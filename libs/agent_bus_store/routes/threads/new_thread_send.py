@@ -92,6 +92,8 @@ def run_new_thread_send(
     allow_long_body: bool,
     lane_bind_body: TurnSendCreate | None = None,
     idempotency_key: str | None = None,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[dict[str, Any], int, str, int, PreparedBody]:
     """Mint, optional lane bind, prepare outside any transaction, then insert turn."""
     thread_row, mint_hold_ms = mint_thread(
@@ -149,6 +151,8 @@ def run_new_thread_send(
             supersedes_turn=None,
             attachments=attachments,
             idempotent_first_turn=claim_first_turn,
+            attested_by=attested_by,
+            user_agent=user_agent,
         )
     except FirstTurnAuthorConflict as exc:
         if prepared.sidecar_uri:

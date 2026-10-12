@@ -357,22 +357,28 @@ class McpRequestEventsMiddleware:
                     record("mcp.transport.stream.opened", **opened_payload)
             await send(message)
 
+        bind_kwargs: dict[str, Any] = {
+            "request_profile": profile,
+            "client_ip": client_ip,
+            "auth_mode": auth_mode,
+            "mcp_method": mcp_method,
+            "tool_name": tool_name or None,
+            "seat_class": seat_class,
+            "surface": surface or None,
+            "jsonrpc_id": jsonrpc_id,
+            "cloudproxy_correlation_id": correlation_hdr or None,
+            "caller_identity": caller_identity or None,
+            "oauth_client_id": oauth_client_id or None,
+            "mcp_session_id": mcp_session_id or None,
+            **request_tool_context,
+        }
+        ua_header = (request.headers.get("user-agent") or "").strip()
+        if ua_header:
+            bind_kwargs["user_agent"] = ua_header
         with bind_request(
             profile,
             structured_capable=structured_capable,
-            request_profile=profile,
-            client_ip=client_ip,
-            auth_mode=auth_mode,
-            mcp_method=mcp_method,
-            tool_name=tool_name or None,
-            seat_class=seat_class,
-            surface=surface or None,
-            jsonrpc_id=jsonrpc_id,
-            cloudproxy_correlation_id=correlation_hdr or None,
-            caller_identity=caller_identity or None,
-            oauth_client_id=oauth_client_id or None,
-            mcp_session_id=mcp_session_id or None,
-            **request_tool_context,
+            **bind_kwargs,
         ):
             try:
                 await self._app(scope, receive, measuring_send)

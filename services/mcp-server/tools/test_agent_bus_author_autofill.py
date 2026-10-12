@@ -16,6 +16,7 @@ from tools import agent_bus as agent_bus_module
 from tools._agent_bus_author import (
     default_from_for_surface,
     reconcile_author_arguments,
+    turn_author_attestation_fields,
 )
 
 
@@ -118,3 +119,108 @@ def test_reply_dispatch_accepts_from_alias() -> None:
 
     assert "error" not in result
     assert relay_calls[0]["from"] == "web-anthropic"
+
+
+def test_send_stamps_attestation_explicit_from() -> None:
+    relay_calls: list[dict[str, Any]] = []
+
+    def _relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        relay_calls.append(kwargs.get("body") or {})
+        return {
+            "send_path": "new_thread",
+            "thread": {"id": "501"},
+            "turn": {"turn_number": 1},
+        }
+
+    with bind_request(
+        "default",
+        surface="code",
+        auth_mode="static",
+        caller_identity="cursor",
+        user_agent="probe/1",
+    ):
+        with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+            with patch.object(agent_bus_module, "record", lambda *_a, **_k: None):
+                result = agent_bus_module._send_dispatch(
+                    new_slug="attest-explicit",
+                    to="web-anthropic",
+                    subject="hi",
+                    body="brief",
+                    from_agent="cursor",
+                )
+
+    assert "error" not in result
+    body = relay_calls[0]
+    assert body["from"] == "cursor"
+    assert body["attested_by"] == "static:cursor@code"
+    assert body["user_agent"] == "probe/1"
+
+
+def test_send_stamps_attestation_on_surface_autofill() -> None:
+    relay_calls: list[dict[str, Any]] = []
+
+    def _relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        relay_calls.append(kwargs.get("body") or {})
+        return {
+            "send_path": "new_thread",
+            "thread": {"id": "502"},
+            "turn": {"turn_number": 1},
+        }
+
+    with bind_request(
+        "default",
+        surface="code",
+        auth_mode="static",
+        caller_identity="cursor",
+    ):
+        with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+            with patch.object(agent_bus_module, "record", lambda *_a, **_k: None):
+                result = agent_bus_module._send_dispatch(
+                    new_slug="attest-autofill",
+                    to="web-anthropic",
+                    subject="hi",
+                    body="brief",
+                )
+
+    assert "error" not in result
+    body = relay_calls[0]
+    assert body["from"] == "cursor"
+    assert body["attested_by"] == "static:cursor@code"
+    assert "user_agent" not in body
+
+
+def test_send_succeeds_without_attestation_triple() -> None:
+    relay_calls: list[dict[str, Any]] = []
+
+    def _relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        relay_calls.append(kwargs.get("body") or {})
+        return {
+            "send_path": "new_thread",
+            "thread": {"id": "503"},
+            "turn": {"turn_number": 1},
+        }
+
+    with bind_request("default", surface="code"):
+        with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+            with patch.object(agent_bus_module, "record", lambda *_a, **_k: None):
+                result = agent_bus_module._send_dispatch(
+                    new_slug="attest-null",
+                    to="web-anthropic",
+                    subject="hi",
+                    body="brief",
+                )
+
+    assert "error" not in result
+    body = relay_calls[0]
+    assert body["from"] == "cursor"
+    assert "attested_by" not in body
+    with bind_request("default", surface="code"):
+        attested, ua = turn_author_attestation_fields()
+    assert attested is None
+    assert ua is None

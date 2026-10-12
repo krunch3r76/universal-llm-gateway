@@ -342,6 +342,8 @@ class TurnCreate(BaseModel):
     )
     attachments: list[AttachmentCreate] | None = None
     on_behalf: bool = False
+    attested_by: str | None = None
+    user_agent: str | None = None
 
 
 class TurnCreated(BaseModel):
@@ -415,6 +417,8 @@ class Turn(BaseModel):
     created_at: datetime
     read_at: datetime | None = None
     attachments: list[Attachment] | None = None
+    attested_by: str | None = None
+    user_agent: str | None = None
 
 
 class TurnList(BaseModel):
@@ -630,6 +634,8 @@ class ThreadWithTurnCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     enroll_charter_runner: bool = False
     lifecycle_state: str | None = None
+    attested_by: str | None = None
+    user_agent: str | None = None
 
 
 class ThreadWithTurnCreated(BaseModel):
@@ -682,6 +688,8 @@ class TurnSendCreate(BaseModel):
     lane_role: str | None = None
     fence_id: str | None = None
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+    attested_by: str | None = None
+    user_agent: str | None = None
 
 
 class TurnSendCreated(BaseModel):

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_bus_store.author_attestation import attest
+
 from request_profile import current_request_metadata
 
 # Canonical bus addresses when the caller omits from=/from_agent on a dual mount.
@@ -15,6 +17,21 @@ _SURFACE_DEFAULT_FROM: dict[str, str] = {
 AUTHOR_AUTOFILL_OPS: frozenset[str] = frozenset(
     {"send", "hop", "post", "reply", "triage", "update_thread"}
 )
+
+
+def turn_author_attestation_fields() -> tuple[str | None, str | None]:
+    """Read request metadata for turn credential stamp columns."""
+    meta = current_request_metadata()
+    attested = attest(
+        meta.get("auth_mode"),
+        meta.get("caller_identity"),
+        meta.get("surface"),
+    )
+    raw_ua = meta.get("user_agent")
+    user_agent: str | None = None
+    if isinstance(raw_ua, str) and raw_ua.strip():
+        user_agent = raw_ua.strip()
+    return attested, user_agent
 
 
 def resolve_dispatch_from_agent(from_agent: str = "") -> tuple[str, dict[str, Any] | None]:

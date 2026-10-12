@@ -180,6 +180,8 @@ def insert_turn(
     attachments: list[dict[str, Any]] | None = None,
     on_behalf: bool = False,
     idempotent_first_turn: bool = False,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[int, str, int, bool]:
     """Returns (turn_id, created_at, turn_number, claimed_existing).
 
@@ -285,8 +287,8 @@ def insert_turn(
             cur = conn.execute(
                 "INSERT INTO turns "
                 "(thread, turn_number, from_agent, to_agent, subject, body, "
-                "status, supersedes_turn, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, supersedes_turn, created_at, attested_by, user_agent) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread,
                     turn_number,
@@ -297,6 +299,8 @@ def insert_turn(
                     status,
                     supersedes_turn,
                     ts,
+                    attested_by,
+                    user_agent,
                 ),
             )
         except sqlite3.IntegrityError:
@@ -871,6 +875,8 @@ def create_turn(
     attachments: list[dict[str, Any]] | None = None,
     close: bool = False,
     mark_read: bool = False,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Post a turn to an existing thread for POST /threads/send continue path.
 
@@ -894,6 +900,8 @@ def create_turn(
         after_turn=effective_after,
         supersedes_turn=supersedes_turn,
         attachments=attachments,
+        attested_by=attested_by,
+        user_agent=user_agent,
     )
 
     marked_read = 0

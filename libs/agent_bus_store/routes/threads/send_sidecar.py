@@ -250,6 +250,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             supersedes_turn=storage_supersedes,
             attachments=att_dicts,
             idempotent_first_turn=claim_first_turn,
+            attested_by=body.attested_by,
+            user_agent=body.user_agent,
         )
     except UnreadTurnsExist as exc:
         detail = exc.to_detail()

@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS turns (
     supersedes_turn INTEGER,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     read_at         TEXT,
+    attested_by     TEXT,
+    user_agent      TEXT,
     UNIQUE(thread, turn_number)
 );
 CREATE INDEX IF NOT EXISTS idx_turns_thread ON turns(thread, turn_number DESC);

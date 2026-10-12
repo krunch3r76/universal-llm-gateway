@@ -122,6 +122,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 allow_long_body=body.allow_long_body,
                 lane_bind_body=body,
                 idempotency_key=body.idempotency_key,
+                attested_by=body.attested_by,
+                user_agent=body.user_agent,
             )
         except (EnrollmentTagError, ThreadClassificationError) as exc:
             _raise_enrollment_denied(exc)
@@ -286,6 +288,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             attachments=att_dicts,
             close=body.close,
             mark_read=body.mark_read,
+            attested_by=body.attested_by,
+            user_agent=body.user_agent,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(

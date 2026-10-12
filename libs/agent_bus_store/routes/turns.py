@@ -75,6 +75,8 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "created_at": r["created_at"],
             "read_at": r["read_at"],
             "attachments": attachments,
+            "attested_by": r.get("attested_by"),
+            "user_agent": r.get("user_agent"),
         }
     )
 
@@ -166,6 +168,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             supersedes_turn=storage_supersedes,
             attachments=att_dicts,
             on_behalf=turn.on_behalf,
+            attested_by=turn.attested_by,
+            user_agent=turn.user_agent,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(

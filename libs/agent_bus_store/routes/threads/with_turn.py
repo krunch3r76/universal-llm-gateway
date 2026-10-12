@@ -56,6 +56,8 @@ async def create_thread_with_turn_route(
             attachments=att_dicts,
             allow_long_body=body.allow_long_body,
             lane_bind_body=None,
+            attested_by=body.attested_by,
+            user_agent=body.user_agent,
         )
     except (EnrollmentTagError, ThreadClassificationError) as exc:
         _raise_enrollment_denied(exc)

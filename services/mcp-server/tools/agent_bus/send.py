@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp_events import record
 
-from .._agent_bus_author import resolve_dispatch_from_agent
+from .._agent_bus_author import resolve_dispatch_from_agent, turn_author_attestation_fields
 from .._agent_bus_post_guard import structured_slug_exists
 from ._shared import (
     _format_agent_bus_error,
@@ -43,6 +43,8 @@ def _send_impl(
     lane_role: str | None = None,
     fence_id: str | None = None,
     idempotency_key: str | None = None,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -90,6 +92,10 @@ def _send_impl(
         payload["fence_id"] = fence_id
     if idempotency_key is not None:
         payload["idempotency_key"] = idempotency_key
+    if attested_by is not None:
+        payload["attested_by"] = attested_by
+    if user_agent is not None:
+        payload["user_agent"] = user_agent
 
     result = relay("agent-bus", "POST", "/threads/send", body=payload)
     if "error" in result:
@@ -155,6 +161,8 @@ def _send_dispatch(
     lane_role: str | None = None,
     fence_id: str | None = None,
     idempotency_key: str | None = None,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -162,6 +170,7 @@ def _send_dispatch(
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
+    attested_by, user_agent = turn_author_attestation_fields()
 
     has_new_slug = new_slug is not None
     has_thread = bool(thread)
@@ -293,4 +302,6 @@ def _send_dispatch(
         lane_role=lane_role,
         fence_id=fence_id,
         idempotency_key=idempotency_key,
+        attested_by=attested_by,
+        user_agent=user_agent,
     )

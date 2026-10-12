@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp_events import record
 
-from .._agent_bus_author import resolve_dispatch_from_agent
+from .._agent_bus_author import resolve_dispatch_from_agent, turn_author_attestation_fields
 from .._agent_bus_post_guard import structured_route_guard
 from ._shared import (
     _format_agent_bus_error,
@@ -30,6 +30,8 @@ def _post_impl(
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
     allow_long_body: bool = False,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     """Atomic thread+turn creation via POST /threads/with-turn."""
     payload: dict[str, Any] = {
@@ -49,6 +51,10 @@ def _post_impl(
         payload["tags"] = tags
     if allow_long_body:
         payload["allow_long_body"] = True
+    if attested_by is not None:
+        payload["attested_by"] = attested_by
+    if user_agent is not None:
+        payload["user_agent"] = user_agent
 
     result = relay("agent-bus", "POST", "/threads/with-turn", body=payload)
     if "error" in result:
@@ -102,6 +108,8 @@ def _reply_impl(
     attachments: list[dict[str, Any]] | None = None,
     allow_long_body: bool = False,
     supersedes_turn: int | None = None,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     from claude_bundles.lane_a_closeout_checkpoint import (
         refusal_envelope as checkpoint_refusal_envelope,
@@ -157,6 +165,10 @@ def _reply_impl(
         payload["attachments"] = attachments
     if allow_long_body:
         payload["allow_long_body"] = True
+    if attested_by is not None:
+        payload["attested_by"] = attested_by
+    if user_agent is not None:
+        payload["user_agent"] = user_agent
     result = relay("agent-bus", "POST", "/turns", body=payload)
 
     if "error" in result:
@@ -221,10 +233,13 @@ def _post_dispatch(
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
     allow_long_body: bool = False,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
+    attested_by, user_agent = turn_author_attestation_fields()
 
     missing: list[str] = []
     if not slug:
@@ -255,6 +270,8 @@ def _post_dispatch(
         attachments=attachments,
         tags=tags,
         allow_long_body=allow_long_body,
+        attested_by=attested_by,
+        user_agent=user_agent,
     )
     if "error" not in result:
         result["_deprecated"] = {
@@ -280,6 +297,8 @@ def _reply_dispatch(
     attachments: list[dict[str, Any]] | None = None,
     allow_long_body: bool = False,
     supersedes_turn: int | None = None,
+    attested_by: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -287,6 +306,7 @@ def _reply_dispatch(
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
+    attested_by, user_agent = turn_author_attestation_fields()
 
     missing: list[str] = []
     if not thread:
@@ -322,6 +342,8 @@ def _reply_dispatch(
         attachments=attachments,
         allow_long_body=allow_long_body,
         supersedes_turn=supersedes_turn,
+        attested_by=attested_by,
+        user_agent=user_agent,
     )
     if "error" not in result:
         result["_deprecated"] = {
