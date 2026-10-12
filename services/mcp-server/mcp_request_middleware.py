@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from dual_endpoint_http import is_mcp_endpoint_path
 from endpoint_surface import surface_from_path
 from mcp_events import monotonic_now, record
+from mcp_tools_call_log import ToolsCallIsErrorScan
 from request_profile import bind_request
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -213,6 +214,12 @@ class McpRequestEventsMiddleware:
         # Mcp-Session-Id: client-side session token (stable across tool calls
         # within one session even in stateless_http=True mode).
         mcp_session_id = (request.headers.get("mcp-session-id", "") or "").strip()
+        is_error_scan = ToolsCallIsErrorScan(
+            path=path,
+            protocol=(request.headers.get("mcp-protocol-version") or "").strip(),
+            user_agent=(request.headers.get("user-agent") or "").strip(),
+            caller_id=caller_identity or oauth_client_id,
+        )
         structured_capable = (
             request.headers.get("x-mcp-structured-capable", "") or ""
         ).strip().lower() in {"1", "true", "yes"}
@@ -231,6 +238,8 @@ class McpRequestEventsMiddleware:
             body = msg.get("body", b"")
             jsonrpc_id = _extract_jsonrpc_id(body)
             mcp_method, tool_name, tool_args = _extract_call_metadata(body)
+            if mcp_method == "tools/call":
+                is_error_scan.arm(tool_name)
             request_tool_context = _extract_request_tool_context(tool_name, tool_args)
             if surface == "life" and mcp_method == "tools/call":
                 from middleware.drain import note_life_tools_activity  # noqa: PLC0415
@@ -289,7 +298,9 @@ class McpRequestEventsMiddleware:
         if (
             mcp_method == "tools/call"
             and tool_name
-            and not oauth_client_tool_allowed(oauth_client_id or None, tool_name, tool_args)
+            and not oauth_client_tool_allowed(
+                oauth_client_id or None, tool_name, tool_args
+            )
         ):
             reason = oauth_client_denial_reason(oauth_client_id, tool_name)
             record(
@@ -321,9 +332,12 @@ class McpRequestEventsMiddleware:
 
         async def measuring_send(message: Message) -> None:
             nonlocal response_bytes, stream_opened
+            if message.get("type") == "http.response.start":
+                is_error_scan.note_start(message.get("headers") or [])
             if message.get("type") == "http.response.body":
                 chunk = message.get("body", b"") or b""
                 response_bytes += len(chunk)
+                is_error_scan.feed(chunk)
                 if not stream_opened and len(chunk) > 0:
                     stream_opened = True
                     opened_payload: dict[str, Any] = {
@@ -455,3 +469,4 @@ class McpRequestEventsMiddleware:
                         duration,
                         response_bytes,
                     )
+                is_error_scan.emit(logger)
