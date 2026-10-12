@@ -89,6 +89,7 @@ class ToolsCallIsErrorScan:
         self._carry = b""
         self._gzip: zlib.decompressobj | None = None
         self._failed = False
+        self._status = 0
 
     def arm(self, tool_name: str) -> None:
         """Mark this request as a ``tools/call`` and keep the tool name."""
@@ -96,8 +97,12 @@ class ToolsCallIsErrorScan:
         self._tool_name = tool_name
 
     def emit(self, logger: Any) -> None:
-        """Write the citeable line when this request was a ``tools/call``."""
-        if not self._armed:
+        """Write the citeable line when this request was a ``tools/call``.
+
+        A redirect has no tool result. Skipping 3xx keeps the slash-less
+        mount from writing an ``isError=absent`` row beside the real call.
+        """
+        if not self._armed or 300 <= self._status < 400:
             return
         logger.info(
             "%s",
@@ -110,6 +115,10 @@ class ToolsCallIsErrorScan:
                 caller_id=self._caller_id,
             ),
         )
+
+    def note_status(self, status: int) -> None:
+        """Remember the HTTP status so a redirect is not logged as a tool call."""
+        self._status = status
 
     def note_start(self, headers: list[tuple[bytes, bytes]]) -> None:
         """Remember ``Content-Encoding`` so later chunks inflate before the scan."""

@@ -44,6 +44,7 @@ from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
+from build_identity import register_build_identity
 from response_size_guard import register_response_guard
 from schema_compact import register_compact_schema_transform
 from starlette.middleware.gzip import GZipMiddleware
@@ -281,6 +282,7 @@ def _build_server(
             "Failed to initialize response size guard — proceeding without it"
         )
         record("mcp.response.guard.init.failed", error="see server logs")
+    register_build_identity(mcp)
 
     register_compact_schema_transform(mcp)
     register_surface_enum_transform(mcp, surface)

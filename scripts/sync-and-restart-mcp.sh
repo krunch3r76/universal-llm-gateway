@@ -235,9 +235,14 @@ wait_for_mcp_healthy() {
 
 write_source_sync_stamp() {
   local c=mcp-server
-  local stamp code_sha working_tree_state status_output
+  local stamp code_sha working_tree_state status_output source_tree_sha
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   code_sha="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
+  source_tree_sha="$(
+    find "$WORKSPACE_ROOT/libs" "$WORKSPACE_ROOT/services/mcp-server" -type f \
+      ! -path '*/__pycache__/*' ! -name '*.pyc' -print0 \
+      | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+  )"
   if status_output="$(git -C "$WORKSPACE_ROOT" status --porcelain --untracked-files=all 2>/dev/null)"; then
     if [[ -n "${status_output}" ]]; then
       working_tree_state="dirty"
@@ -248,7 +253,7 @@ write_source_sync_stamp() {
     working_tree_state="unknown"
   fi
   docker exec -u 0 "$c" sh -c \
-    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\nsource_tree_sha=${source_tree_sha}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
   echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
 }
 

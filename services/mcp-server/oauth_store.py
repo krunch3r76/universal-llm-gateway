@@ -61,6 +61,11 @@ class OAuthStore:
         self._db = sqlite3.connect(db_path, isolation_level="DEFERRED")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA_SQL)
+        columns = {
+            row[1] for row in self._db.execute("PRAGMA table_info(clients)")
+        }
+        if "client_name" not in columns:
+            self._db.execute("ALTER TABLE clients ADD COLUMN client_name TEXT")
         logger.info("OAuth store: SQLite persistence at %s", db_path)
 
     def _warm_from_db(self) -> None:
@@ -88,7 +93,7 @@ class OAuthStore:
             token_count += 1
 
         cur = self._db.execute(
-            "SELECT client_id, client_secret, redirect_uris FROM clients"
+            "SELECT client_id, client_secret, redirect_uris, client_name FROM clients"
         )
         client_count = 0
         for row in cur:
@@ -97,6 +102,7 @@ class OAuthStore:
                 client_id=row[0],
                 client_secret=row[1],
                 redirect_uris=uris,
+                client_name=row[3] or None,
             )
             self._clients[client.client_id] = client
             client_count += 1
@@ -113,11 +119,13 @@ class OAuthStore:
         if self._db is not None:
             self._db.execute(
                 "INSERT OR REPLACE INTO clients "
-                "(client_id, client_secret, redirect_uris) VALUES (?, ?, ?)",
+                "(client_id, client_secret, redirect_uris, client_name) "
+                "VALUES (?, ?, ?, ?)",
                 (
                     client.client_id,
                     client.client_secret,
                     json.dumps(client.redirect_uris),
+                    client.client_name,
                 ),
             )
             self._db.commit()

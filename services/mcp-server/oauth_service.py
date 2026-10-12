@@ -29,6 +29,14 @@ _AUTHORIZATION_CODE_TTL_SECONDS = 300
 _ACCESS_TOKEN_TTL_SECONDS = 604_800  # 7 days — persisted tokens need long TTL
 
 
+def _client_name(raw: object) -> str | None:
+    """Keep a registration name as a short log token, never a secret."""
+    text = "".join(
+        ch for ch in " ".join(str(raw or "").split()) if ch.isalnum() or ch in "._-"
+    )
+    return text[:40] or None
+
+
 @dataclass(slots=True, kw_only=True)
 class AuthorizationRequest:
     """Validated authorization request ready for code issuance."""
@@ -149,6 +157,14 @@ class OAuthService:
             "scopes_supported": self._config.supported_scopes or ["mcp"],
         }
 
+    def caller_label(self, client_id: str) -> str:
+        """Return the log label for an OAuth client, including its registered name."""
+        client = self._store.fetch_client(client_id)
+        name = client.client_name if client is not None else None
+        if name:
+            return f"{client_id}({name})"
+        return client_id
+
     def register_dynamic_client(self, payload: dict[str, object]) -> dict[str, object]:
         """Register an OAuth client for MCP connector onboarding (RFC 7591).
 
@@ -185,11 +201,13 @@ class OAuthService:
         client_secret: str | None = None
         if token_auth_method == "client_secret_post":
             client_secret = secrets.token_urlsafe(32)
+        client_name = _client_name(payload.get("client_name"))
         self._store.save_client(
             RegisteredClient(
                 client_id=client_id,
                 client_secret=client_secret,
                 redirect_uris=redirect_uris,
+                client_name=client_name,
             )
         )
         granted = _granted_dynamic_grant_types(grant_types)
@@ -211,6 +229,8 @@ class OAuthService:
             "response_types": ["code"],
             "token_endpoint_auth_method": token_auth_method,
         }
+        if client_name is not None:
+            registration["client_name"] = client_name
         if client_secret is not None:
             registration["client_secret"] = client_secret
             # RFC 7591: 0 means the secret does not expire. Claude's broker

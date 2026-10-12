@@ -333,6 +333,7 @@ class McpRequestEventsMiddleware:
         async def measuring_send(message: Message) -> None:
             nonlocal response_bytes, stream_opened
             if message.get("type") == "http.response.start":
+                is_error_scan.note_status(int(message.get("status") or 0))
                 is_error_scan.note_start(message.get("headers") or [])
             if message.get("type") == "http.response.body":
                 chunk = message.get("body", b"") or b""

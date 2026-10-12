@@ -67,6 +67,21 @@ PUBLIC_PATH_PREFIXES = (
 )
 
 
+def _parse_labeled_bearer(line: str) -> tuple[str, str | None]:
+    """Split ``label token`` from a bare token. The secret is never the label."""
+    text = line.strip()
+    if not text:
+        return "", None
+    label, sep, secret = text.partition(" ")
+    if (
+        sep
+        and secret.strip()
+        and label.replace(".", "").replace("_", "").replace("-", "").isalnum()
+    ):
+        return secret.strip(), label
+    return text, None
+
+
 def _is_public_path(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PATH_PREFIXES)
 
@@ -93,9 +108,18 @@ class AuthMiddleware:
         # Additional valid bearer tokens, one per line. Each is independently
         # valid; absent or empty → no extra tokens (backward-compatible).
         _extra = os.getenv("VORTEX_BEARER_TOKENS", "")
-        self._bearer_tokens: frozenset[str] = frozenset(
-            t for line in _extra.splitlines() if (t := line.strip())
-        )
+        tokens: set[str] = set()
+        labels: dict[str, str] = {}
+        for line in _extra.splitlines():
+            secret, label = _parse_labeled_bearer(line)
+            if not secret:
+                continue
+            tokens.add(secret)
+            if label:
+                labels[secret] = label
+        self._bearer_tokens: frozenset[str] = frozenset(tokens)
+        self._bearer_labels = labels
+        self._primary_caller_label = os.getenv("MCP_PRIMARY_CALLER_LABEL", "").strip()
 
     @staticmethod
     def _extract_authorization_token(authorization: str) -> str | None:
@@ -147,6 +171,10 @@ class AuthMiddleware:
         token = self._extract_authorization_token(auth_header)
         if self._cursor_token and token == self._cursor_token:
             return "cursor"
+        if token and token in self._bearer_labels:
+            return self._bearer_labels[token]
+        if token and token == self._token and self._primary_caller_label:
+            return self._primary_caller_label
         configured = os.getenv("MCP_STATIC_CALLER_IDENTITY", "").strip()
         return configured or "static"
 
@@ -325,7 +353,9 @@ class AuthMiddleware:
         if token is not None and self._oauth_service is not None:
             token_record = self._oauth_service.validate_access_token(token)
             if token_record is not None:
-                caller_identity = token_record.client_id
+                caller_identity = self._oauth_service.caller_label(
+                    token_record.client_id
+                )
                 record(
                     "mcp.auth.admitted",
                     role="coordination",

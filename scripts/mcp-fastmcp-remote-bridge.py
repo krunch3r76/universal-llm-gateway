@@ -34,7 +34,7 @@ from services.git_integration_worker.cursor_sdk_context import (  # noqa: E402
     resolve_mcp_token,
 )
 
-DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/code"
+DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/code/"
 _EVENTS_SOCK = os.environ.get(
     "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
 )

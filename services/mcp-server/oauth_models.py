@@ -48,3 +48,4 @@ class RegisteredClient:
     client_id: str
     redirect_uris: list[str]
     client_secret: str | None = None
+    client_name: str | None = None
