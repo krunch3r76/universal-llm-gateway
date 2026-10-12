@@ -465,6 +465,11 @@ def main() -> int:
         default="only",
         help="only: refuse ambiguity (default)",
     )
+    a.add_argument(
+        "--focus-only",
+        action="store_true",
+        help="ok when target toplevel is activated; skip Cursor-exclusive keyboard check (Grok Bot hops)",
+    )
     ac = sub.add_parser(
         "assert-cursor",
         help="fail if a browser is activated or the named Cursor toplevel is not",
@@ -517,7 +522,10 @@ def main() -> int:
         identifier=str(matches[0].get("identifier") or ""),
         title=str(matches[0].get("title") or ""),
     )
-    ok = focused and bool(exclusive.get("ok")) and not wire.errors
+    if args.focus_only:
+        ok = focused and not wire.errors
+    else:
+        ok = focused and bool(exclusive.get("ok")) and not wire.errors
     print(
         json.dumps(
             {

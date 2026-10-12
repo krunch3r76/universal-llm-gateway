@@ -29,6 +29,8 @@ from evdev import UInput, ecodes as e
 _REPO = Path(__file__).resolve().parents[1]
 _GROKBOT_URI = os.environ.get("GROKBOT_OPEN_URI", "grokbot://app/v1/open")
 _BOT_QUERY = os.environ.get("GROKBOT_TARGET_QUERY", "treasury scout")
+_GROK_APP_ID = os.environ.get("GROKBOT_APP_ID", "grok-bot")
+_GROK_TITLE_SUBSTR = os.environ.get("GROKBOT_FOCUS_TITLE", "Grok Bot")
 
 
 def _require_display() -> None:
@@ -47,6 +49,34 @@ def _wl_copy(text: str) -> None:
     )
     if proc.returncode != 0:
         raise SystemExit(f"wl-copy failed rc={proc.returncode}")
+
+
+def _focus_grok_window(*, settle_s: float = 0.6) -> dict[str, object]:
+    """Raise Grok Bot via compositor activate (works when lock screen would swallow blind uinput)."""
+    helper = Path(__file__).with_name("cosmic_focus_window.py")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(helper),
+            "activate",
+            "--app-id",
+            _GROK_APP_ID,
+            "--title-substr",
+            _GROK_TITLE_SUBSTR,
+            "--focus-only",
+        ],
+        env=os.environ,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    try:
+        verdict = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        verdict = {"ok": False, "raw": (proc.stdout + proc.stderr)[-400:]}
+    if verdict.get("ok"):
+        time.sleep(settle_s)
+    return verdict
 
 
 def _raise_grokbot() -> None:
@@ -131,6 +161,7 @@ def launch_routine_message(
     bot_query: str = _BOT_QUERY,
     dry_run: bool = False,
     focus_delay_s: float = 1.2,
+    existing_chat: bool = False,
 ) -> dict[str, object]:
     _require_display()
     if dry_run:
@@ -138,15 +169,27 @@ def launch_routine_message(
             "dry_run": True,
             "grokbot_uri": _GROKBOT_URI,
             "bot_query": bot_query,
-            "steps": ["ctrl+n", f"paste:{bot_query}", "enter", "paste:routine", "enter"],
+            "steps": (
+                ["paste:routine", "enter"]
+                if existing_chat
+                else ["ctrl+n", f"paste:{bot_query}", "enter", "paste:routine", "enter"]
+            ),
             "message_preview": message[:160],
             "message_len": len(message),
         }
-    _raise_grokbot()
-    time.sleep(focus_delay_s)
+    focus = _focus_grok_window(settle_s=0.35)
+    if not focus.get("ok"):
+        _raise_grokbot()
+        time.sleep(focus_delay_s)
+        focus = _focus_grok_window(settle_s=0.35)
+        if not focus.get("ok"):
+            raise SystemExit(json.dumps({"ok": False, "phase": "focus_grok", **focus}))
+    else:
+        time.sleep(max(0.15, focus_delay_s - 0.35))
     ui = _ui()
     try:
-        _new_chat_to_bot(ui, bot_query)
+        if not existing_chat:
+            _new_chat_to_bot(ui, bot_query)
         _paste_and_enter(ui, message)
     finally:
         ui.close()
@@ -155,6 +198,8 @@ def launch_routine_message(
         "message_len": len(message),
         "grokbot_uri": _GROKBOT_URI,
         "bot_query": bot_query,
+        "existing_chat": existing_chat,
+        "focus": focus,
     }
 
 
@@ -171,6 +216,11 @@ def main() -> int:
         help="Grok Bot new-chat picker filter (default: treasury scout)",
     )
     lp.add_argument("--dry-run", action="store_true")
+    lp.add_argument(
+        "--existing-chat",
+        action="store_true",
+        help="Paste into focused Grok chat (no Ctrl+N new chat / bot picker)",
+    )
     sub.add_parser("smoke", help="xdg-open Grok Bot only")
 
     args = p.parse_args()
@@ -191,6 +241,7 @@ def main() -> int:
             bot_query=args.bot_query,
             dry_run=args.dry_run,
             focus_delay_s=args.focus_delay_s,
+            existing_chat=args.existing_chat,
         )
         print(json.dumps(out, indent=2))
         return 0

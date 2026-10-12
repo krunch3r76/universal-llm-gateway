@@ -1,0 +1,52 @@
+# display-chat-wake — paste one BRIDGE_WAKE when the sidebar title matches.
+#
+# One step. Options: display, app, thread, slug, turn.
+# A title mismatch finishes the run with ok false. It does not fail the pipeline.
+#
+#   pipeline(op="run", pipeline_id="display-chat-wake",
+#            messages=[{"role":"user","content":"wake"}],
+#            options={
+#              "display": "9",
+#              "app": "grok",
+#              "thread": "16416",
+#              "slug": "io-cursor-grok-control",
+#              "turn": 9,
+#            })
+
+schema_version: 6
+id: display-chat-wake
+version: "1.0"
+type: display_chat_wake
+category: display_chat_wake
+description: >
+  Paste BRIDGE_WAKE thread=<id> turn=<n> into the named display app when
+  the active sidebar title is exactly "<thread> <slug>". Any other gate
+  result completes with ok false and pasted false.
+output: display-chat-wake
+
+options:
+  timeout_seconds: 30
+  display:
+    type: string
+    description: X11 display number, 8 or 9
+    default: ""
+  app:
+    type: string
+    description: cursor or grok
+    default: ""
+  thread:
+    type: string
+    description: agent-bus thread id whose sidebar title is "<thread> <slug>"
+    default: ""
+  slug:
+    type: string
+    description: thread slug, the second token of the sidebar title
+    default: ""
+  turn:
+    type: integer
+    description: bus turn to wake; the paste does not include the turn body
+    default: 0
+
+steps:
+  - name: display-chat-wake
+    type: display_chat_wake_v1
