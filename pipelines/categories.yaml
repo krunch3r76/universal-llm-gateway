@@ -11,6 +11,8 @@ categories:
     description: continuity_consolidate
   cursor_paste_resolve:
     description: cursor_paste_resolve
+  display_chat_wake:
+    description: display_chat_wake
   implement_closeout:
     description: implement_closeout
   predicate_extract:

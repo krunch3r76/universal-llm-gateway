@@ -185,7 +185,7 @@ def resolve_fastmcp_remote_cmd() -> str:
             return str(candidate)
     raise CursorSdkParityError(
         f"{_FASTMCP_REMOTE_CMD} not on PATH or under sys.prefix/bin — "
-        "install fastmcp-remote==3.4.2 into the active venv"
+        "install fastmcp-remote==4.1.0 into the active venv"
     )
 
 
