@@ -109,4 +109,4 @@ websockets>=11.0
 # See cortex notes/system/threads/cursor-sdk-bridge-token-fix.md.
 cursor-sdk==1.0.31
 # Track 3: stdio bridge for cursor-sdk dispatches (replaces custom mcp-stdio-proxy)
-fastmcp-remote==3.4.2
+fastmcp-remote==4.1.0

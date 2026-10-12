@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from fastmcp.server.transforms import GetToolNext, Transform
 from fastmcp.utilities.versions import VersionSpec
+from schema_compact import read_input_schema, write_input_schema
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
 from ._agent_tools import JsonArgStr, parse_dispatch_arguments
@@ -57,7 +58,7 @@ class _DelegateSchemaProxy:
 
     def to_mcp_tool(self, **overrides: Any) -> Any:
         mcp_tool = self._tool.to_mcp_tool(**overrides)
-        schema = mcp_tool.inputSchema
+        schema = read_input_schema(mcp_tool)
         if isinstance(schema, dict):
             props = dict(schema.get("properties") or {})
             props["intent"] = {
@@ -72,7 +73,7 @@ class _DelegateSchemaProxy:
             props["op"] = op_prop
             schema = dict(schema)
             schema["properties"] = props
-            mcp_tool.inputSchema = schema
+            write_input_schema(mcp_tool, schema)
         return mcp_tool
 
     def __getattr__(self, name: str) -> Any:

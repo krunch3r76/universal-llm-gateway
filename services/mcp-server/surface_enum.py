@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from _derive import derive_cortex_surface
 from fastmcp.server.transforms import GetToolNext, Transform
 from fastmcp.utilities.versions import VersionSpec
+from schema_compact import read_input_schema, write_input_schema
 from tools.agent_bus import advertised_agent_bus_ops
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ class _SurfaceEnumToolProxy:
 
     def to_mcp_tool(self, **overrides: Any) -> Any:
         mcp_tool = self._tool.to_mcp_tool(**overrides)
-        schema = mcp_tool.inputSchema
+        schema = read_input_schema(mcp_tool)
         if isinstance(schema, dict):
             props = schema.get("properties")
             if isinstance(props, dict) and "tool" in props:
@@ -40,7 +41,7 @@ class _SurfaceEnumToolProxy:
                 props["tool"] = tool_prop
                 schema = dict(schema)
                 schema["properties"] = props
-                mcp_tool.inputSchema = schema
+                write_input_schema(mcp_tool, schema)
         return mcp_tool
 
     def __getattr__(self, name: str) -> Any:

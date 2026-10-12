@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools.base import ToolResult
 from fs_roots import (
     life_workspaces_write_enabled,
     life_workspaces_write_refusal_message,

@@ -568,7 +568,6 @@ def _demote_inline_wrappers(
     not in ``_PRIMARY_TOOLS`` must be moved into the overflow registry and
     its description captured so ``tool_search`` can surface it.
     """
-    import warnings
 
     async def _capture_and_remove() -> None:
         for tool in await mcp.list_tools():
@@ -586,14 +585,14 @@ def _demote_inline_wrappers(
 
     asyncio.run(_capture_and_remove())
     current_tool_names = asyncio.run(_tool_names(mcp))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        for name in list(overflow_metadata):
-            if name not in current_tool_names:
-                continue
-            if name in primary_tools:
-                continue
-            mcp.remove_tool(name)
+    # FastMCP 4 dropped FastMCP.remove_tool. The local provider still deletes
+    # the component; the callable was already copied into overflow_registry.
+    for name in list(overflow_metadata):
+        if name not in current_tool_names:
+            continue
+        if name in primary_tools:
+            continue
+        mcp.local_provider.remove_tool(name)
 
 
 def _prune_to_primary(
@@ -622,12 +621,10 @@ def _prune_to_primary(
     # If this function were to be called from within an active event loop, this would be problematic.
     registry = asyncio.run(_collect())
 
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        for name in registry:
-            mcp.remove_tool(name)
+    # FastMCP 4 dropped FastMCP.remove_tool. The local provider still deletes
+    # the component; dispatch keeps the callable captured above.
+    for name in registry:
+        mcp.local_provider.remove_tool(name)
 
     return registry
 

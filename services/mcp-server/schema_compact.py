@@ -129,11 +129,44 @@ def minify_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _model_fields(mcp_tool: Any) -> dict[str, Any]:
+    return getattr(mcp_tool.__class__, "model_fields", {}) or {}
+
+
+def read_input_schema(mcp_tool: Any) -> Any:
+    """Read the tool input schema across MCP SDK v1 (``inputSchema``) and v2 (``input_schema``).
+
+    SDK v2 keeps ``inputSchema`` as a read-only alias, so writers must use the field
+    that ``model_fields`` actually declares.
+    """
+    if "input_schema" in _model_fields(mcp_tool):
+        return mcp_tool.input_schema
+    return getattr(mcp_tool, "inputSchema", None)
+
+
+def write_input_schema(mcp_tool: Any, schema: dict[str, Any]) -> None:
+    """Write the tool input schema on whichever field this SDK generation stores."""
+    if "input_schema" in _model_fields(mcp_tool):
+        mcp_tool.input_schema = schema
+        return
+    mcp_tool.inputSchema = schema
+
+
+def clear_output_schema(mcp_tool: Any) -> None:
+    """Drop the output schema. v2 renamed the stored field to ``output_schema``."""
+    fields = _model_fields(mcp_tool)
+    if "output_schema" in fields:
+        mcp_tool.output_schema = None
+    elif "outputSchema" in fields:
+        mcp_tool.outputSchema = None
+
+
 def _compact_mcp_tool(mcp_tool: Any) -> Any:
     """Apply the three wire-schema mutations in order (matches legacy patch)."""
-    if isinstance(mcp_tool.inputSchema, dict):
-        mcp_tool.inputSchema = minify_schema(mcp_tool.inputSchema)
-    mcp_tool.outputSchema = None
+    schema = read_input_schema(mcp_tool)
+    if isinstance(schema, dict):
+        write_input_schema(mcp_tool, minify_schema(schema))
+    clear_output_schema(mcp_tool)
     mcp_tool.meta = None
     return mcp_tool
 

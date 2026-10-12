@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools.base import ToolResult
 from markdown_sections import list_sections
 from request_profile import bind_profile
 from response_overflow_manifest import (

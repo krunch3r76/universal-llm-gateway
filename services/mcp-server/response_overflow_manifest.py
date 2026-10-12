@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools.base import ToolResult
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
 

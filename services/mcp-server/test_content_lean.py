@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools.base import ToolResult
 from mcp.types import ImageContent, TextContent
 from request_profile import bind_profile, bind_request, current_structured_capable
 from response_size_guard import (

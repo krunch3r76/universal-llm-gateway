@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools.base import ToolResult
 from request_profile import bind_request
 from response_size_guard import (
     _agent_bus_manifest,
