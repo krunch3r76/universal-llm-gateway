@@ -15,7 +15,17 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 _ROSTER_REL = Path("notes/system/operational/maestro-sidekick-roster.md")
 _EXTRA_HOUSE_LANES: tuple[str, ...] = ("15851", "12286")
 _PAGE_SIZE = 200
+_MAX_PAGES = 50
 _BUS_TIMEOUT_S = 15.0
+
+_SCHEME_WORK_KEY_PREFIXES: tuple[str, ...] = (
+    "todo:",
+    "plan:",
+    "decision:",
+    "friction:",
+    "packet:",
+    "agent-bus:",
+)
 
 _SUBJECT_RE = re.compile(
     r"^(?P<verb>[A-Z_]+)"
@@ -107,6 +117,10 @@ def _parse_subject(subject: str) -> tuple[str, str, str]:
     return verb, kind, key
 
 
+def _scheme_work_key(work_key: str) -> bool:
+    return any(work_key.startswith(prefix) for prefix in _SCHEME_WORK_KEY_PREFIXES)
+
+
 def _cancel_targets_key(
     subject: str,
     open_requests: dict[str, int],
@@ -122,7 +136,10 @@ def _cancel_targets_key(
     matches = [work_key for work_key, start_turn in open_requests.items() if start_turn == req_turn]
     if len(matches) != 1:
         return None
-    return matches[0]
+    matched = matches[0]
+    if _scheme_work_key(matched):
+        return None
+    return matched
 
 
 def _auth_headers() -> dict[str, str]:
@@ -165,27 +182,47 @@ def fetch_turns_to_closure(
     *,
     page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
     | None = None,
-) -> list[dict[str, Any]]:
-    """Page compact turns until the thread start or the API reports no truncation."""
+) -> tuple[list[dict[str, Any]], bool]:
+    """Page compact turns until thread start, a stop condition, or a bounded cap."""
     fetch = page_fetch or fetch_turns_page
     merged: dict[int, dict[str, Any]] = {}
     after_turn = 0
+    paging_truncated = False
+    pages = 0
     while True:
+        pages += 1
         page, truncated, next_after = fetch(lane, after_turn=after_turn, last=_PAGE_SIZE)
+        max_seen_before = max(merged) if merged else 0
         for turn in page:
             turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
             merged[turn_no] = turn
-        if not truncated or not page:
+        if not page:
+            if truncated:
+                paging_truncated = True
             break
+        if not truncated:
+            break
+        if pages >= _MAX_PAGES:
+            paging_truncated = True
+            break
+
         if next_after is not None:
+            if next_after <= after_turn or (
+                max_seen_before and next_after <= max_seen_before
+            ):
+                paging_truncated = True
+                break
             after_turn = next_after
         else:
-            after_turn = max(int(t.get("turn_number") or 0) for t in page)
-    return [merged[k] for k in sorted(merged)]
+            after_turn = max(
+                int(t.get("turn_number") or t.get("id") or 0) for t in page
+            )
+    return [merged[k] for k in sorted(merged)], paging_truncated
 
 
 def _production_fetch_turns(lane: str) -> list[dict[str, Any]]:
-    return fetch_turns_to_closure(lane)
+    turns, _ = fetch_turns_to_closure(lane)
+    return turns
 
 
 def _wrap_fetch_turns(
@@ -259,7 +296,12 @@ def project_live_leg(
     leg = LiveLeg(lanes_queried=list(lanes))
     for lane in lanes:
         try:
-            turns = resolve(lane)
+            if resolve is _production_fetch_turns:
+                turns, lane_truncated = fetch_turns_to_closure(lane)
+                if lane_truncated:
+                    leg.truncated = True
+            else:
+                turns = resolve(lane)
         except Exception as exc:  # noqa: BLE001 — render degraded line per lane
             leg.errors[lane] = str(exc)
             continue

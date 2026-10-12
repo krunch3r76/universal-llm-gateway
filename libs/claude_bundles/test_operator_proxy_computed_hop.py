@@ -219,8 +219,9 @@ def test_amendment_2_paging_reaches_open_beyond_first_page() -> None:
             return [open_turn], False, None
         return [], False, None
 
-    merged = fetch_turns_to_closure("15722", page_fetch=page_fetch)
+    merged, paging_truncated = fetch_turns_to_closure("15722", page_fetch=page_fetch)
     items, truncated = fold_lane("15722", merged)
+    assert paging_truncated is False
     assert truncated is False
     keys = {item.key for item in items}
     assert "decision:house-kinds-unify" in keys
@@ -243,6 +244,47 @@ def test_fold_lane_15722_real_subject_shapes() -> None:
     assert ("PICKUP", "decision:maestro-hop-model-fable") not in keys
     assert ("PICKUP", "decision:forward-only-git") not in keys
     assert ("PLAN", "decision:forward-only-git") not in keys
+
+
+def test_fetch_turns_stops_when_next_after_does_not_advance() -> None:
+    """Stuck bus cursor must return partial turns with truncated=True (nit 1)."""
+    calls = 0
+
+    def page_fetch(
+        _lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del last
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [_turn(5, "REQUEST|freeform|recover-alpha")], True, 5
+        return [_turn(6, "STATUS|filler")], True, 5
+
+    turns, paging_truncated = fetch_turns_to_closure("15722", page_fetch=page_fetch)
+    assert paging_truncated is True
+    assert calls == 2
+    assert len(turns) == 2
+
+
+def test_cancel_turn_ref_leaves_scheme_keyed_request_open() -> None:
+    """CANCEL|#N must not close todo:-keyed items; CANCEL|todo:x must (nit 2)."""
+    turns = [
+        _turn(20, "REQUEST|implement|todo:alpha"),
+        _turn(21, "CANCEL|#20"),
+    ]
+    items, _ = fold_lane("15722", turns)
+    assert len(items) == 1
+    assert items[0].key == "todo:alpha"
+
+    turns_closed = [
+        _turn(20, "REQUEST|implement|todo:alpha"),
+        _turn(21, "CANCEL|todo:alpha"),
+    ]
+    items_closed, _ = fold_lane("15722", turns_closed)
+    assert items_closed == []
 
 
 def test_done_closes_pickup_even_when_request_already_closed() -> None:
