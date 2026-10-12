@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
 _ROSTER_REL = Path("notes/system/operational/maestro-sidekick-roster.md")
 _EXTRA_HOUSE_LANES: tuple[str, ...] = ("15851", "12286")
-_FETCH_LAST = 200
+_PAGE_SIZE = 200
+_BUS_TIMEOUT_S = 15.0
 
 _SUBJECT_RE = re.compile(
     r"^(?P<verb>[A-Z_]+)"
@@ -32,23 +36,11 @@ GOVERNING_RULE: dict[str, str] = {
     "PLAN": (
         "R4: review the plan and post ACK or PARK before the implement leg"
     ),
-    "LANDED": (
-        "LANDED closes the REQUEST like DONE and leaves a restart-owed item until "
-        "DONE or FAILED on the same work_key"
-    ),
 }
 
-_REQUEST_CLOSE = frozenset({"DONE", "FAILED", "CANCEL", "WITHDRAW", "LANDED"})
+_REQUEST_CLOSE = frozenset({"DONE", "FAILED", "CANCEL", "WITHDRAW"})
 _PICKUP_CLOSE = frozenset({"DONE", "FAILED"})
 _PLAN_CLOSE = frozenset({"ACK", "PARK", "CANCEL"})
-
-POINTERS_BLOCK = """\
-- Prior LEG blocks (LEG 119…183): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
-- K-row rulings (K1–K22): runbook Appendix § Rulings (K-rows) — current binds are restated in step 5 R lines and in the hard refusals (K22 opus-5.5-extra, no fable).
-- Conductor trajectories (2026-09-30): runbook Appendix § Conductor trajectories — C1 routes conductor lanes to the sidekick; `contract=conductor` is inline in hard refusals.
-- Journal entries: `cortex://notes/system/maestro/journal.md` — narrative; first act 4 reads its head.
-- Roster detail (bots, hop history): `cortex://notes/system/operational/maestro-sidekick-roster.md` — lane ids used at render are named in the running-now line.
-- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal against re-arming send_later stays inline."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,18 +107,96 @@ def _parse_subject(subject: str) -> tuple[str, str, str]:
     return verb, kind, key
 
 
-def _cancel_targets_key(subject: str, turn_number: int, open_requests: dict[str, int]) -> str | None:
+def _cancel_targets_key(
+    subject: str,
+    open_requests: dict[str, int],
+) -> str | None:
+    """Match CANCEL|WITHDRAW by scheme key, else by a single explicit #turn ref."""
     _, _, key = _parse_subject(subject)
     if key:
         return key
-    ref = _TURN_REF_RE.search(subject or "")
-    if ref is None:
+    refs = [int(match.group(1)) for match in _TURN_REF_RE.finditer(subject or "")]
+    if len(refs) != 1:
         return None
-    req_turn = int(ref.group(1))
-    for work_key, start_turn in open_requests.items():
-        if start_turn == req_turn:
-            return work_key
-    return None
+    req_turn = refs[0]
+    matches = [work_key for work_key, start_turn in open_requests.items() if start_turn == req_turn]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _auth_headers() -> dict[str, str]:
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def fetch_turns_page(
+    lane: str,
+    *,
+    after_turn: int = 0,
+    last: int = _PAGE_SIZE,
+    compact: bool = True,
+    mark_read: bool = False,
+) -> tuple[list[dict[str, Any]], bool, int | None]:
+    """Fetch one compact page oldest-first; return (turns, truncated, next_after_turn)."""
+    params = {
+        "thread": str(lane),
+        "last": last,
+        "after_turn": after_turn,
+        "compact": "true" if compact else "false",
+        "mark_read": "true" if mark_read else "false",
+    }
+    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=_BUS_TIMEOUT_S) as client:
+        resp = client.get("/turns", params=params, headers=_auth_headers())
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"agent-bus fetch HTTP {resp.status_code} for lane {lane}"
+            )
+        payload = resp.json()
+    turns = list(payload.get("turns") or [])
+    truncated = bool(payload.get("truncated"))
+    next_after = payload.get("next_after_turn")
+    turns.sort(key=lambda t: int(t.get("turn_number") or t.get("id") or 0))
+    return turns, truncated, int(next_after) if next_after is not None else None
+
+
+def fetch_turns_to_closure(
+    lane: str,
+    *,
+    page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
+    | None = None,
+) -> list[dict[str, Any]]:
+    """Page compact turns until the thread start or the API reports no truncation."""
+    fetch = page_fetch or fetch_turns_page
+    merged: dict[int, dict[str, Any]] = {}
+    after_turn = 0
+    while True:
+        page, truncated, next_after = fetch(lane, after_turn=after_turn, last=_PAGE_SIZE)
+        for turn in page:
+            turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
+            merged[turn_no] = turn
+        if not truncated or not page:
+            break
+        if next_after is not None:
+            after_turn = next_after
+        else:
+            after_turn = max(int(t.get("turn_number") or 0) for t in page)
+    return [merged[k] for k in sorted(merged)]
+
+
+def _production_fetch_turns(lane: str) -> list[dict[str, Any]]:
+    return fetch_turns_to_closure(lane)
+
+
+def _wrap_fetch_turns(
+    fetch_turns: Callable[[str], list[dict]],
+) -> Callable[[str], list[dict]]:
+    """Use compact paging when the injected fetcher is the single-window bus helper."""
+    mod = getattr(fetch_turns, "__module__", "")
+    name = getattr(fetch_turns, "__name__", "")
+    if mod == "claude_bundles.operator_proxy_bus_fetch" and name == "fetch_turns_for_lane":
+        return _production_fetch_turns
+    return fetch_turns
 
 
 def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
@@ -134,9 +204,7 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
     open_requests: dict[str, tuple[int, str, str, str]] = {}
     open_pickups: dict[str, tuple[int, str, str, str]] = {}
     open_plans: dict[str, tuple[int, str, str, str]] = {}
-    open_landeds: dict[str, tuple[int, str, str, str]] = {}
     request_start_turn: dict[str, int] = {}
-    truncated = len(turns) >= _FETCH_LAST
 
     for turn in turns:
         turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
@@ -151,14 +219,11 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
         elif verb in _REQUEST_CLOSE:
             close_key = key
             if verb in {"CANCEL", "WITHDRAW"} and not close_key:
-                close_key = _cancel_targets_key(subject, turn_no, request_start_turn)
+                close_key = _cancel_targets_key(subject, request_start_turn)
             if close_key:
                 open_requests.pop(close_key, None)
-                if verb == "LANDED":
-                    open_landeds[close_key] = (turn_no, verb, kind, subject)
                 if verb in _PICKUP_CLOSE:
                     open_pickups.pop(close_key, None)
-                    open_landeds.pop(close_key, None)
         elif verb == "PICKUP" and key:
             open_pickups[key] = (turn_no, verb, kind, subject)
         elif verb == "PLAN" and key:
@@ -169,7 +234,7 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
             open_plans.pop(key, None)
 
     items: list[OpenItem] = []
-    for store in (open_requests, open_pickups, open_plans, open_landeds):
+    for store in (open_requests, open_pickups, open_plans):
         for work_key, (turn_no, verb, kind, subject) in store.items():
             items.append(
                 OpenItem(
@@ -182,7 +247,7 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
                 )
             )
     items.sort(key=lambda item: (item.lane, item.turn))
-    return items, truncated
+    return items, False
 
 
 def project_live_leg(
@@ -190,19 +255,18 @@ def project_live_leg(
     fetch_turns: Callable[[str], list[dict]],
 ) -> LiveLeg:
     """Query each lane and merge open items."""
+    resolve = _wrap_fetch_turns(fetch_turns)
     leg = LiveLeg(lanes_queried=list(lanes))
-    any_truncated = False
     for lane in lanes:
         try:
-            turns = fetch_turns(lane)
+            turns = resolve(lane)
         except Exception as exc:  # noqa: BLE001 — render degraded line per lane
             leg.errors[lane] = str(exc)
             continue
-        items, truncated = fold_lane(lane, turns)
+        items, _ = fold_lane(lane, turns)
         leg.items.extend(items)
-        any_truncated = any_truncated or truncated
     leg.items.sort(key=lambda item: (item.lane, item.turn))
-    leg.truncated = any_truncated
+    leg.truncated = False
     return leg
 
 
@@ -211,7 +275,8 @@ def render_live_leg(leg: LiveLeg) -> str:
     lines: list[str] = []
     if leg.truncated:
         lines.append(
-            "(truncated: last=200 per lane; an open item may lie beyond this window.)"
+            "(truncated: bus paging did not reach thread start; "
+            "an open item may lie beyond the fetched window.)"
         )
     for lane in leg.lanes_queried:
         if lane in leg.errors:
@@ -227,8 +292,17 @@ def render_live_leg(leg: LiveLeg) -> str:
             f"{rule}"
         )
     if not lines:
-        lines.append("(no open REQUEST, PICKUP, PLAN, or restart-owed LANDED items)")
+        lines.append("(no open REQUEST, PICKUP, or PLAN items)")
     return "\n".join(lines)
+
+
+POINTERS_BLOCK = """\
+- Prior LEG blocks (LEG 119…183): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
+- K-row rulings (K1–K22): runbook Appendix § Rulings (K-rows) — current binds are restated in step 5 R lines and in the hard refusals (K22 opus-5.5-extra, no fable).
+- Conductor trajectories (2026-09-30): runbook Appendix § Conductor trajectories — C1 routes conductor lanes to the sidekick; `contract=conductor` is inline in hard refusals.
+- Journal entries: `cortex://notes/system/maestro/journal.md` — narrative; first act 4 reads its head.
+- Roster detail (bots, hop history): `cortex://notes/system/operational/maestro-sidekick-roster.md` — lane ids used at render are named in the running-now line.
+- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal against re-arming send_later stays inline."""
 
 
 __all__ = [
@@ -236,6 +310,8 @@ __all__ = [
     "LiveLeg",
     "OpenItem",
     "POINTERS_BLOCK",
+    "fetch_turns_page",
+    "fetch_turns_to_closure",
     "fold_lane",
     "house_lanes",
     "load_maestro_roster_text",

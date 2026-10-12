@@ -8,10 +8,9 @@ import pytest
 
 from claude_bundles.operator_proxy_live_leg import (
     GOVERNING_RULE,
+    fetch_turns_to_closure,
     fold_lane,
     house_lanes,
-    project_live_leg,
-    render_live_leg,
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 
@@ -135,15 +134,17 @@ def test_computed_hop_rendering() -> None:
     assert twice.rstrip("\n") == out.rstrip("\n")
 
 
-def test_landed_verb_closes_request_and_stays_open() -> None:
+def test_amendment_3_landed_does_not_mint_open_item() -> None:
+    """LANDED is not a close verb; PICKUP stays open until DONE|FAILED."""
     turns = [
         _turn(1, "REQUEST|implement|todo:restart-me"),
         _turn(2, "LANDED|implement|todo:restart-me"),
+        _turn(3, "PICKUP|implement|todo:restart-me"),
     ]
     items, _ = fold_lane("12286", turns)
-    assert len(items) == 1
-    assert items[0].verb == "LANDED"
-    assert items[0].key == "todo:restart-me"
+    verbs = {item.verb for item in items if item.key == "todo:restart-me"}
+    assert verbs == {"REQUEST", "PICKUP"}
+    assert "LANDED" not in GOVERNING_RULE
 
 
 def test_cancel_matches_work_key_before_turn_ref() -> None:
@@ -164,13 +165,65 @@ def test_cancel_turn_ref_fallback() -> None:
     assert items == []
 
 
-def test_truncated_flag_when_window_full() -> None:
-    turns = [_turn(i, f"STATUS|n{i}") for i in range(1, 201)]
-    _, truncated = fold_lane("15722", turns)
-    assert truncated is True
-    leg = project_live_leg(["15722"], lambda _l: turns)
-    block = render_live_leg(leg)
-    assert "truncated" in block.lower()
+def test_amendment_6_cancel_rejects_multiple_turn_refs() -> None:
+    turns = [
+        _turn(81, "REQUEST|freeform|todo:recover-maestro-houses"),
+        _turn(82, "CANCEL|#81|#82"),
+    ]
+    items, _ = fold_lane("15722", turns)
+    assert len(items) == 1
+    assert items[0].key == "todo:recover-maestro-houses"
+
+
+def test_amendment_6_cancel_turn_ref_must_match_request_turn() -> None:
+    turns = [
+        _turn(81, "REQUEST|freeform|todo:recover-maestro-houses"),
+        _turn(82, "CANCEL|#73"),
+    ]
+    items, _ = fold_lane("15722", turns)
+    assert len(items) == 1
+    assert items[0].turn == 81
+
+
+def test_amendment_4_act3_house_rules_inline_limit_fifty_only_on_degraded() -> None:
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=_standing_handoff_fixture(),
+        roster_text=_ROSTER,
+        fetch_turns=lambda _lane: [],
+    )
+    acts = out.split("## Your first acts, in order", 1)[1].split("## How this seat works", 1)[0]
+    line3 = [line for line in acts.splitlines() if line.lstrip().startswith("3.")][0]
+    assert "HOUSE RULES" in line3
+    assert "limit 50" in line3
+    assert "unavailable" in line3
+    assert out.index(_HR_SENTINEL) < out.index("## Live leg")
+    assert "SENTINEL-LEG-" not in out
+
+
+def test_amendment_2_paging_reaches_open_beyond_first_page() -> None:
+    """Open REQUEST #50 must appear when it lies outside the first 200-turn page."""
+    open_turn = _turn(50, "REQUEST|investigate|decision:house-kinds-unify")
+    filler = [_turn(i, f"STATUS|n{i}") for i in range(151, 251)]
+
+    def page_fetch(
+        _lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del last
+        if after_turn == 0:
+            return filler, True, 150
+        if after_turn == 150:
+            return [open_turn], False, None
+        return [], False, None
+
+    merged = fetch_turns_to_closure("15722", page_fetch=page_fetch)
+    items, truncated = fold_lane("15722", merged)
+    assert truncated is False
+    keys = {item.key for item in items}
+    assert "decision:house-kinds-unify" in keys
 
 
 def test_fold_lane_15722_real_subject_shapes() -> None:
@@ -184,13 +237,12 @@ def test_fold_lane_15722_real_subject_shapes() -> None:
         _turn(105, "IMPLEMENT|decision:forward-only-git (ACK received)"),
         _turn(107, "DONE|decision:forward-only-git (ACK received)"),
     ]
-    items, truncated = fold_lane("15722", turns)
+    items, _truncated = fold_lane("15722", turns)
     keys = {(item.verb, item.key) for item in items}
     assert ("PICKUP", "runbook:maestro-sidekick") in keys
     assert ("PICKUP", "decision:maestro-hop-model-fable") not in keys
     assert ("PICKUP", "decision:forward-only-git") not in keys
     assert ("PLAN", "decision:forward-only-git") not in keys
-    assert truncated is False
 
 
 def test_done_closes_pickup_even_when_request_already_closed() -> None:
