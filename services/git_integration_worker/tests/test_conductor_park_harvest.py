@@ -396,6 +396,68 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
     await maybe_fire_conductor_hop_reactor(dispatch_id=designed.dispatch_id)
     assert len(posted) == 2
 
+    ledger.merge_record_json(
+        dispatch_id=fenced.dispatch_id, patch={"closeout_turn": 48}
+    )
+    ledger.merge_record_json(
+        dispatch_id=designed.dispatch_id, patch={"closeout_turn": 48}
+    )
+    admits: list[dict] = []
+
+    async def _admit(body, **_k):
+        admits.append(body)
+        return True, {"dispatch_id": f"succ-{len(admits)}"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _admit,
+    )
+
+    def _load(dispatch_id: str) -> dict:
+        with ledger._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        return {k: row[k] for k in row.keys()}
+
+    def _reply(*_a, **_k):
+        return True
+
+    fenced_row = _load(fenced.dispatch_id)
+    assert park_harvest_continue_owed(fenced_row, reply_fn=_reply)
+    assert await fire_park_harvest_continue(fenced_row)
+    assert len(admits) == 1
+    assert admits[0]["hop_reason"] == "park_harvest"
+    assert not park_harvest_continue_owed(_load(fenced.dispatch_id), reply_fn=_reply)
+
+    designed_row = _load(designed.dispatch_id)
+    assert park_harvest_continue_owed(designed_row, reply_fn=_reply)
+    assert await fire_park_harvest_continue(designed_row)
+    assert len(admits) == 2
+    assert admits[1]["hop_reason"] == "park_harvest"
+
+    row_hop = _req(dispatch_id="pred-park-row-hop")
+    _admit_conductor(ledger, row_hop)
+    _terminal_row(
+        ledger,
+        row_hop,
+        closeout_body=(
+            "status: complete\n"
+            "stop: ROW_HOP\n"
+            "```\n"
+            "stop: PARKED_TRANSPORT\n"
+            "```\n"
+            f"NEXT_ADMIT: harvest {_LIVE_CDP}\n"
+        ),
+        closeout_tokens=[],
+    )
+    ledger.merge_record_json(
+        dispatch_id=row_hop.dispatch_id, patch={"closeout_turn": 48}
+    )
+    assert not park_harvest_continue_owed(_load(row_hop.dispatch_id), reply_fn=_reply)
+    assert len(admits) == 2
+
 
 @pytest.mark.asyncio
 async def test_park_harvest_idempotent_second_call(tmp_path, monkeypatch):

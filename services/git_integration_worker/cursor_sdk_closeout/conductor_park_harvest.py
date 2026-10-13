@@ -654,14 +654,19 @@ def park_harvest_continue_owed(
     closeout_tokens: frozenset[str] | None = None,
     reply_fn: Any | None = None,
 ) -> bool:
-    """R-B2 bind §6: PARKED_TRANSPORT terminal + Phase B fired + reply arrived."""
+    """R-B2 bind §6: PARKED_TRANSPORT terminal + Phase B fired + reply arrived.
+
+    The same body grade as the wake continues when stored tokens omitted
+    PARKED_TRANSPORT. A designed PARKED_TRANSPORT stamp is unchanged.
+    """
     status = str(row.get("status") or "")
     if status not in ("completed", "failed", "cancelled"):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     if _closeout_declares_done(row, tokens):
         return False
-    if "PARKED_TRANSPORT" not in tokens:
+    body_park = _body_grades_park_harvest_owed(row)
+    if "PARKED_TRANSPORT" not in tokens and not body_park:
         return False
     rec = _record_data(row)
     if not harvest_owed_at_terminal(row):
