@@ -24,7 +24,7 @@ _ULG_REPO_DIRNAME = "universal-llm-gateway"
 
 def _ulg_checkout_roots() -> tuple[Path, ...]:
     """ULG repo roots to probe — hub layout, arc worktree parent, or pytest cwd."""
-    from claude_bundles.catalog import _REPO_ROOT as checkout_root
+    from claude_bundles.catalog import _REPO_ROOT
 
     candidates: list[Path] = []
     ws = _WORKSPACES_ROOT
@@ -33,7 +33,7 @@ def _ulg_checkout_roots() -> tuple[Path, ...]:
     nested = ws / _ULG_REPO_DIRNAME
     if nested.is_dir():
         candidates.append(nested)
-    candidates.append(checkout_root)
+    candidates.append(_REPO_ROOT)
 
     ordered: list[Path] = []
     seen: set[Path] = set()
