@@ -20,10 +20,7 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_sdk_branch_debt import (
-    open_branch_debt,
-    workspace_token_for_repo,
-)
+from services.git_integration_worker.cursor_sdk_branch_debt import open_branch_debt
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     add_land_required_tag,
     remove_land_required_tag,
@@ -183,6 +180,75 @@ def _caller_agent_for(dispatch_id: str) -> str | None:
     return row["caller_agent"] if row is not None else None
 
 
+def _dispatch_source_repo_stored(dispatch_id: str) -> str | None:
+    from services.git_integration_worker.cursor_dispatch_ledger import _connect
+
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    value = row["source_repo"]
+    if value is None:
+        return None
+    return str(value)
+
+
+def _workspace_token_from_dispatch_ledger(
+    dispatch_id: str,
+    *,
+    hub: Path,
+    projects_root: Path,
+) -> str | None:
+    """Resolve the dispatch ledger's git identity to a debt ``source_repo`` token."""
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        resolve_debt_source_repo,
+        workspace_token_for_repo,
+    )
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        _source_is_hub,
+    )
+
+    stored = _dispatch_source_repo_stored(dispatch_id)
+    if not stored or not stored.strip():
+        return None
+    if _source_is_hub(stored, hub):
+        return None
+    try:
+        repo_path = resolve_debt_source_repo(
+            stored.strip(),
+            hub=hub,
+            projects_root=projects_root,
+        )
+    except Exception as exc:
+        logger.warning(
+            "branch debt source_repo unresolved dispatch_id=%s stored=%r: %s",
+            dispatch_id,
+            stored,
+            exc,
+        )
+        return None
+    if repo_path.resolve() == hub.resolve():
+        return None
+    if not repo_path.is_dir() or not (repo_path / ".git").exists():
+        logger.warning(
+            "branch debt source_repo absent dispatch_id=%s path=%s",
+            dispatch_id,
+            repo_path,
+        )
+        return None
+    return workspace_token_for_repo(
+        repo_path,
+        hub=hub,
+        projects_root=projects_root,
+    )
+
+
 def _open_debt(
     *,
     source_repo: Path,
@@ -197,8 +263,8 @@ def _open_debt(
     from services.git_integration_worker.config import load_config
 
     cfg = load_config()
-    workspace_token = workspace_token_for_repo(
-        source_repo,
+    workspace_token = _workspace_token_from_dispatch_ledger(
+        dispatch_id,
         hub=cfg.source_repo,
         projects_root=cfg.dispatch_workspace,
     )
@@ -249,9 +315,7 @@ def packet_requests_silent_land(packet_text: str | None) -> bool:
     return _SILENT_LAND_OPT_IN_RE.search(packet_text) is not None
 
 
-def _silent_land_source(
-    packet_text: str | None, land_text: str | None
-) -> str | None:
+def _silent_land_source(packet_text: str | None, land_text: str | None) -> str | None:
     """Inline admits pass ``land_text``; file packets use ``packet_text`` only."""
     if land_text is not None:
         return land_text or None
