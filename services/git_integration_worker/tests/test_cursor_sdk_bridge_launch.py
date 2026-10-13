@@ -991,6 +991,7 @@ def test_shell_cwd_preload_logs_unusable_for_eloop(tmp_path: Path) -> None:
         tmp_path,
     )
     assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
     assert f"shell_cwd_unusable {loop} ELOOP" in proc.stderr
     assert f"shell_cwd_reset {loop} {lane}" in proc.stderr
 
@@ -1028,7 +1029,7 @@ def test_preload_uncaught_exception_monitor_writes_line_and_exits_nonzero(
         tmp_path,
     )
     assert proc.returncode != 0
-    assert "bridge_uncaught ERR_TEST open /gone/bundle" in proc.stderr
+    assert "bridge_uncaught uncaughtException ERR_TEST open /gone/bundle" in proc.stderr
     assert "Error: sdk bundle" in proc.stderr
 
 

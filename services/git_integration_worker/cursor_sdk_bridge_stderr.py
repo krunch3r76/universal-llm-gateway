@@ -164,7 +164,7 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     """Lane-root spawn cwd plus the shell cwd the failing bash spawn used.
 
     ``bridge_spawn_cwd`` stays the directory GIW passed when it launched the
-    node bridge (the lane root).     ``bridge_shell_cwd`` prefers an unrecovered
+    node bridge (the lane root). ``bridge_shell_cwd`` prefers an unrecovered
     ``shell_cwd_missing <path>`` line from the stderr tail (a bash cwd that
     was still missing at spawn), then the in-flight shell tool's
     ``workingDirectory``, then the last bash-snapshot PWD. When that fallback
@@ -203,7 +203,7 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
         snapshot_pwd=from_tail,
     )
     reset_from: str | None = None
-    if shell_cwd and shell_cwd in resets:
+    if not missing and shell_cwd and shell_cwd in resets:
         reset_from = shell_cwd
         shell_cwd = resets[shell_cwd]
     if shell_cwd:
@@ -212,7 +212,10 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
             snapshot["bridge_shell_cwd_reset_from"] = reset_from
         exists = os.path.isdir(shell_cwd)
         # A deleted recorded cwd on a non-ENOENT death is not the spawn failure.
-        if exists or classify_bridge_stderr(text=tail_text) == "spawn_enoent_missing_cwd":
+        if (
+            exists
+            or classify_bridge_stderr(text=tail_text) == "spawn_enoent_missing_cwd"
+        ):
             snapshot["bridge_shell_cwd_exists"] = exists
     return snapshot
 
