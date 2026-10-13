@@ -19,6 +19,7 @@ from implement_admission.conductor_score_journal import (
 )
 from implement_admission.conductor_score_locus import work_item_locus
 from implement_admission.conductor_witness_table import (
+    G5_NEST_PIN_JOURNAL_REASON,
     _conductor_dispatch_id,
     _g3_journal_written_at,
 )
@@ -165,7 +166,7 @@ def test_g3_cutoff_skips_nest_pin_all_row_stamp(tmp_path: Path) -> None:
             tip_body=body,
             seat="giw",
             dispatch_id=_PARENT,
-            reason="g5 nest pin conductor dispatch_id",
+            reason=G5_NEST_PIN_JOURNAL_REASON,
             rows=G_ROWS,
             delta="conductor dispatch_id",
             written_at=pin_at,

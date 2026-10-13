@@ -317,7 +317,8 @@ def _g6_review_failure_reason(
 # The G5 nest pin journals every G-row so the dispatch id lands on the tip.
 # That stamp is not a new G3. Using it as the resurface cutoff hides a
 # SCORE_RESURFACE posted in the gap before the pin.
-_G3_CUTOFF_IGNORE_REASONS = frozenset({"g5 nest pin conductor dispatch_id"})
+G5_NEST_PIN_JOURNAL_REASON = "g5 nest pin conductor dispatch_id"
+_G3_CUTOFF_IGNORE_REASONS = frozenset({G5_NEST_PIN_JOURNAL_REASON})
 
 
 def _g3_journal_written_at(slug: str, *, files_root: Path) -> str | None:

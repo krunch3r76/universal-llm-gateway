@@ -12,7 +12,10 @@ from implement_admission.conductor_score_journal import (
     forward_mutate_tip,
     read_tip,
 )
-from implement_admission.conductor_witness_table import _conductor_dispatch_id
+from implement_admission.conductor_witness_table import (
+    G5_NEST_PIN_JOURNAL_REASON,
+    _conductor_dispatch_id,
+)
 
 # Same set as GIW nested-implement witness jobs. Kept here so pin does not
 # import the worker package.
@@ -72,7 +75,7 @@ def pin_g5_nest_dispatch_id(
             next_body=next_body,
             seat="giw",
             dispatch_id=parent_dispatch_id,
-            reason="g5 nest pin conductor dispatch_id",
+            reason=G5_NEST_PIN_JOURNAL_REASON,
             rows=G_ROWS,
             delta=f"conductor dispatch_id `{parent_dispatch_id}`",
             files_root=root,
