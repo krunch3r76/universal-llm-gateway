@@ -389,10 +389,10 @@ def qualifying_reply_for_wait(
     if pinned and producer_state == "in_flight":
         return None
 
-    if pinned and producer_state == "terminal" and mode in {
-        "first_reply_from",
-        "proof_reply_from",
-    }:
+    # Pinned reply waits skip interim producer chrome for every liveness reading
+    # except in_flight (witness/grace). Unknown after probe timeout used to fall
+    # through to plain qualifying_reply and complete on cdp generate admit (S1).
+    if pinned and mode in {"first_reply_from", "proof_reply_from"}:
         if mode == "proof_reply_from":
             return qualifying_reply(
                 turns,

@@ -951,11 +951,62 @@ def test_a39199_pinned_completes_on_terminal_closeout_not_admit() -> None:
     assert reply is not None and reply["turn_number"] == 9
 
 
-def test_a39199_unknown_producer_keeps_first_reply_behavior() -> None:
+def test_a39199_replay_16643_admit_chrome_while_producer_unknown() -> None:
+    """Past grace / probe-null: admit chrome must not complete pinned wait (S1)."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(6, "dispatch", subject="packet"),
+        _turn(
+            7,
+            "cursor-sdk",
+            subject="cdp generate — 062d4d460c41",
+            body='{"status":"admitted"}',
+        ),
+    ]
+    comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
+    producer = _producer("unknown")
+    assert not wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=6,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=6,
+            completion=comp,
+            execution_id="0e59a64f",
+            producer=producer,
+        )
+        == "predicate_unmet"
+    )
+    assert (
+        qualifying_reply_for_wait(
+            turns,
+            after_turn=6,
+            completion=comp,
+            execution_id="0e59a64f",
+            producer=producer,
+        )
+        is None
+    )
+
+
+def test_a39199_unknown_producer_substantive_reply_still_completes() -> None:
+    """Unknown liveness must not hang when a non-chrome closeout exists (AC3)."""
     thread = {"status": ThreadStatus.ACTIVE}
     turns = [
         _turn(1, "dispatch"),
-        _turn(2, "cursor-sdk", subject="cdp generate — x", body="admit"),
+        _turn(
+            2,
+            "cursor-sdk",
+            subject="cursor-sdk CLOSEOUT 0e59a64f-dispatch contract=freeform",
+            body="status: complete\nlanded.",
+        ),
     ]
     comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
     producer = _producer("unknown")
