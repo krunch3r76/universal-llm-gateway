@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
 from agent_bus_store.cdp_link_reconcile import (
     _PENDING_CLOSED,
@@ -14,12 +17,26 @@ from agent_bus_store.cdp_link_reconcile import (
 from agent_bus_store.db import (
     admit_dispatch,
     create_thread,
+    get_thread,
     get_thread_with_links,
     get_turns,
     init_db,
 )
 from agent_bus_store.db.connection import connect
 from agent_bus_store.producer_witness import CdpLegProbeResult, WitnessVerdict
+from agent_bus_store.wait_status import derive_status
+from systems.frontier_consult.cdp_dispatch_envelope import (
+    clear_cdp_dispatch_envelope,
+    record_cdp_admit,
+    reset_cdp_dispatch_envelope_for_tests,
+)
+from systems.frontier_consult.cdp_generate_inflight_ledger import (
+    clear_inflight_ledger,
+    mark_delivered,
+    mark_proof_emitted,
+    upsert_inflight_leg,
+)
+from systems.frontier_consult.cdp_leg_status_route import cdp_leg_status_router
 
 pytestmark = pytest.mark.offline
 
@@ -65,6 +82,86 @@ def _absent_probe(_execution_id: str) -> CdpLegProbeResult:
         "leg_not_found",
         {"found": False},
     )
+
+
+@pytest.fixture()
+def stargate_leg_probe(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """In-process Stargate leg route — real HTTP probe, not a mocked verdict."""
+    stargate_data = tmp_path / "stargate-data"
+    stargate_data.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(stargate_data))
+
+    app = FastAPI()
+    app.include_router(cdp_leg_status_router)
+    asgi = httpx.ASGITransport(app=app)
+
+    @contextmanager
+    def _sync_client(_base_url: str, **kwargs):
+        timeout = kwargs.get("timeout", 5.0)
+        with httpx.Client(
+            transport=asgi,
+            base_url="http://stargate-leg.test",
+            timeout=timeout,
+        ) as client:
+            yield client
+
+    monkeypatch.setattr(
+        "agent_bus_store.producer_witness.make_sync_client",
+        _sync_client,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_leg_status_route.terminal_status_for_execution",
+        lambda _execution_id: "completed",
+    )
+    reset_cdp_dispatch_envelope_for_tests()
+    clear_inflight_ledger()
+    yield stargate_data
+    reset_cdp_dispatch_envelope_for_tests()
+    clear_inflight_ledger()
+
+
+def _ac1e_transport_admit_closed_leg(
+    *,
+    execution_id: str,
+    clear_envelope: bool,
+) -> str:
+    """Bus link committed after transport admit; Stargate leg closed and delivered."""
+    row = create_thread(thread_id=None, slug="ac1e-transport", lifecycle_state="active")
+    assert row is not None
+    thread_id = row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id=execution_id,
+        pipeline_id="cdp-generate",
+        caller_agent="dispatch",
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE thread_dispatch_links SET linked_at = ? WHERE thread_id = ?",
+            (_past_grace_ts(), thread_id),
+        )
+    record_cdp_admit(
+        execution_id=execution_id,
+        thread_id=thread_id,
+        pointer_turn=1,
+        admit_reason="transport",
+        caller_supplied_thread=False,
+    )
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id="req-ac1e",
+        thread_id=thread_id,
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=2400.0,
+    )
+    mark_proof_emitted(execution_id)
+    mark_delivered(execution_id)
+    if clear_envelope:
+        clear_cdp_dispatch_envelope(execution_id)
+    return thread_id
 
 
 def test_double_pass_absent_stamps_failed_and_event(bus_db) -> None:
