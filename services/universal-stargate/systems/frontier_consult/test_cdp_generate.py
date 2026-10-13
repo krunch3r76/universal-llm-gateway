@@ -2458,12 +2458,12 @@ async def test_supplied_thread_atomic_admit_and_post_no_separate_admit(
 
 
 @pytest.mark.asyncio
-async def test_supplied_thread_timeout_retry_single_link(
+async def test_supplied_thread_timeout_retry_call_count(
     _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Timeout then retry with same execution_id leaves one dispatch link."""
+    """Mocked admit timeout then retry invokes admit twice (same execution_id)."""
     import httpx
-    from agent_bus_store.db import create_thread
+    from agent_bus_store.db import create_thread, get_turns
 
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult import handoff
@@ -2519,15 +2519,20 @@ async def test_supplied_thread_timeout_retry_single_link(
         response=response,
     )
     assert calls["n"] == 2
+    turns = get_turns(thread=thread_id)
+    pointer = [
+        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
+    ]
+    assert len(pointer) == 1
 
 
 @pytest.mark.asyncio
 async def test_supplied_thread_read_timeout_retries_one_link(
     _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """First POST ReadTimeout is retried; one link and one execution_id remain."""
+    """First POST ReadTimeout before commit is retried; one link remains."""
     import httpx
-    from agent_bus_store.db import create_thread, get_thread_with_links
+    from agent_bus_store.db import create_thread, get_thread_with_links, get_turns
 
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult import handoff
@@ -2592,6 +2597,91 @@ async def test_supplied_thread_read_timeout_retries_one_link(
     assert detail is not None
     assert len(detail["dispatch_links"]) == 1
     assert detail["dispatch_links"][0]["execution_id"] == execution_id
+    turns = get_turns(thread=thread_id)
+    pointer = [
+        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
+    ]
+    assert len(pointer) == 1
+
+
+@pytest.mark.asyncio
+async def test_supplied_thread_read_timeout_after_commit_one_pointer_turn(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Bus commits on POST #1; lost response retries idempotently to one pointer."""
+    import httpx
+    from agent_bus_store.db import create_thread, get_thread_with_links, get_turns
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult import handoff
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="commit-timeout", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    captured: dict[str, int] = {}
+
+    def _capture_handoff(**kw: Any) -> dict[str, str]:
+        captured["after_turn"] = int(kw["after_turn"])
+        return {"handoff_status": "ok", "poll_hint": {}}
+
+    monkeypatch.setattr(mod, "build_handoff_result", _capture_handoff)
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "run_cdp_worker", AsyncMock())
+
+    posts = {"n": 0}
+    inner = _cdp_bus_env
+
+    class _FlakyTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and "dispatch-admit-and-post" in str(
+                request.url
+            ):
+                posts["n"] += 1
+                if posts["n"] == 1:
+                    await inner.handle_async_request(request)
+                    raise httpx.ReadTimeout("read timed out", request=request)
+            return await inner.handle_async_request(request)
+
+    def _client_factory(_url: str, *, timeout: float = 10.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=_FlakyTransport(), base_url="http://test", timeout=timeout
+        )
+
+    monkeypatch.setattr(handoff, "make_async_client", _client_factory)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-commit-timeout-retry",
+        body=body,
+        response=response,
+    )
+    assert posts["n"] == 2
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert len(detail["dispatch_links"]) == 1
+    turns = get_turns(thread=thread_id)
+    pointer = [
+        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
+    ]
+    assert len(pointer) == 1
+    pointer_turn = int(pointer[0]["turn_number"])
+    assert captured["after_turn"] == pointer_turn
 
 
 @pytest.mark.asyncio
@@ -2822,4 +2912,49 @@ async def test_post_pointer_turn_transport_error_agent_bus_unreachable(
         )
     assert exc.value.code == "agent_bus_unreachable"
     assert exc.value.code != "persona_violation"
+
+
+@pytest.mark.asyncio
+async def test_admit_and_post_pointer_turn_missing_pointer_turn_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stale agent-bus without pointer_turn yields 0 and a warning log."""
+    import logging
+
+    import httpx
+
+    from systems.frontier_consult.handoff import admit_and_post_pointer_turn
+
+    class _StaleBusClient:
+        async def __aenter__(self) -> _StaleBusClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            return httpx.Response(200, json={"turn_number": 3})
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.make_async_client",
+        lambda _url, *, timeout=10.0: _StaleBusClient(),
+    )
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+    caplog.set_level(logging.WARNING)
+
+    after_turn = await admit_and_post_pointer_turn(
+        request_id="req-stale-bus",
+        thread_id="123",
+        to_agent="web-anthropic",
+        subject="subj",
+        pointer_body="body",
+        caller_agent="dispatch",
+        execution_id="exec-stale",
+        pipeline_id="cdp-generate",
+    )
+    assert after_turn == 0
+    assert any(
+        "missing pointer_turn" in rec.message for rec in caplog.records
+    )
 

@@ -19,8 +19,8 @@ logger = get_logger(__name__)
 CDP_POINTER_ORPHAN_GRACE_SECONDS = 300
 CDP_POINTER_PIPELINE_ID = "cdp-generate"
 CDP_POINTER_SWEEP_BATCH_LIMIT = 50
-# Bound the candidate scan to recent turn ids so a full history walk cannot
-# starve the batch. Linked rows are excluded in SQL before LIMIT.
+# Bound candidate scan cost (turn id lower bound). Orphans older than this
+# window are never stamped by the sweep. Linked rows are excluded before LIMIT.
 CDP_POINTER_SWEEP_ID_WINDOW = 5000
 
 __all__ = [

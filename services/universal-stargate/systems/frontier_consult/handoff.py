@@ -1131,12 +1131,46 @@ async def admit_and_post_pointer_turn(
         )
     try:
         body = resp.json()
-        pointer_turn = body.get("pointer_turn")
-        if pointer_turn is not None:
-            return int(pointer_turn)
-    except (TypeError, ValueError):
-        pass
-    return 0
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "handoff admit_and_post_pointer_turn unparseable response: "
+            "request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
+        return 0
+    if not isinstance(body, dict):
+        logger.warning(
+            "handoff admit_and_post_pointer_turn non-object response: "
+            "request_id=%s thread=%s type=%s",
+            request_id,
+            thread_id,
+            type(body).__name__,
+        )
+        return 0
+    pointer_turn = body.get("pointer_turn")
+    if pointer_turn is None:
+        logger.warning(
+            "handoff admit_and_post_pointer_turn missing pointer_turn: "
+            "request_id=%s thread=%s body_keys=%s",
+            request_id,
+            thread_id,
+            sorted(body.keys()),
+        )
+        return 0
+    try:
+        return int(pointer_turn)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "handoff admit_and_post_pointer_turn unparseable pointer_turn: "
+            "request_id=%s thread=%s value=%r error=%s",
+            request_id,
+            thread_id,
+            pointer_turn,
+            exc,
+        )
+        return 0
 
 
 async def create_handoff_thread(
