@@ -13,7 +13,7 @@ def reconcile_unsupported_proof_class(row: OpenPropagationProjection) -> str | N
 
     Returns the fail-loud error token when the row was terminated, else ``None``.
     """
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+    from scripts.model_manager.ui.controller.propagation_proof import (
         dispatch_for_projection,
     )
 

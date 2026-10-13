@@ -306,7 +306,7 @@ def probe_process_live(service: str) -> dict[str, Any] | None:
 
 def probe_for_row(row: PropagationRow) -> dict[str, Any] | None:
     """Probe closure surface for one propagation row via the B1 registry."""
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+    from scripts.model_manager.ui.controller.propagation_proof import (
         dispatch_proof_probe,
     )
 

@@ -108,7 +108,7 @@ def _open_proof_payload(row: OpenPropagationProjection) -> dict[str, Any] | None
 
 
 def _probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+    from scripts.model_manager.ui.controller.propagation_proof import (
         dispatch_for_projection,
     )
 
