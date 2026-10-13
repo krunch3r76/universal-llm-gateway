@@ -233,8 +233,6 @@ def _workspace_token_from_dispatch_ledger(
             exc,
         )
         return None
-    if repo_path.resolve() == hub.resolve():
-        return None
     if not repo_path.is_dir() or not (repo_path / ".git").exists():
         logger.warning(
             "branch debt source_repo absent dispatch_id=%s path=%s",
@@ -251,7 +249,6 @@ def _workspace_token_from_dispatch_ledger(
 
 def _open_debt(
     *,
-    source_repo: Path,
     branch_name: str,
     thread_id: str | None,
     dispatch_id: str,
@@ -543,7 +540,6 @@ def _settle(
             )
         # A declaration the tree contradicts is residue, not a clean exit.
         return _open_debt(
-            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,
@@ -554,7 +550,6 @@ def _settle(
 
     if verb is not None:
         return _open_debt(
-            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,
@@ -638,7 +633,6 @@ def _settle(
         else:
             debt_reason = "land:silent_token_absent"
         return _open_debt(
-            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,

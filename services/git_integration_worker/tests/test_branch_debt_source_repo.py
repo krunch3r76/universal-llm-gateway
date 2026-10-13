@@ -261,6 +261,11 @@ def test_hub_settle_leaves_source_repo_null(
     projects_layout: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """End-to-end: hub dispatch ledger row yields NULL debt source_repo at settle.
+
+    Does not assert which hub guard fired; ``workspace_token_for_repo(hub)``
+    also returns None without ``_source_is_hub``.
+    """
     hub, satellite, projects_root = projects_layout
     branch = "cursor-sdk/lane-hub-null"
     _branch_with_change(hub, branch=branch, path="hub_null.py", content="h = 1\n")
