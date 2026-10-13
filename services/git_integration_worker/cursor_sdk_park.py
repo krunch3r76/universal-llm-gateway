@@ -421,6 +421,7 @@ def conductor_park_harvest_continue_candidates(
     )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
         _HOP_PARK_HARVEST_CONTINUED_KEY,
+        _body_grades_park_harvest_owed,
         harvest_owed_at_terminal,
     )
 
@@ -437,7 +438,9 @@ def conductor_park_harvest_continue_candidates(
             ):
                 continue
             closeout_tokens = _closeout_tokens_from_row(mapped)
-            if "PARKED_TRANSPORT" not in closeout_tokens:
+            if "PARKED_TRANSPORT" not in closeout_tokens and not _body_grades_park_harvest_owed(
+                mapped
+            ):
                 continue
             try:
                 rec = json.loads(record_json) if record_json else {}

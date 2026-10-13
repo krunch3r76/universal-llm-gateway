@@ -172,8 +172,9 @@ def park_harvest_owed(
     if status not in ("completed", "failed", "cancelled"):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
-    body_park = _body_grades_park_harvest_owed(row)
-    if not (tokens & EXIT_PERSIST_STOPS) and not body_park:
+    has_exit_persist = bool(tokens & EXIT_PERSIST_STOPS)
+    body_park = _body_grades_park_harvest_owed(row) if not has_exit_persist else False
+    if not has_exit_persist and not body_park:
         return False
     rec = _record_data(row)
     if rec.get("hop_parked"):
@@ -193,12 +194,13 @@ def park_harvest_owed(
     )
     if sb and not mission_open(scoreboard_body=sb):
         return False
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-        hop_owed,
-    )
+    if not body_park:
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+            hop_owed,
+        )
 
-    if hop_owed(row, closeout_tokens=tokens) and not body_park:
-        return False
+        if hop_owed(row, closeout_tokens=tokens):
+            return False
     return True
 
 

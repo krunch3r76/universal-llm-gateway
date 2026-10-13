@@ -784,6 +784,101 @@ def test_park_harvest_continue_candidates_no_grace() -> None:
     assert conductor_park_harvest_continue_candidates(ledger) == [req.dispatch_id]
 
 
+def test_park_harvest_continue_candidates_fenced_body_grade() -> None:
+    """R-B2 selector: fenced park-harvest row is a continue candidate without stored token."""
+    ledger = CursorDispatchLedger.instance()
+    fenced = _req(dispatch_id="sel-fenced-park", thread_id="10066")
+    _admit_conductor(ledger, fenced, record_patch={"cdp_execution_id": _LIVE_CDP})
+    _terminal_row(
+        ledger,
+        fenced,
+        closeout_body=_FENCED_PARK_HARVEST_CLOSEOUT,
+        closeout_tokens=[],
+    )
+    ledger.merge_record_json(
+        dispatch_id=fenced.dispatch_id,
+        patch={"hop_park_harvest_fired_at": time.time()},
+    )
+    designed = _req(dispatch_id="sel-designed-park", thread_id="10067")
+    _production_parked_row(ledger, designed)
+    row_hop = _req(dispatch_id="sel-row-hop-park", thread_id="10068")
+    _admit_conductor(ledger, row_hop)
+    _terminal_row(
+        ledger,
+        row_hop,
+        closeout_body=(
+            "status: complete\n"
+            "stop: ROW_HOP\n"
+            "```\n"
+            "stop: PARKED_TRANSPORT\n"
+            "```\n"
+            f"NEXT_ADMIT: harvest {_LIVE_CDP}\n"
+        ),
+        closeout_tokens=[],
+    )
+    ledger.merge_record_json(
+        dispatch_id=row_hop.dispatch_id,
+        patch={"hop_park_harvest_fired_at": time.time()},
+    )
+
+    candidates = conductor_park_harvest_continue_candidates(ledger)
+    assert candidates.count(fenced.dispatch_id) == 1
+    assert candidates.count(designed.dispatch_id) == 1
+    assert row_hop.dispatch_id not in candidates
+
+
+def test_park_harvest_owed_body_park_live_sibling_parity_with_designed(
+    monkeypatch,
+) -> None:
+    """Body-grade wake and stored PARKED_TRANSPORT agree when a live sibling exists."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.live_conductor_row_on_thread",
+        lambda **_k: True,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
+        lambda **_k: True,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.mission_open",
+        lambda **_: True,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    fenced = _req(dispatch_id="parity-fenced")
+    _admit_conductor(ledger, fenced, record_patch={"cdp_execution_id": _LIVE_CDP})
+    _terminal_row(
+        ledger,
+        fenced,
+        closeout_body=_FENCED_PARK_HARVEST_CLOSEOUT,
+        closeout_tokens=[],
+    )
+    designed = _req(dispatch_id="parity-designed")
+    _admit_conductor(ledger, designed)
+    _terminal_row(
+        ledger,
+        designed,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+
+    with ledger._connect() as conn:
+        fenced_row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (fenced.dispatch_id,),
+        ).fetchone()
+        designed_row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (designed.dispatch_id,),
+        ).fetchone()
+    fenced_mapped = {k: fenced_row[k] for k in fenced_row.keys()}
+    designed_mapped = {k: designed_row[k] for k in designed_row.keys()}
+
+    fenced_owed = park_harvest_owed(fenced_mapped, scoreboard_body=_OPEN_SCOREBOARD)
+    designed_owed = park_harvest_owed(designed_mapped, scoreboard_body=_OPEN_SCOREBOARD)
+    assert fenced_owed == designed_owed
+
+
 @pytest.mark.asyncio
 async def test_fire_park_harvest_failed_post_leaves_row_retryable(
     tmp_path, monkeypatch
