@@ -348,18 +348,10 @@ def _count_reap_worktree_actions(
     active: set[str],
     held: set[str],
     source_repo: Path,
-    row_kinds: list[ReapWorktreeRowKind] | None = None,
+    row_kinds: list[ReapWorktreeRowKind],
 ) -> int:
-    if row_kinds is None:
-        kinds = _snapshot_reap_worktree_rows(
-            rows=rows,
-            active=active,
-            held=held,
-            source_repo=source_repo,
-        )
-    else:
-        kinds = row_kinds
-    return sum(1 for kind in kinds if kind != "none")
+    del rows, active, held, source_repo
+    return sum(1 for kind in row_kinds if kind != "none")
 
 
 def reap_orphan_worktrees(
@@ -367,7 +359,13 @@ def reap_orphan_worktrees(
     source_repo: Path,
     worktree_root: Path,
 ) -> ReapSweepResult:
-    """Salvage, drop, and GC orphan Lane-B worktrees (S6 reaper sweep)."""
+    """Salvage, drop, and GC orphan Lane-B worktrees (S6 reaper sweep).
+
+    ``row_kinds`` from :func:`_snapshot_reap_worktree_rows` is advisory — it
+    drives action counts and which rows enter :func:`prune_dispatch_worktree`.
+    :func:`release_lane_worktree` re-checks live bridge, retain-active,
+    non-terminal dispatch, pin, and dirty→salvage before any removal.
+    """
     refuse_real_hub_reap_under_pytest(
         source_repo=source_repo,
         worktree_root=worktree_root,
@@ -404,6 +402,7 @@ def reap_orphan_worktrees(
         source_repo=source_repo,
         action_count=worktree_actions + branch_actions,
     )
+    # row_kind is advisory; prune_dispatch_worktree → release_lane_worktree re-validates.
     for row, row_kind in zip(rows, row_kinds, strict=True):
         wt_path = str(Path(row["worktree_path"]).resolve())
         if wt_path in held:

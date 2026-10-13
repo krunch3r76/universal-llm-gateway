@@ -24,6 +24,7 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+_GIT_VERIFY_TIMEOUT_S = 5.0
 DISPATCH_BRANCH_PREFIX = "cursor-sdk/"
 PROTECTED_BRANCHES = frozenset({"master", "main", "HEAD"})
 
@@ -246,6 +247,44 @@ def _delete_orphan_branch(
             branch_name,
             _GIT_TIMEOUT_S,
         )
+        ref = f"refs/heads/{branch_name}"
+        try:
+            verify_proc = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    ref,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=_GIT_VERIFY_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            emit_sdk_lane_b_reaped(
+                dispatch_id=dispatch_id or "",
+                branch_deleted=False,
+                outcome="failed",
+                branch=branch_name,
+                tip_sha=tip_sha,
+                reason="git_delete_timeout_state_unknown",
+            )
+            return "failed"
+        if verify_proc.returncode != 0:
+            discharge_branch_debt(branch_name=branch_name, verb="landed", note=reason)
+            emit_sdk_lane_b_reaped(
+                dispatch_id=dispatch_id or "",
+                branch_deleted=True,
+                outcome="deleted",
+                branch=branch_name,
+                tip_sha=tip_sha,
+                reason=reason,
+            )
+            return "deleted"
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id or "",
             branch_deleted=False,

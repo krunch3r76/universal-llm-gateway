@@ -653,8 +653,63 @@ def test_gc_branch_delete_timeout_emits_one_failed_and_continues(
     assert "git_delete_timeout" in str(reaped[0].get("reason", ""))
     assert reaped[1]["outcome"] == "deleted"
     assert deleted == 1
+    assert first in subprocess.run(
+        ["git", "-C", str(git_repo), "branch", "--list", first],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     assert second not in subprocess.run(
         ["git", "-C", str(git_repo), "branch", "--list", second],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_gc_branch_delete_timeout_after_delete_reports_deleted(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``-D`` finishes but raises ``TimeoutExpired``, verify ref absence → deleted."""
+    branch = "cursor-sdk/lane-timeout-deleted"
+    _merged_sdk_branch(git_repo, branch)
+    real_run = subprocess.run
+
+    def _delete_then_timeout(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if isinstance(cmd, list) and "-D" in cmd:
+            real_run(cmd, **kwargs)  # type: ignore[arg-type]
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=60.0)
+        return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_gc.subprocess.run",
+        _delete_then_timeout,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        from services.git_integration_worker.cursor_sdk_worktree_gc import (
+            _delete_orphan_branch,
+        )
+
+        outcome = _delete_orphan_branch(
+            repo=git_repo,
+            branch_name=branch,
+            reason="ancestry_merged",
+            dispatch_id="timeout-deleted",
+        )
+    assert outcome == "deleted"
+    reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
+    assert len(reaped) == 1
+    assert reaped[0]["outcome"] == "deleted"
+    assert branch not in subprocess.run(
+        ["git", "-C", str(git_repo), "branch", "--list", branch],
         capture_output=True,
         text=True,
         check=True,
@@ -683,7 +738,6 @@ def test_count_reap_worktree_actions_matches_row_snapshot(
         CursorDispatchResponse,
     )
 
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     CursorDispatchLedger._instance = None
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "count-snapshot"
@@ -718,6 +772,7 @@ def test_count_reap_worktree_actions_matches_row_snapshot(
     )
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
     rows = list_registered_worktrees_with_status()
+    assert len(rows) == 1
     active: set[str] = set()
     held: set[str] = set()
     row_kinds = _snapshot_reap_worktree_rows(
@@ -726,7 +781,8 @@ def test_count_reap_worktree_actions_matches_row_snapshot(
         held=held,
         source_repo=git_repo,
     )
-    expected = sum(1 for kind in row_kinds if kind != "none")
+    assert row_kinds == ["none"]
+    expected = 0
     assert (
         _count_reap_worktree_actions(
             rows=rows,
