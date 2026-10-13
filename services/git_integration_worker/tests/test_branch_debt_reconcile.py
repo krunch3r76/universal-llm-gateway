@@ -20,20 +20,20 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
     open_branch_debt,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt_reconcile import (
+    _LIVE_GRADE_CAP,
     VERDICT_ANCESTOR,
     VERDICT_ARCHIVED,
     VERDICT_EQUIVALENT,
     VERDICT_INDETERMINATE,
     VERDICT_LIVE,
     VERDICT_RECOVERED,
-    _LIVE_GRADE_CAP,
     reconcile_open_branch_debts,
     reset_live_grade_memo_for_tests,
 )
+from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
 )
-from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
 from services.git_integration_worker.cursor_sdk_worktree_lock import lock_lane_worktree
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     ensure_worktree_schema,
@@ -330,6 +330,78 @@ def test_missing_dispatch_row_keeps_ancestor_open(repo: Path) -> None:
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
 
     assert _verdict_for(report, branch).verdict == VERDICT_LIVE
+    assert get_branch_debt(branch_name=branch).open
+
+
+def test_rev_list_merge_count_git_error_stays_live(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-zero rev-list --merges --count must not fall through to cherry (16501#7 b2)."""
+    branch = "cursor-sdk/lane-merge-revlist-err"
+    sha = _lane_commit(repo, branch, "revlist err\n")
+    _admit_dispatch(dispatch_id="d-rle", thread_id="rle", status="completed")
+    open_branch_debt(
+        branch_name=branch, thread_id="rle", dispatch_id="d-rle", tip_sha=sha
+    )
+    _git("checkout", "master", cwd=repo)
+    (repo / "master-only-rle.txt").write_text("diverge\n", encoding="utf-8")
+    _git("add", "master-only-rle.txt", cwd=repo)
+    _git("commit", "-m", "master-only", cwd=repo)
+    _git("cherry-pick", sha, cwd=repo)
+    import services.git_integration_worker.cursor_sdk_branch_debt_reconcile as mod
+
+    real_git = mod._git
+
+    def _broken_git(r: Path, *args: str):
+        if args[:3] == ("rev-list", "--merges", "--count"):
+            return subprocess.CompletedProcess(
+                args, 128, "", "fatal: rev-list merge count failed"
+            )
+        return real_git(r, *args)
+
+    monkeypatch.setattr(mod, "_git", _broken_git)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert "git exit 128" in verdict.detail or "rev-list merge count failed" in (
+        verdict.detail
+    )
+    assert get_branch_debt(branch_name=branch).open
+
+
+def test_rev_list_merge_count_unparsable_stays_live(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unparsable rev-list --merges --count output must grade LIVE, not cherry-through."""
+    branch = "cursor-sdk/lane-merge-revlist-bad"
+    sha = _lane_commit(repo, branch, "revlist bad\n")
+    _admit_dispatch(dispatch_id="d-rlb", thread_id="rlb", status="completed")
+    open_branch_debt(
+        branch_name=branch, thread_id="rlb", dispatch_id="d-rlb", tip_sha=sha
+    )
+    _git("checkout", "master", cwd=repo)
+    (repo / "master-only-rlb.txt").write_text("diverge\n", encoding="utf-8")
+    _git("add", "master-only-rlb.txt", cwd=repo)
+    _git("commit", "-m", "master-only", cwd=repo)
+    _git("cherry-pick", sha, cwd=repo)
+    import services.git_integration_worker.cursor_sdk_branch_debt_reconcile as mod
+
+    real_git = mod._git
+
+    def _bad_count_git(r: Path, *args: str):
+        if args[:3] == ("rev-list", "--merges", "--count"):
+            return subprocess.CompletedProcess(args, 0, "not-an-int\n", "")
+        return real_git(r, *args)
+
+    monkeypatch.setattr(mod, "_git", _bad_count_git)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert verdict.detail == "rev-list merge count unparsable"
     assert get_branch_debt(branch_name=branch).open
 
 
