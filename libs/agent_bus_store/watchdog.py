@@ -10,8 +10,9 @@ Runs as a background asyncio task. Four sweep paths:
   4. quiet-with-WIP soft-actuate — seat silent with open WIP (A′ / arc 6885);
      alarm row + event + lane turn (does not abandon the thread)
 
-Each sweep pass is synchronous (SQLite I/O); called from the async loop directly
-(no executor needed — infrequent, fast).
+Each sweep pass is synchronous (SQLite I/O and sync GIW probes). ``run_watchdog``
+runs it in a worker thread via ``asyncio.to_thread`` so POST /turns stays
+responsive while probes or reconcile I/O run.
 
 TTL accuracy: each state transition bumps `threads.updated_at` via
 `_transition_lifecycle_state` using `now()` (ISO-8601 with ``T`` and ``Z``).
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -50,6 +52,10 @@ _ACTIVE_ABANDON_TTL: int = int(
     os.getenv("AGENT_BUS_WATCHDOG_ACTIVE_ABANDON_TTL", "172800")
 )
 _SWEEP_INTERVAL: int = int(os.getenv("AGENT_BUS_WATCHDOG_SWEEP_INTERVAL", "300"))
+_SWEEP_CANCEL_JOIN_S: float = float(
+    os.getenv("AGENT_BUS_WATCHDOG_SWEEP_CANCEL_JOIN_S", "60")
+)
+_sweep_inflight_done: threading.Event | None = None
 
 ReapReason = Literal[
     "pending_ttl_exceeded",
@@ -222,25 +228,40 @@ def _cutoff_for_ttl(ttl_seconds: int) -> str:
 
 
 def _sweep() -> None:
-    """Single synchronous sweep pass — called from the async task."""
-    _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
-    _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
-    _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
-    from .quiet_sweep import sweep_quiet_with_wip
-    from .reconcile import reconcile_orphaned_dispatches
+    """Single synchronous sweep pass — runs on a worker thread from ``run_watchdog``."""
+    try:
+        _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
+        _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
+        _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
+        from .quiet_sweep import sweep_quiet_with_wip
+        from .reconcile import reconcile_orphaned_dispatches
 
-    reconcile_orphaned_dispatches()
-    sweep_quiet_with_wip()
+        reconcile_orphaned_dispatches()
+        sweep_quiet_with_wip()
+    finally:
+        done = _sweep_inflight_done
+        if done is not None:
+            done.set()
 
 
 async def run_watchdog() -> None:
     """TTL reaper loop. Runs until task is cancelled.
 
-    CancelledError propagates from `asyncio.sleep` — no suppress needed.
+    CancelledError propagates from `asyncio.sleep` or after an in-flight sweep
+    thread finishes when cancellation arrives during ``await asyncio.to_thread``.
     """
+    global _sweep_inflight_done
     while True:
         await asyncio.sleep(_SWEEP_INTERVAL)
+        done = threading.Event()
+        _sweep_inflight_done = done
         try:
-            _sweep()
+            await asyncio.to_thread(_sweep)
+        except asyncio.CancelledError:
+            if not done.is_set():
+                await asyncio.to_thread(done.wait, _SWEEP_CANCEL_JOIN_S)
+            raise
         except Exception as exc:
             emit_watchdog_sweep_failed(error=str(exc)[:500])
+        finally:
+            _sweep_inflight_done = None
