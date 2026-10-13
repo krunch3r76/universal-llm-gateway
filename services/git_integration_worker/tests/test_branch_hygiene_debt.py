@@ -453,6 +453,26 @@ def test_no_commits_means_nothing_owed(repo: Path) -> None:
     assert list_open_debts() == []
 
 
+def test_settle_ancestor_tip_opens_no_debt(repo: Path) -> None:
+    branch = "cursor-sdk/lane-settle-anc"
+    tip = _branch_with_change(
+        repo, branch=branch, path="settle_anc.py", content="already on master\n"
+    )
+    _git("merge", branch, cwd=repo)
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name=branch,
+        thread_id="settle-anc",
+        dispatch_id="d-settle-anc",
+        closeout_text=None,
+        commits_ahead=1,
+        landed=None,
+        head_sha=tip,
+    )
+    assert settlement.outcome == "nothing_owed"
+    assert list_open_debts() == []
+
+
 # --- the probe refuses claims the tree does not support ----------------------
 
 

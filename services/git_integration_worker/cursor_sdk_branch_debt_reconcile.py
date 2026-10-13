@@ -14,13 +14,17 @@ work is preserved and the row is stale bookkeeping; a still-reachable commit can
 be archived now and then retired; an unreachable one is **indeterminate** and is
 escalated rather than discharged, because recording ``landed`` for work we can
 no longer inspect is the one outcome worse than leaving the row open.
+
+Live refs whose work is already on ``master`` (ancestor tip or cherry-equivalent)
+are retired **row-only** when dispatch and pin guards pass — no branch delete,
+no worktree release.
 """
 
 from __future__ import annotations
 
 import enum
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from universal_logging import get_logger
@@ -37,15 +41,35 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    is_reapable_dispatch_status,
+    sibling_non_terminal_dispatch_on_thread,
+)
+from services.git_integration_worker.cursor_sdk_worktree_registry import active_pin
 
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+_LIVE_GRADE_CAP = 20
+_MASTER_REF = "master"
 
 VERDICT_LIVE = "live"
 VERDICT_ARCHIVED = "archived"
 VERDICT_RECOVERED = "recovered"
 VERDICT_INDETERMINATE = "indeterminate"
+VERDICT_ANCESTOR = "ancestor"
+VERDICT_EQUIVALENT = "equivalent"
+
+# branch_name -> (tip_sha, master_sha, git_verdict)
+_LIVE_GRADE_MEMO: dict[str, tuple[str, str, str]] = {}
+
+
+def reset_live_grade_memo_for_tests() -> None:
+    """Clear process-local live-ref grade memo (tests only)."""
+    _LIVE_GRADE_MEMO.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +102,14 @@ class ReconcileReport:
         for row in self.verdicts:
             counts[row.verdict] = counts.get(row.verdict, 0) + 1
         return counts
+
+
+@dataclass
+class _SweepState:
+    """Per-sweep counters and master tip cache."""
+
+    master_sha_by_repo: dict[Path, str | None] = field(default_factory=dict)
+    fresh_live_grades: int = 0
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -161,18 +193,141 @@ def _tag_orphan_tip(repo: Path, branch_name: str, sha: str) -> str | None:
     return tag_name
 
 
-def _classify(*, repo: Path, debt: BranchDebt) -> DebtVerdict:
-    """Grade one open debt by the tip evidence that survives it."""
+def _dispatch_status(dispatch_id: str | None) -> str | None:
+    if not dispatch_id:
+        return None
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["status"])
+
+
+def _live_ref_guard_detail(*, repo: Path, debt: BranchDebt) -> str | None:
+    """Return guard ``detail`` when the row must stay open; ``None`` when clear."""
+    status = _dispatch_status(debt.dispatch_id)
+    if debt.dispatch_id is None or status is None:
+        return "guard: dispatch row missing or dispatch_id unset"
+    if not is_reapable_dispatch_status(status):
+        return f"guard: dispatch status {status!r} not terminal"
+    thread_id = debt.thread_id or ""
+    if thread_id and debt.dispatch_id:
+        sibling = sibling_non_terminal_dispatch_on_thread(
+            thread_id=thread_id,
+            exclude_dispatch_id=debt.dispatch_id,
+        )
+        if sibling is not None:
+            return f"guard: sibling dispatch {sibling} still non-terminal"
+    if thread_id:
+        pin = active_pin(source_repo=repo, thread_id=thread_id)
+        if pin is not None:
+            return f"guard: active pin dispatch_id={pin.dispatch_id}"
+    return None
+
+
+def _master_sha(repo: Path, sweep: _SweepState) -> str | None:
+    cached = sweep.master_sha_by_repo.get(repo)
+    if repo in sweep.master_sha_by_repo:
+        return cached
+    proc = _git(repo, "rev-parse", _MASTER_REF)
+    sha = proc.stdout.strip() if proc.returncode == 0 else None
+    sweep.master_sha_by_repo[repo] = sha
+    return sha
+
+
+def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
+    proc = _git(repo, "rev-parse", branch_name)
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _grade_live_git(repo: Path, branch_name: str) -> tuple[str, str]:
+    """Git-only grade for a present ref: ancestor, equivalent, or live."""
+    try:
+        ancestor = _git(repo, "merge-base", "--is-ancestor", branch_name, _MASTER_REF)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return VERDICT_LIVE, str(exc)
+    if ancestor.returncode == 0:
+        return VERDICT_ANCESTOR, ""
+    if ancestor.returncode not in (0, 1):
+        detail = (ancestor.stderr or "").strip() or f"git exit {ancestor.returncode}"
+        return VERDICT_LIVE, detail
+
+    try:
+        cherry = _git(repo, "cherry", _MASTER_REF, branch_name)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return VERDICT_LIVE, str(exc)
+    if cherry.returncode not in (0, 1):
+        detail = (cherry.stderr or "").strip() or f"git exit {cherry.returncode}"
+        return VERDICT_LIVE, detail
+    lines = [line for line in cherry.stdout.splitlines() if line.strip()]
+    if not lines:
+        return VERDICT_LIVE, "git cherry produced no output"
+    if any(line.startswith("+") for line in lines):
+        return VERDICT_LIVE, "unique patch commits remain on branch"
+    return VERDICT_EQUIVALENT, ""
+
+
+def _classify_present_ref(
+    *,
+    repo: Path,
+    debt: BranchDebt,
+    sweep: _SweepState,
+) -> DebtVerdict:
     branch = debt.branch_name
-    if ref_exists(repo, branch):
+    guard = _live_ref_guard_detail(repo=repo, debt=debt)
+    if guard is not None:
         return DebtVerdict(
             branch=branch,
             verdict=VERDICT_LIVE,
             thread_id=debt.thread_id,
             tip_sha=debt.tip_sha,
-            detail="branch ref present — resolve by land or discard, not reconciliation",
+            detail=guard,
         )
 
+    master_sha = _master_sha(repo, sweep)
+    if master_sha is None:
+        return DebtVerdict(
+            branch=branch,
+            verdict=VERDICT_LIVE,
+            thread_id=debt.thread_id,
+            tip_sha=debt.tip_sha,
+            detail=f"guard: {_MASTER_REF} ref missing in repo",
+        )
+
+    tip_sha = _branch_tip_sha(repo, branch) or (debt.tip_sha or "")
+    memo = _LIVE_GRADE_MEMO.get(branch)
+    if memo is not None and memo[0] == tip_sha and memo[1] == master_sha:
+        git_verdict, git_detail = memo[2], ""
+    else:
+        if sweep.fresh_live_grades >= _LIVE_GRADE_CAP:
+            return DebtVerdict(
+                branch=branch,
+                verdict=VERDICT_LIVE,
+                thread_id=debt.thread_id,
+                tip_sha=tip_sha or debt.tip_sha,
+                detail="deferred: grade cap",
+            )
+        sweep.fresh_live_grades += 1
+        git_verdict, git_detail = _grade_live_git(repo, branch)
+        _LIVE_GRADE_MEMO[branch] = (tip_sha, master_sha, git_verdict)
+
+    return DebtVerdict(
+        branch=branch,
+        verdict=git_verdict,
+        thread_id=debt.thread_id,
+        tip_sha=tip_sha or debt.tip_sha,
+        detail=git_detail,
+    )
+
+
+def _classify_missing_ref(*, repo: Path, debt: BranchDebt) -> DebtVerdict:
+    """Grade one open debt whose branch ref is absent."""
+    branch = debt.branch_name
     archived = lookup_archive_tag(repo=repo, branch_name=branch)
     if archived is not None:
         tag_name, tag_sha = archived
@@ -206,6 +361,23 @@ def _classify(*, repo: Path, debt: BranchDebt) -> DebtVerdict:
     )
 
 
+def _classify(*, repo: Path, debt: BranchDebt, sweep: _SweepState) -> DebtVerdict:
+    """Grade one open debt by the tip evidence that survives it."""
+    branch = debt.branch_name
+    probe = ref_probe(repo, branch)
+    if probe.state == RefProbeState.PRESENT:
+        return _classify_present_ref(repo=repo, debt=debt, sweep=sweep)
+    if probe.state == RefProbeState.ERROR:
+        return DebtVerdict(
+            branch=branch,
+            verdict=VERDICT_LIVE,
+            thread_id=debt.thread_id,
+            tip_sha=debt.tip_sha,
+            detail=f"ref probe error: {probe.detail}",
+        )
+    return _classify_missing_ref(repo=repo, debt=debt)
+
+
 def _retire(*, verdict: DebtVerdict, note: str) -> DebtVerdict:
     """Discharge a reconciled debt as landed and announce it."""
     discharge_branch_debt(branch_name=verdict.branch, verb="landed", note=note)
@@ -235,7 +407,7 @@ def _retire(*, verdict: DebtVerdict, note: str) -> DebtVerdict:
 
 
 def _apply(*, repo: Path, verdict: DebtVerdict) -> DebtVerdict:
-    """Carry out the action a verdict licenses; LIVE rows are never touched."""
+    """Carry out the action a verdict licenses; guarded LIVE rows are never touched."""
     if verdict.verdict == VERDICT_ARCHIVED:
         return _retire(
             verdict=verdict,
@@ -261,6 +433,13 @@ def _apply(*, repo: Path, verdict: DebtVerdict) -> DebtVerdict:
             verdict=tagged,
             note=f"reconciled — branch ref absent, orphan tip archived at {tag_name}",
         )
+    if verdict.verdict in {VERDICT_ANCESTOR, VERDICT_EQUIVALENT}:
+        note = (
+            "reconciled — ancestor of master"
+            if verdict.verdict == VERDICT_ANCESTOR
+            else "reconciled — cherry equivalent"
+        )
+        return _retire(verdict=verdict, note=note)
     if verdict.verdict == VERDICT_INDETERMINATE:
         # Deliberately no row mutation. `mark_debt_escalated` is the aged-debt
         # loop's already-announced flag; stamping it here would suppress the bus
@@ -285,7 +464,8 @@ def reconcile_open_branch_debts(
 
     Defaults to a dry run so the verdict table can be inspected before any row
     is retired — the rows this sweep resolves are, by construction, ones no
-    living branch explains.
+    living branch explains, plus live refs whose work is already on ``master``
+    when guards pass.
     """
     from services.git_integration_worker.config import load_config
     from services.git_integration_worker.cursor_sdk_branch_debt import (
@@ -297,6 +477,7 @@ def reconcile_open_branch_debts(
     projects_root = cfg.dispatch_workspace
     sweep_repo = source_repo.resolve()
     debts = list_open_debts()
+    sweep = _SweepState()
     verdicts: list[DebtVerdict] = []
     for debt in debts:
         if debt.source_repo:
@@ -307,7 +488,7 @@ def reconcile_open_branch_debts(
             )
         else:
             repo = sweep_repo
-        verdicts.append(_classify(repo=repo, debt=debt))
+        verdicts.append(_classify(repo=repo, debt=debt, sweep=sweep))
     if apply:
         verdicts = [
             _apply(

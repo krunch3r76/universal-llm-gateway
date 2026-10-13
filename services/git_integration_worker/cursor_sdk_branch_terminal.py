@@ -493,6 +493,23 @@ def _settle(
         )
 
     if (commits_ahead or 0) >= 1 and landed is not True:
+        ancestor = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "merge-base",
+                "--is-ancestor",
+                branch_name,
+                "master",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60.0,
+            check=False,
+        )
+        if ancestor.returncode == 0:
+            return LaneBranchSettlement(outcome="nothing_owed", branch=branch_name)
         silent = silent_land_attempt(
             repo=source_repo,
             branch_name=branch_name,
