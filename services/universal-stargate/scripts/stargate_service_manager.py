@@ -703,28 +703,12 @@ class StargateServiceManager:
 
         try:
             # Stop stargate process gracefully
+            # Only stop processes this manager instance started (never port scans).
             if self.stargate_process and self.stargate_process.is_running():
                 self.logger.info("Stopping stargate process gracefully...")
                 self.process_manager.terminate_process_tree(
                     self.stargate_process, timeout=self.config.shutdown_grace
                 )
-
-            # Clean up any remaining processes (excluding ourselves)
-            remaining_processes = self.process_manager.find_stargate_processes(
-                self.config.port
-            )
-            # Filter out our own PID to prevent self-termination during cleanup
-            current_pid = os.getpid()
-            remaining_processes = [
-                proc for proc in remaining_processes if proc.pid != current_pid
-            ]
-
-            if remaining_processes:
-                self.logger.info(
-                    f"Cleaning up {len(remaining_processes)} remaining processes"
-                )
-                for proc in remaining_processes:
-                    self.process_manager.terminate_process_tree(proc)
 
             # Remove PID file
             pid_file = Path(self.config.pid_file)
