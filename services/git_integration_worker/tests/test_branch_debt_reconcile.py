@@ -99,6 +99,7 @@ def _admit_dispatch(
     dispatch_id: str,
     thread_id: str,
     status: str = "completed",
+    source_repo: str | None = None,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
@@ -120,6 +121,7 @@ def _admit_dispatch(
             thread_id=thread_id,
             model_id="composer-2.5",
         ),
+        source_repo=source_repo,
     )
     if status in {"completed", "failed", "cancelled"}:
         ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status=status)
@@ -945,3 +947,103 @@ def test_summary_counts_every_grading(repo: Path) -> None:
     summary = reconcile_open_branch_debts(source_repo=repo, apply=False).summary()
 
     assert summary == {VERDICT_LIVE: 1, VERDICT_ARCHIVED: 1, VERDICT_INDETERMINATE: 1}
+
+
+def _init_git_repo(path: Path) -> None:
+    _git("init", "-b", "master", cwd=path)
+    _git("config", "user.email", "test@example.com", cwd=path)
+    _git("config", "user.name", "test", cwd=path)
+    (path / "README.md").write_text("init\n", encoding="utf-8")
+    _git("add", "README.md", cwd=path)
+    _git("commit", "-m", "init", cwd=path)
+
+
+@pytest.fixture
+def hub_satellite_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, Path]:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    hub = projects_root / "hub-gateway"
+    hub.mkdir()
+    _init_git_repo(hub)
+    satellite = projects_root / "sat-bot"
+    satellite.mkdir()
+    _init_git_repo(satellite)
+    roster = hub / "cursor-plugins/ulg-ecosystem/SATELLITES.txt"
+    roster.parent.mkdir(parents=True)
+    roster.write_text("sat-bot\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
+    monkeypatch.setenv("GIT_INTEGRATION_DISPATCH_WORKSPACE", str(projects_root))
+    return hub, satellite, projects_root
+
+
+def test_reconcile_backfill_retires_satellite_ancestor(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    """Legacy NULL ``source_repo`` backfills from the ledger and grades the satellite."""
+    hub, satellite, _projects_root = hub_satellite_layout
+    branch = "cursor-sdk/lane-sat-backfill"
+    sha = _lane_commit(satellite, branch, "sat merged work\n")
+    _admit_dispatch(
+        dispatch_id="d-sat-backfill",
+        thread_id="sat-backfill",
+        status="completed",
+        source_repo=str(satellite.resolve()),
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="sat-backfill",
+        dispatch_id="d-sat-backfill",
+        tip_sha=sha,
+        source_repo=None,
+    )
+    _git("merge", branch, cwd=satellite)
+    hub_has_branch = subprocess.run(
+        ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+        cwd=str(hub),
+        capture_output=True,
+    )
+    assert hub_has_branch.returncode != 0
+
+    report = reconcile_open_branch_debts(source_repo=hub, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_ANCESTOR
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None
+    assert not debt.open
+    assert debt.source_repo == "sat-bot"
+
+
+def test_missing_checkout_not_retired_as_hub(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    """Missing ledger checkout must not fall back to hub grading."""
+    hub, _satellite, projects_root = hub_satellite_layout
+    missing = projects_root / "gone-satellite"
+    branch = "cursor-sdk/lane-missing-reconcile"
+    sha = _lane_commit(hub, branch, "would retire on hub\n")
+    _git("merge", branch, cwd=hub)
+    _admit_dispatch(
+        dispatch_id="d-missing-reconcile",
+        thread_id="missing-reconcile",
+        status="completed",
+        source_repo=str(missing.resolve()),
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="missing-reconcile",
+        dispatch_id="d-missing-reconcile",
+        tip_sha=sha,
+        source_repo=None,
+    )
+
+    report = reconcile_open_branch_debts(source_repo=hub, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.detail == "source repo absent"
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None
+    assert debt.open
+    assert debt.discharged_at is None

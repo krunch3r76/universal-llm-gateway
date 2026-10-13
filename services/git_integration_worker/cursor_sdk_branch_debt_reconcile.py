@@ -36,8 +36,10 @@ from services.git_integration_worker.cursor_sdk_branch_archive import (
 from services.git_integration_worker.cursor_sdk_branch_debt import (
     BranchDebt,
     discharge_branch_debt,
+    fill_empty_branch_debt_source_repo,
     get_branch_debt,
     list_open_debts,
+    resolve_debt_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     remove_land_required_tag,
@@ -68,6 +70,8 @@ VERDICT_RECOVERED = "recovered"
 VERDICT_INDETERMINATE = "indeterminate"
 VERDICT_ANCESTOR = "ancestor"
 VERDICT_EQUIVALENT = "equivalent"
+
+_SOURCE_REPO_ABSENT_DETAIL = "source repo absent"
 
 # branch_name -> (tip_sha, master_sha, git_verdict)
 _LIVE_GRADE_MEMO: dict[str, tuple[str, str, str]] = {}
@@ -573,6 +577,78 @@ def _apply(*, repo: Path, verdict: DebtVerdict) -> DebtVerdict:
     return verdict
 
 
+def _backfill_empty_debt_source_repos_from_ledger(
+    debts: list[BranchDebt],
+    *,
+    hub: Path,
+    projects_root: Path,
+) -> None:
+    """Stamp open rows whose ``source_repo`` is empty from the dispatch ledger."""
+    from services.git_integration_worker.cursor_sdk_branch_terminal import (
+        _workspace_token_from_dispatch_ledger,
+    )
+
+    for debt in debts:
+        if (debt.source_repo or "").strip():
+            continue
+        if not debt.dispatch_id:
+            continue
+        token = _workspace_token_from_dispatch_ledger(
+            debt.dispatch_id,
+            hub=hub,
+            projects_root=projects_root,
+        )
+        if not token:
+            continue
+        fill_empty_branch_debt_source_repo(
+            branch_name=debt.branch_name,
+            source_repo=token,
+        )
+
+
+def _resolve_reconcile_repo(
+    debt: BranchDebt,
+    *,
+    hub: Path,
+    projects_root: Path,
+    sweep_repo: Path,
+) -> tuple[Path | None, str | None]:
+    """Map one debt to the git repo that grades it; ``None`` repo ⇒ absent detail."""
+    from services.git_integration_worker.cursor_sdk_branch_terminal import (
+        _dispatch_source_repo_stored,
+    )
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        _source_is_hub,
+    )
+
+    if (debt.source_repo or "").strip():
+        return (
+            resolve_debt_source_repo(
+                debt.source_repo,
+                hub=hub,
+                projects_root=projects_root,
+            ),
+            None,
+        )
+    if debt.dispatch_id:
+        stored = _dispatch_source_repo_stored(debt.dispatch_id)
+        if stored and stored.strip():
+            if _source_is_hub(stored, hub):
+                return sweep_repo, None
+            try:
+                repo_path = resolve_debt_source_repo(
+                    stored.strip(),
+                    hub=hub,
+                    projects_root=projects_root,
+                )
+            except Exception:
+                return sweep_repo, None
+            if not repo_path.is_dir() or not (repo_path / ".git").exists():
+                return None, _SOURCE_REPO_ABSENT_DETAIL
+            return repo_path, None
+    return sweep_repo, None
+
+
 def reconcile_open_branch_debts(
     *,
     source_repo: Path,
@@ -586,43 +662,55 @@ def reconcile_open_branch_debts(
     when guards pass.
     """
     from services.git_integration_worker.config import load_config
-    from services.git_integration_worker.cursor_sdk_branch_debt import (
-        resolve_debt_source_repo,
-    )
 
     cfg = load_config()
     hub = cfg.source_repo.resolve()
     projects_root = cfg.dispatch_workspace
     sweep_repo = source_repo.resolve()
     debts = list_open_debts()
+    _backfill_empty_debt_source_repos_from_ledger(
+        debts,
+        hub=hub,
+        projects_root=projects_root,
+    )
+    debts = list_open_debts()
     sweep = _SweepState(worktree_root=cfg.worktree_root)
     verdicts: list[DebtVerdict] = []
     for debt in debts:
-        if debt.source_repo:
-            repo = resolve_debt_source_repo(
-                debt.source_repo,
-                hub=hub,
-                projects_root=projects_root,
+        repo, absent_detail = _resolve_reconcile_repo(
+            debt,
+            hub=hub,
+            projects_root=projects_root,
+            sweep_repo=sweep_repo,
+        )
+        if absent_detail is not None:
+            verdicts.append(
+                DebtVerdict(
+                    branch=debt.branch_name,
+                    verdict=VERDICT_LIVE,
+                    thread_id=debt.thread_id,
+                    tip_sha=debt.tip_sha,
+                    detail=absent_detail,
+                )
             )
-        else:
-            repo = sweep_repo
+            continue
+        assert repo is not None
         verdicts.append(_classify(repo=repo, debt=debt, sweep=sweep))
     if apply:
-        verdicts = [
-            _apply(
-                repo=(
-                    resolve_debt_source_repo(
-                        debt.source_repo,
-                        hub=hub,
-                        projects_root=projects_root,
-                    )
-                    if debt.source_repo
-                    else sweep_repo
-                ),
-                verdict=row,
+        applied: list[DebtVerdict] = []
+        for debt, row in zip(debts, verdicts, strict=True):
+            if row.detail == _SOURCE_REPO_ABSENT_DETAIL:
+                applied.append(row)
+                continue
+            repo, _absent = _resolve_reconcile_repo(
+                debt,
+                hub=hub,
+                projects_root=projects_root,
+                sweep_repo=sweep_repo,
             )
-            for debt, row in zip(debts, verdicts, strict=True)
-        ]
+            assert repo is not None
+            applied.append(_apply(repo=repo, verdict=row))
+        verdicts = applied
     report = ReconcileReport(verdicts=verdicts, applied=apply)
     logger.info("branch debt reconcile apply=%s summary=%s", apply, report.summary())
     return report
