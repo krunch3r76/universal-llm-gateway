@@ -655,7 +655,7 @@ def test_checked_out_blocks_orphan_branch_delete(repo: Path, tmp_path: Path) -> 
         dispatch_id="d-held",
         tip_sha=tip,
     )
-    assert not deleted
+    assert deleted == "refused"
     assert "cursor-sdk/lane-7112" in _branches(repo)
 
 
@@ -678,7 +678,7 @@ def test_open_debt_blocks_orphan_branch_delete(repo: Path) -> None:
         dispatch_id="d-race",
         tip_sha=tip,
     )
-    assert not deleted
+    assert deleted == "refused"
     assert "cursor-sdk/lane-7413" in _branches(repo)
     debt = get_branch_debt(branch_name="cursor-sdk/lane-7413")
     assert debt is not None and debt.open

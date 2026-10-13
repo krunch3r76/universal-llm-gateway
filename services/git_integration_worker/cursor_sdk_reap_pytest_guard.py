@@ -38,32 +38,43 @@ def refuse_real_hub_reap_under_pytest(
         repo = source_repo.resolve()
     except OSError:
         repo = source_repo
+    wt_for_emit: Path | None = None
+    if worktree_root is not None:
+        try:
+            wt_for_emit = worktree_root.resolve()
+        except OSError:
+            wt_for_emit = worktree_root
     hub = _REAL_HUB_REPO.resolve()
     if repo == hub:
         detail = f"refusing reap against the live hub repo under pytest: {repo}"
-        emit_sdk_lane_b_reap_refused_pytest(
-            source_repo=repo,
-            worktree_root=worktree_root,
-            detail=detail,
-        )
+        try:
+            emit_sdk_lane_b_reap_refused_pytest(
+                source_repo=repo,
+                worktree_root=wt_for_emit,
+                detail=detail,
+            )
+        except Exception:
+            logger.exception("reap_refused_pytest emit failed")
+            raise
         raise RuntimeError(detail)
     if worktree_root is None:
         return
-    try:
-        wt_root = worktree_root.resolve()
-    except OSError:
-        wt_root = worktree_root
+    wt_root = wt_for_emit if wt_for_emit is not None else worktree_root
     store = _REAL_HUB_WORKTREE_STORE.resolve()
     if wt_root == store or wt_root.is_relative_to(store) or store.is_relative_to(wt_root):
         detail = (
             "refusing reap against the live hub worktree store under pytest: "
             f"worktree_root={wt_root} store={store}"
         )
-        emit_sdk_lane_b_reap_refused_pytest(
-            source_repo=repo,
-            worktree_root=wt_root,
-            detail=detail,
-        )
+        try:
+            emit_sdk_lane_b_reap_refused_pytest(
+                source_repo=repo,
+                worktree_root=wt_root,
+                detail=detail,
+            )
+        except Exception:
+            logger.exception("reap_refused_pytest emit failed")
+            raise
         raise RuntimeError(detail)
 
 

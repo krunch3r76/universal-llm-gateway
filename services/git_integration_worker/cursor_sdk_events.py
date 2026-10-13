@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+SdkLaneBReapOutcome = Literal["deleted", "kept", "failed"]
+_VALID_REAP_OUTCOMES = frozenset({"deleted", "kept", "failed"})
 
 _uds_publisher: Callable[[str, dict[str, Any]], None] | None = None
 _terminal_emitted: set[str] = set()
@@ -1268,11 +1271,13 @@ def emit_sdk_lane_b_branch_retained(
 def SdkLaneBReaped(  # noqa: N802
     dispatch_id: str,
     branch_deleted: bool,
-    outcome: str,
+    outcome: SdkLaneBReapOutcome,
     branch: str | None = None,
     tip_sha: str | None = None,
     reason: str | None = None,
 ) -> Event:
+    if outcome not in _VALID_REAP_OUTCOMES:
+        raise ValueError(f"invalid sdk.lane_b.reaped outcome: {outcome!r}")
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
         "branch_deleted": branch_deleted,
@@ -1295,12 +1300,14 @@ def emit_sdk_lane_b_reaped(
     *,
     dispatch_id: str,
     branch_deleted: bool,
-    outcome: str,
+    outcome: SdkLaneBReapOutcome,
     branch: str | None = None,
     tip_sha: str | None = None,
     reason: str | None = None,
 ) -> None:
     """Emit when a dispatch worktree is pruned or an orphan branch is reaped."""
+    if outcome not in _VALID_REAP_OUTCOMES:
+        raise ValueError(f"invalid sdk.lane_b.reaped outcome: {outcome!r}")
     _emit(
         SdkLaneBReaped(
             dispatch_id=dispatch_id,

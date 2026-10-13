@@ -103,7 +103,7 @@ def test_branch_delete_emits_reaped_on_success_and_on_git_failure(
             reason="ancestry_merged",
             dispatch_id="d-ok",
         )
-    assert ok
+    assert ok == "deleted"
     success = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
     assert success[-1]["branch_deleted"] is True
     assert success[-1]["outcome"] == "deleted"
@@ -144,7 +144,7 @@ def test_branch_delete_emits_reaped_on_success_and_on_git_failure(
                 reason="ancestry_merged",
                 dispatch_id="d-fail",
             )
-    assert not bad
+    assert bad == "failed"
     failed = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
     assert failed
     assert failed[-1]["branch_deleted"] is False
@@ -217,79 +217,17 @@ def test_discharge_delete_branch_emits_reaped_on_git_failure(
             "services.git_integration_worker.cursor_sdk_branch_discharge.subprocess.run",
             side_effect=_fail_delete,
         ):
-            ok, err = _delete_branch(git_repo, branch)
+            ok, err = _delete_branch(
+                git_repo, branch, dispatch_id="d-discharge-fail"
+            )
     assert not ok
     assert "discharge delete blocked" in (err or "")
     reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
     assert reaped
     assert reaped[-1]["outcome"] == "failed"
     assert reaped[-1]["branch"] == branch
-
-
-def test_reaped_outcome_distinguishes_failed_delete_from_kept_branch(
-    git_repo: Path,
-) -> None:
-    """``outcome`` field separates a failed delete from a prune that kept the branch."""
-    branch = "cursor-sdk/lane-kept"
-    _git("checkout", "-b", branch, cwd=git_repo)
-    (git_repo / "keep.py").write_text("k = 1\n", encoding="utf-8")
-    _git("add", "keep.py", cwd=git_repo)
-    _git("commit", "-m", "ahead", cwd=git_repo)
-    _git("checkout", "master", cwd=git_repo)
-
-    emitted: list[dict] = []
-
-    def _capture(signal: str, **payload: object) -> None:
-        emitted.append({"signal": signal, **payload})
-
-    with patch(
-        "services.git_integration_worker.cursor_sdk_events.record",
-        side_effect=_capture,
-    ):
-        from services.git_integration_worker.cursor_sdk_worktree_prune import (
-            emit_sdk_lane_b_reaped,
-        )
-
-        emit_sdk_lane_b_reaped(
-            dispatch_id="d-kept",
-            branch_deleted=False,
-            outcome="kept",
-            branch=None,
-            tip_sha=None,
-            reason=None,
-        )
-        real_run = subprocess.run
-
-        def _fail_delete(
-            cmd: list[str], **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            if isinstance(cmd, list) and "-D" in cmd:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=1,
-                    stdout="",
-                    stderr="outcome probe failure",
-                )
-            return real_run(cmd, **kwargs)  # type: ignore[arg-type]
-
-        with patch(
-            "services.git_integration_worker.cursor_sdk_worktree_gc.subprocess.run",
-            side_effect=_fail_delete,
-        ):
-            _delete_orphan_branch(
-                repo=git_repo,
-                branch_name=branch,
-                reason="mechanical_safe",
-                dispatch_id="d-fail",
-            )
-
-    reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
-    kept = [e for e in reaped if e.get("outcome") == "kept"]
-    failed = [e for e in reaped if e.get("outcome") == "failed"]
-    assert kept and failed
-    assert kept[0]["outcome"] == "kept"
-    assert failed[-1]["outcome"] == "failed"
-    assert failed[-1]["branch"] == branch
+    assert reaped[-1]["dispatch_id"] == "d-discharge-fail"
+    assert str(reaped[-1].get("reason", "")).startswith("discharge_delete_failed:")
 
 
 def test_pytest_hub_refusal_emits_reap_refused_pytest_event() -> None:
@@ -450,3 +388,98 @@ def test_prune_terminal_emits_one_reaped_when_branch_deleted(
     reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
     assert len(reaped) == 1
     assert reaped[0]["outcome"] == "deleted"
+
+
+def test_prune_terminal_emits_one_reaped_when_git_delete_fails(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failed prune ``git branch -D`` emits exactly one ``reaped`` (``failed``), not ``kept``."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        mint_dispatch_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+        prune_dispatch_worktree,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    CursorDispatchLedger._instance = None
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "one-reaped-fail"
+    mint_dispatch_worktree(
+        source_repo=git_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    ledger = CursorDispatchLedger.instance()
+    from services.git_integration_worker.models.cursor_api import (
+        CursorDispatchRequest,
+        CursorDispatchResponse,
+    )
+
+    req = CursorDispatchRequest(
+        thread_id=dispatch_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message="x",
+        worktree_isolated=True,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint="fp",
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id=dispatch_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+
+    real_run = subprocess.run
+
+    def _fail_delete(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if isinstance(cmd, list) and "-D" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                returncode=1,
+                stdout="",
+                stderr="prune delete blocked",
+            )
+        return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
+        lambda *_a, **_k: [],
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_worktree_gc.subprocess.run",
+            side_effect=_fail_delete,
+        ):
+            result = prune_dispatch_worktree(
+                dispatch_id=dispatch_id,
+                source_repo=git_repo,
+            )
+    assert result.pruned
+    reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
+    assert len(reaped) == 1
+    assert reaped[0]["outcome"] == "failed"
+    assert "prune delete blocked" in str(reaped[0].get("reason", ""))

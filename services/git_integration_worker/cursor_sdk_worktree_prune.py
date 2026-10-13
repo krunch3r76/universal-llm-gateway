@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
     refuse_real_hub_reap_under_pytest,
 )
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
+    OrphanBranchDeleteResult,
     _delete_orphan_branch,
     gc_merged_dispatch_branches,
 )
@@ -208,14 +209,16 @@ def prune_dispatch_worktree(
             trigger="reaper",
         )
     branch_deleted = False
+    delete_result: OrphanBranchDeleteResult | None = None
     if state.safe_to_delete:
-        branch_deleted = _delete_orphan_branch(
+        delete_result = _delete_orphan_branch(
             repo=source_repo.resolve(),
             branch_name=branch,
             reason="prune_terminal",
             dispatch_id=dispatch_id,
             tip_sha=state.head_sha,
         )
+        branch_deleted = delete_result == "deleted"
         if not branch_deleted:
             branch_retained = True
     if branch_retained:
@@ -224,13 +227,13 @@ def prune_dispatch_worktree(
             branch=branch,
             commits_ahead=state.commits_ahead,
         )
-    if not branch_deleted:
+    if delete_result != "failed" and not branch_deleted:
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id,
             branch_deleted=False,
             outcome="kept",
-            branch=None,
-            tip_sha=None,
+            branch=branch,
+            tip_sha=state.head_sha,
             reason=None,
         )
     return PruneResult(
