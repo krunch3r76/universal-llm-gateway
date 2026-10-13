@@ -1153,9 +1153,10 @@ async def admit_and_post_pointer_turn(
     if pointer_turn is None:
         logger.warning(
             "handoff admit_and_post_pointer_turn missing pointer_turn: "
-            "request_id=%s thread=%s body_keys=%s",
+            "request_id=%s thread=%s value=%r body_keys=%s",
             request_id,
             thread_id,
+            pointer_turn,
             sorted(body.keys()),
         )
         return 0
