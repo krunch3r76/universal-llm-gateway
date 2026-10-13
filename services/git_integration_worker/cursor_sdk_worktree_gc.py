@@ -12,6 +12,10 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_lane_b_reaped
+from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
+    log_reap_pass,
+    refuse_real_hub_reap_under_pytest,
+)
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
 )
@@ -48,26 +52,20 @@ def registered_branch_names() -> set[str]:
     return {row["branch_name"] for row in rows}
 
 
-def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
-    """Delete unused landed ``cursor-sdk/*`` orphans; archive every tip first.
-
-    Pass 1 is prefix-scoped: ``git branch --merged master`` is not a license
-    to vacuum ``arc/*`` or other local heads. Pass 2 stays lane-scoped
-    (disposition / content-landed) and inherits the same delete gates.
-    """
+def _gc_delete_candidates(*, source_repo: Path) -> list[tuple[str, str, str | None, str | None]]:
+    """Return ``(branch_name, reason, dispatch_id, tip_sha)`` rows eligible for delete."""
     from services.git_integration_worker.cursor_sdk_lane_b_commit import (
         list_cursor_sdk_branches,
         normalize_git_branch_list_name,
         orphan_branch_state,
     )
     from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
-        clear_disposition,
         get_disposition,
     )
 
     repo = source_repo.resolve()
     registered = registered_branch_names()
-    deleted = 0
+    candidates: list[tuple[str, str, str | None, str | None]] = []
 
     merged_proc = subprocess.run(
         ["git", "-C", str(repo), "branch", "--merged", "master"],
@@ -85,43 +83,66 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
                 continue
             if name in registered:
                 continue
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason="ancestry_merged",
-                dispatch_id=None,
-            ):
-                clear_disposition(branch_name=name)
-                deleted += 1
+            candidates.append((name, "ancestry_merged", None, None))
 
+    seen = {name for name, *_ in candidates}
     for name in list_cursor_sdk_branches(repo):
-        if name in registered:
+        if name in registered or name in seen:
             continue
         disposition = get_disposition(branch_name=name)
         if disposition is not None:
             if disposition.reason == "retained_for_mission":
                 continue
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason=disposition.reason,
-                dispatch_id=disposition.dispatch_id,
-                tip_sha=disposition.tip_sha,
-            ):
-                clear_disposition(branch_name=name)
-                deleted += 1
+            candidates.append(
+                (
+                    name,
+                    disposition.reason,
+                    disposition.dispatch_id,
+                    disposition.tip_sha,
+                )
+            )
             continue
         state = orphan_branch_state(repo, branch_name=name)
         if state.safe_to_delete:
             reason = "content_landed" if state.content_landed else "mechanical_safe"
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason=reason,
-                dispatch_id=None,
-                tip_sha=state.head_sha,
-            ):
-                deleted += 1
+            candidates.append((name, reason, None, state.head_sha))
+    return candidates
+
+
+def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
+    """Delete unused landed ``cursor-sdk/*`` orphans; archive every tip first.
+
+    Pass 1 is prefix-scoped: ``git branch --merged master`` is not a license
+    to vacuum ``arc/*`` or other local heads. Pass 2 stays lane-scoped
+    (disposition / content-landed) and inherits the same delete gates.
+    """
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        clear_disposition,
+        get_disposition,
+    )
+
+    refuse_real_hub_reap_under_pytest(source_repo=source_repo)
+    repo = source_repo.resolve()
+    candidates = _gc_delete_candidates(source_repo=source_repo)
+    log_reap_pass(
+        pass_name="gc_merged_dispatch_branches",
+        source_repo=repo,
+        action_count=len(candidates),
+    )
+    deleted = 0
+
+    for name, reason, dispatch_id, tip_sha in candidates:
+        had_disposition = get_disposition(branch_name=name) is not None
+        if _delete_orphan_branch(
+            repo=repo,
+            branch_name=name,
+            reason=reason,
+            dispatch_id=dispatch_id,
+            tip_sha=tip_sha,
+        ):
+            if reason == "ancestry_merged" or had_disposition:
+                clear_disposition(branch_name=name)
+            deleted += 1
     return deleted
 
 
@@ -148,6 +169,8 @@ def _delete_orphan_branch(
         get_branch_debt,
     )
 
+    refuse_real_hub_reap_under_pytest(source_repo=repo)
+
     pinned = branch_checked_out_at(repo=repo, branch_name=branch_name)
     if pinned is not None:
         logger.info(
@@ -171,6 +194,11 @@ def _delete_orphan_branch(
             "orphan branch delete skipped — archive failed branch=%s", branch_name
         )
         return False
+    log_reap_pass(
+        pass_name="_delete_orphan_branch",
+        source_repo=repo,
+        action_count=1,
+    )
     del_proc = subprocess.run(
         ["git", "-C", str(repo), "branch", "-D", branch_name],
         capture_output=True,
@@ -179,6 +207,19 @@ def _delete_orphan_branch(
         check=False,
     )
     if del_proc.returncode != 0:
+        stderr = del_proc.stderr.strip()
+        logger.warning(
+            "orphan branch git delete failed branch=%s err=%s",
+            branch_name,
+            stderr,
+        )
+        emit_sdk_lane_b_reaped(
+            dispatch_id=dispatch_id or "",
+            branch_deleted=False,
+            branch=branch_name,
+            tip_sha=tip_sha,
+            reason=f"git_delete_failed:{stderr}",
+        )
         return False
     discharge_branch_debt(branch_name=branch_name, verb="landed", note=reason)
     emit_sdk_lane_b_reaped(

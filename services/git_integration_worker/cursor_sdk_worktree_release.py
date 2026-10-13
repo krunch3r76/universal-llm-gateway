@@ -98,7 +98,16 @@ def _detach_head(worktree_path: Path) -> bool:
     return True
 
 
-def _git_worktree_remove(source_repo: Path, worktree_path: Path) -> bool:
+def _git_worktree_remove(
+    source_repo: Path,
+    worktree_path: Path,
+    *,
+    dispatch_id: str = "",
+    branch: str | None = None,
+    reason: str = "worktree_remove",
+) -> bool:
+    from services.git_integration_worker.cursor_sdk_events import emit_sdk_lane_b_reaped
+
     proc = subprocess.run(
         [
             "git",
@@ -115,12 +124,25 @@ def _git_worktree_remove(source_repo: Path, worktree_path: Path) -> bool:
         check=False,
     )
     if proc.returncode != 0:
+        stderr = proc.stderr.strip()
         logger.warning(
             "worktree remove failed path=%s err=%s",
             worktree_path,
-            proc.stderr.strip(),
+            stderr,
+        )
+        emit_sdk_lane_b_reaped(
+            dispatch_id=dispatch_id,
+            branch_deleted=False,
+            branch=branch,
+            reason=f"worktree_remove_failed:{stderr}",
         )
         return False
+    emit_sdk_lane_b_reaped(
+        dispatch_id=dispatch_id,
+        branch_deleted=False,
+        branch=branch,
+        reason=reason,
+    )
     return True
 
 
@@ -511,7 +533,13 @@ def release_lane_worktree(
 
     removed = False
     if wt_path.is_dir():
-        removed = _git_worktree_remove(repo, wt_path)
+        removed = _git_worktree_remove(
+            repo,
+            wt_path,
+            dispatch_id=resolved_dispatch or "",
+            branch=branch,
+            reason=reason,
+        )
 
     if removed:
         pin_reason = reason
