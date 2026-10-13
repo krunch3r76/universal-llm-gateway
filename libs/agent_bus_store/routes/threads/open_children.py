@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import HTTPException, status
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel
 
 from ...db import get_thread, normalize_thread_id
@@ -23,6 +24,7 @@ class OpenChildrenResponse(BaseModel):
 @router.get(
     "/threads/{thread_id}/open-children",
     response_model=OpenChildrenResponse,
+    openapi_extra=x_mcp("open_children", tool="agent_bus"),
 )
 async def open_children_route(thread_id: str) -> OpenChildrenResponse:
     """Return active or unharvested depth-1 children for ``thread_id``."""

@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "d51ae02dab5b8a9ced0d6cb140a7d7f8bfd3af722c11d374aed9c7457876c6e4"
+OPENAPI_SHA256 = "7122d12b492ee16588d5113e3dc710845b83d08c3200e0ad15af9903345007ff"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -75,6 +75,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/threads/{thread_id}/turns/read-state",
         "operation_id": "bulk_mark_read_state_route_threads__thread_id__turns_read_state_patch",
     },
+    "open_children": {
+        "method": "GET",
+        "path": "/threads/{thread_id}/open-children",
+        "operation_id": "open_children_route_threads__thread_id__open_children_get",
+    },
     "post": {
         "method": "POST",
         "path": "/threads/with-turn",
@@ -140,7 +145,6 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /resume-fences/{fence_id}": "faa8db7e13d971df64761d456de2b49efdfca13983139ff6d363a38e63671603",
     "GET /threads/{thread_id}/cse-current": "2f461416fdaf2260253067b60ddd42037cb95af90e91cea3726b23bff64c31d2",
     "GET /threads/{thread_id}/export": "a784f1abaed3c1f6839a38b2da63cff1f70cd335d3a9098fa3f2ebf10d8eb063",
-    "GET /threads/{thread_id}/open-children": "302b43b4696be8260ad927d429f0b47c36de6be4c9cfc88612539c5d4415abeb",
     "GET /threads/{thread_id}/resume-fence": "9111adec1e5af49c6a2778f36ca005164511929b63dbe16cf93ea36e0344165c",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",
     "PATCH /turns/{turn_id}/read": "d0c7fd2d62a6d60b88d62147bbe83cb63699716a9af07258f124e4a03794ad83",
