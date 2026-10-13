@@ -29,6 +29,7 @@ from claude_bundles.cdp_model_endpoint import (
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
     StagedPrompt,
+    _lane_worktree_root_for_thread,
     stage_cdp_prompt_with_skills,
     stage_prompt_uri,
     sweep_ephemeral,
@@ -558,15 +559,24 @@ def test_stage_lane_escape_refused(
 
 
 def test_stage_lane_no_association_falls_back_to_hub_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No lane root ⇒ today's unstageable behaviour, not an exception."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex"))
     monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
-    monkeypatch.setattr(
-        "claude_bundles.cdp_model_endpoint_staging._lane_worktree_root_for_thread",
-        lambda _tid: None,
-    )
+    mcp_server = Path(__file__).resolve().parents[2] / "services" / "mcp-server"
+    monkeypatch.syspath_prepend(str(mcp_server))
+    from lane_branch_root import LaneBranchResolutionError
+
+    def _fail_root(_tid: str) -> Path:
+        raise LaneBranchResolutionError(
+            "thread '7119': branch association state='none'"
+        )
+
+    monkeypatch.setattr("lane_branch_root.root_for_thread", _fail_root)
 
     with pytest.raises(CdpStagingError) as exc:
         stage_prompt_uri(
@@ -575,6 +585,32 @@ def test_stage_lane_no_association_falls_back_to_hub_missing(
             dispatch_thread_id="7119",
         )
     assert exc.value.code == "cdp_prompt_unstageable"
+    assert any(
+        "cdp lane worktree lookup failed" in r.message and "7119" in r.message
+        for r in caplog.records
+    )
+
+
+def test_lane_worktree_lookup_logs_resolution_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    mcp_server = Path(__file__).resolve().parents[2] / "services" / "mcp-server"
+    monkeypatch.syspath_prepend(str(mcp_server))
+    from lane_branch_root import LaneBranchResolutionError
+
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setattr(
+        "lane_branch_root.root_for_thread",
+        lambda _tid: (_ for _ in ()).throw(
+            LaneBranchResolutionError("thread '16646': no worktree")
+        ),
+    )
+    assert _lane_worktree_root_for_thread("16646") is None
+    assert any(
+        "16646" in r.message and "no worktree" in r.message for r in caplog.records
+    )
 
 
 def test_stage_workspaces_hub_repo_uri_resolves_in_lane_after_hub_miss(

@@ -533,6 +533,8 @@ class StargateServiceManager:
                 "STARGATE_PROJECT_ROOT",
                 _PROJECT_ROOT,
             ),
+            # MCP fs / lane_branch_root read PROJECT_ROOT (not STARGATE_*).
+            "PROJECT_ROOT": os.getenv("PROJECT_ROOT", _PROJECT_ROOT),
         }
 
         # Update environment

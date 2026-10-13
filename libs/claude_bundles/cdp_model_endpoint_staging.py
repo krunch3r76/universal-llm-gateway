@@ -26,6 +26,7 @@ channel router — this gate lives here, not there.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import sys
 from dataclasses import dataclass
@@ -50,6 +51,8 @@ _CDP_SKILLS_DENIED_SLUGS: frozenset[str] = frozenset({"path-sim"})
 _CDP_SKILLS_PATH_SIM_REJECTED = "cdp_skills_path_sim_rejected"
 # Same basename ``lane_branch_root`` uses when composing worktree paths.
 _HUB_REPO_DIRNAME = "universal-llm-gateway"
+
+_logger = logging.getLogger(__name__)
 
 
 class CdpStagingError(ValueError):
@@ -205,11 +208,21 @@ def _lane_worktree_root_for_thread(thread_id: str) -> Path | None:
     try:
         _ensure_lane_branch_root_importable()
         from lane_branch_root import LaneBranchResolutionError, root_for_thread
-    except ImportError:
+    except ImportError as exc:
+        _logger.warning(
+            "cdp lane worktree lookup failed for thread_id=%s: %s",
+            tid,
+            f"lane_branch_root import failed: {exc}",
+        )
         return None
     try:
         return root_for_thread(tid)
-    except LaneBranchResolutionError:
+    except LaneBranchResolutionError as exc:
+        _logger.warning(
+            "cdp lane worktree lookup failed for thread_id=%s: %s",
+            tid,
+            exc,
+        )
         return None
 
 
