@@ -473,6 +473,72 @@ def test_settle_ancestor_tip_opens_no_debt(repo: Path) -> None:
     assert list_open_debts() == []
 
 
+def test_nothing_owed_clears_land_required_tag(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_remove(*, thread_id: str | None) -> bool:
+        calls.append({"thread_id": thread_id})
+        return True
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.remove_land_required_tag",
+        _fake_remove,
+    )
+    branch = "cursor-sdk/lane-nothing-owed-tag"
+    tip = _branch_with_change(
+        repo, branch=branch, path="now_tag.py", content="on master soon\n"
+    )
+    _git("merge", branch, cwd=repo)
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name=branch,
+        thread_id="nothing-owed-tag",
+        dispatch_id="d-nothing-owed",
+        closeout_text=None,
+        commits_ahead=1,
+        landed=None,
+        head_sha=tip,
+    )
+    assert settlement.outcome == "nothing_owed"
+    assert calls == [{"thread_id": "nothing-owed-tag"}]
+
+
+def test_settle_merge_base_timeout_falls_through_not_settle_error(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = "cursor-sdk/lane-settle-timeout"
+    tip = _branch_with_change(
+        repo, branch=branch, path="st.py", content="still unique\n"
+    )
+    real_run = subprocess.run
+
+    def _timeout_on_merge_base(*args, **kwargs):
+        cmd = kwargs.get("args") or (args[0] if args else [])
+        if isinstance(cmd, list) and "merge-base" in cmd:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=60.0)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.subprocess.run",
+        _timeout_on_merge_base,
+    )
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name=branch,
+        thread_id="settle-timeout",
+        dispatch_id="d-settle-timeout",
+        closeout_text=None,
+        commits_ahead=1,
+        landed=None,
+        head_sha=tip,
+        packet_text="no silent land",
+    )
+    assert settlement.outcome != "settle_error"
+    assert settlement.outcome == "debt_opened"
+
+
 # --- the probe refuses claims the tree does not support ----------------------
 
 

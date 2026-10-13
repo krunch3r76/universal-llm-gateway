@@ -38,6 +38,9 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
     discharge_branch_debt,
     list_open_debts,
 )
+from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
+    remove_land_required_tag,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
@@ -65,6 +68,7 @@ VERDICT_EQUIVALENT = "equivalent"
 
 # branch_name -> (tip_sha, master_sha, git_verdict)
 _LIVE_GRADE_MEMO: dict[str, tuple[str, str, str]] = {}
+_LIVE_GRADE_MEMO_MAX = 256
 
 
 def reset_live_grade_memo_for_tests() -> None:
@@ -206,6 +210,35 @@ def _dispatch_status(dispatch_id: str | None) -> str | None:
     return str(row["status"])
 
 
+def _dispatch_thread_id(dispatch_id: str | None) -> str | None:
+    if not dispatch_id:
+        return None
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None or row["thread_id"] is None:
+        return None
+    return str(row["thread_id"])
+
+
+def _head_ref(branch_name: str) -> str:
+    return f"refs/heads/{branch_name}"
+
+
+def _memoize_live_grade(
+    branch: str, tip_sha: str, master_sha: str, git_verdict: str, git_detail: str
+) -> None:
+    if git_verdict == VERDICT_LIVE and git_detail != "unique patch commits remain on branch":
+        return
+    if git_verdict not in {VERDICT_ANCESTOR, VERDICT_EQUIVALENT, VERDICT_LIVE}:
+        return
+    while len(_LIVE_GRADE_MEMO) >= _LIVE_GRADE_MEMO_MAX:
+        _LIVE_GRADE_MEMO.pop(next(iter(_LIVE_GRADE_MEMO)))
+    _LIVE_GRADE_MEMO[branch] = (tip_sha, master_sha, git_verdict)
+
+
 def _live_ref_guard_detail(*, repo: Path, debt: BranchDebt) -> str | None:
     """Return guard ``detail`` when the row must stay open; ``None`` when clear."""
     status = _dispatch_status(debt.dispatch_id)
@@ -213,7 +246,7 @@ def _live_ref_guard_detail(*, repo: Path, debt: BranchDebt) -> str | None:
         return "guard: dispatch row missing or dispatch_id unset"
     if not is_reapable_dispatch_status(status):
         return f"guard: dispatch status {status!r} not terminal"
-    thread_id = debt.thread_id or ""
+    thread_id = debt.thread_id or _dispatch_thread_id(debt.dispatch_id) or ""
     if thread_id and debt.dispatch_id:
         sibling = sibling_non_terminal_dispatch_on_thread(
             thread_id=thread_id,
@@ -232,14 +265,21 @@ def _master_sha(repo: Path, sweep: _SweepState) -> str | None:
     cached = sweep.master_sha_by_repo.get(repo)
     if repo in sweep.master_sha_by_repo:
         return cached
-    proc = _git(repo, "rev-parse", _MASTER_REF)
+    try:
+        proc = _git(repo, "rev-parse", _MASTER_REF)
+    except (subprocess.TimeoutExpired, OSError):
+        sweep.master_sha_by_repo[repo] = None
+        return None
     sha = proc.stdout.strip() if proc.returncode == 0 else None
     sweep.master_sha_by_repo[repo] = sha
     return sha
 
 
 def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
-    proc = _git(repo, "rev-parse", branch_name)
+    try:
+        proc = _git(repo, "rev-parse", _head_ref(branch_name))
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     if proc.returncode != 0:
         return None
     return proc.stdout.strip()
@@ -247,8 +287,9 @@ def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
 
 def _grade_live_git(repo: Path, branch_name: str) -> tuple[str, str]:
     """Git-only grade for a present ref: ancestor, equivalent, or live."""
+    head = _head_ref(branch_name)
     try:
-        ancestor = _git(repo, "merge-base", "--is-ancestor", branch_name, _MASTER_REF)
+        ancestor = _git(repo, "merge-base", "--is-ancestor", head, _MASTER_REF)
     except (subprocess.TimeoutExpired, OSError) as exc:
         return VERDICT_LIVE, str(exc)
     if ancestor.returncode == 0:
@@ -258,7 +299,22 @@ def _grade_live_git(repo: Path, branch_name: str) -> tuple[str, str]:
         return VERDICT_LIVE, detail
 
     try:
-        cherry = _git(repo, "cherry", _MASTER_REF, branch_name)
+        merges = _git(repo, "rev-list", "--merges", "--count", f"{_MASTER_REF}..{head}")
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return VERDICT_LIVE, str(exc)
+    if merges.returncode == 0:
+        try:
+            merge_count = int((merges.stdout or "").strip() or "0")
+        except ValueError:
+            merge_count = 0
+        if merge_count > 0:
+            return (
+                VERDICT_LIVE,
+                "lane merge commits may carry content not represented in cherry",
+            )
+
+    try:
+        cherry = _git(repo, "cherry", _MASTER_REF, head)
     except (subprocess.TimeoutExpired, OSError) as exc:
         return VERDICT_LIVE, str(exc)
     if cherry.returncode not in (0, 1):
@@ -314,7 +370,7 @@ def _classify_present_ref(
             )
         sweep.fresh_live_grades += 1
         git_verdict, git_detail = _grade_live_git(repo, branch)
-        _LIVE_GRADE_MEMO[branch] = (tip_sha, master_sha, git_verdict)
+        _memoize_live_grade(branch, tip_sha, master_sha, git_verdict, git_detail)
 
     return DebtVerdict(
         branch=branch,
@@ -381,6 +437,7 @@ def _classify(*, repo: Path, debt: BranchDebt, sweep: _SweepState) -> DebtVerdic
 def _retire(*, verdict: DebtVerdict, note: str) -> DebtVerdict:
     """Discharge a reconciled debt as landed and announce it."""
     discharge_branch_debt(branch_name=verdict.branch, verb="landed", note=note)
+    remove_land_required_tag(thread_id=verdict.thread_id)
     emit_sdk_lane_b_discharged(
         branch=verdict.branch,
         verb="landed",

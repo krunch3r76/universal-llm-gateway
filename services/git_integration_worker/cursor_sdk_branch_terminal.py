@@ -92,7 +92,14 @@ def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
     if not branch:
         return None
     proc = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "--verify", f"{branch}^{{commit}}"],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--verify",
+            f"refs/heads/{branch}^{{commit}}",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -493,22 +500,29 @@ def _settle(
         )
 
     if (commits_ahead or 0) >= 1 and landed is not True:
-        ancestor = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(source_repo),
-                "merge-base",
-                "--is-ancestor",
-                branch_name,
-                "master",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60.0,
-            check=False,
-        )
-        if ancestor.returncode == 0:
+        tip_ref = head_sha if head_sha else f"refs/heads/{branch_name}"
+        ancestor_on_master = False
+        try:
+            ancestor = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source_repo),
+                    "merge-base",
+                    "--is-ancestor",
+                    tip_ref,
+                    "master",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60.0,
+                check=False,
+            )
+            ancestor_on_master = ancestor.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            ancestor_on_master = False
+        if ancestor_on_master:
+            remove_land_required_tag(thread_id=thread_id)
             return LaneBranchSettlement(outcome="nothing_owed", branch=branch_name)
         silent = silent_land_attempt(
             repo=source_repo,
