@@ -232,13 +232,29 @@ def _delete_orphan_branch(
         source_repo=repo,
         action_count=1,
     )
-    del_proc = subprocess.run(
-        ["git", "-C", str(repo), "branch", "-D", branch_name],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
+    try:
+        del_proc = subprocess.run(
+            ["git", "-C", str(repo), "branch", "-D", branch_name],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "orphan branch git delete timed out branch=%s timeout_s=%s",
+            branch_name,
+            _GIT_TIMEOUT_S,
+        )
+        emit_sdk_lane_b_reaped(
+            dispatch_id=dispatch_id or "",
+            branch_deleted=False,
+            outcome="failed",
+            branch=branch_name,
+            tip_sha=tip_sha,
+            reason=f"git_delete_timeout:{_GIT_TIMEOUT_S}s",
+        )
+        return "failed"
     if del_proc.returncode != 0:
         stderr = del_proc.stderr.strip()
         logger.warning(

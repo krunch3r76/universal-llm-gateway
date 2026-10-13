@@ -16,6 +16,9 @@ from services.git_integration_worker.cursor_sdk_branch_discharge import (
 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
     mark_lane_b_disposition,
 )
+from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
+    refuse_real_hub_reap_under_pytest,
+)
 from services.git_integration_worker.cursor_sdk_worktree import reap_orphan_worktrees
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
     _delete_orphan_branch,
@@ -24,9 +27,6 @@ from services.git_integration_worker.cursor_sdk_worktree_gc import (
 )
 from services.git_integration_worker.cursor_sdk_worktree_release import (
     _git_worktree_remove,
-)
-from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
-    refuse_real_hub_reap_under_pytest,
 )
 
 
@@ -595,3 +595,199 @@ def test_prune_terminal_emits_one_reaped_when_git_delete_fails(
     assert len(reaped) == 1
     assert reaped[0]["outcome"] == "failed"
     assert "prune delete blocked" in str(reaped[0].get("reason", ""))
+
+
+def _merged_sdk_branch(git_repo: Path, branch: str) -> None:
+    _git("checkout", "-b", branch, cwd=git_repo)
+    (git_repo / f"{branch.replace('/', '-')}.txt").write_text("tip\n", encoding="utf-8")
+    _git("add", ".", cwd=git_repo)
+    _git("commit", "-m", "tip", cwd=git_repo)
+    _git("checkout", "master", cwd=git_repo)
+    _git("merge", branch, cwd=git_repo)
+
+
+def test_gc_branch_delete_timeout_emits_one_failed_and_continues(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``TimeoutExpired`` on ``-D`` yields one ``reaped(failed)``; later rows still run."""
+    first = "cursor-sdk/lane-timeout-first"
+    second = "cursor-sdk/lane-timeout-second"
+    _merged_sdk_branch(git_repo, first)
+    _merged_sdk_branch(git_repo, second)
+    delete_attempts: list[list[str]] = []
+    real_run = subprocess.run
+
+    def _timeout_first_delete(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if isinstance(cmd, list) and "-D" in cmd:
+            delete_attempts.append(cmd)
+            if len(delete_attempts) == 1:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=60.0)
+        return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_gc.subprocess.run",
+        _timeout_first_delete,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        deleted = gc_merged_dispatch_branches(
+            source_repo=git_repo,
+            delete_candidates=[
+                (first, "ancestry_merged", None, None),
+                (second, "ancestry_merged", None, None),
+            ],
+        )
+    assert len(delete_attempts) == 2
+    reaped = [e for e in emitted if e.get("signal") == "sdk.lane_b.reaped"]
+    assert len(reaped) == 2
+    assert reaped[0]["outcome"] == "failed"
+    assert "git_delete_timeout" in str(reaped[0].get("reason", ""))
+    assert reaped[1]["outcome"] == "deleted"
+    assert deleted == 1
+    assert second not in subprocess.run(
+        ["git", "-C", str(git_repo), "branch", "--list", second],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_count_reap_worktree_actions_matches_row_snapshot(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pinned action counts stay aligned with one-per-sweep row classification."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        mint_dispatch_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+        _count_reap_worktree_actions,
+        _snapshot_reap_worktree_rows,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        list_registered_worktrees_with_status,
+    )
+    from services.git_integration_worker.models.cursor_api import (
+        CursorDispatchRequest,
+        CursorDispatchResponse,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    CursorDispatchLedger._instance = None
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "count-snapshot"
+    wt = mint_dispatch_worktree(
+        source_repo=git_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id=dispatch_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message="x",
+        worktree_isolated=True,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint="fp",
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id=dispatch_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+        lease_key=str(wt.resolve()),
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    rows = list_registered_worktrees_with_status()
+    active: set[str] = set()
+    held: set[str] = set()
+    row_kinds = _snapshot_reap_worktree_rows(
+        rows=rows,
+        active=active,
+        held=held,
+        source_repo=git_repo,
+    )
+    expected = sum(1 for kind in row_kinds if kind != "none")
+    assert (
+        _count_reap_worktree_actions(
+            rows=rows,
+            active=active,
+            held=held,
+            source_repo=git_repo,
+            row_kinds=row_kinds,
+        )
+        == expected
+    )
+
+
+def test_count_reap_worktree_actions_with_row_kinds_skips_resnapshot(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Passing ``row_kinds`` avoids a second classification pass for the count."""
+    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+        _count_reap_worktree_actions,
+    )
+
+    def _unexpected_snapshot(**_kwargs: object) -> list[str]:
+        raise AssertionError("_snapshot_reap_worktree_rows must not run")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_prune._snapshot_reap_worktree_rows",
+        _unexpected_snapshot,
+    )
+    kinds = ["none", "terminal_prune", "pinned_prune"]
+    assert (
+        _count_reap_worktree_actions(
+            rows=[],
+            active=set(),
+            held=set(),
+            source_repo=git_repo,
+            row_kinds=kinds,
+        )
+        == 2
+    )
+
+
+def test_reap_orphan_worktrees_snapshots_rows_once(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One sweep classifies registry rows once for count and processing."""
+    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+        _snapshot_reap_worktree_rows,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    snap_calls = 0
+    real_snapshot = _snapshot_reap_worktree_rows
+
+    def _counting_snapshot(**kwargs: object) -> list[str]:
+        nonlocal snap_calls
+        snap_calls += 1
+        return real_snapshot(**kwargs)  # type: ignore[misc]
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_prune._snapshot_reap_worktree_rows",
+        _counting_snapshot,
+    )
+    reap_orphan_worktrees(source_repo=git_repo, worktree_root=worktree_root)
+    assert snap_calls == 1
