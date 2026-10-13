@@ -17,6 +17,8 @@ _STATUS_PLACEHOLDERS = ",".join("?" for _ in _DRAINABLE_STATUSES)
 
 def _drain_orphan_consults_under_closed_roots(conn: sqlite3.Connection, *, reason: str) -> int:
     """Inline orphan drain (archived consult_drain; no package import)."""
+    from ..db import execute_with_retry
+
     rows = conn.execute(
         f"""
         SELECT cq.id, cq.root_id, cq.gid, cq.consult_role, cq.status
@@ -44,7 +46,8 @@ def _drain_orphan_consults_under_closed_roots(conn: sqlite3.Connection, *, reaso
             (root_id, *_DRAINABLE_STATUSES),
         ).fetchall()
         for active_row in active:
-            conn.execute(
+            execute_with_retry(
+                conn,
                 f"""
                 UPDATE consult_queue
                    SET status = 'cancelled',
