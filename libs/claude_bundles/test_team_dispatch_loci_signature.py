@@ -130,7 +130,6 @@ _TEACHING_WALKS = (
 _KNOWN_TEACHING = (
     "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md",
     "cursor-plugins/ulg-ecosystem/commands/conductor.md",
-    "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc",
 )
 
 

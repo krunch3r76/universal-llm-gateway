@@ -16,7 +16,7 @@ introducing a new query path into the tick loop.
 from __future__ import annotations
 
 # Wire token — also restated in
-# ``scripts/model_manager/ui/controller/charter_runner/gate_bypass_detect.py``,
+# ``archive/charter_runner/gate_bypass_detect.py``,
 # which is the consumer in a different service domain.
 IMPLEMENT_GATE_BYPASS_DEVIATION = "gate:implement_source_ref_unresolved"
 
