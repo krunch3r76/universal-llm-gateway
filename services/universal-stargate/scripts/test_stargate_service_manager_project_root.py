@@ -5,7 +5,9 @@ from __future__ import annotations
 import atexit
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,8 +25,59 @@ def _suppress_manager_atexit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(atexit, "register", lambda *_args, **_kwargs: None)
 
 
-def _fresh_manager() -> ssm.StargateServiceManager:
-    return ssm.StargateServiceManager("default")
+@dataclass
+class _PatchedManager:
+    manager: ssm.StargateServiceManager
+    terminate_process_tree: MagicMock
+    find_stargate_processes: MagicMock
+    find_processes_on_port: MagicMock
+
+
+def _fake_port_holder() -> MagicMock:
+    holder = MagicMock(name="port_holder_process")
+    holder.pid = 424242
+    return holder
+
+
+def _patched_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    find_stargate_return: list[Any] | None = None,
+    find_port_return: list[Any] | None = None,
+) -> _PatchedManager:
+    """Construct StargateServiceManager with lifecycle/process discovery fully stubbed."""
+    holder = _fake_port_holder()
+    find_stargate = MagicMock(
+        return_value=find_stargate_return if find_stargate_return is not None else [holder]
+    )
+    find_port = MagicMock(
+        return_value=find_port_return if find_port_return is not None else [holder]
+    )
+    terminate = MagicMock()
+
+    monkeypatch.setattr(
+        ssm.ProcessManager,
+        "find_stargate_processes",
+        find_stargate,
+    )
+    monkeypatch.setattr(
+        ssm.ProcessManager,
+        "find_processes_on_port",
+        find_port,
+    )
+    monkeypatch.setattr(
+        ssm.ProcessManager,
+        "terminate_process_tree",
+        terminate,
+    )
+
+    manager = ssm.StargateServiceManager("default")
+    return _PatchedManager(
+        manager=manager,
+        terminate_process_tree=terminate,
+        find_stargate_processes=find_stargate,
+        find_processes_on_port=find_port,
+    )
 
 
 def test_setup_environment_sets_project_root_when_unset(
@@ -32,8 +85,8 @@ def test_setup_environment_sets_project_root_when_unset(
 ) -> None:
     """Broken state: Stargate child without PROJECT_ROOT (no .env.local)."""
     monkeypatch.delenv("PROJECT_ROOT", raising=False)
-    manager = _fresh_manager()
-    manager._setup_environment()
+    patched = _patched_manager(monkeypatch)
+    patched.manager._setup_environment()
     assert os.environ["PROJECT_ROOT"] == ssm._PROJECT_ROOT
 
 
@@ -43,20 +96,39 @@ def test_setup_environment_preserves_explicit_project_root(
 ) -> None:
     explicit = str(tmp_path / "custom-projects-root")
     monkeypatch.setenv("PROJECT_ROOT", explicit)
-    manager = _fresh_manager()
-    manager._setup_environment()
+    patched = _patched_manager(monkeypatch)
+    patched.manager._setup_environment()
     assert os.environ["PROJECT_ROOT"] == explicit
 
 
 def test_cleanup_with_no_spawned_process_does_not_terminate_port_holder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exit cleanup must not signal whatever holds STARGATE_PORT (e.g. live proxy)."""
-    manager = _fresh_manager()
-    terminate = MagicMock()
-    monkeypatch.setattr(manager.process_manager, "terminate_process_tree", terminate)
+    """Exit cleanup must not signal port holders when this manager spawned nothing."""
+    patched = _patched_manager(monkeypatch)
+    assert patched.manager.stargate_process is None
 
-    # Port 9999 may be held by production Stargate during CI/local runs.
-    manager._cleanup()
+    patched.manager._cleanup()
 
-    terminate.assert_not_called()
+    patched.terminate_process_tree.assert_not_called()
+    patched.find_stargate_processes.assert_not_called()
+    patched.find_processes_on_port.assert_not_called()
+
+
+def test_cleanup_terminates_only_spawned_stargate_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When stargate_process is set and running, cleanup terminates exactly that process."""
+    patched = _patched_manager(monkeypatch)
+    spawned = MagicMock(name="spawned_stargate_process")
+    spawned.is_running.return_value = True
+    patched.manager.stargate_process = spawned
+
+    patched.manager._cleanup()
+
+    patched.terminate_process_tree.assert_called_once()
+    (proc_arg,), kwargs = patched.terminate_process_tree.call_args
+    assert proc_arg is spawned
+    assert kwargs.get("timeout") == patched.manager.config.shutdown_grace
+    patched.find_stargate_processes.assert_not_called()
+    patched.find_processes_on_port.assert_not_called()
