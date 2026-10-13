@@ -230,9 +230,16 @@ def _sweep() -> None:
     from .reconcile import reconcile_orphaned_dispatches
 
     reconcile_orphaned_dispatches()
+    from universal_logging import get_logger
+
     from .cdp_pointer_sweep import sweep_cdp_pointer_orphans
 
-    sweep_cdp_pointer_orphans()
+    try:
+        sweep_cdp_pointer_orphans()
+    except Exception:
+        get_logger(__name__).exception(
+            "cdp_pointer_sweep failed; continuing to quiet-with-wip"
+        )
     sweep_quiet_with_wip()
 
 

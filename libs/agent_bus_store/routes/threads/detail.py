@@ -72,6 +72,7 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         lane_role=row.get("lane_role"),
         cse_chat_url=row.get("cse_chat_url"),
         cse_registration_id=row.get("cse_registration_id"),
+        pointer_turn=row.get("pointer_turn"),
     )
 
 

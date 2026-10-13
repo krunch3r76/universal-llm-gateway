@@ -2,44 +2,32 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from universal_logging import get_logger
 
+from .cdp_pointer_body import (
+    CDP_POINTER_BODY_PREFIX,
+    format_cdp_generate_pointer_body,
+    parse_cdp_pointer_execution_id,
+)
 from .db.connection import connect, now, write_connect
-from .db.threads_atomic import _insert_dispatch_link_row, _maybe_mirror_dispatch_to_parent
+from .db.threads_atomic import _insert_dispatch_link_row
 
 logger = get_logger(__name__)
 
 CDP_POINTER_ORPHAN_GRACE_SECONDS = 300
-CDP_POINTER_BODY_PREFIX = "CDP generate admitted"
 CDP_POINTER_PIPELINE_ID = "cdp-generate"
 CDP_POINTER_SWEEP_BATCH_LIMIT = 50
+# Bound the candidate scan to recent turn ids so a full history walk cannot
+# starve the batch. Linked rows are excluded in SQL before LIMIT.
+CDP_POINTER_SWEEP_ID_WINDOW = 5000
 
-_EXECUTION_ID_RE = re.compile(
-    r"execution_id=([^)\s]+)\)",
-)
-
-
-def format_cdp_generate_pointer_body(*, model: str, execution_id: str) -> str:
-    """Canonical CDP generate pointer body (must stay in sync with stargate)."""
-    return (
-        f"{CDP_POINTER_BODY_PREFIX} (model={model}, execution_id={execution_id}). "
-        "Poll poll_hint (from_agent=web-anthropic). "
-        "Terminal only after harvest proof."
-    )
-
-
-def parse_cdp_pointer_execution_id(body: str | None) -> str | None:
-    """Extract execution_id from a CDP generate pointer body, or None."""
-    if not body or not body.startswith(CDP_POINTER_BODY_PREFIX):
-        return None
-    match = _EXECUTION_ID_RE.search(body)
-    if match is None:
-        return None
-    value = match.group(1).strip()
-    return value or None
+__all__ = [
+    "CDP_POINTER_BODY_PREFIX",
+    "format_cdp_generate_pointer_body",
+    "parse_cdp_pointer_execution_id",
+]
 
 
 def _failed_subject(execution_id: str) -> str:
@@ -147,9 +135,15 @@ def sweep_cdp_pointer_orphans(
             "SELECT thread, turn_number, body, created_at, from_agent "
             "FROM turns "
             "WHERE body LIKE ? AND created_at < ? "
+            "AND id > (SELECT COALESCE(MAX(id), 0) - ? FROM turns) "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM thread_dispatch_links l "
+            "  WHERE l.thread_id = turns.thread "
+            "  AND turns.body LIKE '%execution_id=' || l.execution_id || ')%'"
+            ") "
             "ORDER BY created_at ASC "
             "LIMIT ?",
-            (prefix, cutoff, batch_limit),
+            (prefix, cutoff, CDP_POINTER_SWEEP_ID_WINDOW, batch_limit),
         ).fetchall()
 
     stamped = 0

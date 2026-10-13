@@ -572,6 +572,7 @@ class ThreadDetail(BaseModel):
     cse_chat_url: str | None = None
     cse_registration_id: str | None = None
     resume_envelope: dict[str, Any] | None = None
+    pointer_turn: int | None = None
 
 
 class ThreadSummaryResponse(BaseModel):

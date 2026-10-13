@@ -2493,7 +2493,13 @@ async def test_supplied_thread_timeout_retry_single_link(
     async def _flaky_admit(**kwargs: Any) -> int:
         calls["n"] += 1
         if calls["n"] == 1:
-            raise httpx.TimeoutException("read timed out")
+            raise FrontierEndpointError(
+                request_id="req-timeout-retry",
+                field="thread",
+                reason="ReadTimeout: read timed out",
+                status_code=503,
+                code="agent_bus_unreachable",
+            ) from httpx.ReadTimeout("read timed out")
         return await handoff.admit_and_post_pointer_turn(**kwargs)
 
     monkeypatch.setattr(mod, "admit_and_post_pointer_turn", _flaky_admit)
@@ -2514,18 +2520,210 @@ async def test_supplied_thread_timeout_retry_single_link(
     )
     assert calls["n"] == 2
 
-    async with httpx.AsyncClient(
-        transport=_cdp_bus_env, base_url="http://test"
-    ) as client:
-        turns_resp = await client.get("/turns", params={"thread": thread_id})
-    payload = turns_resp.json()
-    turns = payload.get("turns", payload) if isinstance(payload, dict) else payload
-    pointer_turns = [
-        t
-        for t in turns
-        if isinstance(t, dict) and "CDP generate admitted" in (t.get("body") or "")
+
+@pytest.mark.asyncio
+async def test_supplied_thread_read_timeout_retries_one_link(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """First POST ReadTimeout is retried; one link and one execution_id remain."""
+    import httpx
+    from agent_bus_store.db import create_thread, get_thread_with_links
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult import handoff
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="read-timeout", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {"handoff_status": "ok", "poll_hint": {}},
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "run_cdp_worker", AsyncMock())
+
+    posts = {"n": 0}
+    inner = _cdp_bus_env
+
+    class _FlakyTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and "dispatch-admit-and-post" in str(
+                request.url
+            ):
+                posts["n"] += 1
+                if posts["n"] == 1:
+                    raise httpx.ReadTimeout("read timed out", request=request)
+            return await inner.handle_async_request(request)
+
+    def _client_factory(_url: str, *, timeout: float = 10.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=_FlakyTransport(), base_url="http://test", timeout=timeout
+        )
+
+    monkeypatch.setattr(handoff, "make_async_client", _client_factory)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    result = await mod.dispatch_cdp_generate(
+        request_id="req-read-timeout-retry",
+        body=body,
+        response=response,
+    )
+    assert posts["n"] == 2
+    execution_id = result["execution_id"]
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert len(detail["dispatch_links"]) == 1
+    assert detail["dispatch_links"][0]["execution_id"] == execution_id
+
+
+@pytest.mark.asyncio
+async def test_supplied_thread_after_turn_is_pointer_turn(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Prior turns: admit-and-post return is the pointer turn, not 0."""
+    import httpx
+    from agent_bus_store.db import create_thread, get_turns, insert_turn
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult import handoff
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="prior-turns", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    for n in range(1, 4):
+        insert_turn(
+            thread=thread_id,
+            from_agent="dispatch",
+            to_agent="web-anthropic",
+            subject=f"prior {n}",
+            body=f"prior body {n}",
+        )
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    captured: dict[str, int] = {}
+
+    def _capture_handoff(**kw: Any) -> dict[str, str]:
+        captured["after_turn"] = int(kw["after_turn"])
+        return {"handoff_status": "ok", "poll_hint": {}}
+
+    monkeypatch.setattr(mod, "build_handoff_result", _capture_handoff)
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "run_cdp_worker", AsyncMock())
+
+    inner = _cdp_bus_env
+
+    class _TurnsGetFails(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/turns":
+                return httpx.Response(500, json={"detail": "turns unavailable"})
+            return await inner.handle_async_request(request)
+
+    def _client_factory(_url: str, *, timeout: float = 10.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=_TurnsGetFails(), base_url="http://test", timeout=timeout
+        )
+
+    monkeypatch.setattr(handoff, "make_async_client", _client_factory)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-after-turn",
+        body=body,
+        response=response,
+    )
+    turns = get_turns(thread=thread_id)
+    pointer = [
+        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
     ]
-    assert len(pointer_turns) == 1
+    assert len(pointer) == 1
+    assert captured["after_turn"] == int(pointer[0]["turn_number"])
+    assert captured["after_turn"] > 1
+
+
+@pytest.mark.asyncio
+async def test_terminate_false_is_logged(
+    _cdp_bus_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """terminate_handoff_dispatch False is logged, not discarded."""
+    import logging
+
+    from agent_bus_store.db import create_thread
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="term-false", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(
+        mod,
+        "upsert_inflight_leg",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("inflight boom")),
+    )
+    monkeypatch.setattr(
+        mod, "terminate_handoff_dispatch", AsyncMock(return_value=False)
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(RuntimeError, match="inflight boom"):
+        await mod.dispatch_cdp_generate(
+            request_id="req-term-false",
+            body=body,
+            response=MagicMock(),
+        )
+    assert any(
+        "terminate_handoff_dispatch returned False" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio

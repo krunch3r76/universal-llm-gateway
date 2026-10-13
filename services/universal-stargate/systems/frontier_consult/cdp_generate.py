@@ -16,7 +16,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from agent_bus_store.cdp_pointer_sweep import format_cdp_generate_pointer_body
+from agent_bus_store.cdp_pointer_body import format_cdp_generate_pointer_body
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     CDP_SUBSTRATE,
@@ -657,7 +657,9 @@ async def dispatch_cdp_generate(
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
             )
-        except httpx.TimeoutException:
+        except FrontierEndpointError as exc:
+            if not isinstance(exc.__cause__, httpx.TimeoutException):
+                raise
             after_turn = await admit_and_post_pointer_turn(
                 request_id=request_id,
                 thread_id=str(thread_id),
@@ -806,12 +808,19 @@ async def dispatch_cdp_generate(
             exc,
             exc_info=exc,
         )
-        await terminate_handoff_dispatch(
+        terminated = await terminate_handoff_dispatch(
             request_id=request_id,
             thread_id=str(thread_id),
             execution_id=execution_id,
             terminal_status="failed",
         )
+        if not terminated:
+            get_logger(__name__).error(
+                "terminate_handoff_dispatch returned False: "
+                "execution_id=%s thread_id=%s",
+                execution_id,
+                thread_id,
+            )
         raise
 
     record = job_record(contract) if contract else None

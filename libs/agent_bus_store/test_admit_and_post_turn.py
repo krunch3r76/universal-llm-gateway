@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -134,12 +133,17 @@ def test_admit_and_post_turn_sqlite_busy_no_partial_commit(
         execution_id="exec-busy",
     )
 
-    def _raise_busy(*args, **kwargs):
+    real_insert = __import__(
+        "agent_bus_store.db.threads_atomic", fromlist=["_insert_dispatch_link_row"]
+    )._insert_dispatch_link_row
+
+    def _raise_after_turn(*args, **kwargs):
+        real_insert(*args, **kwargs)
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(
-        "agent_bus_store.db.threads_atomic.write_connect",
-        _raise_busy,
+        "agent_bus_store.db.threads_atomic._insert_dispatch_link_row",
+        _raise_after_turn,
     )
     with pytest.raises(sqlite3.OperationalError):
         admit_and_post_turn(

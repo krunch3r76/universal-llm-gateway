@@ -158,3 +158,28 @@ def test_two_orphans_same_thread_two_links(bus_db) -> None:
     assert detail is not None
     exec_ids = {link["execution_id"] for link in detail["dispatch_links"]}
     assert exec_ids == {"exec-dual-a", "exec-dual-b"}
+
+
+def test_linked_batch_does_not_starve_newer_orphan(bus_db) -> None:
+    """≥50 older linked pointers must not hide a later orphan (LIMIT after filter)."""
+    created = _old_timestamp(seconds_past_grace=120)
+    newer = _old_timestamp(seconds_past_grace=10)
+    for i in range(60):
+        row = create_thread(thread_id=None, slug=f"linked-{i}", lifecycle_state="active")
+        assert row is not None
+        execution_id = f"exec-linked-batch-{i}"
+        _insert_orphan_pointer(row["id"], execution_id, created_at=created)
+        admit_dispatch(
+            thread_id=row["id"],
+            execution_id=execution_id,
+            pipeline_id="cdp-generate",
+        )
+    orphan = create_thread(thread_id=None, slug="starved-orphan", lifecycle_state=None)
+    assert orphan is not None
+    orphan_id = orphan["id"]
+    _insert_orphan_pointer(orphan_id, "exec-starved-orphan", created_at=newer)
+
+    assert sweep_cdp_pointer_orphans() == 1
+    detail = get_thread_with_links(orphan_id)
+    assert detail is not None
+    assert detail["dispatch_links"][0]["terminal_status"] == "failed"

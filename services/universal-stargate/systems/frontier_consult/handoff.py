@@ -1060,6 +1060,7 @@ async def admit_and_post_pointer_turn(
                 "admit_and_post_pointer_turn requires agent-bus access."
             ),
             status_code=503,
+            code="agent_bus_unreachable",
         )
     payload: dict[str, Any] = {
         "execution_id": execution_id,
@@ -1080,6 +1081,21 @@ async def admit_and_post_pointer_turn(
                 headers=headers,
                 json=payload,
             )
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "handoff admit_and_post_pointer_turn timeout: "
+            "request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"{type(exc).__name__}: {exc}",
+            status_code=503,
+            code="agent_bus_unreachable",
+        ) from exc
     except httpx.HTTPError as exc:
         logger.error(
             "handoff admit_and_post_pointer_turn transport error: "
@@ -1113,29 +1129,12 @@ async def admit_and_post_pointer_turn(
             status_code=502,
             code="agent_bus_error",
         )
-    from agent_bus_store.cdp_pointer_sweep import parse_cdp_pointer_execution_id
-
     try:
-        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            turns_resp = await client.get(
-                "/turns",
-                params={"thread": thread_id, "limit": 500},
-                headers=headers,
-            )
-        if turns_resp.status_code == 200:
-            turns_payload = turns_resp.json()
-            turns = (
-                turns_payload
-                if isinstance(turns_payload, list)
-                else turns_payload.get("turns") or []
-            )
-            for turn in reversed(turns):
-                if not isinstance(turn, dict):
-                    continue
-                body_text = turn.get("body")
-                if parse_cdp_pointer_execution_id(body_text) == execution_id:
-                    return int(turn["turn_number"])
-    except (httpx.HTTPError, TypeError, ValueError, KeyError):
+        body = resp.json()
+        pointer_turn = body.get("pointer_turn")
+        if pointer_turn is not None:
+            return int(pointer_turn)
+    except (TypeError, ValueError):
         pass
     return 0
 
