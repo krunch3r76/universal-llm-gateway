@@ -125,8 +125,12 @@ async def _ensure_cache(base_url: str) -> bool:
             # callers do not each wait out another /scopes timeout.
             return _stale_catalog_usable(now2)
         _cache_last_attempt_ts = now2
-        refreshed = await _refresh_cache(base_url)
-        _cache_last_attempt_ts = time.monotonic()
+        try:
+            refreshed = await _refresh_cache(base_url)
+        finally:
+            # Backoff must cover failed, raised, or cancelled refresh attempts so
+            # concurrent callers coalesce instead of each hammering /scopes.
+            _cache_last_attempt_ts = time.monotonic()
         if refreshed:
             return True
         if _stale_catalog_usable(time.monotonic()):
