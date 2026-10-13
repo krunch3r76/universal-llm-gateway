@@ -24,9 +24,9 @@ _cache_ttl_seconds = 60.0
 # catalog a few minutes old still does that. Past this window, callers get
 # None and must surface a transport failure rather than an empty corpus.
 _stale_serve_seconds = 300.0
-# Parallel searches share one refresh. After a failed attempt, further
-# callers inside this backoff reuse the stale catalog instead of each
-# waiting out another /scopes timeout.
+# Parallel searches share one refresh. After a refresh attempt completes,
+# further callers inside this backoff window skip another /scopes round trip.
+# With a warm stale catalog they reuse it; a cold miss returns None instead.
 _refresh_backoff_seconds = 5.0
 _cache_lock = asyncio.Lock()
 _cache_scopes: set[str] | None = None
@@ -100,10 +100,7 @@ async def _refresh_cache(base_url: str) -> bool:
 
 def _stale_catalog_usable(now: float) -> bool:
     """True when a previous catalog is still inside the staleness window."""
-    return (
-        _cache_scopes is not None
-        and (now - _cache_ts) < _stale_serve_seconds
-    )
+    return _cache_scopes is not None and (now - _cache_ts) < _stale_serve_seconds
 
 
 async def _ensure_cache(base_url: str) -> bool:
@@ -128,7 +125,9 @@ async def _ensure_cache(base_url: str) -> bool:
             # callers do not each wait out another /scopes timeout.
             return _stale_catalog_usable(now2)
         _cache_last_attempt_ts = now2
-        if await _refresh_cache(base_url):
+        refreshed = await _refresh_cache(base_url)
+        _cache_last_attempt_ts = time.monotonic()
+        if refreshed:
             return True
         if _stale_catalog_usable(time.monotonic()):
             logger.warning(

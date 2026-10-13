@@ -19,6 +19,7 @@ _SPEC.loader.exec_module(scope_catalog)
 
 @pytest.fixture(autouse=True)
 def _reset_catalog() -> None:
+    scope_catalog._cache_lock = asyncio.Lock()
     scope_catalog._cache_scopes = None
     scope_catalog._cache_prefixes = None
     scope_catalog._cache_ts = 0.0
@@ -37,6 +38,29 @@ async def test_cold_failure_is_one_refresh(monkeypatch: pytest.MonkeyPatch) -> N
         return False
 
     monkeypatch.setattr(scope_catalog, "_refresh_cache", _fail)
+    results = await asyncio.gather(
+        *[scope_catalog.fetch_valid_scopes("http://rag") for _ in range(5)]
+    )
+    assert results == [None, None, None, None, None]
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_refresh_coalesces_while_backoff_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queued callers must not start another refresh when the first exceeds backoff."""
+    backoff = 0.08
+    monkeypatch.setattr(scope_catalog, "_refresh_backoff_seconds", backoff)
+    calls = 0
+
+    async def _slow_fail(_base_url: str) -> bool:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(backoff + 0.02)
+        return False
+
+    monkeypatch.setattr(scope_catalog, "_refresh_cache", _slow_fail)
     results = await asyncio.gather(
         *[scope_catalog.fetch_valid_scopes("http://rag") for _ in range(5)]
     )
