@@ -572,6 +572,7 @@ class ThreadDetail(BaseModel):
     cse_chat_url: str | None = None
     cse_registration_id: str | None = None
     resume_envelope: dict[str, Any] | None = None
+    pointer_turn: int | None = None
 
 
 class ThreadSummaryResponse(BaseModel):
@@ -733,6 +734,19 @@ class DispatchTerminate(BaseModel):
 
 class DispatchClaimAndPost(BaseModel):
     """Payload for POST /threads/{id}/dispatch-claim-and-post."""
+
+    execution_id: str
+    pipeline_id: str
+    caller_agent: str | None = None
+    parent_thread_id: str | None = None
+    from_agent: str
+    to_agent: str
+    subject: str
+    body: str
+
+
+class DispatchAdmitAndPost(BaseModel):
+    """Payload for POST /threads/{id}/dispatch-admit-and-post."""
 
     execution_id: str
     pipeline_id: str

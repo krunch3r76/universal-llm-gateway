@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "4b15348c76057c68932e78586c8b8a1a359eb8a46526c56ad1ad98b18eb3437a"
+OPENAPI_SHA256 = "7122d12b492ee16588d5113e3dc710845b83d08c3200e0ad15af9903345007ff"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -137,7 +137,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "063921d7746908472e66091ad87f4bc8001df3606fe684ebb869c17779f2a02f",
+    "@components": "94d3e005d1959e8a9095781da0d637a303f7d3af33f36030641b6ba6475ed9ba",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",
@@ -145,7 +145,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /resume-fences/{fence_id}": "faa8db7e13d971df64761d456de2b49efdfca13983139ff6d363a38e63671603",
     "GET /threads/{thread_id}/cse-current": "2f461416fdaf2260253067b60ddd42037cb95af90e91cea3726b23bff64c31d2",
     "GET /threads/{thread_id}/export": "a784f1abaed3c1f6839a38b2da63cff1f70cd335d3a9098fa3f2ebf10d8eb063",
-    "GET /threads/{thread_id}/resume-fence": "dd8f52258331970fccd8aa8fe2dfc854fcf2b31024f1391fe30c1d8a6e41652e",
+    "GET /threads/{thread_id}/resume-fence": "9111adec1e5af49c6a2778f36ca005164511929b63dbe16cf93ea36e0344165c",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",
     "PATCH /turns/{turn_id}/read": "d0c7fd2d62a6d60b88d62147bbe83cb63699716a9af07258f124e4a03794ad83",
     "PATCH /turns/{turn_id}/status": "b072109a07a08292a0b2047561d1162fd5be53eea6dd69e123d44f2ddf352d3f",
@@ -156,6 +156,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "POST /resume-fences/{fence_id}/release": "b463ab4100730d82c76dfa638508dbd703991c128faec0266fbbba884e323204",
     "POST /threads/{thread_id}/cse-associate": "53b29011b1b08907286ffff3e9a3f7907ba3cd643bd1ac9f032521193ce01d5a",
     "POST /threads/{thread_id}/dispatch-admit": "27aad9c96e97de4adbe40143028f8c440509ac92d8aff28b7f21e75c86c2ed82",
+    "POST /threads/{thread_id}/dispatch-admit-and-post": "6ee71424874e9320e084e1b913d528615e4f1848259f10c3bb7aad68036761a9",
     "POST /threads/{thread_id}/dispatch-claim-and-post": "4451b725f714794ab82d68c1654f4b46441122bd4ad9f6624853fa0e0b04002e",
     "POST /threads/{thread_id}/dispatch-terminate": "7d0134029e2ebb637b6f3c1e7fd4c9ff991a366149b806cbb927e17f6f324ff4",
     "POST /threads/{thread_id}/rename": "b324915b8c6a73f4ce1d6baec4d71b6e0ec21e65a7e5fef3f217ad508540353d",

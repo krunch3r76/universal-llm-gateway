@@ -10,7 +10,7 @@ from agent_bus_store.server import create_app
 
 # Bump deliberately when a route gains or loses an x-mcp stamp; the count is the
 # guard against a stamp disappearing silently.
-SERVED_OP_COUNT = 24
+SERVED_OP_COUNT = 25
 
 
 @pytest.mark.offline
@@ -33,6 +33,9 @@ def test_extract_typed_routes_returns_every_stamped_op() -> None:
     assert "substrate_entity_mint" not in routes
     assert "add_tags" not in routes
     assert "remove_tags" not in routes
+    admit_post = schema["paths"].get("/threads/{thread_id}/dispatch-admit-and-post", {})
+    post_spec = admit_post.get("post") if isinstance(admit_post, dict) else None
+    assert not (isinstance(post_spec, dict) and "x-mcp" in post_spec)
 
 
 @pytest.mark.offline

@@ -14,8 +14,10 @@ from ...db import (
     normalize_thread_id,
     terminate_dispatch,
 )
+from ...db.threads_atomic import admit_and_post_turn
 from ...turns_models import (
     DispatchAdmit,
+    DispatchAdmitAndPost,
     DispatchClaimAndPost,
     DispatchLinkByExecution,
     DispatchTerminate,
@@ -111,6 +113,35 @@ async def dispatch_claim_and_post_route(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "pending_shell_contention", "message": str(exc)},
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return _thread_detail(row)
+
+
+@router.post(
+    "/threads/{thread_id}/dispatch-admit-and-post",
+    response_model=ThreadDetail,
+)
+async def dispatch_admit_and_post_route(
+    thread_id: str, body: DispatchAdmitAndPost
+) -> ThreadDetail:
+    """Atomically register dispatch link + pointer turn (no pending-shell CAS)."""
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        row = admit_and_post_turn(
+            thread_id=thread_id,
+            execution_id=body.execution_id,
+            pipeline_id=body.pipeline_id,
+            caller_agent=body.caller_agent,
+            parent_thread_id=body.parent_thread_id,
+            from_agent=body.from_agent,
+            to_agent=body.to_agent,
+            subject=body.subject,
+            body=body.body,
         )
     except ValueError:
         raise HTTPException(
