@@ -4,6 +4,7 @@
 // On load, align the bridge process cwd to CURSOR_SDK_SHELL_FALLBACK_CWD when
 // that path is an existing directory, then drop the require and the fallback
 // cwd from process.env so children do not inherit the wrapper.
+// Swallows only unhandled rejections whose reason is ConnectError with code 14.
 
 const childProcess = require('child_process');
 const fs = require('fs');
@@ -94,15 +95,37 @@ function isBash(command) {
   return typeof command === 'string' && (command === 'bash' || command.endsWith('/bash'));
 }
 
-process.on('uncaughtExceptionMonitor', (err, origin) => {
+function bridgeUncaughtMonitorLine(originLabel, err) {
   const code = err && err.code != null ? err.code : '';
   const syscall = err && err.syscall != null ? err.syscall : '';
   const errPath = err && err.path != null ? err.path : '';
-  const originLabel = origin != null ? origin : '';
   process.stderr.write(`bridge_uncaught ${originLabel} ${code} ${syscall} ${errPath}\n`);
+}
+
+process.on('uncaughtExceptionMonitor', (err, origin) => {
+  const originLabel = origin != null ? origin : '';
+  bridgeUncaughtMonitorLine(originLabel, err);
   if (err && err.stack) {
     process.stderr.write(`${err.stack}\n`);
   }
+});
+
+process.on('unhandledRejection', (reason) => {
+  if (reason && reason.name === 'ConnectError' && Number(reason.code) === 14) {
+    process.stderr.write('bridge_uncaught unhandledRejection 14   survived\n');
+    if (reason.stack) {
+      process.stderr.write(`${reason.stack}\n`);
+    }
+    return;
+  }
+  bridgeUncaughtMonitorLine('unhandledRejection', reason);
+  if (reason != null) {
+    process.stderr.write(`${String(reason)}\n`);
+  }
+  if (reason && reason.stack) {
+    process.stderr.write(`${reason.stack}\n`);
+  }
+  process.exit(1);
 });
 
 const originalSpawn = childProcess.spawn;

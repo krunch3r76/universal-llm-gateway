@@ -996,6 +996,85 @@ def test_shell_cwd_preload_logs_unusable_for_eloop(tmp_path: Path) -> None:
     assert f"shell_cwd_reset {loop} {lane}" in proc.stderr
 
 
+def test_preload_unhandled_rejection_connect_error_14_survives(
+    tmp_path: Path,
+) -> None:
+    """AC1: ConnectError code 14 is swallowed; process stays alive until exit 0.
+
+    Breaks when code 14 still exits non-zero, when the liveness marker is absent,
+    or when stderr omits bridge_uncaught unhandledRejection 14   survived.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "connect_error_14.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "class ConnectError extends Error {",
+                "  constructor(message) {",
+                "    super(message);",
+                "    this.name = 'ConnectError';",
+                "    this.code = 14;",
+                "  }",
+                "}",
+                "Promise.reject(new ConnectError('skills sync'));",
+                "setImmediate(() => {",
+                "  console.log('connect_error_14_liveness');",
+                "  process.exit(0);",
+                "});",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe)],
+        _armed_preload_env(lane, align=False),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "connect_error_14_liveness" in proc.stdout
+    assert "bridge_uncaught unhandledRejection 14   survived" in proc.stderr
+
+
+def test_preload_unhandled_rejection_typeerror_exits_nonzero(
+    tmp_path: Path,
+) -> None:
+    """Companion: non-ConnectError rejections stay fatal with TypeError on stderr.
+
+    Breaks when TypeError is swallowed, when survived appears, or exit is zero.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "typeerror_rejection.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "Promise.reject(new TypeError('boom'));",
+                "setImmediate(() => process.exit(0));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe)],
+        _armed_preload_env(lane, align=False),
+        tmp_path,
+    )
+    assert proc.returncode != 0, proc.stdout
+    assert "survived" not in proc.stderr
+    assert "TypeError:" in proc.stderr
+
+
 def test_preload_uncaught_exception_monitor_writes_line_and_exits_nonzero(
     tmp_path: Path,
 ) -> None:
