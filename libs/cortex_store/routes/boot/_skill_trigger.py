@@ -19,6 +19,39 @@ _WORKSPACES_ROOT = Path(
     os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")
 ).resolve()
 
+_ULG_REPO_DIRNAME = "universal-llm-gateway"
+
+
+def _ulg_checkout_roots() -> tuple[Path, ...]:
+    """ULG repo roots to probe — hub layout, arc worktree parent, or pytest cwd."""
+    from claude_bundles.catalog import _REPO_ROOT as checkout_root
+
+    candidates: list[Path] = []
+    ws = _WORKSPACES_ROOT
+    if ws.name == _ULG_REPO_DIRNAME:
+        candidates.append(ws)
+    nested = ws / _ULG_REPO_DIRNAME
+    if nested.is_dir():
+        candidates.append(nested)
+    candidates.append(checkout_root)
+
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+    for root in candidates:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered.append(resolved)
+
+    with_skills = [r for r in ordered if (r / "config" / "skills.yaml").is_file()]
+    without = [r for r in ordered if r not in with_skills]
+    return tuple(with_skills + without)
+
+
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger:\*\*\s*(.+)$", re.MULTILINE)
 
@@ -62,6 +95,13 @@ def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
             candidate = (_WORKSPACES_ROOT / rest).resolve()
             if candidate.is_file():
                 return candidate
+            repo_prefix = f"{_ULG_REPO_DIRNAME}/"
+            if rest.startswith(repo_prefix):
+                tail = rest[len(repo_prefix) :]
+                for repo_root in _ulg_checkout_roots():
+                    alt = (repo_root / tail).resolve()
+                    if alt.is_file():
+                        return alt
         elif "://" not in source_uri:
             candidate = (
                 Path(source_uri)
@@ -73,11 +113,10 @@ def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
             if not Path(source_uri).is_absolute() and source_uri.startswith(
                 "docs/agent-guides/"
             ):
-                ws_candidate = (
-                    _WORKSPACES_ROOT / "universal-llm-gateway" / source_uri
-                ).resolve()
-                if ws_candidate.is_file():
-                    return ws_candidate
+                for repo_root in _ulg_checkout_roots():
+                    ws_candidate = (repo_root / source_uri).resolve()
+                    if ws_candidate.is_file():
+                        return ws_candidate
         else:
             raw = source_uri.removeprefix("cortex://")
             candidate = (
@@ -93,11 +132,14 @@ def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
     try:
         from claude_bundles.catalog import load_skill_catalog
 
-        repo_root = _WORKSPACES_ROOT / "universal-llm-gateway"
-        catalog = load_skill_catalog(repo_root=repo_root)
-        plugin_path, _ = catalog.resolve_sot(slug, repo_root)
-        if plugin_path.is_file():
-            return plugin_path
+        for repo_root in _ulg_checkout_roots():
+            try:
+                catalog = load_skill_catalog(repo_root=repo_root)
+                plugin_path, _ = catalog.resolve_sot(slug, repo_root)
+            except (FileNotFoundError, KeyError, ValueError):
+                continue
+            if plugin_path.is_file():
+                return plugin_path
     except (FileNotFoundError, KeyError, ValueError):
         pass
     return None
