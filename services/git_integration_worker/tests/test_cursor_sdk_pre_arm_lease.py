@@ -9,11 +9,14 @@ deferred drains timed out on it. See
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     _connect,
@@ -36,6 +39,38 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     CursorDispatchLedger._instance = None
     yield
     CursorDispatchLedger._instance = None
+
+
+@pytest.fixture
+def _hermetic_worker_cfg(tmp_path: Path) -> WorkerConfig:
+    repo = tmp_path / "source"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "master"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True)
+    wt = tmp_path / "worktrees"
+    wt.mkdir()
+    return WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=repo,
+        worktree_root=wt,
+        dispatch_workspace=tmp_path / "dispatch_ws",
+        green_gate_cmd=["true"],
+    )
 
 
 def _req(dispatch_id: str) -> CursorDispatchRequest:
@@ -201,6 +236,7 @@ def _controller() -> MagicMock:
 @pytest.mark.asyncio
 async def test_reconcile_reap_only_releases_without_promoting(
     monkeypatch: pytest.MonkeyPatch,
+    _hermetic_worker_cfg: WorkerConfig,
 ) -> None:
     """Drain path: clear the wedged holder, do not start its successor."""
     from services.git_integration_worker.routes import cursor_sdk as route
@@ -219,7 +255,9 @@ async def test_reconcile_reap_only_releases_without_promoting(
     monkeypatch.setattr(route, "_promote_queued_for_lease", _fake_promote)
     monkeypatch.setattr(route, "_SDK_ARM_TIMEOUT_S", ARMING_S)
 
-    await route.reconcile_stale_leases(_controller(), reap_only=True)
+    await route.reconcile_stale_leases(
+        _controller(), reap_only=True, worker_cfg=_hermetic_worker_cfg
+    )
 
     assert promoted == []
     with _connect() as conn:
@@ -233,6 +271,7 @@ async def test_reconcile_reap_only_releases_without_promoting(
 @pytest.mark.asyncio
 async def test_reconcile_promotes_when_not_draining(
     monkeypatch: pytest.MonkeyPatch,
+    _hermetic_worker_cfg: WorkerConfig,
 ) -> None:
     """Steady state keeps the promote half of the sweep."""
     from services.git_integration_worker.routes import cursor_sdk as route
@@ -251,7 +290,7 @@ async def test_reconcile_promotes_when_not_draining(
     monkeypatch.setattr(route, "_promote_queued_for_lease", _fake_promote)
     monkeypatch.setattr(route, "_SDK_ARM_TIMEOUT_S", ARMING_S)
 
-    await route.reconcile_stale_leases(_controller())
+    await route.reconcile_stale_leases(_controller(), worker_cfg=_hermetic_worker_cfg)
 
     assert promoted == [REPO]
 

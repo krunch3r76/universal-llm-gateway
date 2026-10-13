@@ -20,6 +20,10 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     branch_state,
     is_worktree_dirty,
 )
+from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
+    log_reap_pass,
+    refuse_real_hub_reap_under_pytest,
+)
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
     _delete_orphan_branch,
     gc_merged_dispatch_branches,
@@ -286,12 +290,53 @@ def _git_worktree_prune(*, source_repo: Path) -> bool:
     return True
 
 
+def _count_reap_worktree_actions(
+    *,
+    rows: list[sqlite3.Row],
+    active: set[str],
+    held: set[str],
+    source_repo: Path,
+) -> int:
+    count = 0
+    for row in rows:
+        wt_path = str(Path(row["worktree_path"]).resolve())
+        status = row["status"]
+        if wt_path in held or wt_path in active:
+            continue
+        if not is_reapable_dispatch_status(status):
+            continue
+        thread_id = str(row["thread_id"] or "")
+        pin = (
+            active_pin(source_repo=source_repo, thread_id=thread_id)
+            if thread_id
+            else None
+        )
+        if pin is not None:
+            count += 1
+            continue
+        wt = Path(row["worktree_path"])
+        if wt.is_dir() and is_worktree_dirty(wt):
+            continue
+        state = branch_state(
+            source_repo.resolve(),
+            branch_name=row["branch_name"],
+            branch_point=row["branch_point"],
+        )
+        if state.safe_to_delete:
+            count += 1
+    return count
+
+
 def reap_orphan_worktrees(
     *,
     source_repo: Path,
     worktree_root: Path,
 ) -> ReapSweepResult:
     """Salvage, drop, and GC orphan Lane-B worktrees (S6 reaper sweep)."""
+    refuse_real_hub_reap_under_pytest(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
     reaped = 0
     salvaged = 0
     branches_retained = 0
@@ -300,6 +345,22 @@ def reap_orphan_worktrees(
     held = live_bridge_worktree_paths(worktree_root=worktree_root)
     vanished = sweep_vanished_pinned_worktrees(source_repo=source_repo)
     rows = list_registered_worktrees_with_status()
+    worktree_actions = _count_reap_worktree_actions(
+        rows=rows,
+        active=active,
+        held=held,
+        source_repo=source_repo,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_gc import (
+        _gc_delete_candidates,
+    )
+
+    branch_actions = len(_gc_delete_candidates(source_repo=source_repo))
+    log_reap_pass(
+        pass_name="reap_orphan_worktrees",
+        source_repo=source_repo,
+        action_count=worktree_actions + branch_actions,
+    )
     for row in rows:
         wt_path = str(Path(row["worktree_path"]).resolve())
         status = row["status"]

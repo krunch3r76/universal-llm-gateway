@@ -3960,6 +3960,15 @@ async def test_failure_paths_emit_one_terminal_before_lease(
         )
         ledger.mark_running(dispatch_id=dispatch_id)
         controller = _make_controller()
+        from services.git_integration_worker.cursor_sdk_worktree_prune import (
+            ReapSweepResult,
+        )
+
+        monkeypatch.setattr(
+            route_mod,
+            "reap_orphan_worktrees",
+            lambda **_k: ReapSweepResult(),
+        )
         await route_mod.reconcile_stale_leases(controller)
     elif scenario == "nest_park_transfer_fail":
         ledger = CursorDispatchLedger.instance()
