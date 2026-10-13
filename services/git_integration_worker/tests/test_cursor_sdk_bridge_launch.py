@@ -369,6 +369,7 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
     )
     assert rewritten.returncode == 0, rewritten.stderr
     assert f"shell_cwd_missing {missing}" in rewritten.stderr
+    assert f"shell_cwd_reset {missing} {fallback}" in rewritten.stderr
     assert rewritten.stdout.strip() == str(fallback)
 
     inherited = subprocess.run(
@@ -382,6 +383,61 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
     assert inherited.returncode == 0, inherited.stderr
     assert str(preload) not in inherited.stdout
     assert str(fallback) not in inherited.stdout
+
+
+def test_shell_cwd_preload_survives_removed_cwd_between_spawns(
+    tmp_path: Path,
+) -> None:
+    """Regression: scratch cwd removed after a successful bash spawn must not kill the bridge."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    probe = tmp_path / "two_spawn.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const fs = require('fs');",
+                "const { spawn } = require('child_process');",
+                "const scratch = process.argv[2];",
+                "function bashPwd(cwd) {",
+                "  return new Promise((resolve, reject) => {",
+                "    const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd });",
+                "    let out = '';",
+                "    child.stdout.on('data', (buf) => { out += buf; });",
+                "    child.on('error', reject);",
+                "    child.on('close', (code) => resolve({ code, out }));",
+                "  });",
+                "}",
+                "(async () => {",
+                "  const first = await bashPwd(scratch);",
+                "  if (first.code !== 0) process.exit(first.code == null ? 1 : first.code);",
+                "  fs.rmSync(scratch, { recursive: true, force: true });",
+                "  const second = await bashPwd(scratch);",
+                "  if (second.code !== 0) process.exit(second.code == null ? 1 : second.code);",
+                "  process.stdout.write(second.out);",
+                "})().catch((err) => {",
+                "  process.stderr.write(String(err && err.code || err) + '\\n');",
+                "  process.exit(1);",
+                "});",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe), str(scratch)],
+        _armed_preload_env(lane, align=True),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+    assert f"shell_cwd_missing {scratch}" in proc.stderr
+    assert f"shell_cwd_reset {scratch} {lane}" in proc.stderr
 
 
 def test_shell_cwd_preload_keeps_dispatch_id_in_bash_child(tmp_path: Path) -> None:

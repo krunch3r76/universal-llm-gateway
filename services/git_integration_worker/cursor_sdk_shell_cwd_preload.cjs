@@ -71,7 +71,20 @@ if (alignShellCwd) {
     process.stderr.write(`shell_cwd_fallback_invalid ${fallbackCwd}\n`);
   }
 }
+// Bridge spawn cwd: lane fallback when valid, else whatever cwd the bridge loaded with.
+const bridgeSpawnCwd =
+  fallbackCwd && isDir(fallbackCwd) ? fallbackCwd : process.cwd();
 delete process.env.CURSOR_SDK_SHELL_FALLBACK_CWD;
+
+function bashSpawnCwdReset(_requestedCwd) {
+  if (fallbackCwd && isDir(fallbackCwd)) {
+    return fallbackCwd;
+  }
+  if (isDir(bridgeSpawnCwd)) {
+    return bridgeSpawnCwd;
+  }
+  return '';
+}
 
 function isBash(command) {
   return typeof command === 'string' && (command === 'bash' || command.endsWith('/bash'));
@@ -89,9 +102,11 @@ function wrappedSpawn(command, args, options) {
   const cwd = opts && typeof opts.cwd === 'string' ? opts.cwd : '';
   if (isBash(command) && typeof (opts && opts.cwd) === 'string' && cwd && !isDir(cwd)) {
     process.stderr.write(`shell_cwd_missing ${cwd}\n`);
-    if (fallbackCwd && isDir(fallbackCwd)) {
+    const resetTo = bashSpawnCwdReset(cwd);
+    if (resetTo) {
+      process.stderr.write(`shell_cwd_reset ${cwd} ${resetTo}\n`);
       const copied = Object.assign({}, opts);
-      copied.cwd = fallbackCwd;
+      copied.cwd = resetTo;
       if (argv === undefined) {
         return originalSpawn.call(this, command, copied);
       }
@@ -99,9 +114,9 @@ function wrappedSpawn(command, args, options) {
     }
   }
   const cwdUnset = opts == null || opts.cwd == null || opts.cwd === '';
-  if (alignShellCwd && isBash(command) && cwdUnset && fallbackCwd && isDir(fallbackCwd)) {
-    const copied = Object.assign({}, opts);
-    copied.cwd = fallbackCwd;
+  if (alignShellCwd && isBash(command) && cwdUnset && isDir(bridgeSpawnCwd)) {
+    const copied = Object.assign({}, opts || {});
+    copied.cwd = bridgeSpawnCwd;
     if (argv === undefined) {
       return originalSpawn.call(this, command, copied);
     }
