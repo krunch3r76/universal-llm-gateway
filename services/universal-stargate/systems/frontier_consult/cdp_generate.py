@@ -550,6 +550,7 @@ async def dispatch_cdp_generate(
             prompt_text=prompt if isinstance(prompt, str) else None,
             sidecar_ref=sidecar_ref if isinstance(sidecar_ref, str) else None,
             packet_path=packet_path if isinstance(packet_path, str) else None,
+            dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )
         staged = _stage_inputs(
             execution_id=execution_id,

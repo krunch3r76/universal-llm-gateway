@@ -577,6 +577,52 @@ def test_stage_lane_no_association_falls_back_to_hub_missing(
     assert exc.value.code == "cdp_prompt_unstageable"
 
 
+def test_stage_workspaces_hub_repo_uri_resolves_in_lane_after_hub_miss(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """workspaces://universal-llm-gateway/… matches fs(thread=…) lane spelling."""
+    cortex = tmp_path / "cortex"
+    lane = tmp_path / "lane-16538"
+    cortex.mkdir()
+    lane.mkdir()
+    packet = lane / "tmp" / "lane-only.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("hub repo uri in lane\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    _mock_lane_root(monkeypatch, lane=lane)
+
+    staged = stage_prompt_uri(
+        execution_id="exec-ws-hub-repo",
+        packet_path="workspaces://universal-llm-gateway/tmp/lane-only.md",
+        dispatch_thread_id="16538",
+    )
+    assert staged.staged is True
+    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-ws-hub-repo/lane-only.md"
+    assert dest.read_text(encoding="utf-8") == "hub repo uri in lane\n"
+
+
+def test_review_gate_reads_lane_only_packet_with_dispatch_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+
+    lane = tmp_path / "lane-16538"
+    lane.mkdir()
+    packet = lane / "tmp" / "g3-review-packet-16538-r3.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("x" * 600, encoding="utf-8")
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    _mock_lane_root(monkeypatch, lane=lane)
+
+    enforce_review_prompt_gate(
+        contract="code-review",
+        prompt_text=None,
+        packet_path="tmp/g3-review-packet-16538-r3.md",
+        dispatch_thread_id="16538",
+    )
+
+
 def test_stage_workspaces_lane_uri_with_thread(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

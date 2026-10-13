@@ -22,9 +22,7 @@ _PLACEHOLDER_TOKENS = frozenset({"placeholder", "todo", "tbd"})
 _LONE_HEADING = re.compile(r"^#{1,6}\s+\S")
 _WORD = re.compile(r"[A-Za-z]+")
 
-FIX_HINT = (
-    "land review packet on hub master or use cortex:// sidecar before dispatch"
-)
+FIX_HINT = "land review packet on hub master or use cortex:// sidecar before dispatch"
 
 
 def author_prompt_source(
@@ -33,13 +31,17 @@ def author_prompt_source(
     prompt_uri: str | None = None,
     sidecar_ref: str | None = None,
     packet_path: str | None = None,
+    dispatch_thread_id: str | None = None,
 ) -> tuple[str, str, str]:
     """Resolve author body with the same sources CDP staging will read."""
-    del prompt_uri  # callers may pass explicit uri; staging derives it from sidecar/packet
+    del (
+        prompt_uri
+    )  # callers may pass explicit uri; staging derives it from sidecar/packet
     return resolve_cdp_admit_prompt_author(
         prompt_text=prompt_text,
         sidecar_ref=sidecar_ref,
         packet_path=packet_path,
+        dispatch_thread_id=dispatch_thread_id,
     )
 
 
@@ -61,6 +63,7 @@ def enforce_review_prompt_gate(
     prompt_uri: str | None = None,
     sidecar_ref: str | None = None,
     packet_path: str | None = None,
+    dispatch_thread_id: str | None = None,
 ) -> None:
     """Refuse tiny or placeholder review packets before worker admit."""
     if contract not in REVIEW_CONTRACTS:
@@ -70,16 +73,13 @@ def enforce_review_prompt_gate(
         prompt_uri=prompt_uri,
         sidecar_ref=sidecar_ref,
         packet_path=packet_path,
+        dispatch_thread_id=dispatch_thread_id,
     )
     raw = body.encode("utf-8")
     placeholder = is_review_prompt_placeholder(body)
     if not placeholder and len(raw) >= REVIEW_PROMPT_MIN_BYTES:
         return
-    code = (
-        "review_prompt_placeholder"
-        if placeholder
-        else "review_prompt_too_small"
-    )
+    code = "review_prompt_placeholder" if placeholder else "review_prompt_too_small"
     field = "sidecar_ref" if kind == "sidecar_ref" else "prompt"
     raise CdpStagingError(
         f"CDP {contract} prompt refused ({code})",

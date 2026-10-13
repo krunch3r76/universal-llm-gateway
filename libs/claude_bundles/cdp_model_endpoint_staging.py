@@ -48,6 +48,8 @@ CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("reasoning-posture",)
 # a:27430 — one-slug denylist at CDP skills= staging (not a general policy DSL).
 _CDP_SKILLS_DENIED_SLUGS: frozenset[str] = frozenset({"path-sim"})
 _CDP_SKILLS_PATH_SIM_REJECTED = "cdp_skills_path_sim_rejected"
+# Same basename ``lane_branch_root`` uses when composing worktree paths.
+_HUB_REPO_DIRNAME = "universal-llm-gateway"
 
 
 class CdpStagingError(ValueError):
@@ -192,7 +194,7 @@ def _ensure_lane_branch_root_importable() -> None:
     mcp_server = repo_root / "services" / "mcp-server"
     path_str = str(mcp_server)
     if mcp_server.is_dir() and path_str not in sys.path:
-        sys.path.insert(0, path_str)
+        sys.path.append(path_str)
 
 
 def _lane_worktree_root_for_thread(thread_id: str) -> Path | None:
@@ -238,7 +240,7 @@ def _lane_relative_path(raw: str, *, dispatch_thread_id: str) -> str | None:
         if len(parts) != 2 or not parts[1]:
             return None
         repo, rel = parts[0], parts[1]
-        if repo in (f"lane-{tid}", tid):
+        if repo in (f"lane-{tid}", tid, _HUB_REPO_DIRNAME):
             return rel
         return None
     if raw.startswith("cortex://"):
