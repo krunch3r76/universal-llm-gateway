@@ -56,6 +56,7 @@ _SPAWN_ENOENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SHELL_CWD_MISSING_RE = re.compile(r"^shell_cwd_missing (?P<path>.+)$")
+_SHELL_CWD_RESET_PREFIX = "shell_cwd_reset "
 _UNCAUGHT_BUNDLE_RE = re.compile(
     r"(?:^|\s)(?:error|typeerror|referenceerror|syntaxerror):",
     re.IGNORECASE,
@@ -123,27 +124,38 @@ def _resolve_bridge_process(client: Any) -> subprocess.Popen[str] | None:
 
 
 def parse_shell_cwd_missing(text: str | None) -> str | None:
-    """Return the path from the last ``shell_cwd_missing <path>`` stderr line."""
+    """Return the last ``shell_cwd_missing`` path that a later reset did not clear.
+
+    ``shell_cwd_reset <missing> <fallback>`` with the same missing path means
+    the bash spawn was redirected. That stale path is not the cwd the spawn
+    used, so it must not become ``bridge_shell_cwd``.
+    """
     if not text:
         return None
-    found: str | None = None
+    pending: str | None = None
     for line in text.splitlines():
-        match = _SHELL_CWD_MISSING_RE.match(line.strip())
+        stripped = line.strip()
+        match = _SHELL_CWD_MISSING_RE.match(stripped)
         if match and match.group("path"):
-            found = match.group("path")
-    return found
+            pending = match.group("path")
+            continue
+        if pending and stripped.startswith(f"{_SHELL_CWD_RESET_PREFIX}{pending} "):
+            pending = None
+    return pending
 
 
 def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     """Lane-root spawn cwd plus the shell cwd the failing bash spawn used.
 
     ``bridge_spawn_cwd`` stays the directory GIW passed when it launched the
-    node bridge (the lane root). ``bridge_shell_cwd`` prefers a
-    ``shell_cwd_missing <path>`` line from the stderr tail (the cwd the bash
-    spawn actually used), then the in-flight shell tool's ``workingDirectory``,
-    then the last bash-snapshot PWD. The exists bit on the shell path is the
-    one that explains ``spawn /bin/bash ENOENT``; the lane root can be present
-    while that path is already gone.
+    node bridge (the lane root). ``bridge_shell_cwd`` prefers an unrecovered
+    ``shell_cwd_missing <path>`` line from the stderr tail (a bash cwd that
+    was still missing at spawn), then the in-flight shell tool's
+    ``workingDirectory``, then the last bash-snapshot PWD. A missing line
+    followed by ``shell_cwd_reset <path> <fallback>`` is a recovered redirect
+    and is not a fatal shell cwd. The exists bit on an unrecovered shell path
+    is the one that explains ``spawn /bin/bash ENOENT``; the lane root can be
+    present while that path is already gone.
     """
     if tap is None or not tap.spawn_cwd:
         return {}

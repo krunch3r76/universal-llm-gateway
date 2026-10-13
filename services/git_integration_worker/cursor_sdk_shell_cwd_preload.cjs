@@ -45,12 +45,19 @@ function stripOwnRequire(nodeOptions) {
   return kept.join(' ');
 }
 
-function isDir(dirPath) {
+function statDir(dirPath) {
   try {
-    return fs.statSync(dirPath).isDirectory();
-  } catch (_err) {
-    return false;
+    if (fs.statSync(dirPath).isDirectory()) {
+      return { ok: true, code: '' };
+    }
+    return { ok: false, code: 'ENOTDIR' };
+  } catch (err) {
+    return { ok: false, code: (err && err.code) || '' };
   }
+}
+
+function isDir(dirPath) {
+  return statDir(dirPath).ok;
 }
 
 const remaining = stripOwnRequire(process.env.NODE_OPTIONS);
@@ -71,16 +78,13 @@ if (alignShellCwd) {
     process.stderr.write(`shell_cwd_fallback_invalid ${fallbackCwd}\n`);
   }
 }
-// Bridge spawn cwd: lane fallback when valid, else whatever cwd the bridge loaded with.
-const bridgeSpawnCwd =
-  fallbackCwd && isDir(fallbackCwd) ? fallbackCwd : process.cwd();
+// Lane fallback only. process.cwd() throws when the launch directory is already
+// gone, and resetting bash into the worker tree is the wrong tree.
+const bridgeSpawnCwd = fallbackCwd && isDir(fallbackCwd) ? fallbackCwd : '';
 delete process.env.CURSOR_SDK_SHELL_FALLBACK_CWD;
 
-function bashSpawnCwdReset(_requestedCwd) {
-  if (fallbackCwd && isDir(fallbackCwd)) {
-    return fallbackCwd;
-  }
-  if (isDir(bridgeSpawnCwd)) {
+function bashSpawnCwdReset() {
+  if (bridgeSpawnCwd && isDir(bridgeSpawnCwd)) {
     return bridgeSpawnCwd;
   }
   return '';
@@ -100,17 +104,23 @@ function wrappedSpawn(command, args, options) {
     argv = undefined;
   }
   const cwd = opts && typeof opts.cwd === 'string' ? opts.cwd : '';
-  if (isBash(command) && typeof (opts && opts.cwd) === 'string' && cwd && !isDir(cwd)) {
-    process.stderr.write(`shell_cwd_missing ${cwd}\n`);
-    const resetTo = bashSpawnCwdReset(cwd);
-    if (resetTo) {
-      process.stderr.write(`shell_cwd_reset ${cwd} ${resetTo}\n`);
-      const copied = Object.assign({}, opts);
-      copied.cwd = resetTo;
-      if (argv === undefined) {
-        return originalSpawn.call(this, command, copied);
+  if (isBash(command) && typeof (opts && opts.cwd) === 'string' && cwd) {
+    const stat = statDir(cwd);
+    if (!stat.ok) {
+      if (stat.code === 'EACCES' || stat.code === 'ENOTDIR') {
+        process.stderr.write(`shell_cwd_unusable ${cwd} ${stat.code}\n`);
       }
-      return originalSpawn.call(this, command, argv, copied);
+      process.stderr.write(`shell_cwd_missing ${cwd}\n`);
+      const resetTo = bashSpawnCwdReset();
+      if (resetTo) {
+        process.stderr.write(`shell_cwd_reset ${cwd} ${resetTo}\n`);
+        const copied = Object.assign({}, opts);
+        copied.cwd = resetTo;
+        if (argv === undefined) {
+          return originalSpawn.call(this, command, copied);
+        }
+        return originalSpawn.call(this, command, argv, copied);
+      }
     }
   }
   const cwdUnset = opts == null || opts.cwd == null || opts.cwd === '';

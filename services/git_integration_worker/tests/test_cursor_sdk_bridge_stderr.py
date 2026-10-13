@@ -366,6 +366,40 @@ def test_shell_cwd_forensics_prefers_shell_cwd_missing_marker(
     assert snapshot["bridge_shell_cwd"] == "/x/y"
 
 
+def test_shell_cwd_forensics_ignores_missing_recovered_by_reset(
+    tmp_path: Path,
+) -> None:
+    """``shell_cwd_missing`` followed by a matching ``shell_cwd_reset`` is not fatal.
+
+    Breaks when forensics keeps the stale missing path after the preload
+    redirected that bash spawn. The incident death was an SDK bundle exception;
+    the missing precheck cwd had already been reset and must not become
+    ``bridge_shell_cwd``.
+    """
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "precheck-removed"
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'shell_cwd_missing {missing}\\n"
+        f"shell_cwd_reset {missing} {lane}\\n"
+        "Error: boom in sdk bundle\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-recovered-cwd",
+        thread_id="t-recovered",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_spawn_cwd"] == str(lane)
+    assert snapshot["bridge_spawn_cwd_exists"] is True
+    assert snapshot.get("bridge_shell_cwd") != str(missing)
+    assert "bridge_shell_cwd" not in snapshot
+
+
 def test_shell_spawn_cwd_keeps_top_level_cd_and_ignores_subshell(
     tmp_path: Path,
 ) -> None:
