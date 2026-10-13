@@ -388,7 +388,11 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
 def test_shell_cwd_preload_survives_removed_cwd_between_spawns(
     tmp_path: Path,
 ) -> None:
-    """Regression: scratch cwd removed after a successful bash spawn must not kill the bridge."""
+    """Log-contract / round-1 regression guard: a removed scratch cwd is reset onto the lane.
+
+    The preload logs shell_cwd_missing and shell_cwd_reset and the second pwd
+    is the lane. This is not a crash-regression claim for the SDK bundle death.
+    """
     node = _vendored_node()
     if node is None:
         pytest.skip("vendored cursor-sdk bin/node is absent")
@@ -948,6 +952,84 @@ def test_shell_cwd_preload_deleted_launch_cwd_does_not_throw(tmp_path: Path) -> 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "alive"
     assert "ENOENT" not in proc.stderr
+
+
+def test_shell_cwd_preload_logs_unusable_for_eloop(tmp_path: Path) -> None:
+    """A symlink loop is shell_cwd_unusable ELOOP, then reset onto the lane.
+
+    Breaks when only EACCES and ENOTDIR are logged and ELOOP is missing-only.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    loop = tmp_path / "loop"
+    loop.symlink_to("loop")
+    probe = tmp_path / "eloop.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const cwd = process.argv[2];",
+                "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd });",
+                "child.stdout.on('data', (buf) => process.stdout.write(buf));",
+                "child.on('error', (err) => {",
+                "  process.stderr.write(String(err.code) + '\\n');",
+                "  process.exit(1);",
+                "});",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe), str(loop)],
+        _armed_preload_env(lane, align=True),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert f"shell_cwd_unusable {loop} ELOOP" in proc.stderr
+    assert f"shell_cwd_reset {loop} {lane}" in proc.stderr
+
+
+def test_preload_uncaught_exception_monitor_writes_line_and_exits_nonzero(
+    tmp_path: Path,
+) -> None:
+    """An uncaught throw writes bridge_uncaught and the process still exits non-zero.
+
+    Breaks when the monitor swallows the exception or omits code, syscall, and path.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "uncaught.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const err = new Error('sdk bundle');",
+                "err.code = 'ERR_TEST';",
+                "err.syscall = 'open';",
+                "err.path = '/gone/bundle';",
+                "throw err;",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe)],
+        _armed_preload_env(lane, align=False),
+        tmp_path,
+    )
+    assert proc.returncode != 0
+    assert "bridge_uncaught ERR_TEST open /gone/bundle" in proc.stderr
+    assert "Error: sdk bundle" in proc.stderr
 
 
 def test_shell_cwd_preload_invalid_fallback_stderr(tmp_path: Path) -> None:

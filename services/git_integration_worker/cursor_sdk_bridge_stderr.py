@@ -130,9 +130,22 @@ def parse_shell_cwd_missing(text: str | None) -> str | None:
     the bash spawn was redirected. That stale path is not the cwd the spawn
     used, so it must not become ``bridge_shell_cwd``.
     """
+    pending, _resets = _parse_shell_cwd_lines(text)
+    return pending
+
+
+def parse_shell_cwd_resets(text: str | None) -> dict[str, str]:
+    """Map each reset-recovered missing path to the fallback the preload used."""
+    _pending, resets = _parse_shell_cwd_lines(text)
+    return resets
+
+
+def _parse_shell_cwd_lines(text: str | None) -> tuple[str | None, dict[str, str]]:
+    """Walk missing/reset lines. Pending is unrecovered; resets maps recovered paths."""
     if not text:
-        return None
+        return None, {}
     pending: str | None = None
+    resets: dict[str, str] = {}
     for line in text.splitlines():
         stripped = line.strip()
         match = _SHELL_CWD_MISSING_RE.match(stripped)
@@ -140,22 +153,26 @@ def parse_shell_cwd_missing(text: str | None) -> str | None:
             pending = match.group("path")
             continue
         if pending and stripped.startswith(f"{_SHELL_CWD_RESET_PREFIX}{pending} "):
+            reset_to = stripped[len(_SHELL_CWD_RESET_PREFIX) + len(pending) + 1 :]
+            if reset_to:
+                resets[pending] = reset_to
             pending = None
-    return pending
+    return pending, resets
 
 
 def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     """Lane-root spawn cwd plus the shell cwd the failing bash spawn used.
 
     ``bridge_spawn_cwd`` stays the directory GIW passed when it launched the
-    node bridge (the lane root). ``bridge_shell_cwd`` prefers an unrecovered
+    node bridge (the lane root).     ``bridge_shell_cwd`` prefers an unrecovered
     ``shell_cwd_missing <path>`` line from the stderr tail (a bash cwd that
     was still missing at spawn), then the in-flight shell tool's
-    ``workingDirectory``, then the last bash-snapshot PWD. A missing line
-    followed by ``shell_cwd_reset <path> <fallback>`` is a recovered redirect
-    and is not a fatal shell cwd. The exists bit on an unrecovered shell path
-    is the one that explains ``spawn /bin/bash ENOENT``; the lane root can be
-    present while that path is already gone.
+    ``workingDirectory``, then the last bash-snapshot PWD. When that fallback
+    is a path a ``shell_cwd_reset`` line already recovered, the reported cwd
+    is the reset target and ``bridge_shell_cwd_reset_from`` names the deleted
+    path. ``bridge_shell_cwd_exists`` is false only when the death class is
+    ``spawn_enoent_missing_cwd``. The lane root can be present while the
+    unrecovered shell path is already gone.
     """
     if tap is None or not tap.spawn_cwd:
         return {}
@@ -178,15 +195,25 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
             snapshot["bridge_process_cwd"] = proc_cwd
     tail_text = "\n".join(tap.tail())
     missing = parse_shell_cwd_missing(tail_text)
+    resets = parse_shell_cwd_resets(tail_text)
     recorded = shell_spawn_cwd(tap.dispatch_id)
     from_tail = parse_bash_snapshot_pwd(tail_text)
     shell_cwd = missing or resolve_shell_spawn_cwd(
         working_directory=recorded,
         snapshot_pwd=from_tail,
     )
+    reset_from: str | None = None
+    if shell_cwd and shell_cwd in resets:
+        reset_from = shell_cwd
+        shell_cwd = resets[shell_cwd]
     if shell_cwd:
         snapshot["bridge_shell_cwd"] = shell_cwd
-        snapshot["bridge_shell_cwd_exists"] = os.path.isdir(shell_cwd)
+        if reset_from:
+            snapshot["bridge_shell_cwd_reset_from"] = reset_from
+        exists = os.path.isdir(shell_cwd)
+        # A deleted recorded cwd on a non-ENOENT death is not the spawn failure.
+        if exists or classify_bridge_stderr(text=tail_text) == "spawn_enoent_missing_cwd":
+            snapshot["bridge_shell_cwd_exists"] = exists
     return snapshot
 
 

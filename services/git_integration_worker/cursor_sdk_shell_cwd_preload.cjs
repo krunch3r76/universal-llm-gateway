@@ -94,6 +94,16 @@ function isBash(command) {
   return typeof command === 'string' && (command === 'bash' || command.endsWith('/bash'));
 }
 
+process.on('uncaughtExceptionMonitor', (err) => {
+  const code = err && err.code != null ? err.code : '';
+  const syscall = err && err.syscall != null ? err.syscall : '';
+  const errPath = err && err.path != null ? err.path : '';
+  process.stderr.write(`bridge_uncaught ${code} ${syscall} ${errPath}\n`);
+  if (err && err.stack) {
+    process.stderr.write(`${err.stack}\n`);
+  }
+});
+
 const originalSpawn = childProcess.spawn;
 
 function wrappedSpawn(command, args, options) {
@@ -107,7 +117,7 @@ function wrappedSpawn(command, args, options) {
   if (isBash(command) && typeof (opts && opts.cwd) === 'string' && cwd) {
     const stat = statDir(cwd);
     if (!stat.ok) {
-      if (stat.code === 'EACCES' || stat.code === 'ENOTDIR') {
+      if (stat.code !== 'ENOENT') {
         process.stderr.write(`shell_cwd_unusable ${cwd} ${stat.code}\n`);
       }
       process.stderr.write(`shell_cwd_missing ${cwd}\n`);
