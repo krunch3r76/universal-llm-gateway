@@ -150,12 +150,12 @@ async def test_reapers_run_in_worker_thread(bus_db) -> None:
 async def test_run_watchdog_slow_probe_does_not_stall_loop(
     bus_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """run_watchdog keeps the loop responsive while a worker probe sleeps.
+    """run_watchdog keeps the asyncio loop responsive while a worker probe sleeps.
 
-    The latency sample starts only after the probe's threading.Event fires, and
-    it is taken from another thread via call_soon_threadsafe. An inline sweep
-    blocks that callback for the whole probe sleep. emit_quiet_with_wip_fired
-    and _licensed_park stay on the real path.
+    Loop-liveness proxy (not an HTTP POST): latency is sampled from a worker
+    thread after a threading.Event handshake via call_soon_threadsafe. An inline
+    sweep blocks that callback for the whole probe sleep. POST /turns handlers
+    use asyncio.to_thread end-to-end, so loop liveness implies handler progress.
     """
     monkeypatch.setattr(watchdog, "_SWEEP_INTERVAL", 0)
     _admit_stale_sdk_thread(slug="slow-admitted", execution_id="exec-adm")

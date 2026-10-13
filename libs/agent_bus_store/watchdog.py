@@ -10,9 +10,10 @@ Runs as a background asyncio task. Four sweep paths:
   4. quiet-with-WIP soft-actuate — seat silent with open WIP (A′ / arc 6885);
      alarm row + event + lane turn (does not abandon the thread)
 
-Each sweep pass is synchronous (SQLite I/O and sync GIW probes). ``run_watchdog``
-runs it in a worker thread via ``asyncio.to_thread`` so POST /turns stays
-responsive while probes or reconcile I/O run.
+Each sweep pass is synchronous (SQLite I/O, sync GIW probes,
+``reconcile_orphaned_dispatches``, ``sweep_cdp_pointer_orphans``, quiet-with-WIP).
+``run_watchdog`` runs it in a worker thread via ``asyncio.to_thread`` so the
+asyncio loop stays responsive while probes or reconcile I/O run.
 
 TTL accuracy: each state transition bumps `threads.updated_at` via
 `_transition_lifecycle_state` using `now()` (ISO-8601 with ``T`` and ``Z``).
@@ -141,6 +142,8 @@ def _reap_pending(cutoff: str) -> None:
     """Abandon pending threads older than PENDING_TTL.
 
     `cutoff` is an ISO-8601 timestamp: threads with created_at < cutoff qualify.
+    The transaction guard uses ``updated_at`` via ``stale_before``: pending
+    threads that keep receiving turns (e.g. pointer posts) are not abandoned.
     """
     with connect() as conn:
         rows = conn.execute(
@@ -261,6 +264,16 @@ def _sweep() -> None:
     from .reconcile import reconcile_orphaned_dispatches
 
     reconcile_orphaned_dispatches()
+    from universal_logging import get_logger
+
+    from .cdp_pointer_sweep import sweep_cdp_pointer_orphans
+
+    try:
+        sweep_cdp_pointer_orphans()
+    except Exception:
+        get_logger(__name__).exception(
+            "cdp_pointer_sweep failed; continuing to quiet-with-wip"
+        )
     sweep_quiet_with_wip()
 
 
@@ -289,6 +302,8 @@ async def run_watchdog() -> None:
                 started = True
             try:
                 _sweep()
+            except Exception as exc:
+                emit_watchdog_sweep_failed(error=str(exc)[:500])
             finally:
                 done.set()
 
@@ -303,7 +318,10 @@ async def run_watchdog() -> None:
                     needs_join = not done.is_set()
             if needs_join:
                 # A second cancel during this join leaves the sweep thread to executor shutdown; the bound orders DB-close teardown, not process exit.
-                await asyncio.to_thread(done.wait, _SWEEP_CANCEL_JOIN_S)
+                try:
+                    await asyncio.to_thread(done.wait, _SWEEP_CANCEL_JOIN_S)
+                except RuntimeError:
+                    pass  # default executor shut down during interpreter teardown
             raise
         except Exception as exc:
             emit_watchdog_sweep_failed(error=str(exc)[:500])
