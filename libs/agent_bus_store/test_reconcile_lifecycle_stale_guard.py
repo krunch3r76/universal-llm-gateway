@@ -94,6 +94,52 @@ def test_orphan_lifecycle_skipped_when_updated_at_bumps(bus_db) -> None:
     assert detail["status"] != "closed"
 
 
+def test_orphan_lifecycle_skipped_when_same_second_turn(bus_db) -> None:
+    """Same-second updated_at: a turn after the SELECT must still block the transition."""
+    thread_id = _seed_orphan_candidate(
+        slug="stale-same-sec", execution_id="exec-stale-same-sec"
+    )
+
+    def _null(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
+    real = _transition_lifecycle_state
+
+    def _race_guarded_transition(conn, tid, to_state, trigger, **kwargs):
+        stale_before = kwargs.get("stale_before")
+        stale_max = kwargs.get("stale_max_turn_number")
+        if stale_before is not None and stale_max is not None:
+            insert_turn(
+                thread=tid,
+                from_agent="dispatch",
+                to_agent="claude-cursor",
+                subject="still working",
+                body="turn between lifecycle select and update (same second)",
+            )
+            conn.execute(
+                "UPDATE threads SET updated_at = ? WHERE id = ?",
+                (stale_before, tid),
+            )
+        return real(conn, tid, to_state, trigger, **kwargs)
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_null
+        ):
+            with patch(
+                "agent_bus_store.reconcile._transition_lifecycle_state",
+                side_effect=_race_guarded_transition,
+            ):
+                assert reconcile_orphaned_dispatches() == 0
+                assert reconcile_orphaned_dispatches() == 1
+
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert detail["dispatch_links"][0]["terminal_status"] == "failed"
+    assert detail["bus_lifecycle_state"] == "active"
+    assert detail["status"] != "closed"
+
+
 def test_orphan_lifecycle_still_transitions_when_row_unchanged(bus_db) -> None:
     """Guard must not block a normal orphan reap when updated_at is unchanged."""
     thread_id = _seed_orphan_candidate(

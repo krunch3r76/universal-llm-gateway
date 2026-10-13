@@ -166,6 +166,22 @@ def _stamp_liveness_deferred(
         )
 
 
+def _thread_stale_guard_select_sql(*extra_cols: str) -> str:
+    cols = ", ".join(("bus_lifecycle_state", *extra_cols, "updated_at"))
+    return (
+        f"SELECT {cols}, "
+        "(SELECT COALESCE(MAX(turn_number), 0) FROM turns WHERE thread = ?) AS max_turn "
+        "FROM threads WHERE id = ?"
+    )
+
+
+def _lifecycle_stale_guard_kwargs(row: Any) -> dict[str, Any]:
+    return {
+        "stale_before": row["updated_at"],
+        "stale_max_turn_number": int(row["max_turn"]),
+    }
+
+
 def _clear_liveness_deferred(*, thread_id: str, execution_id: str) -> None:
     with write_connect() as conn:
         conn.execute(
@@ -198,14 +214,14 @@ def _backfill_terminal_link(
     )
     with write_connect() as conn:
         row = conn.execute(
-            "SELECT bus_lifecycle_state, updated_at FROM threads WHERE id = ?",
-            (thread_id,),
+            _thread_stale_guard_select_sql(),
+            (thread_id, thread_id),
         ).fetchone()
         if row is None:
             _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
             return True
         current = row["bus_lifecycle_state"]
-        stale_before = row["updated_at"]
+        stale = _lifecycle_stale_guard_kwargs(row)
         if current == "active":
             _transition_lifecycle_state(
                 conn,
@@ -213,7 +229,7 @@ def _backfill_terminal_link(
                 "completed" if status == "completed" else "failed",
                 "watchdog_reap",
                 expect_state="active",
-                stale_before=stale_before,
+                **stale,
             )
         elif current == "admitted":
             _transition_lifecycle_state(
@@ -222,7 +238,7 @@ def _backfill_terminal_link(
                 "abandoned",
                 "watchdog_reap",
                 expect_state="admitted",
-                stale_before=stale_before,
+                **stale,
             )
     _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
     return True
@@ -261,12 +277,12 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         # (see lifecycle._LEGAL): active->completed|failed, admitted->abandoned.
         with write_connect() as conn:
             row = conn.execute(
-                "SELECT bus_lifecycle_state, updated_at FROM threads WHERE id = ?",
-                (thread_id,),
+                _thread_stale_guard_select_sql(),
+                (thread_id, thread_id),
             ).fetchone()
             if row is not None:
                 current = row["bus_lifecycle_state"]
-                stale_before = row["updated_at"]
+                stale = _lifecycle_stale_guard_kwargs(row)
                 if current == "active":
                     _transition_lifecycle_state(
                         conn,
@@ -274,7 +290,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
                         "completed" if status == "completed" else "failed",
                         "watchdog_reap",
                         expect_state="active",
-                        stale_before=stale_before,
+                        **stale,
                     )
                 elif current == "admitted":
                     _transition_lifecycle_state(
@@ -283,7 +299,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
                         "abandoned",
                         "watchdog_reap",
                         expect_state="admitted",
-                        stale_before=stale_before,
+                        **stale,
                     )
         return True
 
@@ -383,8 +399,8 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
     row = None
     with write_connect() as conn:
         row = conn.execute(
-            "SELECT bus_lifecycle_state, status, updated_at FROM threads WHERE id = ?",
-            (thread_id,),
+            _thread_stale_guard_select_sql("status"),
+            (thread_id, thread_id),
         ).fetchone()
         if row is not None and row["bus_lifecycle_state"] == "active":
             applied = _transition_lifecycle_state(
@@ -393,7 +409,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
                 target_state,
                 "watchdog_reap",
                 expect_state="active",
-                stale_before=row["updated_at"],
+                **_lifecycle_stale_guard_kwargs(row),
             )
 
     if applied and row is not None and row["status"] != "closed":

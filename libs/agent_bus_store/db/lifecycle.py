@@ -40,6 +40,7 @@ def _transition_lifecycle_state(
     *,
     expect_state: str | None = None,
     stale_before: str | None = None,
+    stale_max_turn_number: int | None = None,
 ) -> bool:
     """Atomically update bus_lifecycle_state; caller holds the transaction.
 
@@ -47,12 +48,15 @@ def _transition_lifecycle_state(
     ValueError on illegal transitions. Emits lifecycle events from here —
     single point of correctness so call-sites cannot drift.
 
-    ``expect_state`` and ``stale_before`` are the watchdog reap guard. The
-    UPDATE matches only when the row is still in ``expect_state`` and
-    ``updated_at`` is still at or before ``stale_before`` (same T/Z normalization
-    as the TTL select). A turn posted after the candidate select bumps
-    ``updated_at`` and the UPDATE matches nothing: no emit, return False.
-    Callers that omit both guards keep the previous id-only write.
+    ``expect_state``, ``stale_before``, and ``stale_max_turn_number`` are the
+    watchdog reap guard. The UPDATE matches only when the row is still in
+    ``expect_state``, ``updated_at`` is still at or before ``stale_before``
+    (same T/Z normalization as the TTL select), and no turn with
+    ``turn_number`` greater than ``stale_max_turn_number`` exists (covers
+    same-second ``updated_at`` collisions). A fresher turn after the candidate
+    select bumps ``updated_at`` and/or ``turn_number`` and the UPDATE matches
+    nothing: no emit, return False. Callers that omit all guards keep the
+    previous id-only write.
     """
     row = conn.execute(
         "SELECT bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
@@ -83,11 +87,21 @@ def _transition_lifecycle_state(
             "replace(replace(?, 'T', ' '), 'Z', '')"
         )
         params.append(stale_before)
+    if stale_max_turn_number is not None:
+        where += (
+            " AND (SELECT COALESCE(MAX(turn_number), 0) FROM turns "
+            "WHERE thread = threads.id) <= ?"
+        )
+        params.append(stale_max_turn_number)
     cur = conn.execute(
         "UPDATE threads SET bus_lifecycle_state = ?, updated_at = ? WHERE " + where,
         params,
     )
-    if (expect_state is not None or stale_before is not None) and cur.rowcount == 0:
+    if (
+        expect_state is not None
+        or stale_before is not None
+        or stale_max_turn_number is not None
+    ) and cur.rowcount == 0:
         return False
 
     # Emit coordination event — single point of correctness, never at call-sites.
