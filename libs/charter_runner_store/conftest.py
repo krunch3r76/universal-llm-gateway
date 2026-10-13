@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import pytest
 
+from charter_runner_store.archive_pkg import ensure_archived_pkg_registered
+
 
 def pytest_configure(config: pytest.Config) -> None:
+    ensure_archived_pkg_registered()
     config.addinivalue_line(
         "markers",
         "real_git_resolve: use real git rev-parse (disable synthetic 40-hex resolve)",

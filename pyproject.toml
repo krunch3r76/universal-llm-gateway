@@ -18,6 +18,7 @@ exclude = [
     ".venv",
     "venv",
     "tmp",
+    "archive",
     "*.egg-info",
     "build",
     "dist",

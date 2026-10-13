@@ -36,7 +36,7 @@ def enqueue_db(migrated_db_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
         category="tool_error",
         note=(
             "deploy verify probe failed in "
-            "scripts/model_manager/ui/controller/charter_runner/harvest.py"
+            "archive/charter_runner/harvest.py"
         ),
         agent="cursor-sdk",
         suggestion="Pass consult provenance kwargs in _evaluate_from_persisted",
@@ -55,7 +55,7 @@ def test_mint_followon_attrs(enqueue_db: int) -> None:
         "entity_id": "service:charter-runner",
         "claim": (
             "[tool_error] deploy verify probe failed in "
-            "scripts/model_manager/ui/controller/charter_runner/harvest.py "
+            "archive/charter_runner/harvest.py "
             "— Suggestion: Pass consult provenance kwargs"
         ),
         "attributes": {
@@ -84,7 +84,7 @@ def test_mint_dedup(enqueue_db: int) -> None:
         "entity_id": "service:charter-runner",
         "claim": (
             "[tool_error] deploy verify probe failed in "
-            "scripts/model_manager/ui/controller/charter_runner/harvest.py"
+            "archive/charter_runner/harvest.py"
         ),
         "attributes": {"charter_root": "5624", "actionable": True},
     }

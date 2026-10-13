@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from charter_runner_store.archive_pkg import import_archived
 
 from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
 from implement_admission.consumer_import_verify import (
@@ -20,14 +21,13 @@ from implement_admission.service_lib_ownership import (
     service_ownership,
     serving_services_for_lib_path,
 )
-from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
-    _resolve_libs_path,
-    plan_propagation,
-)
-from scripts.model_manager.ui.controller.charter_runner.propagation_libs_closure import (
-    _lib_to_services,
-    repo_root,
-)
+
+_propagation_execute = import_archived("propagation_execute")
+_propagation_libs_closure = import_archived("propagation_libs_closure")
+_resolve_libs_path = _propagation_execute._resolve_libs_path
+plan_propagation = _propagation_execute.plan_propagation
+_lib_to_services = _propagation_libs_closure._lib_to_services
+repo_root = _propagation_libs_closure.repo_root
 
 
 def _closeout_turn(*, files_modified: list[str] | None = None) -> dict:
@@ -62,11 +62,13 @@ def test_wait_status_plan_nominates_agent_bus_not_seven_owners() -> None:
 
 def test_inferred_fanout_ge_two_defers_without_restart(monkeypatch) -> None:
     monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.charter_runner.propagation_execute.serving_services_for_lib_path",
+        _propagation_execute,
+        "serving_services_for_lib_path",
         lambda _path: (),
     )
     monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.charter_runner.propagation_execute.services_for_lib_path",
+        _propagation_execute,
+        "services_for_lib_path",
         lambda _path, *, prefixes: ("agent_bus", "cortex_api"),
     )
     slugs, deferrals = _resolve_libs_path("libs/shared_example/foo.py")

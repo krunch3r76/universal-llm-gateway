@@ -24,7 +24,7 @@ _TREES: tuple[str, ...] = (
     "services/mcp-server/tools/",
     "services/universal-stargate/systems/frontier_consult/",
     "services/git_integration_worker/trigger_service/",
-    "scripts/model_manager/ui/controller/charter_runner/",
+    "archive/charter_runner/",
 )
 
 _EXTRA_FILES: tuple[str, ...] = (
@@ -59,34 +59,34 @@ OUT_OF_CLASS: dict[str, str] = {
     "services/universal-stargate/systems/frontier_consult/route.py": (
         "mutates the handoff packet_file argument, not the notes root"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/dispatch_client.py": (
+    "archive/charter_runner/dispatch_client.py": (
         "writes tmp/charter-runner packets, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/kernel/hold.py": (
+    "archive/charter_runner/kernel/hold.py": (
         "writes charter-runner hold state, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/admission/caps.py": (
+    "archive/charter_runner/admission/caps.py": (
         "writes charter-runner cap/intent files, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/root_health.py": (
+    "archive/charter_runner/root_health.py": (
         "writes charter-runner health JSON, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/storm_fuse.py": (
+    "archive/charter_runner/storm_fuse.py": (
         "writes charter-runner fuse state, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/r_corpus_sha.py": (
+    "archive/charter_runner/r_corpus_sha.py": (
         "writes charter-runner corpus counter, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/window_log.py": (
+    "archive/charter_runner/window_log.py": (
         "writes charter-runner harvest/token markers, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/residue_store.py": (
+    "archive/charter_runner/residue_store.py": (
         "writes charter-runner residue JSON, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/verification_manifest.py": (
+    "archive/charter_runner/verification_manifest.py": (
         "writes charter-runner verification manifests, not notes"
     ),
-    "scripts/model_manager/ui/controller/charter_runner/test_support/reference_age_watch.py": (
+    "archive/charter_runner/test_support/reference_age_watch.py": (
         "writes charter-runner test-support watch JSON, not notes"
     ),
     "libs/implement_admission/materialize.py": (

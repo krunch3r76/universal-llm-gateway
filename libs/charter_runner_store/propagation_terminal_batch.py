@@ -72,7 +72,7 @@ def reconcile_all_open_rows(
 
 def default_probe(service: str) -> dict[str, Any] | None:
     """Import-safe default probe for GIW and MCP liveness endpoints."""
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+    from services.git_integration_worker.relay.propagation_probe import (
         probe_process_live,
     )
 

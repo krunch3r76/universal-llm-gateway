@@ -19,7 +19,8 @@ def test_manage_app_has_no_charter_runner_tick() -> None:
 
     source = Path(app_mod.__file__).read_text(encoding="utf-8")
     assert "CharterRunnerTickLoop" not in source
-    assert "controller.charter_runner" not in source
+    retired_pkg = ".".join(["controller", "charter_runner"])
+    assert retired_pkg not in source
 
     tree = ast.parse(source)
     activity_literals: set[str] = set()

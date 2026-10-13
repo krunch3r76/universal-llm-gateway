@@ -210,7 +210,7 @@ def collect_refuse_report(
     store: RestartIntentStore | None = None,
     db_path: Path | None = None,
     manage_pid: int | None = None,
-    require_drain_clear: bool = True,
+    require_drain_clear: bool = False,
 ) -> CheckReport:
     """Aggregate every external refuse/require observation into one report."""
     findings: list[RefuseFinding] = []

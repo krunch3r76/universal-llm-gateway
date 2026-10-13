@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from implement_admission.propagation_row import PropagationRow
 
+from charter_runner_store.archive_pkg import import_archived, patch_target
 from charter_runner_store.propagation_ledger import (
     DEFER_HARVEST_WANTED,
     DEFER_OPERATOR_RETRACTED,
@@ -22,12 +23,13 @@ from charter_runner_store.propagation_ledger import (
     upsert_open_rows,
 )
 from charter_runner_store.propagation_outcomes import propagation_outcomes_path
-from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
-    ProbeDispatchResult,
-    install_propagation_context,
-)
-from scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted import (
-    consume_harvest_wanted_at_tick,
+
+_propagation_execute = import_archived("propagation_execute")
+_propagation_harvest_wanted = import_archived("propagation_harvest_wanted")
+ProbeDispatchResult = _propagation_execute.ProbeDispatchResult
+install_propagation_context = _propagation_execute.install_propagation_context
+consume_harvest_wanted_at_tick = (
+    _propagation_harvest_wanted.consume_harvest_wanted_at_tick
 )
 
 _SHA = "abcd000000000000000000000000000000000000"
@@ -121,11 +123,11 @@ async def test_consume_closes_on_proof_observed(tmp_path, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            patch_target("propagation_harvest_wanted", "dispatch_for_projection"),
             side_effect=dispatch_results,
         ),
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.proof_matches",
+            patch_target("propagation_harvest_wanted", "proof_matches"),
             return_value=True,
         ),
         patch(
@@ -158,7 +160,7 @@ async def test_consume_failed_outcome_distinct(tmp_path, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            patch_target("propagation_harvest_wanted", "dispatch_for_projection"),
             return_value=ProbeDispatchResult(
                 payload={"code_version": _SHA},
                 proof_class_requested="client_visible",
@@ -206,7 +208,7 @@ async def test_declined_manage_deferred_keeps_harvest_wanted_pool(
 
     with (
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            patch_target("propagation_harvest_wanted", "dispatch_for_projection"),
             return_value=ProbeDispatchResult(
                 payload={"code_version": _SHA},
                 proof_class_requested="client_visible",
@@ -271,11 +273,11 @@ async def test_attempted_unproven_ejects_from_harvest_wanted_pool(
 
     with (
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            patch_target("propagation_harvest_wanted", "dispatch_for_projection"),
             side_effect=dispatch_results,
         ),
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.proof_matches",
+            patch_target("propagation_harvest_wanted", "proof_matches"),
             return_value=False,
         ),
         patch(
@@ -316,7 +318,7 @@ async def test_decline_reclaim_idempotent_across_ticks(tmp_path, monkeypatch) ->
 
     with (
         patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            patch_target("propagation_harvest_wanted", "dispatch_for_projection"),
             return_value=ProbeDispatchResult(
                 payload={"code_version": _SHA},
                 proof_class_requested="client_visible",

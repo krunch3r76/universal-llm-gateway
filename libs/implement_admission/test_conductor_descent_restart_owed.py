@@ -143,7 +143,7 @@ def test_restart_owed_docs_only_is_none() -> None:
 
 
 def test_restart_owed_charter_runner_script_is_unmapped() -> None:
-    path = "scripts/model_manager/ui/controller/charter_runner/propagation_execute.py"
+    path = "archive/charter_runner/propagation_execute.py"
     text = restart_owed_line([path])
     assert text.startswith("restart_owed: none\n")
     assert f"unmapped: {path}" in text

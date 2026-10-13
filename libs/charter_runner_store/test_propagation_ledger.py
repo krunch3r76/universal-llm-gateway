@@ -202,9 +202,9 @@ def test_upsert_persists_proof_class_requested(tmp_path, monkeypatch) -> None:
 def test_projection_to_row_round_trips_proof_class_requested(
     tmp_path, monkeypatch
 ) -> None:
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
-        _projection_to_row,
-    )
+    from charter_runner_store.archive_pkg import import_archived
+
+    projection_to_row = import_archived("propagation_execute").projection_to_row
 
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     upsert_open_rows(
@@ -216,19 +216,19 @@ def test_projection_to_row_round_trips_proof_class_requested(
             )
         ]
     )
-    rebuilt = _projection_to_row(list_open_rows()[0])
+    rebuilt = projection_to_row(list_open_rows()[0])
     assert rebuilt.proof_class == "served_artifact"
     assert rebuilt.proof_class_requested == "process_live"
 
 
 def test_projection_to_row_round_trips_force_flags(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
-        _projection_to_row,
-    )
+    from charter_runner_store.archive_pkg import import_archived
+
+    projection_to_row = import_archived("propagation_execute").projection_to_row
 
     upsert_open_rows([_row(service="mcp", allow_self_preempt=False, force=True)])
     projection = list_open_rows()[0]
-    rebuilt = _projection_to_row(projection)
+    rebuilt = projection_to_row(projection)
     assert rebuilt.allow_self_preempt is False
     assert rebuilt.force is True
