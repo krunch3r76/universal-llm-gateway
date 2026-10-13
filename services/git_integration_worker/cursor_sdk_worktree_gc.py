@@ -109,7 +109,11 @@ def _gc_delete_candidates(*, source_repo: Path) -> list[tuple[str, str, str | No
     return candidates
 
 
-def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
+def gc_merged_dispatch_branches(
+    *,
+    source_repo: Path,
+    delete_candidates: list[tuple[str, str, str | None, str | None]] | None = None,
+) -> int:
     """Delete unused landed ``cursor-sdk/*`` orphans; archive every tip first.
 
     Pass 1 is prefix-scoped: ``git branch --merged master`` is not a license
@@ -123,7 +127,11 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
 
     refuse_real_hub_reap_under_pytest(source_repo=source_repo)
     repo = source_repo.resolve()
-    candidates = _gc_delete_candidates(source_repo=source_repo)
+    candidates = (
+        delete_candidates
+        if delete_candidates is not None
+        else _gc_delete_candidates(source_repo=source_repo)
+    )
     log_reap_pass(
         pass_name="gc_merged_dispatch_branches",
         source_repo=repo,
@@ -132,7 +140,10 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
     deleted = 0
 
     for name, reason, dispatch_id, tip_sha in candidates:
-        had_disposition = get_disposition(branch_name=name) is not None
+        disposition = get_disposition(branch_name=name)
+        if disposition is not None and disposition.reason == "retained_for_mission":
+            continue
+        had_disposition = disposition is not None
         if _delete_orphan_branch(
             repo=repo,
             branch_name=name,
@@ -216,6 +227,7 @@ def _delete_orphan_branch(
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id or "",
             branch_deleted=False,
+            outcome="failed",
             branch=branch_name,
             tip_sha=tip_sha,
             reason=f"git_delete_failed:{stderr}",
@@ -225,6 +237,7 @@ def _delete_orphan_branch(
     emit_sdk_lane_b_reaped(
         dispatch_id=dispatch_id or "",
         branch_deleted=True,
+        outcome="deleted",
         branch=branch_name,
         tip_sha=tip_sha,
         reason=reason,

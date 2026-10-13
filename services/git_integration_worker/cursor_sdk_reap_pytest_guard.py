@@ -30,15 +30,23 @@ def refuse_real_hub_reap_under_pytest(
     """Raise when pytest would mutate the production hub checkout or lane store."""
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         return
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_reap_refused_pytest,
+    )
+
     try:
         repo = source_repo.resolve()
     except OSError:
         repo = source_repo
     hub = _REAL_HUB_REPO.resolve()
     if repo == hub:
-        raise RuntimeError(
-            f"refusing reap against the live hub repo under pytest: {repo}"
+        detail = f"refusing reap against the live hub repo under pytest: {repo}"
+        emit_sdk_lane_b_reap_refused_pytest(
+            source_repo=repo,
+            worktree_root=worktree_root,
+            detail=detail,
         )
+        raise RuntimeError(detail)
     if worktree_root is None:
         return
     try:
@@ -47,10 +55,16 @@ def refuse_real_hub_reap_under_pytest(
         wt_root = worktree_root
     store = _REAL_HUB_WORKTREE_STORE.resolve()
     if wt_root == store or wt_root.is_relative_to(store) or store.is_relative_to(wt_root):
-        raise RuntimeError(
+        detail = (
             "refusing reap against the live hub worktree store under pytest: "
             f"worktree_root={wt_root} store={store}"
         )
+        emit_sdk_lane_b_reap_refused_pytest(
+            source_repo=repo,
+            worktree_root=wt_root,
+            detail=detail,
+        )
+        raise RuntimeError(detail)
 
 
 def log_reap_pass(

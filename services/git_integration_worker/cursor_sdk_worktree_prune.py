@@ -228,6 +228,7 @@ def prune_dispatch_worktree(
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id,
             branch_deleted=False,
+            outcome="kept",
             branch=None,
             tip_sha=None,
             reason=None,
@@ -355,7 +356,8 @@ def reap_orphan_worktrees(
         _gc_delete_candidates,
     )
 
-    branch_actions = len(_gc_delete_candidates(source_repo=source_repo))
+    branch_candidates = _gc_delete_candidates(source_repo=source_repo)
+    branch_actions = len(branch_candidates)
     log_reap_pass(
         pass_name="reap_orphan_worktrees",
         source_repo=source_repo,
@@ -419,7 +421,10 @@ def reap_orphan_worktrees(
         active=active,
     )
     stale_metadata_pruned = _git_worktree_prune(source_repo=source_repo)
-    branches_gc = gc_merged_dispatch_branches(source_repo=source_repo)
+    branches_gc = gc_merged_dispatch_branches(
+        source_repo=source_repo,
+        delete_candidates=branch_candidates,
+    )
     dispositions_reconciled = _reconcile_orphaned_dispositions(
         source_repo=source_repo
     )

@@ -1268,6 +1268,7 @@ def emit_sdk_lane_b_branch_retained(
 def SdkLaneBReaped(  # noqa: N802
     dispatch_id: str,
     branch_deleted: bool,
+    outcome: str,
     branch: str | None = None,
     tip_sha: str | None = None,
     reason: str | None = None,
@@ -1275,6 +1276,7 @@ def SdkLaneBReaped(  # noqa: N802
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
         "branch_deleted": branch_deleted,
+        "outcome": outcome,
     }
     if branch is not None:
         payload["branch"] = branch
@@ -1293,6 +1295,7 @@ def emit_sdk_lane_b_reaped(
     *,
     dispatch_id: str,
     branch_deleted: bool,
+    outcome: str,
     branch: str | None = None,
     tip_sha: str | None = None,
     reason: str | None = None,
@@ -1302,9 +1305,44 @@ def emit_sdk_lane_b_reaped(
         SdkLaneBReaped(
             dispatch_id=dispatch_id,
             branch_deleted=branch_deleted,
+            outcome=outcome,
             branch=branch,
             tip_sha=tip_sha,
             reason=reason,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReapRefusedPytest(  # noqa: N802
+    source_repo: str,
+    worktree_root: str | None = None,
+    detail: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"source_repo": source_repo}
+    if worktree_root is not None:
+        payload["worktree_root"] = worktree_root
+    if detail is not None:
+        payload["detail"] = detail
+    return Event(
+        signal="sdk.lane_b.reap_refused_pytest",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reap_refused_pytest(
+    *,
+    source_repo: Path,
+    worktree_root: Path | None = None,
+    detail: str | None = None,
+) -> None:
+    """Emit when pytest blocks a reap entrypoint from touching the live hub."""
+    _emit(
+        SdkLaneBReapRefusedPytest(
+            source_repo=str(source_repo),
+            worktree_root=str(worktree_root) if worktree_root is not None else None,
+            detail=detail,
         )
     )
 

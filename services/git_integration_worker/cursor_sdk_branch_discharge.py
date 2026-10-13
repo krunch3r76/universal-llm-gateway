@@ -40,6 +40,7 @@ from services.git_integration_worker.cursor_sdk_branch_divergence import (
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
+    emit_sdk_lane_b_reaped,
 )
 
 logger = get_logger(__name__)
@@ -230,7 +231,20 @@ def _delete_branch(repo: Path, branch_name: str) -> tuple[bool, str | None]:
         return False, f"branch checked out at {pinned}"
     proc = _git(repo, "branch", "-D", branch_name)
     if proc.returncode != 0:
-        return False, proc.stderr.strip() or "git branch -D failed"
+        err = proc.stderr.strip() or "git branch -D failed"
+        logger.warning(
+            "lane_b branch delete failed branch=%s err=%s",
+            branch_name,
+            err,
+        )
+        emit_sdk_lane_b_reaped(
+            dispatch_id="",
+            branch_deleted=False,
+            outcome="failed",
+            branch=branch_name,
+            reason=f"git_delete_failed:{err}",
+        )
+        return False, err
     return True, None
 
 
