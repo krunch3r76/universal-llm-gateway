@@ -1047,3 +1047,164 @@ def test_missing_checkout_not_retired_as_hub(
     assert debt is not None
     assert debt.open
     assert debt.discharged_at is None
+    assert not (debt.source_repo or "").strip()
+
+
+def test_stamped_satellite_missing_git_only_marks_that_row(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    """One stamped row with a gone satellite checkout must not abort the sweep."""
+    hub, satellite, _projects_root = hub_satellite_layout
+    bad_branch = "cursor-sdk/lane-stamped-absent"
+    bad_sha = _lane_commit(hub, bad_branch, "sat debt tip\n")
+    open_branch_debt(
+        branch_name=bad_branch,
+        thread_id="stamped-absent",
+        dispatch_id="d-stamped-absent",
+        tip_sha=bad_sha,
+        source_repo="sat-bot",
+    )
+    (satellite / ".git").rename(satellite / ".git.bak")
+
+    good_branch = "cursor-sdk/lane-stamped-healthy"
+    good_sha = _lane_commit(hub, good_branch, "hub merged\n")
+    _admit_dispatch(
+        dispatch_id="d-stamped-healthy",
+        thread_id="stamped-healthy",
+        status="completed",
+    )
+    open_branch_debt(
+        branch_name=good_branch,
+        thread_id="stamped-healthy",
+        dispatch_id="d-stamped-healthy",
+        tip_sha=good_sha,
+    )
+    _git("merge", good_branch, cwd=hub)
+
+    report = reconcile_open_branch_debts(source_repo=hub, apply=True)
+
+    assert _verdict_for(report, bad_branch).detail == "source repo absent"
+    assert get_branch_debt(branch_name=bad_branch).open
+    assert _verdict_for(report, good_branch).verdict == VERDICT_ANCESTOR
+    assert not get_branch_debt(branch_name=good_branch).open
+
+
+def test_ledger_unknown_bare_name_is_source_repo_absent(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    hub, _satellite, _projects_root = hub_satellite_layout
+    branch = "cursor-sdk/lane-unknown-roster"
+    sha = _lane_commit(hub, branch, "unknown roster\n")
+    _admit_dispatch(
+        dispatch_id="d-unknown-roster",
+        thread_id="unknown-roster",
+        status="completed",
+        source_repo="not-on-roster",
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="unknown-roster",
+        dispatch_id="d-unknown-roster",
+        tip_sha=sha,
+        source_repo=None,
+    )
+
+    report = reconcile_open_branch_debts(source_repo=hub, apply=False)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.detail == "source repo absent"
+    assert verdict.verdict == VERDICT_LIVE
+
+
+def test_moved_hub_ledger_path_still_grades_on_hub(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    hub, _satellite, projects_root = hub_satellite_layout
+    old_hub_path = projects_root / "legacy-layout" / "universal-llm-gateway"
+    branch = "cursor-sdk/lane-moved-hub"
+    sha = _lane_commit(hub, branch, "hub ancestor\n")
+    _git("merge", branch, cwd=hub)
+    _admit_dispatch(
+        dispatch_id="d-moved-hub",
+        thread_id="moved-hub",
+        status="completed",
+        source_repo=str(old_hub_path),
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="moved-hub",
+        dispatch_id="d-moved-hub",
+        tip_sha=sha,
+        source_repo=None,
+    )
+
+    report = reconcile_open_branch_debts(source_repo=hub, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_ANCESTOR
+    assert not get_branch_debt(branch_name=branch).open
+
+
+def test_apply_uses_repo_resolved_during_classify(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Apply must not re-resolve checkout; a second failure would break retirement."""
+    import services.git_integration_worker.cursor_sdk_branch_debt_reconcile as mod
+
+    branch = "cursor-sdk/lane-single-resolve"
+    sha = _lane_commit(repo, branch, "single resolve\n")
+    _admit_dispatch(dispatch_id="d-single-resolve", thread_id="single-resolve")
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="single-resolve",
+        dispatch_id="d-single-resolve",
+        tip_sha=sha,
+    )
+    archive_branch(repo=repo, branch_name=branch)
+    _git("branch", "-D", branch, cwd=repo)
+
+    real_resolve = mod._resolve_reconcile_repo
+    calls: list[str] = []
+
+    def _resolve_once(debt, **kwargs):
+        calls.append(debt.branch_name)
+        if calls.count(debt.branch_name) > 1:
+            return None, "source repo absent"
+        return real_resolve(debt, **kwargs)
+
+    monkeypatch.setattr(mod, "_resolve_reconcile_repo", _resolve_once)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_ARCHIVED
+    assert verdict.applied
+    assert calls.count(branch) == 1
+    assert not get_branch_debt(branch_name=branch).open
+
+
+def test_dry_run_does_not_backfill_source_repo_stamp(
+    hub_satellite_layout: tuple[Path, Path, Path],
+) -> None:
+    hub, satellite, _projects_root = hub_satellite_layout
+    branch = "cursor-sdk/lane-dry-no-stamp"
+    sha = _lane_commit(satellite, branch, "dry stamp\n")
+    _admit_dispatch(
+        dispatch_id="d-dry-no-stamp",
+        thread_id="dry-no-stamp",
+        status="completed",
+        source_repo=str(satellite.resolve()),
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="dry-no-stamp",
+        dispatch_id="d-dry-no-stamp",
+        tip_sha=sha,
+        source_repo=None,
+    )
+
+    reconcile_open_branch_debts(source_repo=hub, apply=False)
+
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None
+    assert not (debt.source_repo or "").strip()

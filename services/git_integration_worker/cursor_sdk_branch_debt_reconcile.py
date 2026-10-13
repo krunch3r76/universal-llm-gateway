@@ -606,6 +606,22 @@ def _backfill_empty_debt_source_repos_from_ledger(
         )
 
 
+def _stored_refers_to_hub(stored: str, hub: Path) -> bool:
+    """True when ledger/debt storage names this install's hub, including after a move."""
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        _hub_identity_names,
+        _source_is_hub,
+    )
+
+    if _source_is_hub(stored, hub):
+        return True
+    hub_names = _hub_identity_names(hub)
+    token = stored.strip()
+    if token in hub_names:
+        return True
+    return Path(token).name in hub_names
+
+
 def _resolve_reconcile_repo(
     debt: BranchDebt,
     *,
@@ -618,22 +634,26 @@ def _resolve_reconcile_repo(
         _dispatch_source_repo_stored,
     )
     from services.git_integration_worker.cursor_sdk_satellite_workspace import (
-        _source_is_hub,
+        CursorWorkspaceNotGit,
+        CursorWorkspaceUnknown,
     )
 
     if (debt.source_repo or "").strip():
-        return (
-            resolve_debt_source_repo(
+        try:
+            repo_path = resolve_debt_source_repo(
                 debt.source_repo,
                 hub=hub,
                 projects_root=projects_root,
-            ),
-            None,
-        )
+            )
+        except (CursorWorkspaceNotGit, CursorWorkspaceUnknown):
+            return None, _SOURCE_REPO_ABSENT_DETAIL
+        if not repo_path.is_dir() or not (repo_path / ".git").exists():
+            return None, _SOURCE_REPO_ABSENT_DETAIL
+        return repo_path, None
     if debt.dispatch_id:
         stored = _dispatch_source_repo_stored(debt.dispatch_id)
         if stored and stored.strip():
-            if _source_is_hub(stored, hub):
+            if _stored_refers_to_hub(stored, hub):
                 return sweep_repo, None
             try:
                 repo_path = resolve_debt_source_repo(
@@ -642,7 +662,7 @@ def _resolve_reconcile_repo(
                     projects_root=projects_root,
                 )
             except Exception:
-                return sweep_repo, None
+                return None, _SOURCE_REPO_ABSENT_DETAIL
             if not repo_path.is_dir() or not (repo_path / ".git").exists():
                 return None, _SOURCE_REPO_ABSENT_DETAIL
             return repo_path, None
@@ -668,14 +688,16 @@ def reconcile_open_branch_debts(
     projects_root = cfg.dispatch_workspace
     sweep_repo = source_repo.resolve()
     debts = list_open_debts()
-    _backfill_empty_debt_source_repos_from_ledger(
-        debts,
-        hub=hub,
-        projects_root=projects_root,
-    )
-    debts = list_open_debts()
+    if apply:
+        _backfill_empty_debt_source_repos_from_ledger(
+            debts,
+            hub=hub,
+            projects_root=projects_root,
+        )
+        debts = list_open_debts()
     sweep = _SweepState(worktree_root=cfg.worktree_root)
     verdicts: list[DebtVerdict] = []
+    resolved_repos: list[Path | None] = []
     for debt in debts:
         repo, absent_detail = _resolve_reconcile_repo(
             debt,
@@ -693,21 +715,17 @@ def reconcile_open_branch_debts(
                     detail=absent_detail,
                 )
             )
+            resolved_repos.append(None)
             continue
         assert repo is not None
         verdicts.append(_classify(repo=repo, debt=debt, sweep=sweep))
+        resolved_repos.append(repo)
     if apply:
         applied: list[DebtVerdict] = []
-        for debt, row in zip(debts, verdicts, strict=True):
+        for debt, row, repo in zip(debts, verdicts, resolved_repos, strict=True):
             if row.detail == _SOURCE_REPO_ABSENT_DETAIL:
                 applied.append(row)
                 continue
-            repo, _absent = _resolve_reconcile_repo(
-                debt,
-                hub=hub,
-                projects_root=projects_root,
-                sweep_repo=sweep_repo,
-            )
             assert repo is not None
             applied.append(_apply(repo=repo, verdict=row))
         verdicts = applied
