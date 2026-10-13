@@ -37,12 +37,22 @@ def _transition_lifecycle_state(
     thread_id: str,
     to_state: str,
     trigger: str,
-) -> None:
+    *,
+    expect_state: str | None = None,
+    stale_before: str | None = None,
+) -> bool:
     """Atomically update bus_lifecycle_state; caller holds the transaction.
 
     Validates the transition against the legal-transitions table and raises
     ValueError on illegal transitions. Emits lifecycle events from here —
     single point of correctness so call-sites cannot drift.
+
+    ``expect_state`` and ``stale_before`` are the watchdog reap guard. The
+    UPDATE matches only when the row is still in ``expect_state`` and
+    ``updated_at`` is still older than ``stale_before`` (same T/Z normalization
+    as the TTL select). A turn posted after the candidate select bumps
+    ``updated_at`` and the UPDATE matches nothing: no emit, return False.
+    Callers that omit both guards keep the previous id-only write.
     """
     row = conn.execute(
         "SELECT bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
@@ -61,10 +71,24 @@ def _transition_lifecycle_state(
     # Bump updated_at on every transition — TTL clocks in the watchdog anchor to
     # this field, so every state change must reset it regardless of the caller.
     ts = now()
-    conn.execute(
-        "UPDATE threads SET bus_lifecycle_state = ?, updated_at = ? WHERE id = ?",
-        (to_state, ts, thread_id),
+    where = "id = ?"
+    params: list[object] = [to_state, ts, thread_id]
+    if expect_state is not None:
+        where += " AND bus_lifecycle_state = ?"
+        params.append(expect_state)
+    if stale_before is not None:
+        # Same normalization as watchdog._ts_older_than (ISO T/Z vs sqlite space).
+        where += (
+            " AND replace(replace(updated_at, 'T', ' '), 'Z', '') < "
+            "replace(replace(?, 'T', ' '), 'Z', '')"
+        )
+        params.append(stale_before)
+    cur = conn.execute(
+        "UPDATE threads SET bus_lifecycle_state = ?, updated_at = ? WHERE " + where,
+        params,
     )
+    if (expect_state is not None or stale_before is not None) and cur.rowcount == 0:
+        return False
 
     # Emit coordination event — single point of correctness, never at call-sites.
     emit_lifecycle_transitioned(
@@ -81,3 +105,4 @@ def _transition_lifecycle_state(
             from_state=from_state,
             to_state=to_state,
         )
+    return True

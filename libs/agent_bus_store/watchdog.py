@@ -22,7 +22,9 @@ interval is 300s; worst-case reap lag = TTL + one sweep period (~5 min extra).
 Admitted reap additionally probes the GIW holder and fail-closes on DEFER.
 
 ∀ sweep failure: emit mcp.agentbus.watchdog.sweep.failed; never crash the task.
-∀ reap attempt: re-check lifecycle state inside the transaction (TOCTOU guard).
+∀ reap attempt: the transition UPDATE re-checks lifecycle state and updated_at
+inside the write transaction (a turn posted after the candidate select must
+not be abandoned).
 """
 
 from __future__ import annotations
@@ -55,7 +57,6 @@ _SWEEP_INTERVAL: int = int(os.getenv("AGENT_BUS_WATCHDOG_SWEEP_INTERVAL", "300")
 _SWEEP_CANCEL_JOIN_S: float = float(
     os.getenv("AGENT_BUS_WATCHDOG_SWEEP_CANCEL_JOIN_S", "60")
 )
-_sweep_inflight_done: threading.Event | None = None
 
 ReapReason = Literal[
     "pending_ttl_exceeded",
@@ -73,11 +74,15 @@ def _reap_single(
     *,
     expected_state: str,
     reason: ReapReason,
+    stale_before: str,
 ) -> bool:
     """Attempt to reap one thread.
 
-    Opens its own transaction. Returns True when the thread was abandoned,
-    False when it was already advanced (TOCTOU guard fired).
+    Opens its own ``write_connect`` (``BEGIN IMMEDIATE``). The transition
+    UPDATE matches only while ``bus_lifecycle_state`` is still
+    ``expected_state`` and ``updated_at`` is still older than ``stale_before``,
+    so a turn posted after the candidate select is not abandoned. Returns True
+    when the thread was abandoned, False when that guard misses.
     """
     with write_connect() as conn:
         row = conn.execute(
@@ -92,7 +97,16 @@ def _reap_single(
             (thread_id,),
         ).fetchall()
 
-        _transition_lifecycle_state(conn, thread_id, "abandoned", "watchdog_reap")
+        applied = _transition_lifecycle_state(
+            conn,
+            thread_id,
+            "abandoned",
+            "watchdog_reap",
+            expect_state=expected_state,
+            stale_before=stale_before,
+        )
+        if not applied:
+            return False
 
         ts = now()
         conn.execute(
@@ -135,7 +149,12 @@ def _reap_pending(cutoff: str) -> None:
             (cutoff,),
         ).fetchall()
     for row in rows:
-        _reap_single(row["id"], expected_state="pending", reason="pending_ttl_exceeded")
+        _reap_single(
+            row["id"],
+            expected_state="pending",
+            reason="pending_ttl_exceeded",
+            stale_before=cutoff,
+        )
 
 
 def _holder_blocks_admitted_reap(
@@ -187,7 +206,10 @@ def _reap_admitted(
         if _holder_blocks_admitted_reap(row["id"], probe_fn=probe_fn):
             continue
         _reap_single(
-            row["id"], expected_state="admitted", reason="admitted_ttl_exceeded"
+            row["id"],
+            expected_state="admitted",
+            reason="admitted_ttl_exceeded",
+            stale_before=cutoff,
         )
 
 
@@ -210,7 +232,10 @@ def _reap_active(cutoff: str) -> None:
         ).fetchall()
     for row in rows:
         _reap_single(
-            row["id"], expected_state="active", reason="all_terminal_no_delivery"
+            row["id"],
+            expected_state="active",
+            reason="all_terminal_no_delivery",
+            stale_before=cutoff,
         )
 
 
@@ -229,39 +254,56 @@ def _cutoff_for_ttl(ttl_seconds: int) -> str:
 
 def _sweep() -> None:
     """Single synchronous sweep pass — runs on a worker thread from ``run_watchdog``."""
-    try:
-        _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
-        _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
-        _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
-        from .quiet_sweep import sweep_quiet_with_wip
-        from .reconcile import reconcile_orphaned_dispatches
+    _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
+    _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
+    _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
+    from .quiet_sweep import sweep_quiet_with_wip
+    from .reconcile import reconcile_orphaned_dispatches
 
-        reconcile_orphaned_dispatches()
-        sweep_quiet_with_wip()
-    finally:
-        done = _sweep_inflight_done
-        if done is not None:
-            done.set()
+    reconcile_orphaned_dispatches()
+    sweep_quiet_with_wip()
 
 
 async def run_watchdog() -> None:
-    """TTL reaper loop. Runs until task is cancelled.
+    """TTL reaper loop. Runs until the task is cancelled.
 
-    CancelledError propagates from `asyncio.sleep` or after an in-flight sweep
-    thread finishes when cancellation arrives during ``await asyncio.to_thread``.
+    Each pass awaits ``asyncio.to_thread`` on a local closure that calls
+    ``_sweep`` and sets a local ``done`` event in ``finally``. Cancel before
+    that closure starts marks the pass abandoned and returns without waiting
+    out ``_SWEEP_CANCEL_JOIN_S``. Cancel after it starts waits on ``done``,
+    bounded by that join. ``CancelledError`` propagates from ``asyncio.sleep``
+    or from that wait. There is no module-global in-flight event.
     """
-    global _sweep_inflight_done
     while True:
         await asyncio.sleep(_SWEEP_INTERVAL)
         done = threading.Event()
-        _sweep_inflight_done = done
+        gate = threading.Lock()
+        started = False
+        abandoned = False
+
+        def _run() -> None:
+            nonlocal started
+            with gate:
+                if abandoned:
+                    return
+                started = True
+            try:
+                _sweep()
+            finally:
+                done.set()
+
         try:
-            await asyncio.to_thread(_sweep)
+            await asyncio.to_thread(_run)
         except asyncio.CancelledError:
-            if not done.is_set():
+            with gate:
+                if not started:
+                    abandoned = True
+                    needs_join = False
+                else:
+                    needs_join = not done.is_set()
+            if needs_join:
+                # A second cancel during this join leaves the sweep thread to executor shutdown; the bound orders DB-close teardown, not process exit.
                 await asyncio.to_thread(done.wait, _SWEEP_CANCEL_JOIN_S)
             raise
         except Exception as exc:
             emit_watchdog_sweep_failed(error=str(exc)[:500])
-        finally:
-            _sweep_inflight_done = None
