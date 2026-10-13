@@ -27,6 +27,7 @@ channel router — this gate lives here, not there.
 from __future__ import annotations
 
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -151,18 +152,22 @@ def resolve_cdp_admit_prompt_author(
     prompt_text: str | None,
     sidecar_ref: str | None,
     packet_path: str | None,
+    dispatch_thread_id: str | None = None,
 ) -> tuple[str, str, str]:
     """Resolve the author body using the same sources CDP staging will read."""
-    staged_prompt, staged_uri, staged_packet, staged_sidecar = prepare_cdp_staging_sources(
-        prompt_text=prompt_text,
-        sidecar_ref=sidecar_ref,
-        packet_path=packet_path,
+    staged_prompt, staged_uri, staged_packet, staged_sidecar = (
+        prepare_cdp_staging_sources(
+            prompt_text=prompt_text,
+            sidecar_ref=sidecar_ref,
+            packet_path=packet_path,
+        )
     )
     body = read_prompt_text(
         prompt_text=staged_prompt,
         prompt_uri=staged_uri,
         packet_path=staged_packet,
         sidecar_ref=staged_sidecar,
+        dispatch_thread_id=dispatch_thread_id,
     )
     if staged_prompt is not None and str(staged_prompt).strip():
         return body, "prompt", "prompt"
@@ -181,7 +186,73 @@ def resolve_cdp_admit_prompt_author(
     )
 
 
-def resolve_workspaces_path(uri_or_path: str) -> Path | None:
+def _ensure_lane_branch_root_importable() -> None:
+    """Add ``services/mcp-server`` once so ``lane_branch_root`` matches ``fs(thread=…)``."""
+    repo_root = Path(__file__).resolve().parents[2]
+    mcp_server = repo_root / "services" / "mcp-server"
+    path_str = str(mcp_server)
+    if mcp_server.is_dir() and path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+
+def _lane_worktree_root_for_thread(thread_id: str) -> Path | None:
+    """Resolve dispatch thread to Lane-B worktree root (same module as ``fs``)."""
+    tid = str(thread_id).strip()
+    if not tid:
+        return None
+    try:
+        _ensure_lane_branch_root_importable()
+        from lane_branch_root import LaneBranchResolutionError, root_for_thread
+    except ImportError:
+        return None
+    try:
+        return root_for_thread(tid)
+    except LaneBranchResolutionError:
+        return None
+
+
+def _resolve_file_under_root(root: Path, rel: str) -> Path | None:
+    """Map a relative path under *root*; refuse traversal escapes and non-files."""
+    if not rel or not str(rel).strip():
+        return None
+    rel_text = str(rel).strip()
+    if Path(rel_text).is_absolute():
+        return None
+    root_resolved = root.resolve()
+    candidate = (root_resolved / rel_text).resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def _lane_relative_path(raw: str, *, dispatch_thread_id: str) -> str | None:
+    """Relative path under the lane worktree for *raw*, if applicable."""
+    tid = str(dispatch_thread_id).strip()
+    if raw.startswith("workspaces://"):
+        rest = raw[len("workspaces://") :]
+        parts = rest.split("/", 1)
+        if len(parts) != 2 or not parts[1]:
+            return None
+        repo, rel = parts[0], parts[1]
+        if repo in (f"lane-{tid}", tid):
+            return rel
+        return None
+    if raw.startswith("cortex://"):
+        return None
+    if Path(raw).is_absolute():
+        return None
+    return raw
+
+
+def resolve_workspaces_path(
+    uri_or_path: str,
+    *,
+    dispatch_thread_id: str | None = None,
+) -> Path | None:
     """Map workspaces:// or checkout-relative path to an on-disk file."""
     raw = uri_or_path.strip()
     if not raw:
@@ -204,14 +275,20 @@ def resolve_workspaces_path(uri_or_path: str) -> Path | None:
         for candidate in candidates:
             if candidate.is_file():
                 return candidate.resolve()
-        return None
-    path = Path(raw)
-    if path.is_file():
-        return path.resolve()
-    # Checkout-relative under ULG.
-    candidate = workspaces_root() / raw
-    if candidate.is_file():
-        return candidate.resolve()
+    else:
+        path = Path(raw)
+        if path.is_file():
+            return path.resolve()
+        # Checkout-relative under ULG.
+        candidate = workspaces_root() / raw
+        if candidate.is_file():
+            return candidate.resolve()
+    if dispatch_thread_id and str(dispatch_thread_id).strip():
+        lane_root = _lane_worktree_root_for_thread(str(dispatch_thread_id).strip())
+        if lane_root is not None:
+            rel = _lane_relative_path(raw, dispatch_thread_id=str(dispatch_thread_id))
+            if rel is not None:
+                return _resolve_file_under_root(lane_root, rel)
     return None
 
 
@@ -221,6 +298,7 @@ def read_prompt_text(
     prompt_uri: str | None = None,
     packet_path: str | None = None,
     sidecar_ref: str | None = None,
+    dispatch_thread_id: str | None = None,
 ) -> str:
     """Resolve CDP prompt inputs to a mutable text body.
 
@@ -240,7 +318,7 @@ def read_prompt_text(
                     code="cdp_prompt_missing",
                 )
             return path.read_text(encoding="utf-8")
-        source = resolve_workspaces_path(raw)
+        source = resolve_workspaces_path(raw, dispatch_thread_id=dispatch_thread_id)
         if source is None:
             raise CdpStagingError(
                 f"unstageable CDP prompt input: {raw!r} "
@@ -390,6 +468,7 @@ def stage_cdp_prompt_with_skills(
         prompt_uri=prompt_uri,
         packet_path=packet_path,
         sidecar_ref=sidecar_ref,
+        dispatch_thread_id=dispatch_thread_id,
     )
 
     if is_operator_proxy_mission_purpose(purpose):
@@ -492,6 +571,7 @@ def stage_cdp_prompt_with_skills(
         execution_id=execution_id,
         prompt_text=merged,
         mission=mission,
+        dispatch_thread_id=dispatch_thread_id,
     )
 
 
@@ -503,6 +583,7 @@ def stage_prompt_uri(
     packet_path: str | None = None,
     sidecar_ref: str | None = None,
     mission: bool = False,
+    dispatch_thread_id: str | None = None,
 ) -> StagedPrompt:
     """Return a cortex:// prompt_uri for satellite submit.
 
@@ -534,7 +615,7 @@ def stage_prompt_uri(
                 staged=False,
                 mission=mission,
             )
-        source = resolve_workspaces_path(raw)
+        source = resolve_workspaces_path(raw, dispatch_thread_id=dispatch_thread_id)
         if source is None:
             raise CdpStagingError(
                 f"unstageable CDP prompt input: {raw!r} "

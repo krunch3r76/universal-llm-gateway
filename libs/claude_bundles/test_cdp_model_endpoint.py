@@ -455,6 +455,152 @@ def test_stage_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert exc.value.code == "cdp_prompt_unstageable"
 
 
+def _mock_lane_root(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    lane: Path,
+    thread_id: str = "16538",
+) -> None:
+    def _root(tid: str) -> Path:
+        assert tid == thread_id
+        return lane
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_model_endpoint_staging._lane_worktree_root_for_thread",
+        _root,
+    )
+
+
+def test_stage_lane_worktree_repo_relative_packet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Repo-relative packet_path readable only in the lane worktree stages."""
+    cortex = tmp_path / "cortex"
+    hub = tmp_path / "ws" / "universal-llm-gateway"
+    lane = tmp_path / "lane-16538"
+    cortex.mkdir()
+    hub.mkdir(parents=True)
+    lane.mkdir()
+    packet = lane / "tmp" / "g3-review-packet-16538-r3.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("lane-only packet body\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    _mock_lane_root(monkeypatch, lane=lane)
+
+    staged = stage_prompt_uri(
+        execution_id="exec-lane-rel",
+        packet_path="tmp/g3-review-packet-16538-r3.md",
+        dispatch_thread_id="16538",
+    )
+    assert staged.staged is True
+    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-lane-rel/g3-review-packet-16538-r3.md"
+    assert dest.read_text(encoding="utf-8") == "lane-only packet body\n"
+
+
+def test_stage_hub_checkout_path_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cortex = tmp_path / "cortex"
+    ws = tmp_path / "ws" / "universal-llm-gateway"
+    cortex.mkdir()
+    ws.mkdir(parents=True)
+    src = ws / "hub-packet.md"
+    src.write_text("hub checkout packet\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+
+    staged = stage_prompt_uri(
+        execution_id="exec-hub",
+        packet_path="hub-packet.md",
+        dispatch_thread_id="16538",
+    )
+    assert staged.staged is True
+    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-hub/hub-packet.md"
+    assert dest.read_text(encoding="utf-8") == "hub checkout packet\n"
+
+
+def test_stage_cortex_uri_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    src = tmp_path / "notes/system/specs/review.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("cortex body\n", encoding="utf-8")
+
+    staged = stage_prompt_uri(
+        execution_id="exec-cortex",
+        prompt_uri="cortex://notes/system/specs/review.md",
+        dispatch_thread_id="16538",
+    )
+    assert staged.staged is False
+    assert staged.prompt_uri == "cortex://notes/system/specs/review.md"
+
+
+def test_stage_lane_escape_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lane = tmp_path / "lane-16538"
+    outside = tmp_path / "outside-secret.md"
+    lane.mkdir()
+    outside.write_text("secret\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex"))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    _mock_lane_root(monkeypatch, lane=lane)
+
+    with pytest.raises(CdpStagingError) as exc:
+        stage_prompt_uri(
+            execution_id="exec-escape",
+            packet_path="../outside-secret.md",
+            dispatch_thread_id="16538",
+        )
+    assert exc.value.code == "cdp_prompt_unstageable"
+
+
+def test_stage_lane_no_association_falls_back_to_hub_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No lane root ⇒ today's unstageable behaviour, not an exception."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex"))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    monkeypatch.setattr(
+        "claude_bundles.cdp_model_endpoint_staging._lane_worktree_root_for_thread",
+        lambda _tid: None,
+    )
+
+    with pytest.raises(CdpStagingError) as exc:
+        stage_prompt_uri(
+            execution_id="exec-no-lane",
+            packet_path="tmp/missing-only-in-lane.md",
+            dispatch_thread_id="7119",
+        )
+    assert exc.value.code == "cdp_prompt_unstageable"
+
+
+def test_stage_workspaces_lane_uri_with_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cortex = tmp_path / "cortex"
+    lane = tmp_path / "lane-16538"
+    cortex.mkdir()
+    lane.mkdir()
+    packet = lane / "tmp" / "g3-review-packet-16538-r3.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("workspaces lane uri\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    _mock_lane_root(monkeypatch, lane=lane)
+
+    staged = stage_prompt_uri(
+        execution_id="exec-ws-lane",
+        packet_path="workspaces://lane-16538/tmp/g3-review-packet-16538-r3.md",
+        dispatch_thread_id="16538",
+    )
+    assert staged.staged is True
+    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-ws-lane/g3-review-packet-16538-r3.md"
+    assert dest.read_text(encoding="utf-8") == "workspaces lane uri\n"
+
+
 class _FakeClient:
     """Minimal httpx-shaped client for adapter unit tests."""
 
