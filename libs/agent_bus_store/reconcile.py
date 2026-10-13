@@ -196,21 +196,34 @@ def _backfill_terminal_link(
         execution_id=execution_id,
         fan_out=fan_out,
     )
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
-            "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+            "SELECT bus_lifecycle_state, updated_at FROM threads WHERE id = ?",
             (thread_id,),
         ).fetchone()
-        current = row["bus_lifecycle_state"] if row is not None else None
+        if row is None:
+            _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
+            return True
+        current = row["bus_lifecycle_state"]
+        stale_before = row["updated_at"]
         if current == "active":
             _transition_lifecycle_state(
                 conn,
                 thread_id,
                 "completed" if status == "completed" else "failed",
                 "watchdog_reap",
+                expect_state="active",
+                stale_before=stale_before,
             )
         elif current == "admitted":
-            _transition_lifecycle_state(conn, thread_id, "abandoned", "watchdog_reap")
+            _transition_lifecycle_state(
+                conn,
+                thread_id,
+                "abandoned",
+                "watchdog_reap",
+                expect_state="admitted",
+                stale_before=stale_before,
+            )
     _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
     return True
 
@@ -246,23 +259,32 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         # left in admitted/active. Drive it to the matching terminal state so
         # reconcile closes the THREAD, not just the link. Legal transitions
         # (see lifecycle._LEGAL): active->completed|failed, admitted->abandoned.
-        with connect() as conn:
+        with write_connect() as conn:
             row = conn.execute(
-                "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+                "SELECT bus_lifecycle_state, updated_at FROM threads WHERE id = ?",
                 (thread_id,),
             ).fetchone()
-            current = row["bus_lifecycle_state"] if row is not None else None
-            if current == "active":
-                _transition_lifecycle_state(
-                    conn,
-                    thread_id,
-                    "completed" if status == "completed" else "failed",
-                    "watchdog_reap",
-                )
-            elif current == "admitted":
-                _transition_lifecycle_state(
-                    conn, thread_id, "abandoned", "watchdog_reap"
-                )
+            if row is not None:
+                current = row["bus_lifecycle_state"]
+                stale_before = row["updated_at"]
+                if current == "active":
+                    _transition_lifecycle_state(
+                        conn,
+                        thread_id,
+                        "completed" if status == "completed" else "failed",
+                        "watchdog_reap",
+                        expect_state="active",
+                        stale_before=stale_before,
+                    )
+                elif current == "admitted":
+                    _transition_lifecycle_state(
+                        conn,
+                        thread_id,
+                        "abandoned",
+                        "watchdog_reap",
+                        expect_state="admitted",
+                        stale_before=stale_before,
+                    )
         return True
 
     with connect() as conn:
@@ -357,15 +379,24 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
 
     # insert_turn advances admitted→active; reap from the post-post state.
     target_state = "abandoned" if lifecycle == "admitted" else "failed"
-    with connect() as conn:
+    applied = False
+    row = None
+    with write_connect() as conn:
         row = conn.execute(
-            "SELECT bus_lifecycle_state, status FROM threads WHERE id = ?",
+            "SELECT bus_lifecycle_state, status, updated_at FROM threads WHERE id = ?",
             (thread_id,),
         ).fetchone()
         if row is not None and row["bus_lifecycle_state"] == "active":
-            _transition_lifecycle_state(conn, thread_id, target_state, "watchdog_reap")
+            applied = _transition_lifecycle_state(
+                conn,
+                thread_id,
+                target_state,
+                "watchdog_reap",
+                expect_state="active",
+                stale_before=row["updated_at"],
+            )
 
-    if row is not None and row["status"] != "closed":
+    if applied and row is not None and row["status"] != "closed":
         close_thread(
             thread_id,
             summary=f"Dispatch orphaned — {reason}",

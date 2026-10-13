@@ -49,7 +49,7 @@ def _transition_lifecycle_state(
 
     ``expect_state`` and ``stale_before`` are the watchdog reap guard. The
     UPDATE matches only when the row is still in ``expect_state`` and
-    ``updated_at`` is still older than ``stale_before`` (same T/Z normalization
+    ``updated_at`` is still at or before ``stale_before`` (same T/Z normalization
     as the TTL select). A turn posted after the candidate select bumps
     ``updated_at`` and the UPDATE matches nothing: no emit, return False.
     Callers that omit both guards keep the previous id-only write.
@@ -79,7 +79,7 @@ def _transition_lifecycle_state(
     if stale_before is not None:
         # Same normalization as watchdog._ts_older_than (ISO T/Z vs sqlite space).
         where += (
-            " AND replace(replace(updated_at, 'T', ' '), 'Z', '') < "
+            " AND replace(replace(updated_at, 'T', ' '), 'Z', '') <= "
             "replace(replace(?, 'T', ' '), 'Z', '')"
         )
         params.append(stale_before)
