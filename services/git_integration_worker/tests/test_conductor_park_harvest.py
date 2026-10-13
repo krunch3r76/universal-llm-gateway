@@ -327,6 +327,76 @@ async def test_reactor_fires_park_harvest_not_team_dispatch(tmp_path, monkeypatc
     assert "hop_successor" not in rec
 
 
+_LIVE_CDP = "642fe99c-45e4-487d-9abb-132c1023a679"
+_FENCED_PARK_HARVEST_CLOSEOUT = f"""\
+status: complete
+```
+stop: PARKED_TRANSPORT
+```
+NEXT_ADMIT: harvest {_LIVE_CDP}
+"""
+
+
+@pytest.mark.asyncio
+async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not_double(
+    tmp_path, monkeypatch
+):
+    """conductor_park_harvest_owed with an in-flight CDP id posts one wake.
+
+    Stored tokens omit PARKED_TRANSPORT (the stop line is fenced), which is
+    the next_admit_blocked strand. A designed PARKED_TRANSPORT stop still
+    posts exactly one wake.
+    """
+    posted: list[tuple[str, str]] = []
+
+    def _poster(thread_id: str, body: str) -> None:
+        posted.append((thread_id, body))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
+        _poster,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+        lambda *a, **k: True,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        AsyncMock(return_value=(True, {"dispatch_id": "successor-should-not"})),
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    fenced = _req(dispatch_id="pred-park-fenced", execution_id=_LIVE_CDP)
+    _admit_conductor(
+        ledger, fenced, record_patch={"cdp_execution_id": _LIVE_CDP}
+    )
+    _terminal_row(
+        ledger,
+        fenced,
+        closeout_body=_FENCED_PARK_HARVEST_CLOSEOUT,
+        closeout_tokens=[],
+    )
+    await maybe_fire_conductor_hop_reactor(dispatch_id=fenced.dispatch_id)
+    assert len(posted) == 1
+    assert "park-harvest: arm watcher" in posted[0][1]
+    assert _LIVE_CDP in posted[0][1]
+
+    designed = _req(dispatch_id="pred-park-designed")
+    _admit_conductor(ledger, designed)
+    _terminal_row(
+        ledger,
+        designed,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT"],
+    )
+    await maybe_fire_conductor_hop_reactor(dispatch_id=designed.dispatch_id)
+    assert len(posted) == 2
+
+
 @pytest.mark.asyncio
 async def test_park_harvest_idempotent_second_call(tmp_path, monkeypatch):
     ledger = CursorDispatchLedger.instance()

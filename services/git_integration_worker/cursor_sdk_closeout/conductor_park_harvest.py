@@ -133,18 +133,47 @@ def harvest_owed_at_terminal(row: dict[str, Any]) -> bool:
     return harvest_still_owed(body=body)
 
 
+def _body_grades_park_harvest_owed(row: dict[str, Any]) -> bool:
+    """True when closeout prose grades ``conductor_park_harvest_owed``.
+
+    Hop authority stores only unfenced ``stop:`` lines. A ``PARKED_TRANSPORT``
+    mention the grader still sees (fenced footer, table cell) leaves
+    ``closeout_stop_tokens`` without an exit-persist token, ``hop_owed`` stays
+    true, and the reactor emits ``next_admit_blocked`` without the wake.
+    ``ROW_HOP`` in the same prose wins, matching the degraded-reason order.
+    """
+    body = _closeout_body_from_row(row)
+    if not body.strip():
+        return False
+    from claude_bundles.conductor_stop import parse_stop_tokens
+
+    prose_tokens = parse_stop_tokens(body).tokens
+    if "ROW_HOP" in prose_tokens:
+        return False
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        _parked_transport_harvest_is_live,
+    )
+
+    return _parked_transport_harvest_is_live(body, prose_tokens)
+
+
 def park_harvest_owed(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str] | None = None,
     scoreboard_body: str | None = None,
 ) -> bool:
-    """G1 R1 bind: terminal exit-persist + mission open + harvest owed + ¬hop_owed."""
+    """G1 R1 bind: terminal exit-persist + mission open + harvest owed + ¬hop_owed.
+
+    A body that grades ``conductor_park_harvest_owed`` owes the same wake when
+    the stored token list omitted ``PARKED_TRANSPORT``.
+    """
     status = str(row.get("status") or "")
     if status not in ("completed", "failed", "cancelled"):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
-    if not (tokens & EXIT_PERSIST_STOPS):
+    body_park = _body_grades_park_harvest_owed(row)
+    if not (tokens & EXIT_PERSIST_STOPS) and not body_park:
         return False
     rec = _record_data(row)
     if rec.get("hop_parked"):
@@ -155,7 +184,7 @@ def park_harvest_owed(
         return False
     if rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
         return False
-    if not harvest_owed_at_terminal(row):
+    if not harvest_owed_at_terminal(row) and not body_park:
         return False
     sb = (
         scoreboard_body
@@ -168,7 +197,7 @@ def park_harvest_owed(
         hop_owed,
     )
 
-    if hop_owed(row, closeout_tokens=tokens):
+    if hop_owed(row, closeout_tokens=tokens) and not body_park:
         return False
     return True
 
