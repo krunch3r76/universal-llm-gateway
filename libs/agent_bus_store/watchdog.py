@@ -230,6 +230,9 @@ def _sweep() -> None:
     from .reconcile import reconcile_orphaned_dispatches
 
     reconcile_orphaned_dispatches()
+    from .cdp_pointer_sweep import sweep_cdp_pointer_orphans
+
+    sweep_cdp_pointer_orphans()
     sweep_quiet_with_wip()
 
 

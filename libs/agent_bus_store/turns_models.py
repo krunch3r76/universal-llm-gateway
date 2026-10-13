@@ -744,6 +744,19 @@ class DispatchClaimAndPost(BaseModel):
     body: str
 
 
+class DispatchAdmitAndPost(BaseModel):
+    """Payload for POST /threads/{id}/dispatch-admit-and-post."""
+
+    execution_id: str
+    pipeline_id: str
+    caller_agent: str | None = None
+    parent_thread_id: str | None = None
+    from_agent: str
+    to_agent: str
+    subject: str
+    body: str
+
+
 TRIAGE_THREAD_CAP = 50
 TRIAGE_MARK_READ_FLOOR_HOURS = 24
 TRIAGE_CLOSE_FLOOR_DAYS = 7

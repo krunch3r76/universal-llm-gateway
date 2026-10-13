@@ -724,3 +724,279 @@ def claim_and_post_turn(
     result = get_thread_with_links(thread_id)
     assert result is not None
     return result
+
+
+def _pointer_turn_for_execution(
+    conn,
+    *,
+    thread_id: str,
+    execution_id: str,
+) -> int | None:
+    from ..cdp_pointer_sweep import parse_cdp_pointer_execution_id
+
+    rows = conn.execute(
+        "SELECT turn_number, body FROM turns WHERE thread = ? ORDER BY turn_number",
+        (thread_id,),
+    ).fetchall()
+    for row in rows:
+        if parse_cdp_pointer_execution_id(row["body"]) == execution_id:
+            return int(row["turn_number"])
+    return None
+
+
+def admit_and_post_turn(
+    *,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None = None,
+    parent_thread_id: str | None = None,
+    from_agent: str,
+    to_agent: str,
+    subject: str,
+    body: str,
+) -> dict[str, Any]:
+    """Atomically register dispatch link + pointer turn in one write txn.
+
+    No pending-empty CAS — accepts threads with prior turns and null lifecycle.
+    Idempotent on ``(thread_id, execution_id)``: when the link row already
+    exists, returns thread detail without inserting a duplicate pointer.
+    """
+    ts = now()
+    turn_id: int | None = None
+    turn_number: int | None = None
+    inserted_turn = False
+
+    with write_connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Thread {thread_id!r} not found")
+
+        link_row = conn.execute(
+            "SELECT execution_id FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (thread_id, execution_id),
+        ).fetchone()
+
+        if link_row is not None:
+            turn_number = _pointer_turn_for_execution(
+                conn, thread_id=thread_id, execution_id=execution_id
+            )
+        else:
+            max_row = conn.execute(
+                "SELECT COALESCE(MAX(turn_number), 0) AS mx FROM turns WHERE thread = ?",
+                (thread_id,),
+            ).fetchone()
+            turn_number = int(max_row["mx"] or 0) + 1
+
+            cur = conn.execute(
+                "INSERT INTO turns "
+                "(thread, turn_number, from_agent, to_agent, subject, body, "
+                "status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    thread_id,
+                    turn_number,
+                    from_agent,
+                    to_agent,
+                    subject,
+                    body,
+                    "open",
+                    ts,
+                ),
+            )
+            if cur.lastrowid is None:
+                raise RuntimeError("admit_and_post_turn: sqlite returned no row id")
+            turn_id = int(cur.lastrowid)
+            inserted_turn = True
+
+            _insert_dispatch_link_row(
+                conn,
+                thread_id=thread_id,
+                execution_id=execution_id,
+                pipeline_id=pipeline_id,
+                caller_agent=caller_agent,
+                linked_at=ts,
+            )
+            _maybe_mirror_dispatch_to_parent(
+                worker_thread_id=thread_id,
+                parent_thread_id=parent_thread_id,
+                execution_id=execution_id,
+                pipeline_id=pipeline_id,
+                caller_agent=caller_agent,
+                linked_at=ts,
+                conn=conn,
+            )
+
+    if inserted_turn and turn_id is not None and turn_number is not None:
+        _maybe_lane_bind_worker_to_parent(
+            worker_thread_id=thread_id,
+            parent_thread_id=parent_thread_id,
+            execution_id=execution_id,
+            caller_agent=caller_agent,
+        )
+        from ..events.turn_created import emit_turn_created
+
+        emit_turn_created(
+            thread=thread_id,
+            turn_id=turn_id,
+            turn_number=turn_number,
+            from_agent=from_agent,
+            to_agent=to_agent,
+            subject=subject,
+            created_at=ts,
+        )
+        from claude_bundles.cse_session_obligations import maybe_mirror_protocol_turn
+
+        maybe_mirror_protocol_turn(
+            thread=thread_id,
+            turn_id=turn_id,
+            turn_number=turn_number,
+            created_at=ts,
+            body=body,
+        )
+
+    result = get_thread_with_links(thread_id)
+    assert result is not None
+    return result
+
+
+def _pointer_turn_for_execution(
+    conn,
+    *,
+    thread_id: str,
+    execution_id: str,
+) -> int | None:
+    from ..cdp_pointer_sweep import parse_cdp_pointer_execution_id
+
+    rows = conn.execute(
+        "SELECT turn_number, body FROM turns WHERE thread = ? ORDER BY turn_number",
+        (thread_id,),
+    ).fetchall()
+    for row in rows:
+        if parse_cdp_pointer_execution_id(row["body"]) == execution_id:
+            return int(row["turn_number"])
+    return None
+
+
+def admit_and_post_turn(
+    *,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None = None,
+    parent_thread_id: str | None = None,
+    from_agent: str,
+    to_agent: str,
+    subject: str,
+    body: str,
+) -> dict[str, Any]:
+    """Atomically register dispatch link + pointer turn in one write txn.
+
+    No pending-empty CAS — accepts threads with prior turns and null lifecycle.
+    Idempotent on ``(thread_id, execution_id)``: when the link row already
+    exists, returns thread detail without inserting a duplicate pointer.
+    """
+    ts = now()
+    turn_id: int | None = None
+    turn_number: int | None = None
+    inserted_turn = False
+
+    with write_connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Thread {thread_id!r} not found")
+
+        link_row = conn.execute(
+            "SELECT execution_id FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (thread_id, execution_id),
+        ).fetchone()
+
+        if link_row is not None:
+            turn_number = _pointer_turn_for_execution(
+                conn, thread_id=thread_id, execution_id=execution_id
+            )
+        else:
+            max_row = conn.execute(
+                "SELECT COALESCE(MAX(turn_number), 0) AS mx FROM turns WHERE thread = ?",
+                (thread_id,),
+            ).fetchone()
+            turn_number = int(max_row["mx"] or 0) + 1
+
+            cur = conn.execute(
+                "INSERT INTO turns "
+                "(thread, turn_number, from_agent, to_agent, subject, body, "
+                "status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    thread_id,
+                    turn_number,
+                    from_agent,
+                    to_agent,
+                    subject,
+                    body,
+                    "open",
+                    ts,
+                ),
+            )
+            if cur.lastrowid is None:
+                raise RuntimeError("admit_and_post_turn: sqlite returned no row id")
+            turn_id = int(cur.lastrowid)
+            inserted_turn = True
+
+            _insert_dispatch_link_row(
+                conn,
+                thread_id=thread_id,
+                execution_id=execution_id,
+                pipeline_id=pipeline_id,
+                caller_agent=caller_agent,
+                linked_at=ts,
+            )
+            _maybe_mirror_dispatch_to_parent(
+                worker_thread_id=thread_id,
+                parent_thread_id=parent_thread_id,
+                execution_id=execution_id,
+                pipeline_id=pipeline_id,
+                caller_agent=caller_agent,
+                linked_at=ts,
+                conn=conn,
+            )
+
+    if inserted_turn and turn_id is not None and turn_number is not None:
+        _maybe_lane_bind_worker_to_parent(
+            worker_thread_id=thread_id,
+            parent_thread_id=parent_thread_id,
+            execution_id=execution_id,
+            caller_agent=caller_agent,
+        )
+        from ..events.turn_created import emit_turn_created
+
+        emit_turn_created(
+            thread=thread_id,
+            turn_id=turn_id,
+            turn_number=turn_number,
+            from_agent=from_agent,
+            to_agent=to_agent,
+            subject=subject,
+            created_at=ts,
+        )
+        from claude_bundles.cse_session_obligations import maybe_mirror_protocol_turn
+
+        maybe_mirror_protocol_turn(
+            thread=thread_id,
+            turn_id=turn_id,
+            turn_number=turn_number,
+            created_at=ts,
+            body=body,
+        )
+
+    result = get_thread_with_links(thread_id)
+    assert result is not None
+    return result

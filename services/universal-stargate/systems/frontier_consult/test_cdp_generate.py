@@ -1331,7 +1331,7 @@ def _stub_cdp_generate_after_gate(
 
     monkeypatch.setattr(staging, "ephemeral_dir", _ephemeral)
     monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
-    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
         "admit_handoff_dispatch",
@@ -1624,7 +1624,7 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
         "_stage_inputs",
         lambda **kw: MagicMock(prompt_uri=prompt_uri, staged=True),
     )
-    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
         "admit_handoff_dispatch",
@@ -1708,7 +1708,7 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
         return MagicMock(prompt_uri=prompt_uri, staged=True)
 
     monkeypatch.setattr(mod, "_stage_inputs", _stage_inputs)
-    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
         "admit_handoff_dispatch",
@@ -1832,7 +1832,7 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
         "_stage_inputs",
         lambda **kw: MagicMock(prompt_uri=prompt_uri, staged=True),
     )
-    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
     monkeypatch.setattr(
@@ -2394,4 +2394,234 @@ async def test_staged_digest_failure_before_admit(
     assert exc.value.status_code == 422
     assert exc.value.code == "cdp_prompt_missing"
     admit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_supplied_thread_atomic_admit_and_post_no_separate_admit(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Supplied-thread path uses dispatch-admit-and-post, not post-then-admit."""
+    from agent_bus_store.db import create_thread, insert_turn
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult import handoff
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="parent", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    insert_turn(
+        thread=thread_id,
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="prior",
+        body="prior",
+    )
+
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {"handoff_status": "ok", "poll_hint": {}},
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "run_cdp_worker", AsyncMock())
+
+    admit_post = AsyncMock(wraps=handoff.admit_and_post_pointer_turn)
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", admit_post)
+    separate_admit = AsyncMock(wraps=handoff.admit_handoff_dispatch)
+    monkeypatch.setattr(mod, "admit_handoff_dispatch", separate_admit)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-atomic-admit-post",
+        body=body,
+        response=response,
+    )
+    admit_post.assert_awaited_once()
+    separate_admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_supplied_thread_timeout_retry_single_link(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Timeout then retry with same execution_id leaves one dispatch link."""
+    import httpx
+    from agent_bus_store.db import create_thread
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult import handoff
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="retry", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {"handoff_status": "ok", "poll_hint": {}},
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "run_cdp_worker", AsyncMock())
+
+    calls = {"n": 0}
+
+    async def _flaky_admit(**kwargs: Any) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.TimeoutException("read timed out")
+        return await handoff.admit_and_post_pointer_turn(**kwargs)
+
+    monkeypatch.setattr(mod, "admit_and_post_pointer_turn", _flaky_admit)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-timeout-retry",
+        body=body,
+        response=response,
+    )
+    assert calls["n"] == 2
+
+    async with httpx.AsyncClient(
+        transport=_cdp_bus_env, base_url="http://test"
+    ) as client:
+        turns_resp = await client.get("/turns", params={"thread": thread_id})
+    payload = turns_resp.json()
+    turns = payload.get("turns", payload) if isinstance(payload, dict) else payload
+    pointer_turns = [
+        t
+        for t in turns
+        if isinstance(t, dict) and "CDP generate admitted" in (t.get("body") or "")
+    ]
+    assert len(pointer_turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_post_admit_worker_spawn_failure_terminates_link_failed(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Raise after bus commit terminates dispatch link as failed."""
+    import httpx
+    from agent_bus_store.db import create_thread
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(thread_id=None, slug="fail-after", lifecycle_state=None)
+    assert row is not None
+    thread_id = row["id"]
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {"prompt_uri": prompt_uri, "staged": True})(),
+    )
+    monkeypatch.setattr(
+        mod,
+        "upsert_inflight_leg",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("inflight boom")),
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/fable",
+        dispatch_thread_id=str(thread_id),
+        prompt="consult",
+    )
+    response = MagicMock()
+    with pytest.raises(RuntimeError, match="inflight boom"):
+        await mod.dispatch_cdp_generate(
+            request_id="req-fail-after-admit",
+            body=body,
+            response=response,
+        )
+
+    async with httpx.AsyncClient(
+        transport=_cdp_bus_env, base_url="http://test"
+    ) as client:
+        thread_resp = await client.get(f"/threads/{thread_id}")
+    links = thread_resp.json().get("dispatch_links")
+    assert links is None  # ThreadDetail omits links — use lineage or DB
+    from agent_bus_store.db import get_thread_with_links
+
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert detail["dispatch_links"][0]["terminal_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_post_pointer_turn_transport_error_agent_bus_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bus transport failures surface agent_bus_unreachable, not persona_violation."""
+    import httpx
+
+    from systems.frontier_consult.handoff import post_pointer_turn
+
+    class _FailingClient:
+        async def __aenter__(self) -> _FailingClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        async def get(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+    def _fail_client(_url: str, *, timeout: float = 10.0) -> _FailingClient:
+        return _FailingClient()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.make_async_client",
+        _fail_client,
+    )
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        await post_pointer_turn(
+            request_id="req-transport",
+            thread_id="123",
+            to_agent="web-anthropic",
+            subject="subj",
+            pointer_body="body",
+            caller_agent="dispatch",
+        )
+    assert exc.value.code == "agent_bus_unreachable"
+    assert exc.value.code != "persona_violation"
 

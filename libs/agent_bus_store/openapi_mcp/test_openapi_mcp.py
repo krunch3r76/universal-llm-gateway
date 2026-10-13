@@ -10,7 +10,7 @@ from agent_bus_store.server import create_app
 
 # Bump deliberately when a route gains or loses an x-mcp stamp; the count is the
 # guard against a stamp disappearing silently.
-SERVED_OP_COUNT = 24
+SERVED_OP_COUNT = 25
 
 
 @pytest.mark.offline

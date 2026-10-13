@@ -876,13 +876,26 @@ async def post_pointer_turn(
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
             resp = await client.post("/turns", headers=headers, json=payload)
     except httpx.HTTPError as exc:
+        logger.error(
+            "handoff post_pointer_turn transport error: request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
         raise FrontierEndpointError(
             request_id=request_id,
             field="thread",
-            reason=f"Agent-bus unreachable: {exc}",
+            reason=f"{type(exc).__name__}: {exc}",
             status_code=503,
+            code="agent_bus_unreachable",
         ) from exc
     if resp.status_code >= 400:
+        logger.error(
+            "handoff post_pointer_turn HTTP error: request_id=%s thread=%s status=%s",
+            request_id,
+            thread_id,
+            resp.status_code,
+        )
         raise FrontierEndpointError(
             request_id=request_id,
             field="thread",
@@ -891,6 +904,7 @@ async def post_pointer_turn(
                 f"HTTP {resp.status_code} — {resp.text[:200]}"
             ),
             status_code=502,
+            code="agent_bus_error",
         )
     try:
         payload = resp.json()
@@ -964,11 +978,19 @@ async def claim_and_post_pointer_turn(
                 json=payload,
             )
     except httpx.HTTPError as exc:
+        logger.error(
+            "handoff claim_and_post_pointer_turn transport error: "
+            "request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
         raise FrontierEndpointError(
             request_id=request_id,
             field="thread",
-            reason=f"Agent-bus unreachable: {exc}",
+            reason=f"{type(exc).__name__}: {exc}",
             status_code=503,
+            code="agent_bus_unreachable",
         ) from exc
     if resp.status_code == 409:
         detail = resp.json().get("detail", {})
@@ -983,6 +1005,13 @@ async def claim_and_post_pointer_turn(
             status_code=409,
         )
     if resp.status_code >= 400:
+        logger.error(
+            "handoff claim_and_post_pointer_turn HTTP error: "
+            "request_id=%s thread=%s status=%s",
+            request_id,
+            thread_id,
+            resp.status_code,
+        )
         raise FrontierEndpointError(
             request_id=request_id,
             field="thread",
@@ -991,6 +1020,7 @@ async def claim_and_post_pointer_turn(
                 f"HTTP {resp.status_code} — {resp.text[:200]}"
             ),
             status_code=502,
+            code="agent_bus_error",
         )
     try:
         body = resp.json()
@@ -998,6 +1028,114 @@ async def claim_and_post_pointer_turn(
         if turn_number is not None:
             return int(turn_number)
     except (TypeError, ValueError):
+        pass
+    return 0
+
+
+async def admit_and_post_pointer_turn(
+    *,
+    request_id: str,
+    thread_id: str,
+    to_agent: str,
+    subject: str,
+    pointer_body: str,
+    caller_agent: str | None,
+    execution_id: str,
+    pipeline_id: str,
+    parent_thread_id: str | None = None,
+) -> int:
+    """POST /threads/{id}/dispatch-admit-and-post — atomic link + pointer turn."""
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                "AGENT_BUS_TOKEN not configured; "
+                "admit_and_post_pointer_turn requires agent-bus access."
+            ),
+            status_code=503,
+        )
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "pipeline_id": pipeline_id,
+        "caller_agent": caller_agent,
+        "from_agent": caller_agent or "dispatch",
+        "to_agent": to_agent,
+        "subject": subject,
+        "body": pointer_body,
+    }
+    if parent_thread_id is not None:
+        payload["parent_thread_id"] = parent_thread_id
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.post(
+                f"/threads/{thread_id}/dispatch-admit-and-post",
+                headers=headers,
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        logger.error(
+            "handoff admit_and_post_pointer_turn transport error: "
+            "request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"{type(exc).__name__}: {exc}",
+            status_code=503,
+            code="agent_bus_unreachable",
+        ) from exc
+    if resp.status_code >= 400:
+        logger.error(
+            "handoff admit_and_post_pointer_turn HTTP error: "
+            "request_id=%s thread=%s status=%s",
+            request_id,
+            thread_id,
+            resp.status_code,
+        )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=(
+                f"Agent-bus admit-and-post failed: "
+                f"HTTP {resp.status_code} — {resp.text[:200]}"
+            ),
+            status_code=502,
+            code="agent_bus_error",
+        )
+    from agent_bus_store.cdp_pointer_sweep import parse_cdp_pointer_execution_id
+
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            turns_resp = await client.get(
+                "/turns",
+                params={"thread": thread_id, "limit": 500},
+                headers=headers,
+            )
+        if turns_resp.status_code == 200:
+            turns_payload = turns_resp.json()
+            turns = (
+                turns_payload
+                if isinstance(turns_payload, list)
+                else turns_payload.get("turns") or []
+            )
+            for turn in reversed(turns):
+                if not isinstance(turn, dict):
+                    continue
+                body_text = turn.get("body")
+                if parse_cdp_pointer_execution_id(body_text) == execution_id:
+                    return int(turn["turn_number"])
+    except (httpx.HTTPError, TypeError, ValueError, KeyError):
         pass
     return 0
 
