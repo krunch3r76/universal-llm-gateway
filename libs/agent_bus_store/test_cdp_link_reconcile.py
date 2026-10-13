@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-import httpx
 import pytest
 from fastapi import FastAPI
+from starlette.testclient import TestClient
+from systems.frontier_consult.cdp_dispatch_envelope import (
+    clear_cdp_dispatch_envelope,
+    record_cdp_admit,
+    reset_cdp_dispatch_envelope_for_tests,
+)
+from systems.frontier_consult.cdp_generate_inflight_ledger import (
+    clear_inflight_ledger,
+    mark_delivered,
+    mark_proof_emitted,
+    upsert_inflight_leg,
+)
+from systems.frontier_consult.cdp_leg_status_route import cdp_leg_status_router
 
 from agent_bus_store.cdp_link_reconcile import (
     _PENDING_CLOSED,
@@ -25,18 +36,6 @@ from agent_bus_store.db import (
 from agent_bus_store.db.connection import connect
 from agent_bus_store.producer_witness import CdpLegProbeResult, WitnessVerdict
 from agent_bus_store.wait_status import derive_status
-from systems.frontier_consult.cdp_dispatch_envelope import (
-    clear_cdp_dispatch_envelope,
-    record_cdp_admit,
-    reset_cdp_dispatch_envelope_for_tests,
-)
-from systems.frontier_consult.cdp_generate_inflight_ledger import (
-    clear_inflight_ledger,
-    mark_delivered,
-    mark_proof_emitted,
-    upsert_inflight_leg,
-)
-from systems.frontier_consult.cdp_leg_status_route import cdp_leg_status_router
 
 pytestmark = pytest.mark.offline
 
@@ -93,21 +92,21 @@ def stargate_leg_probe(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
     app = FastAPI()
     app.include_router(cdp_leg_status_router)
-    asgi = httpx.ASGITransport(app=app)
+    leg_client = TestClient(app)
 
-    @contextmanager
-    def _sync_client(_base_url: str, **kwargs):
-        timeout = kwargs.get("timeout", 5.0)
-        with httpx.Client(
-            transport=asgi,
-            base_url="http://stargate-leg.test",
-            timeout=timeout,
-        ) as client:
-            yield client
+    class _SyncLegClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, path: str, **kwargs: object):
+            return leg_client.get(path, headers=kwargs.get("headers"))
 
     monkeypatch.setattr(
         "agent_bus_store.producer_witness.make_sync_client",
-        _sync_client,
+        lambda _base_url, **_kwargs: _SyncLegClient(),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_leg_status_route.terminal_status_for_execution",
@@ -324,3 +323,56 @@ def test_closed_leg_null_terminal_defers_and_emits(bus_db) -> None:
         ).fetchone()
     assert row["liveness_probe_deferred_reason"] is not None
     assert _PENDING_CLOSED not in (row["liveness_probe_deferred_reason"] or "")
+
+
+def test_ac1e_case1_transport_admit_closed_leg_wait_terminal(
+    bus_db, stargate_leg_probe
+) -> None:
+    """AC1e Case 1: transport admit, worker delivered; pass 2 + wait terminal."""
+    del bus_db, stargate_leg_probe
+    execution_id = "exec-ac1e-case1"
+    thread_id = _ac1e_transport_admit_closed_leg(
+        execution_id=execution_id,
+        clear_envelope=False,
+    )
+    with patch("agent_bus_store.cdp_link_reconcile.emit_dispatch_orphaned"):
+        assert reconcile_cdp_dispatch_links() == 0
+        assert reconcile_cdp_dispatch_links() == 1
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    link = detail["dispatch_links"][0]
+    assert link["terminal_status"] == "completed"
+    turns = get_turns(thread=thread_id)
+    assert not any("cdp FAILED" in (t.get("subject") or "") for t in turns)
+    thread_row = get_thread(thread_id) or {"status": "active"}
+    assert (
+        derive_status(
+            thread_row,
+            turns,
+            after_turn=0,
+            completion={"mode": "proof_reply_from", "from_agent": "web-anthropic"},
+            execution_id=execution_id,
+            dispatch_links=detail["dispatch_links"],
+        )
+        == "producer_terminal"
+    )
+
+
+def test_ac1e_case2_cleared_envelope_pass2_stamps_completed(
+    bus_db, stargate_leg_probe
+) -> None:
+    """AC1e Case 2: Stargate recycle cleared envelope; pass 2 still completes link."""
+    del bus_db, stargate_leg_probe
+    execution_id = "exec-ac1e-case2"
+    thread_id = _ac1e_transport_admit_closed_leg(
+        execution_id=execution_id,
+        clear_envelope=True,
+    )
+    with patch("agent_bus_store.cdp_link_reconcile.emit_dispatch_orphaned"):
+        assert reconcile_cdp_dispatch_links() == 0
+        assert reconcile_cdp_dispatch_links() == 1
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert detail["dispatch_links"][0]["terminal_status"] == "completed"
+    turns = get_turns(thread=thread_id)
+    assert not any("cdp FAILED" in (t.get("subject") or "") for t in turns)
