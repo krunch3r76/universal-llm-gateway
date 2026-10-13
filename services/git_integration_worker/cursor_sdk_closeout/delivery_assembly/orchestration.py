@@ -239,7 +239,7 @@ def _assemble_closeout_delivery(
         hub_repo=binding.receipt_tree if binding is not None else source_repo,
     )
     return receipt_finalization.finalize_closeout_receipt(
-        source_repo=source_repo,
+        source_repo=write_tree,
         lane_b_branch=lane_b_branch,
         thread_id=thread_id,
         dispatch_id=dispatch_id,

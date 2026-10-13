@@ -6,7 +6,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from implement_admission.closeout_models import EffectsManifest
 
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -21,6 +23,11 @@ from services.git_integration_worker.cursor_sdk_branch_discharge import (
 )
 from services.git_integration_worker.cursor_sdk_branch_terminal import (
     settle_lane_branch,
+)
+from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+from services.git_integration_worker.cursor_sdk_closeout import SdkRunOutcome
+from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
+    _assemble_closeout_delivery,
 )
 
 
@@ -142,6 +149,27 @@ def test_discharge_uses_satellite_repo_from_debt_row(
     assert debt.discharged_at is not None
 
 
+def _commit_on_branch(repo: Path, branch: str, rel_path: str, content: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", branch],
+        check=True,
+        capture_output=True,
+    )
+    path = repo / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", rel_path],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", f"lane work on {branch}"],
+        check=True,
+        capture_output=True,
+    )
+
+
 def test_settle_lane_branch_records_workspace_token(
     projects_layout: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -149,6 +177,7 @@ def test_settle_lane_branch_records_workspace_token(
     hub, satellite, projects_root = projects_layout
     branch = "cursor-sdk/lane-settle"
     _branch(satellite, branch)
+    _commit_on_branch(satellite, branch, "lane-settle.txt", "ahead\n")
     monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
     monkeypatch.setenv("GIT_INTEGRATION_DISPATCH_WORKSPACE", str(projects_root))
     settlement = settle_lane_branch(
@@ -162,6 +191,81 @@ def test_settle_lane_branch_records_workspace_token(
         head_sha=None,
     )
     assert settlement.outcome == "debt_opened"
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None
+    assert debt.source_repo == "sat-bot"
+
+
+def test_assemble_closeout_settles_satellite_debt_against_write_tree(
+    projects_layout: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production passes hub as source_repo; branch debt must use the satellite write tree."""
+    hub, satellite, projects_root = projects_layout
+    branch = "cursor-sdk/lane-closeout-sat"
+    _branch(satellite, branch)
+    _commit_on_branch(satellite, branch, "closeout-sat.txt", "ahead\n")
+    tip = subprocess.run(
+        ["git", "-C", str(satellite), "rev-parse", branch],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
+    monkeypatch.setenv("GIT_INTEGRATION_DISPATCH_WORKSPACE", str(projects_root))
+    cfg = load_config()
+    binding = CaptureBinding.lane_a(cfg, dispatch_source_repo=satellite)
+
+    def _stub_lane_settle(**_kwargs: object) -> tuple:
+        return (
+            "B",
+            branch,
+            None,
+            tip,
+            1,
+            1,
+            False,
+            "B",
+            False,
+            "",
+            False,
+            tip,
+            [],
+            None,
+            None,
+        )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_assembly."
+        "lane_settlement.settle_lane_and_dispatch_fields",
+        _stub_lane_settle,
+    )
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=1,
+        tool_call_count=0,
+        effects_manifest=EffectsManifest(
+            dispatch_id="d-closeout-sat",
+            thread_id="16518",
+            capture_sources=["conversation"],
+            surfaces={},
+        ),
+    )
+    _assemble_closeout_delivery(
+        source_repo=hub,
+        binding=binding,
+        dispatch_id="d-closeout-sat",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="16518",
+        work_item_ref=None,
+        baseline=None,
+        packet_text=None,
+        cortex_artifact_paths=[],
+        gate_d_created_rels=(),
+        finalize_oversize=False,
+    )
     debt = get_branch_debt(branch_name=branch)
     assert debt is not None
     assert debt.source_repo == "sat-bot"
