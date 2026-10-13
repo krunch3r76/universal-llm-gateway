@@ -235,8 +235,9 @@ wait_for_mcp_healthy() {
 
 write_source_sync_stamp() {
   local c=mcp-server
-  local stamp code_sha working_tree_state status_output source_tree_sha
+  local stamp code_sha working_tree_state status_output source_tree_sha image_id
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  image_id="$(docker inspect -f '{{.Image}}' mcp-server 2>/dev/null || true)"
   code_sha="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
   source_tree_sha="$(
     find "$WORKSPACE_ROOT/libs" "$WORKSPACE_ROOT/services/mcp-server" -type f \
@@ -253,7 +254,7 @@ write_source_sync_stamp() {
     working_tree_state="unknown"
   fi
   docker exec -u 0 "$c" sh -c \
-    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\nsource_tree_sha=${source_tree_sha}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\nsource_tree_sha=${source_tree_sha}\nimage_id=${image_id}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
   echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
 }
 

@@ -3,8 +3,9 @@
 ``McpRequestEventsMiddleware`` already logs the caller. This middleware
 writes the same kind of identity onto ``ToolResult.meta`` so a client
 that only sees the tool response can name the serving checkout, the
-sync time, and the surface. It does not record tokens or replace an
-existing ``meta`` entry other than the ``ulg`` key.
+sync time, the content hash, the container image, and the surface. It
+does not record tokens or replace an existing ``meta`` entry other
+than the ``ulg`` key.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ def build_ulg_meta() -> dict[str, str]:
         "source_synced_at": stamp.get("source_synced_at") or "",
         "worktree_state": stamp.get("source_sync_worktree_state") or "",
         "source_tree_sha": stamp.get("source_tree_sha") or "",
+        "image_id": stamp.get("image_id") or "",
         "surface": str(request.get("surface") or ""),
     }
     return {key: value for key, value in fields.items() if value}

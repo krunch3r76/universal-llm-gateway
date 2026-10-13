@@ -20,6 +20,8 @@ def test_read_source_sync_stamp_missing(
         "source_sync_basis": None,
         "code_version_semantics": None,
         "source_sync_worktree_state": None,
+        "source_tree_sha": None,
+        "image_id": None,
     }
 
 
@@ -38,6 +40,8 @@ def test_read_source_sync_stamp_present(
         "source_sync_basis": "unspecified_legacy",
         "code_version_semantics": "legacy_source_sync_commit_label",
         "source_sync_worktree_state": "unknown",
+        "source_tree_sha": None,
+        "image_id": None,
     }
 
 
@@ -61,7 +65,24 @@ def test_read_source_sync_stamp_qualifies_working_tree_label(
         "source_sync_basis": "working_tree",
         "code_version_semantics": "checkout_head_at_source_sync",
         "source_sync_worktree_state": "dirty",
+        "source_tree_sha": None,
+        "image_id": None,
     }
+
+
+def test_read_source_sync_stamp_includes_image_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stamp = tmp_path / ".source_sync_stamp"
+    stamp.write_text(
+        "2026-08-15T09:30:00Z\n"
+        "a28906fc180db15916f61f00eb61a633b7781689\n"
+        "source_basis=working_tree\n"
+        "image_id=sha256:abc\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("_deploy_stamp._STAMP_PATH", stamp)
+    assert read_source_sync_stamp()["image_id"] == "sha256:abc"
 
 
 def test_health_json_includes_stamp(

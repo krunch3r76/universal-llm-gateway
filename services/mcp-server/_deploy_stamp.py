@@ -28,6 +28,7 @@ def read_source_sync_stamp() -> dict[str, str | None]:
             "code_version_semantics": None,
             "source_sync_worktree_state": None,
             "source_tree_sha": None,
+            "image_id": None,
         }
     lines = _STAMP_PATH.read_text(encoding="utf-8").strip().splitlines()
     line = lines[0].strip() if lines else ""
@@ -43,11 +44,12 @@ def read_source_sync_stamp() -> dict[str, str | None]:
         "code_version_semantics": metadata.get(
             "code_version_semantics", "legacy_source_sync_commit_label"
         ),
-            "source_sync_worktree_state": metadata.get(
-                "working_tree_state", "unknown"
-            ),
-            "source_tree_sha": metadata.get("source_tree_sha"),
-        }
+        "source_sync_worktree_state": metadata.get(
+            "working_tree_state", "unknown"
+        ),
+        "source_tree_sha": metadata.get("source_tree_sha"),
+        "image_id": metadata.get("image_id"),
+    }
 
 
 def health_json() -> dict[str, Any]:
