@@ -35,11 +35,9 @@ from ..wait_status import (
     build_suggested_next,
     classify_producer_link,
     derive_status,
-    is_complete,
     is_dead_wait_no_auto_producer,
-    qualifying_proof_reply,
-    qualifying_reply,
-    qualifying_status_turn,
+    qualifying_reply_for_wait,
+    wait_predicate_satisfied,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -109,40 +107,7 @@ async def _snapshot(
         )
     dispatch_links = thread_row.get("dispatch_links") or []
     turns = get_thread_turns_asc(thread_id)
-    complete = is_complete(
-        thread_row, turns, after_turn=after_turn, completion=completion
-    )
-    wait_status = derive_status(
-        thread_row,
-        turns,
-        after_turn=after_turn,
-        completion=completion,
-        execution_id=execution_id,
-        dispatch_links=dispatch_links,
-    )
     pointer = next((t for t in turns if t["turn_number"] == after_turn), None)
-    mode = completion.get("mode", "first_reply_from")
-    if mode in STATUS_COMPLETION_MODES:
-        reply = qualifying_status_turn(
-            turns, after_turn=after_turn, status_token=str(mode)
-        )
-    elif mode == "proof_reply_from":
-        reply = qualifying_proof_reply(
-            turns, after_turn=after_turn, from_agent=completion.get("from_agent")
-        )
-    else:
-        reply = qualifying_reply(
-            turns, after_turn=after_turn, from_agent=completion.get("from_agent")
-        )
-    reply_turn = reply["turn_number"] if reply else None
-    suggested = build_suggested_next(
-        thread_row,
-        complete=complete,
-        completion=completion,
-        qualifying_reply_turn=reply_turn,
-        after_turn=after_turn,
-        turns=turns,
-    )
     clock = datetime.now(UTC)
     pinned_witness, witness_map = await _pinned_reader_witness(
         thread_id=thread_id,
@@ -155,6 +120,39 @@ async def _snapshot(
         dispatch_links=dispatch_links,
         now=clock,
         liveness_witness=pinned_witness,
+    )
+    reply = qualifying_reply_for_wait(
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+        execution_id=execution_id,
+        producer=producer,
+    )
+    reply_turn = reply["turn_number"] if reply else None
+    complete = wait_predicate_satisfied(
+        thread_row,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+        execution_id=execution_id,
+        producer=producer,
+    )
+    wait_status = derive_status(
+        thread_row,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+        execution_id=execution_id,
+        dispatch_links=dispatch_links,
+        producer=producer,
+    )
+    suggested = build_suggested_next(
+        thread_row,
+        complete=complete,
+        completion=completion,
+        qualifying_reply_turn=reply_turn,
+        after_turn=after_turn,
+        turns=turns,
     )
     producers = project_thread_producers(
         dispatch_links,

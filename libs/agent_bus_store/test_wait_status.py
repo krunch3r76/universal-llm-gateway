@@ -17,6 +17,8 @@ from agent_bus_store.wait_status import (
     derive_status,
     is_complete,
     qualifying_proof_reply,
+    qualifying_reply_for_wait,
+    wait_predicate_satisfied,
 )
 
 
@@ -861,3 +863,126 @@ def test_classify_producer_link_terminal() -> None:
         )["state"]
         == "terminal"
     )
+
+
+def _producer(state: str) -> dict:
+    return {"state": state, "execution_id": "0e59a64f"}
+
+
+def test_a39199_replay_16643_admit_chrome_while_in_flight() -> None:
+    """agent-bus:16643 — cdp generate admit must not complete pinned wait (a:39199)."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(6, "dispatch", subject="packet"),
+        _turn(
+            7,
+            "cursor-sdk",
+            subject="cdp generate — 062d4d460c41",
+            body='{"status":"admitted"}',
+        ),
+    ]
+    comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
+    producer = _producer("in_flight")
+    assert not wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=6,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=6,
+            completion=comp,
+            execution_id="0e59a64f",
+            producer=producer,
+        )
+        == "predicate_unmet"
+    )
+    assert (
+        qualifying_reply_for_wait(
+            turns,
+            after_turn=6,
+            completion=comp,
+            execution_id="0e59a64f",
+            producer=producer,
+        )
+        is None
+    )
+
+
+def test_a39199_pinned_completes_on_terminal_closeout_not_admit() -> None:
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(6, "dispatch", subject="packet"),
+        _turn(
+            7,
+            "cursor-sdk",
+            subject="cdp generate — 062d4d460c41",
+            body='{"status":"admitted"}',
+        ),
+        _turn(
+            9,
+            "cursor-sdk",
+            subject="cursor-sdk CLOSEOUT 0e59a64f-dispatch contract=freeform",
+            body="status: complete\nlanded.",
+        ),
+    ]
+    comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
+    producer = _producer("terminal")
+    assert wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=6,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    reply = qualifying_reply_for_wait(
+        turns,
+        after_turn=6,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    assert reply is not None and reply["turn_number"] == 9
+
+
+def test_a39199_unknown_producer_keeps_first_reply_behavior() -> None:
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "dispatch"),
+        _turn(2, "cursor-sdk", subject="cdp generate — x", body="admit"),
+    ]
+    comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
+    producer = _producer("unknown")
+    assert wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=1,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    reply = qualifying_reply_for_wait(
+        turns,
+        after_turn=1,
+        completion=comp,
+        execution_id="0e59a64f",
+        producer=producer,
+    )
+    assert reply is not None and reply["turn_number"] == 2
+
+
+def test_unpinned_wait_unchanged_with_cdp_admit_turn() -> None:
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "dispatch"),
+        _turn(2, "cursor-sdk", subject="cdp generate — x", body="admit"),
+    ]
+    comp = {"mode": "first_reply_from", "from_agent": "cursor-sdk"}
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"

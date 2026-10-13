@@ -37,7 +37,11 @@ from chat_harvest.chrome import (
 )
 
 from .close_on_read import CLOSE_ON_READ_TAG
-from .cursor_sdk_dispatch_turn import is_cursor_sdk_advisory_subject
+from .cursor_sdk_dispatch_turn import (
+    is_cursor_sdk_advisory_subject,
+    is_cursor_sdk_dispatch_subject,
+    is_cursor_sdk_dispatch_terminal_subject,
+)
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .producer_projection import classify_producer_link
 from .turns_models import ThreadStatus
@@ -53,6 +57,8 @@ __all__ = [
     "classify_producer_link",
     "derive_status",
     "is_complete",
+    "wait_predicate_satisfied",
+    "qualifying_reply_for_wait",
     "is_dead_wait_no_auto_producer",
     "is_disposition_one_correction",
     "qualifying_proof_reply",
@@ -350,6 +356,110 @@ def build_suggested_next(
     }
 
 
+def _is_cdp_generate_admit_subject(subject: str) -> bool:
+    """Stargate on-behalf admit chrome — not the pinned producer's closeout."""
+    return str(subject or "").lower().startswith("cdp generate")
+
+
+def _is_pinned_interim_producer_turn(turn: dict[str, Any]) -> bool:
+    """Turns that may appear while a pinned producer is still running (a:39199)."""
+    subject = str(turn.get("subject") or "")
+    if _is_cdp_generate_admit_subject(subject):
+        return True
+    author = normalize_bus_address(str(turn.get("from_agent") or ""))
+    if author == "cursor-sdk" and is_cursor_sdk_dispatch_subject(subject):
+        return not is_cursor_sdk_dispatch_terminal_subject(subject)
+    return False
+
+
+def qualifying_reply_for_wait(
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    completion: Completion,
+    execution_id: str | None = None,
+    producer: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Qualifying turn for wait snapshots, honoring pinned producer liveness."""
+    mode = completion.get("mode", "first_reply_from")
+    from_agent = completion.get("from_agent")
+    producer_state = (producer or {}).get("state")
+    pinned = bool(execution_id)
+
+    if pinned and producer_state == "in_flight":
+        return None
+
+    if pinned and producer_state == "terminal" and mode in {
+        "first_reply_from",
+        "proof_reply_from",
+    }:
+        if mode == "proof_reply_from":
+            return qualifying_reply(
+                turns,
+                after_turn=after_turn,
+                from_agent=from_agent,
+                accept=lambda t: (
+                    not _is_pinned_interim_producer_turn(t) and _is_proof_turn(t)
+                ),
+            )
+        return qualifying_reply(
+            turns,
+            after_turn=after_turn,
+            from_agent=from_agent,
+            accept=lambda t: not _is_pinned_interim_producer_turn(t),
+        )
+
+    if mode in STATUS_COMPLETION_MODES:
+        return qualifying_status_turn(
+            turns, after_turn=after_turn, status_token=str(mode)
+        )
+    if mode == "proof_reply_from":
+        return qualifying_proof_reply(
+            turns, after_turn=after_turn, from_agent=from_agent
+        )
+    return qualifying_reply(
+        turns, after_turn=after_turn, from_agent=from_agent
+    )
+
+
+def wait_predicate_satisfied(
+    thread_row: dict[str, Any],
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    completion: Completion,
+    execution_id: str | None = None,
+    producer: dict[str, Any] | None = None,
+) -> bool:
+    """True when the wait may report ``complete`` (pinned in_flight blocks early)."""
+    mode = completion.get("mode", "first_reply_from")
+    if mode == "thread_closed":
+        return thread_row["status"] == ThreadStatus.CLOSED
+    if (
+        execution_id
+        and mode in {"first_reply_from", "proof_reply_from"}
+        and (producer or {}).get("state") == "in_flight"
+    ):
+        return False
+    if mode in STATUS_COMPLETION_MODES:
+        return (
+            qualifying_status_turn(
+                turns, after_turn=after_turn, status_token=str(mode)
+            )
+            is not None
+        )
+    return (
+        qualifying_reply_for_wait(
+            turns,
+            after_turn=after_turn,
+            completion=completion,
+            execution_id=execution_id,
+            producer=producer,
+        )
+        is not None
+    )
+
+
 def is_complete(
     thread_row: dict[str, Any],
     turns: list[dict[str, Any]],
@@ -358,29 +468,11 @@ def is_complete(
     completion: Completion,
 ) -> bool:
     """Evaluate the caller's completion predicate against current state."""
-    mode = completion.get("mode", "first_reply_from")
-    if mode == "thread_closed":
-        return thread_row["status"] == ThreadStatus.CLOSED
-    if mode in STATUS_COMPLETION_MODES:
-        return (
-            qualifying_status_turn(
-                turns, after_turn=after_turn, status_token=str(mode)
-            )
-            is not None
-        )
-    if mode == "proof_reply_from":
-        return (
-            qualifying_proof_reply(
-                turns, after_turn=after_turn, from_agent=completion.get("from_agent")
-            )
-            is not None
-        )
-    # first_reply_from
-    return (
-        qualifying_reply(
-            turns, after_turn=after_turn, from_agent=completion.get("from_agent")
-        )
-        is not None
+    return wait_predicate_satisfied(
+        thread_row,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
     )
 
 
@@ -434,6 +526,7 @@ def derive_status(
     completion: Completion,
     execution_id: str | None = None,
     dispatch_links: list[dict[str, Any]] | None = None,
+    producer: dict[str, Any] | None = None,
 ) -> WaitStatus:
     """Map thread state to an observable wait status.
 
@@ -448,7 +541,14 @@ def derive_status(
     reply: failed ``cdp-generate``, or any pipeline ``completed`` on the link
     while this thread still has no proof (a:38447).
     """
-    if is_complete(thread_row, turns, after_turn=after_turn, completion=completion):
+    if wait_predicate_satisfied(
+        thread_row,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+        execution_id=execution_id,
+        producer=producer,
+    ):
         return "complete"
     mode = completion.get("mode", "first_reply_from")
     links = dispatch_links if dispatch_links is not None else thread_row.get(
