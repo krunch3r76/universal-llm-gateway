@@ -47,6 +47,7 @@ from services.git_integration_worker.cursor_sdk_events import (
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
+    live_ledger_worktree_paths,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     is_reapable_dispatch_status,
@@ -115,6 +116,17 @@ class _SweepState:
 
     master_sha_by_repo: dict[Path, str | None] = field(default_factory=dict)
     fresh_live_grades: int = 0
+    live_ledger_paths: set[str] | None = None
+
+
+def _live_ledger_paths_for_sweep(sweep: _SweepState) -> set[str]:
+    if sweep.live_ledger_paths is None:
+        from services.git_integration_worker.config import load_config
+
+        sweep.live_ledger_paths = live_ledger_worktree_paths(
+            worktree_root=load_config().worktree_root
+        )
+    return sweep.live_ledger_paths
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -248,7 +260,9 @@ def _memoize_live_grade(
     _LIVE_GRADE_MEMO[branch] = (tip_sha, master_sha, git_verdict)
 
 
-def _live_ref_guard_detail(*, repo: Path, debt: BranchDebt) -> str | None:
+def _live_ref_guard_detail(
+    *, repo: Path, debt: BranchDebt, sweep: _SweepState
+) -> str | None:
     """Return guard ``detail`` when the row must stay open; ``None`` when clear."""
     status = _dispatch_status(debt.dispatch_id)
     if debt.dispatch_id is None or status is None:
@@ -266,7 +280,20 @@ def _live_ref_guard_detail(*, repo: Path, debt: BranchDebt) -> str | None:
     if thread_id:
         pin = active_pin(source_repo=repo, thread_id=thread_id)
         if pin is not None:
-            return f"guard: active pin dispatch_id={pin.dispatch_id}"
+            pin_status = _dispatch_status(pin.dispatch_id)
+            if pin_status is None:
+                return (
+                    f"guard: active pin dispatch_id={pin.dispatch_id} "
+                    "dispatch row missing"
+                )
+            if not is_reapable_dispatch_status(pin_status):
+                return f"guard: active pin dispatch_id={pin.dispatch_id}"
+            try:
+                pin_path = str(Path(pin.worktree_path).resolve())
+            except OSError:
+                pin_path = str(Path(pin.worktree_path))
+            if pin_path in _live_ledger_paths_for_sweep(sweep):
+                return f"guard: active pin dispatch_id={pin.dispatch_id}"
     return None
 
 
@@ -346,7 +373,7 @@ def _classify_present_ref(
     sweep: _SweepState,
 ) -> DebtVerdict:
     branch = debt.branch_name
-    guard = _live_ref_guard_detail(repo=repo, debt=debt)
+    guard = _live_ref_guard_detail(repo=repo, debt=debt, sweep=sweep)
     if guard is not None:
         return DebtVerdict(
             branch=branch,

@@ -291,29 +291,139 @@ def test_sibling_non_terminal_keeps_ancestor_open(repo: Path) -> None:
     assert get_branch_debt(branch_name=branch).open
 
 
-def test_active_pin_keeps_ancestor_open(repo: Path, tmp_path: Path) -> None:
-    branch = "cursor-sdk/lane-pin"
-    thread_id = "pin-thread"
+def test_stale_pin_terminal_non_live_worktree_retires_ancestor(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Terminal pin on a worktree no longer in the live ledger does not guard."""
+    branch = "cursor-sdk/lane-pin-stale"
+    thread_id = "pin-stale-thread"
     sha = _lane_commit(repo, branch, "pin\n")
-    _admit_dispatch(dispatch_id="d-pin", thread_id=thread_id, status="completed")
+    _admit_dispatch(dispatch_id="d-pin-stale", thread_id=thread_id, status="completed")
     _pin_thread(
         repo=repo,
         thread_id=thread_id,
-        dispatch_id="d-pin",
+        dispatch_id="d-pin-stale",
         worktree_root=tmp_path / "worktrees",
     )
     open_branch_debt(
         branch_name=branch,
         thread_id=thread_id,
-        dispatch_id="d-pin",
+        dispatch_id="d-pin-stale",
         tip_sha=sha,
     )
     _git("merge", branch, cwd=repo)
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
 
-    assert _verdict_for(report, branch).verdict == VERDICT_LIVE
+    assert verdict.verdict == VERDICT_ANCESTOR
+    assert not get_branch_debt(branch_name=branch).open
+
+
+def test_non_terminal_pin_keeps_ancestor_open(repo: Path, tmp_path: Path) -> None:
+    branch = "cursor-sdk/lane-pin-nt"
+    thread_id = "pin-nt-thread"
+    sha = _lane_commit(repo, branch, "pinnt\n")
+    _admit_dispatch(dispatch_id="d-pin-nt", thread_id=thread_id, status="running")
+    _pin_thread(
+        repo=repo,
+        thread_id=thread_id,
+        dispatch_id="d-pin-nt",
+        worktree_root=tmp_path / "worktrees",
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id=thread_id,
+        dispatch_id="d-pin-nt",
+        tip_sha=sha,
+    )
+    _git("merge", branch, cwd=repo)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
     assert get_branch_debt(branch_name=branch).open
+    assert (
+        "active pin" in verdict.detail
+        or "dispatch status" in verdict.detail
+    )
+
+
+def test_terminal_pin_live_worktree_keeps_ancestor_open(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker import cursor_sdk_branch_debt_reconcile as mod
+    from services.git_integration_worker.cursor_sdk_worktree_registry import active_pin
+
+    worktree_root = tmp_path / "worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
+    branch = "cursor-sdk/lane-pin-live"
+    thread_id = "pin-live-thread"
+    sha = _lane_commit(repo, branch, "pinlive\n")
+    _admit_dispatch(
+        dispatch_id="d-pin-live-debt", thread_id=thread_id, status="completed"
+    )
+    _pin_thread(
+        repo=repo,
+        thread_id=thread_id,
+        dispatch_id="d-pin-live-debt",
+        worktree_root=worktree_root,
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id=thread_id,
+        dispatch_id="d-pin-live-debt",
+        tip_sha=sha,
+    )
+    _git("merge", branch, cwd=repo)
+
+    real_paths = mod._live_ledger_paths_for_sweep
+
+    def _ledger_with_pinned_path(sweep: mod._SweepState) -> set[str]:
+        paths = set(real_paths(sweep))
+        pin = active_pin(source_repo=repo, thread_id=thread_id)
+        assert pin is not None
+        paths.add(str(Path(pin.worktree_path).resolve()))
+        sweep.live_ledger_paths = paths
+        return paths
+
+    monkeypatch.setattr(mod, "_live_ledger_paths_for_sweep", _ledger_with_pinned_path)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert "active pin" in verdict.detail
+    assert get_branch_debt(branch_name=branch).open
+
+
+def test_stale_pin_unique_patch_stays_live(repo: Path, tmp_path: Path) -> None:
+    branch = "cursor-sdk/lane-pin-unique"
+    thread_id = "pin-unique-thread"
+    sha = _lane_commit(repo, branch, "unique\n")
+    _admit_dispatch(
+        dispatch_id="d-pin-unique", thread_id=thread_id, status="completed"
+    )
+    _pin_thread(
+        repo=repo,
+        thread_id=thread_id,
+        dispatch_id="d-pin-unique",
+        worktree_root=tmp_path / "worktrees",
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id=thread_id,
+        dispatch_id="d-pin-unique",
+        tip_sha=sha,
+    )
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=False)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert "active pin" not in verdict.detail
+    assert "unique patch" in verdict.detail
 
 
 def test_missing_dispatch_row_keeps_ancestor_open(repo: Path) -> None:
