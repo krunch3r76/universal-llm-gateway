@@ -174,6 +174,26 @@ def resolve_debt_source_repo(
     )
 
 
+def fill_empty_branch_debt_source_repo(
+    *,
+    branch_name: str,
+    source_repo: str,
+) -> bool:
+    """Stamp ``source_repo`` on an open row only when the column is still empty."""
+    token = str(source_repo).strip()
+    if not token:
+        return False
+    with _connect() as conn:
+        ensure_debt_schema(conn)
+        cur = conn.execute(
+            "UPDATE cursor_sdk_branch_debts SET source_repo=? "
+            "WHERE branch_name=? AND discharged_at IS NULL "
+            "AND (source_repo IS NULL OR source_repo = '')",
+            (token, branch_name),
+        )
+    return cur.rowcount > 0
+
+
 def open_branch_debt(
     *,
     branch_name: str,
@@ -204,6 +224,14 @@ def open_branch_debt(
         raise ValueError("open_branch_debt requires non-null thread_id and dispatch_id")
     existing = get_branch_debt(branch_name=branch_name)
     if existing is not None and existing.open:
+        if source_repo and not (existing.source_repo or "").strip():
+            fill_empty_branch_debt_source_repo(
+                branch_name=branch_name,
+                source_repo=source_repo,
+            )
+            refreshed = get_branch_debt(branch_name=branch_name)
+            if refreshed is not None:
+                existing = refreshed
         return existing
     opened_at = _now()
     with _connect() as conn:

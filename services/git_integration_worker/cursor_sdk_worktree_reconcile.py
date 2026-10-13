@@ -154,10 +154,7 @@ def sweep_vanished_pinned_worktrees(*, source_repo: Path) -> int:
             bridge_pid=bridge_pid,
         )
         count += 1
-        if (
-            ledger_status not in _REMIT_SKIP_STATUSES
-            and bridge_pid is None
-        ):
+        if ledger_status not in _REMIT_SKIP_STATUSES and bridge_pid is None:
             try:
                 from services.git_integration_worker.cursor_sdk_worktree_remint import (
                     WorktreeMintError,
@@ -252,7 +249,7 @@ def reconcile_unregistered_worktrees(
         if entry.branch and entry.branch in registered_branches:
             continue
         if entry.path.is_dir() and _is_dirty(entry.path):
-            surfaced += _surface_dirty_tree(entry)
+            surfaced += _surface_dirty_tree(entry, sweep_repo=repo)
             continue
         holder_pid = worktree_held_by_live_bridge(
             worktree_path=entry.path,
@@ -286,22 +283,31 @@ def reconcile_unregistered_worktrees(
     return reconciled, surfaced
 
 
-def _surface_dirty_tree(entry: GitWorktree) -> int:
+def _surface_dirty_tree(entry: GitWorktree, *, sweep_repo: Path) -> int:
     """Record a dirty unregistered tree as debt rather than touching it."""
+    from services.git_integration_worker.config import load_config
     from services.git_integration_worker.cursor_sdk_branch_debt import (
         get_branch_debt,
         open_branch_debt,
+        workspace_token_for_repo,
     )
 
     branch = entry.branch or f"(detached){entry.path.name}"
     if get_branch_debt(branch_name=branch) is not None:
         return 0
+    cfg = load_config()
+    source_repo_token = workspace_token_for_repo(
+        sweep_repo,
+        hub=cfg.source_repo,
+        projects_root=cfg.dispatch_workspace,
+    )
     open_branch_debt(
         branch_name=branch,
         thread_id="(unregistered-worktree)",
         dispatch_id=f"unregistered:{entry.path.name}",
         caller_agent="(unregistered worktree)",
         files=[str(entry.path)],
+        source_repo=source_repo_token,
     )
     logger.warning(
         "unregistered dirty worktree surfaced as debt path=%s branch=%s",
