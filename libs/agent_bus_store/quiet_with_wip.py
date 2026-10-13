@@ -44,6 +44,7 @@ class DispatchLinkView:
     terminal_status: str | None
     terminal_at: str | None = None
     linked_at: str | None = None
+    pipeline_id: str | None = None
     liveness_witness: Literal["live", "dead"] | None = None
 
 

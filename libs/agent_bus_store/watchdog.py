@@ -274,6 +274,14 @@ def _sweep() -> None:
         get_logger(__name__).exception(
             "cdp_pointer_sweep failed; continuing to quiet-with-wip"
         )
+    from .cdp_link_reconcile import reconcile_cdp_dispatch_links
+
+    try:
+        reconcile_cdp_dispatch_links()
+    except Exception:
+        get_logger(__name__).exception(
+            "cdp_link_reconcile failed; continuing to quiet-with-wip"
+        )
     sweep_quiet_with_wip()
 
 

@@ -13,6 +13,7 @@ from .cdp_pointer_body import (
 )
 from .db.connection import connect, now, write_connect
 from .db.threads_atomic import _insert_dispatch_link_row
+from .events.lifecycle import emit_dispatch_orphaned
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,7 @@ def _sweep_one_orphan(
     thread_id: str,
     execution_id: str,
     pointer_from_agent: str,
+    pointer_created_at: str,
 ) -> bool:
     """Stamp failed link + one FAILED turn for a pointer-without-link orphan."""
     ts = now()
@@ -105,6 +107,23 @@ def _sweep_one_orphan(
             ),
         )
 
+    from datetime import UTC, datetime
+
+    try:
+        created = datetime.fromisoformat(pointer_created_at.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        age_s = max(0.0, (datetime.now(UTC) - created).total_seconds())
+    except (ValueError, TypeError):
+        age_s = float(CDP_POINTER_ORPHAN_GRACE_SECONDS)
+    emit_dispatch_orphaned(
+        execution_id=execution_id,
+        thread_id=thread_id,
+        pipeline_id=CDP_POINTER_PIPELINE_ID,
+        linked_at=pointer_created_at,
+        age_s=age_s,
+        reason="pointer_without_link",
+    )
     logger.info(
         "cdp_pointer_sweep: stamped failed link thread=%s execution_id=%s",
         thread_id,
@@ -157,6 +176,7 @@ def sweep_cdp_pointer_orphans(
             thread_id=thread_id,
             execution_id=execution_id,
             pointer_from_agent=str(row_dict.get("from_agent") or "dispatch"),
+            pointer_created_at=str(row_dict.get("created_at") or ""),
         ):
             stamped += 1
     return stamped

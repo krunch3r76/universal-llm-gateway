@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -70,7 +71,10 @@ def test_orphan_past_grace_gets_failed_link_and_turn(bus_db) -> None:
         created_at=_old_timestamp(),
     )
 
-    assert sweep_cdp_pointer_orphans() == 1
+    with patch("agent_bus_store.cdp_pointer_sweep.emit_dispatch_orphaned") as emit:
+        assert sweep_cdp_pointer_orphans() == 1
+        emit.assert_called_once()
+        assert emit.call_args.kwargs["reason"] == "pointer_without_link"
     detail = get_thread_with_links(thread_id)
     assert detail is not None
     assert len(detail["dispatch_links"]) == 1

@@ -356,6 +356,7 @@ def reader_liveness_witness(
     execution_id: str,
     linked_at: object,
     now: datetime,
+    pipeline_id: str | None = None,
 ) -> Literal["live", "dead"] | None:
     """Witness whether a null-terminal link is live, without writing ``terminal_status``.
 
@@ -367,6 +368,13 @@ def reader_liveness_witness(
     """
     if _linked_at_within_grace(linked_at, now):
         return None
+    if pipeline_id == "cdp-generate":
+        from .producer_witness import (
+            probe_cdp_leg_status,
+            reader_witness_from_cdp_probe,
+        )
+
+        return reader_witness_from_cdp_probe(probe_cdp_leg_status(execution_id))
     verdict, reason, _terminal = evaluate_link_liveness(
         thread_id=thread_id,
         link_execution_id=execution_id,
@@ -380,10 +388,21 @@ async def reader_liveness_witness_async(
     execution_id: str,
     linked_at: object,
     now: datetime,
+    pipeline_id: str | None = None,
 ) -> Literal["live", "dead"] | None:
     """Async witness for wait — awaits ``probe_dispatch_status_async`` off the sync path."""
     if _linked_at_within_grace(linked_at, now):
         return None
+    if pipeline_id == "cdp-generate":
+        import asyncio
+
+        from .producer_witness import (
+            probe_cdp_leg_status,
+            reader_witness_from_cdp_probe,
+        )
+
+        probe = await asyncio.to_thread(probe_cdp_leg_status, execution_id)
+        return reader_witness_from_cdp_probe(probe)
     verdict, reason, _terminal = await evaluate_link_liveness_async(
         thread_id=thread_id,
         link_execution_id=execution_id,

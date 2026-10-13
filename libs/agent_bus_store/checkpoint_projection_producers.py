@@ -65,6 +65,7 @@ def _cached_witness(
             execution_id=link.execution_id,
             linked_at=link.linked_at,
             now=now,
+            pipeline_id=link.pipeline_id,
         )
     return cache[link.execution_id]
 

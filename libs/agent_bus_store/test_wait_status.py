@@ -729,6 +729,46 @@ def test_reader_witness_other_verdicts_do_not_map_to_live_or_dead(
         assert witness is None, reason
 
 
+def test_cdp_generate_reader_witness_uses_stargate_probe(monkeypatch) -> None:
+    """AC2: cdp-generate links probe Stargate, not GIW dispatch-status."""
+    from agent_bus_store.producer_witness import CdpLegProbeResult, WitnessVerdict
+    from agent_bus_store.sdk_liveness import reader_liveness_witness
+
+    giw_called: list[str] = []
+
+    def _giw(**kwargs: object):
+        giw_called.append("giw")
+        raise AssertionError("GIW probe must not run for cdp-generate")
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        _giw,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.producer_witness.probe_cdp_leg_status",
+        lambda _eid: CdpLegProbeResult(
+            WitnessVerdict.LIVE,
+            "leg_open",
+            {"found": True, "open": True},
+        ),
+    )
+    row = {
+        "execution_id": "cdp-exec-1",
+        "pipeline_id": "cdp-generate",
+        "linked_at": "2026-09-29T06:38:48Z",
+    }
+    observed = datetime(2026, 9, 29, 6, 44, tzinfo=UTC)
+    witness = reader_liveness_witness(
+        thread_id="16555",
+        execution_id=row["execution_id"],
+        linked_at=row["linked_at"],
+        now=observed,
+        pipeline_id=row["pipeline_id"],
+    )
+    assert witness == "live"
+    assert giw_called == []
+
+
 def test_reader_witness_inside_grace_does_not_probe(monkeypatch) -> None:
     """Inside the admit grace the probe is not called and classification stays admit_grace."""
     from agent_bus_store.sdk_liveness import reader_liveness_witness

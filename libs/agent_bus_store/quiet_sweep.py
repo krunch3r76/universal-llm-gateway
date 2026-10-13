@@ -126,7 +126,7 @@ def _load_lane(
             return None
         lifecycle = trow["bus_lifecycle_state"] or ""
         link_rows = conn.execute(
-            "SELECT execution_id, terminal_status, terminal_at, linked_at "
+            "SELECT execution_id, terminal_status, terminal_at, linked_at, pipeline_id "
             "FROM thread_dispatch_links WHERE thread_id = ?",
             (thread_id,),
         ).fetchall()
@@ -141,6 +141,7 @@ def _load_lane(
             terminal_status=r["terminal_status"],
             terminal_at=r["terminal_at"],
             linked_at=r["linked_at"],
+            pipeline_id=r["pipeline_id"],
         )
         for r in link_rows
     ]
@@ -257,6 +258,7 @@ def sweep_quiet_with_wip(*, threshold_s: float | None = None) -> int:
                         execution_id=lnk.execution_id,
                         linked_at=lnk.linked_at,
                         now=now_dt,
+                        pipeline_id=lnk.pipeline_id,
                     )
                 lnk = replace(lnk, liveness_witness=witness_cache[lnk.execution_id])
             witnessed.append(lnk)

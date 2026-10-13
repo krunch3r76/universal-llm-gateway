@@ -83,6 +83,7 @@ async def _pinned_reader_witness(
         execution_id=execution_id,
         linked_at=row.get("linked_at"),
         now=now,
+        pipeline_id=row.get("pipeline_id"),
     )
     return witness, {execution_id: witness}
 

@@ -52,8 +52,12 @@ _frontier_consult_implement_router = None
 _frontier_consult_densify_router = None
 _life_intent_router = None
 _life_dispatch_router = None
+_cdp_leg_status_router = None
 
 if _federation_config.mode == StargateMode.MASTER:
+    from systems.frontier_consult.cdp_leg_status_route import (
+        cdp_leg_status_router as _cdp_leg_status_router,
+    )
     from systems.frontier_consult.densify_routes import (
         densify_router as _frontier_consult_densify_router,
     )
@@ -584,6 +588,7 @@ if _frontier_consult_team_router is not None:
     app.include_router(_frontier_consult_densify_router)  # /api/v1/team/densify/*
     app.include_router(_life_intent_router)  # /api/v1/life/intent/*
     app.include_router(_life_dispatch_router)  # /api/v1/life/dispatch
+    app.include_router(_cdp_leg_status_router)  # /api/v1/frontier/cdp-legs/*
 app.include_router(
     cloud_passthrough.router
 )  # /api/models, /api/select, /api/refresh (cloud passthrough)
