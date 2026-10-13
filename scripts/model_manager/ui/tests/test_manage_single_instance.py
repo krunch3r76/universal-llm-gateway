@@ -228,7 +228,6 @@ def _loop_call_names(node: ast.AST) -> set[str]:
     loop_names = {
         "reconcile_pending_restart_intents",
         "DigestTickLoop",
-        "CharterRunnerTickLoop",
         "StargateHealthRestart",
     }
     names: set[str] = set()
@@ -280,7 +279,6 @@ def test_bound_loops_only_in_start_bound_loops() -> None:
     loop_names = {
         "reconcile_pending_restart_intents",
         "DigestTickLoop",
-        "CharterRunnerTickLoop",
         "StargateHealthRestart",
     }
 

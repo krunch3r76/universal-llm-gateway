@@ -390,66 +390,6 @@ async def execute(
         case "whoami":
             return _whoami()
 
-        case "charter_reload":
-            # In-process charter-runner module reload + tick restart (no TUI quit).
-            return await ctl.reload_charter_tick()
-
-        case "charter_pause":
-            timeout_raw = params.get("timeout", params.get("timeout_s", 1800.0))
-            try:
-                timeout_s = float(timeout_raw)
-            except (TypeError, ValueError):
-                timeout_s = 1800.0
-            return await ctl.charter_pause(
-                reason=str(params.get("reason") or ""),
-                set_by=str(params.get("set_by") or "manage"),
-                timeout_s=timeout_s,
-            )
-
-        case "charter_resume":
-            return await ctl.charter_resume()
-
-        case "charter_hold_status":
-            return await ctl.charter_hold_status()
-
-        case "charter_block_root":
-            root_id = str(params.get("root_id") or "").strip()
-            if not root_id:
-                raise ValueError("charter_block_root requires 'root_id'")
-            return await ctl.charter_block_root(
-                root_id=root_id,
-                reason=str(params.get("reason") or ""),
-                set_by=str(params.get("set_by") or "manage"),
-                unenroll=bool(params.get("unenroll", True)),
-                clear_wip=bool(params.get("clear_wip", False)),
-            )
-
-        case "charter_unblock_root":
-            root_id = str(params.get("root_id") or "").strip()
-            if not root_id:
-                raise ValueError("charter_unblock_root requires 'root_id'")
-            return await ctl.charter_unblock_root(
-                root_id=root_id,
-                set_by=str(params.get("set_by") or "manage"),
-                reenroll=bool(params.get("reenroll", False)),
-            )
-
-        case "charter_root_status":
-            root_id = str(params.get("root_id") or "").strip()
-            if not root_id:
-                raise ValueError("charter_root_status requires 'root_id'")
-            return await ctl.charter_root_status(root_id=root_id)
-
-        case "charter_cap_stop_clear":
-            root_id = str(params.get("root_id") or "").strip()
-            if not root_id:
-                raise ValueError("charter_cap_stop_clear requires 'root_id'")
-            return await ctl.charter_cap_stop_clear(
-                root_id=root_id,
-                set_by=str(params.get("set_by") or "manage"),
-                force=bool(params.get("force", False)),
-            )
-
         case "fleet_sync_restart":
             return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
 
@@ -462,9 +402,7 @@ async def execute(
                 "Valid: status, health, wait_healthy, start, stop, restart, "
                 "sync_restart, rebuild, busy_status, restart_intent_status, "
                 "cancel_restart_intent, "
-                "whoami, charter_reload, charter_pause, charter_resume, "
-                "charter_hold_status, charter_block_root, charter_unblock_root, "
-                "charter_root_status, charter_cap_stop_clear, recycle_giw, "
+                "whoami, recycle_giw, "
                 "fleet_sync_restart, fleet_rebuild_deploy"
             )
 
@@ -888,7 +826,6 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
         )
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
-    hold_status = await ctl.charter_hold_status()
     return {
         "services": report,
         "restart_windows": store.restart_window_projection(now=now),
@@ -896,7 +833,6 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
             "manage_inflight": snap.manage_inflight,
             "activities": list(snap.activities),
         },
-        "charter_hold": hold_status,
     }
 
 

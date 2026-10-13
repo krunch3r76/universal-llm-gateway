@@ -27,7 +27,6 @@ from libs.manage_handover import (
 from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer, ManageSocketBusyError
-from .controller.charter_runner import CharterRunnerTickLoop
 from .controller.digest_tick_loop import DigestTickLoop
 from .controller.onboarding import OnboardingController
 from .controller.service_config import (
@@ -140,7 +139,6 @@ class ModelManagerApp(App):
         self._broadcaster: MinimalEventDebugBroadcaster | None = None
         self._api_server: ManageAPIServer | None = None
         self._digest_tick_loop: DigestTickLoop | None = None
-        self._charter_tick_loop: CharterRunnerTickLoop | None = None
         self._stargate_health_restart = None
         self._mcp_edge_probe = None
         self._armed_record_path = record_path_from_env()
@@ -245,26 +243,6 @@ class ModelManagerApp(App):
             )
 
         try:
-            self._charter_tick_loop = CharterRunnerTickLoop(
-                service_state=self._service_controller.service_state,
-                shutdown_gate=self._service_controller.shutdown_gate,
-                workspace_root=self._workspace_root,
-                on_admit=lambda msg: self.notify(msg, timeout=45),
-                service_controller=self._service_controller,
-                event_bus=self._event_bus,
-            )
-            await self._charter_tick_loop.start()
-            self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
-        except Exception as e:
-            logger.exception("Failed to start charter runner tick loop: %s", e)
-            self._charter_tick_loop = None
-            self.notify(
-                f"charter runner tick loop unavailable: {e}",
-                severity="warning",
-                timeout=15,
-            )
-
-        try:
             from scripts.model_manager.ui.controller.stargate_health_restart import (
                 StargateHealthRestart,
             )
@@ -334,45 +312,6 @@ class ModelManagerApp(App):
             self.set_timer(30, self._park_for_handover)
             return
 
-    async def reload_charter_tick(self) -> dict:
-        """Restart the charter runner loop in place. Wired to ``charter_reload``.
-
-        Phase 3 retired ``importlib.reload``, so this does **not** re-import
-        charter-runner modules — it returns ``count=0`` and the process keeps the
-        code it booted with. Charter-runner code edits require a manage
-        quit/start; this method only bounces the loop.
-        """
-        from scripts.model_manager.ui.controller.charter_runner import (
-            CharterRunnerTickLoop,
-        )
-
-        if self._charter_tick_loop is not None:
-            try:
-                await self._charter_tick_loop.stop()
-            except Exception as e:
-                logger.exception("Error stopping charter runner before reload: %s", e)
-            self._charter_tick_loop = None
-
-        self._charter_tick_loop = CharterRunnerTickLoop(
-            service_state=self._service_controller.service_state,
-            shutdown_gate=self._service_controller.shutdown_gate,
-            workspace_root=self._workspace_root,
-            on_admit=lambda msg: self.notify(msg, timeout=45),
-            service_controller=self._service_controller,
-            event_bus=self._event_bus,
-        )
-        await self._charter_tick_loop.start()
-        self._service_controller.set_charter_tick_reload(self.reload_charter_tick)
-        self.notify("charter runner restarted (no module reload)", timeout=15)
-        from scripts.model_manager.ui.controller.charter_runner.kernel import hold
-
-        return {
-            "status": "ok",
-            "reloaded_modules": [],
-            "count": 0,
-            "held": hold.read_hold() is not None,
-        }
-
     async def _retry_api_server(self) -> None:
         """Retry binding manage.sock after a startup failure.
 
@@ -423,12 +362,6 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping digest tick loop: %s", e)
             self._digest_tick_loop = None
-        if self._charter_tick_loop is not None:
-            try:
-                await self._charter_tick_loop.stop()
-            except Exception as e:
-                logger.exception("Error stopping charter runner tick loop: %s", e)
-            self._charter_tick_loop = None
         if self._stargate_health_restart is not None:
             try:
                 await self._stargate_health_restart.stop()

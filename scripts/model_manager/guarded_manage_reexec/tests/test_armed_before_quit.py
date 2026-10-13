@@ -109,8 +109,8 @@ def test_open_intent_after_arm_refuses_before_quit(tmp_path: Path) -> None:
     assert os.getpid() in killed_pids
     assert read_armed_record(record_path) is None
     assert manage_call("whoami")["pid"] == before_pid
-    assert "charter_resume" in manage_calls
-    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
+    assert "charter_pause" not in manage_calls
+    assert "charter_resume" not in manage_calls
 
 
 @pytest.mark.offline
@@ -188,8 +188,8 @@ def test_start_not_proven_refuses_without_quit(tmp_path: Path) -> None:
     assert manage_call("whoami")["pid"] == before_pid
     assert elapsed < 5.0
     assert result.reason != "checks_passed_stopped_before_quit"
-    assert "charter_resume" in manage_calls
-    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
+    assert "charter_pause" not in manage_calls
+    assert "charter_resume" not in manage_calls
 
 
 @pytest.mark.offline
@@ -268,8 +268,8 @@ def test_pre_quit_busy_inflight_refuses(tmp_path: Path) -> None:
         c[:2] == ["tmux", "send-keys"] and len(c) > 4 and c[4] == "q"
         for c in tmux_log
     )
-    assert "charter_resume" in manage_calls
-    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
+    assert "charter_pause" not in manage_calls
+    assert "charter_resume" not in manage_calls
 
 
 @pytest.mark.offline

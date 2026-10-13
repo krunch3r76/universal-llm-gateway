@@ -2,9 +2,7 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, busy_status, cancel_restart_intent, whoami, charter_reload,
-charter_pause, charter_resume, charter_hold_status, charter_block_root,
-charter_unblock_root, charter_root_status, and recycle_giw for
+wait_healthy, busy_status, cancel_restart_intent, whoami, and recycle_giw for
 gateway-managed services. Life seats should prefer the dedicated
 ``recycle_giw`` tool; this action exists for already-admitted code seats.
 Single entry point reduces agent context overhead.
@@ -44,14 +42,6 @@ _VALID_ACTIONS = frozenset(
         "restart_intent_status",
         "cancel_restart_intent",
         "whoami",
-        "charter_reload",
-        "charter_pause",
-        "charter_resume",
-        "charter_hold_status",
-        "charter_block_root",
-        "charter_unblock_root",
-        "charter_root_status",
-        "charter_cap_stop_clear",
         "recycle_giw",
     }
 )
@@ -307,7 +297,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
                    until the caller exits; foreign holders still get state=busy.
-        reason: optional reason for charter_pause
         intent_id: required for cancel_restart_intent (restart-intent retraction)
 
         Actions:
@@ -413,7 +402,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              retry_after_s, elapsed_s}. Reads the
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
-                                             Also returns charter_hold {held, …}.
           cancel_restart_intent (intent_id, service?) — retract a deferred
                                              restart intent: writes status=cancelled,
                                              aborts the drain supervisor before
@@ -431,37 +419,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              seal). process_start_time is ISO UTC.
                                              Lets a caller attribute which controller
                                              answered without ss/procfs on the same host.
-          charter_reload (no service needed) — restart the charter runner loop in place
-                                             (no TUI quit). Phase 3 retired
-                                             importlib.reload: this does NOT re-import
-                                             modules and returns count=0 /
-                                             reloaded_modules=[]. Charter-runner code
-                                             edits need a manage quit/start to go live
-                                             (charter_pause -> charter_hold_status
-                                             pause_drain_clear -> ./manage q -> ./manage ->
-                                             charter_resume).
-          charter_pause (reason?, timeout?)  — durable hold: arm immediately (no
-                                             new admits), then **block** until
-                                             in-flight charter cursor-sdk
-                                             dispatches finish (default timeout
-                                             1800s). Returns drained/pause_drain_clear.
-                                             Survives manage quit/start.
-          charter_resume                     — clear durable hold; next interval ticks.
-          charter_hold_status                — {held, pause_drain_clear, tick_in_flight, …}.
-          charter_block_root (root_id, reason?, clear_wip?) — durable per-root hold:
-                                             ledger BLOCKED + BLOCKED/NOTE receipt tip +
-                                             enrollment strip. Stops NEW admits only;
-                                             in-flight cursor-sdk dispatches keep running
-                                             (returns live_dispatches). Orthogonal to
-                                             charter_pause (fleet stop).
-          charter_unblock_root (root_id, reenroll?) — clear the hold; BLOCKED -> IDLE.
-                                             Does not re-enroll unless reenroll=true.
-          charter_root_status (root_id)      — read-only {status, enrolled, wip_window_id,
-                                             last_error, operator_hold}.
-          charter_cap_stop_clear (root_id, force?) — clear a suite-clearable cap stop
-                                             (worker_failed, stale_window) when no
-                                             tick error or window_failed names the
-                                             root in 24h. force skips both gates.
           recycle_giw   (no service/action) — drain-gated GIW recycle; escalates to
                                              force only after occupant progress idles.
                                              Hard-scoped to git_integration_worker.
@@ -571,29 +528,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 params["intent_id"] = intent_id
             if service:
                 params["service"] = service
-        if action == "charter_pause":
-            params["set_by"] = "mcp"
-            if reason:
-                params["reason"] = reason
-            params["timeout"] = timeout
-        if action in {
-            "charter_block_root",
-            "charter_unblock_root",
-            "charter_root_status",
-            "charter_cap_stop_clear",
-        }:
-            params["root_id"] = root_id
-        if action == "charter_cap_stop_clear" and force:
-            params["force"] = True
-        if action == "charter_block_root":
-            params["set_by"] = "mcp"
-            if reason:
-                params["reason"] = reason
-            if clear_wip:
-                params["clear_wip"] = True
-        if action == "charter_unblock_root" and reenroll:
-            params["reenroll"] = True
-
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
@@ -604,7 +538,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 "restart",
                 "sync_restart",
                 "rebuild",
-                "charter_pause",
             }
             else _DEFAULT_TIMEOUT
         )

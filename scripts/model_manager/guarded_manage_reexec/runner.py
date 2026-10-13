@@ -26,7 +26,6 @@ from libs.manage_handover import (
 from .checks import (
     RefuseFinding,
     collect_refuse_report,
-    observe_drain_clear,
     observe_manage_inflight,
     observe_nonterminal_intents,
 )
@@ -183,19 +182,6 @@ def _poll_armed_record(
     return False, "successor_not_armed", None
 
 
-def _dry_run_attach_drain(report: Any, hold: dict[str, Any]) -> None:
-    """Fold hold_status drain observation into a dry-run check report."""
-    report.hold_status = hold
-    if hold.get("status") == "error":
-        report.findings.append(
-            RefuseFinding(reason="hold_status_unobservable", offenders=[hold])
-        )
-        report.refused = True
-        return
-    report.held = bool(hold.get("held"))
-    report.pause_drain_clear = bool(hold.get("pause_drain_clear"))
-
-
 def _attach_finding(report: Any, finding: RefuseFinding | None) -> None:
     if finding is None:
         return
@@ -239,7 +225,7 @@ def run_guarded_reexec(
     kill_pid_fn: KillPid | None = None,
     intent_db: Path | None = None,
     armed_record_path: Path | None = None,
-    pause_reason: str = "guarded_manage_reexec",
+    pause_reason: str = "guarded_manage_reexec",  # noqa: ARG001 — CLI compat
     quit_timeout_s: float = DEFAULT_QUIT_TIMEOUT_S,
     boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
     tree_contains_fn: TreeContainsFn | None = None,
@@ -247,7 +233,7 @@ def run_guarded_reexec(
     inflight_wait_s: float = 120.0,
     max_start_attempts: int | None = None,
 ) -> GuardedReexecResult:
-    del max_start_attempts  # CLI compat; arm-then-quit uses a single successor spawn.
+    del max_start_attempts, pause_reason  # CLI compat; arm-then-quit uses a single successor spawn.
     """Run refuse/arm/quit/proof path; dry_run never spawns a successor."""
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
@@ -260,9 +246,6 @@ def run_guarded_reexec(
 
     def _busy() -> dict[str, Any]:
         return manage_call("busy_status", {}, sock_path=sock_path)
-
-    def _hold() -> dict[str, Any]:
-        return manage_call("charter_hold_status", {}, sock_path=sock_path)
 
     whoami_before = manage_call("whoami", {}, sock_path=sock_path)
     if whoami_before.get("status") == "error":
@@ -290,13 +273,11 @@ def run_guarded_reexec(
     store = intent_store_for_manage(db_path=intent_db, manage_pid=manage_pid_i)
     report = collect_refuse_report(
         busy_status_fn=_busy,
-        hold_status_fn=_hold,
+        hold_status_fn=None,
         store=store,
         manage_pid=manage_pid_i,
         require_drain_clear=False,
     )
-    if dry_run:
-        _dry_run_attach_drain(report, _hold())
 
     # Same occupant guard on dry-run and execute; the caller counts as one.
     occupant_finding = observe_giw_occupants(
@@ -470,34 +451,6 @@ def run_guarded_reexec(
                 quit_timeout_s=quit_timeout_s,
             )
 
-    pause = manage_call(
-        "charter_pause",
-        {"reason": pause_reason, "set_by": "guarded_manage_reexec"},
-        sock_path=sock_path,
-        timeout=1830.0,
-    )
-    hold_after = manage_call("charter_hold_status", {}, sock_path=sock_path)
-    drain = observe_drain_clear(
-        hold_after if hold_after.get("status") != "error" else {}
-    )
-    if drain is not None:
-        _emit_refused("drain_not_clear_after_pause")
-        return GuardedReexecResult(
-            status="refused",
-            reason="drain_not_clear_after_pause",
-            dry_run=False,
-            checks={
-                "pause": pause,
-                "hold_after": hold_after,
-                "findings": [{"reason": drain.reason, "offenders": drain.offenders}],
-            },
-            whoami_before=whoami_before,
-            target_ref=target_ref,
-            executed=False,
-            boot_timeout_s=boot_timeout_s,
-            quit_timeout_s=quit_timeout_s,
-        )
-
     successor_pane_id: str | None = None
     record_pid: int | None = None
     t_arm_start = time.monotonic()
@@ -511,7 +464,6 @@ def run_guarded_reexec(
             run_cmd=run_cmd,
             kill_pid_fn=kill_pid_fn,
         )
-        manage_call("charter_resume", {}, sock_path=sock_path)
         return GuardedReexecResult(
             status="refused",
             reason=reason,
@@ -577,13 +529,6 @@ def run_guarded_reexec(
     if inflight_recheck is not None:
         return _refuse_after_arm(inflight_recheck.reason)
 
-    hold_recheck = _hold()
-    if hold_recheck.get("status") == "error":
-        return _refuse_after_arm("hold_status_unobservable")
-    drain_before_quit = observe_drain_clear(hold_recheck)
-    if drain_before_quit is not None:
-        return _refuse_after_arm("drain_not_clear_before_quit")
-
     _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
     _publish_reexec(ManageReexecQuitCommitted(tmux_target=tmux_effective))
 
@@ -644,7 +589,6 @@ def run_guarded_reexec(
     if giw_paired_required:
         giw_paired = giw_paired or {}
         giw_paired["start"] = run_giw_paired_start(manage_call)
-    manage_call("charter_resume", {}, sock_path=sock_path)
     version_ok, start_ok, proof_reason = prove_pickup(
         before=whoami_before, after=whoami_after, target_ref=target_ref
     )
@@ -663,8 +607,6 @@ def run_guarded_reexec(
         boot_timeout_s=boot_timeout_s,
         quit_timeout_s=quit_timeout_s,
         checks={
-            "pause": pause,
-            "hold_after": hold_after,
             "seat_prelude": prelude,
             "giw_paired": giw_paired,
             "tmux_target_effective": tmux_effective,

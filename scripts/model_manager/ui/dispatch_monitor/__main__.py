@@ -16,12 +16,6 @@ from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.replay import JsonlEventSource
 from scripts.model_manager.ui.dispatch_monitor.ulg.controller import MonitorController
-from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (
-    charter_hold_status,
-    charter_pause,
-    charter_resume,
-)
-from scripts.model_manager.ui.dispatch_monitor.ulg.manage_reload import charter_reload
 from scripts.model_manager.ui.dispatch_monitor.ulg.projection_hub import BroadcastHub
 from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import (
     ReconcileOnClick,
@@ -82,29 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=60,
         help="cold-start history window for live mode (default 60)",
-    )
-    parser.add_argument(
-        "--charter-reload",
-        action="store_true",
-        help="fire manage.sock charter_reload then exit",
-    )
-    parser.add_argument(
-        "--charter-pause",
-        metavar="REASON",
-        nargs="?",
-        const="operator",
-        default=None,
-        help="fire manage.sock charter_pause [REASON] then exit",
-    )
-    parser.add_argument(
-        "--charter-resume",
-        action="store_true",
-        help="fire manage.sock charter_resume then exit",
-    )
-    parser.add_argument(
-        "--charter-hold-status",
-        action="store_true",
-        help="fire manage.sock charter_hold_status then exit",
     )
     parser.add_argument(
         "--reconcile",
@@ -168,7 +139,7 @@ def _run_live(args: argparse.Namespace) -> int:
             controller.run(
                 on_frame=sink,
                 json_frames=args.format == "json",
-                command_endpoint="manage.sock:charter_reload",
+                command_endpoint="manage.sock",
             )
         )
     except KeyboardInterrupt:
@@ -180,26 +151,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.charter_reload:
-        result = charter_reload()
-        print(result, flush=True)
-        return 1 if "error" in result else 0
-
-    if args.charter_pause is not None:
-        result = charter_pause(reason=args.charter_pause)
-        print(result, flush=True)
-        return 1 if "error" in result else 0
-
-    if args.charter_resume:
-        result = charter_resume()
-        print(result, flush=True)
-        return 1 if "error" in result else 0
-
-    if args.charter_hold_status:
-        result = charter_hold_status()
-        print(result, flush=True)
-        return 1 if "error" in result else 0
-
     if args.reconcile:
         controller = MonitorController(reconcile=ReconcileOnClick())
         result = controller.trigger_reconcile(args.reconcile)
@@ -207,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1 if result.get("error") else 0
 
     if not args.watch:
-        parser.error("--watch is required unless using a --charter-* one-shot")
+        parser.error("--watch is required unless using --reconcile")
 
     if args.watch == "live":
         if args.format == "board":

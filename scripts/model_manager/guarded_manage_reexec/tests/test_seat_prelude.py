@@ -374,13 +374,31 @@ def test_execute_counts_calling_dispatch_as_occupant(
 
 
 def test_zero_occupants_passes_guard(tmp_path: Path) -> None:
-    """AC3: no occupants and no caller dispatch => guard passes; execute proceeds."""
+    """AC3: no occupants => guard passes; execute proceeds without charter pause."""
     busy = _occupant_busy(active_work={"active_count": 0})
     assert observe_giw_occupants(busy, caller_dispatch=None) is None
     calls: list[str] = []
-    result = _run(tmp_path, busy, calls, dry_run=False)
-    assert "charter_pause" in calls
-    assert result.reason == "drain_not_clear_after_pause"
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="%1\n", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=_recording_manage_call(busy, calls),
+        intent_db=_store(tmp_path)._db_path,  # noqa: SLF001
+        run_cmd=run_cmd,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+    )
+    assert "charter_pause" not in calls
+    assert "charter_hold_status" not in calls
+    assert result.status == "refused"
 
 
 def test_dry_run_surfaces_occupant_refusal(tmp_path: Path) -> None:

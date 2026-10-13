@@ -50,8 +50,8 @@ See: `topology_ws.mdc`, `systems/federation/TOPOLOGY.md`
 ### Manage process recycle — tmux `0:0` (seat op)
 
 **Invariant:** `manage.sock` absent ∨ long-lived manage must reload (e.g. edits under
-`scripts/model_manager/ui/controller/charter_runner/`) ⇒ **seat** recycles manage
-via tmux — ¬ park on the operator (`judgment-escalation-ladder`).
+`scripts/model_manager/ui/`) ⇒ **seat** recycles manage via tmux — ¬ park on the
+operator (`judgment-escalation-ladder`).
 
 `./manage` on this host usually lives in **tmux session 0 / window 0** (`0:0`).
 Confirm with `tmux capture-pane -t 0:0 -p` before sending keys.
@@ -60,19 +60,13 @@ Confirm with `tmux capture-pane -t 0:0 -p` before sending keys.
 |---|---|
 | Service start/stop/sync_restart (sock up) | MCP `manage(...)` only — Use the `service-lifecycle` skill |
 | Manage process itself down / code pickup | tmux `0:0` quit/start recipe below |
-| `charter_reload` | Loop bounce only — **not** Python re-import; charter-runner edits still need quit/start |
 
-**Safe quit/start recipe** (fleet stays up across the quit when hold is used):
+**Safe quit/start recipe** (fleet containers stay up across manage quit):
 
-1. `manage(action="charter_pause", …)` — **required precondition of step 2**;
-   `pause_drain_clear` reads false until the hold is armed, whether or not a tick
-   happens to be live right now.
-2. Poll `manage(action="charter_hold_status")` until `pause_drain_clear=true`
-3. `tmux send-keys -t 0:0 'q' Enter` (or type `q` in the TUI) — wait for shell prompt
-4. `tmux send-keys -t 0:0 'cd /mnt/torus/projects/universal-llm-gateway && ./manage' Enter`
-5. Wait until MCP `manage(action="status")` works again (`manage.sock` live)
-6. `manage(action="charter_resume")` if a hold was set
-7. Re-`start` / `sync_restart` any services that stayed down (e.g. GIW)
+1. `tmux send-keys -t 0:0 'q' Enter` (or type `q` in the TUI) — wait for shell prompt
+2. `tmux send-keys -t 0:0 'cd /mnt/torus/projects/universal-llm-gateway && ./manage' Enter`
+3. Wait until MCP `manage(action="status")` works again (`manage.sock` live)
+4. Re-`start` / `sync_restart` any services that stayed down (e.g. GIW)
 
 **Forbidden:** ask the operator to quit/start manage; `systemctl` / `pkill` / raw
 docker kill for **fleet-service** lifecycle. **Permitted:** tmux drive of `0:0` for

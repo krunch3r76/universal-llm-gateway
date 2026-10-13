@@ -356,10 +356,8 @@ def test_run_refuses_when_tmux_pane_mismatches(tmp_path: Any) -> None:
     assert sends == []
 
 
-def test_execute_reaches_charter_pause_then_post_pause_drain_refuse(
-    tmp_path: Any,
-) -> None:
-    """AC2.1: pre-pause drain duplicate removed — pause arms, post-pause gate refuses."""
+def test_execute_skips_charter_pause_after_checks(tmp_path: Any) -> None:
+    """S1: guarded reexec no longer calls charter_pause / charter_hold_status."""
     store = _store(tmp_path)
     calls: list[str] = []
 
@@ -375,33 +373,35 @@ def test_execute_reaches_charter_pause_then_post_pause_drain_refuse(
         if method == "busy_status":
             return {
                 "process": {"manage_inflight": 1, "activities": []},
-                "charter_hold": {"held": False, "pause_drain_clear": False},
             }
-        if method == "charter_hold_status":
-            return {
-                "held": False,
-                "pause_drain_clear": False,
-                "tick_in_flight": False,
-                "live_charter_shaped_dispatches": [],
-            }
-        if method == "charter_pause":
-            return {"status": "ok", "held": True}
         raise AssertionError(f"unexpected manage call: {method}")
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="%1\n", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected cmd: {cmd}")
 
     result = run_guarded_reexec(
         target_ref="deadbeef",
         dry_run=False,
         manage_call=manage_call,
-        run_cmd=_ok_tmux(9),
+        run_cmd=run_cmd,
         intent_db=store._db_path,  # noqa: SLF001
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        boot_timeout_s=0.2,
     )
-    assert "charter_pause" in calls
-    assert result.reason == "drain_not_clear_after_pause"
+    assert "charter_pause" not in calls
+    assert "charter_hold_status" not in calls
+    assert "charter_resume" not in calls
+    assert result.status == "refused"
 
 
-def test_dry_run_unarmed_hold_observes_drain_without_refuse(tmp_path: Any) -> None:
-    """AC2.3: dry-run surfaces pause_drain_clear=False without refusing on drain alone."""
+def test_dry_run_passes_without_charter_hold_probe(tmp_path: Any) -> None:
+    """S1: dry-run no longer probes charter hold / drain."""
     store = _store(tmp_path)
     calls: list[str] = []
 
@@ -417,14 +417,6 @@ def test_dry_run_unarmed_hold_observes_drain_without_refuse(tmp_path: Any) -> No
         if method == "busy_status":
             return {
                 "process": {"manage_inflight": 1, "activities": []},
-                "charter_hold": {"held": False, "pause_drain_clear": False},
-            }
-        if method == "charter_hold_status":
-            return {
-                "held": False,
-                "pause_drain_clear": False,
-                "tick_in_flight": False,
-                "live_charter_shaped_dispatches": [],
             }
         raise AssertionError(f"unexpected manage call in dry-run: {method}")
 
@@ -438,8 +430,9 @@ def test_dry_run_unarmed_hold_observes_drain_without_refuse(tmp_path: Any) -> No
     )
     assert result.status == "dry-run"
     assert result.reason == "checks_passed_stopped_before_quit"
-    assert result.checks["pause_drain_clear"] is False
+    assert result.checks.get("pause_drain_clear") is None
     assert "charter_pause" not in calls
+    assert "charter_hold_status" not in calls
 
 
 def test_dry_run_unarmed_hold_still_refuses_nonterminal_intent(
@@ -801,4 +794,5 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
     assert not any(len(c) > 4 and c[4] == "q" for c in sends)
     assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%42" for c in tmux_log)
     assert os.getpid() in killed_pids
-    assert "charter_resume" in manage_calls
+    assert "charter_pause" not in manage_calls
+    assert "charter_resume" not in manage_calls
