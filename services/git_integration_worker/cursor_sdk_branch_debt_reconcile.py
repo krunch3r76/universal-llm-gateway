@@ -36,6 +36,7 @@ from services.git_integration_worker.cursor_sdk_branch_archive import (
 from services.git_integration_worker.cursor_sdk_branch_debt import (
     BranchDebt,
     discharge_branch_debt,
+    get_branch_debt,
     list_open_debts,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
@@ -227,10 +228,18 @@ def _head_ref(branch_name: str) -> str:
     return f"refs/heads/{branch_name}"
 
 
+_MEMOIZABLE_LIVE_DETAILS = frozenset(
+    {
+        "unique patch commits remain on branch",
+        "lane merge commits may carry content not represented in cherry",
+    }
+)
+
+
 def _memoize_live_grade(
     branch: str, tip_sha: str, master_sha: str, git_verdict: str, git_detail: str
 ) -> None:
-    if git_verdict == VERDICT_LIVE and git_detail != "unique patch commits remain on branch":
+    if git_verdict == VERDICT_LIVE and git_detail not in _MEMOIZABLE_LIVE_DETAILS:
         return
     if git_verdict not in {VERDICT_ANCESTOR, VERDICT_EQUIVALENT, VERDICT_LIVE}:
         return
@@ -302,16 +311,18 @@ def _grade_live_git(repo: Path, branch_name: str) -> tuple[str, str]:
         merges = _git(repo, "rev-list", "--merges", "--count", f"{_MASTER_REF}..{head}")
     except (subprocess.TimeoutExpired, OSError) as exc:
         return VERDICT_LIVE, str(exc)
-    if merges.returncode == 0:
-        try:
-            merge_count = int((merges.stdout or "").strip() or "0")
-        except ValueError:
-            merge_count = 0
-        if merge_count > 0:
-            return (
-                VERDICT_LIVE,
-                "lane merge commits may carry content not represented in cherry",
-            )
+    if merges.returncode != 0:
+        detail = (merges.stderr or "").strip() or f"git exit {merges.returncode}"
+        return VERDICT_LIVE, detail
+    try:
+        merge_count = int((merges.stdout or "").strip() or "0")
+    except ValueError:
+        return VERDICT_LIVE, "rev-list merge count unparsable"
+    if merge_count > 0:
+        return (
+            VERDICT_LIVE,
+            "lane merge commits may carry content not represented in cherry",
+        )
 
     try:
         cherry = _git(repo, "cherry", _MASTER_REF, head)
@@ -355,7 +366,15 @@ def _classify_present_ref(
             detail=f"guard: {_MASTER_REF} ref missing in repo",
         )
 
-    tip_sha = _branch_tip_sha(repo, branch) or (debt.tip_sha or "")
+    tip_sha = _branch_tip_sha(repo, branch)
+    if tip_sha is None:
+        return DebtVerdict(
+            branch=branch,
+            verdict=VERDICT_LIVE,
+            thread_id=debt.thread_id,
+            tip_sha=debt.tip_sha,
+            detail="guard: branch tip could not be resolved",
+        )
     memo = _LIVE_GRADE_MEMO.get(branch)
     if memo is not None and memo[0] == tip_sha and memo[1] == master_sha:
         git_verdict, git_detail = memo[2], ""
@@ -434,10 +453,19 @@ def _classify(*, repo: Path, debt: BranchDebt, sweep: _SweepState) -> DebtVerdic
     return _classify_missing_ref(repo=repo, debt=debt)
 
 
+def _resolve_retire_thread_id(verdict: DebtVerdict) -> str | None:
+    if verdict.thread_id:
+        return verdict.thread_id
+    debt = get_branch_debt(branch_name=verdict.branch)
+    if debt is None:
+        return None
+    return debt.thread_id or _dispatch_thread_id(debt.dispatch_id)
+
+
 def _retire(*, verdict: DebtVerdict, note: str) -> DebtVerdict:
     """Discharge a reconciled debt as landed and announce it."""
     discharge_branch_debt(branch_name=verdict.branch, verb="landed", note=note)
-    remove_land_required_tag(thread_id=verdict.thread_id)
+    remove_land_required_tag(thread_id=_resolve_retire_thread_id(verdict))
     emit_sdk_lane_b_discharged(
         branch=verdict.branch,
         verb="landed",

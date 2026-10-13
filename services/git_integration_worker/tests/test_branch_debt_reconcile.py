@@ -374,9 +374,10 @@ def test_reconcile_git_timeout_keeps_row_open(
     import services.git_integration_worker.cursor_sdk_branch_debt_reconcile as mod
 
     real_git = mod._git
+    head_ref = f"refs/heads/{branch}"
 
     def _slow_git(r: Path, *args: str):
-        if args[:2] == ("merge-base", "--is-ancestor"):
+        if args[:2] == ("rev-parse", head_ref):
             raise subprocess.TimeoutExpired(cmd=args, timeout=60.0)
         return real_git(r, *args)
 
@@ -384,7 +385,9 @@ def test_reconcile_git_timeout_keeps_row_open(
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
 
-    assert _verdict_for(report, branch).verdict == VERDICT_LIVE
+    verdict = _verdict_for(report, branch)
+    assert verdict.verdict == VERDICT_LIVE
+    assert "branch tip could not be resolved" in verdict.detail
     assert get_branch_debt(branch_name=branch).open
 
 
@@ -397,10 +400,10 @@ def test_cherry_equivalent_with_lane_merge_stays_live(repo: Path) -> None:
     _git("add", "master_d.txt", cwd=repo)
     _git("commit", "-m", "master D", cwd=repo)
     _git("checkout", branch, cwd=repo)
-    _git("merge", "master", "--no-edit", cwd=repo)
+    _git("merge", "master", "--no-commit", "--no-ff", cwd=repo)
     (repo / "evil.txt").write_text("not on master\n", encoding="utf-8")
     _git("add", "evil.txt", cwd=repo)
-    _git("commit", "-m", "evil on lane", cwd=repo)
+    _git("commit", "-m", "merge master with evil inside", cwd=repo)
     _git("checkout", "master", cwd=repo)
     _git("cherry-pick", sha_a, cwd=repo)
     assert (
@@ -420,7 +423,12 @@ def test_cherry_equivalent_with_lane_merge_stays_live(repo: Path) -> None:
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
 
-    assert _verdict_for(report, branch).verdict == VERDICT_LIVE
+    verdict = _verdict_for(report, branch)
+    assert verdict.verdict == VERDICT_LIVE
+    assert (
+        verdict.detail
+        == "lane merge commits may carry content not represented in cherry"
+    )
     assert get_branch_debt(branch_name=branch).open
 
 
