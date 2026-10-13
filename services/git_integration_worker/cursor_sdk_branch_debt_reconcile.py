@@ -46,6 +46,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    containing_worktree_under_root,
     ledger_connection,
     live_ledger_worktree_paths,
 )
@@ -117,15 +118,15 @@ class _SweepState:
     master_sha_by_repo: dict[Path, str | None] = field(default_factory=dict)
     fresh_live_grades: int = 0
     live_ledger_paths: set[str] | None = None
+    worktree_root: Path | None = None
 
 
 def _live_ledger_paths_for_sweep(sweep: _SweepState) -> set[str]:
     if sweep.live_ledger_paths is None:
-        from services.git_integration_worker.config import load_config
-
-        sweep.live_ledger_paths = live_ledger_worktree_paths(
-            worktree_root=load_config().worktree_root
-        )
+        root = sweep.worktree_root
+        if root is None:
+            raise RuntimeError("reconcile sweep missing worktree_root")
+        sweep.live_ledger_paths = live_ledger_worktree_paths(worktree_root=root)
     return sweep.live_ledger_paths
 
 
@@ -288,10 +289,15 @@ def _live_ref_guard_detail(
                 )
             if not is_reapable_dispatch_status(pin_status):
                 return f"guard: active pin dispatch_id={pin.dispatch_id}"
-            try:
-                pin_path = str(Path(pin.worktree_path).resolve())
-            except OSError:
-                pin_path = str(Path(pin.worktree_path))
+            root = sweep.worktree_root
+            if root is None:
+                return f"guard: active pin dispatch_id={pin.dispatch_id}"
+            pin_path = containing_worktree_under_root(
+                path=pin.worktree_path,
+                worktree_root=root,
+            )
+            if pin_path is None:
+                return f"guard: active pin dispatch_id={pin.dispatch_id}"
             if pin_path in _live_ledger_paths_for_sweep(sweep):
                 return f"guard: active pin dispatch_id={pin.dispatch_id}"
     return None
@@ -589,7 +595,7 @@ def reconcile_open_branch_debts(
     projects_root = cfg.dispatch_workspace
     sweep_repo = source_repo.resolve()
     debts = list_open_debts()
-    sweep = _SweepState()
+    sweep = _SweepState(worktree_root=cfg.worktree_root)
     verdicts: list[DebtVerdict] = []
     for debt in debts:
         if debt.source_repo:

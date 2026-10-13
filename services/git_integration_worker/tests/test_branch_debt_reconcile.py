@@ -32,10 +32,13 @@ from services.git_integration_worker.cursor_sdk_branch_debt_reconcile import (
 )
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    containing_worktree_under_root,
     ledger_connection,
+    live_ledger_worktree_paths,
 )
 from services.git_integration_worker.cursor_sdk_worktree_lock import lock_lane_worktree
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    active_pin,
     ensure_worktree_schema,
     pin_lane_worktree,
 )
@@ -292,9 +295,11 @@ def test_sibling_non_terminal_keeps_ancestor_open(repo: Path) -> None:
 
 
 def test_stale_pin_terminal_non_live_worktree_retires_ancestor(
-    repo: Path, tmp_path: Path
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Terminal pin on a worktree no longer in the live ledger does not guard."""
+    worktree_root = tmp_path / "worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
     branch = "cursor-sdk/lane-pin-stale"
     thread_id = "pin-stale-thread"
     sha = _lane_commit(repo, branch, "pin\n")
@@ -303,7 +308,7 @@ def test_stale_pin_terminal_non_live_worktree_retires_ancestor(
         repo=repo,
         thread_id=thread_id,
         dispatch_id="d-pin-stale",
-        worktree_root=tmp_path / "worktrees",
+        worktree_root=worktree_root,
     )
     open_branch_debt(
         branch_name=branch,
@@ -320,21 +325,28 @@ def test_stale_pin_terminal_non_live_worktree_retires_ancestor(
     assert not get_branch_debt(branch_name=branch).open
 
 
-def test_non_terminal_pin_keeps_ancestor_open(repo: Path, tmp_path: Path) -> None:
+def test_non_terminal_pin_keeps_ancestor_open(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
     branch = "cursor-sdk/lane-pin-nt"
     thread_id = "pin-nt-thread"
     sha = _lane_commit(repo, branch, "pinnt\n")
-    _admit_dispatch(dispatch_id="d-pin-nt", thread_id=thread_id, status="running")
+    _admit_dispatch(
+        dispatch_id="d-pin-nt-debt", thread_id=thread_id, status="completed"
+    )
+    _admit_dispatch(dispatch_id="d-pin-nt-pin", thread_id=thread_id, status="claimed")
     _pin_thread(
         repo=repo,
         thread_id=thread_id,
-        dispatch_id="d-pin-nt",
-        worktree_root=tmp_path / "worktrees",
+        dispatch_id="d-pin-nt-pin",
+        worktree_root=worktree_root,
     )
     open_branch_debt(
         branch_name=branch,
         thread_id=thread_id,
-        dispatch_id="d-pin-nt",
+        dispatch_id="d-pin-nt-debt",
         tip_sha=sha,
     )
     _git("merge", branch, cwd=repo)
@@ -344,17 +356,87 @@ def test_non_terminal_pin_keeps_ancestor_open(repo: Path, tmp_path: Path) -> Non
 
     assert verdict.verdict == VERDICT_LIVE
     assert get_branch_debt(branch_name=branch).open
-    assert (
-        "active pin" in verdict.detail
-        or "dispatch status" in verdict.detail
+    assert "active pin" in verdict.detail
+    assert "d-pin-nt-pin" in verdict.detail
+
+
+def test_pin_missing_dispatch_row_keeps_ancestor_open(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
+    branch = "cursor-sdk/lane-pin-ghost"
+    thread_id = "pin-ghost-thread"
+    sha = _lane_commit(repo, branch, "ghost\n")
+    _admit_dispatch(
+        dispatch_id="d-pin-ghost-debt", thread_id=thread_id, status="completed"
     )
+    _pin_thread(
+        repo=repo,
+        thread_id=thread_id,
+        dispatch_id="d-pin-ghost",
+        worktree_root=worktree_root,
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id=thread_id,
+        dispatch_id="d-pin-ghost-debt",
+        tip_sha=sha,
+    )
+    _git("merge", branch, cwd=repo)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert get_branch_debt(branch_name=branch).open
+    assert "dispatch row missing" in verdict.detail
+    assert "d-pin-ghost" in verdict.detail
+
+
+def test_pin_worktree_outside_configured_root_holds_ancestor(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pin path outside ``GIT_INTEGRATION_WORKTREE_ROOT`` must fail closed."""
+    configured_root = tmp_path / "configured-worktrees"
+    outside_root = tmp_path / "outside-worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(configured_root))
+    branch = "cursor-sdk/lane-pin-outside"
+    thread_id = "pin-outside-thread"
+    sha = _lane_commit(repo, branch, "outside\n")
+    _admit_dispatch(
+        dispatch_id="d-pin-outside-debt", thread_id=thread_id, status="completed"
+    )
+    _admit_dispatch(
+        dispatch_id="d-pin-outside-pin", thread_id=thread_id, status="completed"
+    )
+    _pin_thread(
+        repo=repo,
+        thread_id=thread_id,
+        dispatch_id="d-pin-outside-pin",
+        worktree_root=outside_root,
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id=thread_id,
+        dispatch_id="d-pin-outside-debt",
+        tip_sha=sha,
+    )
+    _git("merge", branch, cwd=repo)
+
+    report = reconcile_open_branch_debts(source_repo=repo, apply=True)
+    verdict = _verdict_for(report, branch)
+
+    assert verdict.verdict == VERDICT_LIVE
+    assert get_branch_debt(branch_name=branch).open
+    assert "active pin" in verdict.detail
+    assert "d-pin-outside-pin" in verdict.detail
 
 
 def test_terminal_pin_live_worktree_keeps_ancestor_open(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from services.git_integration_worker import cursor_sdk_branch_debt_reconcile as mod
-    from services.git_integration_worker.cursor_sdk_worktree_registry import active_pin
+    from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
 
     worktree_root = tmp_path / "worktrees"
     monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
@@ -364,12 +446,34 @@ def test_terminal_pin_live_worktree_keeps_ancestor_open(
     _admit_dispatch(
         dispatch_id="d-pin-live-debt", thread_id=thread_id, status="completed"
     )
+    pin_dispatch = "d-pin-live-park"
+    _admit_dispatch(dispatch_id=pin_dispatch, thread_id=thread_id, status="running")
     _pin_thread(
         repo=repo,
         thread_id=thread_id,
-        dispatch_id="d-pin-live-debt",
+        dispatch_id=pin_dispatch,
         worktree_root=worktree_root,
     )
+    pin = active_pin(source_repo=repo, thread_id=thread_id)
+    assert pin is not None
+    mark_parked(
+        dispatch_id=pin_dispatch,
+        intent_id="intent-pin-live",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="2026-10-13T00:00:00Z",
+        method="run_cancel",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    pin_norm = containing_worktree_under_root(
+        path=pin.worktree_path, worktree_root=worktree_root
+    )
+    assert pin_norm is not None
+    assert pin_norm in live_ledger_worktree_paths(worktree_root=worktree_root)
+
     open_branch_debt(
         branch_name=branch,
         thread_id=thread_id,
@@ -377,18 +481,6 @@ def test_terminal_pin_live_worktree_keeps_ancestor_open(
         tip_sha=sha,
     )
     _git("merge", branch, cwd=repo)
-
-    real_paths = mod._live_ledger_paths_for_sweep
-
-    def _ledger_with_pinned_path(sweep: mod._SweepState) -> set[str]:
-        paths = set(real_paths(sweep))
-        pin = active_pin(source_repo=repo, thread_id=thread_id)
-        assert pin is not None
-        paths.add(str(Path(pin.worktree_path).resolve()))
-        sweep.live_ledger_paths = paths
-        return paths
-
-    monkeypatch.setattr(mod, "_live_ledger_paths_for_sweep", _ledger_with_pinned_path)
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
     verdict = _verdict_for(report, branch)
@@ -398,18 +490,20 @@ def test_terminal_pin_live_worktree_keeps_ancestor_open(
     assert get_branch_debt(branch_name=branch).open
 
 
-def test_stale_pin_unique_patch_stays_live(repo: Path, tmp_path: Path) -> None:
+def test_stale_pin_unique_patch_stays_live(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(worktree_root))
     branch = "cursor-sdk/lane-pin-unique"
     thread_id = "pin-unique-thread"
     sha = _lane_commit(repo, branch, "unique\n")
-    _admit_dispatch(
-        dispatch_id="d-pin-unique", thread_id=thread_id, status="completed"
-    )
+    _admit_dispatch(dispatch_id="d-pin-unique", thread_id=thread_id, status="completed")
     _pin_thread(
         repo=repo,
         thread_id=thread_id,
         dispatch_id="d-pin-unique",
-        worktree_root=tmp_path / "worktrees",
+        worktree_root=worktree_root,
     )
     open_branch_debt(
         branch_name=branch,
@@ -515,9 +609,7 @@ def test_rev_list_merge_count_unparsable_stays_live(
     assert get_branch_debt(branch_name=branch).open
 
 
-def test_git_error_keeps_row_open(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_git_error_keeps_row_open(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A git failure during grading must not retire the row (master present)."""
     branch = "cursor-sdk/lane-giterr"
     sha = _lane_commit(repo, branch, "err work\n")
@@ -643,12 +735,8 @@ def test_sibling_guard_uses_dispatch_thread_when_debt_thread_missing(
     branch = "cursor-sdk/lane-thread-fallback"
     thread_id = "thread-from-dispatch"
     sha = _lane_commit(repo, branch, "tf\n")
-    _admit_dispatch(
-        dispatch_id="d-tf-parent", thread_id=thread_id, status="completed"
-    )
-    _admit_dispatch(
-        dispatch_id="d-tf-child", thread_id=thread_id, status="running"
-    )
+    _admit_dispatch(dispatch_id="d-tf-parent", thread_id=thread_id, status="completed")
+    _admit_dispatch(dispatch_id="d-tf-child", thread_id=thread_id, status="running")
     from services.git_integration_worker.cursor_sdk_branch_debt import (
         ensure_debt_schema,
     )
@@ -687,9 +775,7 @@ def test_grade_cap_defers_rows(repo: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     first = reconcile_open_branch_debts(source_repo=repo, apply=True)
     retired_first = sum(
-        1
-        for row in first.verdicts
-        if row.verdict == VERDICT_ANCESTOR and row.applied
+        1 for row in first.verdicts if row.verdict == VERDICT_ANCESTOR and row.applied
     )
     assert retired_first == cap
     from services.git_integration_worker.cursor_sdk_branch_debt import list_open_debts
@@ -698,9 +784,7 @@ def test_grade_cap_defers_rows(repo: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     second = reconcile_open_branch_debts(source_repo=repo, apply=True)
     retired_second = sum(
-        1
-        for row in second.verdicts
-        if row.verdict == VERDICT_ANCESTOR and row.applied
+        1 for row in second.verdicts if row.verdict == VERDICT_ANCESTOR and row.applied
     )
     assert retired_second == n - cap
 
@@ -727,7 +811,9 @@ def test_retire_path_never_deletes_ref_or_worktree(
                 raise AssertionError("branch -D must not run during reconcile retire")
             if "worktree" in joined and "remove" in joined:
                 attempted.append(joined)
-                raise AssertionError("worktree remove must not run during reconcile retire")
+                raise AssertionError(
+                    "worktree remove must not run during reconcile retire"
+                )
         return real_git(*args, **kwargs)
 
     import services.git_integration_worker.cursor_sdk_branch_debt_reconcile as mod
