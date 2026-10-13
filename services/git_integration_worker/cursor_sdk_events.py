@@ -1306,8 +1306,6 @@ def emit_sdk_lane_b_reaped(
     reason: str | None = None,
 ) -> None:
     """Emit when a dispatch worktree is pruned or an orphan branch is reaped."""
-    if outcome not in _VALID_REAP_OUTCOMES:
-        raise ValueError(f"invalid sdk.lane_b.reaped outcome: {outcome!r}")
     _emit(
         SdkLaneBReaped(
             dispatch_id=dispatch_id,

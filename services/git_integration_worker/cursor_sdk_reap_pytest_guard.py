@@ -53,9 +53,9 @@ def refuse_real_hub_reap_under_pytest(
                 worktree_root=wt_for_emit,
                 detail=detail,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("reap_refused_pytest emit failed")
-            raise
+            raise RuntimeError(detail) from exc
         raise RuntimeError(detail)
     if worktree_root is None:
         return
@@ -72,9 +72,9 @@ def refuse_real_hub_reap_under_pytest(
                 worktree_root=wt_root,
                 detail=detail,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("reap_refused_pytest emit failed")
-            raise
+            raise RuntimeError(detail) from exc
         raise RuntimeError(detail)
 
 

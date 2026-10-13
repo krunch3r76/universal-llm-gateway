@@ -249,6 +249,118 @@ def test_pytest_hub_refusal_emits_reap_refused_pytest_event() -> None:
     assert refused[0]["source_repo"] == str(hub.resolve())
 
 
+def test_pytest_hub_refusal_raises_runtime_error_when_emit_fails() -> None:
+    """Emit failure must not replace the hub refusal ``RuntimeError``."""
+    hub = Path(_DEFAULT_SOURCE_REPO)
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_lane_b_reap_refused_pytest",
+        side_effect=OSError("event service down"),
+    ):
+        with pytest.raises(RuntimeError, match="live hub repo") as exc_info:
+            refuse_real_hub_reap_under_pytest(source_repo=hub)
+    assert exc_info.value.__cause__ is not None
+    assert isinstance(exc_info.value.__cause__, OSError)
+
+
+def test_gc_same_branch_retained_during_own_archive_pass(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same branch marked ``retained_for_mission`` during its own archive is kept."""
+    branch = "cursor-sdk/lane-gc-self-retain"
+    _git("checkout", "-b", branch, cwd=git_repo)
+    (git_repo / "self_retain.py").write_text("x\n", encoding="utf-8")
+    _git("add", "self_retain.py", cwd=git_repo)
+    _git("commit", "-m", "tip", cwd=git_repo)
+    _git("checkout", "master", cwd=git_repo)
+    _git("merge", branch, cwd=git_repo)
+
+    from services.git_integration_worker.cursor_sdk_branch_archive import (
+        archive_branch as real_archive_branch,
+    )
+
+    def _archive_self_retain(*, repo: Path, branch_name: str) -> str | None:
+        if branch_name == branch:
+            mark_lane_b_disposition(
+                branch_name=branch,
+                reason="retained_for_mission",
+                dispatch_id="self-retain",
+            )
+        return real_archive_branch(repo=repo, branch_name=branch_name)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_archive.archive_branch",
+        _archive_self_retain,
+    )
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        deleted = gc_merged_dispatch_branches(source_repo=git_repo)
+    assert deleted == 0
+    listing = subprocess.run(
+        ["git", "branch", "--list", branch],
+        cwd=str(git_repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert branch in listing
+    deleted_reaped = [
+        e
+        for e in emitted
+        if e.get("signal") == "sdk.lane_b.reaped"
+        and e.get("outcome") == "deleted"
+        and e.get("branch") == branch
+    ]
+    assert not deleted_reaped
+
+
+def test_gc_skips_protected_and_non_sdk_delete_candidates(git_repo: Path) -> None:
+    """Injected ``master`` / ``arc/*`` candidates are never deleted."""
+    _git("checkout", "-b", "arc/x", cwd=git_repo)
+    (git_repo / "arc.py").write_text("a\n", encoding="utf-8")
+    _git("add", "arc.py", cwd=git_repo)
+    _git("commit", "-m", "arc tip", cwd=git_repo)
+    _git("checkout", "master", cwd=git_repo)
+    master_sha = subprocess.run(
+        ["git", "rev-parse", "master"],
+        cwd=str(git_repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    arc_sha = subprocess.run(
+        ["git", "rev-parse", "arc/x"],
+        cwd=str(git_repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    deleted = gc_merged_dispatch_branches(
+        source_repo=git_repo,
+        delete_candidates=[
+            ("master", "injected", None, master_sha),
+            ("arc/x", "injected", None, arc_sha),
+        ],
+    )
+    assert deleted == 0
+    for name in ("master", "arc/x"):
+        listing = subprocess.run(
+            ["git", "branch", "--list", name],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert name in listing
+
+
 def test_gc_respects_retained_disposition_set_during_archive_pass(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
