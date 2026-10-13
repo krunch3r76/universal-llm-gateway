@@ -369,6 +369,7 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
     )
     assert rewritten.returncode == 0, rewritten.stderr
     assert f"shell_cwd_missing {missing}" in rewritten.stderr
+    assert f"shell_cwd_reset {missing} {fallback}" in rewritten.stderr
     assert rewritten.stdout.strip() == str(fallback)
 
     inherited = subprocess.run(
@@ -382,6 +383,65 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
     assert inherited.returncode == 0, inherited.stderr
     assert str(preload) not in inherited.stdout
     assert str(fallback) not in inherited.stdout
+
+
+def test_shell_cwd_preload_survives_removed_cwd_between_spawns(
+    tmp_path: Path,
+) -> None:
+    """Log-contract / round-1 regression guard: a removed scratch cwd is reset onto the lane.
+
+    The preload logs shell_cwd_missing and shell_cwd_reset and the second pwd
+    is the lane. This is not a crash-regression claim for the SDK bundle death.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    probe = tmp_path / "two_spawn.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const fs = require('fs');",
+                "const { spawn } = require('child_process');",
+                "const scratch = process.argv[2];",
+                "function bashPwd(cwd) {",
+                "  return new Promise((resolve, reject) => {",
+                "    const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd });",
+                "    let out = '';",
+                "    child.stdout.on('data', (buf) => { out += buf; });",
+                "    child.on('error', reject);",
+                "    child.on('close', (code) => resolve({ code, out }));",
+                "  });",
+                "}",
+                "(async () => {",
+                "  const first = await bashPwd(scratch);",
+                "  if (first.code !== 0) process.exit(first.code == null ? 1 : first.code);",
+                "  fs.rmSync(scratch, { recursive: true, force: true });",
+                "  const second = await bashPwd(scratch);",
+                "  if (second.code !== 0) process.exit(second.code == null ? 1 : second.code);",
+                "  process.stdout.write(second.out);",
+                "})().catch((err) => {",
+                "  process.stderr.write(String(err && err.code || err) + '\\n');",
+                "  process.exit(1);",
+                "});",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe), str(scratch)],
+        _armed_preload_env(lane, align=True),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+    assert f"shell_cwd_missing {scratch}" in proc.stderr
+    assert f"shell_cwd_reset {scratch} {lane}" in proc.stderr
 
 
 def test_shell_cwd_preload_keeps_dispatch_id_in_bash_child(tmp_path: Path) -> None:
@@ -815,6 +875,162 @@ def test_shell_cwd_preload_spawn_url_cwd_not_replaced(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "/tmp"
     assert proc.stdout.strip() != str(lane)
+
+
+def test_shell_cwd_preload_logs_unusable_when_bash_cwd_is_file(tmp_path: Path) -> None:
+    """A file used as bash cwd is ENOTDIR: log it and still reset onto the lane.
+
+    Breaks when a non-directory cwd is only reported as missing, or when the
+    spawn is left on that path and bash dies instead of running in the lane.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    not_dir = tmp_path / "not-a-dir"
+    not_dir.write_text("x", encoding="utf-8")
+    probe = tmp_path / "file_cwd.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const cwd = process.argv[2];",
+                "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd });",
+                "child.stdout.on('data', (buf) => process.stdout.write(buf));",
+                "child.on('error', (err) => {",
+                "  process.stderr.write(String(err.code) + '\\n');",
+                "  process.exit(1);",
+                "});",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe), str(not_dir)],
+        _armed_preload_env(lane, align=True),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+    assert f"shell_cwd_unusable {not_dir} ENOTDIR" in proc.stderr
+    assert f"shell_cwd_reset {not_dir} {lane}" in proc.stderr
+
+
+def test_shell_cwd_preload_deleted_launch_cwd_does_not_throw(tmp_path: Path) -> None:
+    """Invalid fallback must not call process.cwd() after the launch directory is gone.
+
+    Breaks when preload load evaluates process.cwd() and the directory the
+    bridge was started in has been removed: Node throws ENOENT before any
+    script runs. The fallback is not a directory, so there is no lane to
+    chdir to.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    launch = tmp_path / "launch-cwd"
+    launch.mkdir()
+    env = _armed_preload_env(Path("/nonexistent/for/shell_cwd_test"), align=True)
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'cd "$1" && rmdir "$1" && exec "$2" -e "console.log(\'alive\')"',
+            "bash",
+            str(launch),
+            str(node),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "alive"
+    assert "ENOENT" not in proc.stderr
+
+
+def test_shell_cwd_preload_logs_unusable_for_eloop(tmp_path: Path) -> None:
+    """A symlink loop is shell_cwd_unusable ELOOP, then reset onto the lane.
+
+    Breaks when only EACCES and ENOTDIR are logged and ELOOP is missing-only.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    loop = tmp_path / "loop"
+    loop.symlink_to("loop")
+    probe = tmp_path / "eloop.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const cwd = process.argv[2];",
+                "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd });",
+                "child.stdout.on('data', (buf) => process.stdout.write(buf));",
+                "child.on('error', (err) => {",
+                "  process.stderr.write(String(err.code) + '\\n');",
+                "  process.exit(1);",
+                "});",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe), str(loop)],
+        _armed_preload_env(lane, align=True),
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+    assert f"shell_cwd_unusable {loop} ELOOP" in proc.stderr
+    assert f"shell_cwd_reset {loop} {lane}" in proc.stderr
+
+
+def test_preload_uncaught_exception_monitor_writes_line_and_exits_nonzero(
+    tmp_path: Path,
+) -> None:
+    """An uncaught throw writes bridge_uncaught and the process still exits non-zero.
+
+    Breaks when the monitor swallows the exception or omits code, syscall, and path.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "uncaught.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const err = new Error('sdk bundle');",
+                "err.code = 'ERR_TEST';",
+                "err.syscall = 'open';",
+                "err.path = '/gone/bundle';",
+                "throw err;",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_node(
+        node,
+        [str(probe)],
+        _armed_preload_env(lane, align=False),
+        tmp_path,
+    )
+    assert proc.returncode != 0
+    assert "bridge_uncaught uncaughtException ERR_TEST open /gone/bundle" in proc.stderr
+    assert "Error: sdk bundle" in proc.stderr
 
 
 def test_shell_cwd_preload_invalid_fallback_stderr(tmp_path: Path) -> None:

@@ -15,6 +15,8 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 
+import httpx
+from agent_bus_store.cdp_pointer_body import format_cdp_generate_pointer_body
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     CDP_SUBSTRATE,
@@ -45,9 +47,11 @@ from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .cdp_mission_provenance import observe_mission_binding
 from .handoff import (
+    AdmitHandoffResult,
+    admit_and_post_pointer_turn,
     admit_handoff_dispatch,
     create_handoff_thread,
-    post_pointer_turn,
+    terminate_handoff_dispatch,
 )
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
 from .poll_hint_events import emit_poll_hint_from_handoff
@@ -633,23 +637,40 @@ async def dispatch_cdp_generate(
         )
 
     thread_subject = f"cdp generate — {request_id}"
-    pointer_body = (
-        f"CDP generate admitted (model={model}, execution_id={execution_id}). "
-        f"Poll poll_hint (from_agent=web-anthropic). Terminal only after harvest proof."
+    pointer_body = format_cdp_generate_pointer_body(
+        model=str(model),
+        execution_id=execution_id,
     )
 
     thread_id = dispatch_thread
     caller_supplied_thread = bool(thread_id and str(thread_id).strip().isdigit())
     if caller_supplied_thread:
-        pointer_turn = await post_pointer_turn(
-            request_id=request_id,
-            thread_id=str(thread_id),
-            to_agent=CDP_REPLY_FROM,
-            subject=thread_subject,
-            pointer_body=pointer_body,
-            caller_agent=body.caller_agent,
-        )
-        after_turn = pointer_turn
+        try:
+            after_turn = await admit_and_post_pointer_turn(
+                request_id=request_id,
+                thread_id=str(thread_id),
+                to_agent=CDP_REPLY_FROM,
+                subject=thread_subject,
+                pointer_body=pointer_body,
+                caller_agent=body.caller_agent,
+                execution_id=execution_id,
+                pipeline_id="cdp-generate",
+                parent_thread_id=parent_thread,
+            )
+        except FrontierEndpointError as exc:
+            if not isinstance(exc.__cause__, httpx.TimeoutException):
+                raise
+            after_turn = await admit_and_post_pointer_turn(
+                request_id=request_id,
+                thread_id=str(thread_id),
+                to_agent=CDP_REPLY_FROM,
+                subject=thread_subject,
+                pointer_body=pointer_body,
+                caller_agent=body.caller_agent,
+                execution_id=execution_id,
+                pipeline_id="cdp-generate",
+                parent_thread_id=parent_thread,
+            )
     else:
         thread_id = await create_handoff_thread(
             request_id=request_id,
@@ -676,14 +697,17 @@ async def dispatch_cdp_generate(
                 thread_id=str(thread_id),
             )
 
-    admit_result = await admit_handoff_dispatch(
-        request_id=request_id,
-        thread_id=str(thread_id),
-        execution_id=execution_id,
-        pipeline_id="cdp-generate",
-        caller_agent=body.caller_agent,
-        parent_thread_id=parent_thread,
-    )
+    if caller_supplied_thread:
+        admit_result = AdmitHandoffResult(admitted=True, reason="admit_and_post")
+    else:
+        admit_result = await admit_handoff_dispatch(
+            request_id=request_id,
+            thread_id=str(thread_id),
+            execution_id=execution_id,
+            pipeline_id="cdp-generate",
+            caller_agent=body.caller_agent,
+            parent_thread_id=parent_thread,
+        )
     record_cdp_admit(
         execution_id=execution_id,
         thread_id=str(thread_id),
@@ -695,85 +719,109 @@ async def dispatch_cdp_generate(
 
     timeout_seconds = getattr(body, "timeout_seconds", None)
     max_wall = float(timeout_seconds) if timeout_seconds else DEFAULT_MAX_WALL_S
-    upsert_inflight_leg(
-        execution_id=execution_id,
-        request_id=request_id,
-        thread_id=str(thread_id),
-        pointer_turn=after_turn,
-        caller_agent=body.caller_agent,
-        prompt_uri=staged.prompt_uri,
-        model_id=str(model),
-        max_wall_s=max_wall,
-        purpose=purpose,
-        bus_body=getattr(body, "bus_body", None),
-    )
-
-    if is_operator_proxy_mission_purpose(purpose):
-        observe_mission_binding(
+    try:
+        upsert_inflight_leg(
+            execution_id=execution_id,
+            request_id=request_id,
+            thread_id=str(thread_id),
+            pointer_turn=after_turn,
+            caller_agent=body.caller_agent,
+            prompt_uri=staged.prompt_uri,
+            model_id=str(model),
+            max_wall_s=max_wall,
             purpose=purpose,
-            dispatch_thread_id=str(thread_id),
-            parent_thread=parent_thread,
-            mission_kind=mission_kind,
-            synthesized=declared_parent is None,
+            bus_body=getattr(body, "bus_body", None),
         )
-    opts = getattr(body, "generation_options", None) or {}
-    from .cdp_dispatch_topic import extract_cdp_dispatch_topic
 
-    prompt_for_topic = prompt if isinstance(prompt, str) else None
-    dispatch_topic = extract_cdp_dispatch_topic(prompt_for_topic)
-    worker_kwargs: dict[str, Any] = {
-        "execution_id": execution_id,
-        "model_id": str(model),
-        "thread_id": str(thread_id),
-        "caller_agent": body.caller_agent,
-        "prompt_uri": staged.prompt_uri,
-        "request_id": request_id,
-        "pointer_turn": after_turn,
-        "max_wall_s": float(timeout_seconds) if timeout_seconds else None,
-        "purpose": purpose,
-        "mission_kind": mission_kind,
-        "parent_thread": parent_thread,
-        "topic": dispatch_topic,
-    }
-    if contract is not None:
-        worker_kwargs["contract"] = contract
-    if isinstance(opts, dict):
-        if "harvest_source" in opts:
-            worker_kwargs["harvest_source"] = opts["harvest_source"]
-        if "expected_size" in opts:
-            worker_kwargs["expected_size"] = opts["expected_size"]
-        if "download_output" in opts:
-            worker_kwargs["download_output"] = opts["download_output"]
-    if project_uuid:
-        worker_kwargs["project_uuid"] = project_uuid
-    worker_task = asyncio.create_task(
-        run_cdp_worker(**worker_kwargs),
-        name=f"cdp-worker-{execution_id[:8]}",
-    )
-    _CDP_WORKER_TASKS.add(worker_task)
-
-    def _log_worker_done(task: asyncio.Task[None]) -> None:
-        _CDP_WORKER_TASKS.discard(task)
-        if task.cancelled():
-            from universal_logging import get_logger
-
-            get_logger(__name__).warning(
-                "cdp worker task cancelled: execution_id=%s",
-                execution_id,
+        if is_operator_proxy_mission_purpose(purpose):
+            observe_mission_binding(
+                purpose=purpose,
+                dispatch_thread_id=str(thread_id),
+                parent_thread=parent_thread,
+                mission_kind=mission_kind,
+                synthesized=declared_parent is None,
             )
-            return
-        exc = task.exception()
-        if exc is not None:
-            from universal_logging import get_logger
+        opts = getattr(body, "generation_options", None) or {}
+        from .cdp_dispatch_topic import extract_cdp_dispatch_topic
 
+        prompt_for_topic = prompt if isinstance(prompt, str) else None
+        dispatch_topic = extract_cdp_dispatch_topic(prompt_for_topic)
+        worker_kwargs: dict[str, Any] = {
+            "execution_id": execution_id,
+            "model_id": str(model),
+            "thread_id": str(thread_id),
+            "caller_agent": body.caller_agent,
+            "prompt_uri": staged.prompt_uri,
+            "request_id": request_id,
+            "pointer_turn": after_turn,
+            "max_wall_s": float(timeout_seconds) if timeout_seconds else None,
+            "purpose": purpose,
+            "mission_kind": mission_kind,
+            "parent_thread": parent_thread,
+            "topic": dispatch_topic,
+        }
+        if contract is not None:
+            worker_kwargs["contract"] = contract
+        if isinstance(opts, dict):
+            if "harvest_source" in opts:
+                worker_kwargs["harvest_source"] = opts["harvest_source"]
+            if "expected_size" in opts:
+                worker_kwargs["expected_size"] = opts["expected_size"]
+            if "download_output" in opts:
+                worker_kwargs["download_output"] = opts["download_output"]
+        if project_uuid:
+            worker_kwargs["project_uuid"] = project_uuid
+        worker_task = asyncio.create_task(
+            run_cdp_worker(**worker_kwargs),
+            name=f"cdp-worker-{execution_id[:8]}",
+        )
+        _CDP_WORKER_TASKS.add(worker_task)
+
+        def _log_worker_done(task: asyncio.Task[None]) -> None:
+            _CDP_WORKER_TASKS.discard(task)
+            if task.cancelled():
+                from universal_logging import get_logger
+
+                get_logger(__name__).warning(
+                    "cdp worker task cancelled: execution_id=%s",
+                    execution_id,
+                )
+                return
+            exc = task.exception()
+            if exc is not None:
+                from universal_logging import get_logger
+
+                get_logger(__name__).error(
+                    "cdp worker task failed: execution_id=%s err=%s",
+                    execution_id,
+                    exc,
+                    exc_info=exc,
+                )
+
+        worker_task.add_done_callback(_log_worker_done)
+    except Exception as exc:
+        from universal_logging import get_logger
+
+        get_logger(__name__).error(
+            "cdp generate post-admit failure: execution_id=%s err=%s",
+            execution_id,
+            exc,
+            exc_info=exc,
+        )
+        terminated = await terminate_handoff_dispatch(
+            request_id=request_id,
+            thread_id=str(thread_id),
+            execution_id=execution_id,
+            terminal_status="failed",
+        )
+        if not terminated:
             get_logger(__name__).error(
-                "cdp worker task failed: execution_id=%s err=%s",
+                "terminate_handoff_dispatch returned False: "
+                "execution_id=%s thread_id=%s",
                 execution_id,
-                exc,
-                exc_info=exc,
+                thread_id,
             )
-
-    worker_task.add_done_callback(_log_worker_done)
+        raise
 
     record = job_record(contract) if contract else None
     handoff_fields = build_handoff_result(

@@ -48,6 +48,7 @@ from .threads import (
 )
 from .threads_atomic import (
     PendingShellContention,
+    admit_and_post_turn,
     admit_dispatch,
     backfill_parent_facing_dispatch_enumeration,
     claim_and_post_turn,
@@ -84,6 +85,7 @@ __all__ = [
     "TurnAlreadyAcknowledged",
     "UnreadTurnsExist",
     "PendingShellContention",
+    "admit_and_post_turn",
     "admit_dispatch",
     "backfill_parent_facing_dispatch_enumeration",
     "add_tags",

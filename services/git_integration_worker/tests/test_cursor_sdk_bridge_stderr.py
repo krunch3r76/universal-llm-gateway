@@ -366,6 +366,301 @@ def test_shell_cwd_forensics_prefers_shell_cwd_missing_marker(
     assert snapshot["bridge_shell_cwd"] == "/x/y"
 
 
+def test_shell_cwd_forensics_reports_reset_target_for_running_recorded_cwd(
+    tmp_path: Path,
+) -> None:
+    """A running shell tool whose cwd was reset reports the reset target.
+
+    Breaks when ``workingDirectory`` is the deleted path and the stderr reset
+    is ignored, so ``bridge_shell_cwd`` stays on that deleted path.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "precheck-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-recovered-cwd",
+        tool_name="shell",
+        status="running",
+        args={"workingDirectory": str(missing)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'shell_cwd_missing {missing}\\n"
+        f"shell_cwd_reset {missing} {lane}\\n"
+        "Error: boom in sdk bundle\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-recovered-cwd",
+        thread_id="t-recovered",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_spawn_cwd"] == str(lane)
+    assert snapshot["bridge_spawn_cwd_exists"] is True
+    assert snapshot["bridge_shell_cwd"] == str(lane)
+    assert snapshot["bridge_shell_cwd_reset_from"] == str(missing)
+    assert snapshot["bridge_shell_cwd_exists"] is True
+
+
+def test_shell_cwd_forensics_reports_reset_target_for_completed_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A completed shell tool's snapshot path is rewritten the same way.
+
+    Breaks when the fallback uses the snapshot PWD (status completed) and
+    that path is the deleted one the preload already reset.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "snapshot-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-recovered-snapshot",
+        tool_name="shell",
+        status="completed",
+        args={"workingDirectory": str(missing)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'shell_cwd_missing {missing}\\n"
+        f"shell_cwd_reset {missing} {lane}\\n"
+        "Error: boom in sdk bundle\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-recovered-snapshot",
+        thread_id="t-recovered-snap",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_shell_cwd"] == str(lane)
+    assert snapshot["bridge_shell_cwd_reset_from"] == str(missing)
+
+
+def test_shell_cwd_forensics_reset_rewrites_bash_snapshot_pwd_without_recorded_tool(
+    tmp_path: Path,
+) -> None:
+    """When only the bash snapshot names the deleted cwd, reset rewrite still applies.
+
+    Breaks when ``snapshot_pwd=from_tail`` is skipped because a recorded tool call
+    was required to reach the fallback path.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "snapshot-only-removed"
+    reset_shell_spawn_state()
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'__CURSOR_BASH_STATE_START__\\n{missing}\\n"
+        "__CURSOR_BASH_STATE_END__\\n"
+        f"shell_cwd_missing {missing}\\n"
+        f"shell_cwd_reset {missing} {lane}\\n"
+        "Error: boom in sdk bundle\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-snapshot-reset-only",
+        thread_id="t-snapshot-reset",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_shell_cwd"] == str(lane)
+    assert snapshot["bridge_shell_cwd_reset_from"] == str(missing)
+
+
+def test_shell_cwd_forensics_unrecovered_marker_not_rewritten_by_earlier_reset(
+    tmp_path: Path,
+) -> None:
+    """A second missing marker without reset must not inherit an earlier reset map entry.
+
+    Breaks when ``shell_cwd in resets`` rewrites an active ``shell_cwd_missing`` path
+    after the lane was removed and the spawn truly used the deleted path.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "precheck-twice"
+    reset_shell_spawn_state()
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'shell_cwd_missing {missing}\\n"
+        f"shell_cwd_reset {missing} {lane}\\n"
+        f"shell_cwd_missing {missing}\\n"
+        "Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-double-missing",
+        thread_id="t-double-missing",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_death_class"] == "spawn_enoent_missing_cwd"
+    assert snapshot["bridge_shell_cwd"] == str(missing)
+    assert snapshot["bridge_shell_cwd_exists"] is False
+    assert "bridge_shell_cwd_reset_from" not in snapshot
+
+
+def test_shell_cwd_forensics_incident_shape_bundle_death_not_enoent_class(
+    tmp_path: Path,
+) -> None:
+    """Base-preload incident: missing marker, no reset, bundled SDK stack — not ENOENT class.
+
+    Breaks when classification or exists=false promotion treats the marker as spawn
+    ENOENT even though the death is the bundled SDK exception shape.
+    """
+    from services.git_integration_worker.cursor_sdk_bridge_stderr import (
+        classify_bridge_stderr,
+    )
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    precheck = tmp_path / "precheck-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-incident-shape",
+        tool_name="shell",
+        status="running",
+        args={"command": "ls", "workingDirectory": str(precheck)},
+    )
+    tail_lines = [
+        f"shell_cwd_missing {precheck}",
+        "Error: TypeError: Cannot read properties of undefined (reading 'x')",
+        "    at Object.<anonymous> (/path/to/357.js:1:12345)",
+    ]
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        + repr("\n".join(tail_lines) + "\n")
+        + "); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-incident-shape",
+        thread_id="t-incident",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    tail_text = "\n".join(tap.tail())
+    assert classify_bridge_stderr(text=tail_text) != "spawn_enoent_missing_cwd"
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_death_class"] == "uncaught_exception_bundle"
+    assert snapshot["bridge_shell_cwd"] == str(precheck)
+    assert snapshot.get("bridge_shell_cwd_exists") is not False
+
+
+def test_shell_cwd_exists_false_on_old_log_without_reset_lines(
+    tmp_path: Path,
+) -> None:
+    """An old spawn-ENOENT log with no reset lines still reports exists false.
+
+    Breaks when exists=false is gated on reset markers the old log does not have.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "old-log-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-old-log",
+        tool_name="shell",
+        status="running",
+        args={"workingDirectory": str(missing)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write('Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-old-log",
+        thread_id="t-old-log",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_death_class"] == "spawn_enoent_missing_cwd"
+    assert snapshot["bridge_shell_cwd"] == str(missing)
+    assert snapshot["bridge_shell_cwd_exists"] is False
+    assert "bridge_shell_cwd_reset_from" not in snapshot
+
+
+def test_shell_cwd_exists_false_not_promoted_for_other_death(
+    tmp_path: Path,
+) -> None:
+    """A non-ENOENT death does not promote bridge_shell_cwd_exists false.
+
+    Breaks when a deleted recorded cwd on an SDK-bundle crash is reported
+    missing even though the death class is not spawn_enoent_missing_cwd.
+    The log has no reset lines.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "bundle-crash-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-bundle-crash",
+        tool_name="shell",
+        status="running",
+        args={"workingDirectory": str(missing)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write('Error: boom in sdk bundle\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-bundle-crash",
+        thread_id="t-bundle",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_death_class"] == "uncaught_exception_bundle"
+    assert snapshot["bridge_shell_cwd"] == str(missing)
+    assert snapshot.get("bridge_shell_cwd_exists") is not False
+
+
 def test_shell_spawn_cwd_keeps_top_level_cd_and_ignores_subshell(
     tmp_path: Path,
 ) -> None:
