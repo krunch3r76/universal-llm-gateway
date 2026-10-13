@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from universal_logging import get_logger
 
@@ -23,8 +24,11 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+_GIT_VERIFY_TIMEOUT_S = 5.0
 DISPATCH_BRANCH_PREFIX = "cursor-sdk/"
 PROTECTED_BRANCHES = frozenset({"master", "main", "HEAD"})
+
+OrphanBranchDeleteResult = Literal["deleted", "refused", "failed"]
 
 
 def is_cursor_sdk_branch(name: str) -> bool:
@@ -109,7 +113,11 @@ def _gc_delete_candidates(*, source_repo: Path) -> list[tuple[str, str, str | No
     return candidates
 
 
-def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
+def gc_merged_dispatch_branches(
+    *,
+    source_repo: Path,
+    delete_candidates: list[tuple[str, str, str | None, str | None]] | None = None,
+) -> int:
     """Delete unused landed ``cursor-sdk/*`` orphans; archive every tip first.
 
     Pass 1 is prefix-scoped: ``git branch --merged master`` is not a license
@@ -123,7 +131,11 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
 
     refuse_real_hub_reap_under_pytest(source_repo=source_repo)
     repo = source_repo.resolve()
-    candidates = _gc_delete_candidates(source_repo=source_repo)
+    candidates = (
+        delete_candidates
+        if delete_candidates is not None
+        else _gc_delete_candidates(source_repo=source_repo)
+    )
     log_reap_pass(
         pass_name="gc_merged_dispatch_branches",
         source_repo=repo,
@@ -132,13 +144,23 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
     deleted = 0
 
     for name, reason, dispatch_id, tip_sha in candidates:
-        had_disposition = get_disposition(branch_name=name) is not None
-        if _delete_orphan_branch(
-            repo=repo,
-            branch_name=name,
-            reason=reason,
-            dispatch_id=dispatch_id,
-            tip_sha=tip_sha,
+        if not name or name in PROTECTED_BRANCHES:
+            continue
+        if not is_cursor_sdk_branch(name):
+            continue
+        disposition = get_disposition(branch_name=name)
+        if disposition is not None and disposition.reason == "retained_for_mission":
+            continue
+        had_disposition = disposition is not None
+        if (
+            _delete_orphan_branch(
+                repo=repo,
+                branch_name=name,
+                reason=reason,
+                dispatch_id=dispatch_id,
+                tip_sha=tip_sha,
+            )
+            == "deleted"
         ):
             if reason == "ancestry_merged" or had_disposition:
                 clear_disposition(branch_name=name)
@@ -153,7 +175,7 @@ def _delete_orphan_branch(
     reason: str,
     dispatch_id: str | None,
     tip_sha: str | None = None,
-) -> bool:
+) -> OrphanBranchDeleteResult:
     """Archive then delete *branch_name*, emitting ``sdk.lane_b.reaped``.
 
     Archiving is a precondition, not a courtesy: a tip we could not preserve is
@@ -178,7 +200,7 @@ def _delete_orphan_branch(
             branch_name,
             pinned,
         )
-        return False
+        return "refused"
 
     debt = get_branch_debt(branch_name=branch_name)
     if debt is not None and debt.open:
@@ -187,25 +209,91 @@ def _delete_orphan_branch(
             branch_name,
             debt.dispatch_id,
         )
-        return False
+        return "refused"
 
     if archive_branch(repo=repo, branch_name=branch_name) is None:
         logger.warning(
             "orphan branch delete skipped — archive failed branch=%s", branch_name
         )
-        return False
+        return "refused"
+
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        get_disposition,
+    )
+
+    disposition = get_disposition(branch_name=branch_name)
+    if disposition is not None and disposition.reason == "retained_for_mission":
+        logger.info(
+            "orphan branch delete skipped — retained_for_mission branch=%s",
+            branch_name,
+        )
+        return "refused"
     log_reap_pass(
         pass_name="_delete_orphan_branch",
         source_repo=repo,
         action_count=1,
     )
-    del_proc = subprocess.run(
-        ["git", "-C", str(repo), "branch", "-D", branch_name],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
+    try:
+        del_proc = subprocess.run(
+            ["git", "-C", str(repo), "branch", "-D", branch_name],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "orphan branch git delete timed out branch=%s timeout_s=%s",
+            branch_name,
+            _GIT_TIMEOUT_S,
+        )
+        ref = f"refs/heads/{branch_name}"
+        try:
+            verify_proc = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    ref,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=_GIT_VERIFY_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            emit_sdk_lane_b_reaped(
+                dispatch_id=dispatch_id or "",
+                branch_deleted=False,
+                outcome="failed",
+                branch=branch_name,
+                tip_sha=tip_sha,
+                reason="git_delete_timeout_state_unknown",
+            )
+            return "failed"
+        if verify_proc.returncode != 0:
+            discharge_branch_debt(branch_name=branch_name, verb="landed", note=reason)
+            emit_sdk_lane_b_reaped(
+                dispatch_id=dispatch_id or "",
+                branch_deleted=True,
+                outcome="deleted",
+                branch=branch_name,
+                tip_sha=tip_sha,
+                reason=reason,
+            )
+            return "deleted"
+        emit_sdk_lane_b_reaped(
+            dispatch_id=dispatch_id or "",
+            branch_deleted=False,
+            outcome="failed",
+            branch=branch_name,
+            tip_sha=tip_sha,
+            reason=f"git_delete_timeout:{_GIT_TIMEOUT_S}s",
+        )
+        return "failed"
     if del_proc.returncode != 0:
         stderr = del_proc.stderr.strip()
         logger.warning(
@@ -216,17 +304,19 @@ def _delete_orphan_branch(
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id or "",
             branch_deleted=False,
+            outcome="failed",
             branch=branch_name,
             tip_sha=tip_sha,
             reason=f"git_delete_failed:{stderr}",
         )
-        return False
+        return "failed"
     discharge_branch_debt(branch_name=branch_name, verb="landed", note=reason)
     emit_sdk_lane_b_reaped(
         dispatch_id=dispatch_id or "",
         branch_deleted=True,
+        outcome="deleted",
         branch=branch_name,
         tip_sha=tip_sha,
         reason=reason,
     )
-    return True
+    return "deleted"

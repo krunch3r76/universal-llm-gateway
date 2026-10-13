@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from universal_logging import get_logger
 
@@ -25,6 +26,7 @@ from services.git_integration_worker.cursor_sdk_reap_pytest_guard import (
     refuse_real_hub_reap_under_pytest,
 )
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
+    OrphanBranchDeleteResult,
     _delete_orphan_branch,
     gc_merged_dispatch_branches,
 )
@@ -208,14 +210,16 @@ def prune_dispatch_worktree(
             trigger="reaper",
         )
     branch_deleted = False
+    delete_result: OrphanBranchDeleteResult | None = None
     if state.safe_to_delete:
-        branch_deleted = _delete_orphan_branch(
+        delete_result = _delete_orphan_branch(
             repo=source_repo.resolve(),
             branch_name=branch,
             reason="prune_terminal",
             dispatch_id=dispatch_id,
             tip_sha=state.head_sha,
         )
+        branch_deleted = delete_result == "deleted"
         if not branch_deleted:
             branch_retained = True
     if branch_retained:
@@ -224,12 +228,13 @@ def prune_dispatch_worktree(
             branch=branch,
             commits_ahead=state.commits_ahead,
         )
-    if not branch_deleted:
+    if delete_result != "failed" and not branch_deleted:
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id,
             branch_deleted=False,
-            branch=None,
-            tip_sha=None,
+            outcome="kept",
+            branch=branch,
+            tip_sha=state.head_sha,
             reason=None,
         )
     return PruneResult(
@@ -290,20 +295,27 @@ def _git_worktree_prune(*, source_repo: Path) -> bool:
     return True
 
 
-def _count_reap_worktree_actions(
+ReapWorktreeRowKind = Literal["none", "pinned_prune", "terminal_prune"]
+
+
+def _snapshot_reap_worktree_rows(
     *,
     rows: list[sqlite3.Row],
     active: set[str],
     held: set[str],
     source_repo: Path,
-) -> int:
-    count = 0
+) -> list[ReapWorktreeRowKind]:
+    """Classify each registry row once per sweep for count and reap loops."""
+    kinds: list[ReapWorktreeRowKind] = []
+    repo = source_repo.resolve()
     for row in rows:
         wt_path = str(Path(row["worktree_path"]).resolve())
         status = row["status"]
         if wt_path in held or wt_path in active:
+            kinds.append("none")
             continue
         if not is_reapable_dispatch_status(status):
+            kinds.append("none")
             continue
         thread_id = str(row["thread_id"] or "")
         pin = (
@@ -312,19 +324,34 @@ def _count_reap_worktree_actions(
             else None
         )
         if pin is not None:
-            count += 1
+            kinds.append("pinned_prune")
             continue
         wt = Path(row["worktree_path"])
         if wt.is_dir() and is_worktree_dirty(wt):
+            kinds.append("none")
             continue
         state = branch_state(
-            source_repo.resolve(),
+            repo,
             branch_name=row["branch_name"],
             branch_point=row["branch_point"],
         )
         if state.safe_to_delete:
-            count += 1
-    return count
+            kinds.append("terminal_prune")
+        else:
+            kinds.append("none")
+    return kinds
+
+
+def _count_reap_worktree_actions(
+    *,
+    rows: list[sqlite3.Row],
+    active: set[str],
+    held: set[str],
+    source_repo: Path,
+    row_kinds: list[ReapWorktreeRowKind],
+) -> int:
+    del rows, active, held, source_repo
+    return sum(1 for kind in row_kinds if kind != "none")
 
 
 def reap_orphan_worktrees(
@@ -332,7 +359,13 @@ def reap_orphan_worktrees(
     source_repo: Path,
     worktree_root: Path,
 ) -> ReapSweepResult:
-    """Salvage, drop, and GC orphan Lane-B worktrees (S6 reaper sweep)."""
+    """Salvage, drop, and GC orphan Lane-B worktrees (S6 reaper sweep).
+
+    ``row_kinds`` from :func:`_snapshot_reap_worktree_rows` is advisory — it
+    drives action counts and which rows enter :func:`prune_dispatch_worktree`.
+    :func:`release_lane_worktree` re-checks live bridge, retain-active,
+    non-terminal dispatch, pin, and dirty→salvage before any removal.
+    """
     refuse_real_hub_reap_under_pytest(
         source_repo=source_repo,
         worktree_root=worktree_root,
@@ -345,25 +378,33 @@ def reap_orphan_worktrees(
     held = live_bridge_worktree_paths(worktree_root=worktree_root)
     vanished = sweep_vanished_pinned_worktrees(source_repo=source_repo)
     rows = list_registered_worktrees_with_status()
-    worktree_actions = _count_reap_worktree_actions(
+    row_kinds = _snapshot_reap_worktree_rows(
         rows=rows,
         active=active,
         held=held,
         source_repo=source_repo,
     )
+    worktree_actions = _count_reap_worktree_actions(
+        rows=rows,
+        active=active,
+        held=held,
+        source_repo=source_repo,
+        row_kinds=row_kinds,
+    )
     from services.git_integration_worker.cursor_sdk_worktree_gc import (
         _gc_delete_candidates,
     )
 
-    branch_actions = len(_gc_delete_candidates(source_repo=source_repo))
+    branch_candidates = _gc_delete_candidates(source_repo=source_repo)
+    branch_actions = len(branch_candidates)
     log_reap_pass(
         pass_name="reap_orphan_worktrees",
         source_repo=source_repo,
         action_count=worktree_actions + branch_actions,
     )
-    for row in rows:
+    # row_kind is advisory; prune_dispatch_worktree → release_lane_worktree re-validates.
+    for row, row_kind in zip(rows, row_kinds, strict=True):
         wt_path = str(Path(row["worktree_path"]).resolve())
-        status = row["status"]
         if wt_path in held:
             emit_sdk_lane_b_reap_skipped_live_bridge(
                 worktree_path=wt_path,
@@ -373,38 +414,17 @@ def reap_orphan_worktrees(
             continue
         if wt_path in active:
             continue
-        if not is_reapable_dispatch_status(status):
+        if row_kind == "none":
             continue
         thread_id = str(row["thread_id"] or "")
-        pin = (
-            active_pin(source_repo=source_repo, thread_id=thread_id)
-            if thread_id
-            else None
-        )
-        if pin is not None:
-            result = prune_dispatch_worktree(
-                dispatch_id=row["dispatch_id"] or thread_id,
-                source_repo=source_repo,
-            )
-            if result.salvage_refused:
-                salvage_refused += 1
-            continue
-        wt = Path(row["worktree_path"])
-        if wt.is_dir() and is_worktree_dirty(wt):
-            continue
-        state = branch_state(
-            source_repo.resolve(),
-            branch_name=row["branch_name"],
-            branch_point=row["branch_point"],
-        )
-        if not state.safe_to_delete:
-            continue
         result = prune_dispatch_worktree(
             dispatch_id=row["dispatch_id"] or thread_id,
             source_repo=source_repo,
         )
         if result.salvage_refused:
             salvage_refused += 1
+        if row_kind == "pinned_prune":
+            continue
         if not result.pruned:
             continue
         reaped += 1
@@ -419,7 +439,10 @@ def reap_orphan_worktrees(
         active=active,
     )
     stale_metadata_pruned = _git_worktree_prune(source_repo=source_repo)
-    branches_gc = gc_merged_dispatch_branches(source_repo=source_repo)
+    branches_gc = gc_merged_dispatch_branches(
+        source_repo=source_repo,
+        delete_candidates=branch_candidates,
+    )
     dispositions_reconciled = _reconcile_orphaned_dispositions(
         source_repo=source_repo
     )

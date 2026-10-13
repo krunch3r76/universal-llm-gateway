@@ -133,16 +133,11 @@ def _git_worktree_remove(
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id,
             branch_deleted=False,
+            outcome="failed",
             branch=branch,
             reason=f"worktree_remove_failed:{stderr}",
         )
         return False
-    emit_sdk_lane_b_reaped(
-        dispatch_id=dispatch_id,
-        branch_deleted=False,
-        branch=branch,
-        reason=reason,
-    )
     return True
 
 
