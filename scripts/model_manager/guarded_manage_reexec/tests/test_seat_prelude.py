@@ -15,12 +15,16 @@ from scripts.model_manager.guarded_manage_reexec.pane import (
 from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexec
 from scripts.model_manager.guarded_manage_reexec.seat_prelude import (
     InflightWaitResult,
+    _foreign_giw_offenders,
     _nudge_dead_intent_converge,
     giw_foreign_claimed_occupants,
     giw_has_claimed_occupants,
     observe_giw_occupants,
     resolve_manage_inflight_for_seat,
     wait_nonterminal_intents_clear,
+)
+from scripts.model_manager.guarded_manage_reexec.tests.fixtures.giw_active_work_producer_shape import (
+    PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED,
 )
 from scripts.model_manager.ui.controller.restart_intent_store import (
     RestartIntentStore,
@@ -428,15 +432,194 @@ def test_dry_run_refuses_foreign_queued_id_when_holder_is_caller(
 ) -> None:
     """AC3: dry-run refuses queued dispatch other than caller."""
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED
+    busy = _occupant_busy(active_work=active_work)
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=True)
+    assert result.reason == "giw_claimed_occupants"
+
+
+def test_giw_foreign_claimed_occupants_refuses_producer_shape_queued_rows() -> None:
+    """AC1: producer wire shape with foreign queued rows is a claim."""
+    busy = _occupant_busy(active_work=PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
+
+
+def test_foreign_queued_fires_on_write_lease_rows_alone() -> None:
+    """AC1 partial payload: write_lease.queued alone is enough to refuse."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": "d-self",
+            "queue_depth": 1,
+            "queued": [{"dispatch_id": "d-other"}],
+        },
+        "active_count": 1,
+        "queued": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
+
+
+def test_foreign_queued_fires_on_queued_dispatches_alone() -> None:
+    """AC1 partial payload: queued_dispatches alone is enough to refuse."""
     active_work = {
         "write_lease": {"holder_dispatch_id": "d-self"},
+        "cursor_sdk_gate": {
+            "busy_status": {
+                "queue_depth": 1,
+                "queued_dispatches": [{"dispatch_id": "d-other"}],
+            }
+        },
         "active_count": 1,
-        "queued": [{"dispatch_id": "d-other"}],
+        "queued": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
+
+
+def test_refuses_unattributable_queue_depth() -> None:
+    """AC1: queue_depth > 0 with both row lists empty is an unattributable queue."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": "d-self",
+            "queue_depth": 1,
+            "queued": [],
+        },
+        "cursor_sdk_gate": {"busy_status": {"queue_depth": 1, "queued_dispatches": []}},
+        "active_count": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
+
+
+def test_queue_depth_with_caller_row_only_passes() -> None:
+    """AC1: queue_depth > 0 does not refuse when the only row is the caller."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": "d-self",
+            "queue_depth": 1,
+            "queued": [{"dispatch_id": "d-self"}],
+        },
+        "cursor_sdk_gate": {
+            "busy_status": {
+                "active_holder": {"dispatch_id": "d-self"},
+                "queue_depth": 1,
+                "queued_dispatches": [{"dispatch_id": "d-self"}],
+            }
+        },
+        "active_count": 1,
+        "queued": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is False
+
+
+def test_dry_run_refuses_unattributable_single_active_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC2: count 1 with no positive caller attribution refuses."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = {
+        "write_lease": {"holder_dispatch_id": None, "active_holders": []},
+        "active_count": 1,
+        "active_ops": [],
     }
     busy = _occupant_busy(active_work=active_work)
     calls: list[str] = []
     result = _run(tmp_path, busy, calls, dry_run=True)
     assert result.reason == "giw_claimed_occupants"
+
+
+def test_dry_run_caller_only_in_active_holders_passes() -> None:
+    """AC2: holder_dispatch_id on active_holders identifies the caller."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": None,
+            "active_holders": [{"holder_dispatch_id": "d-self"}],
+        },
+        "active_count": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
+
+
+def test_dry_run_caller_identified_in_active_ops_passes() -> None:
+    """AC2: active_ops op_id for kind cursor_sdk identifies the caller."""
+    active_work = {
+        "write_lease": {"holder_dispatch_id": None},
+        "active_count": 1,
+        "active_ops": [{"kind": "cursor_sdk", "op_id": "d-self"}],
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
+
+
+def test_dry_run_offender_shape_lists_excluded_and_foreign_only() -> None:
+    """AC3: dry-run refusal names the caller and foreign rows only."""
+    busy = _occupant_busy(active_work=PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED)
+    finding = observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True)
+    assert finding is not None
+    offenders = finding.offenders
+    assert len(offenders) == 1
+    row = offenders[0]
+    assert row["occupant"] == "busy_status"
+    assert row["excluded_dispatch_id"] == "d-self"
+    assert "active_work" not in row
+    assert row["foreign"]
+    assert all(item.get("dispatch_id") != "d-self" for item in row["foreign"])
+    doc = _foreign_giw_offenders.__doc__ or ""
+    assert "foreign" in doc
+    assert "excluded_dispatch_id" in doc
+    assert "never the excluded dispatch id" not in doc
+
+
+def test_producer_shape_fixture_matches_active_work_keys() -> None:
+    """AC7: fixture keys are the /active-work content keys; queued is an int."""
+    content_keys = {
+        "running",
+        "queued",
+        "cursor_dispatches",
+        "cursor_sdk_gate",
+        "write_lease",
+        "active_count",
+        "active_ops",
+        "cse_holders",
+        "cse_holder",
+        "busy",
+    }
+    fixture = PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED
+    assert set(fixture) <= content_keys
+    assert isinstance(fixture["queued"], int)
+    assert fixture["write_lease"]["queued"][0]["dispatch_id"] == "d-other"
+    assert (
+        fixture["cursor_sdk_gate"]["busy_status"]["queued_dispatches"][0]["dispatch_id"]
+        == "d-other"
+    )
+    assert fixture["write_lease"]["holder_dispatch_id"] == "d-self"
+
+
+def test_giw_has_claimed_occupants_ignores_queued_only_state() -> None:
+    """AC8: queued-only state is foreign for dry-run and invisible to execute."""
+    active_work = {
+        "active_count": 0,
+        "total": 0,
+        "running_count": 0,
+        "running": 0,
+        "write_lease": {
+            "holder_dispatch_id": None,
+            "queue_depth": 1,
+            "queued": [{"dispatch_id": "d-other"}],
+        },
+        "cursor_sdk_gate": {
+            "busy_status": {
+                "queue_depth": 1,
+                "queued_dispatches": [{"dispatch_id": "d-other"}],
+            }
+        },
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_has_claimed_occupants(busy) is False
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
 
 
 def test_dry_run_missing_giw_service_is_not_a_claim(
