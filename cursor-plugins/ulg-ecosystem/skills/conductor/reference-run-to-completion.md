@@ -24,7 +24,7 @@ per-G-row one. Default posture once running:
   9675#8) and would orphan the thread if it were not. The successor is a
   **new top-level `dispatch_id`, ¬ `nest_under`**, same `source_ref`, same
   branch — the same shape as crash-resume, fired by the substrate on your
-  terminal instead of by a liaison after a crash. Not the pause-and-ask
+  terminal instead of by an Impresario after a crash. Not the pause-and-ask
   anti-pattern (7419): nobody is asked, nothing waits; the mission still runs
   start-to-finish under one standing admit as a chain of short dispatches.
   Bounds each dispatch's token footprint to roughly one movement and caps a

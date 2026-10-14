@@ -34,7 +34,7 @@ hop(conductor) ⇒
 reply, no page), not a stop the operator answers, not a merge gate. The
 `¬ pause between G-rows` and `¬ second gate on the mission's own merge`
 invariants are untouched because nothing waits on anyone. Machine vocabulary
-only: grader, reactor, journal — never the liaison register or the pager.
+only: grader, reactor, journal — never the Impresario register or the pager.
 
 ### External gate occupancy (binding — `todo:conductor-hop-wait-protocol` / a:32405)
 
