@@ -314,3 +314,101 @@ def test_live_witness_past_grace_counts_as_wip_in_flight() -> None:
     assert verdict.fire is True
     assert verdict.reason == "wip_in_flight"
     assert verdict.wip_execution_ids == ("67aae3ee-ff0b-4e63-bfad-de87ceac2f93",)
+
+
+def _registration_body(execution_id: str) -> str:
+    return (
+        "TYPE: SEAT_REGISTRATION\n"
+        "successor_birth_id: birth-1\n"
+        "registration_id: reg-1\n"
+        f"execution_id: {execution_id}\n"
+        "parent_thread: T1\n"
+    )
+
+
+def test_seat_own_generate_alone_does_not_alarm() -> None:
+    """The generate named on SEAT_REGISTRATION is the seat, not unharvested WIP.
+
+    Breaks when a null-terminal link for that execution still yields
+    wip_in_flight after the stamp is on the lane.
+    """
+    own = "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id=own,
+                terminal_status=None,
+                linked_at=_ts(30),
+                pipeline_id="cdp-generate",
+                liveness_witness="live",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="earlier",
+                body="seated",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-auto",
+                created_at=_ts(THRESHOLD_S),
+                subject="TYPE: SEAT_REGISTRATION — thread T1",
+                body=_registration_body(own),
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is False
+    assert verdict.skip_reason == "no_wip"
+    assert verdict.wip_execution_ids == ()
+
+
+def test_commissioned_dispatch_still_alarms_beside_own_generate() -> None:
+    """Own generate is excluded; an in-flight commissioned link still fires.
+
+    Breaks when the holder exclusion drops every nonterminal link, or when
+    the commissioned id is omitted from wip_execution_ids.
+    """
+    own = "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
+    commissioned = "exec-commissioned"
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id=own,
+                terminal_status=None,
+                linked_at=_ts(30),
+                pipeline_id="cdp-generate",
+                liveness_witness="live",
+            ),
+            DispatchLinkView(
+                execution_id=commissioned,
+                terminal_status=None,
+                linked_at=_ts(30),
+                pipeline_id="cursor-sdk-generate",
+                liveness_witness="live",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="commission",
+                body="go",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-auto",
+                created_at=_ts(THRESHOLD_S),
+                subject="TYPE: SEAT_REGISTRATION — thread T1",
+                body=_registration_body(own),
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "wip_in_flight"
+    assert verdict.wip_execution_ids == (commissioned,)

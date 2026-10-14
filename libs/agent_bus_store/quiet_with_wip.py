@@ -7,6 +7,10 @@ timer; ``pickup_awaits`` write-path refuse remains the complementary cease gate
 
 Silence is **seat-scoped** (``last_turn_from(T, S)``), never ``threads.updated_at``
 — worker closeouts that create debt must not reset the quiet clock.
+
+The execution named on the latest ``TYPE: SEAT_REGISTRATION`` stamp is the
+generate that holds the operator seat. It is omitted from the WIP set.
+A dispatch the seat commissioned stays in the set until harvested.
 """
 
 from __future__ import annotations
@@ -122,6 +126,43 @@ def infer_seat(turns: Sequence[LaneTurnView]) -> str | None:
     return None
 
 
+_SEAT_REGISTRATION_MARK = "TYPE: SEAT_REGISTRATION"
+_EXECUTION_ID_FIELD = "execution_id:"
+
+
+def seat_holding_execution_id(turns: Sequence[LaneTurnView]) -> str | None:
+    """Return the execution that currently holds the operator seat.
+
+    Reads ``execution_id`` from the latest ``TYPE: SEAT_REGISTRATION`` body
+    (the hop / operator-proxy generate cursor-auto projects onto the lane).
+    That id is the seat's own life, not a job the seat commissioned. Returns
+    None when no stamp exists or the stamp omits the field. No I/O.
+    """
+    ordered = sorted(turns, key=lambda t: t.turn_number, reverse=True)
+    for turn in ordered:
+        first = (turn.body or "").strip().split("\n", 1)[0].strip()
+        if not first.startswith(_SEAT_REGISTRATION_MARK):
+            continue
+        for line in (turn.body or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith(_EXECUTION_ID_FIELD):
+                value = stripped[len(_EXECUTION_ID_FIELD) :].strip()
+                return value or None
+        return None
+    return None
+
+
+def _links_excluding_seat_holder(
+    links: Sequence[DispatchLinkView],
+    turns: Sequence[LaneTurnView],
+) -> list[DispatchLinkView]:
+    """Drop the seat-holding generate so it cannot count as unharvested WIP."""
+    holder = seat_holding_execution_id(turns)
+    if not holder:
+        return list(links)
+    return [lnk for lnk in links if lnk.execution_id != holder]
+
+
 def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
     """True only when the link carries a positive liveness signal.
 
@@ -146,8 +187,13 @@ def _classify_wip(
     turns: Sequence[LaneTurnView],
     now: datetime,
 ) -> tuple[QuietReason | None, tuple[str, ...], tuple[str, ...]]:
-    """Return ``(reason, execution_ids, unbound_turn_labels)`` for first WIP class."""
-    in_flight = [lnk for lnk in links if _link_counts_as_live_wip(lnk, now=now)]
+    """Return ``(reason, execution_ids, unbound_turn_labels)`` for first WIP class.
+
+    The seat-holding generate (latest ``SEAT_REGISTRATION`` execution) is
+    removed before either in-flight or unharvested classification.
+    """
+    counted = _links_excluding_seat_holder(links, turns)
+    in_flight = [lnk for lnk in counted if _link_counts_as_live_wip(lnk, now=now)]
     if in_flight:
         return (
             "wip_in_flight",
@@ -156,7 +202,7 @@ def _classify_wip(
         )
 
     unharvested: list[DispatchLinkView] = []
-    for lnk in links:
+    for lnk in counted:
         if lnk.terminal_status is None or not lnk.terminal_at:
             continue
         term_at = parse_iso_ts(lnk.terminal_at)
@@ -187,7 +233,8 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
 
     Returns ``fire=True`` only when WIP is open, the seat has been silent longer
     than ``threshold_s``, the lane is admitted/active, park is not licensed, and
-    no alarm is already open (idempotence).
+    no alarm is already open (idempotence). The generate named on the latest
+    seat-registration stamp does not count as WIP.
     """
     if snap.lifecycle not in ("admitted", "active"):
         return QuietWithWipVerdict(fire=False, skip_reason="lifecycle_out")
