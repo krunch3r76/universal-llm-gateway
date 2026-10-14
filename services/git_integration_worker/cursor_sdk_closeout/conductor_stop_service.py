@@ -61,11 +61,15 @@ def budget_park_pages(reason: str) -> bool:
 
 HOP_INSPECTION_PAGED_FOR_KEY = "hop_inspection_paged_for"
 HOP_INSPECTION_EMITTED_FOR_KEY = "hop_inspection_emitted_for"
+# Admit-retry crash cap pages, but it is not a suspicion inspection window.
+HOP_ADMIT_RETRY_PAGED_FOR_KEY = "hop_admit_retry_paged_for"
 
 
 async def apply_hop_budget_announcer(
     row: dict[str, Any],
     verdict: HopBudgetVerdict,
+    *,
+    inspection_page_key: str | None = None,
 ) -> bool:
     """Page/emit once per inspection window; park loop rows.
 
@@ -110,19 +114,23 @@ async def apply_hop_budget_announcer(
         return True
     if verdict.reason == REASON_INSPECTION_REQUESTED:
         key = signature_key_for(progress_signature_for_row(row))
-        await _page_inspection_once(row, signature_key=key)
-        _emit_inspection_once(
-            row,
-            outcome="requested",
-            emit_fn=lambda k: emit_frontier_sdk_conductor_hop_inspection_requested(
-                dispatch_id=str(row.get("dispatch_id") or ""),
-                thread_id=str(row.get("thread_id") or ""),
-                work_key=str(row.get("work_key") or "") or None,
-                hop_seq=_hop_seq(row),
-                signature_key=k,
-            ),
-            signature_key=key,
-        )
+        page_key = inspection_page_key or HOP_INSPECTION_PAGED_FOR_KEY
+        await _page_inspection_once(row, signature_key=key, record_key=page_key)
+        # Admit-retry dedup lives on its own key and must not open a
+        # suspicion window (paged or emitted) that a later clear would close.
+        if page_key == HOP_INSPECTION_PAGED_FOR_KEY:
+            _emit_inspection_once(
+                row,
+                outcome="requested",
+                emit_fn=lambda k: emit_frontier_sdk_conductor_hop_inspection_requested(
+                    dispatch_id=str(row.get("dispatch_id") or ""),
+                    thread_id=str(row.get("thread_id") or ""),
+                    work_key=str(row.get("work_key") or "") or None,
+                    hop_seq=_hop_seq(row),
+                    signature_key=k,
+                ),
+                signature_key=key,
+            )
         return True
     if verdict.ok and not verdict.reason:
         _maybe_emit_inspection_cleared(row)
@@ -173,13 +181,18 @@ def _emit_inspection_once(
     )
 
 
-async def _page_inspection_once(row: dict[str, Any], *, signature_key: str) -> None:
+async def _page_inspection_once(
+    row: dict[str, Any],
+    *,
+    signature_key: str,
+    record_key: str = HOP_INSPECTION_PAGED_FOR_KEY,
+) -> None:
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
         page_hop_inspection_requested,
     )
 
     record = _record(row)
-    if record.get(HOP_INSPECTION_PAGED_FOR_KEY) == signature_key:
+    if record.get(record_key) == signature_key:
         return
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
@@ -196,7 +209,7 @@ async def _page_inspection_once(row: dict[str, Any], *, signature_key: str) -> N
 
     CursorDispatchLedger.instance().merge_record_json(
         dispatch_id=dispatch_id,
-        patch={HOP_INSPECTION_PAGED_FOR_KEY: signature_key},
+        patch={record_key: signature_key},
     )
 
 
@@ -210,24 +223,67 @@ def _reload_row(dispatch_id: str) -> dict[str, Any] | None:
     return _load_row(dispatch_id)
 
 
+def _inspection_window_key(record: dict[str, Any]) -> str | None:
+    """Suspicion window key. Admit-retry paging is a different record field."""
+    paged = record.get(HOP_INSPECTION_PAGED_FOR_KEY)
+    if isinstance(paged, str) and paged:
+        return paged
+    emitted = record.get(HOP_INSPECTION_EMITTED_FOR_KEY)
+    if not isinstance(emitted, dict):
+        return None
+    for outcome in ("requested", "unprovable"):
+        value = emitted.get(outcome)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _newest_inspection_window_key(row: dict[str, Any]) -> str | None:
+    """Window on this row, else the newest prior terminal row that has one.
+
+    Suspicion stamps land on the row that was paged. Once ``hop_successor``
+    is set that row is not evaluated again, so the clear has to read back
+    along the mission chain.
+    """
+    own = _inspection_window_key(_record(row))
+    if own:
+        return own
+    work_key = str(row.get("work_key") or "")
+    dispatch_id = str(row.get("dispatch_id") or "")
+    if not work_key:
+        return None
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        list_mission_terminal_chain,
+    )
+
+    chain = list_mission_terminal_chain(work_key=work_key)
+    for prior in reversed(chain):
+        if str(prior.get("dispatch_id") or "") == dispatch_id:
+            continue
+        key = _inspection_window_key(_record(prior))
+        if key:
+            return key
+    return None
+
+
 def _maybe_emit_inspection_cleared(row: dict[str, Any]) -> None:
-    """Emit inspection_cleared once when a clear follows an inspection window.
+    """Emit inspection_cleared once when the signature advanced past a window.
 
     A clear with no prior page or emit is the common admit path; emitting
-    there would be a hot signal. The catalog entry stays because this edge
-    is the one the signal's docstring names.
+    there would be a hot signal. The window is the newest suspicion stamp
+    on this row or an earlier row in the mission. The catalog edge is a
+    fold or tip that moved since that stamp.
     """
     from services.git_integration_worker.cursor_sdk_hop_events import (
         emit_frontier_sdk_conductor_hop_inspection_cleared,
     )
 
-    record = _record(row)
-    paged = record.get(HOP_INSPECTION_PAGED_FOR_KEY)
-    emitted = record.get(HOP_INSPECTION_EMITTED_FOR_KEY)
-    had_window = bool(paged) or (isinstance(emitted, dict) and bool(emitted))
-    if not had_window:
+    window_key = _newest_inspection_window_key(row)
+    if not window_key:
         return
     key = signature_key_for(progress_signature_for_row(row))
+    if key == window_key:
+        return
     _emit_inspection_once(
         row,
         outcome="cleared",

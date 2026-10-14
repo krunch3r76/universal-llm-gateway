@@ -322,6 +322,9 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
             from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
                 REASON_INSPECTION_REQUESTED,
             )
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                HOP_ADMIT_RETRY_PAGED_FOR_KEY,
+            )
 
             retry_verdict = HopBudgetVerdict(
                 ok=True,
@@ -329,7 +332,11 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
                 reason=REASON_INSPECTION_REQUESTED,
                 backoff_s=300.0,
             )
-            await apply_hop_budget_announcer(row, retry_verdict)
+            await apply_hop_budget_announcer(
+                row,
+                retry_verdict,
+                inspection_page_key=HOP_ADMIT_RETRY_PAGED_FOR_KEY,
+            )
     return stamped
 
 
@@ -408,6 +415,7 @@ async def _admit_cdp_probe_indeterminate(
                 REASON_INSPECTION_REQUESTED,
             )
             from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                HOP_ADMIT_RETRY_PAGED_FOR_KEY,
                 apply_hop_budget_announcer,
             )
 
@@ -417,7 +425,11 @@ async def _admit_cdp_probe_indeterminate(
                 reason=REASON_INSPECTION_REQUESTED,
                 backoff_s=300.0,
             )
-            await apply_hop_budget_announcer(row, retry_verdict)
+            await apply_hop_budget_announcer(
+                row,
+                retry_verdict,
+                inspection_page_key=HOP_ADMIT_RETRY_PAGED_FOR_KEY,
+            )
             _stamp_cdp_probe_indeterminate(dispatch_id)
     return False
 

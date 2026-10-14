@@ -1433,6 +1433,9 @@ async def test_main_path_crash_cap_holds_backoff_and_does_not_service_park(
     )
     post = AsyncMock(return_value=(False, {"status_code": 503, "error": "down"}))
     page = AsyncMock(return_value=True)
+    emit_cleared = patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    )
     with (
         patch(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
@@ -1442,11 +1445,13 @@ async def test_main_path_crash_cap_holds_backoff_and_does_not_service_park(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
             page,
         ),
+        emit_cleared as cleared_mock,
     ):
         await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
         await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
     assert post.await_count == 1
     assert page.await_count == 1
+    cleared_mock.assert_not_called()
     record = _record(ledger, dispatch_id)
     assert record.get("hop_park_serviced") is not True
     assert record.get("hop_parked") is not True
@@ -1588,4 +1593,82 @@ async def test_clear_after_inspection_window_emits_once() -> None:
         fresh = _record(ledger, "pred-watchdog-1")
         row["record_json"] = json.dumps(fresh)
         await apply_hop_budget_announcer(row, HopBudgetVerdict(ok=True))
+    assert emit_mock.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_clear_without_inspection_window_does_not_emit() -> None:
+    """A clear with no suspicion window is the common admit path.
+
+    Removing the early return in ``_maybe_emit_inspection_cleared`` emits here.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        dispatch_id="cold-clear-1",
+        closeout_tokens=["ROW_HOP"],
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    ) as emit_mock:
+        await apply_hop_budget_announcer(row, HopBudgetVerdict(ok=True))
+    emit_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successor_clear_after_prior_inspection_window_emits_once() -> None:
+    """Window stamped on row N; successor N+1 with an advanced tip clears once."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        signature_key_for,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
+        progress_signature_for_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    prior = _terminal_row(
+        ledger,
+        dispatch_id="insp-n",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_entry_gate": "G4", "hop_lane_tip": "tip-n"},
+        terminal_at_offset_s=-400.0,
+    )
+    window_key = signature_key_for(progress_signature_for_row(prior, live=False))
+    ledger.merge_record_json(
+        dispatch_id="insp-n",
+        patch={"hop_inspection_paged_for": window_key, "hop_seq": 1},
+    )
+    successor = _terminal_row(
+        ledger,
+        dispatch_id="insp-n1",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G4",
+            "hop_lane_tip": "tip-n-advanced",
+            "hop_seq": 2,
+            "hop_from": "insp-n",
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    ) as emit_mock:
+        await apply_hop_budget_announcer(successor, HopBudgetVerdict(ok=True))
+        fresh = _record(ledger, "insp-n1")
+        successor["record_json"] = json.dumps(fresh)
+        await apply_hop_budget_announcer(successor, HopBudgetVerdict(ok=True))
     assert emit_mock.call_count == 1

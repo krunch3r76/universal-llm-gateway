@@ -1647,7 +1647,7 @@ async def test_consult_pending_identical_signatures_park() -> None:
             AsyncMock(),
         ) as park_mock,
         patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
             AsyncMock(return_value=True),
         ) as page_mock,
         patch(
