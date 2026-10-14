@@ -68,7 +68,7 @@ def _entry_rule_lines(
         if not _rule_line_matches(line):
             continue
         line_facets = _line_facets(line)
-        if line_facets and not (line_facets & facets):
+        if not (line_facets & facets):
             continue
         kept.append(line.rstrip())
     return kept

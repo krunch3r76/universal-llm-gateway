@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, override
 
-from claude_bundles.journal_lesson import capture_lesson
+from claude_bundles.journal_lesson import capture_lesson, parse_source_turn_id
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -17,7 +17,6 @@ class JournalProjectorParseHandler(BaseHandler):
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         opts = getattr(context, "options", {}) or {}
-        turn_id = str(opts.get("source_turn_id") or opts.get("turn_id") or "").strip()
         body = str(opts.get("disposition_body") or "").strip()
         if not body:
             messages = getattr(context, "messages", None) or []
@@ -33,7 +32,16 @@ class JournalProjectorParseHandler(BaseHandler):
                 json={"has_lesson": False, "reason": "empty_body"},
             )
 
-        capture = capture_lesson(body, turn_id=turn_id or "unknown")
+        turn_id = parse_source_turn_id(body)
+        if not turn_id:
+            if capture_lesson(body, turn_id="") is not None:
+                return StepOutput(
+                    raw="",
+                    json={"has_lesson": False, "reason": "no_turn_id"},
+                )
+            capture = None
+        else:
+            capture = capture_lesson(body, turn_id=turn_id)
         if capture is None:
             return StepOutput(
                 raw="",

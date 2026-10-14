@@ -56,6 +56,15 @@ def _lesson_lines(body: str) -> list[str]:
     return kept
 
 
+def parse_source_turn_id(body: str) -> str | None:
+    """Line-start ``source_turn_id:`` token from a disposition or closeout body."""
+    for line in (body or "").splitlines():
+        match = _SOURCE_TURN_ID_RE.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
 def capture_lesson(body: str, *, turn_id: str) -> LessonCapture | None:
     """Return one capture when *body* is a disposition with line-start ``lesson:``."""
     if not body_has_disposition_type(body):

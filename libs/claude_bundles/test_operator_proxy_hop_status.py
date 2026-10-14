@@ -10,6 +10,7 @@ import pytest
 from claude_bundles.journal_hop_projection import (
     MAESTRO_JOURNAL_URI,
     MAESTRO_REGISTER_URI,
+    project_lessons_in_force,
 )
 from claude_bundles.operator_proxy_hop_status import (
     MISSING_HANDOFF_INSTRUCTION,
@@ -212,6 +213,18 @@ def _journal_fixture_seven_plus_fleet() -> str:
             lines.append("## 2026-10-06 — entry fleet-only\n")
             lines.append("RULE: [fleet] must omit for maestro\n")
     return "".join(lines)
+
+
+def test_untagged_rule_line_omitted_from_projection() -> None:
+    journal = (
+        "## 2026-10-14 — entry untagged\n"
+        "RULE: no facet tags must not project for any role\n"
+        "## 2026-10-13 — entry tagged\n"
+        "RULE: [route] tagged rule keeps\n"
+    )
+    out = project_lessons_in_force(journal, role="maestro")
+    assert "no facet tags must not project" not in out
+    assert "tagged rule keeps" in out
 
 
 def test_lessons_in_force_bounds_k_and_facets() -> None:

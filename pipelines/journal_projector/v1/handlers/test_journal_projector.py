@@ -32,6 +32,13 @@ from pipelines.journal_projector.v1.handlers.append_closeout import (
 from pipelines.journal_projector.v1.handlers.parse_lesson import (
     JournalProjectorParseHandler,
 )
+from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
+from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
+    reject_unknown_runtime_options,
+)
+from systems.pipeline.core.handlers.frontier_dispatch.handler import (
+    FrontierDispatchHandler,
+)
 from pipelines.journal_projector.v1.handlers.projector_guard import (
     reject_projector_wire_model,
 )
@@ -40,6 +47,99 @@ from pipelines.journal_projector.v1.handlers.projector_status import (
     projection_poll_is_delay,
     seat_may_fallback_after_projector_failure,
 )
+
+
+def test_runtime_options_source_turn_id_rejected_at_admission() -> None:
+    """Production trigger must not pass dedupe key via runtime_options (one field per run)."""
+    step = SimpleNamespace(id="project")
+    context = SimpleNamespace(
+        options={"model": "cursor/composer-2.5"},
+        runtime_options={
+            "model": "cursor/composer-2.5",
+            "source_turn_id": "agent-bus:16671#1",
+        },
+    )
+    with pytest.raises(UnknownPipelineOptionsError) as exc_info:
+        reject_unknown_runtime_options(
+            step,
+            context,
+            FrontierDispatchHandler._ACCEPTED_RUNTIME_OPTION_KEYS,
+        )
+    assert "source_turn_id" in str(exc_info.value)
+
+
+def _disposition_with_lesson(
+    turn_id: str | None, *, lesson: str = "poll with poll_hint unchanged"
+) -> str:
+    lines = ["TYPE: DISPOSITION", "status: complete"]
+    if turn_id is not None:
+        lines.append(f"source_turn_id: {turn_id}")
+    lines.append(f"lesson: {lesson}")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_parse_missing_turn_id_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    handler = JournalProjectorParseHandler()
+    body = _disposition_with_lesson(None)
+    context = SimpleNamespace(options={}, messages=[{"role": "user", "content": body}])
+    out = await handler.execute(SimpleNamespace(id="parse"), context)
+    assert out.json is not None
+    assert out.json.get("has_lesson") is False
+    assert out.json.get("reason") == "no_turn_id"
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    journal = tmp_path / "notes/system/maestro/journal.md"
+    _seed_projector_journal(journal)
+    closeout = "RULE: [brief] Should not land.\n"
+    result = append_journal_from_closeout(closeout)
+    assert result.skipped is True
+    assert result.skipped_reason == "no_turn_id"
+    assert "Should not land" not in journal.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_parse_through_append_turn_id_from_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    journal = tmp_path / "notes/system/maestro/journal.md"
+    _seed_projector_journal(journal)
+    handler = JournalProjectorParseHandler()
+
+    turn_a = "agent-bus:16671#101"
+    body_a = _disposition_with_lesson(turn_a)
+    out_a = await handler.execute(
+        SimpleNamespace(id="parse"),
+        SimpleNamespace(options={}, messages=[{"role": "user", "content": body_a}]),
+    )
+    assert out_a.json is not None
+    assert out_a.json.get("has_lesson") is True
+    assert out_a.json.get("turn_id") == turn_a
+
+    closeout_a = f"RULE: [brief] First lesson.\nsource_turn_id: {turn_a}\n"
+    first = append_journal_from_closeout(closeout_a)
+    assert first.skipped is False
+    assert turn_a in journal.read_text(encoding="utf-8")
+
+    turn_b = "agent-bus:16671#102"
+    body_b = _disposition_with_lesson(turn_b, lesson="second distinct lesson")
+    out_b = await handler.execute(
+        SimpleNamespace(id="parse"),
+        SimpleNamespace(options={}, messages=[{"role": "user", "content": body_b}]),
+    )
+    assert out_b.json is not None
+    assert out_b.json.get("turn_id") == turn_b
+
+    closeout_b = f"RULE: [bus] Second lesson.\nsource_turn_id: {turn_b}\n"
+    second = append_journal_from_closeout(closeout_b)
+    assert second.skipped is False
+    assert second.skipped_reason != "deduped"
+    text = journal.read_text(encoding="utf-8")
+    assert turn_a in text
+    assert turn_b in text
 
 
 def test_projector_rejects_anthropic_and_other_models_pool() -> None:

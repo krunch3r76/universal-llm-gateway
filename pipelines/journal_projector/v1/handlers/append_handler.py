@@ -40,11 +40,7 @@ class JournalProjectorAppendHandler(BaseHandler):
                 json={"ok": False, "error": "closeout_missing", "dispatch_id": dispatch_id},
             )
 
-        turn_id = opts.get("source_turn_id")
-        result = append_journal_from_closeout(
-            closeout_text,
-            turn_id=str(turn_id).strip() if turn_id else None,
-        )
+        result = append_journal_from_closeout(closeout_text)
         payload: dict[str, Any] = {
             "ok": result.ok,
             "skipped": result.skipped,
