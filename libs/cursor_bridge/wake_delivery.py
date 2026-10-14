@@ -4,10 +4,11 @@ Callers are the ``display-chat-wake`` pipeline step. The debug port is
 chosen from ``app`` and ``display``; the sidebar observation comes from
 ``probe_surface``. When ``select=True`` (default) and the target row is
 present in the sidebar, the step can switch to that row provided the
-currently active chat is not generating and its composer is empty. A
-match pastes ``BRIDGE_WAKE thread=<id> turn=<n>`` into that app's
-composer, submits it, and verifies delivery. Any other outcome returns
-``ok`` false. This module does not fail a pipeline run.
+currently active chat's composer is empty (streaming/generating does not
+block steering or row selection). A match pastes
+``BRIDGE_WAKE thread=<id> turn=<n>`` into that app's composer, submits it,
+and verifies delivery. Any other outcome returns ``ok`` false. This module
+does not fail a pipeline run.
 """
 
 from __future__ import annotations
@@ -95,8 +96,8 @@ def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
 
 
 def _busy_or_draft_reason(surface: dict[str, Any]) -> str | None:
-    if surface.get("generating"):
-        return "active_chat_busy"
+    # Why: grok-bot, cursor, and claude.ai all support mid-stream steering;
+    # only an unsent composer draft blocks a wake paste.
     if str(surface.get("composer_draft") or "").strip():
         return "composer_not_empty"
     return None
