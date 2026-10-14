@@ -594,7 +594,7 @@ async def test_hop_inherit_skipped_when_post_fails(
 
 @pytest.mark.asyncio
 async def test_inherit_fail_open_copy_lost_no_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spool = tmp_path / "steer-spool"
     spool.mkdir()
@@ -649,7 +649,7 @@ async def test_inherit_fail_open_copy_lost_no_retry(
 
 @pytest.mark.asyncio
 async def test_hop_inherit_skipped_when_payload_id_differs_from_admit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spool = tmp_path / "steer-spool"
     spool.mkdir()
@@ -676,6 +676,15 @@ async def test_hop_inherit_skipped_when_payload_id_differs_from_admit(
         }
         return resp
 
+    warn_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def _capture_warning(msg: str, *args: Any) -> None:
+        warn_calls.append((msg, args))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.logger.warning",
+        _capture_warning,
+    )
     _hop_post_client_mocks(monkeypatch, _post)
     ok, _detail = await post_conductor_hop_team_dispatch(
         {
@@ -688,7 +697,7 @@ async def test_hop_inherit_skipped_when_payload_id_differs_from_admit(
     assert ok is True
     assert not spool_path(spool, "wire-admit-id").exists()
     assert not spool_path(spool, "payload-not-admit-id").exists()
-    assert "steer inherit skipped" in caplog.text
+    assert any("steer inherit skipped" in msg for msg, _ in warn_calls)
 
 
 @pytest.mark.asyncio
@@ -733,6 +742,13 @@ async def test_hop_inherit_copies_pending_on_post_success(
     child_id = detail["dispatch_id"]
     parent = json.loads(spool_path(spool, "pred-hop-ok").read_text(encoding="utf-8"))
     assert parent["pending"][0]["entry_id"] == "parent-entry"
+    child = json.loads(spool_path(spool, child_id).read_text(encoding="utf-8"))
+    child_row = child["pending"][0]
+    assert child_row["origin_entry_id"] == "parent-entry"
+    assert child_row["inherited_from"] == "pred-hop-ok"
+    assert child_row["inherited_via"] == "conductor_hop"
+    assert child_row["entry_id"] != "parent-entry"
+    assert child_row["deposited_at"] != parent["pending"][0]["deposited_at"]
     pending = claim_pending(child_id, spool_dir=spool)
     assert pending is not None
     assert pending.directive == "successor sees"
