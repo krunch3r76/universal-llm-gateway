@@ -135,6 +135,17 @@ def test_standing_handoff_classified_shared_requires_expected_sha256(
     assert rejected["reason"] == "expected_sha256.required"
 
 
+def test_house_rules_classified_shared_requires_expected_sha256(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    ops_text.write_file_impl(rel, "rule-0\n")
+    rejected = ops_text.write_file_impl(rel, "rule-0\nrule-1\n")
+    assert rejected["reason"] == "expected_sha256.required"
+
+
 def test_threads_other_file_stays_unclassified_no_cas(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,

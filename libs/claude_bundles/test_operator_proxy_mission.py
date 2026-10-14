@@ -40,8 +40,10 @@ def test_purpose_recognition() -> None:
 
 _SECTION_ORDER = (
     "## What is running now",
+    "## CURRENT LEG (rendered checkpoint)",
     "## Lessons in force",
     "## Register",
+    "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
@@ -57,6 +59,12 @@ def _noop_fetch(_lane: str) -> list:
     return []
 
 
+def _assert_section_order(out: str, markers: tuple[str, ...]) -> None:
+    present = [m for m in markers if m in out]
+    positions = [out.index(m) for m in present]
+    assert positions == sorted(positions)
+
+
 def test_ensure_injects_briefing_without_slash_prefix() -> None:
     out = ensure_operator_proxy_mission_prompt(
         "# Mission\nDo the thing.\n",
@@ -67,8 +75,7 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
     )
     assert not out.startswith("/cdp-operator-proxy")
     assert out.startswith("# Hop on agent-bus:")
-    positions = [out.index(marker) for marker in _SECTION_ORDER]
-    assert positions == sorted(positions)
+    _assert_section_order(out, _SECTION_ORDER)
     assert "cdp-operator-proxy" in out
     assert "agent-bus-discipline" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")

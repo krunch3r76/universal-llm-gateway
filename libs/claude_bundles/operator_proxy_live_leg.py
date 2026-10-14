@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -12,7 +14,11 @@ from typing import Any
 from implement_admission.closeout_helpers import cortex_files_root
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
+_logger = logging.getLogger(__name__)
+
 _ROSTER_REL = Path("notes/system/operational/maestro-sidekick-roster.md")
+_FOLD_STATE_REL = Path("notes/system/operational/live-leg-fold-state.json")
+_WARM_MAX_PAGES = 2
 _EXTRA_HOUSE_LANES: tuple[str, ...] = ("15851", "12286")
 _PAGE_SIZE = 200
 _MAX_PAGES = 50
@@ -225,13 +231,15 @@ def fetch_turns_to_closure(
     *,
     page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
     | None = None,
+    after_turn: int = 0,
+    max_pages: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Page compact turns until thread start, a stop condition, or a bounded cap."""
     fetch = page_fetch or fetch_turns_page
     merged: dict[int, dict[str, Any]] = {}
-    after_turn = 0
     paging_truncated = False
     pages = 0
+    page_limit = _MAX_PAGES if max_pages is None else max_pages
     while True:
         pages += 1
         page, truncated, next_after = fetch(lane, after_turn=after_turn, last=_PAGE_SIZE)
@@ -245,7 +253,7 @@ def fetch_turns_to_closure(
             break
         if not truncated:
             break
-        if pages >= _MAX_PAGES:
+        if pages >= page_limit:
             paging_truncated = True
             break
 
@@ -363,17 +371,127 @@ def fold_lane(
     return items, False
 
 
+@dataclass
+class LaneFoldState:
+    watermark: int = 0
+    open_keys: list[str] = field(default_factory=list)
+
+
+FoldStateStore = Callable[[], dict[str, LaneFoldState] | None]
+FoldStateSaver = Callable[[dict[str, LaneFoldState]], None]
+
+
+def _default_fold_state_path() -> Path:
+    return cortex_files_root() / _FOLD_STATE_REL
+
+
+def load_fold_state(
+    *,
+    read_state: Callable[[], str | None] | None = None,
+) -> dict[str, LaneFoldState] | None:
+    if read_state is not None:
+        try:
+            raw = read_state()
+        except OSError:
+            _logger.warning("live-leg fold state unreadable", exc_info=True)
+            return None
+        if raw is None:
+            return {}
+    else:
+        path = _default_fold_state_path()
+        try:
+            if not path.is_file():
+                return {}
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            _logger.warning("live-leg fold state unreadable", exc_info=True)
+            return None
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None
+    out: dict[str, LaneFoldState] = {}
+    lanes = payload.get("lanes") if isinstance(payload, dict) else None
+    if not isinstance(lanes, dict):
+        return {}
+    for lane_id, row in lanes.items():
+        if not isinstance(row, dict):
+            continue
+        out[str(lane_id)] = LaneFoldState(
+            watermark=int(row.get("watermark") or 0),
+            open_keys=[str(k) for k in row.get("open_keys") or []],
+        )
+    return out
+
+
+def save_fold_state(
+    state: dict[str, LaneFoldState],
+    *,
+    write_state: Callable[[str], None] | None = None,
+) -> None:
+    payload = {
+        "lanes": {
+            lane: {"watermark": st.watermark, "open_keys": list(st.open_keys)}
+            for lane, st in state.items()
+        }
+    }
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if write_state is not None:
+        try:
+            write_state(text)
+        except OSError:
+            _logger.warning("live-leg fold state write failed", exc_info=True)
+        return
+    path = _default_fold_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError:
+        _logger.warning("live-leg fold state write failed", exc_info=True)
+
+
+def _item_key(item: OpenItem) -> str:
+    return f"{item.lane}:{item.turn}:{item.key}"
+
+
 def project_live_leg(
     lanes: list[str],
     fetch_turns: Callable[[str], list[dict]],
+    *,
+    page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
+    | None = None,
+    fold_state_load: FoldStateStore | None = None,
+    fold_state_save: FoldStateSaver | None = None,
 ) -> LiveLeg:
     """Query each lane and merge open items."""
     resolve = _wrap_fetch_turns(fetch_turns)
     leg = LiveLeg(lanes_queried=list(lanes))
+    state_writable = False
+    state_mut: dict[str, LaneFoldState] = {}
+    if fold_state_load is not None:
+        loaded = fold_state_load()
+        if loaded is not None:
+            state_mut = dict(loaded)
+            state_writable = True
+    elif page_fetch is not None or resolve is _production_fetch_turns:
+        loaded = load_fold_state()
+        if loaded is not None:
+            state_mut = dict(loaded)
+            state_writable = True
+
     for lane in lanes:
         try:
-            if resolve is _production_fetch_turns:
-                turns, lane_truncated = fetch_turns_to_closure(lane)
+            lane_state = state_mut.get(lane) if state_writable else None
+            warm = bool(lane_state and lane_state.watermark > 0)
+            if resolve is _production_fetch_turns or page_fetch is not None:
+                after = lane_state.watermark if warm else 0
+                max_p = _WARM_MAX_PAGES if warm else _MAX_PAGES
+                turns, lane_truncated = fetch_turns_to_closure(
+                    lane,
+                    page_fetch=page_fetch,
+                    after_turn=after,
+                    max_pages=max_p,
+                )
                 if lane_truncated:
                     leg.truncated = True
             else:
@@ -388,15 +506,52 @@ def project_live_leg(
             except Exception:  # noqa: BLE001 — degrade to turn-only retirement
                 lane_status = None
         items, _ = fold_lane(lane, turns, lane_status=lane_status)
+        if warm and lane_state and lane_state.open_keys:
+            seen = {_item_key(i) for i in items}
+            for key in lane_state.open_keys:
+                if key not in seen:
+                    parts = key.split(":", 2)
+                    if len(parts) == 3:
+                        items.append(
+                            OpenItem(
+                                lane=parts[0],
+                                turn=int(parts[1]),
+                                verb="REQUEST",
+                                kind="",
+                                key=parts[2],
+                                subject=f"REQUEST|{parts[2]} (open-item set)",
+                            )
+                        )
         leg.items.extend(items)
+        if state_writable:
+            max_turn = max(
+                (t.turn for t in items),
+                default=lane_state.watermark if lane_state else 0,
+            )
+            for turn in turns:
+                turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
+                max_turn = max(max_turn, turn_no)
+            state_mut[lane] = LaneFoldState(
+                watermark=max_turn,
+                open_keys=[_item_key(i) for i in items],
+            )
     leg.items.sort(key=lambda item: (item.lane, item.turn))
-    leg.truncated = False
+    if state_writable:
+        if fold_state_save is not None:
+            try:
+                fold_state_save(state_mut)
+            except OSError:
+                _logger.warning("live-leg fold state write failed", exc_info=True)
+        else:
+            save_fold_state(state_mut)
     return leg
 
 
-def render_live_leg(leg: LiveLeg) -> str:
+def render_live_leg(leg: LiveLeg, *, declared_in_flight: int | None = None) -> str:
     """Render the live-leg block for the hop template."""
     lines: list[str] = []
+    if declared_in_flight is not None:
+        lines.append(f"declared_in_flight: {declared_in_flight}")
     if leg.truncated:
         lines.append(
             "(truncated: bus paging did not reach thread start; "
@@ -431,9 +586,12 @@ POINTERS_BLOCK = """\
 
 __all__ = [
     "GOVERNING_RULE",
+    "LaneFoldState",
     "LiveLeg",
     "OpenItem",
     "POINTERS_BLOCK",
+    "load_fold_state",
+    "save_fold_state",
     "fetch_lane_status",
     "fetch_turns_page",
     "fetch_turns_to_closure",
