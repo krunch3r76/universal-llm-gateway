@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    _reply_matches_harvest_execution,
     build_park_harvest_arm_recipe,
     fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
@@ -1167,3 +1168,88 @@ def test_park_harvest_admit_error_increment_race_safe() -> None:
     bad_err = json.loads(bad)["hop_admit_error"]
     assert bad_err["attempts"] == 1
     assert bad_err.get("stop_not_claimed_attempts", 0) <= 1
+
+
+def _thread_turns(turns: list[dict]) -> patch:
+    return patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._fetch_thread_turns",
+        side_effect=lambda _tid: list(turns),
+    )
+
+
+def _no_harvest_started_at() -> patch:
+    return patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._harvest_execution_started_at_iso",
+        return_value=None,
+    )
+
+
+def _set_row_started_at(ledger: CursorDispatchLedger, dispatch_id: str, iso: str) -> None:
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=? WHERE dispatch_id=?",
+            (iso, dispatch_id),
+        )
+
+
+def test_reply_matches_harvest_execution_accepts_from_bus_key() -> None:
+    """Agent-bus ``/turns`` exposes author on ``from``, not ``from_agent``."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-from-key")
+    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        assert _reply_matches_harvest_execution(mapped, _HARVEST_REPLY_UUID)
+
+
+def test_reply_matches_harvest_execution_accepts_from_agent_key() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-from-agent-key")
+    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    turns = [
+        {
+            "turn_number": 50,
+            "from_agent": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        assert _reply_matches_harvest_execution(mapped, _HARVEST_REPLY_UUID)
+
+
+def test_park_harvest_continue_emits_no_harvest_token_refusal() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-no-token")
+    row = _production_parked_row(ledger, req)
+    record = json.loads(row["record_json"])
+    record["closeout_body"] = "stop: PARKED_TRANSPORT\nprose only\n"
+    row["record_json"] = json.dumps(record)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    emit_refused.assert_called_once()
+    assert emit_refused.call_args.kwargs["predicate"] == "no_harvest_token"

@@ -184,6 +184,26 @@ def FrontierSdkConductorHopParkHarvest(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopParkHarvestContinueRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    predicate: str,
+) -> Event:
+    """Park-harvest continue owed but a harvest gate predicate stayed false."""
+    return Event(
+        signal="frontier.sdk.conductor.hop.park_harvest_continue_refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "hop_seq": hop_seq,
+            "predicate": predicate,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopAdmitRefusedParked(  # noqa: N802
     thread_id: str,
     work_key: str | None,
@@ -385,6 +405,24 @@ def emit_frontier_sdk_conductor_hop_park_harvest(
             thread_id=thread_id,
             summoning_thread_id=summoning_thread_id,
             hop_seq=hop_seq,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_park_harvest_continue_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    predicate: str,
+) -> None:
+    """Publish park-harvest continue gate refusal (observability for silent skips)."""
+    emit_frontier_event(
+        FrontierSdkConductorHopParkHarvestContinueRefused(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            predicate=predicate,
         )
     )
 
