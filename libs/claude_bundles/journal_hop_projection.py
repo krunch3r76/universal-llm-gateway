@@ -17,7 +17,7 @@ MAESTRO_ROLE_FACETS: frozenset[str] = frozenset(
 )
 
 _RULE_LINE_RE = re.compile(
-    r"^(?:[-*]\s+(?:\*\*)?RULE:|(?:\*\*)?RULE:)",
+    r"^\s*(?:[-*]\s+)?(?:\*\*)?RULE:",
     re.MULTILINE,
 )
 _FACET_TAG_RE = re.compile(r"\[([a-z]+)\]")

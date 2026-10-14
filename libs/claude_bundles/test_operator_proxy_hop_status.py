@@ -103,6 +103,8 @@ def test_fixture_head_does_not_copy_leg_stack() -> None:
         roster_text="| N | Display name | Lane | Mailbox | State |\n",
         fetch_turns=_noop_fetch,
         execution_id="exec-from-satellite",
+        journal_text="",
+        register_text="",
     )
     assert "LEG 11 ~21:00Z" not in out
     assert "LEG 10 ~20:55Z" not in out
@@ -120,6 +122,8 @@ def test_missing_handoff_renders_the_author_instruction() -> None:
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert MISSING_HANDOFF_INSTRUCTION in out
     assert "Author the standing handoff before you leave." in out
@@ -153,6 +157,8 @@ def test_rendered_prompt_section_order() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
         execution_id="exec-1",
+        journal_text="",
+        register_text="",
     )
     positions = [out.index(marker) for marker in _SECTION_ORDER]
     assert positions == sorted(positions)
@@ -167,6 +173,8 @@ def test_first_acts_are_numbered_in_order() -> None:
         "# Mission\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     start = out.index("## Your first acts, in order")
     end = out.index("## How this seat works")
@@ -184,6 +192,8 @@ def test_mission_ensure_opens_on_successor_template() -> None:
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert out.startswith("# Hop on agent-bus:")
     assert out.index("## What is running now") < out.index("## Hard refusals")
@@ -198,8 +208,9 @@ def _journal_fixture_seven_plus_fleet() -> str:
     for index in range(7, 0, -1):
         lines.append(f"## 2026-10-{index:02d} — entry {index}\n")
         lines.append(f"RULE: [route] newest rule number {index}\n")
-    lines.append("## 2026-10-00 — entry fleet-only\n")
-    lines.append("RULE: [fleet] must omit for maestro\n")
+        if index == 7:
+            lines.append("## 2026-10-06 — entry fleet-only\n")
+            lines.append("RULE: [fleet] must omit for maestro\n")
     return "".join(lines)
 
 
@@ -240,8 +251,8 @@ def test_lessons_ignore_standing_rule_headings_and_midline_rule() -> None:
         "## STANDING RULE — lean verification\n"
         "RULE: [route] must not project from standing heading\n"
         "## 2026-10-14 — entry 157\n"
-        "- **A tool that fires before retrieval-before-authoring runs is a defect.**\n"
-        "  **RULE:** mid-bullet must not match\n"
+        "- **A tool that refuses early execution** when the only executor is the seat **RULE:** mid-bullet must not match\n"
+        "   - RULE: [route] indented line-start keeps\n"
         "RULE: [bus] line-start keeps\n"
     )
     out = ensure_operator_proxy_mission_prompt(
@@ -254,6 +265,7 @@ def test_lessons_ignore_standing_rule_headings_and_midline_rule() -> None:
     lessons_block = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
     assert "must not project from standing heading" not in lessons_block
     assert "mid-bullet must not match" not in lessons_block
+    assert "indented line-start keeps" in lessons_block
     assert "line-start keeps" in lessons_block
 
 
@@ -335,6 +347,8 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
         "TYPE: DIRECTIVE\nintent: birth\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.rstrip("\n") == once.rstrip("\n")

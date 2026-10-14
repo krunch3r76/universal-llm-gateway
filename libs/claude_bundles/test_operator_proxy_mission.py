@@ -62,6 +62,8 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert not out.startswith("/cdp-operator-proxy")
     assert out.startswith("# Hop on agent-bus:")
@@ -417,6 +419,8 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
         "TYPE: CONTINUITY_HANDOFF\n# body\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert len(out.encode()) < 16000
     for needle in (
