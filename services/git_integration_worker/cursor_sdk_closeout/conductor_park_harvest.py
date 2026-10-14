@@ -856,9 +856,21 @@ def _park_harvest_stop_claim_exhausted(row: dict[str, Any]) -> bool:
 async def fire_consult_pending_continue(row: dict[str, Any]) -> bool:
     """Admit consult-harvest successor via hop path (D3)."""
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _closeout_tokens_from_row,
         build_hop_team_dispatch_body,
         post_conductor_hop_team_dispatch,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    tokens = _closeout_tokens_from_row(row)
+    verdict = evaluate_hop_budget(row, closeout_tokens=tokens)
+    if not await apply_hop_budget_announcer(row, verdict):
+        return False
     from services.git_integration_worker.cursor_sdk_hop_events import (
         emit_frontier_sdk_conductor_hop_admit_failed,
         emit_frontier_sdk_conductor_hop_admitted,
@@ -1027,9 +1039,21 @@ def park_harvest_continue_owed(
 async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
     """Admit park-harvest successor via hop path (bind §6 X-fresh)."""
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _closeout_tokens_from_row,
         build_hop_team_dispatch_body,
         post_conductor_hop_team_dispatch,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    tokens = _closeout_tokens_from_row(row)
+    verdict = evaluate_hop_budget(row, closeout_tokens=tokens)
+    if not await apply_hop_budget_announcer(row, verdict):
+        return False
     from services.git_integration_worker.cursor_sdk_hop_events import (
         emit_frontier_sdk_conductor_hop_admit_failed,
         emit_frontier_sdk_conductor_hop_admitted,

@@ -17,6 +17,9 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     PARK_REASON_ADMIT_RETRY_CAP,
     build_budget_authority_patch,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
+    record_data,
+)
 
 logger = get_logger(__name__)
 
@@ -128,6 +131,9 @@ async def park_conductor_hop_mission(
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     work_key = str(row.get("work_key") or "")
+    record = record_data(str(row.get("record_json") or ""))
+    if record.get(HOP_PARKED_KEY) is True and str(record.get(HOP_PARK_REASON_KEY) or "") == reason:
+        return
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     hop_seq = hop_fields.get("hop_seq")
     hop_seq_int = int(hop_seq) if isinstance(hop_seq, int) else None

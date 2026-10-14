@@ -277,6 +277,102 @@ def FrontierSdkConductorHopLineageStamped(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopInspectionRequested(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> Event:
+    """Suspicion inspection: page once, admit continues."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "hop_seq": hop_seq,
+        "signature_key": signature_key,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.inspection_requested",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkConductorHopInspectionUnprovable(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> Event:
+    """Unpaid progress instrument — admit without paging."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "hop_seq": hop_seq,
+        "signature_key": signature_key,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.inspection_unprovable",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkConductorHopInspectionCleared(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> Event:
+    """Fold or tip advanced since the last inspection window."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "hop_seq": hop_seq,
+        "signature_key": signature_key,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.inspection_cleared",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkConductorHopInspectionDeferred(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    error_class: str,
+) -> Event:
+    """Chain read failed — retry on a later sweep without parking."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "hop_seq": hop_seq,
+        "error_class": error_class,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.inspection_deferred",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopWatchdogFired(  # noqa: N802
     last_dispatch_id: str,
     thread_id: str,
@@ -507,6 +603,82 @@ def emit_frontier_sdk_conductor_hop_deferral_released(
             hop_seq=hop_seq,
             prior_gate=prior_gate,
             successor_dispatch_id=successor_dispatch_id,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_inspection_requested(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopInspectionRequested(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            hop_seq=hop_seq,
+            signature_key=signature_key,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_inspection_unprovable(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopInspectionUnprovable(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            hop_seq=hop_seq,
+            signature_key=signature_key,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_inspection_cleared(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    signature_key: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopInspectionCleared(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            hop_seq=hop_seq,
+            signature_key=signature_key,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_inspection_deferred(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    hop_seq: int,
+    error_class: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopInspectionDeferred(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            hop_seq=hop_seq,
+            error_class=error_class,
         )
     )
 

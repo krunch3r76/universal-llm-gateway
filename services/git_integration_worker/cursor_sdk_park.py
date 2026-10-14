@@ -326,7 +326,15 @@ def conductor_hop_watchdog_candidates(
             if admit_retry_park_unserviced(mapped):
                 candidates.append(dispatch_id)
                 continue
-            verdict = evaluate_hop_budget(mapped, closeout_tokens=closeout_tokens)
+            try:
+                verdict = evaluate_hop_budget(mapped, closeout_tokens=closeout_tokens)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "hop watchdog candidate budget failed dispatch=%s err=%s",
+                    dispatch_id,
+                    exc.__class__.__name__,
+                )
+                continue
             if verdict.park and verdict.reason:
                 candidates.append(dispatch_id)
                 continue

@@ -1567,3 +1567,63 @@ def test_park_harvest_continue_uses_midline_harvest_token() -> None:
         assert emit_refused.call_args.kwargs["harvest_token"] == _HARVEST_124_INLINE
     evaluate.assert_called_once()
     assert evaluate.call_args[0][1] == _HARVEST_124_INLINE
+
+
+@pytest.mark.asyncio
+async def test_consult_pending_identical_signatures_park() -> None:
+    """Three CONSULT_PENDING hops with identical signatures park and page once."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        fire_consult_pending_continue,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        _PARK_REASON_NO_PROGRESS_CAP,
+    )
+
+    stuck = {
+        "hop_entry_gate": "G2",
+        "hop_witnessed_done": ["G1"],
+        "hop_lane_tip": "lane-a",
+        "hop_scoreboard_tip": "board-a",
+        "hop_next_admit": "harvest G3",
+        "summoning_thread_id": "9638",
+        "consult_summoning_after_turn": 1,
+        "closeout_turn": 2,
+    }
+    ledger = CursorDispatchLedger.instance()
+    prior = "spawn-parent"
+    last_id = "cp-3"
+    for idx in range(1, 4):
+        dispatch_id = f"cp-{idx}"
+        req = _req(dispatch_id=dispatch_id)
+        _admit_conductor(ledger, req, record_patch={**stuck, "closeout_stop_tokens": ["CONSULT_PENDING"]})
+        ledger.merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={"hop_seq": idx, "hop_from": prior},
+        )
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+        prior = dispatch_id
+        last_id = dispatch_id
+    row = _reload_row(ledger, last_id)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.park_conductor_hop_mission",
+            AsyncMock(),
+        ) as park_mock,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
+            AsyncMock(return_value=True),
+        ) as page_mock,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-cp"})),
+        ) as post_mock,
+    ):
+        assert await fire_consult_pending_continue(row) is False
+    park_mock.assert_awaited_once()
+    assert park_mock.await_args.kwargs["reason"] == _PARK_REASON_NO_PROGRESS_CAP
+    page_mock.assert_not_awaited()
+    post_mock.assert_not_awaited()

@@ -32,12 +32,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     HOP_LAST_TERMINAL_AT_KEY,
-    PARK_REASON_ADMIT_RETRY_CAP,
     evaluate_hop_budget,
     load_hop_budget_config,
-)
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
-    park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
     backfill_no_progress_claimed_successor,
@@ -203,8 +199,11 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
         # Re-emitting on every sweep produced ~12k events/day per stalled fleet.
         return False
     verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
-    if verdict.park and verdict.reason:
-        await park_conductor_hop_mission(row, reason=verdict.reason)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    if not await apply_hop_budget_announcer(row, verdict):
         return False
     # Health-red (a 2s /health timeout is ok=False) must not preempt a row
     # hop_owed would admit at grace as watchdog. The one-shot CDP branch
@@ -264,7 +263,20 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
             int(admit_err.get("attempts") or 0) if isinstance(admit_err, dict) else 0
         )
         if attempts >= cfg.crash_cap_per_row:
-            await park_conductor_hop_mission(row, reason=PARK_REASON_ADMIT_RETRY_CAP)
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+                HopBudgetVerdict,
+            )
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+                REASON_INSPECTION_REQUESTED,
+            )
+
+            retry_verdict = HopBudgetVerdict(
+                ok=True,
+                park=False,
+                reason=REASON_INSPECTION_REQUESTED,
+                backoff_s=300.0,
+            )
+            await apply_hop_budget_announcer(row, retry_verdict)
     return stamped
 
 
@@ -336,7 +348,23 @@ async def _admit_cdp_probe_indeterminate(
             int(admit_err.get("attempts") or 0) if isinstance(admit_err, dict) else 0
         )
         if attempts >= cfg.crash_cap_per_row:
-            await park_conductor_hop_mission(row, reason=PARK_REASON_ADMIT_RETRY_CAP)
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+                HopBudgetVerdict,
+            )
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+                REASON_INSPECTION_REQUESTED,
+            )
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                apply_hop_budget_announcer,
+            )
+
+            retry_verdict = HopBudgetVerdict(
+                ok=True,
+                park=False,
+                reason=REASON_INSPECTION_REQUESTED,
+                backoff_s=300.0,
+            )
+            await apply_hop_budget_announcer(row, retry_verdict)
             _stamp_cdp_probe_indeterminate(dispatch_id)
     return False
 

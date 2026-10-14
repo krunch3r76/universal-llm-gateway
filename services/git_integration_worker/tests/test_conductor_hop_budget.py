@@ -181,7 +181,8 @@ def test_planned_row_hop_budget_ok() -> None:
     assert verdict.backoff_s == 0.0
 
 
-def test_mission_cap_parks() -> None:
+def test_mission_cap_count_never_parks() -> None:
+    """Hop count alone must not park — only loop evidence may."""
     ledger = CursorDispatchLedger.instance()
     for idx in range(1, 4):
         _admit_and_terminal(
@@ -207,8 +208,8 @@ def test_mission_cap_parks() -> None:
         closeout_tokens=frozenset({"ROW_HOP"}),
         config=_tight_config(mission_cap=3),
     )
-    assert verdict.park is True
-    assert verdict.reason == PARK_REASON_MISSION_CAP
+    assert verdict.park is False
+    assert verdict.ok is True
 
 
 def test_crash_cap_parks() -> None:
@@ -426,7 +427,11 @@ def test_a32411_unpaid_fold_alone_does_not_park() -> None:
         config=_tight_config(no_progress_cap=2),
     )
     assert verdict.park is False
-    assert verdict.reason is None
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        REASON_INSPECTION_UNPROVABLE,
+    )
+
+    assert verdict.reason == REASON_INSPECTION_UNPROVABLE
 
 
 def test_next_admit_advance_breaks_no_progress_streak() -> None:
@@ -724,8 +729,13 @@ def test_h1_unpaid_fold_crash_chain_does_not_park() -> None:
         closeout_tokens=frozenset(),
         config=_tight_config(crash_cap_per_row=3),
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        REASON_INSPECTION_REQUESTED,
+    )
+
     assert verdict.park is False
-    assert verdict.backoff_s == 0.0
+    assert verdict.reason == REASON_INSPECTION_REQUESTED
+    assert verdict.backoff_s == 300.0
 
 
 def test_h1_stamped_gate_alone_does_not_count_crash_streak() -> None:
@@ -887,6 +897,14 @@ def test_budget_authority_patch_carries_scoreboard_tip() -> None:
 # --- mission cap: only rows that owe a hop are budgeted ---
 
 
+_STUCK_LOOP_PATCH = {
+    "hop_entry_gate": "G4",
+    "hop_witnessed_done": [],
+    "hop_lane_tip": "aaaaaaa",
+    "hop_scoreboard_tip": "bbbbbbb",
+}
+
+
 def _chain_at_cap(ledger: CursorDispatchLedger, *, last_tokens: list[str]) -> dict:
     for idx in range(1, 4):
         _admit_and_terminal(
@@ -896,7 +914,7 @@ def _chain_at_cap(ledger: CursorDispatchLedger, *, last_tokens: list[str]) -> di
             hop_from="spawn" if idx == 1 else f"cap-{idx - 1}",
             hop_reason="planned" if idx > 1 else "spawn",
             closeout_tokens=["ROW_HOP"],
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_STUCK_LOOP_PATCH),
         )
     return _admit_and_terminal(
         ledger,
@@ -905,7 +923,7 @@ def _chain_at_cap(ledger: CursorDispatchLedger, *, last_tokens: list[str]) -> di
         hop_from="cap-3",
         hop_reason="planned",
         closeout_tokens=last_tokens,
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_STUCK_LOOP_PATCH),
     )
 
 
@@ -933,13 +951,8 @@ def test_mission_cap_never_parks_a_designed_stop(token: str) -> None:
 
 
 @pytest.mark.parametrize("token", ["CONSULT_PENDING", "PARKED_TRANSPORT"])
-def test_mission_cap_still_parks_continue_owed_stops(token: str) -> None:
-    """CONSULT_PENDING and PARKED_TRANSPORT admit successors, so the cap binds.
-
-    ``consult_pending_continue_owed`` and ``park_harvest_continue_owed`` are
-    the only budget check those chains get. An early exit on either token
-    drops the mission cap.
-    """
+def test_continue_owed_identical_signatures_park(token: str) -> None:
+    """Identical stamped signatures on continue-owed chains park on loop evidence."""
     ledger = CursorDispatchLedger.instance()
     row = _chain_at_cap(ledger, last_tokens=[token])
     verdict = evaluate_hop_budget(
@@ -949,38 +962,12 @@ def test_mission_cap_still_parks_continue_owed_stops(token: str) -> None:
     )
     assert verdict.park is True
     assert verdict.ok is False
-    assert verdict.reason == PARK_REASON_MISSION_CAP
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
 
 
-def test_mission_cap_parks_consult_pending_with_row_pinned() -> None:
-    """{CONSULT_PENDING, ROW_PINNED} at the cap still parks.
-
-    ``consult_pending_continue_owed`` does not reject ``ROW_PINNED``, and
-    ``mission_open_for_row`` rejects only ``DONE``, so an exempt token in the
-    same closeout must not skip the mission cap.
-    """
-    ledger = CursorDispatchLedger.instance()
+def test_consult_pending_with_row_pinned_parks_on_loop() -> None:
     tokens = ["CONSULT_PENDING", "ROW_PINNED"]
-    row = _chain_at_cap(ledger, last_tokens=tokens)
-    verdict = evaluate_hop_budget(
-        row,
-        closeout_tokens=frozenset(tokens),
-        config=_tight_config(mission_cap=3),
-    )
-    assert verdict.park is True
-    assert verdict.ok is False
-    assert verdict.reason == PARK_REASON_MISSION_CAP
-
-
-def test_mission_cap_parks_parked_transport_with_operator_gate() -> None:
-    """{PARKED_TRANSPORT, OPERATOR_GATE} at the cap still parks.
-
-    ``park_harvest_continue_owed`` requires ``PARKED_TRANSPORT`` and does not
-    reject ``OPERATOR_GATE``. That successor's only budget check is
-    ``evaluate_hop_budget``.
-    """
     ledger = CursorDispatchLedger.instance()
-    tokens = ["PARKED_TRANSPORT", "OPERATOR_GATE"]
     row = _chain_at_cap(ledger, last_tokens=tokens)
     verdict = evaluate_hop_budget(
         row,
@@ -988,8 +975,20 @@ def test_mission_cap_parks_parked_transport_with_operator_gate() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.ok is False
-    assert verdict.reason == PARK_REASON_MISSION_CAP
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
+
+
+def test_parked_transport_with_operator_gate_parks_on_loop() -> None:
+    tokens = ["PARKED_TRANSPORT", "OPERATOR_GATE"]
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=tokens)
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(tokens),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
 
 
 def test_mission_cap_row_pinned_alone_still_exits_early() -> None:
@@ -1006,8 +1005,7 @@ def test_mission_cap_row_pinned_alone_still_exits_early() -> None:
     assert verdict.reason is None
 
 
-def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
-    """Guard: the cap still binds the rows that do owe a hop."""
+def test_planned_hop_long_chain_parks_only_on_loop_not_count() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
     verdict = evaluate_hop_budget(
@@ -1016,7 +1014,7 @@ def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.reason == PARK_REASON_MISSION_CAP
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
 
 
 def test_mission_cap_skips_restart_park_rows() -> None:
@@ -1041,12 +1039,8 @@ def test_mission_cap_skips_restart_park_rows() -> None:
     assert verdict.ok is True
 
 
-def test_mission_cap_counts_cancel_discard_rows() -> None:
-    """Only ``park_for_restart`` is the same hop as its resume child.
-
-    ``cancel_discard`` ended the attempt. Skipping every ``park_kind`` would
-    hide those rows from the mission cap.
-    """
+def test_cancel_discard_rows_still_in_loop_window() -> None:
+    """``cancel_discard`` rows remain in the signature window for loop evidence."""
     ledger = CursorDispatchLedger.instance()
     row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
     with ledger._connect() as conn:
@@ -1060,7 +1054,7 @@ def test_mission_cap_counts_cancel_discard_rows() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.reason == PARK_REASON_MISSION_CAP
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
 
 
 def test_cancel_discard_row_refuses_budget_without_park() -> None:
@@ -1127,279 +1121,61 @@ def _release_mission_cap_park(ledger: CursorDispatchLedger, *, parked_id: str) -
         )
 
 
-def test_mission_cap_release_allows_hops_until_window_exhausted() -> None:
-    """Released mission-cap park resets the window; re-parks only after cap hops since release."""
+def test_advancing_chain_admits_at_hop_49_eval() -> None:
+    """S1 AC1: hop count alone never parks; advancing tips stay clear."""
     ledger = CursorDispatchLedger.instance()
-    cap = 3
-    for idx in range(1, cap + 1):
-        _planned_hop_row(
+    prior = "spawn"
+    row: dict = {}
+    for idx in range(1, 50):
+        row = _admit_and_terminal(
             ledger,
-            dispatch_id=f"rel-{idx}",
+            dispatch_id=f"adv-{idx}",
             hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"rel-{idx - 1}",
+            hop_from=prior,
+            hop_reason="spawn" if idx == 1 else "planned",
+            closeout_tokens=["ROW_HOP"],
+            record_patch={
+                "hop_entry_gate": "G4",
+                "hop_witnessed_done": [],
+                "hop_lane_tip": f"tip{idx:04d}",
+            },
         )
-    row_at_cap = _planned_hop_row(
-        ledger,
-        dispatch_id="rel-at-cap",
-        hop_seq=cap + 1,
-        hop_from=f"rel-{cap}",
-    )
-    assert (
-        evaluate_hop_budget(
-            row_at_cap,
-            closeout_tokens=frozenset({"ROW_HOP"}),
-            config=_tight_config(mission_cap=cap),
-        ).park
-        is True
-    )
-    _release_mission_cap_park(ledger, parked_id="rel-at-cap")
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='rel-at-cap'"
-        ).fetchone()
-    data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
-
-    for extra in range(1, cap):
-        row = _planned_hop_row(
-            ledger,
-            dispatch_id=f"rel-post-{extra}",
-            hop_seq=cap + 1 + extra,
-            hop_from="rel-at-cap" if extra == 1 else f"rel-post-{extra - 1}",
-        )
-        verdict = evaluate_hop_budget(
-            row,
-            closeout_tokens=frozenset({"ROW_HOP"}),
-            config=_tight_config(mission_cap=cap),
-        )
-        assert verdict.park is False, f"extra hop {extra} should stay under window"
-
-    row_repark = _planned_hop_row(
-        ledger,
-        dispatch_id="rel-repark",
-        hop_seq=cap + 1 + cap,
-        hop_from=f"rel-post-{cap - 1}",
-    )
-    verdict = evaluate_hop_budget(
-        row_repark,
-        closeout_tokens=frozenset({"ROW_HOP"}),
-        config=_tight_config(mission_cap=cap),
-    )
-    assert verdict.park is True
-    assert verdict.reason == PARK_REASON_MISSION_CAP
-
-
-def test_mission_cap_second_release_restarts_window() -> None:
-    """A second mission-cap release replaces the baseline for the next window."""
-    ledger = CursorDispatchLedger.instance()
-    cap = 3
-    for idx in range(1, cap + 2):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"win-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"win-{idx - 1}",
-        )
-    _release_mission_cap_park(ledger, parked_id=f"win-{cap + 1}")
-    for idx in range(cap + 2, cap + cap + 1):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"win-{idx}",
-            hop_seq=idx,
-            hop_from=f"win-{idx - 1}",
-        )
-    repark_id = f"win-{cap + cap + 1}"
-    _planned_hop_row(
-        ledger,
-        dispatch_id=repark_id,
-        hop_seq=cap + cap + 1,
-        hop_from=f"win-{cap + cap}",
-    )
-    _release_mission_cap_park(ledger, parked_id=repark_id)
-    row = _planned_hop_row(
-        ledger,
-        dispatch_id="win-after-second-release",
-        hop_seq=cap + cap + 2,
-        hop_from=repark_id,
-    )
+        prior = f"adv-{idx}"
     verdict = evaluate_hop_budget(
         row,
         closeout_tokens=frozenset({"ROW_HOP"}),
-        config=_tight_config(mission_cap=cap),
+        config=_tight_config(mission_cap=3, no_progress_cap=2),
     )
     assert verdict.park is False
+    assert verdict.ok is True
 
 
-def test_mission_cap_release_baseline_uses_park_work_key_not_caller() -> None:
-    """Thread-scoped release must stamp baseline from the parked row's work_key."""
+def test_hop_park_release_never_stamps_mission_baseline() -> None:
     ledger = CursorDispatchLedger.instance()
-    cap = 3
-    for idx in range(1, cap + 2):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"wk-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"wk-{idx - 1}",
-        )
-    parked_id = f"wk-{cap + 1}"
-    ledger.merge_record_json(
-        dispatch_id=parked_id,
-        patch={
-            HOP_PARKED_KEY: True,
-            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
-        },
-    )
+    _planned_hop_row(ledger, dispatch_id="rel-1", hop_seq=1, hop_from="spawn")
     with ledger._connect() as conn:
         release_mission_parks(
             conn,
-            work_key=None,
+            work_key=_WORK_KEY,
             thread_id="9964",
             caller_agent="liaison",
             post_commit_emits=[],
         )
-    with ledger._connect() as conn:
         row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (parked_id,),
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='rel-1'"
         ).fetchone()
     data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
+    assert HOP_MISSION_CAP_RELEASE_BASELINE_KEY not in data
 
 
-def test_mission_cap_release_baseline_uses_parked_mission_not_caller_work_key() -> None:
-    """Release scoped to caller work_key W1 must still count hops on parked mission W2."""
+def test_loop_park_release_stamps_released_at_not_baseline() -> None:
     ledger = CursorDispatchLedger.instance()
-    w1 = "todo:hop-budget-cross-w1"
-    w2 = "todo:hop-budget-cross-w2"
-    cap = 3
-    for idx in range(1, cap + 2):
-        _admit_and_terminal(
-            ledger,
-            dispatch_id=f"x2-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"x2-{idx - 1}",
-            hop_reason="planned" if idx > 1 else "spawn",
-            closeout_tokens=["ROW_HOP"],
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
-            work_key=w2,
-        )
-    _admit_and_terminal(
-        ledger,
-        dispatch_id="x1-only",
-        hop_seq=1,
-        hop_from="spawn",
-        hop_reason="spawn",
-        closeout_tokens=["ROW_HOP"],
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
-        work_key=w1,
-    )
-    parked_id = f"x2-{cap + 1}"
+    row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
     ledger.merge_record_json(
-        dispatch_id=parked_id,
+        dispatch_id="cap-4",
         patch={
             HOP_PARKED_KEY: True,
-            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
-        },
-    )
-    with ledger._connect() as conn:
-        release_mission_parks(
-            conn,
-            work_key=w1,
-            thread_id="9964",
-            caller_agent="liaison",
-            post_commit_emits=[],
-        )
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (parked_id,),
-        ).fetchone()
-    data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] != 1
-
-
-def _release_without_open_park(ledger: CursorDispatchLedger, *, work_key: str) -> None:
-    with ledger._connect() as conn:
-        released = release_mission_parks(
-            conn,
-            work_key=work_key,
-            thread_id="9964",
-            caller_agent="liaison",
-            post_commit_emits=[],
-        )
-    assert released == ()
-
-
-def test_hop_park_release_with_no_open_park_stamps_baseline() -> None:
-    """Admit-time release with no open park resets the window from the hop count."""
-    ledger = CursorDispatchLedger.instance()
-    cap = 24
-    seeded = 5
-    for idx in range(1, seeded + 1):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"nopark-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"nopark-{idx - 1}",
-        )
-    _release_without_open_park(ledger, work_key=_WORK_KEY)
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (f"nopark-{seeded}",),
-        ).fetchone()
-    data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == seeded
-
-    prior = f"nopark-{seeded}"
-    for extra in range(1, cap):
-        row = _planned_hop_row(
-            ledger,
-            dispatch_id=f"nopark-post-{extra}",
-            hop_seq=seeded + extra,
-            hop_from=prior,
-        )
-        prior = f"nopark-post-{extra}"
-        verdict = evaluate_hop_budget(
-            row,
-            closeout_tokens=frozenset({"ROW_HOP"}),
-            config=_tight_config(mission_cap=cap, no_progress_cap=0),
-        )
-        assert verdict.park is False, f"post-release hop {extra} parked early"
-
-    row_at_window = _planned_hop_row(
-        ledger,
-        dispatch_id="nopark-at-window",
-        hop_seq=seeded + cap,
-        hop_from=prior,
-    )
-    verdict = evaluate_hop_budget(
-        row_at_window,
-        closeout_tokens=frozenset({"ROW_HOP"}),
-        config=_tight_config(mission_cap=cap, no_progress_cap=0),
-    )
-    assert verdict.park is True
-    assert verdict.reason == PARK_REASON_MISSION_CAP
-
-
-def test_admit_release_of_open_mission_cap_park_stamps_and_releases() -> None:
-    """An open mission-cap park is released and carries the baseline."""
-    ledger = CursorDispatchLedger.instance()
-    cap = 3
-    for idx in range(1, cap + 2):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"open-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"open-{idx - 1}",
-        )
-    parked_id = f"open-{cap + 1}"
-    ledger.merge_record_json(
-        dispatch_id=parked_id,
-        patch={
-            HOP_PARKED_KEY: True,
-            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
+            HOP_PARK_REASON_KEY: _PARK_REASON_NO_PROGRESS_CAP,
         },
     )
     with ledger._connect() as conn:
@@ -1411,54 +1187,13 @@ def test_admit_release_of_open_mission_cap_park_stamps_and_releases() -> None:
             post_commit_emits=[],
         )
     assert len(released) == 1
-    assert released[0].parked_dispatch_id == parked_id
     with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (parked_id,),
+        refreshed = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='cap-4'"
         ).fetchone()
-    data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
+    data = json.loads(refreshed["record_json"])
     assert HOP_PARK_RELEASED_AT_KEY in data
-
-
-def test_second_hop_park_release_without_park_moves_baseline() -> None:
-    """A later admit-time release with no open park advances the baseline."""
-    ledger = CursorDispatchLedger.instance()
-    for idx in range(1, 4):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"fwd-{idx}",
-            hop_seq=idx,
-            hop_from="spawn" if idx == 1 else f"fwd-{idx - 1}",
-        )
-    _release_without_open_park(ledger, work_key=_WORK_KEY)
-    for idx in range(4, 6):
-        _planned_hop_row(
-            ledger,
-            dispatch_id=f"fwd-{idx}",
-            hop_seq=idx,
-            hop_from=f"fwd-{idx - 1}",
-        )
-    _release_without_open_park(ledger, work_key=_WORK_KEY)
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='fwd-5'"
-        ).fetchone()
-    data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == 5
-    row = _planned_hop_row(
-        ledger,
-        dispatch_id="fwd-after",
-        hop_seq=6,
-        hop_from="fwd-5",
-    )
-    verdict = evaluate_hop_budget(
-        row,
-        closeout_tokens=frozenset({"ROW_HOP"}),
-        config=_tight_config(mission_cap=48, no_progress_cap=0),
-    )
-    assert verdict.park is False
+    assert HOP_MISSION_CAP_RELEASE_BASELINE_KEY not in data
 
 
 def test_crash_cap_release_does_not_stamp_mission_baseline() -> None:

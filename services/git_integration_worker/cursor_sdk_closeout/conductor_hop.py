@@ -54,9 +54,6 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     build_budget_authority_patch,
     evaluate_hop_budget,
 )
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
-    park_conductor_hop_mission,
-)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
     HOP_NEXT_ADMIT_KEY,
     next_admit_in_closeout,
@@ -1760,8 +1757,11 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if skip_gate is not None:
         if skip_gate == "budget":
             verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
-            if verdict.park and verdict.reason:
-                await park_conductor_hop_mission(row, reason=verdict.reason)
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                apply_hop_budget_announcer,
+            )
+
+            if not await apply_hop_budget_announcer(row, verdict):
                 return
         _emit_hop_skipped(row, gate=skip_gate)
         return
@@ -1780,6 +1780,13 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
         return
     if "dispatch_thread_id" not in body:
         _emit_hop_skipped(row, gate="summoning_unresolved")
+        return
+    verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    if not await apply_hop_budget_announcer(row, verdict):
         return
     thread_id = str(row.get("thread_id") or "")
     hop_seq = int(body.get("hop_seq") or 1)

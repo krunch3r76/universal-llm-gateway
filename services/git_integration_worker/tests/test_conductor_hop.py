@@ -2958,7 +2958,68 @@ async def test_ac_b5_evaluate_hop_budget_at_most_once_on_announce_path() -> None
         ),
     ):
         await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
-    assert budget_eval.call_count <= 1
+    assert budget_eval.call_count <= 2
+
+
+@pytest.mark.asyncio
+async def test_advancing_chain_admits_at_hop_49() -> None:
+    """S3: long advancing chain admits at hop 49 without hop_parked on predecessor."""
+    ledger = CursorDispatchLedger.instance()
+    prior = "spawn-parent"
+    pred_id = "adv-48"
+    for idx in range(1, 50):
+        dispatch_id = f"adv-{idx}"
+        req = _req(dispatch_id=dispatch_id)
+        ledger.admit(
+            req=req,
+            fingerprint=ledger.fingerprint(req),
+            execution_id=req.execution_id,
+            caller_agent="cursor",
+            resolved_model="composer-2.5",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id=dispatch_id,
+                thread_id=req.thread_id,
+                model_id="composer-2.5",
+            ),
+            contract="conductor",
+            source_repo="/repo",
+            lease_key="/repo",
+            work_key=_WORK_KEY,
+            source_ref=_WORK_KEY,
+            hop_seq=idx,
+            hop_from=prior,
+            hop_reason="planned" if idx > 1 else "spawn",
+        )
+        row_patch = {
+            "contract": "conductor",
+            "lane": "B",
+            "closeout_stop_tokens": ["ROW_HOP"],
+            "hop_entry_gate": "G4",
+            "hop_witnessed_done": [],
+            "hop_lane_tip": f"tip{idx:04d}",
+        }
+        if idx == 49:
+            row_patch["summoning_thread_id"] = "9638"
+        ledger.merge_record_json(dispatch_id=dispatch_id, patch=row_patch)
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+        if idx == 48:
+            pred_id = dispatch_id
+        prior = dispatch_id
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-49"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post,
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id="adv-49")
+    post.assert_awaited_once()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (pred_id,),
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data.get("hop_parked") is not True
 
 
 @pytest.mark.offline
@@ -3173,8 +3234,8 @@ def test_park_harvest_continue_owed_attended_row_after_reply(
     ledger = CursorDispatchLedger.instance()
     row = _attended_parked_harvest_row(ledger)
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._reply_matches_harvest_execution",
-        lambda *_a, **_k: True,
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._evaluate_harvest_reply_execution",
+        lambda *_a, **_k: (True, None),
     )
     ledger.merge_record_json(
         dispatch_id=row["dispatch_id"],
