@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 
 _HOP_PARK_HARVEST_FIRED_KEY = "hop_park_harvest_fired_at"
 _HOP_PARK_HARVEST_CONTINUED_KEY = "hop_park_harvest_continued_at"
+_HOP_PARK_HARVEST_REFUSED_PREDICATE_KEY = "hop_park_harvest_refused_predicate"
 _CONSULT_PENDING_CONTINUED_KEY = "hop_consult_harvest_continued_at"
 _NO_PROGRESS_PRODUCER_CONTINUED_KEY = "hop_no_progress_producer_continued_at"
 _PARK_REASON_NO_PROGRESS_CAP = "hop_budget_no_progress_cap"
@@ -572,8 +573,10 @@ def _harvest_reply_lower_bound_watermark(
     return max(bounds)
 
 
-def _reply_harvest_refusal_predicate(row: dict[str, Any], token: str) -> str:
-    """Why shape-B harvest reply matching failed; ``bounds_missing`` when inconclusive."""
+def _evaluate_harvest_reply_execution(
+    row: dict[str, Any], token: str
+) -> tuple[bool, str | None]:
+    """Shape B match in one bus pass — ``(True, None)`` or ``(False, predicate)``."""
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _harvest_execution_started_at_iso,
     )
@@ -581,7 +584,7 @@ def _reply_harvest_refusal_predicate(row: dict[str, Any], token: str) -> str:
     rec = _record_data(row)
     closeout_turn = rec.get("closeout_turn")
     if not isinstance(closeout_turn, int):
-        return "bounds_missing"
+        return False, "bounds_missing"
     thread_ids: list[str] = []
     worker_id = str(row.get("thread_id") or "").strip()
     summoning_id = str(rec.get("summoning_thread_id") or "").strip()
@@ -589,108 +592,94 @@ def _reply_harvest_refusal_predicate(row: dict[str, Any], token: str) -> str:
         if tid and tid not in thread_ids:
             thread_ids.append(tid)
     if not thread_ids:
-        return "bounds_missing"
+        return False, "bounds_missing"
     started_iso = _harvest_execution_started_at_iso(token)
     row_admit_iso = _row_admitted_at_iso(row)
     if started_iso is None and row_admit_iso is None:
-        return "bounds_missing"
-    saw_web_after_closeout = False
-    saw_id_candidate_after_closeout = False
+        return False, "bounds_missing"
+    saw_started_at_floor = False
+    saw_wrong_id_after_watermark = False
+    saw_web_after_watermark = False
     for tid in thread_ids:
         turns = _fetch_thread_turns(tid)
         if turns is None:
-            return "fetch_turns_failed"
+            return False, "fetch_turns_failed"
         watermark = _harvest_reply_lower_bound_watermark(
             thread_id=tid,
             started_iso=started_iso,
             row_admit_iso=row_admit_iso,
         )
         if watermark is None:
-            return "bounds_missing"
+            return False, "bounds_missing"
         for turn in sorted(turns, key=lambda t: t.get("turn_number", 0)):
             turn_number = turn.get("turn_number")
             if not isinstance(turn_number, int):
-                continue
-            if turn_number <= closeout_turn:
                 continue
             author = _turn_bus_author(turn)
             candidate = _turn_cdp_reply_candidate_id(turn)
             if candidate is not None and _harvest_id_boundary_match(candidate, token):
-                saw_id_candidate_after_closeout = True
                 if author != "web-anthropic":
-                    return "author_mismatch"
+                    return False, "author_mismatch"
                 if turn_number <= watermark:
-                    return "started_at_floor"
-                return "bounds_missing"
+                    saw_started_at_floor = True
+                    continue
+                return True, None
+            if turn_number <= watermark:
+                continue
             if author == "web-anthropic":
-                saw_web_after_closeout = True
-    if saw_id_candidate_after_closeout:
-        return "reply_id_mismatch"
-    if saw_web_after_closeout:
-        return "reply_id_mismatch"
-    return "author_mismatch"
+                saw_web_after_watermark = True
+                if candidate is not None:
+                    saw_wrong_id_after_watermark = True
+    if saw_started_at_floor:
+        return False, "started_at_floor"
+    if saw_wrong_id_after_watermark:
+        return False, "reply_id_mismatch"
+    if saw_web_after_watermark:
+        return False, "reply_id_mismatch"
+    return False, "reply_absent"
 
 
 def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
     """Shape B: CDP reply subject or ``execution_id:`` header matches harvest token."""
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-        _harvest_execution_started_at_iso,
-    )
-
-    rec = _record_data(row)
-    closeout_turn = rec.get("closeout_turn")
-    if not isinstance(closeout_turn, int):
-        return False
-    thread_ids: list[str] = []
-    worker_id = str(row.get("thread_id") or "").strip()
-    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
-    for tid in (worker_id, summoning_id):
-        if tid and tid not in thread_ids:
-            thread_ids.append(tid)
-    if not thread_ids:
-        return False
-    started_iso = _harvest_execution_started_at_iso(token)
-    row_admit_iso = _row_admitted_at_iso(row)
-    if started_iso is None and row_admit_iso is None:
-        return False
-    for tid in thread_ids:
-        turns = _fetch_thread_turns(tid)
-        if turns is None:
-            return False
-        watermark = _harvest_reply_lower_bound_watermark(
-            thread_id=tid,
-            started_iso=started_iso,
-            row_admit_iso=row_admit_iso,
-        )
-        if watermark is None:
-            return False
-        for turn in sorted(turns, key=lambda t: t.get("turn_number", 0)):
-            turn_number = turn.get("turn_number")
-            if not isinstance(turn_number, int):
-                continue
-            if _turn_bus_author(turn) != "web-anthropic":
-                continue
-            candidate = _turn_cdp_reply_candidate_id(turn)
-            if candidate is None or not _harvest_id_boundary_match(candidate, token):
-                continue
-            if turn_number <= watermark:
-                continue
-            return True
-    return False
+    matched, _ = _evaluate_harvest_reply_execution(row, token)
+    return matched
 
 
-def _emit_park_harvest_continue_refused(row: dict[str, Any], *, predicate: str) -> None:
+def _hop_seq_from_row(row: dict[str, Any]) -> int:
+    hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+    hop_seq = hop_fields.get("hop_seq")
+    return int(hop_seq) if isinstance(hop_seq, int) else 1
+
+
+def _maybe_record_park_harvest_continue_refused(
+    row: dict[str, Any],
+    *,
+    predicate: str,
+    harvest_token: str | None,
+) -> None:
+    """Emit once per predicate change after park-harvest wake; stamp ledger."""
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     if not dispatch_id or not thread_id:
         return
     rec = _record_data(row)
-    hop_seq = int(rec.get("hop_seq") or 0)
+    if not rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
+        return
+    prior = rec.get(_HOP_PARK_HARVEST_REFUSED_PREDICATE_KEY)
+    if prior == predicate:
+        return
+    summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip() or None
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={_HOP_PARK_HARVEST_REFUSED_PREDICATE_KEY: predicate},
+    )
     emit_frontier_sdk_conductor_hop_park_harvest_continue_refused(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
-        hop_seq=hop_seq,
+        hop_seq=_hop_seq_from_row(row),
         predicate=predicate,
+        harvest_token=harvest_token,
+        summoning_thread_id=summoning_thread_id,
     )
 
 
@@ -931,12 +920,16 @@ def park_harvest_continue_owed(
     guard = _next_admit_guard_text(row, rec)
     harvest_token = _harvest_target_token(guard)
     if harvest_token is None:
-        _emit_park_harvest_continue_refused(row, predicate="no_harvest_token")
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="no_harvest_token", harvest_token=None
+        )
         return False
-    if not _reply_matches_harvest_execution(row, harvest_token):
-        _emit_park_harvest_continue_refused(
+    matched, refusal_predicate = _evaluate_harvest_reply_execution(row, harvest_token)
+    if not matched:
+        _maybe_record_park_harvest_continue_refused(
             row,
-            predicate=_reply_harvest_refusal_predicate(row, harvest_token),
+            predicate=refusal_predicate or "bounds_missing",
+            harvest_token=harvest_token,
         )
         return False
     if reply_fn is not None and not reply_fn(

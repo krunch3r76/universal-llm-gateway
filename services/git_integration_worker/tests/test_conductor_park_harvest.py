@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    _evaluate_harvest_reply_execution,
     _reply_matches_harvest_execution,
     build_park_harvest_arm_recipe,
     fire_park_harvest_continue,
@@ -55,8 +56,9 @@ _HARVEST_REPLY_UUID = "994dc2b4-d1dd-4206-bd97-2ad0109478bc"
 def _stub_shape_b_reply_match() -> patch:
     """Hermetic stand-in for a matching CDP reply header (shape B)."""
     return patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._reply_matches_harvest_execution",
-        return_value=True,
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_evaluate_harvest_reply_execution",
+        return_value=(True, None),
     )
 
 _ROW_HOP_CLOSEOUT = """\
@@ -1239,13 +1241,21 @@ def test_reply_matches_harvest_execution_accepts_from_agent_key() -> None:
         assert _reply_matches_harvest_execution(mapped, _HARVEST_REPLY_UUID)
 
 
+def _row_without_harvest_token(
+    ledger: CursorDispatchLedger, req: CursorDispatchRequest
+) -> dict:
+    _production_parked_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_body": "stop: PARKED_TRANSPORT\nprose only\n"},
+    )
+    return _reload_row(ledger, req.dispatch_id)
+
+
 def test_park_harvest_continue_emits_no_harvest_token_refusal() -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req(dispatch_id="park-no-token")
-    row = _production_parked_row(ledger, req)
-    record = json.loads(row["record_json"])
-    record["closeout_body"] = "stop: PARKED_TRANSPORT\nprose only\n"
-    row["record_json"] = json.dumps(record)
+    row = _row_without_harvest_token(ledger, req)
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
         "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
@@ -1253,3 +1263,133 @@ def test_park_harvest_continue_emits_no_harvest_token_refusal() -> None:
         assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
     emit_refused.assert_called_once()
     assert emit_refused.call_args.kwargs["predicate"] == "no_harvest_token"
+
+
+def test_park_harvest_refusal_emits_once_per_predicate() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-refusal-cardinality")
+    row = _row_without_harvest_token(ledger, req)
+    emit_path = (
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    )
+    with patch(emit_path) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_called_once()
+    row2 = _reload_row(ledger, req.dispatch_id)
+    with patch(emit_path) as emit_refused:
+        assert not park_harvest_continue_owed(row2, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_park_harvest_refusal_not_emitted_before_wake_fired() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-pre-wake")
+    _production_parked_row(ledger, req, fired=False)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_body": "stop: PARKED_TRANSPORT\nprose only\n"},
+    )
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_park_harvest_refusal_not_emitted_when_already_continued() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-continued-stamp")
+    row = _production_parked_row(ledger, req)
+    record = json.loads(row["record_json"])
+    record["hop_park_harvest_continued_at"] = time.time()
+    row["record_json"] = json.dumps(record)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_evaluate_harvest_reply_reply_absent() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-reply-absent")
+    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    with _thread_turns([]), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_absent"
+
+
+def test_evaluate_harvest_reply_author_mismatch_from_key() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-author-mismatch")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "cursor",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "author_mismatch"
+
+
+def test_evaluate_harvest_reply_started_at_floor() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-started-floor")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:05:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "started_at_floor"
+
+
+def test_evaluate_harvest_reply_id_mismatch() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-id-mismatch")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    other = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {other}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_id_mismatch"

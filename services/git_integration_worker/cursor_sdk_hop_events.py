@@ -189,16 +189,23 @@ def FrontierSdkConductorHopParkHarvestContinueRefused(  # noqa: N802
     thread_id: str,
     hop_seq: int,
     predicate: str,
+    harvest_token: str | None = None,
+    summoning_thread_id: str | None = None,
 ) -> Event:
     """Park-harvest continue owed but a harvest gate predicate stayed false."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "hop_seq": hop_seq,
+        "predicate": predicate,
+    }
+    if harvest_token:
+        payload["harvest_token"] = harvest_token
+    if summoning_thread_id:
+        payload["summoning_thread_id"] = summoning_thread_id
     return Event(
         signal="frontier.sdk.conductor.hop.park_harvest_continue_refused",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "hop_seq": hop_seq,
-            "predicate": predicate,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -415,6 +422,8 @@ def emit_frontier_sdk_conductor_hop_park_harvest_continue_refused(
     thread_id: str,
     hop_seq: int,
     predicate: str,
+    harvest_token: str | None = None,
+    summoning_thread_id: str | None = None,
 ) -> None:
     """Publish park-harvest continue gate refusal (observability for silent skips)."""
     emit_frontier_event(
@@ -423,6 +432,8 @@ def emit_frontier_sdk_conductor_hop_park_harvest_continue_refused(
             thread_id=thread_id,
             hop_seq=hop_seq,
             predicate=predicate,
+            harvest_token=harvest_token,
+            summoning_thread_id=summoning_thread_id,
         )
     )
 
