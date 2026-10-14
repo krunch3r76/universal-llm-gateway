@@ -128,7 +128,11 @@ async def _page(root: str, status: TickerStatus) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default="10479")
+    parser.add_argument(
+        "--root",
+        required=True,
+        help="continuity root thread id (required; no default house)",
+    )
     parser.add_argument("--state-file")
     parser.add_argument(
         "--stale-after",

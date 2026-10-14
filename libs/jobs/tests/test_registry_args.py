@@ -79,12 +79,14 @@ def test_production_flags_match_scripts() -> None:
     ide = _ide_argv(
         IdeHopArgs.model_validate(
             {
+                "root": "12345",
                 "row": "now",
                 "transcript_id": "11111111-1111-1111-1111-111111111111",
                 "dry_run": True,
             }
         )
     )
+    assert ide[:2] == ["--root", "12345"]
     assert "--dry-run" in ide
     for banned in ("--gui-host", "--remote-repo", "--no-raise", "--force", "--find-transcript"):
         assert banned not in ide

@@ -90,7 +90,11 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--root", default="10479", help="continuity root thread id")
+    p.add_argument(
+        "--root",
+        required=True,
+        help="continuity root thread id (required; no default house)",
+    )
     p.add_argument("--row", help="scoreboard NOW row the successor picks up")
     p.add_argument(
         "--arm",
