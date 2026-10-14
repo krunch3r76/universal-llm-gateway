@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from claude_bundles.operator_proxy_hop_status import (
     extract_thread_id,
     hop_successor_fields,
     house_rules_section,
+    read_cortex_journal_head,
     read_cortex_uri_from_root,
     standing_handoff_text_for_prompt,
 )
@@ -417,6 +419,66 @@ def test_journal_read_oserror_renders_unavailable() -> None:
     )
     assert "journal unavailable" in out
     assert out.startswith("# Hop on agent-bus:")
+
+
+def test_read_cortex_journal_head_on_disk_bounded_and_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    journal_path = tmp_path / "notes/system/maestro/journal.md"
+    journal_path.parent.mkdir(parents=True)
+    head = "## 2026-10-01 — entry\nRULE: [route] from-disk\n"
+    journal_path.write_bytes(head.encode("utf-8") + b"z" * (JOURNAL_HEAD_BYTES + 4096))
+    text, total = read_cortex_journal_head(MAESTRO_JOURNAL_URI, JOURNAL_HEAD_BYTES)
+    assert total == len(head.encode("utf-8")) + JOURNAL_HEAD_BYTES + 4096
+    assert text is not None
+    assert "from-disk" in text
+    assert len(text.encode("utf-8")) <= JOURNAL_HEAD_BYTES
+
+
+def test_read_cortex_journal_head_unreadable_renders_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    journal_path = tmp_path / "notes/system/maestro/journal.md"
+    journal_path.parent.mkdir(parents=True)
+    journal_path.write_text("## 2026-10-01 — entry\nRULE: [route] hidden\n")
+    os.chmod(journal_path, 0o000)
+    try:
+        out = ensure_operator_proxy_mission_prompt(
+            "# Mission\n",
+            roster_text="",
+            fetch_turns=_noop_fetch,
+            register_text="",
+        )
+    finally:
+        os.chmod(journal_path, 0o644)
+    assert "journal unavailable" in out
+    assert "(none)" not in out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+
+
+def test_journal_head_trim_drops_severed_rule_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    journal_path = tmp_path / "notes/system/maestro/journal.md"
+    journal_path.parent.mkdir(parents=True)
+    body = b"## 2026-10-01 -- entry\nRULE: [route] kept_rule\n"
+    severed = b"RULE: [route] severed_must_not_project"
+    while len(body) < JOURNAL_HEAD_BYTES - len(severed) + 5:
+        body += b"fill\n"
+    assert body.endswith(b"\n")
+    assert len(body) < JOURNAL_HEAD_BYTES < len(body) + len(severed)
+    journal_path.write_bytes(body + severed + b"\n" + b"w" * 8192)
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    lessons = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    assert "kept_rule" in lessons
+    assert "severed_must_not_project" not in lessons
 
 
 def test_load_journal_head_read_bounded_at_64kb() -> None:

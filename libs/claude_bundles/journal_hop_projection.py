@@ -139,6 +139,16 @@ def _decode_utf8_head(raw: bytes) -> str:
     return cut.decode("utf-8", errors="ignore")
 
 
+def _trim_head_past_last_newline(text: str | None) -> str | None:
+    """Drop an incomplete trailing line when the file extends past the head read."""
+    if not text:
+        return text
+    last_nl = text.rfind("\n")
+    if last_nl < 0:
+        return ""
+    return text[: last_nl + 1]
+
+
 def _read_path_journal_head(path: Path, limit: int) -> tuple[str | None, int | None]:
     with path.open("rb") as handle:
         head = handle.read(limit)
@@ -235,12 +245,14 @@ def load_journal_text_for_hop(
     try:
         if read_journal_head is not None:
             text, total = read_journal_head(journal_uri, JOURNAL_HEAD_BYTES)
-            return text, None, total
-        rel = journal_uri.removeprefix("cortex://").lstrip("/")
-        path = cortex_files_root() / rel
-        if not path.is_file():
-            return None, None, None
-        text, total = _read_path_journal_head(path, JOURNAL_HEAD_BYTES)
+        else:
+            rel = journal_uri.removeprefix("cortex://").lstrip("/")
+            path = cortex_files_root() / rel
+            if not path.is_file():
+                return None, None, None
+            text, total = _read_path_journal_head(path, JOURNAL_HEAD_BYTES)
+        if total is not None and total > JOURNAL_HEAD_BYTES:
+            text = _trim_head_past_last_newline(text)
         return text, None, total
     except (OSError, UnicodeError):
         return None, "unavailable", None

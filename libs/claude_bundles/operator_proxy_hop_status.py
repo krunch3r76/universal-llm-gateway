@@ -161,17 +161,18 @@ def cortex_archive_path_exists(path: str) -> bool:
 
 
 def read_cortex_journal_head(uri: str, limit: int) -> tuple[str | None, int | None]:
-    """Read at most *limit* bytes from a cortex journal URI; return ``(head, total)``."""
+    """Read at most *limit* bytes from a cortex journal URI; return ``(head, total)``.
+
+    Missing file → ``(None, None)``. ``OSError`` / ``UnicodeError`` propagate
+    (same discipline as ``read_cortex_uri_from_root``).
+    """
     path = _cortex_path(uri)
-    try:
-        if not path.is_file():
-            return None, None
-        with path.open("rb") as handle:
-            head = handle.read(limit)
-            handle.seek(0, 2)
-            total = handle.tell()
-    except (OSError, UnicodeError):
+    if not path.is_file():
         return None, None
+    with path.open("rb") as handle:
+        head = handle.read(limit)
+        handle.seek(0, 2)
+        total = handle.tell()
     if not head and total == 0:
         return "", 0
     cut = head
