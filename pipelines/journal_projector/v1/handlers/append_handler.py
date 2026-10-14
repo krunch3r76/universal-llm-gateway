@@ -50,6 +50,8 @@ class JournalProjectorAppendHandler(BaseHandler):
             "skipped": result.skipped,
             "written_sha256": result.written_sha256,
         }
+        if result.skipped_reason:
+            payload["skipped_reason"] = result.skipped_reason
         if result.error:
             payload["error"] = result.error
         return StepOutput(raw="", json=payload)

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles.journal_hop_projection import MAESTRO_JOURNAL_URI
-from claude_bundles.journal_lesson import journal_has_source_turn_id
+from claude_bundles.journal_lesson import journal_has_source_turn_id, writer_mode
 
 _RULE_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s+)?(?:\*\*)?RULE:",
@@ -27,6 +27,7 @@ _SOURCE_TURN_ID_RE = re.compile(
 class AppendResult:
     ok: bool
     skipped: bool = False
+    skipped_reason: str | None = None
     error: dict[str, str] | None = None
     written_sha256: str | None = None
 
@@ -84,15 +85,17 @@ def append_journal_from_closeout(
 ) -> AppendResult:
     """Write one RULE entry from *closeout_text*; no-op for admit-only payloads."""
     if not (closeout_text or "").strip():
-        return AppendResult(ok=True, skipped=True)
+        return AppendResult(ok=True, skipped=True, skipped_reason="no_rule_line")
     if "poll_hint" in closeout_text and "execution_id" in closeout_text:
         if _RULE_LINE_RE.search(closeout_text) is None:
-            return AppendResult(ok=True, skipped=True)
+            return AppendResult(ok=True, skipped=True, skipped_reason="admit_envelope")
 
     rule_line, parsed_turn = _extract_rule_and_turn(closeout_text)
     effective_turn = (turn_id or parsed_turn or "").strip()
-    if not rule_line or not effective_turn:
-        return AppendResult(ok=True, skipped=True)
+    if not rule_line:
+        return AppendResult(ok=True, skipped=True, skipped_reason="no_rule_line")
+    if not effective_turn:
+        return AppendResult(ok=True, skipped=True, skipped_reason="no_turn_id")
 
     root = _files_root()
     if root is None:
@@ -106,8 +109,19 @@ def append_journal_from_closeout(
         return AppendResult(ok=False, error=read_res["error"])
     existing, sha = read_res
 
+    if writer_mode(existing) != "projector":
+        return AppendResult(
+            ok=False,
+            error={"kind": "projector_not_live", "message": "projector_live marker absent"},
+        )
+
     if journal_has_source_turn_id(existing, effective_turn):
-        return AppendResult(ok=True, skipped=True, written_sha256=sha)
+        return AppendResult(
+            ok=True,
+            skipped=True,
+            skipped_reason="deduped",
+            written_sha256=sha,
+        )
 
     new_block = _format_new_entry(rule_line=rule_line, turn_id=effective_turn)
     updated = new_block + existing
@@ -121,7 +135,12 @@ def append_journal_from_closeout(
             live_sha = hashlib.sha256(data).hexdigest()
             current_text = data.decode("utf-8")
             if journal_has_source_turn_id(current_text, effective_turn):
-                return AppendResult(ok=True, skipped=True, written_sha256=live_sha)
+                return AppendResult(
+                    ok=True,
+                    skipped=True,
+                    skipped_reason="deduped",
+                    written_sha256=live_sha,
+                )
         else:
             live_sha = hashlib.sha256(b"").hexdigest()
 

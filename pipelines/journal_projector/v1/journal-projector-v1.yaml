@@ -26,6 +26,13 @@ steps:
     model_knobs:
       fast: "true"
     role: cursor-sdk
+    system_prompt: |
+      Project the disposition lesson into one maestro journal entry.
+      Output contract: exactly one line-start RULE: with facet tags in brackets,
+      and one line-start source_turn_id: {turn_id}.
+      Use the `journal-digest` skill for emit shape.
+    handler_inputs:
+      turn_id: parse.json.turn_id
     reads_from:
       - step: parse
         fields: [json]

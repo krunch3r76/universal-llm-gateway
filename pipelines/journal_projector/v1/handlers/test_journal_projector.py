@@ -15,6 +15,11 @@ from systems.pipeline.core.execution.async_tracker import (
     TrackerCapacityError,
 )
 from systems.pipeline.core.execution.async_tracker import lifecycle as lifecycle_mod
+from systems.pipeline.core.handlers.frontier_dispatch.request import (
+    resolve_system_prompt,
+)
+from systems.pipeline.core.handlers.step_output import StepOutput
+from systems.pipeline.core.step_config import StepConfig
 from systems.proxy.routers.api.pipelines_dispatch import (
     DispatchRequest,
     ResultDeliveryConfig,
@@ -72,12 +77,50 @@ async def test_no_lesson_skips_model(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called is False
 
 
+def _seed_projector_journal(journal: Path) -> None:
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text("- projector_live: dispatch-test\n\n", encoding="utf-8")
+
+
+def test_project_step_system_prompt_binds_turn_id_and_skill_cite() -> None:
+    step = StepConfig(
+        id="project",
+        type="frontier_dispatch_v1",
+        system_prompt=(
+            "Output contract: line-start RULE: with facet tags; "
+            "source_turn_id: {turn_id}. Use the `journal-digest` skill."
+        ),
+        handler_inputs={"turn_id": "parse.json.turn_id"},
+    )
+    context = SimpleNamespace(
+        options={},
+        source=SimpleNamespace(),
+        outputs={
+            "parse": StepOutput(
+                raw="",
+                json={"has_lesson": True, "turn_id": "agent-bus:16671#79"},
+            )
+        },
+        messages=None,
+        source_text="",
+    )
+    system = resolve_system_prompt(step, context)
+    assert "agent-bus:16671#79" in system
+    assert "journal-digest" in system
+    assert "RULE:" in system
+
+    context.options = {
+        "system": "pipeline_options.system override must win over step prompt."
+    }
+    assert resolve_system_prompt(step, context) == context.options["system"]
+
+
 def test_append_reads_closeout_not_admit_envelope(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     journal = tmp_path / "notes/system/maestro/journal.md"
-    journal.parent.mkdir(parents=True)
+    _seed_projector_journal(journal)
 
     closeout = (
         "status: complete\n\n"
@@ -98,16 +141,35 @@ def test_append_reads_closeout_not_admit_envelope(
     skip = append_journal_from_closeout(admit_only)
     assert skip.ok is True
     assert skip.skipped is True
+    assert skip.skipped_reason == "admit_envelope"
     assert journal.read_text(encoding="utf-8") == before
+
+
+def test_append_fails_closed_without_projector_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    journal = tmp_path / "notes/system/maestro/journal.md"
+    journal.parent.mkdir(parents=True)
+    journal.write_text("seat-owned journal with no marker\n", encoding="utf-8")
+    closeout = "RULE: [brief] Should not append.\nsource_turn_id: turn-seat\n"
+    result = append_journal_from_closeout(closeout, turn_id="turn-seat")
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.get("kind") == "projector_not_live"
+    assert "seat-owned" in journal.read_text(encoding="utf-8")
 
 
 def test_append_dedupes_turn_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    journal = tmp_path / "notes/system/maestro/journal.md"
+    _seed_projector_journal(journal)
     closeout = "RULE: [bus] Dedupe me.\nsource_turn_id: turn-dup\n"
     first = append_journal_from_closeout(closeout, turn_id="turn-dup")
     assert first.skipped is False
     second = append_journal_from_closeout(closeout, turn_id="turn-dup")
     assert second.skipped is True
+    assert second.skipped_reason == "deduped"
 
 
 def test_append_conflict_fails_closed(
@@ -116,14 +178,18 @@ def test_append_conflict_fails_closed(
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     journal = tmp_path / "notes/system/maestro/journal.md"
     journal.parent.mkdir(parents=True)
-    journal.write_text("mutated-on-disk\n", encoding="utf-8")
+    journal.write_text(
+        "- projector_live: dispatch-cas\n\nmutated-on-disk\n",
+        encoding="utf-8",
+    )
 
     closeout = "RULE: [land] Conflict.\nsource_turn_id: turn-cas\n"
 
     import pipelines.journal_projector.v1.handlers.append_closeout as append_mod
 
     def stale_read(uri: str = append_mod.MAESTRO_JOURNAL_URI):
-        return "seed\n", hashlib.sha256(b"seed\n").hexdigest()
+        text = "- projector_live: cas-test\n\nseed\n"
+        return text, hashlib.sha256(b"seed\n").hexdigest()
 
     monkeypatch.setattr(append_mod, "read_journal_text", stale_read)
     result = append_journal_from_closeout(closeout, turn_id="turn-cas")

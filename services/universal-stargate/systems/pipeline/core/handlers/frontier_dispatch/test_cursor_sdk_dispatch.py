@@ -11,7 +11,7 @@ from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
 )
 from systems.pipeline.core.handlers.frontier_dispatch import (
-    native_loop as fd_native_mod,
+    handler as handler_mod,
 )
 from systems.pipeline.core.handlers.frontier_dispatch.cursor_sdk_dispatch import (
     is_cursor_sdk_dispatch_model,
@@ -68,7 +68,7 @@ async def test_cursor_model_skips_cloud_backend(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_generate",
         fake_sdk_generate,
     )
-    monkeypatch.setattr(fd_native_mod, "run_dispatch_loop", fake_native_loop)
+    monkeypatch.setattr(handler_mod, "run_dispatch_loop", fake_native_loop)
 
     step = SimpleNamespace(
         id="project",
