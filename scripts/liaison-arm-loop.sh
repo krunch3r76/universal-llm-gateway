@@ -243,7 +243,8 @@ PY
 fi
 
 # Promote staging artifacts only after armed (B2).
-cp "$attempt_log" "$log_file"
+# mv (not cp): the loop still appends to attempt_log's inode via open fd 1/2.
+mv -f "$attempt_log" "$log_file"
 echo "$new_pid" >"$pid_file"
 touch "$hb_file"
 "$UNIVERSAL_PYTHON" - "$meta_file" "$new_pid" "$holder" "$root" "$log_file" "$hb_file" <<'PY'
