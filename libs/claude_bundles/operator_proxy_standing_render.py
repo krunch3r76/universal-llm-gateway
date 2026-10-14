@@ -784,4 +784,5 @@ __all__ = [
     "render_house_rules_block",
     "render_inflight_block",
     "render_pointers_block",
+    "runbook_refuse_steps_bytes",
 ]

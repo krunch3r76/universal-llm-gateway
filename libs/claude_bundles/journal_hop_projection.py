@@ -273,7 +273,10 @@ def hop_journal_projection_fields(
     role: str = "maestro",
     inflight_projection_lookup: Callable[[], str | None] | None = None,
 ) -> dict[str, str]:
-    """Lessons + register blocks for ``hop_successor_fields``."""
+    """Build hop successor journal fields: ``lessons_in_force`` (from journal head
+    via ``project_lessons_in_force``, plus head flags and optional in-flight
+    projection line), ``register_card``, and when known ``journal_head_bytes`` /
+    ``journal_over_budget_flag``."""
     text, err, total_bytes = load_journal_text_for_hop(
         journal_text=journal_text,
         read_uri=read_uri,
@@ -348,6 +351,7 @@ __all__ = [
     "MAESTRO_ROLE_FACETS",
     "ReadJournalHead",
     "hop_journal_projection_fields",
+    "journal_over_budget_flag",
     "load_journal_text_for_hop",
     "project_lessons_in_force",
     "render_register_card",
