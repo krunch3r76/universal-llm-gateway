@@ -9,6 +9,7 @@ from agent_bus_store.quiet_with_wip import (
     LaneTurnView,
     QuietWithWipSnapshot,
     evaluate_quiet_with_wip,
+    seat_holding_execution_id,
 )
 
 NOW = datetime(2026, 8, 7, 1, 0, 0, tzinfo=UTC)
@@ -412,3 +413,99 @@ def test_commissioned_dispatch_still_alarms_beside_own_generate() -> None:
     assert verdict.fire is True
     assert verdict.reason == "wip_in_flight"
     assert verdict.wip_execution_ids == (commissioned,)
+
+
+# Verbatim id lines from agent-bus 12286#3383 and 12286#3373.
+_TURN_3383_ID_LINE = (
+    "birth: successor_birth_id 0bde4a5a999f461b9674c07154fed381 · "
+    "execution_id eb3ea111-3615-4c77-906f-34ee4ce2ef1d · configured "
+    "claude-opus-5-5, hop target cdp/opus-5.5-extra. My generate turn on "
+    "this lane: 12286#3382 (cdp generate — fbbc5dd77bb8, 20:59:28Z)."
+)
+_TURN_3373_ID_LINE = (
+    "seat: successor_birth_id 17fffd18747c44e6813ba95bba404b83 · "
+    "execution_id b488b712-5807-4b20-8422-b76d50d1825f · configured "
+    "claude-opus-5-5 (serving model may differ) · hop target "
+    "cdp/opus-5.5-extra · predecessor 01b6c866 (LEG 275)"
+)
+
+
+def test_seat_holding_id_from_turn_3383_inline_line() -> None:
+    """12286#3383 names the holder mid-line, not as an execution_id: field.
+
+    Breaks when the parser still requires the token at the start of a line.
+    """
+    turns = (
+        LaneTurnView(
+            turn_number=3383,
+            from_agent=SEAT,
+            created_at=_ts(THRESHOLD_S),
+            subject="SEAT_REGISTRATION — successor 0bde4a5a (LEG 277)",
+            body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3383_ID_LINE}\n",
+        ),
+    )
+    assert (
+        seat_holding_execution_id(turns)
+        == "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
+    )
+
+
+def test_seat_holding_id_from_turn_3373_inline_line() -> None:
+    """12286#3373 names the holder on the seat: line, space-separated.
+
+    Breaks when a predecessor registration's inline id is not extracted.
+    """
+    turns = (
+        LaneTurnView(
+            turn_number=3373,
+            from_agent=SEAT,
+            created_at=_ts(THRESHOLD_S),
+            subject="SEAT_REGISTRATION — successor 17fffd18 (LEG 276)",
+            body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3373_ID_LINE}\n",
+        ),
+    )
+    assert (
+        seat_holding_execution_id(turns)
+        == "b488b712-5807-4b20-8422-b76d50d1825f"
+    )
+
+
+def test_latest_stamp_without_execution_id_returns_none() -> None:
+    """A newer stamp with no id hides an older stamp that has one.
+
+    Breaks when the scan falls through to a predecessor registration.
+    """
+    turns = (
+        LaneTurnView(
+            turn_number=1,
+            from_agent=SEAT,
+            created_at=_ts(2 * THRESHOLD_S),
+            subject="SEAT_REGISTRATION",
+            body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3373_ID_LINE}\n",
+        ),
+        LaneTurnView(
+            turn_number=2,
+            from_agent=SEAT,
+            created_at=_ts(THRESHOLD_S),
+            subject="SEAT_REGISTRATION",
+            body="TYPE: SEAT_REGISTRATION\nverdict: seated\n",
+        ),
+    )
+    assert seat_holding_execution_id(turns) is None
+
+
+def test_seat_holding_id_accepts_equals_separator() -> None:
+    """An execution_id= token mid-body is the holder id.
+
+    Breaks when only colon or whitespace separators are recognized.
+    """
+    turns = (
+        LaneTurnView(
+            turn_number=1,
+            from_agent=SEAT,
+            created_at=_ts(THRESHOLD_S),
+            subject="SEAT_REGISTRATION",
+            body="TYPE: SEAT_REGISTRATION\nnote execution_id=exec-eq-1 trailing\n",
+        ),
+    )
+    assert seat_holding_execution_id(turns) == "exec-eq-1"

@@ -15,6 +15,7 @@ A dispatch the seat commissioned stays in the set until harvested.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -127,28 +128,29 @@ def infer_seat(turns: Sequence[LaneTurnView]) -> str | None:
 
 
 _SEAT_REGISTRATION_MARK = "TYPE: SEAT_REGISTRATION"
-_EXECUTION_ID_FIELD = "execution_id:"
+# First token after execution_id, whether the separator is ":", "=", or space.
+_EXECUTION_ID_RE = re.compile(r"execution_id(?:\s*[:=]\s*|\s+)(\S+)")
 
 
 def seat_holding_execution_id(turns: Sequence[LaneTurnView]) -> str | None:
     """Return the execution that currently holds the operator seat.
 
-    Reads ``execution_id`` from the latest ``TYPE: SEAT_REGISTRATION`` body
-    (the hop / operator-proxy generate cursor-auto projects onto the lane).
-    That id is the seat's own life, not a job the seat commissioned. Returns
-    None when no stamp exists or the stamp omits the field. No I/O.
+    Takes the first ``execution_id`` token in the latest
+    ``TYPE: SEAT_REGISTRATION`` body. The token may sit mid-line; the
+    separator may be a colon, an equals sign, or whitespace. That id is
+    the seat's own generate, not a job the seat commissioned. Returns None
+    when no stamp exists or the latest stamp has no id. No I/O.
     """
     ordered = sorted(turns, key=lambda t: t.turn_number, reverse=True)
     for turn in ordered:
-        first = (turn.body or "").strip().split("\n", 1)[0].strip()
+        body = turn.body or ""
+        first = body.strip().split("\n", 1)[0].strip()
         if not first.startswith(_SEAT_REGISTRATION_MARK):
             continue
-        for line in (turn.body or "").splitlines():
-            stripped = line.strip()
-            if stripped.startswith(_EXECUTION_ID_FIELD):
-                value = stripped[len(_EXECUTION_ID_FIELD) :].strip()
-                return value or None
-        return None
+        match = _EXECUTION_ID_RE.search(body)
+        if match is None:
+            return None
+        return match.group(1)
     return None
 
 
