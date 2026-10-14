@@ -34,8 +34,12 @@ from urllib.parse import urlencode
 
 import httpx
 import yaml
-
-from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S
+from bus_watch.poll import (
+    DEFAULT_MAX_HOURS,
+    DEFAULT_WAIT_SLICE_S,
+    EXIT_PRODUCER_TERMINAL,
+)
+from bus_watch.stall_pop import closeout_terminal_stall_reason, emit_stall_pop
 from bus_watch.state import write_state
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -96,6 +100,14 @@ def _resolve_latest_dispatch() -> tuple[str, str]:
     return thread_id, dispatch_id
 
 
+def _resolve_execution_id(watch_id: str) -> str:
+    """Pin producer projection from ``frontier.sdk.worker.dispatched`` when only dispatch_id is set."""
+    dispatched = _latest_event_payload(watch_id, "frontier.sdk.worker.dispatched")
+    if not dispatched:
+        return ""
+    return str(dispatched.get("execution_id") or "").strip()
+
+
 def _wait_closeout(
     client: httpx.Client,
     *,
@@ -103,6 +115,7 @@ def _wait_closeout(
     after_turn: int,
     from_agent: str,
     wait_s: int,
+    execution_id: str = "",
 ) -> dict[str, Any]:
     params = {
         "after_turn": after_turn,
@@ -110,6 +123,8 @@ def _wait_closeout(
         "completion": "first_reply_from",
         "from_agent": from_agent,
     }
+    if execution_id:
+        params["execution_id"] = execution_id
     resp = client.get(f"http://localhost/threads/{thread_id}/wait?{urlencode(params)}")
     resp.raise_for_status()
     return resp.json()
@@ -424,6 +439,8 @@ def main() -> int:
         latest_thread, latest_dispatch = _resolve_latest_dispatch()
         thread_id = thread_id or latest_thread
         watch_id = watch_id or latest_dispatch
+    if not execution_id and watch_id:
+        execution_id = _resolve_execution_id(watch_id)
 
     token = _token()
     from_agent = str(args.from_agent or "cursor-sdk").strip()
@@ -432,6 +449,7 @@ def main() -> int:
     started_at = time.monotonic()
     print(
         f"watching thread={thread_id} watch_id={watch_id} "
+        f"execution_id={execution_id or '(none)'} "
         f"after_turn={args.after_turn} from_agent={from_agent} label={args.label!r} "
         f"wait_slice_s={slice_s} "
         f"started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
@@ -447,6 +465,7 @@ def main() -> int:
         )
 
     after_turn = int(args.after_turn)
+    unlinked_warned = False
     with _bus_client(token) as client:
         while True:
             elapsed_s = time.monotonic() - started_at
@@ -473,6 +492,7 @@ def main() -> int:
                 after_turn=after_turn,
                 from_agent=from_agent,
                 wait_s=slice_s,
+                execution_id=execution_id,
             )
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
@@ -551,6 +571,39 @@ def main() -> int:
                     tag="dispatch-done",
                 )
                 return 0
+
+            terminal_reason = closeout_terminal_stall_reason(snap)
+            if terminal_reason:
+                emit_stall_pop(terminal_reason)
+                print(
+                    f"watcher terminal label={args.label!r} thread={thread_id} "
+                    f"after_turn={after_turn} reason={terminal_reason}",
+                    flush=True,
+                )
+                if state_path is not None:
+                    write_state(
+                        state_path,
+                        status="terminal",
+                        last_status=snap.get("status"),
+                        terminal_reason=terminal_reason,
+                        producer=snap.get("producer"),
+                    )
+                return EXIT_PRODUCER_TERMINAL
+
+            producer = snap.get("producer") or {}
+            if (
+                execution_id
+                and isinstance(producer, dict)
+                and producer.get("state") == "unlinked"
+                and not unlinked_warned
+            ):
+                unlinked_reason = (
+                    f"mis-arm — execution_id={execution_id!r} has no dispatch link on "
+                    f"thread {thread_id}; producer death is undetectable from this watch"
+                )
+                emit_stall_pop(unlinked_reason)
+                print(f"watch-dispatch-closeout: {unlinked_reason}", file=sys.stderr, flush=True)
+                unlinked_warned = True
 
             turn_count = snap.get("turn_count")
             thread_status = snap.get("thread_status")

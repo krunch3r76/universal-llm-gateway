@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from bus_watch.stall_pop import (
+    closeout_terminal_stall_reason,
     emit_stall_pop,
     format_producer_terminal_reason,
     should_emit_stall_pop,
@@ -44,6 +45,30 @@ def test_should_emit_stall_pop_debounces_per_episode() -> None:
     )
     assert emit
     assert last == "park_harvest_stall"
+
+
+def test_closeout_terminal_stall_reason_incomplete_terminal() -> None:
+    snap = {
+        "complete": False,
+        "producer": {"state": "terminal", "terminal_status": "completed"},
+    }
+    reason = closeout_terminal_stall_reason(snap)
+    assert reason.startswith("producer_terminal_no_reply")
+
+
+def test_closeout_terminal_stall_reason_complete_terminal_empty() -> None:
+    snap = {"complete": True, "producer": {"state": "terminal"}}
+    assert closeout_terminal_stall_reason(snap) == ""
+
+
+def test_closeout_terminal_stall_reason_in_flight_empty() -> None:
+    snap = {"complete": False, "producer": {"state": "in_flight"}}
+    assert closeout_terminal_stall_reason(snap) == ""
+
+
+def test_closeout_terminal_stall_reason_missing_producer_empty() -> None:
+    assert closeout_terminal_stall_reason({"complete": False}) == ""
+    assert closeout_terminal_stall_reason({"complete": False, "producer": None}) == ""
 
 
 def test_producer_terminal_stall_pop_includes_archive_uri() -> None:
