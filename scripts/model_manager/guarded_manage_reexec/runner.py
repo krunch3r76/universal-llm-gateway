@@ -313,7 +313,7 @@ def run_guarded_reexec(
     whoami_before = manage_call("whoami", {}, sock_path=sock_path)
     if whoami_before.get("status") == "error":
         _emit_refused("whoami_unobservable_before")
-        return GuardedReexecResult(
+        refused = GuardedReexecResult(
             status="refused",
             reason="whoami_unobservable_before",
             dry_run=dry_run,
@@ -329,7 +329,35 @@ def run_guarded_reexec(
                     }
                 ]
             },
+            stage=stage,
         )
+        if result_path is not None:
+            _write_result_file(result_path, refused)
+        return refused
+
+    prelude_early: dict[str, Any] = {}
+
+    if recover and not dry_run:
+        cleared, occ_reason = _wait_detached_occupants_clear(_busy)
+        prelude_early["occupant_wait"] = {
+            "cleared": cleared,
+            "reason": occ_reason or None,
+        }
+        if not cleared:
+            _emit_refused(occ_reason)
+            refused = _refused_result(
+                dry_run=False,
+                reason=occ_reason,
+                whoami_before=whoami_before,
+                target_ref=target_ref,
+                report_dict={"seat_prelude": prelude_early},
+                boot_timeout_s=boot_timeout_s,
+                quit_timeout_s=quit_timeout_s,
+            )
+            refused.stage = stage
+            if result_path is not None:
+                _write_result_file(result_path, refused)
+            return refused
 
     manage_pid = whoami_before.get("pid")
     manage_pid_i = int(manage_pid) if isinstance(manage_pid, int) else None
@@ -389,6 +417,7 @@ def run_guarded_reexec(
     prelude: dict[str, Any] = {
         "seat_operator_home": str(seat_home),
         **pane_meta,
+        **prelude_early,
     }
     giw_paired_required = False
 
@@ -473,7 +502,7 @@ def run_guarded_reexec(
         reason = ";".join(f.reason for f in report.findings) or "refused"
         if not dry_run:
             _emit_refused(reason)
-        return _refused_result(
+        refused = _refused_result(
             dry_run=dry_run,
             reason=reason,
             whoami_before=whoami_before,
@@ -482,6 +511,9 @@ def run_guarded_reexec(
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
         )
+        if result_path is not None and not dry_run:
+            _write_result_file(result_path, refused)
+        return refused
 
     if dry_run:
         return GuardedReexecResult(
@@ -496,23 +528,6 @@ def run_guarded_reexec(
             quit_timeout_s=quit_timeout_s,
         )
 
-    if recover:
-        cleared, occ_reason = _wait_detached_occupants_clear(_busy)
-        if not cleared:
-            _emit_refused(occ_reason)
-            refused = _refused_result(
-                dry_run=False,
-                reason=occ_reason,
-                whoami_before=whoami_before,
-                target_ref=target_ref,
-                report_dict=report_dict,
-                boot_timeout_s=boot_timeout_s,
-                quit_timeout_s=quit_timeout_s,
-            )
-            refused.stage = stage
-            if result_path is not None:
-                _write_result_file(result_path, refused)
-            return refused
     stage = "pre_stop"
 
     giw_paired: dict[str, Any] | None = None

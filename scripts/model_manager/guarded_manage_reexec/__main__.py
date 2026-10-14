@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import traceback
 from pathlib import Path
 
 from .detach import RESULT_PATH, launch_detach
-from .runner import run_guarded_reexec
+from .result import GuardedReexecResult
+from .runner import _write_result_file, run_guarded_reexec
 
 
 def _resolve_target_ref(explicit: str | None, repo_root: Path) -> str:
@@ -144,21 +146,38 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    result = run_guarded_reexec(
-        target_ref=target_ref,
-        dry_run=dry_run,
-        tmux_target=args.tmux_target,
-        repo_root=repo_root,
-        intent_db=Path(args.intent_db) if args.intent_db else None,
-        max_start_attempts=args.max_start_attempts,
-        recover=args.recover,
-        result_path=result_path or (RESULT_PATH if args.recover else None),
-    )
+    effective_result_path = result_path or (RESULT_PATH if args.recover else None)
+    result: GuardedReexecResult | None = None
+    exit_code = 1
+    try:
+        result = run_guarded_reexec(
+            target_ref=target_ref,
+            dry_run=dry_run,
+            tmux_target=args.tmux_target,
+            repo_root=repo_root,
+            intent_db=Path(args.intent_db) if args.intent_db else None,
+            max_start_attempts=args.max_start_attempts,
+            recover=args.recover,
+            result_path=effective_result_path,
+        )
+        exit_code = _exit_for_result(
+            result.status,
+            checks_refused=bool(result.checks.get("refused")),
+        )
+    except Exception as exc:
+        result = GuardedReexecResult(
+            status="crashed",
+            reason=str(exc),
+            dry_run=False,
+            target_ref=target_ref,
+            executed=False,
+            traceback=traceback.format_exc(),
+        )
+        exit_code = 1
+    if effective_result_path is not None and result is not None:
+        _write_result_file(effective_result_path, result)
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
-    return _exit_for_result(
-        result.status,
-        checks_refused=bool(result.checks.get("refused")),
-    )
+    return exit_code
 
 
 if __name__ == "__main__":

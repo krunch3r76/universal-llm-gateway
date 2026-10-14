@@ -56,21 +56,27 @@ def read_env_local_subset(hub: Path) -> dict[str, str]:
 
 
 def parse_active_reexec_units(list_units_stdout: str) -> list[str]:
-    """Parse ``systemctl list-units`` lines for active/activating reexec units."""
+    """Parse ``systemctl list-units --state=active,activating`` rows for reexec units."""
     active: list[str] = []
     for line in list_units_stdout.splitlines():
         line = line.strip()
         if not line:
             continue
-        parts = line.split(None, 2)
-        if len(parts) < 2:
-            continue
-        name, state = parts[0], parts[1].lower()
-        if not name.startswith(UNIT_PREFIX):
-            continue
-        if state in ("active", "activating"):
+        name = line.split(None, 1)[0]
+        if name.startswith(UNIT_PREFIX):
             active.append(name)
     return active
+
+
+def launcher_env_for_systemctl() -> dict[str, str]:
+    """User-session env for ``systemctl --user`` when the seat lacks XDG_RUNTIME_DIR."""
+    env = os.environ.copy()
+    if not os.environ.get("XDG_RUNTIME_DIR"):
+        uid = os.getuid()
+        xdg = f"/run/user/{uid}"
+        env["XDG_RUNTIME_DIR"] = xdg
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={xdg}/bus"
+    return env
 
 
 def child_execute_argv(
@@ -145,6 +151,12 @@ def launch_detach(
     """Admit one transient user service; return (exit_code, payload dict)."""
     run = run_cmd or _default_run
     python_bin = seat_python_bin(python_bin, default=str(seat_operator_home() / ".venvs/universal/bin/python"))
+    launcher_env = launcher_env_for_systemctl()
+
+    try:
+        result_path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     list_proc = run(
         [
@@ -152,8 +164,11 @@ def launch_detach(
             "--user",
             "list-units",
             "--no-legend",
+            "--plain",
+            "--state=active,activating",
             f"{UNIT_PREFIX}*",
-        ]
+        ],
+        env=launcher_env,
     )
     if list_proc.returncode != 0:
         return 2, {"status": "refused", "reason": "list_units_failed"}
@@ -168,14 +183,6 @@ def launch_detach(
         result_path=result_path,
         python_bin=python_bin,
     )
-    launcher_extra: dict[str, str] | None = None
-    if not os.environ.get("XDG_RUNTIME_DIR"):
-        uid = os.getuid()
-        xdg = f"/run/user/{uid}"
-        launcher_extra = {
-            "XDG_RUNTIME_DIR": xdg,
-            "DBUS_SESSION_BUS_ADDRESS": f"unix:path={xdg}/bus",
-        }
 
     systemd_argv = build_systemd_run_cmd(
         unit=unit,
@@ -183,9 +190,6 @@ def launch_detach(
         child_argv=child_argv,
         child_env=child_env,
     )
-    launcher_env = os.environ.copy()
-    if launcher_extra:
-        launcher_env.update(launcher_extra)
     proc = run(systemd_argv, env=launcher_env)
     if proc.returncode != 0:
         return 2, {
@@ -226,6 +230,7 @@ __all__ = [
     "build_systemd_run_cmd",
     "child_execute_argv",
     "launch_detach",
+    "launcher_env_for_systemctl",
     "parse_active_reexec_units",
     "read_env_local_subset",
     "unit_name_for_launch",

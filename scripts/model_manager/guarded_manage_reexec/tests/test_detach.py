@@ -58,6 +58,12 @@ def test_detach_launch_builds_transient_service(tmp_path: Path, monkeypatch: pyt
     def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         calls.append((cmd, env))
         if cmd[:3] == ["systemctl", "--user", "list-units"]:
+            assert env is not None
+            uid = os.getuid()
+            assert env["XDG_RUNTIME_DIR"] == f"/run/user/{uid}"
+            assert env["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path=/run/user/{uid}/bus"
+            assert "--plain" in cmd
+            assert "--state=active,activating" in cmd
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if cmd[0] == "systemd-run":
             assert env is not None
@@ -117,7 +123,10 @@ def test_detach_refuses_active_unit(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout="ulg-manage-reexec-20260101T000000Z.service active running\n",
+                stdout=(
+                    "ulg-manage-reexec-20260101T000000Z.service loaded active running "
+                    "Guarded manage reexec\n"
+                ),
                 stderr="",
             )
         raise AssertionError("systemd-run must not run")
@@ -132,6 +141,88 @@ def test_detach_refuses_active_unit(tmp_path: Path) -> None:
     assert code == 2
     assert payload["reason"] == "reexec_unit_already_active"
     assert not any(c and c[0] == "systemd-run" for c in calls)
+
+
+def test_recover_waits_busy_occupant_then_reaches_paired_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recover path waits launcher occupant off busy_status before refuse checks."""
+    record_path = tmp_path / "armed.json"
+    sock = str(tmp_path / "manage.sock")
+    busy_polls = {"n": 0}
+    paired_stop_called: list[bool] = []
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_ID", raising=False)
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner._publish_reexec",
+        lambda _e: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.time.sleep",
+        lambda _s: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.resolve_manage_inflight_for_seat",
+        lambda *_a, **_k: InflightWaitResult(
+            cleared=True, waited_s=0.0, giw_paired_required=True
+        ),
+    )
+    def _paired_stop(*_a, **_k):
+        paired_stop_called.append(True)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.run_giw_paired_stop",
+        _paired_stop,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.run_giw_paired_start",
+        lambda *_a, **_k: {"status": "ok"},
+    )
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            busy_polls["n"] += 1
+            if busy_polls["n"] <= 2:
+                return {
+                    "process": {"manage_inflight": 1, "activities": []},
+                    "services": {
+                        "git_integration_worker": {
+                            "active_work": {"active_count": 1},
+                        }
+                    },
+                }
+            return {"process": {"manage_inflight": 1, "activities": []}}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fail")
+        return _ok_tmux(9)(cmd)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        recover=True,
+        manage_call=manage_call,
+        run_cmd=run_cmd,
+        armed_record_path=record_path,
+        sock_path=sock,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        intent_db=tmp_path / "intents.db",
+    )
+    assert busy_polls["n"] >= 3
+    assert paired_stop_called == [True]
+    assert result.status == "refused"
+    assert result.reason == "successor_spawn_failed"
 
 
 def test_occupant_poll_timeout_refuses_without_quit(
@@ -678,9 +769,9 @@ def test_doc_claims() -> None:
 
 def test_parse_active_reexec_units() -> None:
     rows = parse_active_reexec_units(
-        "ulg-manage-reexec-1.service active running\n"
-        "ulg-manage-reexec-2.service activating start\n"
-        "other.service active running\n"
+        "ulg-manage-reexec-1.service loaded active running desc\n"
+        "ulg-manage-reexec-2.service loaded activating start desc\n"
+        "other.service loaded active running desc\n"
     )
     assert rows == [
         "ulg-manage-reexec-1.service",
