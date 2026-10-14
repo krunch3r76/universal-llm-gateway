@@ -418,6 +418,7 @@ def _execution_id_target_for_parent(
         row
         for row in rows
         if not str(row["park_resumed_by"] or "")
+        and str(row["dispatch_id"]) != parent_dispatch_id
         and _dispatch_reaches_parent(str(row["dispatch_id"]), parent_dispatch_id)
     ]
     if len(heads) != 1:
@@ -429,6 +430,38 @@ def _execution_id_target_for_parent(
         str(head["dispatch_id"]),
         _dispatch_terminal_for_status(head["status"]),
     )
+
+
+def _nested_harvest_head(
+    row: dict[str, Any], rec: dict[str, Any] | None = None
+) -> tuple[str, bool] | None:
+    """Nested lineage head for ``NEXT_ADMIT: harvest <execution_id>`` under this row."""
+    data = rec if rec is not None else _record_data(row)
+    guard = _next_admit_guard_text(row, data)
+    token = _harvest_target_token(guard)
+    if token is None:
+        return None
+    parent_id = str(row.get("dispatch_id") or "")
+    return _execution_id_target_for_parent(token, parent_id)
+
+
+def _parked_transport_nested_lift(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str],
+    head: tuple[str, bool] | None = None,
+) -> bool:
+    """Shape A: terminal nested harvest head lifts ``PARKED_TRANSPORT`` hop."""
+    if head is None:
+        head = _nested_harvest_head(row)
+    if head is None or not head[1]:
+        return False
+    if (closeout_tokens & EXIT_PERSIST_STOPS) != frozenset({"PARKED_TRANSPORT"}):
+        return False
+    dispatch_id = str(row.get("dispatch_id") or "")
+    if not dispatch_id:
+        return False
+    return not conductor_has_live_nested(dispatch_id=dispatch_id)
 
 
 def _registry_rows_for_exact_execution_id(
@@ -567,7 +600,11 @@ def hop_body_build_refused(
     # parent, the harvest line is the nest finishing, not a CDP reply still
     # owed. Exit-persist tokens, DONE, CONFIRM_PENDING, and CONSULT_PENDING
     # keep blocking, including when they appear only in the closeout prose.
-    if ledger_hit is not None and ledger_hit[1] and not (tokens & _LIFT_HOLD_TOKENS):
+    if ledger_hit is not None and ledger_hit[1]:
+        if tokens & frozenset(
+            {"DONE", "CONFIRM_PENDING", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"}
+        ):
+            return True
         if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
             return True
         return False
@@ -822,7 +859,9 @@ def _hop_skip_gate(
         if status not in ("completed", "failed", "cancelled"):
             return "mission_closed"
         tokens = closeout_tokens
-        if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+        head = _nested_harvest_head(row, _record_data(row))
+        parked_nested = head is not None and "PARKED_TRANSPORT" in tokens
+        if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})) and not parked_nested:
             return "mission_closed"
         thread_id = str(row.get("thread_id") or "")
         dispatch_id = str(row.get("dispatch_id") or "")
@@ -1067,10 +1106,14 @@ def hop_owed(
     if _cancel_discard_blocks_hop(row):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
-    if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+    nested_lift = _parked_transport_nested_lift(row, closeout_tokens=tokens)
+    if "DONE" in tokens:
+        return False
+    if tokens & EXIT_PERSIST_STOPS and not nested_lift:
         return False
     if consult_pending_blocks_progression(_closeout_body_from_row(row)):
-        return False
+        if not nested_lift:
+            return False
     thread_id = str(row.get("thread_id") or "")
     dispatch_id = str(row.get("dispatch_id") or "")
     if not thread_id or not dispatch_id:
@@ -1680,10 +1723,17 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     row = _load_row(dispatch_id) or row
     closeout_tokens = _closeout_tokens_from_row(row)
     from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        fire_park_harvest_continue,
         maybe_fire_conductor_park_harvest,
+        park_harvest_continue_owed,
         park_harvest_owed,
     )
 
+    if await asyncio.to_thread(
+        park_harvest_continue_owed, row, closeout_tokens=closeout_tokens
+    ):
+        await fire_park_harvest_continue(row)
+        return
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
         return

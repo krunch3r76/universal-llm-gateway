@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from bus_watch.park_harvest import harvest_still_owed
@@ -47,6 +47,16 @@ execution_id: exec-abc
 poll_hint: wait
 NEXT_ADMIT: harvest G1
 """
+
+_HARVEST_REPLY_UUID = "994dc2b4-d1dd-4206-bd97-2ad0109478bc"
+
+
+def _stub_shape_b_reply_match() -> patch:
+    """Hermetic stand-in for a matching CDP reply header (shape B)."""
+    return patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._reply_matches_harvest_execution",
+        return_value=True,
+    )
 
 _ROW_HOP_CLOSEOUT = """\
 status: complete
@@ -390,7 +400,11 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
     _terminal_row(
         ledger,
         designed,
-        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_body=(
+            "status: complete\n"
+            "stop: PARKED_TRANSPORT\n"
+            f"NEXT_ADMIT: harvest {_HARVEST_REPLY_UUID}\n"
+        ),
         closeout_tokens=["PARKED_TRANSPORT"],
     )
     await maybe_fire_conductor_hop_reactor(dispatch_id=designed.dispatch_id)
@@ -425,15 +439,17 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
         return True
 
     fenced_row = _load(fenced.dispatch_id)
-    assert park_harvest_continue_owed(fenced_row, reply_fn=_reply)
-    assert await fire_park_harvest_continue(fenced_row)
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(fenced_row, reply_fn=_reply)
+        assert await fire_park_harvest_continue(fenced_row)
     assert len(admits) == 1
     assert admits[0]["hop_reason"] == "park_harvest"
     assert not park_harvest_continue_owed(_load(fenced.dispatch_id), reply_fn=_reply)
 
     designed_row = _load(designed.dispatch_id)
-    assert park_harvest_continue_owed(designed_row, reply_fn=_reply)
-    assert await fire_park_harvest_continue(designed_row)
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(designed_row, reply_fn=_reply)
+        assert await fire_park_harvest_continue(designed_row)
     assert len(admits) == 2
     assert admits[1]["hop_reason"] == "park_harvest"
 
@@ -529,6 +545,7 @@ def _production_parked_row(
         "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
         "closeout_turn": closeout_turn,
         "closeout_harvest_owed": harvest_owed,
+        "closeout_body": f"NEXT_ADMIT: harvest {_HARVEST_REPLY_UUID}\n",
         "summoning_thread_id": "9638",
     }
     if fired:
@@ -548,10 +565,11 @@ def test_park_harvest_reply_on_worker_thread_readmits_without_cursor_post() -> N
     ledger = CursorDispatchLedger.instance()
     req = _req()
     row = _production_parked_row(ledger, req, fired=False)
-    assert park_harvest_continue_owed(
-        row,
-        reply_fn=lambda *_a, **_k: True,
-    )
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(
+            row,
+            reply_fn=lambda *_a, **_k: True,
+        )
     assert conductor_park_harvest_continue_candidates(ledger) == [req.dispatch_id]
 
 
@@ -560,10 +578,11 @@ def test_park_harvest_continue_owed_true_when_reply_arrived() -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req()
     row = _production_parked_row(ledger, req)
-    assert park_harvest_continue_owed(
-        row,
-        reply_fn=lambda *_a, **_k: True,
-    )
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(
+            row,
+            reply_fn=lambda *_a, **_k: True,
+        )
 
 
 def test_park_harvest_continue_owed_unchanged_for_live_harvest_id() -> None:
@@ -594,8 +613,9 @@ def test_park_harvest_continue_owed_unchanged_for_live_harvest_id() -> None:
     def _reply(*_a, **_k):
         return True
 
-    assert park_harvest_continue_owed(row_live, reply_fn=_reply)
-    assert park_harvest_continue_owed(row_g1, reply_fn=_reply)
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(row_live, reply_fn=_reply)
+        assert not park_harvest_continue_owed(row_g1, reply_fn=_reply)
 
 
 def test_park_harvest_continue_rejects_done_in_body() -> None:
@@ -960,9 +980,10 @@ async def test_park_harvest_continue_stop_not_claimed_not_retried_a_third_time(
     )
 
     row = _reload_row(ledger, req.dispatch_id)
-    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
 
-    assert await fire_park_harvest_continue(row) is False
+        assert await fire_park_harvest_continue(row) is False
     assert post_calls == 1
     row = _reload_row(ledger, req.dispatch_id)
     rec = json.loads(row["record_json"])
@@ -986,7 +1007,8 @@ async def test_park_harvest_continue_stop_not_claimed_not_retried_a_third_time(
 
     assert await fire_park_harvest_continue(row) is False
     assert post_calls == 2
-    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    with _stub_shape_b_reply_match():
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
     assert conductor_park_harvest_continue_candidates(ledger) == []
 
 
@@ -1056,8 +1078,9 @@ async def test_park_harvest_transport_then_stop_not_claimed_still_retries(
     row = _reload_row(ledger, req.dispatch_id)
     assert await fire_park_harvest_continue(row) is False
     row = _reload_row(ledger, req.dispatch_id)
-    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
-    assert await fire_park_harvest_continue(row) is False
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        assert await fire_park_harvest_continue(row) is False
     assert post_calls == 3
     row = _reload_row(ledger, req.dispatch_id)
     err = json.loads(row["record_json"])["hop_admit_error"]

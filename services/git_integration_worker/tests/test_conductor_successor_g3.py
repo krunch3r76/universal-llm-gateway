@@ -626,8 +626,8 @@ async def test_non_conductor_parent_reactor_noop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prose_parked_transport_blocks_after_nest_terminal() -> None:
-    """A hold token in the closeout prose still blocks when the nest is terminal."""
+async def test_prose_parked_transport_admits_after_nest_terminal() -> None:
+    """Shape A (friction:39223): terminal nest lifts PARKED_TRANSPORT in prose."""
     ledger = CursorDispatchLedger.instance()
     parent_id = "parent-prose-hold"
     nest_id = "nest-prose-hold"
@@ -643,11 +643,11 @@ async def test_prose_parked_transport_blocks_after_nest_terminal() -> None:
         nest_execution_id=_NEST_EXEC,
         closeout=closeout,
     )
-    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-prose"}))
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-prose-park"}))
     with ExitStack() as stack:
         _promote_contexts(stack, post)
         await _promote_nest(nest_id)
-    assert post.await_count == 0
+    assert post.await_count == 1
 
 
 @pytest.mark.asyncio

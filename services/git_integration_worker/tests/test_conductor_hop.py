@@ -3172,6 +3172,19 @@ def test_park_harvest_continue_owed_attended_row_after_reply(
     _install_mission_open_summon_oracle_fold(monkeypatch)
     ledger = CursorDispatchLedger.instance()
     row = _attended_parked_harvest_row(ledger)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._reply_matches_harvest_execution",
+        lambda *_a, **_k: True,
+    )
+    ledger.merge_record_json(
+        dispatch_id=row["dispatch_id"],
+        patch={
+            "closeout_body": (
+                "NEXT_ADMIT: harvest 994dc2b4-d1dd-4206-bd97-2ad0109478bc\n"
+            ),
+        },
+    )
+    row = _refresh_row(ledger, str(row["dispatch_id"]))
     assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
 
 

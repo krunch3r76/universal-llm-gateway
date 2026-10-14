@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -194,11 +195,14 @@ def park_harvest_owed(
     )
     if sb and not mission_open(scoreboard_body=sb):
         return False
-    if not body_park:
-        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-            hop_owed,
-        )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _nested_harvest_head,
+        hop_owed,
+    )
 
+    if _nested_harvest_head(row, rec) is not None:
+        return False
+    if not body_park:
         if hop_owed(row, closeout_tokens=tokens):
             return False
     return True
@@ -476,6 +480,103 @@ def reply_arrived_on_thread(
         return False
 
 
+_CDP_REPLY_SUBJECT_RE = re.compile(
+    r"(?i)^cdp reply — `(?P<id>[^`\n]+)`$"
+)
+_CDP_REPLY_SUBJECT_PLAIN_RE = re.compile(
+    r"(?i)^cdp reply — (?P<id>\S+)\s*$"
+)
+_EXECUTION_ID_LINE_RE = re.compile(
+    r"(?i)^execution_id:\s*`?(?P<id>[^`\n]+)`?\s*$"
+)
+
+
+def _harvest_id_boundary_match(candidate: str, token: str) -> bool:
+    if not candidate or not token:
+        return False
+    lower_c = candidate.lower()
+    lower_t = token.lower()
+    if lower_c == lower_t:
+        return True
+
+    def _prefix_at_boundary(longer: str, shorter: str) -> bool:
+        if not longer.startswith(shorter):
+            return False
+        if len(longer) == len(shorter):
+            return True
+        return longer[len(shorter)] not in "0123456789abcdef"
+
+    if len(lower_c) >= len(lower_t):
+        return _prefix_at_boundary(lower_c, lower_t)
+    return _prefix_at_boundary(lower_t, lower_c)
+
+
+def _turn_cdp_reply_candidate_id(turn: dict[str, Any]) -> str | None:
+    subject = str(turn.get("subject") or "").strip()
+    for pattern in (_CDP_REPLY_SUBJECT_RE, _CDP_REPLY_SUBJECT_PLAIN_RE):
+        match = pattern.match(subject)
+        if match:
+            return str(match.group("id")).strip()
+    body = str(turn.get("body") or "")
+    from agent_bus_store.body_auto_spill import AUTO_OVERFLOW_BRIEFING
+
+    if AUTO_OVERFLOW_BRIEFING in body:
+        return None
+    for line in body.splitlines():
+        line_match = _EXECUTION_ID_LINE_RE.match(line.strip())
+        if line_match:
+            return str(line_match.group("id")).strip()
+    return None
+
+
+def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
+    """Shape B: CDP reply subject or ``execution_id:`` header matches harvest token."""
+    from agent_seat.registry import normalize_bus_address
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _harvest_execution_started_at_iso,
+    )
+
+    rec = _record_data(row)
+    closeout_turn = rec.get("closeout_turn")
+    if not isinstance(closeout_turn, int):
+        return False
+    thread_ids: list[str] = []
+    worker_id = str(row.get("thread_id") or "").strip()
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    for tid in (worker_id, summoning_id):
+        if tid and tid not in thread_ids:
+            thread_ids.append(tid)
+    if not thread_ids:
+        return False
+    started_iso = _harvest_execution_started_at_iso(token)
+    watermarks: dict[str, int | None] = {}
+    if started_iso is not None:
+        for tid in thread_ids:
+            watermarks[tid] = resolve_consult_summoning_watermark_at_instant(
+                thread_id=tid,
+                closeout_instant=started_iso,
+            )
+    for tid in thread_ids:
+        turns = _fetch_thread_turns(tid)
+        if turns is None:
+            return False
+        watermark = watermarks.get(tid)
+        for turn in sorted(turns, key=lambda t: t.get("turn_number", 0)):
+            turn_number = turn.get("turn_number")
+            if not isinstance(turn_number, int):
+                continue
+            if normalize_bus_address(str(turn.get("from_agent") or "")) != "web-anthropic":
+                continue
+            candidate = _turn_cdp_reply_candidate_id(turn)
+            if candidate is None or not _harvest_id_boundary_match(candidate, token):
+                continue
+            if isinstance(watermark, int) and turn_number <= watermark:
+                continue
+            return True
+    return False
+
+
 def consult_pending_continue_owed(
     row: dict[str, Any],
     *,
@@ -498,6 +599,12 @@ def consult_pending_continue_owed(
         return False
     body = _closeout_body_from_row(row)
     if not is_consult_pending_wait(body):
+        return False
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _nested_harvest_head,
+    )
+
+    if _nested_harvest_head(row, rec) is not None:
         return False
     from services.git_integration_worker.cursor_sdk_park import _successor_admitted
 
@@ -693,18 +800,27 @@ def park_harvest_continue_owed(
     closeout_turn = rec.get("closeout_turn")
     if not thread_id or not isinstance(closeout_turn, int):
         return False
-    snapshot = reply_fn or (
-        lambda tid, turn, agent: reply_arrived_on_thread(
-            thread_id=tid, after_turn=turn, from_agent=agent
-        )
-    )
-    if not snapshot(thread_id, closeout_turn, "web-anthropic"):
-        return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _nested_harvest_head,
+        _next_admit_guard_text,
+        _harvest_target_token,
         conductor_has_live_nested,
         live_conductor_row_on_thread,
         mission_open_for_row,
     )
+
+    if _nested_harvest_head(row, rec) is not None:
+        return False
+    guard = _next_admit_guard_text(row, rec)
+    harvest_token = _harvest_target_token(guard)
+    if harvest_token is None:
+        return False
+    if not _reply_matches_harvest_execution(row, harvest_token):
+        return False
+    if reply_fn is not None and not reply_fn(
+        thread_id, closeout_turn, "web-anthropic"
+    ):
+        return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
         evaluate_hop_budget,
     )
