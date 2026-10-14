@@ -20,6 +20,8 @@ SECTION_OPEN_CAP_B = 600
 SECTION_LAST_CAP_B = 1536
 SECTION_FIRST_ACTS_CAP_B = 300
 PREAMBLE_SOFT_CAP_B = 30 * _KB
+RUNBOOK_BUDGET_B = 32 * _KB
+JOURNAL_HEAD_BUDGET_B = 64 * _KB
 
 _TRUNCATABLE_SECTIONS = ("LAST LEG", "OWED / NEXT", "OPEN FOR KAYWAN")
 
@@ -630,6 +632,75 @@ def maestro_runbook_act2_line() -> str:
     )
 
 
+def measure_checkpoint_budget_bytes(
+    sidecar: str,
+    *,
+    inline_house_rules: str | None = None,
+) -> int | None:
+    """UTF-8 bytes of the checkpoint subject to the 8 KB cap (excludes IN FLIGHT)."""
+    current = _extract_current_leg_block(sidecar)
+    if not current:
+        legacy = _legacy_checkpoint_body(sidecar, house_rules_body=inline_house_rules)
+        return _utf8_len(legacy) if legacy else None
+    sections = _parse_h3_sections(current)
+    working = {k: v for k, v in sections.items() if "HOUSE RULES" not in k}
+    return _checkpoint_budget_body_len(working)
+
+
+def render_budgets_table_block(
+    *,
+    lane: str,
+    checkpoint_capped_bytes: int | None = None,
+    house_rules_bytes: int | None = None,
+    runbook_bytes: int | None = None,
+    journal_head_bytes: int | None = None,
+    preamble_bytes: int | None = None,
+) -> str:
+    """Markdown budgets table (plan §3) with live byte counts when supplied."""
+
+    def _cell(value: int | None, cap: int | None = None) -> str:
+        if value is None:
+            return "—"
+        if cap is not None:
+            return f"{value}/{cap}"
+        return str(value)
+
+    handoff_uri = standing_handoff_uri(lane)
+    rules_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
+    lines = [
+        "## Budgets",
+        "",
+        "Budgets are UTF-8 bytes. Enforcement is at render (truncate-and-flag); "
+        "writers stay under budget.",
+        "",
+        "| Surface | Budget | Live bytes |",
+        "|---|---|---|",
+        (
+            f"| `{lane}-standing-handoff.md` checkpoint (excl. HOUSE RULES; IN FLIGHT "
+            f"uncapped) | {CHECKPOINT_BUDGET_B} | {_cell(checkpoint_capped_bytes, CHECKPOINT_BUDGET_B)} |"
+        ),
+        (
+            f"| `{lane}-house-rules.md` | {RULES_BUDGET_B} | "
+            f"{_cell(house_rules_bytes, RULES_BUDGET_B)} |"
+        ),
+        (
+            f"| `maestro-loop.md` (§ Refuse + § Steps) | {RUNBOOK_BUDGET_B} | "
+            f"{_cell(runbook_bytes, RUNBOOK_BUDGET_B)} |"
+        ),
+        (
+            f"| `maestro/journal.md` head (arrival read) | {JOURNAL_HEAD_BUDGET_B} | "
+            f"{_cell(journal_head_bytes, JOURNAL_HEAD_BUDGET_B)} |"
+        ),
+        (
+            f"| hop preamble (soft; IN FLIGHT may push over) | {PREAMBLE_SOFT_CAP_B} | "
+            f"{_cell(preamble_bytes, PREAMBLE_SOFT_CAP_B)} |"
+        ),
+        "",
+        f"Standing handoff URI: {handoff_uri} · rules URI: {rules_uri}",
+    ]
+    return "\n".join(lines)
+
+
 def assess_render_budget_and_identity(
     sidecar: str | None,
     *,
@@ -686,13 +757,17 @@ def compute_preamble_over_inflight_flag(
 
 __all__ = [
     "CHECKPOINT_BUDGET_B",
+    "JOURNAL_HEAD_BUDGET_B",
     "PREAMBLE_SOFT_CAP_B",
+    "RUNBOOK_BUDGET_B",
     "InflightRow",
     "assess_render_budget_and_identity",
     "compute_preamble_over_inflight_flag",
     "maestro_runbook_act2_line",
+    "measure_checkpoint_budget_bytes",
     "measure_preamble_bytes",
     "parse_inflight_rows",
+    "render_budgets_table_block",
     "render_checkpoint_block",
     "render_house_rules_block",
     "render_inflight_block",

@@ -13,7 +13,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from hop_handoff.body import parse_successor_birth_id, parse_superseded_registration_id
+from hop_handoff.body import (
+    parse_hop_kind,
+    parse_successor_birth_id,
+    parse_superseded_registration_id,
+)
 from hop_handoff.standing_handoff import standing_handoff_path, standing_handoff_uri
 from implement_admission.closeout_helpers import cortex_files_root
 
@@ -34,11 +38,14 @@ from claude_bundles.operator_proxy_live_leg import (
     render_live_leg,
 )
 from claude_bundles.operator_proxy_standing_render import (
+    measure_checkpoint_budget_bytes,
+    render_budgets_table_block,
     render_checkpoint_block,
     render_house_rules_block,
     render_inflight_block,
     render_pointers_block,
 )
+from claude_bundles.maestro_runbook_load import load_maestro_runbook
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -233,8 +240,10 @@ def hop_successor_fields(
     act5_fetch_last: int | None = None,
 ) -> dict[str, str]:
     """Fill the hop-successor template from the prompt, handoff, and bus state."""
-    lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
-    birth = parse_successor_birth_id(prompt or "") or UNKNOWN_FIELD
+    prompt_text = prompt or ""
+    lane = extract_thread_id(prompt_text) or UNKNOWN_FIELD
+    birth = parse_successor_birth_id(prompt_text) or UNKNOWN_FIELD
+    hop_kind = parse_hop_kind(prompt_text)
     handoff_failure = (
         standing_handoff_text
         if _is_standing_handoff_failure(standing_handoff_text)
@@ -377,7 +386,40 @@ def hop_successor_fields(
 
     fetch_last = act5_fetch_last if act5_fetch_last is not None else 3
 
+    rules_bytes = (
+        len((house_rules_verbatim or "").encode("utf-8"))
+        if house_rules_verbatim
+        else None
+    )
+    checkpoint_bytes = (
+        measure_checkpoint_budget_bytes(sidecar, inline_house_rules=inline_rules)
+        if sidecar and not handoff_failure
+        else None
+    )
+    runbook_bytes: int | None = None
+    try:
+        runbook_body, _runbook_err = load_maestro_runbook()
+        runbook_bytes = (
+            len(runbook_body.encode("utf-8")) if runbook_body else None
+        )
+    except Exception:  # noqa: BLE001 — budgets table is fail-open
+        runbook_bytes = None
+    journal_head_bytes = (
+        len((journal_text or "").encode("utf-8")) if journal_text else None
+    )
+    try:
+        budgets_table = render_budgets_table_block(
+            lane=lane,
+            checkpoint_capped_bytes=checkpoint_bytes,
+            house_rules_bytes=rules_bytes,
+            runbook_bytes=runbook_bytes,
+            journal_head_bytes=journal_head_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+        budgets_table = _render_failed("budgets_table", exc, standing_handoff_uri(lane))
+
     return {
+        "hop_kind": hop_kind,
         "lane": lane,
         "successor_birth_id": birth,
         "execution_clause": execution_clause,
@@ -391,6 +433,7 @@ def hop_successor_fields(
         "live_leg": live_leg,
         "pointers": pointers,
         "fetch_last": str(fetch_last),
+        "budgets_table": budgets_table,
     }
 
 

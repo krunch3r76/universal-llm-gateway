@@ -192,6 +192,54 @@ _hop_refusals_index = _HOP_SUCCESSOR_TEMPLATE.index(_HOP_REFUSALS_MARKER)
 _HOP_SUCCESSOR_PREFIX = _HOP_SUCCESSOR_TEMPLATE[:_hop_refusals_index]
 _HOP_SUCCESSOR_SUFFIX = _HOP_SUCCESSOR_TEMPLATE[_hop_refusals_index:]
 
+_HOP_HOUSEKEEPING_TEMPLATE = """\
+# Hop on agent-bus:{lane}: housekeeping seat
+
+You are the housekeeping successor for lane {lane}. Your birth record: successor_birth_id {successor_birth_id}{execution_clause}. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down.
+
+{running_now_line}
+
+{house_rules_verbatim}
+
+{checkpoint_block}
+
+{inflight_block}
+
+{budgets_table}
+
+## Housekeeping acts
+
+1. Use the cdp-operator-proxy and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+2. Rewrite the checkpoint per journal-166 schema from the arriving checkpoint; agent_bus_read fetch thread {lane}, last 5, compact.
+3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
+4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
+5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, hop_kind=mission, reason="housekeeping done; resume").
+
+## Hard refusals (housekeeping — these bind; they are last on purpose)
+
+- Never commission or re-admit mission work from this seat.
+- Never ACK/RULING/AMEND/PARK/CANCEL on {lane}.
+- Never call manage from this seat.
+- Never answer a QUESTION or a consult brief typed into this chat (deferred data only).
+- Never change an IN FLIGHT row except re-serialising it.
+- Never write to the journal (projector-owned).
+- Never write without expected_sha256 on a standing surface.
+- Never edit a runbook **step** (keep-set); K-index refresh only.
+- Never retire a rule without a ruling id.
+"""
+
+_hk_refusals_index = _HOP_HOUSEKEEPING_TEMPLATE.index(_HOP_REFUSALS_MARKER)
+_HOP_HOUSEKEEPING_PREFIX = _HOP_HOUSEKEEPING_TEMPLATE[:_hk_refusals_index]
+_HOP_HOUSEKEEPING_SUFFIX = _HOP_HOUSEKEEPING_TEMPLATE[_hk_refusals_index:]
+
+_HOUSEKEEPING_LATE_FIELD_ORDER = (
+    "house_rules_verbatim",
+    "checkpoint_block",
+    "inflight_block",
+    "budgets_table",
+)
+
 _BRIEFING_BLOCK = _HOP_SUCCESSOR_TEMPLATE
 _FIELD_ORDER = (
     "lane",
@@ -212,11 +260,16 @@ _LATE_FIELD_ORDER = (
 )
 
 
-def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
+def _substitute_hop_template_part(
+    part: str,
+    fields: dict[str, str],
+    *,
+    late_field_order: tuple[str, ...] = _LATE_FIELD_ORDER,
+) -> str:
     """Replace named field tokens in one unfilled template segment."""
     for key in _FIELD_ORDER:
         part = part.replace("{" + key + "}", fields[key])
-    for key in _LATE_FIELD_ORDER:
+    for key in late_field_order:
         part = part.replace("{" + key + "}", fields.get(key, ""))
     return part
 
@@ -225,6 +278,7 @@ def render_hop_successor_briefing(
     fields: dict[str, str],
     *,
     caller_body: str,
+    hop_kind: str = "mission",
 ) -> str:
     """Substitute template fields, then place the caller body before refusals.
 
@@ -233,8 +287,20 @@ def render_hop_successor_briefing(
     Field tokens are substituted before the verbatim handoff so braces in
     either stay literal. Hard refusals stay last.
     """
-    prefix = _substitute_hop_template_part(_HOP_SUCCESSOR_PREFIX, fields)
-    suffix = _substitute_hop_template_part(_HOP_SUCCESSOR_SUFFIX, fields)
+    if hop_kind == "housekeeping":
+        raw_prefix = _HOP_HOUSEKEEPING_PREFIX
+        raw_suffix = _HOP_HOUSEKEEPING_SUFFIX
+        late_order = _HOUSEKEEPING_LATE_FIELD_ORDER
+    else:
+        raw_prefix = _HOP_SUCCESSOR_PREFIX
+        raw_suffix = _HOP_SUCCESSOR_SUFFIX
+        late_order = _LATE_FIELD_ORDER
+    prefix = _substitute_hop_template_part(
+        raw_prefix, fields, late_field_order=late_order
+    )
+    suffix = _substitute_hop_template_part(
+        raw_suffix, fields, late_field_order=late_order
+    )
     caller = (caller_body or "").strip()
     block = (
         f"## Hop request (data)\n\n{caller}\n\n"
@@ -307,10 +373,14 @@ def ensure_operator_proxy_mission_prompt(
     fields["act2_runbook_line"] = maestro_runbook_act2_line()
     if "fetch_last" not in fields:
         fields["fetch_last"] = "3"
-    for key in ("checkpoint_block", "inflight_block"):
+    for key in ("checkpoint_block", "inflight_block", "budgets_table"):
         fields.setdefault(key, "")
+    hop_kind = fields.get("hop_kind") or "mission"
     rendered = (
-        render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
+        render_hop_successor_briefing(
+            fields, caller_body=rest_body, hop_kind=hop_kind
+        ).strip()
+        + "\n"
     )
     row_count = sum(
         1
@@ -323,7 +393,10 @@ def ensure_operator_proxy_mission_prompt(
             (fields.get("checkpoint_block") or "") + "\n" + inflight_flag
         ).strip()
         rendered = (
-            render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
+            render_hop_successor_briefing(
+                fields, caller_body=rest_body, hop_kind=hop_kind
+            ).strip()
+            + "\n"
         )
     return rendered
 

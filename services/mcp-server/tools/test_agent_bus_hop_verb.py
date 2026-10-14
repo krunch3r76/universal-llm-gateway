@@ -150,6 +150,88 @@ def test_hop_relay_body_wires_mission_kind_and_predecessor_registration() -> Non
     assert result["continuity_hop"] is True
 
 
+def test_hop_relay_mission_kind_with_hop_kind_housekeeping() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hk"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="housekeeping: budget_exceeded",
+                from_agent="web-anthropic",
+                hop_kind="housekeeping",
+            )
+
+    asyncio.run(run())
+    assert captured["body"]["mission_kind"] == "hop"
+    assert "hop_kind: housekeeping" in captured["body"]["prompt"]
+
+
+def test_hop_relay_mission_kind_when_hop_kind_omitted() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-mission-default"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+            )
+
+    asyncio.run(run())
+    assert captured["body"]["mission_kind"] == "hop"
+    assert "hop_kind:" not in captured["body"]["prompt"]
+
+
+def test_hop_rejects_invalid_hop_kind_before_relay() -> None:
+    async def fake_relay(**kwargs: object) -> dict[str, str]:
+        raise AssertionError(f"relay must not run: {kwargs!r}")
+
+    async def run() -> dict[str, object]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="housekeeping",
+                from_agent="web-anthropic",
+                hop_kind="bogus",
+            )
+
+    result = asyncio.run(run())
+    assert result["reason"] == "hop_kind_invalid"
+
+
 def test_hop_relay_body_omits_predecessor_when_registration_absent() -> None:
     """No CSE registration: still mission_kind=hop; sole-gate exempt at Stargate."""
     captured: dict[str, Any] = {}
@@ -373,6 +455,9 @@ def test_hop_relays_full_handoff_prompt(reason: str) -> None:
         source="agent-bus-hop-verb",
         handoff=handoff,
         successor_birth_id=birth,
+        standing_handoff_budget=handoff.budget,
+        standing_handoff_identity=handoff.identity,
+        inflight_rows=None,
     )
     assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
 

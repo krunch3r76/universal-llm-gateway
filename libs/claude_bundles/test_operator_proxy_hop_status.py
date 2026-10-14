@@ -578,6 +578,28 @@ def test_journal_archive_path_oserror_does_not_abort_hop() -> None:
     assert out.startswith("# Hop on agent-bus:")
 
 
+def test_hop_successor_fields_parses_hop_kind_and_body_metadata() -> None:
+    prompt = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        "hop_kind: housekeeping\n"
+        "standing_handoff_budget: exceeded\n"
+        "standing_handoff_identity: stale\n"
+        "inflight_rows: 3\n"
+    )
+    sidecar = "## CURRENT LEG\n### OWED / NEXT\nx\n"
+    fields = hop_successor_fields(
+        prompt,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert fields["hop_kind"] == "housekeeping"
+    assert fields["budgets_table"].startswith("## Budgets")
+
+
 def test_hop_journal_default_uri_is_maestro() -> None:
     assert MAESTRO_JOURNAL_URI == "cortex://notes/system/maestro/journal.md"
     fields = hop_successor_fields(

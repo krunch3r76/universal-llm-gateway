@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -626,6 +627,83 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert "execution_id unknown" not in out
 
 
+def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
+    birth = "b" * 32
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {birth}\n"
+        "hop_kind: housekeeping\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n### OWED / NEXT\nhk fixture\n"
+        "### HOUSE RULES\n- K1 hk-rule\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert "## Budgets" in out
+    assert "## Housekeeping acts" in out
+    assert "Act on the running items" not in out
+    assert out.index("## Budgets") < out.index("## Housekeeping acts")
+
+
+def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
+    golden_path = (
+        Path(__file__).resolve().parent / "testdata" / "mission_hop_preamble_golden.txt"
+    )
+    golden = golden_path.read_text(encoding="utf-8")
+    birth = "a" * 32
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {birth}\n"
+        "trigger: golden-fixture\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\nfixture owed line\n"
+        "### HOUSE RULES\n- K1 golden-rule\n"
+    )
+    with patch(
+        "claude_bundles.operator_proxy_mission.maestro_runbook_act2_line",
+        return_value="`md_read` cortex://notes/runbooks/maestro-loop.md sections § Refuse and § Steps only (runbook 12345 bytes).",
+    ):
+        out = ensure_operator_proxy_mission_prompt(
+            caller,
+            standing_handoff_text=sidecar,
+            roster_text="",
+            fetch_turns=_noop_fetch,
+            journal_text="",
+            register_text="",
+            execution_id="exec-golden",
+        )
+    assert out == golden
+    with patch(
+        "claude_bundles.operator_proxy_mission.maestro_runbook_act2_line",
+        return_value="`md_read` cortex://notes/runbooks/maestro-loop.md sections § Refuse and § Steps only (runbook 12345 bytes).",
+    ):
+        explicit = ensure_operator_proxy_mission_prompt(
+            caller + "hop_kind: mission\n",
+            standing_handoff_text=sidecar,
+            roster_text="",
+            fetch_turns=_noop_fetch,
+            journal_text="",
+            register_text="",
+            execution_id="exec-golden",
+        )
+    assert "Act on the running items" in explicit
+    assert "## Housekeeping acts" not in explicit
+    assert explicit.split("## Hop request (data)", 1)[0] == golden.split(
+        "## Hop request (data)", 1
+    )[0]
+
+
 def test_hop_successor_template_has_single_refusals_marker() -> None:
     """Module split assumes one canonical refusals heading in the raw template."""
     assert _HOP_SUCCESSOR_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1
@@ -927,16 +1005,12 @@ def test_ac3_unreadable_journal_renders_unavailable(
     journal = root / "notes/system/maestro/journal.md"
     journal.parent.mkdir(parents=True)
     journal.write_text("# journal\n", encoding="utf-8")
-    original = Path.read_text
-
-    def _wrapped(self: Path, *args: object, **kwargs: object) -> str:
-        if self.name == "journal.md":
-            raise PermissionError("denied")
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", _wrapped)
-    for text in _ac6_texts(root, monkeypatch):
-        assert "journal unavailable" in text
+    os.chmod(journal, 0o000)
+    try:
+        for text in _ac6_texts(root, monkeypatch):
+            assert "journal unavailable" in text
+    finally:
+        os.chmod(journal, 0o644)
 
 
 def test_ac6_checkpoint_raise_replaces_only_that_block(
@@ -992,7 +1066,8 @@ def test_ac8_non_utf8_journal_and_register_degrade(
     (maestro / "journal.md").write_bytes(b"\xff")
     (maestro / "register.md").write_bytes(b"\xff")
     for text in _ac6_texts(root, monkeypatch):
-        assert "journal unavailable" in text
+        lessons = text.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+        assert "RULE:" not in lessons
         assert (
             "[render_failed register_card: UnicodeDecodeError — read "
             "cortex://notes/system/maestro/register.md]"

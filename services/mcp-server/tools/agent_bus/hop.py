@@ -15,6 +15,7 @@ from hop_handoff import (
     build_continuity_handoff_body,
     parse_successor_birth_id,
 )
+from hop_handoff.body import VALID_HOP_KINDS
 from job_grammar import resolve_job_token
 from job_vocab.records import job_record
 from mcp_events import record
@@ -195,6 +196,7 @@ async def _hop_dispatch(
     desired_model: str = "",
     desired_effort: str = "",
     job: str | None = None,
+    hop_kind: str | None = None,
     request_id: str | None = None,
     after_turn: int = 0,
     subject: str | None = None,
@@ -248,6 +250,18 @@ async def _hop_dispatch(
     if seat_refusal is not None:
         return seat_refusal
 
+    resolved_hop_kind = (hop_kind or "").strip().lower() or "mission"
+    if resolved_hop_kind not in VALID_HOP_KINDS:
+        record(
+            "mcp.agentbus.hop.rejected",
+            reason="hop_kind_invalid",
+            thread=thread_id,
+        )
+        return {
+            "error": "hop: hop_kind must be mission or housekeeping",
+            "reason": "hop_kind_invalid",
+        }
+
     try:
         model = resolve_hop_successor_model(desired_model)
     except ValueError:
@@ -257,7 +271,28 @@ async def _hop_dispatch(
             "reason": "hop_model_invalid",
         }
 
-    handoff = assess_standing_handoff(thread_id)
+    handoff = assess_standing_handoff(
+        thread_id,
+        superseded_registration_id=cse_registration_id,
+    )
+    inflight_count: int | None = None
+    try:
+        from claude_bundles.operator_proxy_standing_render import render_checkpoint_block
+        from hop_handoff.standing_handoff import standing_handoff_path
+
+        sidecar_path = standing_handoff_path(thread_id)
+        if sidecar_path.is_file():
+            sidecar_text = sidecar_path.read_text(encoding="utf-8")
+            _checkpoint, ck_meta = render_checkpoint_block(
+                sidecar_text,
+                lane=thread_id,
+                superseded_registration_id=cse_registration_id,
+            )
+            inflight_count = len(ck_meta.get("inflight_rows") or [])
+    except Exception:  # noqa: BLE001 — omit inflight_rows line when not computed
+        inflight_count = None
+
+    wire_hop_kind = resolved_hop_kind if resolved_hop_kind != "mission" else None
     full_body = build_continuity_handoff_body(
         thread_id=thread_id,
         trigger=trigger,
@@ -265,6 +300,10 @@ async def _hop_dispatch(
         handoff=handoff,
         occupy_target=(cse_chat_url or "").strip() or None,
         superseded_registration_id=cse_registration_id,
+        hop_kind=wire_hop_kind,
+        standing_handoff_budget=handoff.budget,
+        standing_handoff_identity=handoff.identity,
+        inflight_rows=inflight_count,
     )
     # mission_kind=hop arms Stargate hop_own_generate so the caller's own
     # live generate is excluded (a:37182). predecessor_registration_id names

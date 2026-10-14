@@ -25,6 +25,7 @@ from hop_handoff import (
     mint_successor_birth_id,
     parse_successor_birth_id,
 )
+from hop_handoff.body import parse_hop_kind
 
 pytestmark = pytest.mark.offline
 
@@ -115,6 +116,30 @@ def test_missing_vs_current_handoff_branch(status: str) -> None:
         assert "standing_handoff_age_s:" not in body
     else:
         assert "standing_handoff_age_s:" in body
+
+
+def test_handoff_body_includes_hop_kind_budget_identity_inflight() -> None:
+    body = build_continuity_handoff_body(
+        thread_id=_THREAD,
+        trigger="housekeeping: budget_exceeded",
+        source="agent-bus-hop-verb",
+        handoff=_handoff("current"),
+        hop_kind="housekeeping",
+        standing_handoff_budget="exceeded",
+        standing_handoff_identity="stale",
+        inflight_rows=2,
+        successor_birth_id="c" * 32,
+    )
+    assert "hop_kind: housekeeping" in body
+    assert "standing_handoff_budget: exceeded" in body
+    assert "standing_handoff_identity: stale" in body
+    assert "inflight_rows: 2" in body
+    assert parse_hop_kind(body) == "housekeeping"
+
+
+def test_parse_hop_kind_defaults_to_mission() -> None:
+    body = _cadence_body()
+    assert parse_hop_kind(body) == "mission"
 
 
 def test_verb_source_body_starts_with_type_token() -> None:

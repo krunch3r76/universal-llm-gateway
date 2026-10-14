@@ -20,6 +20,8 @@ _BIRTH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _BIRTH_ID_PREFIX = "successor_birth_id:"
 _OCCUPY_TARGET_PREFIX = "occupy_target:"
 _SUPSERSED_REG_PREFIX = "superseded_registration_id:"
+_HOP_KIND_PREFIX = "hop_kind:"
+VALID_HOP_KINDS = frozenset({"mission", "housekeeping"})
 
 
 def mint_successor_birth_id() -> str:
@@ -59,6 +61,17 @@ def is_successor_birth_id(value: str | None) -> bool:
     return bool(value) and _BIRTH_ID_RE.fullmatch(value or "") is not None
 
 
+def parse_hop_kind(body: str) -> str:
+    """Return ``hop_kind`` from a handoff body; ``mission`` when the line is absent."""
+    for line in (body or "").splitlines():
+        if line.startswith(_HOP_KIND_PREFIX):
+            value = line.split(":", 1)[1].strip().lower()
+            if value in VALID_HOP_KINDS:
+                return value
+            return value
+    return "mission"
+
+
 def build_continuity_handoff_body(
     *,
     thread_id: str,
@@ -72,6 +85,10 @@ def build_continuity_handoff_body(
     superseded_registration_id: str | None = None,
     successor_birth_id: str | None = None,
     mission: str | None = None,
+    hop_kind: str | None = None,
+    standing_handoff_budget: str | None = None,
+    standing_handoff_identity: str | None = None,
+    inflight_rows: int | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -126,6 +143,19 @@ def build_continuity_handoff_body(
     )
     if handoff.age_s is not None:
         lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
+    resolved_kind = (hop_kind or "").strip().lower()
+    if resolved_kind == "housekeeping":
+        lines.append(f"{_HOP_KIND_PREFIX} housekeeping")
+    elif resolved_kind == "mission":
+        lines.append(f"{_HOP_KIND_PREFIX} mission")
+    budget = (standing_handoff_budget or "").strip()
+    if budget:
+        lines.append(f"standing_handoff_budget: {budget}")
+    identity = (standing_handoff_identity or "").strip()
+    if identity:
+        lines.append(f"standing_handoff_identity: {identity}")
+    if inflight_rows is not None:
+        lines.append(f"inflight_rows: {int(inflight_rows)}")
     if superseded_registration_id:
         lines.append(f"superseded_registration_id: {superseded_registration_id}")
     lines.append(f"{_BIRTH_ID_PREFIX} {birth_id}")

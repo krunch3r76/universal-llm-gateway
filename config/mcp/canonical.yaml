@@ -2358,6 +2358,15 @@ tools:
       desired_effort:
         type: string
         description: Optional Auto hint (default medium).
+      hop_kind:
+        type: string
+        enum:
+        - mission
+        - housekeeping
+        description: >-
+          Successor template variant. Default mission when omitted. Housekeeping
+          selects the bounded housekeeping preamble (budgets table, no mission
+          commission acts). mission_kind=hop on the relay payload is unchanged.
       request_id:
         type: string
         description: Optional idempotency key; minted when omitted.
