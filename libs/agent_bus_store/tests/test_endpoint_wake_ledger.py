@@ -7,6 +7,7 @@ import threading
 import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn
+from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_wake_ledger import (
     WakeConflictError,
     advance_scan,
@@ -14,7 +15,6 @@ from agent_bus_store.db.endpoint_wake_ledger import (
     fold_expired_claims,
     get_cursor,
 )
-from agent_bus_store.db.connection import connect
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 

@@ -72,11 +72,6 @@ from .post_reply import (
     _reply_dispatch,
     _reply_impl,
 )
-from .subscriptions import (
-    _subscribe_dispatch,
-    _subscriptions_dispatch,
-    _unsubscribe_dispatch,
-)
 from .read_state import (
     _mark_read_dispatch,
     _resolve_turn_id,
@@ -87,6 +82,11 @@ from .request import _request_dispatch
 from .send import (
     _send_dispatch,
     _send_impl,
+)
+from .subscriptions import (
+    _subscribe_dispatch,
+    _subscriptions_dispatch,
+    _unsubscribe_dispatch,
 )
 from .threads import (
     _create_thread_dispatch,
