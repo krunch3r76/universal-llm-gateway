@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "7122d12b492ee16588d5113e3dc710845b83d08c3200e0ad15af9903345007ff"
+OPENAPI_SHA256 = "ce2cb1be7ea037e701f47f1d47ffbf22e8d7f75830386f2754710b8fd62db36f"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -100,6 +100,16 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/threads/send",
         "operation_id": "send_route_threads_send_post",
     },
+    "subscribe": {
+        "method": "POST",
+        "path": "/endpoint-subscriptions",
+        "operation_id": "subscribe_route_endpoint_subscriptions_post",
+    },
+    "subscriptions": {
+        "method": "GET",
+        "path": "/endpoint-subscriptions",
+        "operation_id": "subscriptions_route_endpoint_subscriptions_get",
+    },
     "tape": {
         "method": "GET",
         "path": "/threads/{thread_id}/tape",
@@ -120,6 +130,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/threads/triage",
         "operation_id": "triage_threads_route_threads_triage_post",
     },
+    "unsubscribe": {
+        "method": "POST",
+        "path": "/endpoint-subscriptions/unsubscribe",
+        "operation_id": "unsubscribe_route_endpoint_subscriptions_unsubscribe_post",
+    },
     "update": {
         "method": "PATCH",
         "path": "/turns/{turn_id}",
@@ -137,9 +152,10 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "94d3e005d1959e8a9095781da0d637a303f7d3af33f36030641b6ba6475ed9ba",
+    "@components": "a0892dc26aee61b96481b3d4b9c1180fed4f2531e176603c025346e2df11506f",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
+    "GET /endpoint-wake/cursor": "2f6669d44f555a5e11f50ae4a1e39ee8dd234cb433d2173616b8c067d983d2c6",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",
     "GET /messages": "dfa9edc6b95121bb35b9ecca22260b564c40e4a8c4c180950101cb75619b0aa5",
     "GET /resume-fences/{fence_id}": "faa8db7e13d971df64761d456de2b49efdfca13983139ff6d363a38e63671603",
@@ -147,8 +163,12 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /threads/{thread_id}/export": "a784f1abaed3c1f6839a38b2da63cff1f70cd335d3a9098fa3f2ebf10d8eb063",
     "GET /threads/{thread_id}/resume-fence": "9111adec1e5af49c6a2778f36ca005164511929b63dbe16cf93ea36e0344165c",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",
+    "GET /turns/since": "93c587e9bae1612a749ddd982824e1fa1500da5e59554770b207dbec20659924",
     "PATCH /turns/{turn_id}/read": "d0c7fd2d62a6d60b88d62147bbe83cb63699716a9af07258f124e4a03794ad83",
     "PATCH /turns/{turn_id}/status": "b072109a07a08292a0b2047561d1162fd5be53eea6dd69e123d44f2ddf352d3f",
+    "POST /endpoint-wake/claim": "d2949781ebc9a2540d3da8fcc1823bf6d2b6f0577613bd4544c4e0dd697dfdee",
+    "POST /endpoint-wake/result": "f1310a12b0da564f30d80686e279e0031eef1731f4406eabbc8a85afc2ce4dfc",
+    "POST /endpoint-wake/scan": "53b666a90966c49959bbeac18f2896f65ba4fa2d410960ba513d43cf265f8453",
     "POST /messages": "8eb6200e7a4c6230aedbd411e976dff308399638011d2c871377267df36cdcb6",
     "POST /messages/{message_id}/read": "83761673ef954dc5a7199d0edad08a0e6efde98f66f8b0a65a0f6e7fe1a8257e",
     "POST /resume-fences/{fence_id}/denied": "dc85bdb04fa8d904fbca7730155eaf58384e998d5f73fa12401b772395d2cda7",

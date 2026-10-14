@@ -49,6 +49,7 @@ def _agent_bus_runtime_env() -> tuple[dict[str, str], str | None]:
     env = {
         "AGENT_BUS_DB_PATH": str(db_path),
         "AGENT_BUS_SOCK": str(_AGENT_BUS_SOCKET),
+        "AGENT_BUS_ENDPOINT_WAKE_DISPATCHER": "1",
     }
     if cfg.checkpoint_auto_supersede:
         env["AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE"] = "1"

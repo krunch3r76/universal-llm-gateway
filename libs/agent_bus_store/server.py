@@ -19,11 +19,12 @@ from fastapi.responses import JSONResponse
 
 from .db import init_db
 from .reconcile import reconcile_orphaned_dispatches
-from .runtime_config import apply_runtime_config_env
+from .routes.endpoint_wake import router as endpoint_wake_router
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
 from .routes.wait import router as wait_router
+from .runtime_config import apply_runtime_config_env
 from .turns_models import MAX_TURN_BODY_CHARS, body_too_large_envelope
 from .watchdog import run_watchdog
 
@@ -49,13 +50,30 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         except Exception:
             logger.exception("orphan reconcile failed at startup")
         watchdog_task = asyncio.create_task(run_watchdog())
+        wake_task: asyncio.Task[None] | None = None
+        if os.environ.get("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER") == "1":
+            from background_supervisor import supervise
+            from bus_watch.endpoint_wake_dispatcher import run_dispatcher
+
+            wake_task = supervise(
+                _app,
+                "endpoint_wake_dispatcher",
+                run_dispatcher,
+                restart=True,
+                max_restarts=None,
+            )
         logger.info("agent-bus started")
         try:
             yield
         finally:
             watchdog_task.cancel()
+            if wake_task is not None:
+                wake_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await watchdog_task
+            if wake_task is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await wake_task
 
     app = FastAPI(
         title="agent-bus",
@@ -116,6 +134,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(turns_router)
     app.include_router(threads_router)
     app.include_router(wait_router)
+    app.include_router(endpoint_wake_router)
     return app
 
 

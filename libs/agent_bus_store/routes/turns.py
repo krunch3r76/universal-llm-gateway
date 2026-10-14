@@ -555,3 +555,13 @@ async def bulk_mark_read_state_route(
             detail=str(exc),
         )
     return TurnReadStateBulkResult(marked_read=marked)
+
+
+@router.get("/turns/since")
+async def turns_since_route(
+    after_id: int = Query(...), limit: int = Query(default=50)
+) -> dict[str, Any]:
+    """Compact turns with id greater than after_id, oldest first, no body."""
+    from ..db.endpoint_wake_ledger import list_turns_since
+
+    return {"turns": list_turns_since(after_id, limit)}

@@ -1,0 +1,258 @@
+"""Durable cursor and wake claims for the endpoint wake dispatcher."""
+
+from __future__ import annotations
+
+import sqlite3
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from agent_seat.registry import normalize_bus_address
+
+from .connection import connect, write_connect
+
+CONSUMER = "endpoint-wake-dispatcher"
+_CLAIM_STATES = ("claimed", "unknown")
+
+
+class WakeConflictError(Exception):
+    """CAS or result update lost the race."""
+
+
+def _now(now: str | None) -> str:
+    if now:
+        return now
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _shift(stamp: str, seconds: int) -> str:
+    base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {k: row[k] for k in row.keys()}
+
+
+def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str, Any]:
+    """Return the cursor, inserting MAX(turns.id) on first read."""
+    stamp = _now(now)
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO endpoint_wake_cursor "
+            "SELECT ?, COALESCE(MAX(id), 0), ? FROM turns",
+            (consumer, stamp),
+        )
+        row = conn.execute(
+            "SELECT * FROM endpoint_wake_cursor WHERE consumer=?", (consumer,)
+        ).fetchone()
+    assert row is not None
+    return dict(row)
+
+
+def advance_scan(
+    consumer: str,
+    expected_high_water: int,
+    new_high_water: int,
+    pending: list[dict[str, Any]],
+    *,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """CAS the cursor and insert pending rows. 409 on a stale high water."""
+    stamp = _now(now)
+    with write_connect() as conn:
+        row = conn.execute(
+            "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
+            (consumer,),
+        ).fetchone()
+        current = int(row["high_water_turn_id"]) if row else None
+        if current != expected_high_water:
+            raise WakeConflictError("stale_high_water")
+        for item in pending:
+            conn.execute(
+                "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                "(agent, thread_id, turn_id, turn_number, state, created_at) "
+                "VALUES (?,?,?,?, 'pending', ?)",
+                (
+                    item["agent"],
+                    item["thread_id"],
+                    item["turn_id"],
+                    item["turn_number"],
+                    stamp,
+                ),
+            )
+        conn.execute(
+            "UPDATE endpoint_wake_cursor SET high_water_turn_id=?, updated_at=? "
+            "WHERE consumer=?",
+            (new_high_water, stamp, consumer),
+        )
+    return {"high_water_turn_id": new_high_water, "inserted": len(pending)}
+
+
+def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
+    turn = conn.execute(
+        "SELECT read_at, thread FROM turns WHERE id=?", (row["turn_id"],)
+    ).fetchone()
+    if turn is not None and turn["read_at"]:
+        return "already_read"
+    later = conn.execute(
+        "SELECT from_agent FROM turns WHERE thread=? AND id>?",
+        (row["thread_id"], row["turn_id"]),
+    ).fetchall()
+    agent = row["agent"]
+    for nxt in later:
+        if normalize_bus_address(str(nxt["from_agent"] or "")) == agent:
+            return "already_answered"
+    return None
+
+
+def claim_due_wakes(
+    debounce_s: int = 600,
+    claim_ttl_s: int = 300,
+    limit: int = 1,
+    *,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Claim one (agent, thread) group, skipping NF2 rows in the same write."""
+    stamp = _now(now)
+    debounce_before = _shift(stamp, -debounce_s)
+    ttl_before = _shift(stamp, -claim_ttl_s)
+    retry_before = _shift(stamp, -60)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='unknown' "
+            "WHERE state='claimed' AND claimed_at<=?",
+            (ttl_before,),
+        )
+        group = conn.execute(
+            """
+            SELECT agent, thread_id FROM endpoint_wake_ledger p
+            WHERE p.state='pending'
+              AND (p.finished_at IS NULL OR p.finished_at<=?)
+              AND NOT EXISTS (
+                SELECT 1 FROM endpoint_wake_ledger d
+                WHERE d.agent=p.agent AND d.thread_id=p.thread_id
+                  AND d.state='delivered' AND d.finished_at>?
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM endpoint_wake_ledger u
+                WHERE u.agent=p.agent AND u.thread_id=p.thread_id
+                  AND u.state='unknown' AND u.claimed_at>?
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM endpoint_wake_ledger c
+                WHERE c.agent=p.agent AND c.thread_id=p.thread_id
+                  AND c.state='claimed' AND c.claimed_at>?
+              )
+            GROUP BY agent, thread_id
+            LIMIT ?
+            """,
+            (retry_before, debounce_before, debounce_before, ttl_before, limit),
+        ).fetchone()
+        if group is None:
+            return {"wake_id": None, "rows": []}
+        rows = conn.execute(
+            "SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? "
+            "AND state='pending' AND (finished_at IS NULL OR finished_at<=?) "
+            "ORDER BY turn_id",
+            (group["agent"], group["thread_id"], retry_before),
+        ).fetchall()
+        skipped: list[dict[str, Any]] = []
+        claimable: list[sqlite3.Row] = []
+        for row in rows:
+            reason = _skip_reason(conn, row)
+            if reason:
+                conn.execute(
+                    "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
+                    "finished_at=? WHERE id=?",
+                    (reason, stamp, row["id"]),
+                )
+                item = dict(row)
+                item["state"] = "skipped"
+                item["reason"] = reason
+                skipped.append(item)
+            else:
+                claimable.append(row)
+        if not claimable:
+            return {"wake_id": None, "rows": skipped}
+        wake_id = uuid.uuid4().hex
+        ids = [int(r["id"]) for r in claimable]
+        conn.execute(
+            f"UPDATE endpoint_wake_ledger SET state='claimed', wake_id=?, "
+            f"claimed_at=? WHERE id IN ({','.join('?' * len(ids))})",
+            (wake_id, stamp, *ids),
+        )
+        claimed = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM endpoint_wake_ledger WHERE wake_id=? ORDER BY turn_id",
+                (wake_id,),
+            ).fetchall()
+        ]
+    return {"wake_id": wake_id, "rows": claimed}
+
+
+def record_wake_result(
+    wake_id: str,
+    outcome: str,
+    reason: str | None,
+    route: str | None,
+    subscription_id: int | None,
+    cse_registration_id: str | None,
+    *,
+    now: str | None = None,
+) -> int:
+    """Persist a result on claimed rows, or unknown rows folded from that claim."""
+    stamp = _now(now)
+    finished = None if outcome == "refused" else stamp
+    with write_connect() as conn:
+        rows = conn.execute(
+            "SELECT id, state FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake_id,),
+        ).fetchall()
+        eligible = [r for r in rows if r["state"] in _CLAIM_STATES]
+        if not eligible:
+            raise WakeConflictError("wake_not_claimed")
+        ids = [int(r["id"]) for r in eligible]
+        conn.execute(
+            f"UPDATE endpoint_wake_ledger SET state=?, reason=?, route=?, "
+            f"subscription_id=?, cse_registration_id=?, finished_at=? "
+            f"WHERE id IN ({','.join('?' * len(ids))})",
+            (
+                outcome,
+                reason,
+                route,
+                subscription_id,
+                cse_registration_id,
+                finished,
+                *ids,
+            ),
+        )
+    return len(ids)
+
+
+def fold_expired_claims(claim_ttl_s: int = 300, *, now: str | None = None) -> int:
+    """Fold claimed rows older than the TTL to unknown. They are not re-fired."""
+    stamp = _now(now)
+    cutoff = _shift(stamp, -claim_ttl_s)
+    with write_connect() as conn:
+        cur = conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='unknown' "
+            "WHERE state='claimed' AND claimed_at<=?",
+            (cutoff,),
+        )
+        return int(cur.rowcount)
+
+
+def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
+    """Compact turns newer than after_id, oldest first, without body."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+            "status, read_at, created_at FROM turns WHERE id>? "
+            "ORDER BY id ASC LIMIT ?",
+            (after_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]

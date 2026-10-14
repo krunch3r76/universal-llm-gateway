@@ -38,7 +38,7 @@ def supervise(
     factory: LoopFactory,
     *,
     restart: bool = False,
-    max_restarts: int = _DEFAULT_MAX_RESTARTS,
+    max_restarts: int | None = _DEFAULT_MAX_RESTARTS,
 ) -> asyncio.Task[None]:
     """Start a lifespan loop, stash it on ``app.state``, and watch it die.
 
@@ -69,7 +69,7 @@ def _on_loop_exit(
     task: asyncio.Task[None],
     *,
     restart: bool,
-    restarts_left: int,
+    restarts_left: int | None,
 ) -> None:
     """Log why a background loop ended and respawn it when supervised."""
     if task.cancelled():
@@ -87,7 +87,7 @@ def _on_loop_exit(
         )
     if not restart or getattr(app.state, "shutting_down", False):
         return
-    if restarts_left <= 0:
+    if restarts_left is not None and restarts_left <= 0:
         logger.error(
             "giw background loop not respawned (restart budget exhausted): attr=%s",
             attr,
@@ -104,23 +104,23 @@ async def _respawn(
     attr: str,
     factory: LoopFactory,
     *,
-    restarts_left: int,
+    restarts_left: int | None,
 ) -> None:
     """Re-arm a supervised loop after a short delay."""
     await asyncio.sleep(_RESTART_DELAY_S)
     if getattr(app.state, "shutting_down", False):
         return
     logger.warning(
-        "giw background loop respawning: attr=%s restarts_left=%d",
+        "giw background loop respawning: attr=%s restarts_left=%s",
         attr,
-        restarts_left - 1,
+        "uncapped" if restarts_left is None else restarts_left - 1,
     )
     supervise(
         app,
         attr,
         factory,
         restart=True,
-        max_restarts=restarts_left - 1,
+        max_restarts=None if restarts_left is None else restarts_left - 1,
     )
 
 

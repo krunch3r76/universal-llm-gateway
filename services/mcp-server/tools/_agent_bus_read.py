@@ -37,6 +37,7 @@ from .agent_bus._arg_rewrite import (
     reconcile_dispatch_arguments,
 )
 from .agent_bus.lane_associations import _lane_current_dispatch
+from .agent_bus.subscriptions import _subscriptions_dispatch
 from .agent_bus.threads import _job_state_dispatch, _tape_dispatch, _thread_get_dispatch
 
 if TYPE_CHECKING:
@@ -57,6 +58,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "wait": _wait_dispatch,
     "lane_current": _lane_current_dispatch,
     "tape": _tape_dispatch,
+    "subscriptions": _subscriptions_dispatch,
 }
 
 

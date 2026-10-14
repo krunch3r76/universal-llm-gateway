@@ -129,6 +129,18 @@ async def cse_holder_release(req: CseHolderReleaseRequest) -> dict[str, object]:
     return {"ok": True, "holder": row}
 
 
+@router.get("/cse-holders", summary="Driving CSE holder for one lane thread.")
+async def cse_holders(lane_thread_id: str) -> dict[str, object]:
+    """Read-only wrap of get_driving_holder_for_lane."""
+    from services.git_integration_worker.cse_session_holders import (
+        get_driving_holder_for_lane,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        holder = get_driving_holder_for_lane(conn, lane_thread_id)
+    return {"holder": holder}
+
+
 @router.post("/cse-holder/upsert", summary="Register or refresh a CSE session holder.")
 async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
     """Idempotent upsert keyed by ``holder_id`` from ``chat_url``."""

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from background_supervisor import supervise
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from git_integrate.events import register_uds_publisher
@@ -22,7 +23,6 @@ from implement_admission.workflow_registry import (
 from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
-from services.git_integration_worker.background_supervisor import supervise
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,

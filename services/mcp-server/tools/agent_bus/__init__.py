@@ -72,6 +72,11 @@ from .post_reply import (
     _reply_dispatch,
     _reply_impl,
 )
+from .subscriptions import (
+    _subscribe_dispatch,
+    _subscriptions_dispatch,
+    _unsubscribe_dispatch,
+)
 from .read_state import (
     _mark_read_dispatch,
     _resolve_turn_id,
@@ -127,6 +132,9 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "branch_current": _branch_current_dispatch,
     "lane_bind": _lane_bind_dispatch,
     "lane_current": _lane_current_dispatch,
+    "subscribe": _subscribe_dispatch,
+    "unsubscribe": _unsubscribe_dispatch,
+    "subscriptions": _subscriptions_dispatch,
 }
 
 
