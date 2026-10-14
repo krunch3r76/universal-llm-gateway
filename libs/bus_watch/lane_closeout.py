@@ -407,7 +407,7 @@ def post_lane_closeout(
     subject = format_closeout_subject(record, abandoned=abandoned)
     payload: dict[str, Any] = {
         "thread": parent_root,
-        "to": "web-anthropic",
+        "to": "web",
         "from": "cursor",
         "subject": subject,
         "body": body,
