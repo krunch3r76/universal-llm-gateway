@@ -244,7 +244,7 @@ def test_publish_posts_with_supersedes_turn() -> None:
     assert args[0] == "/threads/send"
     payload = kwargs["json"]
     assert payload["thread"] == "10479"
-    assert payload["to"] == "web"
+    assert payload["to"] == "web-anthropic"
     assert payload["from"] == "cursor"
     assert payload["subject"] == "DIGEST 10479 2026-09-11T12:00:00Z"
     assert payload["supersedes_turn"] == 41

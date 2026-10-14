@@ -45,7 +45,7 @@ def _admitted_lane(*, execution_id: str = "exec-orphan-1", **extra: object) -> d
 
 
 @pytest.mark.offline
-def test_post_holder_lost_turn_addresses_web_not_web_anthropic() -> None:
+def test_post_holder_lost_turn_addresses_web_anthropic() -> None:
     client = MagicMock()
     resp = MagicMock()
     resp.status_code = 201
@@ -56,7 +56,7 @@ def test_post_holder_lost_turn_addresses_web_not_web_anthropic() -> None:
     ):
         assert _post_holder_lost_turn("12711", "exec-orphan-1") is True
     payload = client.post.call_args.kwargs["json"]
-    assert payload["to"] == "web"
+    assert payload["to"] == "web-anthropic"
     assert payload["from"] == "liaison-ticker"
     assert payload["thread"] == "12711"
 

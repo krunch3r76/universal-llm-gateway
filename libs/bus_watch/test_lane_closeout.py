@@ -335,7 +335,7 @@ def test_post_lane_closeout_emits_event() -> None:
     emit.assert_called_once()
     payload = client.post.call_args.kwargs["json"]
     assert payload["thread"] == "11667"
-    assert payload["to"] == "web"
+    assert payload["to"] == "web-anthropic"
     assert payload["tags"] == ["lane:closeout"]
     assert "LANE CLOSEOUT" in payload["body"]
 

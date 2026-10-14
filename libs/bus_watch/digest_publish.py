@@ -257,7 +257,7 @@ def publish_digest(
     tape = loop_tape_thread(root_id, effective_policy(state), digest.get("policy"))
     payload: dict[str, Any] = {
         "thread": tape,
-        "to": "web",
+        "to": "web-anthropic",
         "from": "cursor",
         "subject": f"DIGEST {root_id} {ts}",
         "body": body,
