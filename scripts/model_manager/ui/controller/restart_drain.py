@@ -419,11 +419,32 @@ def default_restart_witnesses() -> dict[str, list[InFlightWitness]]:
     pinned or already-dead process still yields a named busy or a real idle.
     """
     from .cdp_ask_inflight_witness import CdpAskInFlightWitness
+    from .stargate_inflight_witness import StargateDownWitness
 
-    witnesses: dict[str, list[InFlightWitness]] = {}
+    witnesses: dict[str, list[InFlightWitness]] = {
+        "stargate": [StargateDownWitness()],
+    }
     if cdp_ask_url_config() is not None:
         witnesses["cdp_ask"] = [CdpAskInFlightWitness()]
     return witnesses
+
+
+async def probe_stargate_active_work(gate: RestartDrainGate) -> ActiveWork:
+    """Probe Stargate ``/admin/active-work``; map ECONNREFUSED+down to idle."""
+    from .stargate_inflight_witness import (
+        stargate_connect_refused,
+        stargate_down_witness_agrees,
+    )
+
+    try:
+        return await gate.probe("stargate")
+    except httpx.HTTPError as exc:
+        if stargate_connect_refused(exc) and stargate_down_witness_agrees():
+            return ActiveWork(
+                busy=False,
+                detail={"busy": False, "probe": "econnrefused"},
+            )
+        raise
 
 
 class RestartDrainGate:
@@ -853,7 +874,7 @@ class StargateIdleDrainSupervisor:
         await supervise_until_lifecycle(
             store=self.store,
             intent=intent,
-            probe=lambda: self.gate.probe("stargate"),
+            probe=lambda: probe_stargate_active_work(self.gate),
             is_idle=lambda work: stargate_idle_from_active_work(work.detail),
             lifecycle=self.lifecycle,
             deadline_s=self.deadline_s,
@@ -896,7 +917,18 @@ async def run_gated_stargate_idle_drain_supervised(
     """Arm a durable restart intent when Stargate active-work reports busy."""
     orphaned: list[dict[str, Any]] = []
     try:
-        probed = await gate.probe("stargate")
+        probed = await probe_stargate_active_work(gate)
+        if (
+            not probed.busy
+            and probed.detail.get("probe") == "econnrefused"
+        ):
+            return await run_gated(
+                gate,
+                action,
+                "stargate",
+                force=True,
+                lifecycle=supervisor.lifecycle,
+            )
         orphaned = cdp_legs_orphaned_from_active_work(probed.detail)
     except (httpx.HTTPError, ValueError, OSError):
         orphaned = []
@@ -1171,5 +1203,6 @@ __all__ = [
     "run_gated_stargate_idle_drain_supervised",
     "sole_busy_holder_matches",
     "cdp_legs_orphaned_from_active_work",
+    "probe_stargate_active_work",
     "stargate_idle_from_active_work",
 ]
