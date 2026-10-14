@@ -120,6 +120,9 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 {house_rules_verbatim}
 
+{lessons_in_force}
+{register_card}
+
 ## Live leg (data, projected from the bus)
 
 {live_leg}
@@ -133,7 +136,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 1. Use the cdp-operator-proxy, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Read cortex://notes/runbooks/maestro-loop.md in full (fs read, no limit).
 3. The live leg above is computed from the bus; the file is the HOUSE RULES and pointer source. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
-4. Read cortex://notes/system/maestro/journal.md with offset 0, limit 40.
+4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. agent_bus_read fetch thread {lane}, last 3, compact. Then mark_read through the latest turn with agent web-anthropic.
 6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Keep it at or under 2000 characters: measure with wc -m before you send.
 7. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
@@ -187,7 +190,13 @@ _FIELD_ORDER = (
     "execution_clause",
     "running_now_line",
 )
-_LATE_FIELD_ORDER = ("house_rules_verbatim", "live_leg", "pointers")
+_LATE_FIELD_ORDER = (
+    "house_rules_verbatim",
+    "lessons_in_force",
+    "register_card",
+    "live_leg",
+    "pointers",
+)
 
 
 def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
@@ -234,6 +243,11 @@ def ensure_operator_proxy_mission_prompt(
     roster_text: str | None = None,
     fetch_turns: Callable[[str], list[dict[str, Any]]] | None = None,
     execution_id: str = "",
+    journal_text: str | None = None,
+    register_text: str | None = None,
+    read_cortex_uri: Callable[[str], str | None] | None = None,
+    inflight_projection_lookup: Callable[[], str | None] | None = None,
+    role: str = "maestro",
 ) -> str:
     """Prepend the hop-successor template when it is not already the opening.
 
@@ -256,6 +270,11 @@ def ensure_operator_proxy_mission_prompt(
         roster_text=roster_text,
         fetch_turns=fetch_turns,
         execution_id=execution_id,
+        journal_text=journal_text,
+        register_text=register_text,
+        read_cortex_uri=read_cortex_uri,
+        inflight_projection_lookup=inflight_projection_lookup,
+        role=role,
     )
     return (
         render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"

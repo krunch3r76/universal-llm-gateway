@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from claude_bundles.journal_hop_projection import MAESTRO_REGISTER_URI
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
     _HOP_REFUSALS_MARKER,
@@ -39,6 +40,8 @@ def test_purpose_recognition() -> None:
 
 _SECTION_ORDER = (
     "## What is running now",
+    "## Lessons in force",
+    "## Register",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
@@ -608,6 +611,8 @@ def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
         "execution_clause": "",
         "running_now_line": "## What is running now",
         "house_rules_verbatim": house_rules,
+        "lessons_in_force": "## Lessons in force\n\n(none)\n",
+        "register_card": f"## Register\n\nRegister card absent at {MAESTRO_REGISTER_URI}.\n",
         "live_leg": "(none)",
         "pointers": "- prior LEG blocks: handoff file",
     }
