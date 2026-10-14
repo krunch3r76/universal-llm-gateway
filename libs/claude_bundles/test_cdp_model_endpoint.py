@@ -130,6 +130,27 @@ def test_stage_review_omits_slash_keeps_marker_and_inline(
     assert "## Review packet" in text
 
 
+def test_stage_code_review_contract_omitted_purpose_injects_charter_and_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """K30 — contract=code-review without purpose: review floor + reading charter."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-cr-omit-purpose",
+        prompt_text="## Review\n" + ("detail " * 80) + "\n",
+        purpose=None,
+        contract="code-review",
+    )
+    text = (
+        tmp_path
+        / "notes/system/ephemeral/cdp-endpoint/exec-cr-omit-purpose/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert staged.staged is True
+    assert "consult-posture" in text
+    assert "the packet names or carries the modules under review" in text.casefold()
+    assert staged.prompt_uri.endswith("exec-cr-omit-purpose/prompt.md")
+
+
 def test_stage_cdp_ask_stamps_libs_and_pipeline_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

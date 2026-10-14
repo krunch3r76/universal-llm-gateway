@@ -2247,6 +2247,31 @@ async def test_review_prompt_too_small_inline_prompt(
 
 
 @pytest.mark.asyncio
+async def test_review_prompt_forbids_no_repo_access_wording() -> None:
+    """Admit refuses diff-only / no-repo-access review author bodies (K30)."""
+    from fastapi import Response
+
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="16709",
+        prompt=_utf8_body_of_byte_length(512)
+        + "\nReason only from the diff; you have no repo access.\n",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-review-no-repo",
+            body=body,
+            response=Response(),
+        )
+    assert exc.value.code == "review_prompt_no_repo_access_forbidden"
+
+
+@pytest.mark.asyncio
 async def test_review_prompt_delivery_review_contract() -> None:
     """delivery-review uses the same admit gate as code-review.
 

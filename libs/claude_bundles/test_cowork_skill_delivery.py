@@ -190,7 +190,7 @@ def test_review_charter_is_not_an_implementer_checklist() -> None:
 
     text, _, _ = prepend_cdp_dispatch_skills("Pin 2a005f508.\n", ["reasoning-posture"])
     reviewed = ensure_review_reading_charter(text, "review")
-    assert "the packet carries the code under review" in reviewed
+    assert "the packet names or carries the modules under review" in reviewed
     assert "cannot check out a commit" in reviewed
     assert reviewed.count("Review seat:") == 1
     assert ensure_review_reading_charter(reviewed, "review").count("Review seat:") == 1
@@ -198,6 +198,18 @@ def test_review_charter_is_not_an_implementer_checklist() -> None:
     assert "Review seat:" not in body
     assert "Pin 2a005f508" in body
     assert "Review seat:" not in ensure_review_reading_charter(text, "ask")
+    by_contract = ensure_review_reading_charter(text, None, contract="code-review")
+    assert "the packet names or carries the modules under review" in by_contract
+
+
+def test_review_prompt_gate_refuses_no_repo_access() -> None:
+    from claude_bundles.cdp_model_endpoint_staging import CdpStagingError
+    from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+
+    body = ("x" * 600) + "\nYou have no repo access; reason only from the diff.\n"
+    with pytest.raises(CdpStagingError) as exc:
+        enforce_review_prompt_gate(contract="code-review", prompt_text=body)
+    assert exc.value.code == "review_prompt_no_repo_access_forbidden"
 
 
 def test_attest_shared_sync_rejects_inline_only_channel() -> None:

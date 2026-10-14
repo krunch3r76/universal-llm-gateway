@@ -1008,6 +1008,7 @@ def run_cdp_generate(
     ask_client: CdpAskClient | None = None,
     on_submitted: Callable[[str], None] | None = None,
     on_url_bound: Callable[[str, str | None, int], None] | None = None,
+    contract: str | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
@@ -1063,6 +1064,7 @@ def run_cdp_generate(
             sidecar_ref=sidecar_ref,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
+            contract=contract,
         )
     except CdpStagingError as exc:
         return CdpGenerateResult(

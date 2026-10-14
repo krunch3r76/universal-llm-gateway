@@ -118,7 +118,7 @@ def test_charter_not_injected_on_skeptic_purpose_review() -> None:
     out = ensure_review_reading_charter(_SKEPTIC_BODY, "review")
     assert "the packet carries the code under review" not in out.casefold()
     delivery = ensure_review_reading_charter("Pin the lane branch diff.\n", "review")
-    assert "the packet carries the code under review" in delivery.casefold()
+    assert "the packet names or carries the modules under review" in delivery.casefold()
 
 
 def test_charter_uses_author_body_not_merged_skills() -> None:
@@ -129,7 +129,7 @@ def test_charter_uses_author_body_not_merged_skills() -> None:
         "G4 skeptic review is documented in consult-routing.\n" + author
     )
     out = ensure_review_reading_charter(merged, "review", author_body=author)
-    assert "the packet carries the code under review" in out.casefold()
+    assert "the packet names or carries the modules under review" in out.casefold()
 
 
 def test_chrome_on_skeptic_refuses_casefold() -> None:

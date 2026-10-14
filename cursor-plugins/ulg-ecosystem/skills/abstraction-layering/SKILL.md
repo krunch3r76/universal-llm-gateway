@@ -123,7 +123,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `contract=delivery-review`. Standing check is not `cursor/claude-fable-5{,-1}`; operator-named availability wins (`consult-routing` § Cursor-sdk generate shape). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
-| 6 | Pre-land review | `cdp/opus-5` `contract=code-review` on lane branch diff | `[judgment]` | R1 sidecar |
+| 6 | Pre-land review | `cdp/opus-5` or `cdp/opus-5.5` `contract=code-review` — modules (`files_expected`) + live-tree expansion via `fs(sandbox="workspaces")`, not raw diff dumps (`cdp/fable-5.1` for expanding detent / sensitive-critical only) | `[judgment]` | R1 sidecar |
 | 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |
 
 ### G1 / G2 architecture skill floor (BINDING — pre-densify)
@@ -239,7 +239,7 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
 4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
    When run: fold amendments + refresh `spec_sha256`.
 5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
-6. **G6** — pre-land: `cdp/opus-5` `contract=code-review` on lane branch diff; R1 sidecar.
+6. **G6** — pre-land: `cdp/opus-5` (lesser-sensitive / non-critical default) or `cdp/opus-5.5` (general default) `contract=code-review` on modules under review + live-tree expansion via `fs(sandbox="workspaces")`; R1 sidecar (`cdp/fable-5.1` for expanding detent / sensitive-critical only).
 7. **G7** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5 · land (L1).
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
    `files_expected ∩ surface-glob-table ≠ ∅`), verify `(block present in dense spec) ∧
@@ -274,10 +274,11 @@ envelope advise-vs-reject). G3→4 / G5→7 keep their reject-mode checkers.
 
 ### Pre-land CDP Opus review (G6 — binding on conductor arcs)
 
-`cdp/opus-5` **`contract=code-review`** on the **lane branch diff** is **G6**, not G4
+`cdp/opus-5` or `cdp/opus-5.5` **`contract=code-review`** on the **modules under review**
+(`files_expected`) with live-tree expansion via `fs(sandbox="workspaces")` is **G6**, not G4
 (pre-ship spec) and not optional commentary. Fire **after G5 implement, before G7
-land** — `review harvest ≺ land ≺ DONE`. Stage closeout + diff to `cortex://`;
-record harvest on sidecar **R1**.
+land** — `review harvest ≺ land ≺ DONE`. Stage closeout + `files_expected` to `cortex://`;
+record harvest on sidecar **R1**. Reserve `cdp/fable-5.1` for expanding detent (`dramaturg`) or sensitive/critical reviews.
 
 | Posture | Do |
 |---|---|

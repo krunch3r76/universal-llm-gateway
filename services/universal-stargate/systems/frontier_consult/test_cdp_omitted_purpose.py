@@ -174,7 +174,6 @@ async def test_admit_omitted_purpose_ledger_stores_none(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "create_handoff_thread", AsyncMock(return_value="14640"))
     monkeypatch.setattr(
         mod,

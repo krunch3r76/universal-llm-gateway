@@ -521,6 +521,7 @@ async def run_cdp_worker(
             mission_kind=mission_kind,
             parent_thread=parent_thread,
             project_uuid=project_uuid,
+            contract=contract,
             on_submitted=_on_submitted,
             on_url_bound=_on_url_bound,
         )
@@ -597,6 +598,7 @@ async def run_cdp_worker(
                 mission_kind=mission_kind,
                 parent_thread=parent_thread,
                 project_uuid=project_uuid,
+                contract=contract,
                 on_submitted=_on_submitted,
                 on_url_bound=_on_url_bound,
             )

@@ -29,6 +29,7 @@ OPERATOR_PROXY_MISSION_PURPOSES: frozenset[str] = frozenset(
 # (decision:reasoning-frontier-skill-pair).
 MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
+    "lean-dispatch",
     "reasoning-posture",
     "hypothesize-simulate",
     # Member 6: status/rank/liveness register at mission-close authoring.
@@ -130,7 +131,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 ## Your first acts, in order
 
-1. Use the cdp-operator-proxy, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+1. Use the cdp-operator-proxy, lean-dispatch, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Read cortex://notes/runbooks/maestro-loop.md in full (fs read, no limit).
 3. The live leg above is computed from the bus; the file is the HOUSE RULES and pointer source. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
 4. Read cortex://notes/system/maestro/journal.md with offset 0, limit 40.

@@ -40,6 +40,23 @@ def test_omitted_purpose_stays_judgment_only() -> None:
     assert ensure_cdp_judgment_skills(None, purpose=None) == ["reasoning-posture"]
 
 
+def test_omitted_purpose_review_contract_uses_review_floor() -> None:
+    """K30 — contract=code-review without purpose gets review skill floor only."""
+    assert profile_slugs_for_purpose(None, contract="code-review") == (
+        "reasoning-posture",
+        "consult-posture",
+        "hypothesize-simulate",
+    )
+    assert ensure_cdp_judgment_skills(None, purpose=None, contract="code-review") == [
+        "reasoning-posture",
+        "consult-posture",
+        "hypothesize-simulate",
+    ]
+    assert ensure_cdp_judgment_skills(None, purpose=None, contract="freeform") == [
+        "reasoning-posture",
+    ]
+
+
 def test_ask_floor_prepends_arch_pair() -> None:
     assert ensure_cdp_judgment_skills(None, purpose="ask") == [
         "architecture-invariants",

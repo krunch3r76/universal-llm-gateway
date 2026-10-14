@@ -368,6 +368,7 @@ def ensure_cdp_judgment_skills(
     skills: list[str] | None,
     *,
     purpose: str | None = None,
+    contract: str | None = None,
 ) -> list[str]:
     """Merge purpose-keyed skill floor into CDP ``skills=`` (idempotent).
 
@@ -378,7 +379,7 @@ def ensure_cdp_judgment_skills(
     """
     caller = [str(s).strip() for s in (skills or []) if str(s).strip()]
     have = {s.lstrip("/").lower() for s in caller}
-    floor = profile_slugs_for_purpose(purpose)
+    floor = profile_slugs_for_purpose(purpose, contract=contract)
     missing = [slug for slug in floor if slug not in have]
     return missing + caller
 
@@ -418,6 +419,7 @@ def stage_cdp_prompt_with_skills(
     sidecar_ref: str | None = None,
     skills: list[str] | None = None,
     purpose: str | None = None,
+    contract: str | None = None,
     dispatch_thread_id: str | None = None,
 ) -> StagedPrompt:
     """Stage CDP input and seal the required-skill marker.
@@ -477,7 +479,9 @@ def stage_cdp_prompt_with_skills(
                 ),
             )
 
-    effective = ensure_cdp_judgment_skills(skills, purpose=purpose)
+    effective = ensure_cdp_judgment_skills(
+        skills, purpose=purpose, contract=contract
+    )
     body = read_prompt_text(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,
@@ -544,7 +548,10 @@ def stage_cdp_prompt_with_skills(
         )
         # a:37183 A1 — shape from author body; charter skip uses same source.
         merged = ensure_review_reading_charter(
-            merged, purpose, author_body=author_for_gate
+            merged,
+            purpose,
+            author_body=author_for_gate,
+            contract=contract,
         )
         from claude_bundles.nested_cdp_prompt_gate import (
             NestedCdpPromptGateError,

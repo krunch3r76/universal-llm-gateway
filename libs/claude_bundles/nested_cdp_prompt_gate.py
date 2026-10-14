@@ -68,6 +68,7 @@ _REQUIRED_REPORT_HEADINGS: tuple[str, ...] = (
 
 _DELIVERY_CHROME_MARKERS: tuple[str, ...] = (
     "the packet carries the code under review",
+    "the packet names or carries the modules under review",
     "do not reject because you cannot check out a commit",
     "do not reject because you cannot check out a commit, run pytest, or run quality_gate",
 )
