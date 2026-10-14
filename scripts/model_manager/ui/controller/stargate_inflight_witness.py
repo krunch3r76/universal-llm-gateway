@@ -87,10 +87,9 @@ class StargateDownWitness:
                 detail={"probe": "econnrefused", "busy": False},
             )
         return WitnessReport(
-            verdict="busy",
+            verdict="unknown",
             source=_SOURCE,
-            note="stargate port open or pid alive despite connect refused",
-            detail={"busy": True},
+            note="stargate port open or pid alive; cannot infer in-flight work",
         )
 
 

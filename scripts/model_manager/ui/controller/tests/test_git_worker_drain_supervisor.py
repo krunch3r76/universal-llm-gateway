@@ -1705,6 +1705,62 @@ def test_park_refused_non_eligible_occupant_drain_waits(
     assert worker.released is False
 
 
+def test_cancel_giw_intent_does_not_clear_window_or_cancel_supervise(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
+        register_supervise_task,
+    )
+    from scripts.model_manager.ui.controller.restart_window_ctl import (
+        open_service_window,
+    )
+
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="sync_restart",
+        deadline_at="d",
+        reason="giw cancel window test",
+    )
+    _run(open_service_window(store, _SERVICE, reason="giw test window"))
+    assert store.window_for_service(_SERVICE) is not None
+    hold = asyncio.Event()
+    cancelled_flag = False
+
+    async def _supervise(_intent: Any) -> None:
+        nonlocal cancelled_flag
+        try:
+            await hold.wait()
+        except asyncio.CancelledError:
+            cancelled_flag = True
+            raise
+
+    async def _cancel() -> dict[str, Any]:
+        task = asyncio.create_task(_supervise(intent))
+        register_supervise_task(_SERVICE, task)
+
+        async def _noop_emit(*_a: Any, **_k: Any) -> None:
+            return None
+
+        monkeypatch.setattr(
+            "scripts.model_manager.ui.controller.restart_window_ctl.emit_manage_restart_window_cleared",
+            _noop_emit,
+        )
+        result = await orchestrate_cancel_restart_intent(
+            store, intent_id=intent.intent_id
+        )
+        assert not task.cancelled()
+        assert not task.done()
+        hold.set()
+        await task
+        return result
+
+    result = _run(_cancel())
+    assert result["status"] == "cancelled"
+    assert store.window_for_service(_SERVICE) is not None
+    assert cancelled_flag is False
+
+
 def test_cancel_stargate_intent_clears_window_and_slot(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

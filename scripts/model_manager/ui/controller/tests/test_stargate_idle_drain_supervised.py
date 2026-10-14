@@ -31,6 +31,9 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     RestartIntentStore,
 )
 from scripts.model_manager.ui.controller import stargate_inflight_witness as sg_witness
+from scripts.model_manager.ui.controller.stargate_inflight_witness import (
+    StargateDownWitness,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -169,7 +172,9 @@ class _RaisingProbe:
         raise self._exc
 
 
-def test_stargate_econnrefused_and_down_witness_starts(tmp_path: Any) -> None:
+def test_stargate_econnrefused_and_down_witness_starts(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = RestartIntentStore(db_path=tmp_path / "stargate-down-start.db")
     lifecycle_calls = 0
 
@@ -186,7 +191,7 @@ def test_stargate_econnrefused_and_down_witness_starts(tmp_path: Any) -> None:
         store=store,
         lifecycle=_lifecycle,
     )
-    sg_witness.stargate_down_witness_agrees = lambda: True  # type: ignore[method-assign]
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: True)
 
     result = _run(
         run_gated_stargate_idle_drain_supervised(
@@ -203,7 +208,7 @@ def test_stargate_econnrefused_and_down_witness_starts(tmp_path: Any) -> None:
 
 
 def test_stargate_connect_error_with_live_pid_stays_on_ceiling(
-    tmp_path: Any,
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = RestartIntentStore(db_path=tmp_path / "stargate-live-pid.db")
     lifecycle_calls = 0
@@ -223,7 +228,7 @@ def test_stargate_connect_error_with_live_pid_stays_on_ceiling(
         deadline_s=0.05,
         poll_interval_s=0.01,
     )
-    sg_witness.stargate_down_witness_agrees = lambda: False  # type: ignore[method-assign]
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: False)
 
     async def _arm() -> dict[str, Any]:
         result = await run_gated_stargate_idle_drain_supervised(
@@ -356,6 +361,40 @@ def test_stargate_force_lost_cas_does_not_cancel(
     assert _run(_preempt()) is None
     assert cancelled is False
     assert done_flag is not None and done_flag.done()
+
+
+def test_stargate_evaluate_read_timeout_fails_closed() -> None:
+    request = httpx.Request(
+        "GET", "http://127.0.0.1:9999/api/v1/admin/active-work"
+    )
+    gate = RestartDrainGate(
+        probes={
+            "stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))
+        }
+    )
+    outcome = _run(gate.evaluate("stargate", force=False))
+    assert outcome is not None
+    assert outcome.state == "probe_error"
+    assert gate.restart_in_progress("stargate") is False
+
+
+def test_stargate_busy_report_timeout_undetermined_with_down_witness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = httpx.Request(
+        "GET", "http://127.0.0.1:9999/api/v1/admin/active-work"
+    )
+    gate = RestartDrainGate(
+        probes={
+            "stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))
+        },
+        witnesses={"stargate": [StargateDownWitness()]},
+    )
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: False)
+    report = _run(gate.busy_report(["stargate"]))
+    row = report["stargate"]
+    assert row["determination"] == "undetermined"
+    assert row["restart_would_defer"] is True
 
 
 def test_giw_force_still_refused(monkeypatch: pytest.MonkeyPatch) -> None:
