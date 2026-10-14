@@ -159,7 +159,7 @@ def load_journal_text_for_hop(
         if not path.is_file():
             return None, None
         return path.read_text(encoding="utf-8"), None
-    except OSError:
+    except (OSError, UnicodeError):
         return None, "unavailable"
 
 
@@ -202,9 +202,14 @@ def hop_journal_projection_fields(
     else:
         try:
             reg_body = _read_cortex_uri(MAESTRO_REGISTER_URI, read_uri=read_uri)
-        except OSError:
-            reg_body = None
-        register = render_register_card(reg_body)
+        except UnicodeError as exc:
+            register = (
+                "## Register\n\n"
+                f"[render_failed register_card: {type(exc).__name__} — "
+                f"read {MAESTRO_REGISTER_URI}]\n"
+            )
+        else:
+            register = render_register_card(reg_body)
 
     return {"lessons_in_force": lessons, "register_card": register}
 

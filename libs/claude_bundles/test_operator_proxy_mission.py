@@ -885,3 +885,114 @@ def test_ac7_live_leg_raise_replaces_only_that_block(
     ) in out
     assert "rules-still-here" in out
     assert "checkpoint-still-here" in out
+
+
+def test_ac1_non_utf8_rules_file_falls_back_inline(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+    threads = root / "notes/system/threads"
+    (threads / "12286-standing-handoff.md").write_text(
+        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-still-here\n"
+        "### HOUSE RULES\n- K1 INLINE-RULES-SENTINEL\n",
+        encoding="utf-8",
+    )
+    (threads / "12286-house-rules.md").write_bytes(b"\xff")
+    for text in _ac6_texts(root, monkeypatch):
+        assert "INLINE-RULES-SENTINEL" in text
+        assert "[rules_file_unreadable: UnicodeDecodeError" in text
+        assert "[render_failed house_rules" not in text
+
+
+def test_ac1_missing_rules_file_is_plain_inline_fallback(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+    threads = root / "notes/system/threads"
+    (threads / "12286-standing-handoff.md").write_text(
+        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-still-here\n"
+        "### HOUSE RULES\n- K1 INLINE-RULES-SENTINEL\n",
+        encoding="utf-8",
+    )
+    (threads / "12286-house-rules.md").unlink()
+    for text in _ac6_texts(root, monkeypatch):
+        assert "INLINE-RULES-SENTINEL" in text
+        assert "rules_file_unreadable" not in text
+
+
+def test_ac3_unreadable_journal_renders_unavailable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+    journal = root / "notes/system/maestro/journal.md"
+    journal.parent.mkdir(parents=True)
+    journal.write_text("# journal\n", encoding="utf-8")
+    original = Path.read_text
+
+    def _wrapped(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "journal.md":
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _wrapped)
+    for text in _ac6_texts(root, monkeypatch):
+        assert "journal unavailable" in text
+
+
+def test_ac6_checkpoint_raise_replaces_only_that_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_hop_status.render_checkpoint_block",
+        _boom,
+    )
+    sidecar = (
+        "## HOUSE RULES\n- K1 rules-still-here\n\n"
+        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-x\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+    )
+    assert (
+        "[render_failed checkpoint: RuntimeError — read "
+        "cortex://notes/system/threads/12286-standing-handoff.md]"
+    ) in out
+    assert "rules-still-here" in out
+    assert "## Hard refusals" in out
+
+
+def test_ac7_non_utf8_roster_does_not_block_hop(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+    operational = root / "notes/system/operational"
+    operational.mkdir(parents=True)
+    (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
+    texts = _ac6_texts(root, monkeypatch)
+    for text in texts:
+        assert "## Hard refusals" in text
+        assert "## Live leg" in text
+
+
+def test_ac8_non_utf8_journal_and_register_degrade(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+    maestro = root / "notes/system/maestro"
+    maestro.mkdir(parents=True)
+    (maestro / "journal.md").write_bytes(b"\xff")
+    (maestro / "register.md").write_bytes(b"\xff")
+    for text in _ac6_texts(root, monkeypatch):
+        assert "journal unavailable" in text
+        assert (
+            "[render_failed register_card: UnicodeDecodeError — read "
+            "cortex://notes/system/maestro/register.md]"
+        ) in text

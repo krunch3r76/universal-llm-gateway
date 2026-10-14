@@ -26,8 +26,8 @@ _TRUNCATABLE_SECTIONS = ("LAST LEG", "OWED / NEXT", "OPEN FOR KAYWAN")
 _ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _CURRENT_LEG_RE = re.compile(r"^##\s+CURRENT LEG\b", re.MULTILINE)
 _REGISTRATION_RE = re.compile(
-    r"registration_id\s+(\S+)",
-    re.IGNORECASE,
+    r"^[ \t]*(?:[^\n]*?\bseat\s*=[^\n]*?)?\bregistration_id\s+(\S+)",
+    re.IGNORECASE | re.MULTILINE,
 )
 _ARCHIVED_PREV_RE = re.compile(
     r"^archived_prev:\s*(\S+)\s+sha256\s+([0-9a-f]{64})\s*$",
@@ -408,14 +408,22 @@ def render_house_rules_block(
     """Render HOUSE RULES. Every cut bullet is named; drops run from the bottom."""
     uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     body = house_rules_text
+    read_error: str | None = None
     if body is None and read_cortex_uri is not None:
         try:
             body = read_cortex_uri(uri)
-        except OSError:
+        except (OSError, UnicodeError) as exc:
             body = None
+            read_error = type(exc).__name__
     if body is None or not str(body).strip():
         body = inline_rules or ""
     if not body.strip():
+        if read_error:
+            flag = (
+                f"[rules_file_unreadable: {read_error} — rendered inline "
+                f"HOUSE RULES; read {uri}]"
+            )
+            return flag, False
         return "", False
     heading_line, intro, bullets = _split_rules_bullets(body)
     bullet_entries: list[tuple[str, str]] = []
@@ -459,6 +467,11 @@ def render_house_rules_block(
         # Oldest first: the bottom of the source is the first name in the flag.
         flag = f"[rules truncated: {', '.join(reversed(truncated_ids))} — read {uri}]"
         assembled.append(flag)
+    if read_error:
+        assembled.append(
+            f"[rules_file_unreadable: {read_error} — rendered inline "
+            f"HOUSE RULES; read {uri}]"
+        )
     return "\n".join(assembled), bool(truncated_ids)
 
 

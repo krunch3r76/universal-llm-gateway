@@ -470,6 +470,20 @@ def test_ac9_page_cap_sets_truncated_through_project() -> None:
     assert _TRUNCATION_LINE in render_live_leg(leg)
 
 
+def test_ac4_non_utf8_fold_state_cold_starts_and_rewrites() -> None:
+    path = live_leg_mod._default_fold_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff")
+    leg = project_live_leg(
+        ["12286"],
+        lambda _l: [],
+        page_fetch=_page_returning([{"turn_number": 7, "subject": "NOTE|x"}]),
+    )
+    assert leg.errors == {}
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["lanes"]["12286"]["watermark"] == 7
+
+
 def test_ac15_pointers_block_removed() -> None:
     removed = "POINTERS_" + "BLOCK"
     assert not hasattr(live_leg_mod, removed)
