@@ -66,6 +66,8 @@ from services.git_integration_worker.cursor_sdk_park import (
 logger = get_logger(__name__)
 SKIP_GATE_ADMIT_ERROR_PERMANENT = "admit_error_permanent"
 HOP_REASON_CDP_PROBE_INDETERMINATE = "cdp_probe_indeterminate"
+HOP_ADMIT_LAST_ATTEMPT_AT_KEY = "hop_admit_last_attempt_at"
+ADMIT_RETRY_BACKOFF_S = 300.0
 
 
 def _write_record_json(dispatch_id: str, record_json: str) -> None:
@@ -88,6 +90,8 @@ def _admit_error_permanent(row: dict[str, Any]) -> bool:
 
 
 def _backoff_elapsed(row: dict[str, Any], *, backoff_s: float) -> bool:
+    if _admit_retry_cap_holding(row):
+        return False
     if backoff_s <= 0:
         return True
     rec = json.loads(str(row.get("record_json") or "") or "{}")
@@ -97,6 +101,53 @@ def _backoff_elapsed(row: dict[str, Any], *, backoff_s: float) -> bool:
     if not isinstance(terminal_at, (int, float)):
         return True
     return (time.time() - float(terminal_at)) >= backoff_s
+
+
+def _admit_retry_cap_holding(row: dict[str, Any]) -> bool:
+    """True when crash-cap 5xx retries must wait ``ADMIT_RETRY_BACKOFF_S``.
+
+    The budget verdict for a planned row carries backoff 0 measured from
+    ``hop_last_terminal_at``, which is already older than reactor grace, so
+    it cannot hold the retry. The clock is the last admit attempt.
+    """
+    cfg = load_hop_budget_config()
+    if cfg.crash_cap_per_row <= 0:
+        return False
+    hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+    admit_err = hop_fields.get("hop_admit_error")
+    if not isinstance(admit_err, dict):
+        return False
+    if int(admit_err.get("attempts") or 0) < cfg.crash_cap_per_row:
+        return False
+    try:
+        rec = json.loads(str(row.get("record_json") or "") or "{}")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(rec, dict):
+        return False
+    last = rec.get(HOP_ADMIT_LAST_ATTEMPT_AT_KEY)
+    if not isinstance(last, (int, float)):
+        return False
+    return (time.time() - float(last)) < ADMIT_RETRY_BACKOFF_S
+
+
+def _record_json_after_announcer(dispatch_id: str, fallback: str) -> str:
+    """Reload ledger JSON so a full replace keeps announcer dedup keys."""
+    fresh = _load_row(dispatch_id)
+    if fresh is None:
+        return fallback
+    return str(fresh.get("record_json") or fallback)
+
+
+def _stamp_admit_attempt_clock(record_json: str) -> str:
+    try:
+        data = json.loads(record_json) if record_json else {}
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[HOP_ADMIT_LAST_ATTEMPT_AT_KEY] = time.time()
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
 async def _stamp_admit_outcome(
@@ -111,7 +162,9 @@ async def _stamp_admit_outcome(
 ) -> bool:
     """Apply ledger + event side effects for one hop admit attempt."""
     thread_id = str(row.get("thread_id") or "")
-    record_json = str(row.get("record_json") or "")
+    record_json = _record_json_after_announcer(
+        dispatch_id, str(row.get("record_json") or "")
+    )
     body = build_hop_team_dispatch_body(row, hop_reason_override=hop_reason)
     hop_seq = int((body or {}).get("hop_seq") or 1)
     if ok:
@@ -157,7 +210,7 @@ async def _stamp_admit_outcome(
             }
         },
     )
-    _write_record_json(dispatch_id, merged)
+    _write_record_json(dispatch_id, _stamp_admit_attempt_clock(merged))
     emit_frontier_sdk_conductor_hop_admit_failed(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -398,12 +451,14 @@ async def _service_admit_retry_park(row: dict) -> bool:
     if body is None or "dispatch_thread_id" not in body:
         return False
     ok, _detail = await post_conductor_hop_team_dispatch(body)
+    if not ok:
+        return False
     ledger = CursorDispatchLedger.instance()
-    patch: dict = {"hop_park_serviced": True}
-    if ok:
-        patch[HOP_PARKED_KEY] = False
-    ledger.merge_record_json(dispatch_id=dispatch_id, patch=patch)
-    return ok
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"hop_park_serviced": True, HOP_PARKED_KEY: False},
+    )
+    return True
 
 
 async def sweep_conductor_hop_watchdog(

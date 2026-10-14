@@ -25,6 +25,11 @@ logger = get_logger(__name__)
 
 
 def build_parked_transport_body(*, reason: str, hop_seq: int | None) -> str:
+    """Closeout body posted on the worker thread when a hop budget parks.
+
+    ``reason`` is the park cause. ``hop_seq`` is omitted when the predecessor
+    has no hop sequence. Returns the multiline body the park poster sends.
+    """
     lines = [
         "status: complete",
         "stop: PARKED_TRANSPORT",
@@ -60,6 +65,58 @@ def default_park_poster(thread_id: str, body: str) -> None:
             request=resp.request,
             response=resp,
         )
+
+
+async def page_hop_inspection_requested(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    reason: str,
+    work_key: str,
+) -> bool:
+    """Awareness page for a suspicion hop that was admitted, not parked.
+
+    Subject and body avoid park language so an operator does not treat an
+    admitted hop as a transport stop. Returns the pager client's bool.
+    """
+    from pager_notify.client import notify_pager
+    from pager_notify.mission_page import format_mission_awareness_page
+    from pager_notify.so_what import SMS_SUBJECT_MAX, clip
+
+    subject = clip(f"Conductor hop inspection — {reason}", SMS_SUBJECT_MAX)
+    _subj, body, tag = format_mission_awareness_page(
+        subject=subject,
+        vision=(
+            "ULG conductor missions should chain across G-rows without you "
+            "babysitting each crash or loop."
+        ),
+        looking_back=(
+            f"Mission {work_key} on worker thread {thread_id} needs inspection "
+            f"for {reason} at dispatch {dispatch_id}. The hop was admitted."
+        ),
+        architecture=(
+            "git_integration_worker conductor hop announcer emitted "
+            "frontier.sdk.conductor.hop.inspection_requested and left the "
+            "row eligible for a successor."
+        ),
+        looking_ahead=(
+            "Read the summoning thread. A successor may already be in flight."
+        ),
+        beyond_bullets=[
+            "This is an inspection notice, not a transport stop.",
+        ],
+        tag="conductor-hop-inspection",
+    )
+    try:
+        return await notify_pager(_subj, body, tag=tag)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "hop inspection pager failed dispatch=%s thread=%s",
+            dispatch_id,
+            thread_id,
+            exc_info=True,
+        )
+        return False
 
 
 async def page_hop_budget_parked(
@@ -180,5 +237,6 @@ __all__ = [
     "build_parked_transport_body",
     "default_park_poster",
     "page_hop_budget_parked",
+    "page_hop_inspection_requested",
     "park_conductor_hop_mission",
 ]

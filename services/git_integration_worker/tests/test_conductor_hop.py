@@ -600,7 +600,7 @@ async def test_inherit_fail_open_copy_lost_no_retry(
     spool.mkdir()
     monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from scripts.mcp_bridge_steer_inject import append_spool_entry, spool_path
+    from scripts.mcp_bridge_steer_inject import append_spool_entry
 
     append_spool_entry(
         "pred-hop-copyfail",
@@ -708,7 +708,11 @@ async def test_hop_inherit_copies_pending_on_post_success(
     spool.mkdir()
     monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from scripts.mcp_bridge_steer_inject import append_spool_entry, claim_pending, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        append_spool_entry,
+        claim_pending,
+        spool_path,
+    )
 
     append_spool_entry(
         "pred-hop-ok",
@@ -2966,7 +2970,6 @@ async def test_advancing_chain_admits_at_hop_49() -> None:
     """S3: long advancing chain admits at hop 49 without hop_parked on predecessor."""
     ledger = CursorDispatchLedger.instance()
     prior = "spawn-parent"
-    pred_id = "adv-48"
     for idx in range(1, 50):
         dispatch_id = f"adv-{idx}"
         req = _req(dispatch_id=dispatch_id)
@@ -3003,8 +3006,6 @@ async def test_advancing_chain_admits_at_hop_49() -> None:
             row_patch["summoning_thread_id"] = "9638"
         ledger.merge_record_json(dispatch_id=dispatch_id, patch=row_patch)
         ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
-        if idx == 48:
-            pred_id = dispatch_id
         prior = dispatch_id
     post = AsyncMock(return_value=(True, {"dispatch_id": "succ-49"}))
     with patch(
@@ -3016,7 +3017,7 @@ async def test_advancing_chain_admits_at_hop_49() -> None:
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (pred_id,),
+            ("adv-49",),
         ).fetchone()
     data = json.loads(row["record_json"])
     assert data.get("hop_parked") is not True
@@ -3123,7 +3124,7 @@ def _install_mission_open_summon_oracle_fold(
     """Oracle from 15336 independent confirm: attended vs omitted fold row_status."""
     from types import SimpleNamespace
 
-    from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
+    from implement_admission.conductor_witness import FoldDeps
 
     def tracking_fold_deps(
         source_ref: str,

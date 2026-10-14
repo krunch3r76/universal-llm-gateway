@@ -884,7 +884,11 @@ async def fire_consult_pending_continue(row: dict[str, Any]) -> bool:
         return False
     hop_seq = int(body.get("hop_seq") or 1)
     ok, detail = await post_conductor_hop_team_dispatch(body)
-    record_json = str(row.get("record_json") or "")
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _load_row,
+    )
+
+    record_json = str((_load_row(dispatch_id) or row).get("record_json") or "")
     if ok:
         successor = str(detail.get("dispatch_id") or "") or str(
             detail.get("execution_id") or ""

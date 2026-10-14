@@ -1323,7 +1323,7 @@ def test_park_harvest_refusal_not_emitted_when_already_continued() -> None:
 def test_evaluate_harvest_reply_reply_absent() -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req(dispatch_id="park-reply-absent")
-    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _production_parked_row(ledger, req, closeout_turn=48)
     _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
     mapped = _reload_row(ledger, req.dispatch_id)
     with _thread_turns([]), _no_harvest_started_at():
@@ -1571,12 +1571,16 @@ def test_park_harvest_continue_uses_midline_harvest_token() -> None:
 
 @pytest.mark.asyncio
 async def test_consult_pending_identical_signatures_park() -> None:
-    """Three CONSULT_PENDING hops with identical signatures park and page once."""
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
-        fire_consult_pending_continue,
-    )
+    """Three identical CONSULT_PENDING signatures park once via park_conductor.
+
+    This is the loop park, not the inspection-deferred admit path. The
+    inspection pager must stay idle; paging happens inside park_conductor.
+    """
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
         _PARK_REASON_NO_PROGRESS_CAP,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        fire_consult_pending_continue,
     )
 
     stuck = {

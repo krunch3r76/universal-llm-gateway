@@ -69,7 +69,10 @@ async def apply_hop_budget_announcer(
 ) -> bool:
     """Page/emit once per inspection window; park loop rows.
 
-    Returns True when the caller may proceed to admit a successor.
+    Returns ``verdict.ok`` so a refusal the announcer does not recognize
+    (``cancel_discard``, ``already_parked``) cannot admit. Dedup keys are
+    merged as single fields so a later full ``record_json`` replace that
+    reloads the row keeps them.
     """
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
         park_conductor_hop_mission,
@@ -121,7 +124,10 @@ async def apply_hop_budget_announcer(
             signature_key=key,
         )
         return True
-    return True
+    if verdict.ok and not verdict.reason:
+        _maybe_emit_inspection_cleared(row)
+    # Unrecognized refusals (cancel_discard, already_parked) must not admit.
+    return verdict.ok
 
 
 def _hop_seq(row: dict[str, Any]) -> int:
@@ -155,19 +161,21 @@ def _emit_inspection_once(
             return
     key = signature_key or signature_key_for(progress_signature_for_row(row))
     emit_fn(key)
-    patch = dict(record)
-    emitted_map = dict(emitted) if isinstance(emitted, dict) else {}
+    fresh = _record(_reload_row(dispatch_id) or row)
+    prior_map = fresh.get(HOP_INSPECTION_EMITTED_FOR_KEY)
+    emitted_map = dict(prior_map) if isinstance(prior_map, dict) else {}
+    if isinstance(emitted, dict):
+        emitted_map = {**emitted, **emitted_map}
     emitted_map[outcome] = key
-    patch[HOP_INSPECTION_EMITTED_FOR_KEY] = emitted_map
     CursorDispatchLedger.instance().merge_record_json(
         dispatch_id=dispatch_id,
-        patch=patch,
+        patch={HOP_INSPECTION_EMITTED_FOR_KEY: emitted_map},
     )
 
 
 async def _page_inspection_once(row: dict[str, Any], *, signature_key: str) -> None:
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
-        page_hop_budget_parked,
+        page_hop_inspection_requested,
     )
 
     record = _record(row)
@@ -176,7 +184,7 @@ async def _page_inspection_once(row: dict[str, Any], *, signature_key: str) -> N
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     work_key = str(row.get("work_key") or "")
-    await page_hop_budget_parked(
+    await page_hop_inspection_requested(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         reason=REASON_INSPECTION_REQUESTED,
@@ -186,9 +194,49 @@ async def _page_inspection_once(row: dict[str, Any], *, signature_key: str) -> N
         CursorDispatchLedger,
     )
 
-    patch = dict(record)
-    patch[HOP_INSPECTION_PAGED_FOR_KEY] = signature_key
     CursorDispatchLedger.instance().merge_record_json(
         dispatch_id=dispatch_id,
-        patch=patch,
+        patch={HOP_INSPECTION_PAGED_FOR_KEY: signature_key},
+    )
+
+
+def _reload_row(dispatch_id: str) -> dict[str, Any] | None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _load_row,
+    )
+
+    if not dispatch_id:
+        return None
+    return _load_row(dispatch_id)
+
+
+def _maybe_emit_inspection_cleared(row: dict[str, Any]) -> None:
+    """Emit inspection_cleared once when a clear follows an inspection window.
+
+    A clear with no prior page or emit is the common admit path; emitting
+    there would be a hot signal. The catalog entry stays because this edge
+    is the one the signal's docstring names.
+    """
+    from services.git_integration_worker.cursor_sdk_hop_events import (
+        emit_frontier_sdk_conductor_hop_inspection_cleared,
+    )
+
+    record = _record(row)
+    paged = record.get(HOP_INSPECTION_PAGED_FOR_KEY)
+    emitted = record.get(HOP_INSPECTION_EMITTED_FOR_KEY)
+    had_window = bool(paged) or (isinstance(emitted, dict) and bool(emitted))
+    if not had_window:
+        return
+    key = signature_key_for(progress_signature_for_row(row))
+    _emit_inspection_once(
+        row,
+        outcome="cleared",
+        emit_fn=lambda k: emit_frontier_sdk_conductor_hop_inspection_cleared(
+            dispatch_id=str(row.get("dispatch_id") or ""),
+            thread_id=str(row.get("thread_id") or ""),
+            work_key=str(row.get("work_key") or "") or None,
+            hop_seq=_hop_seq(row),
+            signature_key=k,
+        ),
+        signature_key=key,
     )

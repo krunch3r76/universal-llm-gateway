@@ -6,8 +6,8 @@ import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    HopBudgetConfig,
     _PARK_REASON_NO_PROGRESS_CAP,
+    HopBudgetConfig,
     list_mission_terminal_chain,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
@@ -273,3 +273,36 @@ def test_recurrence_non_adjacent_full_signature_loop() -> None:
     )
     assert result.outcome == "loop"
     assert result.loop_reason == PARK_REASON_LOOP
+
+
+def test_suspicion_one_provable_prior_requests_inspection() -> None:
+    """S2 AC6 — one identical provable prior is suspicion, not a loop park."""
+    ledger = CursorDispatchLedger.instance()
+    stuck = {
+        "hop_entry_gate": "G4",
+        "hop_witnessed_done": ["G1"],
+        "hop_lane_tip": "lane-sus",
+        "hop_scoreboard_tip": "board-sus",
+        "hop_next_admit": "harvest G5",
+    }
+    _terminal_row(
+        ledger,
+        dispatch_id="sus-1",
+        hop_seq=1,
+        hop_from="spawn",
+        closeout_tokens=["ROW_HOP"],
+        record_patch=stuck,
+    )
+    row = _terminal_row(
+        ledger,
+        dispatch_id="sus-2",
+        hop_seq=2,
+        hop_from="sus-1",
+        closeout_tokens=["ROW_HOP"],
+        record_patch=stuck,
+    )
+    chain = list_mission_terminal_chain(work_key=_WORK_KEY)
+    result = inspect_hop_loop(
+        row, chain, config=_CFG, closeout_tokens=frozenset({"ROW_HOP"})
+    )
+    assert result.outcome == "suspicion"

@@ -1436,6 +1436,11 @@ def _merge_conductor_closeout_hop_authority(
 
 
 def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
+    """Stable team-dispatch idempotency key for one predecessor hop.
+
+    Stargate uses the returned string to collapse a retried admit of the
+    same predecessor into a single successor.
+    """
     return f"conductor-hop:{predecessor_dispatch_id}"
 
 
@@ -1792,7 +1797,7 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     hop_seq = int(body.get("hop_seq") or 1)
     hop_reason = str(body.get("hop_reason") or "planned")
     ok, detail = await post_conductor_hop_team_dispatch(body)
-    record_json = str(row.get("record_json") or "")
+    record_json = str((_load_row(dispatch_id) or row).get("record_json") or "")
     if ok:
         successor = str(detail.get("dispatch_id") or "") or str(
             detail.get("execution_id") or ""
