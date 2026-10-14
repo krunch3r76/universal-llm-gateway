@@ -144,3 +144,52 @@ def test_ac18_registration_id_in_leg_prose_is_not_the_header() -> None:
     assert identity == "unknown"
     assert meta["identity"] == "unknown"
     assert "checkpoint_stale" not in _body
+
+
+def test_ac2_unicode_decode_on_rules_reader_falls_back_inline() -> None:
+    def _raise(_uri: str) -> str:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    text, truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules="### HOUSE RULES\n- K1 INLINE-RULES-SENTINEL",
+        read_cortex_uri=_raise,
+    )
+    assert "INLINE-RULES-SENTINEL" in text
+    assert "[rules_file_unreadable: UnicodeDecodeError" in text
+    assert "[render_failed house_rules" not in text
+    assert truncated is False
+
+
+def test_ac5_prose_registration_id_is_not_checkpoint_author() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "LEG 241 at HOP ~11:00Z — seat 36f73e56; birth 36f73e56f127\n"
+        "DONE: predecessor hop · registration_id a0af518d57e84064bc86d0ee53e74636 "
+        "(relayed)\n"
+        "### OWED / NEXT\nok\n"
+    )
+    body, meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+        superseded_registration_id="reg-old",
+    )
+    assert meta["identity"] == "unknown"
+    assert "checkpoint_stale" not in body
+
+
+def test_ac5_live_leg_line_registration_id_matches() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "seat = Cowork CSE https://x (relayed) · registration_id "
+        "a0af518d57e84064bc86d0ee53e74636 (relayed)\n"
+        "### OWED / NEXT\nok\n"
+    )
+    _body, meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+        superseded_registration_id="a0af518d57e84064bc86d0ee53e74636",
+    )
+    assert meta["identity"] == "match"

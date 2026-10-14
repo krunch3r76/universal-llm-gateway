@@ -17,7 +17,11 @@ from hop_handoff.body import parse_successor_birth_id, parse_superseded_registra
 from hop_handoff.standing_handoff import standing_handoff_path, standing_handoff_uri
 from implement_admission.closeout_helpers import cortex_files_root
 
-from claude_bundles.journal_hop_projection import hop_journal_projection_fields
+from claude_bundles.journal_hop_projection import (
+    MAESTRO_JOURNAL_URI,
+    MAESTRO_REGISTER_URI,
+    hop_journal_projection_fields,
+)
 from claude_bundles.operator_proxy_bus_fetch import lineage_status_for_execution
 from claude_bundles.operator_proxy_live_leg import (
     FoldStateSaver,
@@ -141,14 +145,11 @@ def cortex_archive_path_exists(path: str) -> bool:
 
 
 def read_cortex_uri_from_root(uri: str) -> str | None:
-    """Read a ``cortex://`` URI from the cortex files root. Missing or unreadable → None."""
-    try:
-        path = _cortex_path(uri)
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    except OSError:
+    """Read a ``cortex://`` URI from the cortex files root. Missing → None; read errors propagate."""
+    path = _cortex_path(uri)
+    if not path.is_file():
         return None
-    return None
+    return path.read_text(encoding="utf-8")
 
 
 def production_standing_seams() -> dict[str, Any]:
@@ -213,13 +214,20 @@ def hop_successor_fields(
     rules_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     handoff_uri = standing_handoff_uri(lane)
     if sidecar:
-        checkpoint_block, ck_meta = render_checkpoint_block(
-            sidecar,
-            lane=lane,
-            inline_house_rules=inline_rules,
-            path_exists=archive_path_exists,
-            superseded_registration_id=superseded_reg,
-        )
+        try:
+            checkpoint_block, ck_meta = render_checkpoint_block(
+                sidecar,
+                lane=lane,
+                inline_house_rules=inline_rules,
+                path_exists=archive_path_exists,
+                superseded_registration_id=superseded_reg,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+            checkpoint_block = (
+                "## CURRENT LEG (rendered checkpoint)\n"
+                + _render_failed("checkpoint", exc, handoff_uri)
+            )
+            ck_meta = {}
         inflight_rows = ck_meta.get("inflight_rows") or []
         inflight_count = len(inflight_rows)
         if inflight_rows:
@@ -278,13 +286,27 @@ def hop_successor_fields(
         rules_text=house_rules_verbatim,
     )
 
-    journal_fields = hop_journal_projection_fields(
-        journal_text=journal_text,
-        register_text=register_text,
-        read_uri=read_cortex_uri,
-        role=role,
-        inflight_projection_lookup=inflight_projection_lookup,
-    )
+    try:
+        journal_fields = hop_journal_projection_fields(
+            journal_text=journal_text,
+            register_text=register_text,
+            read_uri=read_cortex_uri,
+            role=role,
+            inflight_projection_lookup=inflight_projection_lookup,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+        journal_fields = {
+            "lessons_in_force": (
+                "## Lessons in force\n\n"
+                + _render_failed("lessons_in_force", exc, MAESTRO_JOURNAL_URI)
+                + "\n"
+            ),
+            "register_card": (
+                "## Register\n\n"
+                + _render_failed("register_card", exc, MAESTRO_REGISTER_URI)
+                + "\n"
+            ),
+        }
 
     fetch_last = act5_fetch_last if act5_fetch_last is not None else 3
 

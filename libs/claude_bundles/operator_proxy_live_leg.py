@@ -84,8 +84,15 @@ def load_maestro_roster_text() -> str:
     """Load the maestro sidekick roster from the cortex files root."""
     root = cortex_files_root()
     path = root / _ROSTER_REL
-    if path.is_file():
-        return path.read_text(encoding="utf-8")
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        _logger.warning(
+            "maestro roster unreadable; house lanes fall back to the fixed extras",
+            exc_info=True,
+        )
+        return ""
     return ""
 
 
@@ -418,6 +425,11 @@ def load_fold_state(
         except OSError:
             _logger.warning("live-leg fold state unreadable", exc_info=True)
             return None
+        except UnicodeError:
+            _logger.warning(
+                "live-leg fold state corrupt; treating as empty", exc_info=True
+            )
+            return {}
         if raw is None:
             return {}
     else:
@@ -429,6 +441,11 @@ def load_fold_state(
         except OSError:
             _logger.warning("live-leg fold state unreadable", exc_info=True)
             return None
+        except UnicodeError:
+            _logger.warning(
+                "live-leg fold state corrupt; treating as empty", exc_info=True
+            )
+            return {}
     try:
         payload = json.loads(raw or "{}")
     except json.JSONDecodeError:

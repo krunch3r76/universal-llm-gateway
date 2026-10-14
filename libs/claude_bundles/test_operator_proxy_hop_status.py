@@ -795,3 +795,54 @@ def test_production_standing_seams_do_not_run_for_bare_ensure(
         fetch_turns=_noop_fetch,
     )
     assert called == []
+
+
+def test_ac5_prose_registration_does_not_widen_fetch() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "LEG 241 at HOP ~11:00Z — seat 36f73e56; birth 36f73e56f127\n"
+        "DONE: predecessor hop · registration_id a0af518d57e84064bc86d0ee53e74636 "
+        "(relayed)\n"
+        "### OWED / NEXT\nok\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\nsuperseded_registration_id: reg-old\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "last 3" in out
+    assert "last 5" not in out
+    assert "checkpoint_stale" not in out
+
+
+def test_ac8_journal_projection_raise_replaces_only_those_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_hop_status.hop_journal_projection_fields",
+        _boom,
+    )
+    sidecar = (
+        "## HOUSE RULES\n- K1 rules-still-here\n\n"
+        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-x\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+    )
+    assert (
+        "[render_failed lessons_in_force: RuntimeError — read "
+        "cortex://notes/system/maestro/journal.md]"
+    ) in out
+    assert "[render_failed register_card: RuntimeError" in out
+    assert "rules-still-here" in out
+    assert "checkpoint-x" in out
+    assert "## Hard refusals" in out
