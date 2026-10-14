@@ -7,6 +7,7 @@ a descendant of ``#{pane_pid}`` when a shell still owns the pane).
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -144,6 +145,27 @@ def observe_tmux_pane_hosts_manage(
     return None
 
 
+def build_successor_pane_shell_command(
+    *,
+    repo_root: Path,
+    record_path: Path,
+) -> str:
+    """Shell one-liner for a successor tmux pane.
+
+    Uses ``./manage`` so bootstrap matches ``manage:9-11`` (``.env.local``),
+    ``manage:118-119`` (``PROJECT_ROOT`` / ``PYTHONPATH``), and the default
+    TUI exec path (``manage:135``).
+    """
+    root_q = shlex.quote(str(repo_root))
+    record_q = shlex.quote(str(record_path))
+    manage_q = shlex.quote(str(repo_root / "manage"))
+    return (
+        f"cd {root_q} && "
+        f"MANAGE_HANDOVER_RECORD={record_q} "
+        f"exec {manage_q}"
+    )
+
+
 def spawn_successor_pane(
     *,
     tmux_target: str,
@@ -153,10 +175,10 @@ def spawn_successor_pane(
     run_cmd: RunCmd,
 ) -> str | None:
     """Split a new tmux pane running armed manage; return pane id or None."""
-    cmd = (
-        f"cd {repo_root} && "
-        f"MANAGE_HANDOVER_RECORD={record_path} "
-        f"{python_bin} -m scripts.model_manager.ui"
+    del python_bin  # successor uses ./manage (venv + env bootstrap), not a bare module invoke
+    cmd = build_successor_pane_shell_command(
+        repo_root=repo_root,
+        record_path=record_path,
     )
     proc = run_cmd(
         [
