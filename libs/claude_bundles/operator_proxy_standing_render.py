@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
-from claude_bundles.maestro_runbook_load import load_maestro_runbook
-from claude_bundles.runbook_excerpt import extract_sections
 from hop_handoff.standing_handoff import standing_handoff_uri
+
+from claude_bundles.maestro_runbook_load import load_maestro_runbook
 
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
@@ -81,10 +79,6 @@ def _extract_current_leg_block(sidecar: str) -> str | None:
         return None
     start = match.start()
     rest = text[start:]
-    for heading, _body, level in _heading_sections(rest)[1:]:
-        if level <= 2 and not heading.startswith("CURRENT LEG"):
-            break
-    # Re-scan: body until next ## at level 2 excluding CURRENT LEG children
     lines = rest.splitlines()
     end = len(lines)
     for i in range(1, len(lines)):
@@ -119,15 +113,52 @@ def _parse_h3_sections(block: str) -> dict[str, str]:
     return out
 
 
+def _atx_chunks(text: str) -> list[tuple[str, str]]:
+    """Each heading plus the lines before the next heading, so parents omit children."""
+    lines = (text or "").splitlines()
+    starts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = _ATX_HEADING_RE.match(line)
+        if match is not None:
+            starts.append((index, match.group(2).strip()))
+    if not starts:
+        body = text.strip()
+        return [("", body)] if body else []
+    chunks: list[tuple[str, str]] = []
+    if starts[0][0] > 0:
+        pre = "\n".join(lines[: starts[0][0]]).strip()
+        if pre:
+            chunks.append(("", pre))
+    for number, (index, heading) in enumerate(starts):
+        end = starts[number + 1][0] if number + 1 < len(starts) else len(lines)
+        chunks.append((heading, "\n".join(lines[index:end]).rstrip()))
+    return chunks
+
+
+def _legacy_header_text(sidecar: str) -> str:
+    """Title block only: the first heading and the lines before the next heading."""
+    lines = (sidecar or "").splitlines()
+    chunk: list[str] = []
+    seen_heading = False
+    for line in lines:
+        if _ATX_HEADING_RE.match(line):
+            if seen_heading:
+                break
+            seen_heading = True
+        chunk.append(line)
+    return "\n".join(chunk).strip()
+
+
 def _legacy_checkpoint_body(sidecar: str, *, house_rules_body: str | None) -> str:
-    """Non-schema sidecar: everything except HOUSE RULES headings."""
+    """Non-schema sidecar: each section once, with every HOUSE RULES span omitted."""
     if not sidecar:
         return ""
     parts: list[str] = []
-    for heading, body, level in _heading_sections(sidecar):
-        if level <= 2 and "HOUSE RULES" in heading:
+    for heading, body in _atx_chunks(sidecar):
+        if "HOUSE RULES" in heading:
             continue
-        parts.append(body)
+        if body:
+            parts.append(body)
     if parts:
         return "\n\n".join(parts).strip()
     trimmed = sidecar
@@ -223,8 +254,15 @@ def _apply_checkpoint_budget(
         trimmed = False
         for name in _TRUNCATABLE_SECTIONS:
             sec = working.get(name, "")
-            if sec and _utf8_len(sec) > 80:
-                working[name] = _truncate_utf8(sec, max(80, _utf8_len(sec) // 2))
+            sec_size = _utf8_len(sec)
+            if sec and sec_size > 80:
+                new_cap = max(80, sec_size // 2)
+                flag = f"[budget_exceeded {name} {sec_size}/{new_cap} — read {uri}]"
+                flags.append(flag)
+                shortened = _truncate_utf8(sec, new_cap)
+                if _utf8_len(shortened) >= sec_size:
+                    break
+                working[name] = shortened
                 trimmed = True
                 break
         if not trimmed:
@@ -235,9 +273,7 @@ def _apply_checkpoint_budget(
     tail_len = _utf8_len(tail)
     if tail_len > CHECKPOINT_BUDGET_B:
         exceeded = True
-        flag = (
-            f"[budget_exceeded checkpoint {tail_len}/{CHECKPOINT_BUDGET_B} — read {uri}]"
-        )
+        flag = f"[budget_exceeded checkpoint {tail_len}/{CHECKPOINT_BUDGET_B} — read {uri}]"
         if flag not in flags:
             flags.append(flag)
         tail = _truncate_utf8(tail, CHECKPOINT_BUDGET_B) + "\n" + flag
@@ -312,12 +348,26 @@ def render_inflight_block(
     return "\n".join(lines)
 
 
-def _split_rules_bullets(rules_body: str) -> list[tuple[str | None, str]]:
-    """Return (K-id or None, bullet text) bottom-to-top order for truncation."""
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+")
+
+
+def _bullet_ident(line: str, fallback: str) -> str:
+    km = _K_BULLET_RE.search(line)
+    if km:
+        return f"K{km.group(1)}"
+    num = re.match(r"^\s*(\d+)\.\s+", line)
+    if num:
+        return num.group(1)
+    return fallback
+
+
+def _split_rules_bullets(
+    rules_body: str,
+) -> tuple[str, str, list[tuple[str | None, str]]]:
+    """Return heading, intro before the first bullet, and bullets newest-first."""
     lines = (rules_body or "").splitlines()
-    if not lines:
-        return []
-    heading = lines[0] if lines[0].startswith("#") else ""
+    heading = ""
+    intro_lines: list[str] = []
     bullets: list[tuple[str | None, str]] = []
     current: list[str] = []
     current_k: str | None = None
@@ -331,20 +381,21 @@ def _split_rules_bullets(rules_body: str) -> list[tuple[str | None, str]]:
         current = []
         current_k = None
 
-    for line in lines[1:] if heading else lines:
-        if line.strip().startswith("- ") or line.strip().startswith("* "):
+    for index, line in enumerate(lines):
+        if index == 0 and line.startswith("#"):
+            heading = line
+            continue
+        if _BULLET_LINE_RE.match(line):
             flush()
-            km = _K_BULLET_RE.search(line)
-            current_k = f"K{km.group(1)}" if km else None
+            current_k = _bullet_ident(line, "")
+            current_k = current_k or None
             current = [line]
         elif current:
             current.append(line)
-        elif heading and not bullets:
-            heading = heading + "\n" + line
+        else:
+            intro_lines.append(line)
     flush()
-    if heading and not bullets:
-        return [(None, heading)]
-    return bullets
+    return heading, "\n".join(intro_lines).strip(), bullets
 
 
 def render_house_rules_block(
@@ -354,6 +405,7 @@ def render_house_rules_block(
     house_rules_text: str | None = None,
     read_cortex_uri: Callable[[str], str | None] | None = None,
 ) -> tuple[str, bool]:
+    """Render HOUSE RULES. Every cut bullet is named; drops run from the bottom."""
     uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     body = house_rules_text
     if body is None and read_cortex_uri is not None:
@@ -365,44 +417,49 @@ def render_house_rules_block(
         body = inline_rules or ""
     if not body.strip():
         return "", False
-    bullets = _split_rules_bullets(body)
-    kept: list[str] = []
-    truncated_ids: list[str] = []
-    total = 0
-    heading_line = ""
-    if body.lstrip().startswith("#"):
-        first_line = body.splitlines()[0]
-        heading_line = first_line
-        total += _utf8_len(first_line + "\n")
-
-    # Keep from top (newest first after heading); truncate oldest (bottom)
-    bullet_entries: list[tuple[str, str, str | None]] = []
-    for k_id, text in bullets:
-        bullet_entries.append((k_id or f"bullet-{len(bullet_entries)+1}", text, k_id))
+    heading_line, intro, bullets = _split_rules_bullets(body)
+    bullet_entries: list[tuple[str, str]] = []
+    for index, (k_id, text) in enumerate(bullets):
+        bullet_entries.append((k_id or f"bullet-{index + 1}", text))
 
     assembled: list[str] = []
     if heading_line:
         assembled.append(heading_line)
     size = _utf8_len("\n".join(assembled))
-    exceeded = False
-    for ident, text, k_id in bullet_entries:
+    truncated_ids: list[str] = []
+
+    if intro:
+        isize = _utf8_len(intro)
+        over_cap = isize > RULES_BULLET_CAP_B
+        shown = _truncate_utf8(intro, RULES_BULLET_CAP_B) if over_cap else intro
+        isize = _utf8_len(shown)
+        if size + isize + 1 > RULES_BUDGET_B:
+            truncated_ids.append("intro")
+        else:
+            if over_cap:
+                truncated_ids.append("intro")
+            assembled.append(shown)
+            size += isize + 1
+
+    for index, (ident, text) in enumerate(bullet_entries):
         bsize = _utf8_len(text)
-        if bsize > RULES_BULLET_CAP_B:
+        over_cap = bsize > RULES_BULLET_CAP_B
+        if over_cap:
             text = _truncate_utf8(text, RULES_BULLET_CAP_B)
             bsize = _utf8_len(text)
         if size + bsize + 1 > RULES_BUDGET_B:
-            exceeded = True
-            truncated_ids.append(k_id or ident)
-            continue
+            truncated_ids.extend(item_id for item_id, _item in bullet_entries[index:])
+            break
+        if over_cap:
+            truncated_ids.append(ident)
         assembled.append(text)
         size += bsize + 1
 
     if truncated_ids:
-        # oldest first in flag = bottom-most truncated first
-        rev = list(reversed(truncated_ids))
-        flag = f"[rules truncated: {', '.join(rev)} — read {uri}]"
+        # Oldest first: the bottom of the source is the first name in the flag.
+        flag = f"[rules truncated: {', '.join(reversed(truncated_ids))} — read {uri}]"
         assembled.append(flag)
-    return "\n".join(assembled), exceeded
+    return "\n".join(assembled), bool(truncated_ids)
 
 
 def render_checkpoint_block(
@@ -427,11 +484,13 @@ def render_checkpoint_block(
         legacy = _legacy_checkpoint_body(sidecar, house_rules_body=inline_house_rules)
         sections = {"__legacy__": legacy} if legacy else {}
 
-    preamble_text = sections.get("__preamble__", "") or sections.get("__legacy__", "")
-    if not preamble_text and current:
-        preamble_text = current.splitlines()[0] if current else ""
+    if current:
+        header = sections.get("__preamble__", "")
+    else:
+        header = _legacy_header_text(sidecar)
+    meta["leg_header"] = header
 
-    reg_match = _REGISTRATION_RE.search(preamble_text or sidecar or "")
+    reg_match = _REGISTRATION_RE.search(header or "")
     checkpoint_reg = reg_match.group(1) if reg_match else None
     superseded = (superseded_registration_id or "").strip() or None
     if checkpoint_reg and superseded:
@@ -447,7 +506,7 @@ def render_checkpoint_block(
     elif checkpoint_reg or superseded:
         meta["identity"] = "unknown"
 
-    archived = _ARCHIVED_PREV_RE.search(preamble_text or "")
+    archived = _ARCHIVED_PREV_RE.search(header or "")
     if archived:
         path = archived.group(1)
         exists_check = path_exists
@@ -461,7 +520,7 @@ def render_checkpoint_block(
             meta["flags"].append("archive_missing")
 
     if current:
-        render_sections = {k: v for k, v in sections.items() if k != "HOUSE RULES"}
+        render_sections = {k: v for k, v in sections.items() if "HOUSE RULES" not in k}
         body, flags, exceeded = _apply_checkpoint_budget(render_sections, uri=uri)
         meta["flags"].extend(flags)
         if exceeded:
@@ -500,18 +559,14 @@ def render_pointers_block(
     checkpoint_preamble: str,
     rules_text: str,
 ) -> str:
-    leg_nums = [int(m.group(1)) for m in _LEG_NUM_RE.finditer(checkpoint_preamble or "")]
+    leg_nums = [
+        int(m.group(1)) for m in _LEG_NUM_RE.finditer(checkpoint_preamble or "")
+    ]
     k_ids = sorted({int(m.group(1)) for m in _K_BULLET_RE.finditer(rules_text or "")})
     leg_part = (
-        f"LEG {min(leg_nums)}…{max(leg_nums)}"
-        if leg_nums
-        else "prior LEG blocks"
+        f"LEG {min(leg_nums)}…{max(leg_nums)}" if leg_nums else "prior LEG blocks"
     )
-    k_part = (
-        f"K{min(k_ids)}–K{max(k_ids)}"
-        if k_ids
-        else "K-row rulings"
-    )
+    k_part = f"K{min(k_ids)}–K{max(k_ids)}" if k_ids else "K-row rulings"
     return (
         f"- Prior LEG blocks ({leg_part}): "
         f"`cortex://notes/system/threads/<lane>-standing-handoff.md` and the house "
@@ -534,17 +589,13 @@ def render_pointers_block(
 
 
 def maestro_runbook_act2_line() -> str:
-    body, err = load_maestro_runbook()
+    """First-act line that names the runbook sections and the file's byte size."""
+    body, _err = load_maestro_runbook()
     if not body:
-        size_note = "size unknown" if err else "size unknown"
         return (
             "2. `md_read` cortex://notes/runbooks/maestro-loop.md sections "
-            f"§ Refuse and § Steps only ({size_note})."
+            "§ Refuse and § Steps only (size unknown)."
         )
-    try:
-        excerpt = extract_sections(body, ("Refuse", "Steps"))
-    except ValueError:
-        excerpt = ""
     size = _utf8_len(body)
     return (
         "2. `md_read` cortex://notes/runbooks/maestro-loop.md sections "
@@ -584,11 +635,21 @@ def assess_render_budget_and_identity(
     return budget, str(meta.get("identity", "unknown"))
 
 
+def measure_preamble_bytes(rendered: str) -> int:
+    """UTF-8 bytes from the start of the hop body through ``## Your first acts``."""
+    marker = "## Your first acts"
+    head = (
+        rendered.split(marker, 1)[0] if marker in (rendered or "") else (rendered or "")
+    )
+    return len(head.encode("utf-8"))
+
+
 def compute_preamble_over_inflight_flag(
     staged_preamble: str,
     inflight_row_count: int,
 ) -> str | None:
-    size = _utf8_len(staged_preamble)
+    """Flag when the measured preamble exceeds the soft cap because of IN FLIGHT rows."""
+    size = measure_preamble_bytes(staged_preamble)
     if size <= PREAMBLE_SOFT_CAP_B:
         return None
     if inflight_row_count <= 0:
@@ -603,6 +664,7 @@ __all__ = [
     "assess_render_budget_and_identity",
     "compute_preamble_over_inflight_flag",
     "maestro_runbook_act2_line",
+    "measure_preamble_bytes",
     "parse_inflight_rows",
     "render_checkpoint_block",
     "render_house_rules_block",

@@ -479,9 +479,7 @@ def stage_cdp_prompt_with_skills(
                 ),
             )
 
-    effective = ensure_cdp_judgment_skills(
-        skills, purpose=purpose, contract=contract
-    )
+    effective = ensure_cdp_judgment_skills(skills, purpose=purpose, contract=contract)
     body = read_prompt_text(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,
@@ -492,6 +490,7 @@ def stage_cdp_prompt_with_skills(
 
     if is_operator_proxy_mission_purpose(purpose):
         from claude_bundles.operator_proxy_hop_status import (
+            production_standing_seams,
             standing_handoff_text_for_prompt,
         )
         from claude_bundles.operator_proxy_live_leg import load_maestro_roster_text
@@ -501,6 +500,7 @@ def stage_cdp_prompt_with_skills(
             standing_handoff_text=standing_handoff_text_for_prompt(body),
             roster_text=load_maestro_roster_text(),
             execution_id=execution_id,
+            **production_standing_seams(),
         )
     from agent_bus_store.house_pools import (
         PoolsParseError,

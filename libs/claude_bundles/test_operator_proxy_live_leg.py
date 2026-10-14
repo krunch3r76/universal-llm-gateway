@@ -2,20 +2,37 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 from typing import Any
 
 import pytest
 
+from claude_bundles import operator_proxy_live_leg as live_leg_mod
 from claude_bundles.operator_proxy_live_leg import (
+    GOVERNING_RULE,
     LaneFoldState,
     LiveLeg,
-    OpenItem,
     fetch_turns_to_closure,
+    load_fold_state,
     project_live_leg,
     render_live_leg,
+    save_fold_state,
 )
 
 pytestmark = pytest.mark.offline
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_fold_state(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect fold-state IO off the real cortex root."""
+    path = tmp_path / "notes/system/operational/live-leg-fold-state.json"
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
+        lambda: path,
+    )
+
 
 _TRUNCATION_LINE = (
     "(truncated: bus paging did not reach thread start; "
@@ -134,3 +151,325 @@ def test_ac8_fold_state_unreadable_cold_start() -> None:
 
 def test_render_declared_in_flight_header() -> None:
     assert "declared_in_flight: 3" in render_live_leg(LiveLeg(), declared_in_flight=3)
+
+
+def _page_returning(turns: list[dict[str, Any]]):
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, after_turn, last, compact, mark_read
+        return turns, False, None
+
+    return _page
+
+
+def _project_saved(
+    state: dict[str, LaneFoldState],
+    turns: list[dict[str, Any]],
+    *,
+    monkeypatch: pytest.MonkeyPatch | None = None,
+    lane_status: str | None = None,
+) -> tuple[LiveLeg, dict[str, LaneFoldState]]:
+    saved: dict[str, LaneFoldState] = {}
+
+    def _save(new_state: dict[str, LaneFoldState]) -> None:
+        saved.clear()
+        saved.update(new_state)
+
+    fetch = lambda _lane: []  # noqa: E731
+    if lane_status is not None:
+        from claude_bundles.operator_proxy_bus_fetch import fetch_turns_for_lane
+
+        assert monkeypatch is not None
+        monkeypatch.setattr(
+            live_leg_mod, "fetch_lane_status", lambda _lane: lane_status
+        )
+        fetch = fetch_turns_for_lane
+    leg = project_live_leg(
+        ["15851"],
+        fetch,
+        page_fetch=_page_returning(turns),
+        fold_state_load=lambda: dict(state),
+        fold_state_save=_save,
+    )
+    return leg, saved
+
+
+def test_ac1_done_after_watermark_retires_open_item() -> None:
+    state = {"15851": LaneFoldState(watermark=3000, open_keys=["15851:100:todo:old"])}
+    leg, saved = _project_saved(
+        state,
+        [{"turn_number": 3001, "subject": "DONE|todo:old"}],
+    )
+    text = render_live_leg(leg)
+    assert "todo:old" not in text
+    assert all("todo:old" not in key for key in saved["15851"].open_keys)
+    assert saved["15851"].watermark >= 3000
+
+
+def test_ac1_close_house_retires_carried_item() -> None:
+    state = {"15851": LaneFoldState(watermark=3000, open_keys=["15851:100:todo:old"])}
+    leg, saved = _project_saved(
+        state,
+        [{"turn_number": 3002, "subject": "CLOSE|house"}],
+    )
+    assert "todo:old" not in render_live_leg(leg)
+    assert saved["15851"].open_keys == []
+
+
+def test_ac1_lane_status_closed_retires_carried_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"15851": LaneFoldState(watermark=3000, open_keys=["15851:100:todo:old"])}
+    leg, saved = _project_saved(
+        state,
+        [],
+        monkeypatch=monkeypatch,
+        lane_status="closed",
+    )
+    assert "todo:old" not in render_live_leg(leg)
+    assert saved["15851"].open_keys == []
+
+
+def test_ac1_carried_pickup_and_plan_keep_their_verbs() -> None:
+    state = {
+        "15851": LaneFoldState(
+            watermark=3000,
+            open_keys=[
+                "15851:150:PICKUP|todo:pick",
+                "15851:160:PLAN|todo:plan",
+            ],
+        )
+    }
+    leg, _saved = _project_saved(state, [])
+    text = render_live_leg(leg)
+    assert "PICKUP|todo:pick" in text
+    assert GOVERNING_RULE["PICKUP"].split(":")[0] in text
+    assert "PLAN|todo:plan" in text
+    assert GOVERNING_RULE["PLAN"].split(":")[0] in text
+    pickup = next(item for item in leg.items if item.key == "todo:pick")
+    assert pickup.verb == "PICKUP"
+    assert "R5" not in text.split("todo:pick", 1)[1].split("\n", 1)[0]
+
+
+def test_ac1_no_new_pages_keeps_watermark() -> None:
+    state = {"15851": LaneFoldState(watermark=3000, open_keys=["15851:100:todo:old"])}
+    leg, saved = _project_saved(state, [])
+    assert any(item.key == "todo:old" and item.verb == "REQUEST" for item in leg.items)
+    assert saved["15851"].watermark >= 3000
+
+
+def test_ac1_legacy_three_part_key_loads_as_request() -> None:
+    loaded = load_fold_state(
+        read_state=lambda: json.dumps(
+            {
+                "lanes": {
+                    "15851": {"watermark": 3000, "open_keys": ["15851:100:todo:old"]}
+                }
+            }
+        )
+    )
+    assert loaded is not None
+    assert loaded["15851"].open_keys == ["15851:100:todo:old"]
+    leg, _saved = _project_saved(
+        {"15851": loaded["15851"]},
+        [],
+    )
+    item = leg.items[0]
+    assert item.verb == "REQUEST"
+    assert item.key == "todo:old"
+
+
+def test_ac7_bad_watermark_cold_starts() -> None:
+    loaded = load_fold_state(read_state=lambda: '{"lanes":{"1":{"watermark":"x"}}}')
+    assert loaded == {}
+    seen: list[int] = []
+
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, last, compact, mark_read
+        seen.append(after_turn)
+        return [], False, None
+
+    leg = project_live_leg(
+        ["1"],
+        lambda _lane: [],
+        page_fetch=_page,
+        fold_state_load=lambda: loaded,
+        fold_state_save=lambda _s: None,
+    )
+    assert seen == [0]
+    assert isinstance(leg, LiveLeg)
+
+
+def test_ac7_bad_open_key_cold_starts() -> None:
+    seen: list[int] = []
+
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, last, compact, mark_read
+        seen.append(after_turn)
+        return [], False, None
+
+    leg = project_live_leg(
+        ["1"],
+        lambda _lane: [],
+        page_fetch=_page,
+        fold_state_load=lambda: {
+            "1": LaneFoldState(watermark=50, open_keys=["1:x:todo:a"])
+        },
+        fold_state_save=lambda _s: None,
+    )
+    assert seen == [0]
+    assert leg.items == []
+
+
+def test_ac7_fold_state_load_runtime_error_cold_starts() -> None:
+    seen: list[int] = []
+
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, last, compact, mark_read
+        seen.append(after_turn)
+        return [], False, None
+
+    def _boom() -> dict[str, LaneFoldState]:
+        raise RuntimeError("store down")
+
+    leg = project_live_leg(
+        ["1"],
+        lambda _lane: [],
+        page_fetch=_page,
+        fold_state_load=_boom,
+    )
+    assert seen == [0]
+    assert isinstance(leg, LiveLeg)
+
+
+def test_ac8_corrupt_json_is_replaced(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    path = tmp_path / "notes/system/operational/live-leg-fold-state.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    project_live_leg(
+        ["1"],
+        lambda _lane: [],
+        page_fetch=_page_returning([]),
+    )
+    reloaded = json.loads(path.read_text(encoding="utf-8"))
+    assert "lanes" in reloaded
+    again = load_fold_state()
+    assert again is not None
+    assert again["1"].watermark == 0
+
+
+def test_ac8_replace_failure_keeps_bytes_and_warns(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    path = tmp_path / "notes/system/operational/live-leg-fold-state.json"
+    path.parent.mkdir(parents=True)
+    original = '{"lanes": {"9": {"open_keys": [], "watermark": 4}}}\n'
+    path.write_text(original, encoding="utf-8")
+
+    def _boom(src: str, dst: str) -> None:
+        del src, dst
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(live_leg_mod.os, "replace", _boom)
+    with caplog.at_level(logging.WARNING):
+        save_fold_state({"1": LaneFoldState(watermark=1, open_keys=[])})
+    assert path.read_text(encoding="utf-8") == original
+    assert list(path.parent.glob(".live-leg-fold-state.json.*.tmp")) == []
+    assert "live-leg fold state write failed" in caplog.text
+
+
+def test_ac8_saves_use_unique_temp_files(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    path = tmp_path / "notes/system/operational/live-leg-fold-state.json"
+    path.parent.mkdir(parents=True)
+    leftover = path.parent / ".live-leg-fold-state.json.leftover.tmp"
+    leftover.write_text("stale", encoding="utf-8")
+    seen: list[str] = []
+    real_replace = os.replace
+
+    def _spy(src: str, dst: str) -> None:
+        seen.append(src)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(live_leg_mod.os, "replace", _spy)
+    first = {"1": LaneFoldState(watermark=1, open_keys=["1:1:REQUEST|todo:a"])}
+    second = {"1": LaneFoldState(watermark=2, open_keys=["1:2:REQUEST|todo:b"])}
+    save_fold_state(first)
+    save_fold_state(second)
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+    assert all(str(path.parent) == str(os.path.dirname(src)) for src in seen)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["lanes"]["1"]["watermark"] in {1, 2}
+    assert leftover.read_text(encoding="utf-8") == "stale"
+
+
+def test_ac8_write_state_seam_still_receives_json() -> None:
+    captured: list[str] = []
+    save_fold_state(
+        {"1": LaneFoldState(watermark=3, open_keys=[])},
+        write_state=captured.append,
+    )
+    assert json.loads(captured[0])["lanes"]["1"]["watermark"] == 3
+
+
+def test_ac9_page_cap_sets_truncated_through_project() -> None:
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, last, compact, mark_read
+        turn = after_turn + 1
+        return ([{"turn_number": turn, "subject": "NOTE|x"}], True, turn)
+
+    leg = project_live_leg(
+        ["1"],
+        lambda _lane: [],
+        page_fetch=_page,
+        fold_state_load=lambda: {"1": LaneFoldState(watermark=10, open_keys=[])},
+        fold_state_save=lambda _s: None,
+    )
+    assert leg.truncated is True
+    assert _TRUNCATION_LINE in render_live_leg(leg)
+
+
+def test_ac15_pointers_block_removed() -> None:
+    removed = "POINTERS_" + "BLOCK"
+    assert not hasattr(live_leg_mod, removed)

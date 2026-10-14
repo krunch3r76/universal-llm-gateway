@@ -10,12 +10,15 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from hop_handoff.body import parse_successor_birth_id, parse_superseded_registration_id
-from hop_handoff.standing_handoff import standing_handoff_path
+from hop_handoff.standing_handoff import standing_handoff_path, standing_handoff_uri
+from implement_admission.closeout_helpers import cortex_files_root
 
 from claude_bundles.journal_hop_projection import hop_journal_projection_fields
+from claude_bundles.operator_proxy_bus_fetch import lineage_status_for_execution
 from claude_bundles.operator_proxy_live_leg import (
     FoldStateSaver,
     FoldStateStore,
@@ -25,7 +28,6 @@ from claude_bundles.operator_proxy_live_leg import (
     render_live_leg,
 )
 from claude_bundles.operator_proxy_standing_render import (
-    compute_preamble_over_inflight_flag,
     render_checkpoint_block,
     render_house_rules_block,
     render_inflight_block,
@@ -123,6 +125,49 @@ def handoff_file_sha256(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
+def _cortex_path(uri_or_path: str) -> Path:
+    rel = (uri_or_path or "").strip()
+    if rel.startswith("cortex://"):
+        rel = rel.removeprefix("cortex://").lstrip("/")
+    return cortex_files_root() / rel
+
+
+def cortex_archive_path_exists(path: str) -> bool:
+    """True when *path* is a file under the cortex files root."""
+    try:
+        return _cortex_path(path).is_file()
+    except OSError:
+        return False
+
+
+def read_cortex_uri_from_root(uri: str) -> str | None:
+    """Read a ``cortex://`` URI from the cortex files root. Missing or unreadable → None."""
+    try:
+        path = _cortex_path(uri)
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return None
+
+
+def production_standing_seams() -> dict[str, Any]:
+    """Lineage, archive-exists, and cortex-read callables for production inject paths.
+
+    ``hop_successor_fields`` does not apply these itself. Callers that omit them
+    make no lineage HTTP request.
+    """
+    return {
+        "lineage_lookup": lineage_status_for_execution,
+        "archive_path_exists": cortex_archive_path_exists,
+        "read_cortex_uri": read_cortex_uri_from_root,
+    }
+
+
+def _render_failed(block: str, exc: BaseException, uri: str) -> str:
+    return f"[render_failed {block}: {type(exc).__name__} — read {uri}]"
+
+
 def hop_successor_fields(
     prompt: str,
     *,
@@ -164,7 +209,9 @@ def hop_successor_fields(
     checkpoint_block = ""
     inflight_block = ""
     inflight_count = 0
-    checkpoint_preamble = ""
+    checkpoint_header = ""
+    rules_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
+    handoff_uri = standing_handoff_uri(lane)
     if sidecar:
         checkpoint_block, ck_meta = render_checkpoint_block(
             sidecar,
@@ -176,32 +223,41 @@ def hop_successor_fields(
         inflight_rows = ck_meta.get("inflight_rows") or []
         inflight_count = len(inflight_rows)
         if inflight_rows:
-            inflight_block = render_inflight_block(
-                inflight_rows,
-                lineage_lookup=lineage_lookup,
-            )
-        checkpoint_preamble = checkpoint_block
+            try:
+                inflight_block = render_inflight_block(
+                    inflight_rows,
+                    lineage_lookup=lineage_lookup,
+                )
+            except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+                inflight_block = _render_failed("inflight", exc, handoff_uri)
+        checkpoint_header = str(ck_meta.get("leg_header") or "")
         if ck_meta.get("identity") == "stale":
             act5_fetch_last = 5
 
-    if not sidecar:
-        house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
-    else:
-        house_rules_verbatim, _rules_budget = render_house_rules_block(
-            lane=lane,
-            inline_rules=inline_rules,
-            house_rules_text=house_rules_text,
-            read_cortex_uri=read_cortex_uri,
-        )
+    try:
+        if not sidecar:
+            house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
+        else:
+            house_rules_verbatim, _rules_budget = render_house_rules_block(
+                lane=lane,
+                inline_rules=inline_rules,
+                house_rules_text=house_rules_text,
+                read_cortex_uri=read_cortex_uri,
+            )
+    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+        house_rules_verbatim = _render_failed("house_rules", exc, rules_uri)
 
-    leg = project_live_leg(
-        lanes,
-        fetch_turns,
-        page_fetch=page_fetch,
-        fold_state_load=fold_state_load,
-        fold_state_save=fold_state_save,
-    )
-    live_leg = render_live_leg(leg, declared_in_flight=inflight_count)
+    try:
+        leg = project_live_leg(
+            lanes,
+            fetch_turns,
+            page_fetch=page_fetch,
+            fold_state_load=fold_state_load,
+            fold_state_save=fold_state_save,
+        )
+        live_leg = render_live_leg(leg, declared_in_flight=inflight_count)
+    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
+        live_leg = _render_failed("live_leg", exc, handoff_uri)
     lane_list = ", ".join(lanes) if lanes else "none"
 
     if sidecar:
@@ -218,19 +274,9 @@ def hop_successor_fields(
         )
 
     pointers = render_pointers_block(
-        checkpoint_preamble=checkpoint_preamble,
+        checkpoint_preamble=checkpoint_header,
         rules_text=house_rules_verbatim,
     )
-
-    preamble_parts = [
-        running_now,
-        house_rules_verbatim,
-        checkpoint_block,
-    ]
-    preamble_staged = "\n\n".join(p for p in preamble_parts if p)
-    inflight_flag = compute_preamble_over_inflight_flag(preamble_staged, inflight_count)
-    if inflight_flag:
-        checkpoint_block = (checkpoint_block + "\n" + inflight_flag).strip()
 
     journal_fields = hop_journal_projection_fields(
         journal_text=journal_text,
@@ -266,5 +312,6 @@ __all__ = [
     "handoff_file_sha256",
     "hop_successor_fields",
     "house_rules_section",
+    "production_standing_seams",
     "standing_handoff_text_for_prompt",
 ]

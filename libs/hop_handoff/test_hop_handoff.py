@@ -226,7 +226,10 @@ def test_assess_standing_handoff_uses_cortex_files_root_not_host_absolute(
     sidecar.write_text("holder\n", encoding="utf-8")
     os.utime(sidecar, (900.0, 900.0))
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(data_files))
-    assert assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0).status == "current"
+    assert (
+        assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0).status
+        == "current"
+    )
 
 
 def test_assess_standing_handoff_budget_and_identity(tmp_path, monkeypatch) -> None:
@@ -235,7 +238,7 @@ def test_assess_standing_handoff_budget_and_identity(tmp_path, monkeypatch) -> N
     threads.mkdir(parents=True)
     handoff = threads / "7182-standing-handoff.md"
     handoff.write_text(
-        "## CURRENT LEG\nregistration_id reg-a\n### OWED / NEXT\nx\n",
+        "## CURRENT LEG\nregistration_id reg-a\n### LAST LEG\n" + ("x" * 20000) + "\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
@@ -245,8 +248,21 @@ def test_assess_standing_handoff_budget_and_identity(tmp_path, monkeypatch) -> N
         stale_after_s=100.0,
         superseded_registration_id="reg-b",
     )
-    assert fresh.budget in {"ok", "exceeded"}
     assert fresh.identity == "stale"
+    assert fresh.budget == "exceeded"
+
+
+def test_ac7_invalid_utf8_sidecar_fails_open(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "cortex"
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True)
+    handoff = threads / f"{_THREAD}-standing-handoff.md"
+    handoff.write_bytes(b"\xff")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    fresh = assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0)
+    assert isinstance(fresh, StandingHandoffFreshness)
+    assert fresh.budget == "ok"
+    assert fresh.identity == "unknown"
 
 
 def test_assess_standing_handoff_distinguishes_missing_stale_current(

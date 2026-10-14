@@ -27,6 +27,23 @@ from claude_bundles.runbook_excerpt import extract_sections
 pytestmark = pytest.mark.offline
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_fold_and_bus(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Production ensure paths must not touch the real fold file or the bus."""
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
+        lambda: tmp_path / "live-leg-fold-state.json",
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_turns_to_closure",
+        lambda *_args, **_kwargs: ([], False),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_lane_status",
+        lambda _lane: None,
+    )
+
+
 def test_purpose_recognition() -> None:
     assert is_operator_proxy_mission_purpose("operator-proxy")
     assert is_operator_proxy_mission_purpose("mission")
@@ -121,7 +138,9 @@ def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
     assert legacy.startswith("# Hop on agent-bus:")
 
 
-def _mission_delivery_prefix(*, marker_only: bool = False, use_lines_only: bool = False) -> str:
+def _mission_delivery_prefix(
+    *, marker_only: bool = False, use_lines_only: bool = False
+) -> str:
     from claude_bundles.cowork_skill_delivery import (
         format_cdp_use_the_lines,
         render_cdp_required_authority,
@@ -172,7 +191,9 @@ def test_ensure_idempotent_past_sealed_marker_only() -> None:
         standing_handoff_text=sidecar,
     )
     prefixed = _mission_delivery_prefix(marker_only=True) + once
-    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    twice = ensure_operator_proxy_mission_prompt(
+        prefixed, standing_handoff_text=sidecar
+    )
     assert twice == prefixed.strip()
     _assert_single_hop_briefing(twice)
 
@@ -185,7 +206,9 @@ def test_ensure_idempotent_past_use_lines_only() -> None:
         standing_handoff_text=sidecar,
     )
     prefixed = _mission_delivery_prefix(use_lines_only=True) + once
-    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    twice = ensure_operator_proxy_mission_prompt(
+        prefixed, standing_handoff_text=sidecar
+    )
     assert twice == prefixed.strip()
     _assert_single_hop_briefing(twice)
 
@@ -234,10 +257,7 @@ def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
 
 
 def test_ensure_preserves_author_use_line_under_hop_request_data() -> None:
-    body = (
-        "Use the `conductor` skill\n"
-        "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
-    )
+    body = "Use the `conductor` skill\nTYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
     out = ensure_operator_proxy_mission_prompt(body)
     hop_data = out.split("## Hop request (data)", 1)[1].split("## Hard refusals", 1)[0]
     assert "Use the `conductor` skill" in hop_data
@@ -261,7 +281,9 @@ def test_ensure_idempotent_past_delivery_prefix_crlf_use_lines() -> None:
     marker = _mission_delivery_prefix(marker_only=True)
     use_lines = _mission_delivery_prefix(use_lines_only=True).replace("\n", "\r\n")
     prefixed = marker + use_lines + once
-    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    twice = ensure_operator_proxy_mission_prompt(
+        prefixed, standing_handoff_text=sidecar
+    )
     assert twice == prefixed.strip()
     _assert_single_hop_briefing(twice)
 
@@ -536,7 +558,9 @@ def test_inline_skills_do_not_make_body_purpose_a_mission(
     assert purpose_implies_mission("freeform", merged) is False
 
 
-def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
+def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(
+    tmp_path, monkeypatch
+) -> None:
     staged = _stage_under(
         tmp_path,
         monkeypatch,
@@ -581,12 +605,15 @@ def test_attest_induction_channel_covers_shared_sync_without_attach() -> None:
     assert review_rows == [
         {"slug": slug, "delivered_via": "induction"} for slug in review
     ]
-    assert attest_delivery_channels(
-        review,
-        attached=[],
-        inlined=[],
-        induction=review,
-    ) == review
+    assert (
+        attest_delivery_channels(
+            review,
+            attached=[],
+            inlined=[],
+            induction=review,
+        )
+        == review
+    )
 
 
 def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
@@ -721,3 +748,140 @@ def test_stage_review_packet_head_with_ask_does_not_induct_operator_proxy(
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert "cdp-operator-proxy" not in _induction_slugs(merged)
+
+
+def _ac6_cortex(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "ac6-root"
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "12286-house-rules.md").write_text(
+        "## HOUSE RULES\n- K1 FILE-RULES-SENTINEL\n",
+        encoding="utf-8",
+    )
+    (threads / "12286-standing-handoff.md").write_text(
+        "## CURRENT LEG\n"
+        "archived_prev: cortex://notes/system/threads/missing-prev.md sha256 "
+        + ("ab" * 32)
+        + "\n### IN FLIGHT\n"
+        '- todo:x · worker 55 · exec ex-ac6 · poll_hint {"a":1}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    return root
+
+
+def _ac6_texts(root, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import resolve_prompt
+
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    prompt = "thread_id: 12286\n# Mission\n"
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-ac6",
+        prompt_text=prompt,
+        purpose="operator-proxy",
+    )
+    rel = staged.prompt_uri.removeprefix("cortex://").lstrip("/")
+    staged_text = (root / rel).read_text(encoding="utf-8")
+    resolved = resolve_prompt(
+        SubmitProjectAskRequest(
+            prompt_text=prompt,
+            purpose="operator-proxy",
+            stargate_execution_id="sg-ac6",
+        )
+    )[0]
+    del monkeypatch
+    return staged_text, resolved
+
+
+def test_ac6_production_seams_render_rules_lineage_and_archive(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+
+    def _lineage(worker: str) -> dict[str, object]:
+        assert worker == "55"
+        return {
+            "dispatch_links": [
+                {"execution_id": "ex-ac6", "terminal_status": "completed"}
+            ]
+        }
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_bus_fetch.fetch_thread_lineage",
+        _lineage,
+    )
+    for text in _ac6_texts(root, monkeypatch):
+        assert "FILE-RULES-SENTINEL" in text
+        assert "liveness: terminal(completed)" in text
+        assert "archive_missing" in text
+
+
+def test_ac6_lineage_transport_raise_is_unverified(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ac6_cortex(tmp_path, monkeypatch)
+
+    def _boom(_worker: str) -> dict[str, object]:
+        raise RuntimeError("lineage down")
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_bus_fetch.fetch_thread_lineage",
+        _boom,
+    )
+    for text in _ac6_texts(root, monkeypatch):
+        assert "liveness: unverified" in text
+        assert "FILE-RULES-SENTINEL" in text
+
+
+def test_ac7_rules_reader_valueerror_replaces_only_that_block() -> None:
+    def _boom(_uri: str) -> str:
+        raise ValueError("bad uri")
+
+    sidecar = "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-still-here\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        read_cortex_uri=_boom,
+        journal_text="",
+        register_text="",
+    )
+    assert (
+        "[render_failed house_rules: ValueError — read "
+        "cortex://notes/system/threads/12286-house-rules.md]"
+    ) in out
+    assert "checkpoint-still-here" in out
+    assert "## Hard refusals" in out
+
+
+def test_ac7_live_leg_raise_replaces_only_that_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("fold exploded")
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_hop_status.project_live_leg",
+        _boom,
+    )
+    sidecar = (
+        "## HOUSE RULES\n- K1 rules-still-here\n\n"
+        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-still-here\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+    )
+    assert (
+        "[render_failed live_leg: RuntimeError — read "
+        "cortex://notes/system/threads/12286-standing-handoff.md]"
+    ) in out
+    assert "rules-still-here" in out
+    assert "checkpoint-still-here" in out

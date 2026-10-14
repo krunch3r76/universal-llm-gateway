@@ -20,9 +20,7 @@ pytestmark = pytest.mark.offline
 
 def test_resolve_stargate_execution_id_prefers_explicit_field() -> None:
     req = SubmitProjectAskRequest(
-        prompt_uri=(
-            "cortex://notes/system/ephemeral/cdp-endpoint/from-uri/prompt.md"
-        ),
+        prompt_uri=("cortex://notes/system/ephemeral/cdp-endpoint/from-uri/prompt.md"),
         stargate_execution_id="from-field",
     )
     assert resolve_stargate_execution_id(req) == "from-field"
@@ -42,9 +40,24 @@ def test_resolve_stargate_execution_id_empty_without_carrier() -> None:
     assert resolve_stargate_execution_id(req) == ""
 
 
-def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record() -> None:
+def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from cdp_ask.runner import resolve_prompt
 
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
+        lambda: tmp_path / "live-leg-fold-state.json",
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_turns_to_closure",
+        lambda *_args, **_kwargs: ([], False),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_lane_status",
+        lambda _lane: None,
+    )
     req = SubmitProjectAskRequest(
         prompt_text="thread_id: 9501\n# Mission\n",
         purpose="operator-proxy",

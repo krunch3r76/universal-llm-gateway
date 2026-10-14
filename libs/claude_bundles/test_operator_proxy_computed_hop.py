@@ -17,6 +17,16 @@ from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_
 
 pytestmark = pytest.mark.offline
 
+
+@pytest.fixture(autouse=True)
+def _hermetic_fold_state(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep production fold-state writes off the real cortex root."""
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
+        lambda: tmp_path / "live-leg-fold-state.json",
+    )
+
+
 _HR_SENTINEL = "HR-SENTINEL-KEEP"
 
 _ROSTER = """
@@ -39,7 +49,9 @@ def _standing_handoff_fixture() -> str:
         f"## HOUSE RULES\n{_HR_SENTINEL}\n",
     ]
     for n in range(184, 118, -1):
-        heading = f"## CURRENT LEG {n} — HOP HANDOFF" if n >= 170 else f"## LEG {n} — CURRENT"
+        heading = (
+            f"## CURRENT LEG {n} — HOP HANDOFF" if n >= 170 else f"## LEG {n} — CURRENT"
+        )
         lines.append(f"{heading}\nSENTINEL-LEG-{n}\n")
         if n == 181:
             lines.append("open sidecar-only ML1 todo:ml1\n")
@@ -193,7 +205,9 @@ def test_amendment_4_act3_house_rules_inline_limit_fifty_only_on_degraded() -> N
         roster_text=_ROSTER,
         fetch_turns=lambda _lane: [],
     )
-    acts = out.split("## Your first acts, in order", 1)[1].split("## How this seat works", 1)[0]
+    acts = out.split("## Your first acts, in order", 1)[1].split(
+        "## How this seat works", 1
+    )[0]
     line3 = [line for line in acts.splitlines() if line.lstrip().startswith("3.")][0]
     assert "HOUSE RULES" in line3
     assert "limit 50" in line3
@@ -324,7 +338,10 @@ def _turns_15838_chronological() -> list[dict[str, Any]]:
         _turn(25, "PLAN|friction:39025"),
         _turn(27, "PLAN|friction:39025"),
         _turn(29, "ACK|friction:39025"),
-        _turn(31, "ACCEPT|DONE #30 friction:39025-c; HANDOFF to SK2; CLOSE|house SK5 retired"),
+        _turn(
+            31,
+            "ACCEPT|DONE #30 friction:39025-c; HANDOFF to SK2; CLOSE|house SK5 retired",
+        ),
     ]
 
 

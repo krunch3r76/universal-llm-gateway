@@ -442,6 +442,7 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     else:
         raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
     from claude_bundles.operator_proxy_hop_status import (
+        production_standing_seams,
         standing_handoff_text_for_prompt,
     )
     from claude_bundles.operator_proxy_mission import (
@@ -470,12 +471,13 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
                 text,
                 standing_handoff_text=standing_handoff_text_for_prompt(text),
                 execution_id=exec_id,
+                **production_standing_seams(),
             )
+        from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
         from claude_bundles.cowork_skill_delivery import (
             extract_cdp_required_authority,
             prepend_cdp_dispatch_skills,
         )
-        from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
         from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
 
         if extract_cdp_required_authority(text) is None:

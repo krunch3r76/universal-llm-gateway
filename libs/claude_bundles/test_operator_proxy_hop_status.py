@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,29 @@ from claude_bundles.operator_proxy_hop_status import (
     standing_handoff_text_for_prompt,
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
+from claude_bundles.operator_proxy_standing_render import (
+    assess_render_budget_and_identity,
+)
 
 pytestmark = pytest.mark.offline
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_fold_state(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect fold-state IO off the real cortex root."""
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
+        lambda: tmp_path / "live-leg-fold-state.json",
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_turns_to_closure",
+        lambda *_args, **_kwargs: ([], False),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_live_leg.fetch_lane_status",
+        lambda _lane: None,
+    )
+
 
 _HANDOFF_HEAD = (
     Path(__file__).resolve().parent
@@ -49,9 +71,19 @@ def _noop_fetch(_lane: str) -> list[dict[str, Any]]:
     return []
 
 
-def _assert_section_order(out: str, markers: tuple[str, ...]) -> None:
-    present = [m for m in markers if m in out]
-    positions = [out.index(m) for m in present]
+def _assert_section_order(
+    out: str,
+    markers: tuple[str, ...],
+    *,
+    strict: bool = False,
+) -> None:
+    if strict:
+        missing = [marker for marker in markers if marker not in out]
+        assert not missing, missing
+        positions = [out.index(marker) for marker in markers]
+    else:
+        present = [marker for marker in markers if marker in out]
+        positions = [out.index(marker) for marker in present]
     assert positions == sorted(positions)
 
 
@@ -119,7 +151,8 @@ def test_fixture_head_does_not_copy_leg_stack() -> None:
         "## Lessons in force", 1
     )[0]
     assert "LEG 11 ~21:00Z" in ck
-    assert "LEG 10 ~20:55Z" not in out.split("## Pointers", 1)[0] or "LEG 10" in ck
+    head = out.split("## CURRENT LEG (rendered checkpoint)", 1)[0]
+    assert "LEG 10 ~20:55Z" not in head
     assert "execution_id exec-from-satellite" in out
     assert "CDP generate" not in out
     _assert_section_order(out, _SECTION_ORDER)
@@ -160,7 +193,14 @@ def test_empty_execution_id_omits_the_clause_even_when_prompt_names_one() -> Non
 
 
 def test_rendered_prompt_section_order() -> None:
-    sidecar = "## HOUSE RULES\nR0\n\n## LEG 9\nmust not copy\n"
+    sidecar = (
+        "## HOUSE RULES\nR0\n\n"
+        "## CURRENT LEG\n"
+        "### IN FLIGHT\n"
+        '- row · worker 1 · exec e1 · poll_hint {"a":1}\n'
+        "### OWED / NEXT\n"
+        "must not copy\n"
+    )
     birth = "ab" * 16
     out = ensure_operator_proxy_mission_prompt(
         f"thread_id: 9501\nsuccessor_birth_id: {birth}\n",
@@ -171,7 +211,7 @@ def test_rendered_prompt_section_order() -> None:
         journal_text="",
         register_text="",
     )
-    _assert_section_order(out, _SECTION_ORDER)
+    _assert_section_order(out, _SECTION_ORDER, strict=True)
     assert "must not copy" in out.split("## CURRENT LEG (rendered checkpoint)", 1)[1]
     assert "R0" in out.split("## Lessons in force", 1)[0]
     assert f"successor_birth_id {birth}" in out
@@ -304,14 +344,19 @@ def test_register_absent_is_named() -> None:
     assert "Kaywan" not in out.split("## Register", 1)[1].split("## Live leg", 1)[0]
 
 
-def test_inflight_projection_does_not_block() -> None:
+def test_inflight_projection_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
     journal = "## 2026-10-01 — entry 1\nRULE: [route] durable\n"
+    sidecar = (
+        "## CURRENT LEG\n### IN FLIGHT\n"
+        '- row · worker 7 · exec ex7 · poll_hint {"a":1}\n'
+    )
 
     def _lookup() -> str | None:
         return "exec-inflight-99"
 
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text=journal,
@@ -320,6 +365,25 @@ def test_inflight_projection_does_not_block() -> None:
     )
     assert "exec-inflight-99" in out
     assert "durable" in out
+    assert "liveness:" in out
+
+    def _raise(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("inflight down")
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_hop_status.render_inflight_block",
+        _raise,
+    )
+    guarded = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+    )
+    assert "durable" in guarded
+    assert "[render_failed inflight: RuntimeError — read " in guarded
 
     def _raise() -> str | None:
         raise OSError("down")
@@ -385,8 +449,10 @@ def _checkpoint_fixture_20kb() -> str:
         "LEG 1 — 2026-01-01T00:00:00Z — seat abcdef01 — schema checkpoint/v1\n"
         "### IN FLIGHT\n"
         '- todo:x · worker 99999 · poll_hint {"thread":"1","after_turn":0}\n'
-        "### OWED / NEXT\n" + ("owed line\n" * 400)
-        + "### LAST LEG\n" + ("last leg narrative\n" * 500)
+        "### OWED / NEXT\n"
+        + ("owed line\n" * 400)
+        + "### LAST LEG\n"
+        + ("last leg narrative\n" * 500)
     )
     return inflight
 
@@ -404,7 +470,11 @@ def test_ac1_checkpoint_budget_excludes_house_rules() -> None:
     )[0]
     assert "### IN FLIGHT" in ck
     assert 'poll_hint {"thread":"1","after_turn":0}' in ck
-    assert "K1 rule" not in ck.split("### HOUSE RULES")[0] if "### HOUSE RULES" in ck else True
+    assert (
+        "K1 rule" not in ck.split("### HOUSE RULES")[0]
+        if "### HOUSE RULES" in ck
+        else True
+    )
     body_no_rules = ck.split("### HOUSE RULES")[0] if "### HOUSE RULES" in ck else ck
     assert len(body_no_rules.encode("utf-8")) <= 8192 + 200
     assert "[budget_exceeded" in ck
@@ -435,7 +505,7 @@ def test_ac2_nine_row_inflight_preamble_flag() -> None:
 
 def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
     rules = "## HOUSE RULES\n- K9 operative rule text forty chars minimum here\n"
-    sidecar = f"## CURRENT LEG\nLEG 1\n### HOUSE RULES\n- inline fallback\n"
+    sidecar = "## CURRENT LEG\nLEG 1\n### HOUSE RULES\n- inline fallback\n"
     out_file = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
         standing_handoff_text=sidecar,
@@ -466,14 +536,16 @@ def test_ac4_rules_truncation_lists_k_ids() -> None:
         fetch_turns=_noop_fetch,
     )
     assert "[rules truncated:" in out
-    assert "K1" in out and "K24" in out
+    match = re.search(r"\[rules truncated: ([^\]]+) —", out)
+    assert match is not None
+    ids = [part.strip() for part in match.group(1).split(",")]
+    assert ids == ["K24", "K23", "K22", "K21", "K20", "K19", "K18", "K17"]
+    assert "K1" not in ids
 
 
 def test_ac10_checkpoint_stale_identity() -> None:
     sidecar = (
-        "## CURRENT LEG\n"
-        "seat = x · registration_id reg-new\n"
-        "### OWED / NEXT\nok\n"
+        "## CURRENT LEG\nseat = x · registration_id reg-new\n### OWED / NEXT\nok\n"
     )
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\nsuperseded_registration_id: reg-old\n",
@@ -578,9 +650,148 @@ def test_ac15_live_12286_fixture_preamble_budget() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    preamble = out.split("## Your first acts", 1)[0]
-    size = len(preamble.encode("utf-8"))
+    from claude_bundles.operator_proxy_standing_render import measure_preamble_bytes
+
+    size = measure_preamble_bytes(out)
     if size > 30720:
         assert "[preamble over budget by IN FLIGHT:" in out
     else:
         assert size <= 30720
+
+
+def test_ac5_live_shape_house_rules_heading_is_not_in_the_checkpoint() -> None:
+    sentinel = "K40-LIVE-SHAPE-RULES-SENTINEL"
+    sidecar = (
+        "## CURRENT LEG\n"
+        "LEG 9 — schema checkpoint/v1\n"
+        "### HOUSE RULES (head copy — read on every arrival; binding)\n"
+        f"- {sentinel}\n"
+        "### OWED / NEXT\n"
+        "owed-stays\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
+        "## Lessons in force", 1
+    )[0]
+    rules = out.split("## Lessons in force", 1)[0]
+    assert sentinel in rules
+    assert sentinel not in ck
+    assert "owed-stays" in ck
+
+
+def test_ac17_full_preamble_span_flags_nine_inflight_rows() -> None:
+    pad = "x" * 1700
+    rows = [
+        f'- todo:t{i} · worker 9000{i} · exec e{i} · poll_hint {{"pad":"{pad}"}}\n'
+        for i in range(9)
+    ]
+    sidecar = (
+        "## CURRENT LEG\n"
+        + ("p" * 200)
+        + "\n### IN FLIGHT\n"
+        + "".join(rows)
+        + "### LAST LEG\n"
+        + ("L" * 1400)
+        + "\n### OWED / NEXT\n"
+        + ("O" * 1400)
+        + "\n### OPEN FOR KAYWAN\n"
+        + ("K" * 500)
+        + "\n### NOTES\n"
+        + ("u" * 6000)
+        + "\n"
+    )
+    rules = "## HOUSE RULES\n" + ("r" * 8192) + "\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        house_rules_text=rules,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    from claude_bundles.operator_proxy_standing_render import measure_preamble_bytes
+
+    assert measure_preamble_bytes(out) > 30720
+    assert "[preamble over budget by IN FLIGHT: 9 rows]" in out
+
+
+def test_ac17_prior_leg_range_uses_the_header_only() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "LEG 190 — 2026-10-01T00:00:00Z — seat abc\n"
+        "### LAST LEG\n"
+        "body prose mentions LEG 12 as history\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    pointers = out.split("## Pointers", 1)[1].split("## Your first acts", 1)[0]
+    assert "LEG 190…190" in pointers
+    assert "LEG 12" not in pointers
+
+
+def test_ac18_prompt_stays_fetch_last_3_when_prose_names_registration() -> None:
+    sidecar = (
+        "# Title\n"
+        "header has no registration\n"
+        "## LAST LEG\n"
+        "the narrative mentions registration_id X in passing\n"
+    )
+    _budget, identity = assess_render_budget_and_identity(
+        sidecar,
+        lane="12286",
+        superseded_registration_id="reg-old",
+    )
+    assert identity == "unknown"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\nsuperseded_registration_id: reg-old\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "checkpoint_stale" not in out
+    assert "last 5" not in out
+    assert "last 3" in out
+
+
+def test_production_standing_seams_do_not_run_for_bare_ensure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
+    def _transport(worker: str) -> dict[str, Any]:
+        called.append(worker)
+        return {"dispatch_links": []}
+
+    monkeypatch.setattr(
+        "claude_bundles.operator_proxy_bus_fetch.fetch_thread_lineage",
+        _transport,
+    )
+    from claude_bundles.operator_proxy_hop_status import production_standing_seams
+
+    seams = production_standing_seams()
+    assert set(seams) == {
+        "lineage_lookup",
+        "archive_path_exists",
+        "read_cortex_uri",
+    }
+    sidecar = (
+        "## CURRENT LEG\n### IN FLIGHT\n"
+        '- w · worker 55 · exec ex1 · poll_hint {"z":1}\n'
+    )
+    ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert called == []

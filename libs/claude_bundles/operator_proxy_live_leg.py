@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,9 +50,7 @@ GOVERNING_RULE: dict[str, str] = {
         "R3: read DONE / FAILED / QUESTION and nothing in between; answer QUESTION "
         "with RULING|<work_key>"
     ),
-    "PLAN": (
-        "R4: review the plan and post ACK or PARK before the implement leg"
-    ),
+    "PLAN": ("R4: review the plan and post ACK or PARK before the implement leg"),
 }
 
 _REQUEST_CLOSE = frozenset({"DONE", "FAILED", "CANCEL", "WITHDRAW"})
@@ -167,7 +166,11 @@ def _cancel_targets_key(
     if len(refs) != 1:
         return None
     req_turn = refs[0]
-    matches = [work_key for work_key, start_turn in open_requests.items() if start_turn == req_turn]
+    matches = [
+        work_key
+        for work_key, start_turn in open_requests.items()
+        if start_turn == req_turn
+    ]
     if len(matches) != 1:
         return None
     matched = matches[0]
@@ -242,7 +245,9 @@ def fetch_turns_to_closure(
     page_limit = _MAX_PAGES if max_pages is None else max_pages
     while True:
         pages += 1
-        page, truncated, next_after = fetch(lane, after_turn=after_turn, last=_PAGE_SIZE)
+        page, truncated, next_after = fetch(
+            lane, after_turn=after_turn, last=_PAGE_SIZE
+        )
         max_seen_before = max(merged) if merged else 0
         for turn in page:
             turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
@@ -282,7 +287,10 @@ def _wrap_fetch_turns(
     """Use compact paging when the injected fetcher is the single-window bus helper."""
     mod = getattr(fetch_turns, "__module__", "")
     name = getattr(fetch_turns, "__name__", "")
-    if mod == "claude_bundles.operator_proxy_bus_fetch" and name == "fetch_turns_for_lane":
+    if (
+        mod == "claude_bundles.operator_proxy_bus_fetch"
+        and name == "fetch_turns_for_lane"
+    ):
         return _production_fetch_turns
     return fetch_turns
 
@@ -385,10 +393,25 @@ def _default_fold_state_path() -> Path:
     return cortex_files_root() / _FOLD_STATE_REL
 
 
+def _parse_lane_row(row: object) -> LaneFoldState | None:
+    """Parse one lane row. None means the row is not usable and the lane cold-starts."""
+    if not isinstance(row, dict):
+        return None
+    try:
+        watermark = int(row.get("watermark") or 0)
+    except (TypeError, ValueError):
+        return None
+    keys = row.get("open_keys") or []
+    if not isinstance(keys, list):
+        return None
+    return LaneFoldState(watermark=watermark, open_keys=[str(k) for k in keys])
+
+
 def load_fold_state(
     *,
     read_state: Callable[[], str | None] | None = None,
 ) -> dict[str, LaneFoldState] | None:
+    """Load fold state. Corrupt JSON is empty writable state; OSError is unreadable."""
     if read_state is not None:
         try:
             raw = read_state()
@@ -409,19 +432,28 @@ def load_fold_state(
     try:
         payload = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        return None
+        _logger.warning("live-leg fold state corrupt; treating as empty", exc_info=True)
+        return {}
     out: dict[str, LaneFoldState] = {}
     lanes = payload.get("lanes") if isinstance(payload, dict) else None
     if not isinstance(lanes, dict):
         return {}
     for lane_id, row in lanes.items():
-        if not isinstance(row, dict):
+        parsed = _parse_lane_row(row)
+        if parsed is None:
             continue
-        out[str(lane_id)] = LaneFoldState(
-            watermark=int(row.get("watermark") or 0),
-            open_keys=[str(k) for k in row.get("open_keys") or []],
-        )
+        out[str(lane_id)] = parsed
     return out
+
+
+def _fold_state_text(state: dict[str, LaneFoldState]) -> str:
+    payload = {
+        "lanes": {
+            lane: {"watermark": st.watermark, "open_keys": list(st.open_keys)}
+            for lane, st in state.items()
+        }
+    }
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
 def save_fold_state(
@@ -429,13 +461,8 @@ def save_fold_state(
     *,
     write_state: Callable[[str], None] | None = None,
 ) -> None:
-    payload = {
-        "lanes": {
-            lane: {"watermark": st.watermark, "open_keys": list(st.open_keys)}
-            for lane, st in state.items()
-        }
-    }
-    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    """Persist fold state. The file write is a same-directory temp file plus rename."""
+    text = _fold_state_text(state)
     if write_state is not None:
         try:
             write_state(text)
@@ -443,15 +470,78 @@ def save_fold_state(
             _logger.warning("live-leg fold state write failed", exc_info=True)
         return
     path = _default_fold_state_path()
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
     except OSError:
         _logger.warning("live-leg fold state write failed", exc_info=True)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            _logger.warning("live-leg fold state temp cleanup failed", exc_info=True)
+
+
+def _stored_subject(item: OpenItem) -> str:
+    verb, _kind, key = _parse_subject(item.subject)
+    if verb and key:
+        return item.subject.strip()
+    kind_part = f"{item.kind}|" if item.kind else ""
+    return f"{item.verb}|{kind_part}{item.key}"
 
 
 def _item_key(item: OpenItem) -> str:
-    return f"{item.lane}:{item.turn}:{item.key}"
+    """Persist lane, turn, and subject so a later fold keeps the original verb."""
+    return f"{item.lane}:{item.turn}:{_stored_subject(item)}"
+
+
+def _parse_stored_open_key(raw: str) -> OpenItem | None:
+    """Load one open item. Legacy ``lane:turn:key`` carries verb REQUEST."""
+    parts = (raw or "").split(":", 2)
+    if len(parts) != 3:
+        return None
+    lane, turn_s, rest = parts
+    if not lane or not rest:
+        return None
+    try:
+        turn = int(turn_s)
+    except (TypeError, ValueError):
+        return None
+    verb, kind, key = _parse_subject(rest)
+    if verb and key:
+        subject = rest
+    else:
+        verb, kind, key = "REQUEST", "", rest
+        subject = f"REQUEST|{rest}"
+    if not key:
+        return None
+    return OpenItem(
+        lane=lane,
+        turn=turn,
+        verb=verb,
+        kind=kind,
+        key=key,
+        subject=subject,
+    )
+
+
+def _carried_open_items(state: LaneFoldState) -> list[OpenItem] | None:
+    """None when any stored key is unreadable, so the lane cold-starts."""
+    items: list[OpenItem] = []
+    for raw in state.open_keys:
+        item = _parse_stored_open_key(str(raw))
+        if item is None:
+            return None
+        items.append(item)
+    return items
+
+
+def _turn_number(turn: dict) -> int:
+    try:
+        return int(turn.get("turn_number") or turn.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def project_live_leg(
@@ -469,7 +559,11 @@ def project_live_leg(
     state_writable = False
     state_mut: dict[str, LaneFoldState] = {}
     if fold_state_load is not None:
-        loaded = fold_state_load()
+        try:
+            loaded = fold_state_load()
+        except Exception:  # noqa: BLE001 — cold-start; a bad store must not raise
+            _logger.warning("live-leg fold state load failed", exc_info=True)
+            loaded = None
         if loaded is not None:
             state_mut = dict(loaded)
             state_writable = True
@@ -482,6 +576,13 @@ def project_live_leg(
     for lane in lanes:
         try:
             lane_state = state_mut.get(lane) if state_writable else None
+            carried: list[OpenItem] = []
+            if lane_state is not None:
+                parsed = _carried_open_items(lane_state)
+                if parsed is None:
+                    lane_state = None
+                else:
+                    carried = parsed
             warm = bool(lane_state and lane_state.watermark > 0)
             if resolve is _production_fetch_turns or page_fetch is not None:
                 after = lane_state.watermark if warm else 0
@@ -496,45 +597,29 @@ def project_live_leg(
                     leg.truncated = True
             else:
                 turns = resolve(lane)
+            lane_status: str | None = None
+            if resolve is _production_fetch_turns:
+                try:
+                    lane_status = fetch_lane_status(lane)
+                except Exception:  # noqa: BLE001 — degrade to turn-only retirement
+                    lane_status = None
+            synthetic = [
+                {"turn_number": item.turn, "subject": item.subject} for item in carried
+            ]
+            items, _ = fold_lane(lane, synthetic + list(turns), lane_status=lane_status)
+            leg.items.extend(items)
+            if state_writable:
+                old_watermark = lane_state.watermark if lane_state else 0
+                max_turn = old_watermark
+                for turn in turns:
+                    max_turn = max(max_turn, _turn_number(turn))
+                state_mut[lane] = LaneFoldState(
+                    watermark=max_turn,
+                    open_keys=[_item_key(i) for i in items],
+                )
         except Exception as exc:  # noqa: BLE001 — render degraded line per lane
             leg.errors[lane] = str(exc)
             continue
-        lane_status: str | None = None
-        if resolve is _production_fetch_turns:
-            try:
-                lane_status = fetch_lane_status(lane)
-            except Exception:  # noqa: BLE001 — degrade to turn-only retirement
-                lane_status = None
-        items, _ = fold_lane(lane, turns, lane_status=lane_status)
-        if warm and lane_state and lane_state.open_keys:
-            seen = {_item_key(i) for i in items}
-            for key in lane_state.open_keys:
-                if key not in seen:
-                    parts = key.split(":", 2)
-                    if len(parts) == 3:
-                        items.append(
-                            OpenItem(
-                                lane=parts[0],
-                                turn=int(parts[1]),
-                                verb="REQUEST",
-                                kind="",
-                                key=parts[2],
-                                subject=f"REQUEST|{parts[2]} (open-item set)",
-                            )
-                        )
-        leg.items.extend(items)
-        if state_writable:
-            max_turn = max(
-                (t.turn for t in items),
-                default=lane_state.watermark if lane_state else 0,
-            )
-            for turn in turns:
-                turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
-                max_turn = max(max_turn, turn_no)
-            state_mut[lane] = LaneFoldState(
-                watermark=max_turn,
-                open_keys=[_item_key(i) for i in items],
-            )
     leg.items.sort(key=lambda item: (item.lane, item.turn))
     if state_writable:
         if fold_state_save is not None:
@@ -575,21 +660,11 @@ def render_live_leg(leg: LiveLeg, *, declared_in_flight: int | None = None) -> s
     return "\n".join(lines)
 
 
-POINTERS_BLOCK = """\
-- Prior LEG blocks (LEG 119…183): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
-- K-row rulings (K1–K22): runbook Appendix § Rulings (K-rows) — current binds are restated in step 5 R lines and in the hard refusals (K22 opus-5.5-extra, no fable).
-- Conductor trajectories (2026-09-30): runbook Appendix § Conductor trajectories — C1 routes conductor lanes to the Impresario house; `contract=conductor` is inline in hard refusals.
-- Journal entries: `cortex://notes/system/maestro/journal.md` — narrative; first act 4 reads its head.
-- Roster detail (bots, hop history): `cortex://notes/system/operational/maestro-sidekick-roster.md` — lane ids used at render are named in the running-now line.
-- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal against re-arming send_later stays inline."""
-
-
 __all__ = [
     "GOVERNING_RULE",
     "LaneFoldState",
     "LiveLeg",
     "OpenItem",
-    "POINTERS_BLOCK",
     "load_fold_state",
     "save_fold_state",
     "fetch_lane_status",

@@ -15,7 +15,10 @@ from typing import Any
 
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
-from claude_bundles.operator_proxy_standing_render import maestro_runbook_act2_line
+from claude_bundles.operator_proxy_standing_render import (
+    compute_preamble_over_inflight_flag,
+    maestro_runbook_act2_line,
+)
 from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
@@ -304,9 +307,23 @@ def ensure_operator_proxy_mission_prompt(
         fields["fetch_last"] = "3"
     for key in ("checkpoint_block", "inflight_block"):
         fields.setdefault(key, "")
-    return (
+    rendered = (
         render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
     )
+    row_count = sum(
+        1
+        for line in (fields.get("inflight_block") or "").splitlines()
+        if line.strip().startswith("- ")
+    )
+    inflight_flag = compute_preamble_over_inflight_flag(rendered, row_count)
+    if inflight_flag and inflight_flag not in (fields.get("checkpoint_block") or ""):
+        fields["checkpoint_block"] = (
+            (fields.get("checkpoint_block") or "") + "\n" + inflight_flag
+        ).strip()
+        rendered = (
+            render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
+        )
+    return rendered
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:

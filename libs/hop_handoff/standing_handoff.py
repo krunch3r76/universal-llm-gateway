@@ -9,12 +9,15 @@ token the successor will read.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_AGE_THRESHOLD_S = 1800.0
 _STANDING_HANDOFF_STALE_FACTOR = 2.0
@@ -101,20 +104,25 @@ def assess_standing_handoff(
     if text is None:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeError):
+            _logger.warning("standing handoff unreadable", exc_info=True)
             text = None
     if text:
-        from claude_bundles.operator_proxy_hop_status import house_rules_section
-        from claude_bundles.operator_proxy_standing_render import (
-            assess_render_budget_and_identity,
-        )
+        try:
+            from claude_bundles.operator_proxy_hop_status import house_rules_section
+            from claude_bundles.operator_proxy_standing_render import (
+                assess_render_budget_and_identity,
+            )
 
-        inline = house_rules_section(text)
-        budget, identity = assess_render_budget_and_identity(
-            text,
-            lane=thread_id,
-            superseded_registration_id=superseded_registration_id,
-            inline_house_rules=inline,
-            house_rules_text=house_rules_text,
-        )
+            inline = house_rules_section(text)
+            budget, identity = assess_render_budget_and_identity(
+                text,
+                lane=thread_id,
+                superseded_registration_id=superseded_registration_id,
+                inline_house_rules=inline,
+                house_rules_text=house_rules_text,
+            )
+        except Exception:  # noqa: BLE001 — hop admission must not raise
+            _logger.warning("standing handoff render failed open", exc_info=True)
+            budget, identity = "ok", "unknown"
     return StandingHandoffFreshness(status, uri, mtime, age, budget, identity)
