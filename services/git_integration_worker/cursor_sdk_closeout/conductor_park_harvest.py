@@ -368,15 +368,11 @@ def _fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
         return None
 
 
-def resolve_consult_summoning_watermark_at_instant(
-    *,
-    thread_id: str,
+def _watermark_at_instant_from_turns(
+    turns: list[dict[str, Any]],
     closeout_instant: str,
 ) -> int | None:
     """Latest turn at or before ``closeout_instant``; 0 when empty at that instant."""
-    turns = _fetch_thread_turns(thread_id)
-    if turns is None:
-        return None
     if not turns:
         return 0
     try:
@@ -396,6 +392,18 @@ def resolve_consult_summoning_watermark_at_instant(
         if ts <= anchor and turn_number > best:
             best = turn_number
     return best
+
+
+def resolve_consult_summoning_watermark_at_instant(
+    *,
+    thread_id: str,
+    closeout_instant: str,
+) -> int | None:
+    """Latest turn at or before ``closeout_instant``; 0 when empty at that instant."""
+    turns = _fetch_thread_turns(thread_id)
+    if turns is None:
+        return None
+    return _watermark_at_instant_from_turns(turns, closeout_instant)
 
 
 def _maybe_retry_summoning_watermark(
@@ -498,7 +506,13 @@ _MIDLINE_NEXT_ADMIT_HARVEST_RE = re.compile(
     r"(?P<id>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
     r"|[0-9a-f]{12}-[0-9a-f]{8}"
     r"|[0-9a-f]{8,32})"
-    r"`?)"
+    r"`?(?![0-9a-z_-]))"
+)
+_CDP_TERMINAL_FAILURE_SUBJECT_RE = re.compile(
+    r"(?i)^cdp (?:FAILED|UNVERIFIED) — `(?P<id>[^`\n]+)`$"
+)
+_CDP_TERMINAL_FAILURE_SUBJECT_PLAIN_RE = re.compile(
+    r"(?i)^cdp (?:FAILED|UNVERIFIED) — (?P<id>\S+)\s*$"
 )
 
 
@@ -506,15 +520,23 @@ def _park_harvest_target_token(guard: str) -> str | None:
     """Harvest id for park-harvest continue; line-anchored NEXT_ADMIT wins over inline."""
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _harvest_target_token,
+        last_next_admit_payload,
     )
 
-    token = _harvest_target_token(guard)
+    scoped = re.sub(r"```[\s\S]*?```", "", guard or "")
+    token = _harvest_target_token(scoped)
     if token is not None:
         return token
-    last_id: str | None = None
-    for match in _MIDLINE_NEXT_ADMIT_HARVEST_RE.finditer(guard or ""):
-        last_id = str(match.group("id"))
-    return last_id
+    if last_next_admit_payload(scoped) is not None:
+        return None
+    distinct: set[str] = set()
+    chosen: str | None = None
+    for match in _MIDLINE_NEXT_ADMIT_HARVEST_RE.finditer(scoped):
+        distinct.add(str(match.group("id")).lower())
+        chosen = str(match.group("id"))
+    if len(distinct) != 1:
+        return None
+    return chosen
 
 
 def _harvest_id_boundary_match(candidate: str, token: str) -> bool:
@@ -557,6 +579,19 @@ def _turn_cdp_reply_candidate_id(turn: dict[str, Any]) -> str | None:
     return None
 
 
+def _turn_cdp_terminal_failure_candidate_id(turn: dict[str, Any]) -> str | None:
+    """Short execution id from on-behalf ``cdp FAILED`` / ``cdp UNVERIFIED`` subjects."""
+    subject = str(turn.get("subject") or "").strip()
+    for pattern in (
+        _CDP_TERMINAL_FAILURE_SUBJECT_RE,
+        _CDP_TERMINAL_FAILURE_SUBJECT_PLAIN_RE,
+    ):
+        match = pattern.match(subject)
+        if match:
+            return str(match.group("id")).strip()
+    return None
+
+
 def _row_admitted_at_iso(row: dict[str, Any]) -> str | None:
     text = str(row.get("started_at") or "").strip()
     return text or None
@@ -572,9 +607,9 @@ def _turn_bus_author(turn: dict[str, Any]) -> str:
     return normalize_bus_address(str(raw or ""))
 
 
-def _harvest_reply_lower_bound_watermark(
+def _harvest_reply_lower_bound_watermark_from_turns(
+    turns: list[dict[str, Any]],
     *,
-    thread_id: str,
     started_iso: str | None,
     row_admit_iso: str | None,
 ) -> int | None:
@@ -585,10 +620,7 @@ def _harvest_reply_lower_bound_watermark(
     for instant in (started_iso, row_admit_iso):
         if instant is None:
             continue
-        wm = resolve_consult_summoning_watermark_at_instant(
-            thread_id=thread_id,
-            closeout_instant=instant,
-        )
+        wm = _watermark_at_instant_from_turns(turns, instant)
         if wm is None:
             return None
         bounds.append(wm)
@@ -622,14 +654,15 @@ def _evaluate_harvest_reply_execution(
     if started_iso is None and row_admit_iso is None:
         return False, "bounds_missing"
     saw_started_at_floor = False
+    saw_author_mismatch = False
     saw_wrong_id_after_watermark = False
     saw_web_after_watermark = False
     for tid in thread_ids:
         turns = _fetch_thread_turns(tid)
         if turns is None:
             return False, "fetch_turns_failed"
-        watermark = _harvest_reply_lower_bound_watermark(
-            thread_id=tid,
+        watermark = _harvest_reply_lower_bound_watermark_from_turns(
+            turns,
             started_iso=started_iso,
             row_admit_iso=row_admit_iso,
         )
@@ -641,19 +674,33 @@ def _evaluate_harvest_reply_execution(
                 continue
             author = _turn_bus_author(turn)
             candidate = _turn_cdp_reply_candidate_id(turn)
+            failure_id = _turn_cdp_terminal_failure_candidate_id(turn)
             if candidate is not None and _harvest_id_boundary_match(candidate, token):
-                if author != "web-anthropic":
-                    return False, "author_mismatch"
                 if turn_number <= watermark:
-                    saw_started_at_floor = True
+                    if author == "web-anthropic":
+                        saw_started_at_floor = True
+                    else:
+                        saw_author_mismatch = True
+                    continue
+                if author != "web-anthropic":
+                    saw_author_mismatch = True
                     continue
                 return True, None
+            if (
+                turn_number > watermark
+                and author == "web-anthropic"
+                and failure_id is not None
+                and _harvest_id_boundary_match(failure_id, token)
+            ):
+                return False, "reply_failed"
             if turn_number <= watermark:
                 continue
             if author == "web-anthropic":
                 saw_web_after_watermark = True
                 if candidate is not None:
                     saw_wrong_id_after_watermark = True
+    if saw_author_mismatch:
+        return False, "author_mismatch"
     if saw_started_at_floor:
         return False, "started_at_floor"
     if saw_wrong_id_after_watermark:

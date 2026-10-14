@@ -630,7 +630,12 @@ def test_park_harvest_continue_rejects_done_in_body() -> None:
     record = json.loads(row["record_json"])
     record["closeout_body"] = "stop: PARKED_TRANSPORT\nstop: DONE\n"
     row["record_json"] = json.dumps(record)
-    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
 
 
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
@@ -1351,6 +1356,88 @@ def test_evaluate_harvest_reply_author_mismatch_from_key() -> None:
     assert predicate == "author_mismatch"
 
 
+def test_evaluate_harvest_reply_echo_then_genuine_web_reply() -> None:
+    """39237: non-web echo must not block a later genuine web-anthropic reply."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-echo-then-genuine")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    short = _HARVEST_REPLY_UUID[:8]
+    worker_turns = [
+        {
+            "turn_number": 30,
+            "from": "cursor",
+            "created_at": "2026-10-13T10:00:30+00:00",
+            "subject": f"cdp reply — {short}",
+        },
+    ]
+    summoning_turns = [
+        {
+            "turn_number": 80,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:05:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+
+    def _turns_for_thread(tid: str) -> list[dict]:
+        if tid == "9638":
+            return summoning_turns
+        return worker_turns
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_fetch_thread_turns",
+        side_effect=lambda tid: _turns_for_thread(tid),
+    ), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert matched
+    assert predicate is None
+
+
+def test_evaluate_harvest_reply_at_most_two_thread_fetches() -> None:
+    """39237: watermark from fetched turns — one GET per thread per evaluation."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-fetch-budget")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    fetch = patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_fetch_thread_turns",
+        side_effect=lambda _tid: [],
+    )
+    with fetch as mocked, _no_harvest_started_at():
+        _evaluate_harvest_reply_execution(mapped, _HARVEST_REPLY_UUID)
+    assert mocked.call_count == 2
+
+
+def test_evaluate_harvest_reply_reply_failed_for_cdp_failed_subject() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-reply-failed")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    short = _HARVEST_REPLY_UUID[:8]
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp FAILED — {short}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_failed"
+
+
 def test_evaluate_harvest_reply_started_at_floor() -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req(dispatch_id="park-started-floor")
@@ -1417,6 +1504,37 @@ def test_park_harvest_target_token_line_anchored_beats_older_inline() -> None:
         f"NEXT_ADMIT: harvest {_HARVEST_LINE_ANCHORED}\n"
     )
     assert _park_harvest_target_token(guard) == _HARVEST_LINE_ANCHORED
+
+
+def test_park_harvest_target_token_line_anchored_g1_ignores_inline() -> None:
+    guard = (
+        "stop: PARKED_TRANSPORT\n"
+        "NEXT_ADMIT: harvest G1\n"
+        f"prose cites NEXT_ADMIT: harvest {_HARVEST_124_INLINE} inline\n"
+    )
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_two_inline_ids_same_line() -> None:
+    a = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    b = "642fe99c-45e4-487d-9abb-132c1023a679"
+    guard = f"notes NEXT_ADMIT: harvest {a} and NEXT_ADMIT: harvest {b} together\n"
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_fenced_only_no_line_admit() -> None:
+    guard = (
+        "```\n"
+        f"NEXT_ADMIT: harvest {_HARVEST_124_INLINE}\n"
+        "```\n"
+    )
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_rejects_hex_suffix_extension() -> None:
+    base = _HARVEST_LINE_ANCHORED[:8]
+    guard = f"NEXT_ADMIT: harvest {base}abcd_retry\n"
+    assert _park_harvest_target_token(guard) is None
 
 
 def test_park_harvest_continue_uses_midline_harvest_token() -> None:
