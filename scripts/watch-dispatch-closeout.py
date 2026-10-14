@@ -35,8 +35,12 @@ from urllib.parse import urlencode
 import httpx
 import yaml
 from bus_watch.arm_contract import NO_PRODUCER_HELP, require_producer_declaration
-from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S
-from bus_watch.stall_pop import emit_stall_pop
+from bus_watch.poll import (
+    DEFAULT_MAX_HOURS,
+    DEFAULT_WAIT_SLICE_S,
+    EXIT_PRODUCER_TERMINAL,
+)
+from bus_watch.stall_pop import closeout_terminal_stall_reason, emit_stall_pop
 from bus_watch.state import write_state
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -602,6 +606,24 @@ def main() -> int:
                     tag="dispatch-done",
                 )
                 return 0
+
+            terminal_reason = closeout_terminal_stall_reason(snap)
+            if terminal_reason:
+                emit_stall_pop(terminal_reason)
+                print(
+                    f"watcher terminal label={args.label!r} thread={thread_id} "
+                    f"after_turn={after_turn} reason={terminal_reason}",
+                    flush=True,
+                )
+                if state_path is not None:
+                    write_state(
+                        state_path,
+                        status="terminal",
+                        last_status=snap.get("status"),
+                        terminal_reason=terminal_reason,
+                        producer=snap.get("producer"),
+                    )
+                return EXIT_PRODUCER_TERMINAL
 
             turn_count = snap.get("turn_count")
             thread_status = snap.get("thread_status")
