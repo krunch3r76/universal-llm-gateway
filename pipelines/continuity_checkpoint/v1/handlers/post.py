@@ -15,7 +15,12 @@ from continuity_tape.events import stargate_continuity_checkpoint_posted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._card_patch import clamp_residue
+from ._card_patch import (
+    clamp_residue,
+    derive_pointer_residue,
+    normalize_preamble,
+    render_preamble_markdown,
+)
 from ._clients import bus_get, bus_send, step_output_json
 
 logger = logging.getLogger(__name__)
@@ -185,6 +190,8 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         pre_source = pre.get("residue_source")
         mission = str(pre.get("mission") or "")
         residue_clamped = False
+        preamble = normalize_preamble(pre) or normalize_preamble(options)
+        raw_model_residue = str(pre.get("residue") or "")
 
         tip, _ = await bus_get(
             "/turns/by-number",
@@ -194,10 +201,30 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         prior_body = str(tip.get("body") or "") if isinstance(tip, dict) else ""
 
         if pre_source in ("model", "seed", "mechanical"):
-            residue, residue_clamped = clamp_residue(str(pre.get("residue") or ""))
+            if preamble and pre_source == "model":
+                residue = derive_pointer_residue(
+                    preamble,
+                    mission=mission,
+                    raw_residue=raw_model_residue,
+                )
+                residue_clamped = bool(
+                    raw_model_residue.strip()
+                    and len(raw_model_residue.strip()) > len(residue)
+                )
+            else:
+                residue, residue_clamped = clamp_residue(raw_model_residue)
             residue_source = pre_source
         elif caller_residue:
-            residue, residue_clamped = clamp_residue(caller_residue)
+            caller_preamble = normalize_preamble(options)
+            if caller_preamble:
+                residue = derive_pointer_residue(
+                    caller_preamble,
+                    mission=mission,
+                    raw_residue=caller_residue,
+                )
+                residue_clamped = len(caller_residue) > len(residue)
+            else:
+                residue, residue_clamped = clamp_residue(caller_residue)
             residue_source = "caller"
         elif letter_ready:
             mission = str(seal.get("handoff_mission") or "")
@@ -219,6 +246,18 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         else:
             residue, residue_clamped = clamp_residue(str(pre.get("residue") or ""))
             residue_source = pre_source or "mechanical"
+
+        sidecar_md: str | None = None
+        sidecar_slug: str | None = None
+        if preamble:
+            sidecar_md = render_preamble_markdown(preamble, thread_id=thread)
+            sidecar_slug = f"cp-{after_turn + 1}-preamble"
+            residue = derive_pointer_residue(
+                preamble,
+                mission=mission,
+                raw_residue="",
+            )
+            residue_clamped = True
 
         checkpoint_channel = str(options.get("channel") or "continuity")
         body = _compose_body(
@@ -260,6 +299,8 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             subject=subject,
             body=body,
             after_turn=after_turn,
+            sidecar_content=sidecar_md,
+            sidecar_slug=sidecar_slug,
         )
         if send_status == 409:
             detail = send_resp.get("detail") or send_resp
@@ -272,6 +313,8 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                     subject=subject,
                     body=body,
                     after_turn=latest,
+                    sidecar_content=sidecar_md,
+                    sidecar_slug=sidecar_slug,
                 )
 
         if send_status >= 400:
@@ -312,6 +355,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             "surface": surface,
             "status": "posted",
             "bus_turn": bus_turn,
+            "preamble": preamble,
             "pre_consolidate": {
                 "executor": pre.get("executor") or "skipped",
                 "card_patch_applied": bool(pre.get("card_patch_applied")),

@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from markdown_sections import read_section, replace_section
@@ -14,6 +15,88 @@ _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
 _WORKSPACES_ULG_PREFIX = "workspaces://universal-llm-gateway/"
 
 RESIDUE_CAP_CHARS = 800
+_PREAMBLE_HEADER_RE = re.compile(r"^#\s*RESUME PREAMBLE", re.MULTILINE)
+
+
+def normalize_preamble(data: Mapping[str, Any]) -> dict[str, str] | None:
+    """Extract stance/facts/next_action from top-level keys or nested ``preamble``."""
+    nested = data.get("preamble")
+    if isinstance(nested, Mapping):
+        stance = str(nested.get("stance") or "").strip()
+        facts = str(nested.get("facts") or "").strip()
+        next_action = str(nested.get("next_action") or "").strip()
+    else:
+        stance = str(data.get("stance") or "").strip()
+        facts = str(data.get("facts") or "").strip()
+        next_action = str(data.get("next_action") or "").strip()
+    if stance or facts or next_action:
+        return {"stance": stance, "facts": facts, "next_action": next_action}
+    return None
+
+
+def render_preamble_markdown(
+    preamble: Mapping[str, str],
+    *,
+    thread_id: str | None = None,
+) -> str:
+    """Render uncapped preamble markdown for checkpoint sidecar storage."""
+    header = (
+        f"# RESUME PREAMBLE — thread {thread_id}"
+        if thread_id
+        else "# RESUME PREAMBLE"
+    )
+    parts = [header]
+    stance = str(preamble.get("stance") or "").strip()
+    facts = str(preamble.get("facts") or "").strip()
+    next_action = str(preamble.get("next_action") or "").strip()
+    if stance:
+        parts.extend(["", "## Stance", stance])
+    if facts:
+        parts.extend(["", "## Facts", facts])
+    if next_action:
+        parts.extend(["", "## Next action", next_action])
+    return "\n".join(parts).strip() + "\n"
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _is_preamble_substitute(text: str) -> bool:
+    body = text.strip()
+    if _PREAMBLE_HEADER_RE.search(body):
+        return True
+    return "## Stance" in body and "## Next action" in body
+
+
+def derive_pointer_residue(
+    preamble: Mapping[str, str] | None,
+    *,
+    mission: str = "",
+    raw_residue: str = "",
+) -> str:
+    """Build the short server pointer for the turn body's ## Residue section."""
+    raw = raw_residue.strip()
+    if raw and len(raw) <= RESIDUE_CAP_CHARS and not _is_preamble_substitute(raw):
+        clamped, _ = clamp_residue(raw)
+        return clamped
+    if preamble and not raw:
+        mission_line = _first_line(mission) or _first_line(str(preamble.get("stance") or ""))
+        next_line = _first_line(str(preamble.get("next_action") or ""))
+        pointer = (
+            f"Mission: {mission_line}\nNext: {next_line}\n"
+            "Preamble: see checkpoint sidecar"
+        )
+        clamped, _ = clamp_residue(pointer)
+        return clamped
+    if raw:
+        clamped, _ = clamp_residue(raw)
+        return clamped
+    return ""
 
 
 def clamp_residue(text: str, cap: int = RESIDUE_CAP_CHARS) -> tuple[str, bool]:
@@ -101,11 +184,20 @@ def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
     """Validate pre-consolidate worker deliverable shape."""
     residue = str(data.get("residue") or "")
     mission = str(data.get("mission") or "")
-    if "### User" in residue or "### User" in mission:
-        return False, "speech_in_body"
-    if len(residue) > 2 * RESIDUE_CAP_CHARS:
-        return False, "residue_too_long"
-    if "Mission:" not in residue and not mission.strip():
+    preamble = normalize_preamble(data) or {}
+    for field in (residue, mission, preamble.get("stance", ""), preamble.get("facts", ""), preamble.get("next_action", "")):
+        if "### User" in field or "### Assistant" in field:
+            return False, "speech_in_residue"
+    has_preamble = normalize_preamble(data) is not None
+    if not has_preamble and not residue.strip():
+        return False, "missing_residue_or_preamble"
+    has_mission = (
+        bool(mission.strip())
+        or "Mission:" in residue
+        or bool(str(preamble.get("stance") or "").strip())
+        or bool(str(preamble.get("next_action") or "").strip())
+    )
+    if not has_mission:
         return False, "missing_mission"
     card_patch = data.get("card_patch")
     if not isinstance(card_patch, dict):
@@ -269,7 +361,10 @@ __all__ = [
     "card_path",
     "resolved_card",
     "clamp_residue",
+    "derive_pointer_residue",
     "derive_settled_live_next",
+    "normalize_preamble",
     "parse_worker_json",
+    "render_preamble_markdown",
     "validate_worker_payload",
 ]

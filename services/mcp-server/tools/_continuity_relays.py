@@ -86,6 +86,10 @@ def _continuity_checkpoint(
     jsonl_path: str | None = None,
     chat_url: str | None = None,
     residue: str | None = None,
+    preamble: dict[str, Any] | None = None,
+    stance: str | None = None,
+    facts: str | None = None,
+    next_action: str | None = None,
     pre_consolidate: bool = True,
     tools: str = "none",
     channel: str | None = None,
@@ -111,6 +115,14 @@ def _continuity_checkpoint(
         body["chat_url"] = chat_url
     if residue is not None:
         body["residue"] = residue
+    if preamble is not None:
+        body["preamble"] = preamble
+    if stance is not None:
+        body["stance"] = stance
+    if facts is not None:
+        body["facts"] = facts
+    if next_action is not None:
+        body["next_action"] = next_action
     if channel is not None:
         body["channel"] = channel
     if handoff is not None:

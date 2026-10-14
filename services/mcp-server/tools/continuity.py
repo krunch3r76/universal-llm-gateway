@@ -284,6 +284,10 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         jsonl_path: str | None = None,
         chat_url: str | None = None,
         residue: str | None = None,
+        preamble: dict[str, Any] | None = None,
+        stance: str | None = None,
+        facts: str | None = None,
+        next_action: str | None = None,
         pre_consolidate: bool | None = None,
         pool: str | None = None,
         fence_id: str | None = None,
@@ -381,6 +385,10 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 jsonl_path=jsonl_path,
                 chat_url=chat_url,
                 residue=residue,
+                preamble=preamble,
+                stance=stance,
+                facts=facts,
+                next_action=next_action,
                 pre_consolidate=coerce_checkpoint_pre_consolidate(
                     surface, pre_consolidate, channel
                 ),

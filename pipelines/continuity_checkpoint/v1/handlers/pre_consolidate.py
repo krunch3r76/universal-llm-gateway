@@ -15,8 +15,11 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._card_patch import (
+    RESIDUE_CAP_CHARS,
     apply_card_patch,
     clamp_residue,
+    derive_pointer_residue,
+    normalize_preamble,
     parse_worker_json,
     validate_worker_payload,
 )
@@ -160,17 +163,8 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 reason="tape_truncated",
             )
 
-        seat_seed, seed_truncated = (
-            clamp_residue(seat_seed_raw) if seat_seed_raw else ("", False)
-        )
-        if seed_truncated:
-            _emit_degraded(
-                execution_id=execution_id,
-                thread=thread,
-                surface=surface,
-                from_agent=from_agent,
-                reason="seed_truncated",
-            )
+        seat_seed = seat_seed_raw
+        seed_truncated = False
 
         packet = render_pre_consolidate_packet(
             thread=thread,
@@ -206,6 +200,8 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         dispatch_resp, dispatch_status = await stargate_post(
             "/api/v1/team/dispatch", dispatch_body
         )
+        caller_preamble = normalize_preamble(options)
+
         if dispatch_status >= 400 or dispatch_resp.get("error"):
             fallback = seat_seed if seat_seed else _mechanical_residue(seal)
             residue, _ = clamp_residue(fallback)
@@ -213,6 +209,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "residue": residue,
                 "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
+                "preamble": caller_preamble,
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": None,
@@ -248,6 +245,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "residue": residue,
                 "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
+                "preamble": caller_preamble,
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": None,
@@ -314,6 +312,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "residue": residue,
                 "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
+                "preamble": caller_preamble,
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": worker_thread,
@@ -340,6 +339,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "residue": residue,
                 "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
+                "preamble": caller_preamble,
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": worker_thread,
@@ -376,13 +376,22 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             )
 
         raw_residue = str(worker_data.get("residue") or "")
-        residue, residue_clamped = clamp_residue(raw_residue)
         mission = str(worker_data.get("mission") or "")
-        result = {
+        preamble = normalize_preamble(worker_data) or caller_preamble
+        residue = derive_pointer_residue(
+            preamble, mission=mission, raw_residue=raw_residue
+        )
+        _, residue_clamped = clamp_residue(raw_residue) if raw_residue else ("", False)
+        if preamble and not raw_residue:
+            residue_clamped = False
+        elif raw_residue and len(raw_residue) > RESIDUE_CAP_CHARS:
+            residue_clamped = True
+        result: dict[str, Any] = {
             "residue": residue,
             "residue_source": "model",
             "residue_clamped": residue_clamped,
             "mission": mission,
+            "preamble": preamble,
             "card_patch_applied": applied,
             "card_patch_reason": patch_reason,
             "executor": "cursor-sdk",
@@ -391,4 +400,12 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             "seed_truncated": seed_truncated,
             "tape_stats": tape_stats,
         }
+        if preamble:
+            result.update(
+                {
+                    "stance": preamble.get("stance", ""),
+                    "facts": preamble.get("facts", ""),
+                    "next_action": preamble.get("next_action", ""),
+                }
+            )
         return StepOutput(raw=json.dumps(result), json=result)
