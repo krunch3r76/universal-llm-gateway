@@ -74,7 +74,7 @@ def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
     )
     assert body["dispatch_thread_id"] == "12029"
     assert body["source_ref"] == "todo:liaison-loop-tape-birth"
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
     assert "prompt" not in body
     assert body["work_key"] == "todo:liaison-loop-tape-birth"
     assert "model" not in body
@@ -88,7 +88,7 @@ def test_play_dispatch_body_uses_successor_model() -> None:
     )
     assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == {"effort": "high", "fast": "false"}
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
     assert body["subject"] == "conductor todo:cse-attachment-hop"
     assert "prompt" not in body
     assert body["source_ref"] == "todo:cse-attachment-hop"
@@ -275,7 +275,7 @@ def test_consult_reply_on_terminal_conductor_open_thread_admits(
     out = tick_spawn_on_wake(digest, {}, "12557", dry_run=True)
     assert out["action"] == "would_spawn"
     body = out["body"]
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
     assert "prompt" not in body
     assert body["subject"] == "conductor todo:cse-attachment-hop"
     assert body["source_ref"] == "todo:cse-attachment-hop"
@@ -328,7 +328,7 @@ def test_dry_run_play_admits_liaison_once(
     out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
     body = out["body"]
     assert body is not None
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
     assert body["subject"] == "conductor todo:alpha"
     assert "prompt" not in body
     assert body["source_ref"] == "todo:alpha"

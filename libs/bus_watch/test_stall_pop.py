@@ -91,7 +91,7 @@ def test_bus_watch_no_services_imports() -> None:
     pattern = re.compile(r"(?:^|\s)(?:from|import)\s+services[\.\s]")
     violations: list[str] = []
     for path in sorted(root.glob("*.py")):
-        if path.name.startswith("test_"):
+        if path.name.startswith("test_") or path.name == "conftest.py":
             continue
         if pattern.search(path.read_text(encoding="utf-8")):
             violations.append(path.name)

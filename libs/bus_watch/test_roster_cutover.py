@@ -507,7 +507,7 @@ def test_closed_lane_before_first_latch_next_tick_holds(
     tick_spawn_on_wake(digest, state, root, submit=submit)
     assert len(calls) == 1
     assert "prompt" not in calls[0]
-    assert calls[0]["contract"] == "conductor"
+    assert calls[0]["job"] == "conductor"
     digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
     assert digest["roster"][0]["closed_lanes_before_latch"] == ["9001"]
     tick_spawn_on_wake(digest, state, root, submit=submit)
@@ -609,7 +609,7 @@ def test_two_disjoint_rows_one_tick_posts_both_then_holds(
     assert len(calls) == 2
     assert {body["work_key"] for body in calls} == {"todo:a", "todo:b"}
     assert all(
-        body["contract"] == "conductor" and "prompt" not in body for body in calls
+        body["job"] == "conductor" and "prompt" not in body for body in calls
     )
     digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
     ids = {row["last_hire_dispatch_id"] for row in digest["roster"]}

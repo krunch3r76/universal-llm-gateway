@@ -247,7 +247,7 @@ def test_checkpoint_observed_event_signal() -> None:
 def test_gear4_successor_contract_conductor_gear3_none() -> None:
     """AC1.1 — gear-4 binds conductor; other gears keep none."""
     assert (
-        effective_policy({"policy": {"gear": "4-cdp-liaison"}})["successor_contract"]
+        effective_policy({"policy": {"gear": "4-cdp-liaison"}})["successor_job"]
         == "conductor"
     )
     assert (

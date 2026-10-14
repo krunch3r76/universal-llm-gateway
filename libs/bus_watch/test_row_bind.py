@@ -84,7 +84,7 @@ def test_latched_low_is_implement_lane_b() -> None:
         friction,
         latched={"class": "low", "why": "one-file fix"},
     )
-    assert body["contract"] == "implement"
+    assert body["job"] == "implement"
     assert body["lane"] == "B"
     assert body["seat"] == "cursor-sdk"
     assert "land on green" in body["prompt"].lower()
@@ -109,7 +109,7 @@ def test_latched_trio_with_todo_is_play_body() -> None:
         latched={"class": "trio", "row_id": "todo:foo"},
         todo_slug="foo",
     )
-    assert body["contract"] == "none"
+    assert body["job"] == "freeform"
     assert body["subject"] == "trio todo:foo"
     assert "source_ref" not in body
     assert body["prompt"] == (
