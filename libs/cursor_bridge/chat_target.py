@@ -14,13 +14,23 @@ from __future__ import annotations
 from typing import Any
 
 
-def chat_title(thread: str, slug: str) -> str:
+def chat_title(
+    thread: str = "",
+    slug: str = "",
+    *,
+    title: str | None = None,
+) -> str:
     """Sidebar title both the opener and the selector use.
 
-    ``thread`` and ``slug`` are stripped. Either one empty, or a newline in
-    either, raises ``ValueError`` so a wake cannot target a blank or
-    multi-line row. No I/O.
+    When ``title`` is provided and non-empty, that exact single-line string
+    is returned (for example a Grok Bot sidebar name like ``Grok Coordinator 1``).
+    Otherwise ``thread`` and ``slug`` are stripped and joined as
+    ``"<thread> <slug>"``. Either one empty, or a newline in any input,
+    raises ``ValueError`` so a wake cannot target a blank or multi-line row.
+    No I/O.
     """
+    if title is not None and str(title).strip():
+        return _one_line(str(title), "title")
     thread_s = _one_line(thread, "thread")
     slug_s = _one_line(slug, "slug")
     return f"{thread_s} {slug_s}"
