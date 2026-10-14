@@ -1,6 +1,20 @@
-# /liaison <root> [attended|autonomous] [--interval S]
+# /liaison [<root>] [attended|autonomous] [--interval S]
 
-Seat this tab as the house liaison on continuity root `<root>` and arm the tick loop.
+**Impresario gear inference (before any arm step).** This tab's agent is the **Impresario** — infer
+**Light**, **Attended**, or **Overnight** internally. Do not ask the operator to choose between
+`/orchestrate` and `/liaison` or to name a gear. `/orchestrate` and `/liaison` share this same entry
+(see `cursor-plugins/ulg-ecosystem/commands/orchestrate.md`).
+
+| Gear | When | Action |
+|---|---|---|
+| **Light** | No continuity root and no durable objective or `todo:` (in-seat question, chat, small patch) | Answer in-seat. **Do not** `create_thread`, **do not** run `liaison-arm-loop.sh` or load the tick-protocol body. |
+| **Attended (birth + seat)** | Operator named a root slug and/or a durable objective or `todo:`, and `agent_bus_read(thread_get, thread=<root>)` lacks `role:root` (or the root thread does not exist yet) | `Use the orchestration-lanes skill` — birth the house (create root thread, continuity doc, birth CHECKPOINT, stamp `role:root`), then run steps 1–6 below on `<root>`. |
+| **Attended (seat only)** | `role:root` already on `<root>` | Steps 1–6 below (orient, register, arm loop). |
+| **Overnight (metronome)** | Departure utterance (`go under`, `running overnight`, leaving, hand off overnight) | `Use the ide-continuity skill` § **go under** only (`liaison-tick.py --go-under`, gear-3 ticker). **Do not** start a new attended seat loop. |
+
+Bare `/liaison` or `/orchestrate` with **no** root slug and **no** durable objective stays **Light** — do not mint an empty `role:root`. Bare `/liaison` with no root can still resolve a **foreign** tab when resolving `ide:<transcript_id>` (specimen `866948bb…`); prefer `/liaison <root>` or `resume <root>` when the house is known.
+
+When steps 1–6 run (**Attended** only):
 
 1. **Load** `Use the ide-continuity skill` (`cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md`) and `checkpoint-discipline`.
 2. **Orient** — `agent_bus_read(thread_get, thread=<root>)` → read the tip CHECKPOINT (latest turn with

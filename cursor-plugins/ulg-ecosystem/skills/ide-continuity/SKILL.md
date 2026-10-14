@@ -1,11 +1,33 @@
 ---
 name: ide-continuity
-description: House liaison on a continuity root. A played todo admits one conductor. Load on /liaison, resume of a liaison root, close the house, or run the house while away.
+description: Impresario on a continuity root — infer Light/Attended/Overnight, seat the house, run the metronome when away. A played todo admits one conductor. Load on /liaison, /orchestrate, resume of a root, close the house, or go under.
 ---
-# Liaison — the seat that runs the house
+# Impresario — the tab that runs the house
+
+**Roles (orchestra vocabulary).** **Maestro** = executive on the **Castle** only (house `12286`,
+`web-anthropic`) — never one maestro per house. **House** = any other durable body of work (`role:root`).
+**Impresario** = this reasoning agent in the IDE tab: coordinates a house or mints one if missing; infers
+gear internally. **Conductor** = session that plays one `todo:` score until a designed stop. **Metronome** =
+gear-3 overnight ticker (`liaison-tick.py --loop --spawn-on-wake` after `--go-under`). **Stage manager** =
+the one Jupiter fleet watcher (lane `15851`).
+
+## Gear inference (Light / Attended / Overnight)
+
+Infer gear before arming loops or loading the tick-protocol body. Machine paths (`/liaison`, `/orchestrate`),
+script names, and registers (`attended`|`autonomous`) stay unchanged.
+
+| Gear | When | Loads |
+|---|---|---|
+| **Light** | No `role:root` context and no durable objective or `todo:` | In-seat answer only. **Never** the tick protocol, `create_thread`, or `liaison-arm-loop.sh`. |
+| **Attended** | Root slug and/or durable objective or `todo:` | If `role:root` missing: `orchestration-lanes` birth, then seat (`--register attended`, arm loop). If `role:root` exists: seat only. Lock `reason=held` by another `ide:` holder ⇒ worker tab (§ Single-liaison-seat cap). **No second birth.** |
+| **Overnight** | Operator departure (`go under`, running overnight, leaving) | § **go under** only (Metronome). **Not** a new attended seat loop. |
+
+Birth when the house is missing is the **Attended lowering** — whether the operator typed `/liaison`,
+`/orchestrate`, or opened the tab with a durable objective. `checkpoint` is `checkpoint-discipline` lean fire,
+not birth.
 
 `liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
-the liaison **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
+the Impresario (liaison seat) **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
 ¬ implement what a live dispatch owns (`in-flight-work-guard`). Consolidated name for *coordinator*;
 Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor = session to a designed stop),
 `decision:conductor-attended-vs-unattended-routing`.
