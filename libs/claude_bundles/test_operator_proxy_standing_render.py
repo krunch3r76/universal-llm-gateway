@@ -179,6 +179,25 @@ def test_ac5_prose_registration_id_is_not_checkpoint_author() -> None:
     assert "checkpoint_stale" not in body
 
 
+def test_friction_39269_checkpoint_current_leg_heading_once() -> None:
+    sidecar = "## CURRENT LEG\n### OWED / NEXT\npin-heading-once\n"
+    body, _meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+    )
+    assert body.startswith("## CURRENT LEG (rendered checkpoint)\n")
+    assert "\n## CURRENT LEG\n" not in body
+    assert "pin-heading-once" in body
+
+
+def test_friction_39269_act2_line_has_no_leading_ordinal() -> None:
+    from claude_bundles.operator_proxy_standing_render import maestro_runbook_act2_line
+
+    line = maestro_runbook_act2_line()
+    assert not line.startswith("2. ")
+
+
 def test_ac5_live_leg_line_registration_id_matches() -> None:
     sidecar = (
         "## CURRENT LEG\n"

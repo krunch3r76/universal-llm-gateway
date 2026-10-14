@@ -16,6 +16,7 @@ from claude_bundles.operator_proxy_live_leg import (
     LiveLeg,
     fetch_turns_to_closure,
     load_fold_state,
+    load_maestro_roster_text,
     project_live_leg,
     render_live_leg,
     save_fold_state,
@@ -487,3 +488,20 @@ def test_ac4_non_utf8_fold_state_cold_starts_and_rewrites() -> None:
 def test_ac15_pointers_block_removed() -> None:
     removed = "POINTERS_" + "BLOCK"
     assert not hasattr(live_leg_mod, removed)
+
+
+def test_friction_39270_roster_load_absent_vs_unreadable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "cortex"
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    absent = load_maestro_roster_text()
+    assert absent.text == ""
+    assert absent.unreadable is None
+
+    operational = root / "notes/system/operational"
+    operational.mkdir(parents=True)
+    (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
+    bad = load_maestro_roster_text()
+    assert bad.text == ""
+    assert bad.unreadable == "UnicodeDecodeError"

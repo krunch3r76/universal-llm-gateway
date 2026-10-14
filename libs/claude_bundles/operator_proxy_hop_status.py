@@ -219,8 +219,17 @@ def hop_successor_fields(
     exec_id = (execution_id or "").strip()
     execution_clause = f", execution_id {exec_id}" if exec_id else ""
 
-    roster = roster_text if roster_text is not None else load_maestro_roster_text()
+    roster_unreadable: str | None = None
+    if roster_text is not None:
+        roster = roster_text
+    else:
+        loaded = load_maestro_roster_text()
+        roster = loaded.text
+        roster_unreadable = loaded.unreadable
     lanes = house_lanes(roster)
+    roster_clause = (
+        f"unreadable: {roster_unreadable}; " if roster_unreadable else ""
+    )
     if fetch_turns is None:
         from claude_bundles.operator_proxy_bus_fetch import fetch_turns_for_lane
 
@@ -296,19 +305,20 @@ def hop_successor_fields(
         digest = ""
         running_now = (
             "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; {handoff_failure})"
+            f"lanes {lane_list}; {roster_clause}{handoff_failure})"
         )
     elif sidecar:
         digest = handoff_file_sha256(sidecar)
         running_now = (
             "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; handoff file sha256 at render {digest})"
+            f"lanes {lane_list}; {roster_clause}handoff file sha256 at render "
+            f"{digest})"
         )
     else:
         digest = ""
         running_now = (
             "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; standing handoff file absent)"
+            f"lanes {lane_list}; {roster_clause}standing handoff file absent)"
         )
 
     pointers = render_pointers_block(

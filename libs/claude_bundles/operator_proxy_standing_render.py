@@ -42,6 +42,17 @@ def _utf8_len(text: str) -> int:
     return len((text or "").encode("utf-8"))
 
 
+def _strip_leading_current_leg_heading(body: str) -> str:
+    """Drop a leading ``## CURRENT LEG`` line; the render wrapper supplies it."""
+    lines = (body or "").splitlines()
+    if not lines or not _CURRENT_LEG_RE.match(lines[0]):
+        return body or ""
+    rest = lines[1:]
+    while rest and not rest[0].strip():
+        rest = rest[1:]
+    return "\n".join(rest)
+
+
 def _truncate_utf8(text: str, max_bytes: int) -> str:
     raw = (text or "").encode("utf-8")
     if len(raw) <= max_bytes:
@@ -564,6 +575,7 @@ def render_checkpoint_block(
     if meta["flags"]:
         body = "\n".join(meta["flags"]) + ("\n\n" + body if body else "")
     if body:
+        body = _strip_leading_current_leg_heading(body)
         return prefix + body, meta
     if meta["flags"]:
         return prefix + "\n".join(meta["flags"]), meta
@@ -605,16 +617,16 @@ def render_pointers_block(
 
 
 def maestro_runbook_act2_line() -> str:
-    """First-act line that names the runbook sections and the file's byte size."""
+    """Act-2 body for the hop template (ordinal ``2.`` lives on the template line)."""
     body, _err = load_maestro_runbook()
     if not body:
         return (
-            "2. `md_read` cortex://notes/runbooks/maestro-loop.md sections "
+            "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
             "§ Refuse and § Steps only (size unknown)."
         )
     size = _utf8_len(body)
     return (
-        "2. `md_read` cortex://notes/runbooks/maestro-loop.md sections "
+        "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
         f"§ Refuse and § Steps only (runbook {size} bytes)."
     )
 

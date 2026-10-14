@@ -593,6 +593,49 @@ def test_pa3_act2_md_read_and_runbook_size() -> None:
     acts = out.split("## Your first acts", 1)[1].split("## How this seat works", 1)[0]
     assert "md_read" in acts and "§ Refuse" in acts and "§ Steps" in acts
     assert "bytes" in acts or "size unknown" in acts
+    assert "2. 2." not in acts
+
+
+def _running_now_segment(out: str) -> str:
+    return out.split("## What is running now", 1)[1].split("\n\n", 1)[0]
+
+
+def test_friction_39270_roster_unreadable_surfaces_and_matches_absent_lanes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "cortex"
+    operational = root / "notes/system/operational"
+    operational.mkdir(parents=True)
+    (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    unreadable_out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    absent_out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert "unreadable: UnicodeDecodeError" in unreadable_out
+    unreadable_rn = _running_now_segment(unreadable_out)
+    absent_rn = _running_now_segment(absent_out)
+    assert unreadable_rn.split("; unreadable:")[0] == absent_rn.split("; standing")[0]
+
+
+def test_friction_39270_absent_roster_omits_unreadable_clause() -> None:
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert "unreadable:" not in out
 
 
 def test_pa5_declared_in_flight_count() -> None:

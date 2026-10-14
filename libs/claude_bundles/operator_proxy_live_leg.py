@@ -80,20 +80,32 @@ class LiveLeg:
     lanes_queried: list[str] = field(default_factory=list)
 
 
-def load_maestro_roster_text() -> str:
-    """Load the maestro sidekick roster from the cortex files root."""
+@dataclass(frozen=True)
+class MaestroRosterLoad:
+    """Roster file read outcome for hop render (absent vs unreadable vs text)."""
+
+    text: str
+    unreadable: str | None = None
+
+
+def load_maestro_roster_text() -> MaestroRosterLoad:
+    """Load the maestro sidekick roster from the cortex files root.
+
+    Missing file → empty text. ``OSError`` / ``UnicodeError`` on read → empty
+    text with ``unreadable`` set to the exception class name (hop body surfaces it).
+    """
     root = cortex_files_root()
     path = root / _ROSTER_REL
+    if not path.is_file():
+        return MaestroRosterLoad("")
     try:
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        return MaestroRosterLoad(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
         _logger.warning(
             "maestro roster unreadable; house lanes fall back to the fixed extras",
             exc_info=True,
         )
-        return ""
-    return ""
+        return MaestroRosterLoad("", unreadable=type(exc).__name__)
 
 
 def house_lanes(roster_text: str) -> list[str]:
@@ -681,6 +693,7 @@ __all__ = [
     "GOVERNING_RULE",
     "LaneFoldState",
     "LiveLeg",
+    "MaestroRosterLoad",
     "OpenItem",
     "load_fold_state",
     "save_fold_state",

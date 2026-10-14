@@ -493,12 +493,9 @@ def stage_cdp_prompt_with_skills(
             production_standing_seams,
             standing_handoff_text_for_prompt,
         )
-        from claude_bundles.operator_proxy_live_leg import load_maestro_roster_text
-
         body = ensure_operator_proxy_mission_prompt(
             body,
             standing_handoff_text=standing_handoff_text_for_prompt(body),
-            roster_text=load_maestro_roster_text(),
             execution_id=execution_id,
             **production_standing_seams(),
         )
