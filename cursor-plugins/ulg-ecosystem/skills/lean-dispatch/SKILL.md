@@ -1,11 +1,6 @@
 ---
 name: lean-dispatch
-description: >-
-  Lean-context dispatch balance for any seat, Cursor agent or Grok Bot, that dispatches work (friction, todo,
-  or greenfield): diagnosis+land stay on the parent; choose the lowest
-  sufficient duty wire; packet in / envelope out; red closeout one tier up.
-  Activate when authoring or citing a dispatch ladder, caste/Huxley table, or
-  "keep this seat lean" posture. Progressive disclosure — full body on activate.
+description: "Parent keeps diagnosis and land, and does not implement or sweep. Packet in, envelope out. A red closeout goes one tier up."
 alwaysApply: false
 trigger_match_terms:
   - lean-dispatch
@@ -24,10 +19,13 @@ related_skills:
 
 # Lean dispatch (shared SoT)
 
-Parent seat holds **diagnosis** and **land**. Everything else may leave.
-Dispatch is a **tool**, not a duty: if the leg is a few edits with files already
-in view, do it yourself. Dispatch when the leg would pull a large read sweep,
-a repetitive multi-file change, or a second opinion into this context.
+Parent seat holds **diagnosis** and **land**. Everything else leaves.
+
+**Forbid.** This seat does not implement and does not sweep. Implement is a
+repo write, a `contract=implement` admit, or editing files in place. Sweep is
+a broad read, a second search, or a bug-class pass across a service. Both go
+out as a packet. Judgment, coordination, and a tool only this seat has stay
+here.
 
 ## Packet in / envelope out
 
@@ -67,10 +65,11 @@ its OWN context lean and leans toward `team_dispatch` seat=`cursor-sdk`
 lane=B for sizable legs (a large read sweep, a multi-file change, a long run
 or land): `cursor/composer-2.5` for well-specified runs and lands,
 `cursor/grok-4.7` for judgment and reviews, or CDP per § Duty → wire. The
-seat still does work that fits it: judgment, short edits with files in view,
-coordination, and legs that need a tool only a bot has (browser/desktop,
-SendToAgent/CreateAgent wake path, connected apps, a user's registered
-machine); hand a leg to a bot subagent or peer bot only for such a tool.
+seat still does judgment, coordination, and legs that need a tool only a bot
+has (browser/desktop, SendToAgent/CreateAgent wake path, connected apps, a
+user's registered machine). It does not implement and does not sweep; those
+leave as packets. Hand a leg to a bot subagent or peer bot only for a
+bot-only tool.
 Weekly Grok Bot usage is capped; that is a reason to spread load, not a ban
 on bot work.
 
@@ -98,12 +97,14 @@ Choose the lowest sufficient tier first.
 | Todo implementer | Same cite; no local wire table |
 | Greenfield start | Same cite at seat boot / first dispatch |
 | Grok Bot seat (any instance) | `runbook:coding-boot` step 2 loads this skill; parity note item 8 points to § Grok Bot seats |
+| claude.ai maestro | Opening prompt and wake reload: `Use the lean-dispatch skill` with the other opening skills |
 | `pipeline_id=cursor-paste-resolve` | **Mechanics only** (compose/launch). Does **not** own the ladder — cite this skill for duty→wire |
 
 Do not paste this table into system prompts or Grok Bot profile descriptions.
 
 ## Constraints (last)
 
+- Parent does not implement and does not sweep. Those legs leave as packets.
 - Wires stay; spoken duty labels are Set D as bound.
 - No collision with musical-arts spoken set: Sketch, Scoring, Conductor, maestro, ear, music makers (lexicon rejects: bare Composer as duty, Score Composer, Orchestrate).
 - No Huxley Alpha→Epsilon speech in new prompts once migration lands.

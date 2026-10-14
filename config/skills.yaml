@@ -147,7 +147,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: life
   lean-dispatch:
-    surface_class: cursor_only
+    # Maestro opening skill (claude.ai). Parent posture: diagnosis+land here,
+    # dispatch the rest. Was cursor_only, so the castle seat could not load it.
+    surface_class: shared_sync
     mcp_surface_required: life
   corpus-cross-reference-discipline:
     surface_class: cursor_only

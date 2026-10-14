@@ -78,6 +78,13 @@ def test_resolve_cursor_api_key_other_models_secondary(tmp_path: Path) -> None:
     assert res.api_key == "secondary-key"
 
 
+def test_resolve_cursor_api_key_gemini_4_argon_uses_secondary() -> None:
+    env = {CURSOR_API_KEY_OTHER_MODELS_ENV: "secondary-key"}
+    res = resolve_cursor_api_key("cursor/gemini-4-argon", env=env)
+    assert res.provenance == f"env:{CURSOR_API_KEY_OTHER_MODELS_ENV}"
+    assert res.api_key == "secondary-key"
+
+
 def test_resolve_cursor_api_key_other_models_missing_secondary() -> None:
     env = {"CURSOR_API_KEY": "primary-key"}
     with pytest.raises(CursorSdkParityError, match=CURSOR_API_KEY_OTHER_MODELS_ENV):
