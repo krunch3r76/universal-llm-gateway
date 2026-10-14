@@ -40,3 +40,15 @@ def _isolate_dispatch_ledger(tmp_path_factory: pytest.TempPathFactory):
         os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] = prior_dispatch_ledger
     SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_liaison_pager_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep liaison pager off a live email-bridge socket even if env is poisoned."""
+    import bus_watch.liaison_pager as liaison_pager
+
+    monkeypatch.setattr(
+        liaison_pager,
+        "_EMAIL_BRIDGE_SOCK",
+        "/nonexistent/pytest-bus-watch-liaison-pager",
+    )

@@ -17,6 +17,7 @@ from typing import Any
 
 from bus_watch.events import emit_lease_forfeited
 from bus_watch.fable_lock import read_lock, release_fable_lock, seat_lock_free
+from pager_notify.client import _pytest_detected
 
 _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
@@ -25,6 +26,8 @@ _EMAIL_BRIDGE_SOCK = os.environ.get(
 
 def page_liaison(root_id: str, subject: str, body: str) -> dict[str, Any]:
     """Fire the email-bridge pager; returns ok=False when the socket is absent."""
+    if _pytest_detected():
+        return {"ok": False, "reason": "pytest"}
     if not os.path.exists(_EMAIL_BRIDGE_SOCK):
         return {"ok": False, "reason": "pager_unavailable"}
     payload = json.dumps(
