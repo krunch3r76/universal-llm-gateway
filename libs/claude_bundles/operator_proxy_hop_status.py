@@ -18,8 +18,10 @@ from hop_handoff.standing_handoff import standing_handoff_path, standing_handoff
 from implement_admission.closeout_helpers import cortex_files_root
 
 from claude_bundles.journal_hop_projection import (
+    JOURNAL_HEAD_BYTES,
     MAESTRO_JOURNAL_URI,
     MAESTRO_REGISTER_URI,
+    ReadJournalHead,
     hop_journal_projection_fields,
 )
 from claude_bundles.operator_proxy_bus_fetch import lineage_status_for_execution
@@ -158,6 +160,26 @@ def cortex_archive_path_exists(path: str) -> bool:
     return _cortex_path(path).is_file()
 
 
+def read_cortex_journal_head(uri: str, limit: int) -> tuple[str | None, int | None]:
+    """Read at most *limit* bytes from a cortex journal URI; return ``(head, total)``."""
+    path = _cortex_path(uri)
+    try:
+        if not path.is_file():
+            return None, None
+        with path.open("rb") as handle:
+            head = handle.read(limit)
+            handle.seek(0, 2)
+            total = handle.tell()
+    except (OSError, UnicodeError):
+        return None, None
+    if not head and total == 0:
+        return "", 0
+    cut = head
+    while cut and (cut[-1] & 0xC0) == 0x80:
+        cut = cut[:-1]
+    return cut.decode("utf-8", errors="ignore"), total
+
+
 def read_cortex_uri_from_root(uri: str) -> str | None:
     """Read a ``cortex://`` URI from the cortex files root.
 
@@ -183,6 +205,7 @@ def production_standing_seams() -> dict[str, Any]:
         "lineage_lookup": lineage_status_for_execution,
         "archive_path_exists": cortex_archive_path_exists,
         "read_cortex_uri": read_cortex_uri_from_root,
+        "read_journal_head": read_cortex_journal_head,
     }
 
 
@@ -196,6 +219,7 @@ def hop_successor_fields(
     journal_text: str | None = None,
     register_text: str | None = None,
     read_cortex_uri: Callable[[str], str | None] | None = None,
+    read_journal_head: ReadJournalHead | None = None,
     inflight_projection_lookup: Callable[[], str | None] | None = None,
     role: str = "maestro",
     house_rules_text: str | None = None,
@@ -331,6 +355,8 @@ def hop_successor_fields(
             journal_text=journal_text,
             register_text=register_text,
             read_uri=read_cortex_uri,
+            read_journal_head=read_journal_head or read_cortex_journal_head,
+            archive_path_exists=archive_path_exists,
             role=role,
             inflight_projection_lookup=inflight_projection_lookup,
         )
@@ -368,6 +394,7 @@ def hop_successor_fields(
 
 
 __all__ = [
+    "JOURNAL_HEAD_BYTES",
     "MISSING_HANDOFF_INSTRUCTION",
     "UNKNOWN_FIELD",
     "extract_thread_id",
@@ -375,5 +402,6 @@ __all__ = [
     "hop_successor_fields",
     "house_rules_section",
     "production_standing_seams",
+    "read_cortex_journal_head",
     "standing_handoff_text_for_prompt",
 ]

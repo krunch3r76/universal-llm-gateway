@@ -9,9 +9,11 @@ from typing import Any
 import pytest
 
 from claude_bundles.journal_hop_projection import (
+    JOURNAL_HEAD_BYTES,
     MAESTRO_JOURNAL_URI,
     MAESTRO_REGISTER_URI,
     _read_cortex_uri,
+    load_journal_text_for_hop,
     project_lessons_in_force,
 )
 from claude_bundles.operator_proxy_hop_status import (
@@ -404,18 +406,113 @@ def test_inflight_projection_does_not_block(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_journal_read_oserror_renders_unavailable() -> None:
-    def _read(uri: str) -> str | None:
-        if uri == MAESTRO_JOURNAL_URI:
-            raise OSError("disk")
-        return None
+    def _read_head(_uri: str, _limit: int) -> tuple[str | None, int | None]:
+        raise OSError("disk")
 
     out = ensure_operator_proxy_mission_prompt(
         "# Mission\n",
         roster_text="",
         fetch_turns=_noop_fetch,
-        read_cortex_uri=_read,
+        read_journal_head=_read_head,
     )
     assert "journal unavailable" in out
+    assert out.startswith("# Hop on agent-bus:")
+
+
+def test_load_journal_head_read_bounded_at_64kb() -> None:
+    seen_limits: list[int] = []
+    five_mb = 5 * 1024 * 1024
+
+    def _read_head(_uri: str, limit: int) -> tuple[str | None, int | None]:
+        seen_limits.append(limit)
+        head = "## 2026-10-01 — entry\nRULE: [route] head rule\n"
+        return head, five_mb
+
+    text, err, total = load_journal_text_for_hop(read_journal_head=_read_head)
+    assert err is None
+    assert total == five_mb
+    assert "head rule" in (text or "")
+    assert seen_limits == [JOURNAL_HEAD_BYTES]
+
+
+def test_journal_head_projection_matches_full_under_budget() -> None:
+    journal = _journal_fixture_seven_plus_fleet()
+    direct = project_lessons_in_force(journal, role="maestro")
+    via_hop = hop_successor_fields(
+        "thread_id: 1\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+    )["lessons_in_force"]
+    assert via_hop == direct
+
+
+def test_journal_head_over_budget_renders_flag() -> None:
+    rules = "".join(
+        f"## 2026-10-{index:02d} — entry {index}\nRULE: [route] rule {index}\n"
+        for index in range(7, 0, -1)
+    )
+    pad = "x" * (JOURNAL_HEAD_BYTES - len(rules.encode("utf-8")) + 1024)
+    journal = (
+        f"archived_prev: cortex://notes/system/threads/prev.md sha256 {'a' * 64}\n"
+        f"{rules}\n{pad}\n"
+    )
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+        archive_path_exists=lambda _p: True,
+    )
+    assert "[journal_over_budget" in out
+    assert "65536" in out
+    assert "rotation owed at next hop" in out
+    lessons = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    assert lessons.count("RULE: [route]") == 5
+    assert "rule 7" in lessons
+    assert "rule 3" in lessons
+    assert "rule 2" not in lessons
+
+
+def test_journal_archived_prev_missing_flags_archive_missing() -> None:
+    journal = (
+        f"archived_prev: cortex://notes/system/threads/missing-prev.md sha256 {'b' * 64}\n"
+        "## 2026-10-01 — entry\nRULE: [route] ok\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+        archive_path_exists=lambda _p: False,
+    )
+    assert "archive_missing: journal" in out
+    assert "ok" in out
+
+
+def test_journal_archive_path_oserror_does_not_abort_hop() -> None:
+    journal = (
+        f"archived_prev: cortex://notes/system/threads/unreadable.md sha256 {'c' * 64}\n"
+        "## 2026-10-01 — entry\nRULE: [route] ok\n"
+    )
+
+    def _exists(_path: str) -> bool:
+        raise OSError("perm")
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+        archive_path_exists=_exists,
+    )
+    assert "[render_failed archive_path: OSError" in out
+    assert "ok" in out
     assert out.startswith("# Hop on agent-bus:")
 
 
@@ -829,6 +926,7 @@ def test_production_standing_seams_do_not_run_for_bare_ensure(
         "lineage_lookup",
         "archive_path_exists",
         "read_cortex_uri",
+        "read_journal_head",
     }
     sidecar = (
         "## CURRENT LEG\n### IN FLIGHT\n"

@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Final
 
 from implement_admission.closeout_helpers import cortex_files_root
 
+_ARCHIVED_PREV_RE = re.compile(
+    r"^archived_prev:\s*(\S+)\s+sha256\s+([0-9a-f]{64})\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 MAESTRO_JOURNAL_URI: Final = "cortex://notes/system/maestro/journal.md"
+JOURNAL_HEAD_BYTES: Final = 64 * 1024
 MAESTRO_REGISTER_URI: Final = "cortex://notes/system/maestro/register.md"
 LESSONS_K: Final = 5
 
@@ -118,6 +125,80 @@ def render_register_card(
     return f"## Register\n\n{capped}\n"
 
 
+ReadJournalHead = Callable[[str, int], tuple[str | None, int | None]]
+
+
+def _utf8_len(text: str) -> int:
+    return len((text or "").encode("utf-8"))
+
+
+def _decode_utf8_head(raw: bytes) -> str:
+    cut = raw
+    while cut and (cut[-1] & 0xC0) == 0x80:
+        cut = cut[:-1]
+    return cut.decode("utf-8", errors="ignore")
+
+
+def _read_path_journal_head(path: Path, limit: int) -> tuple[str | None, int | None]:
+    with path.open("rb") as handle:
+        head = handle.read(limit)
+        handle.seek(0, 2)
+        total = handle.tell()
+    if not head and total == 0:
+        return "", 0
+    return _decode_utf8_head(head), total
+
+
+def _journal_preamble(head_text: str) -> str:
+    body = head_text or ""
+    match = _ENTRY_HEADING_RE.search(body)
+    if match is None:
+        return body
+    return body[: match.start()]
+
+
+def _journal_head_flags(
+    head_text: str,
+    *,
+    total_bytes: int | None,
+    archive_path_exists: Callable[[str], bool] | None,
+) -> list[str]:
+    flags: list[str] = []
+    if total_bytes is not None and total_bytes > JOURNAL_HEAD_BYTES:
+        flags.append(
+            f"[journal_over_budget {total_bytes}/{JOURNAL_HEAD_BYTES}"
+            " — rotation owed at next hop]"
+        )
+    preamble = _journal_preamble(head_text)
+    archived = _ARCHIVED_PREV_RE.search(preamble)
+    if not archived:
+        return flags
+    path = archived.group(1)
+    if archive_path_exists is None:
+        return flags
+    try:
+        missing = not archive_path_exists(path)
+    except Exception as exc:  # noqa: BLE001 — unreadable ≠ absent; fail-open
+        flags.append(
+            f"[render_failed archive_path: {type(exc).__name__} — read {path}]"
+        )
+        return flags
+    if missing:
+        flags.append("archive_missing: journal")
+    return flags
+
+
+def _prepend_journal_flags(lessons: str, flags: list[str]) -> str:
+    if not flags:
+        return lessons
+    prefix = "\n".join(flags)
+    block = "## Lessons in force\n\n"
+    if lessons.startswith(block):
+        tail = lessons[len(block) :]
+        return f"{block}{prefix}\n\n{tail}"
+    return f"{prefix}\n\n{lessons}"
+
+
 def _read_cortex_uri(
     uri: str,
     *,
@@ -139,22 +220,30 @@ def load_journal_text_for_hop(
     *,
     journal_text: str | None = None,
     read_uri: Callable[[str], str | None] | None = None,
+    read_journal_head: ReadJournalHead | None = None,
     journal_uri: str = MAESTRO_JOURNAL_URI,
-) -> tuple[str | None, str | None]:
-    """Return ``(text, error_token)``; ``error_token`` is ``unavailable`` on read failure."""
+) -> tuple[str | None, str | None, int | None]:
+    """Return ``(head_text, error_token, total_bytes)``.
+
+    Reads at most ``JOURNAL_HEAD_BYTES`` from the journal file head. ``error_token``
+    is ``unavailable`` on read failure. ``read_uri`` is ignored for journal load
+    (register reads still use it elsewhere).
+    """
+    del read_uri  # journal load is always head-bounded via path or read_journal_head
     if journal_text is not None:
-        return journal_text, None
+        return journal_text, None, _utf8_len(journal_text)
     try:
-        if read_uri is not None:
-            loaded = read_uri(journal_uri)
-            return loaded, None
+        if read_journal_head is not None:
+            text, total = read_journal_head(journal_uri, JOURNAL_HEAD_BYTES)
+            return text, None, total
         rel = journal_uri.removeprefix("cortex://").lstrip("/")
         path = cortex_files_root() / rel
         if not path.is_file():
-            return None, None
-        return path.read_text(encoding="utf-8"), None
+            return None, None, None
+        text, total = _read_path_journal_head(path, JOURNAL_HEAD_BYTES)
+        return text, None, total
     except (OSError, UnicodeError):
-        return None, "unavailable"
+        return None, "unavailable", None
 
 
 def hop_journal_projection_fields(
@@ -162,11 +251,17 @@ def hop_journal_projection_fields(
     journal_text: str | None = None,
     register_text: str | None = None,
     read_uri: Callable[[str], str | None] | None = None,
+    read_journal_head: ReadJournalHead | None = None,
+    archive_path_exists: Callable[[str], bool] | None = None,
     role: str = "maestro",
     inflight_projection_lookup: Callable[[], str | None] | None = None,
 ) -> dict[str, str]:
     """Lessons + register blocks for ``hop_successor_fields``."""
-    text, err = load_journal_text_for_hop(journal_text=journal_text, read_uri=read_uri)
+    text, err, total_bytes = load_journal_text_for_hop(
+        journal_text=journal_text,
+        read_uri=read_uri,
+        read_journal_head=read_journal_head,
+    )
     inflight_line = ""
     if inflight_projection_lookup is not None:
         try:
@@ -182,6 +277,16 @@ def hop_journal_projection_fields(
         lessons = project_lessons_in_force("", role=role)
     else:
         lessons = project_lessons_in_force(text, role=role)
+
+    try:
+        flags = _journal_head_flags(
+            text or "",
+            total_bytes=total_bytes,
+            archive_path_exists=archive_path_exists,
+        )
+        lessons = _prepend_journal_flags(lessons, flags)
+    except Exception:  # noqa: BLE001 — flags must not abort hop projection
+        pass
 
     if inflight_line:
         prefix = "## Lessons in force\n\n"
@@ -209,10 +314,12 @@ def hop_journal_projection_fields(
 
 
 __all__ = [
+    "JOURNAL_HEAD_BYTES",
     "LESSONS_K",
     "MAESTRO_JOURNAL_URI",
     "MAESTRO_REGISTER_URI",
     "MAESTRO_ROLE_FACETS",
+    "ReadJournalHead",
     "hop_journal_projection_fields",
     "load_journal_text_for_hop",
     "project_lessons_in_force",
