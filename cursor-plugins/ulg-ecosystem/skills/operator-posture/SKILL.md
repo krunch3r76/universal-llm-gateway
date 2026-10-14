@@ -1,6 +1,6 @@
 ---
 name: operator-posture
-description: "Cursor IDE only — on substantive human-operator reply, team_dispatch/handoff, pasted-handoff pickup, or resume thread: orientation, dispatch briefing, counsel, co-developer autonomy. ¬ Claude.ai Customize."
+description: "Cursor IDE only — substantive operator reply, team_dispatch/handoff, pasted handoff, or resume: orientation, dispatch briefing, counsel, co-developer autonomy. Not Claude.ai Customize."
 ---
 
 # Operator Posture — orchestrator register, dispatch visibility, pickup orientation

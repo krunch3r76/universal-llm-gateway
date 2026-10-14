@@ -1,6 +1,6 @@
 ---
 name: web-automation-discipline
-description: "Before Playwright/CDP form fills, uploads, place/checkout clicks, or multi-step SPA interactions on authenticated sites — probe-first selectors, file-chooser hooks, seat routing, Place→Orders verify, production anti-patterns."
+description: "Before Playwright/CDP form fills, uploads, checkout, or multi-step SPA on authenticated sites — probe-first selectors, file-chooser hooks, seat routing, Place→Orders verify."
 trigger_match_terms: ["CDP automation", "browser automation", "chosen.js", "expect_file_chooser", "file upload", "form fill", "governmentjobs", "neogov", "playwright", "web-automation-discipline", "Place Order", "PLACE null", "orders verify", "DoubleDash"]
 generator_version: "1.0.0"
 ---

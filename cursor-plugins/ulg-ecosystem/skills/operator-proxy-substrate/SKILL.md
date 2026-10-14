@@ -1,6 +1,6 @@
 ---
 name: operator-proxy-substrate
-description: "Cursor-side operator-proxy substrate — admit gates, nest_under/lease, auth-gate budget enforcement, supersede revert, GIW drain hazard, CDP packet + chip delivery. Companion to cdp-operator-proxy (shared contract)."
+description: "Cursor operator-proxy substrate — admit gates, nest_under/lease, auth-gate budget, supersede revert, GIW drain hazard, CDP packet/chip delivery. Companion to cdp-operator-proxy."
 ---
 
 # Operator-Proxy Substrate — cursor side

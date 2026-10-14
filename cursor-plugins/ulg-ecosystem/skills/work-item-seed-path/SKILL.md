@@ -1,6 +1,6 @@
 ---
 name: work-item-seed-path
-description: "Commissioned codework → lookup existing todo, then S4a identity mint + spawn conductor only when none. Mode B is Fable-before-S4b, not Fable-before-identity. Slash on an already-punched idea is re-admit, not a second mint."
+description: "Commissioned codework — lookup todo, S4a mint + spawn conductor only if none. Mode B: Fable before S4b, not before identity. Re-punched idea = re-admit, not second mint."
 lifecycle: active
 trigger_match_terms:
   - work-item-seed-path

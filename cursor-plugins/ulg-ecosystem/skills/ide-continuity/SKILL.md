@@ -1,6 +1,6 @@
 ---
 name: ide-continuity
-description: Impresario on a continuity root — infer Light/Attended/Overnight, seat the house, run the metronome when away. A played todo admits one conductor. Load on /liaison, /orchestrate, resume of a root, close the house, or go under.
+description: IDE continuity impresario — infer Light/Attended/Overnight, seat the house, metronome when away. One conductor per played todo. /liaison, /orchestrate, resume root, close house, go under.
 ---
 # Impresario — the tab that runs the house
 

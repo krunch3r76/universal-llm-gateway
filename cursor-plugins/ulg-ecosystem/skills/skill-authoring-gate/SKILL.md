@@ -15,15 +15,15 @@ About to write, amend, or land a `SKILL.md` under `cursor-plugins/ulg-ecosystem/
 
 ## Refuse
 
-- Land the file when its size is over 4096 bytes.
+- Refuse a new skill body over 4096 bytes, or any write that grows a body already over 4096 bytes (legacy: bytes_after ≤ bytes_before may land).
 - Land a numbered invariant that carries a bind date.
 - Land a BINDING section, seat map, or checklist as the body.
 - Treat "keep it short" as the gate.
 
 ## Steps
 
-1. **Ceiling at the write.** Count bytes of the file about to be written. Over 4096, refuse the write.
-   Falsifier: the landed `SKILL.md` is over 4096 bytes. Specimen: `cdp-operator-proxy/SKILL.md` at 66646 bytes, 648 lines.
+1. **Ceiling at the write.** Count bytes before and after. New body: refuse if after > 4096. Legacy body already > 4096: refuse only if after > before.
+   Falsifier: landed growth on a legacy body, or any new body over 4096. Specimen: a:39282 cdp-operator-proxy counter drift.
 
 2. **Dated invariant is a decision.** A numbered line (`1.` …) that also carries a bind date (`YYYY-MM-DD`, `BINDING — operator`, or `Operator-ratified`) is minted as `decision:<slug>` before the write. The skill keeps one line naming that decision and one specimen line. The bind's prose does not remain.
    Falsifier: the landed body still has a numbered invariant and a bind date on the same line. Specimen: invariant 40, operator 2026-08-20, agent-bus:9501.
@@ -32,6 +32,7 @@ About to write, amend, or land a `SKILL.md` under `cursor-plugins/ulg-ecosystem/
    Falsifier: a section of numbered invariants landed, and those items have no falsifier. Specimen: `## Invariants` items 1–39 (no bind date, no `Falsifier:`).
 
 4. **One line, then the specimen.** After step 2 the skill's hold on the bind is `decision:<slug>` plus the specimen id.
+   `decision:skill-gate-non-growing-legacy-edit` — specimen a:39282 (cdp-operator-proxy counter drift).
    Falsifier: the skill restates the decision's rule in a second paragraph. Specimen: the operator-identity table and Invariant 0 stating the same bind.
 
 ## Falsifier

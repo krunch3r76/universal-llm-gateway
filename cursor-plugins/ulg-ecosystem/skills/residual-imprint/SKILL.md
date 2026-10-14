@@ -1,6 +1,6 @@
 ---
 name: residual-imprint
-description: "When leftovers/residuals are named — leftover, residual, deferred, defer, NOT-NOW, park, parking, out-of-charter, arc close, later wave, follow-up, sibling fork, writing hygiene — imprint on the substrate entity; association is memory."
+description: "When leftovers/residuals/deferrals are named — imprint on the substrate entity (association is memory). Not a todo mint."
 skill_category: workflow
 trigger_match_terms:
   - leftover

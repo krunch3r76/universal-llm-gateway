@@ -1,6 +1,6 @@
 ---
 name: audience-register
-description: "MANUAL ONLY — never auto-load, never trigger on keywords. The human invokes this by name to bind both writing registers at once: plain layman English for the human reader, and dense task-relevant state for a frontier model reader. Governs prose only — the words in a reply or a dispatch body, never code, and never the packet formats owned by cursor-sdk-instruction-standard or cdp-operator-proxy."
+description: "MANUAL ONLY — human invokes by name. Binds layman English for the human reader and dense task state for a frontier model. Prose in replies/dispatch only; not code or cursor-sdk/cdp packet formats."
 trigger_match_terms: ["audience-register", "audience_register", "auto-load", "bind", "both", "human", "invokes", "keywords.", "manual", "name", "never", "trigger"]
 generator_version: "1.0.0"
 ---
