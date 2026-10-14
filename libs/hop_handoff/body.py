@@ -65,10 +65,7 @@ def parse_hop_kind(body: str) -> str:
     """Return ``hop_kind`` from a handoff body; ``mission`` when the line is absent."""
     for line in (body or "").splitlines():
         if line.startswith(_HOP_KIND_PREFIX):
-            value = line.split(":", 1)[1].strip().lower()
-            if value in VALID_HOP_KINDS:
-                return value
-            return value
+            return line.split(":", 1)[1].strip().lower()
     return "mission"
 
 

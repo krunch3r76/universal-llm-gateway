@@ -397,7 +397,7 @@ def test_hop_commission_refused_when_contract_job_unknown() -> None:
     "reason",
     ["r" * 38, "r" * 3000, "r" * (MAX_TURN_BODY_CHARS + 1)],
 )
-def test_hop_relays_full_handoff_prompt(reason: str) -> None:
+def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
     """Hop relays the full structural handoff prompt (no bus enqueue path)."""
     handoff = StandingHandoffFreshness(
         status="current",
@@ -436,6 +436,10 @@ def test_hop_relays_full_handoff_prompt(reason: str) -> None:
             ),
             patch("tools.agent_bus.hop.record"),
             patch("tools.frontier._relay", side_effect=fake_relay),
+            patch(
+                "hop_handoff.standing_handoff.standing_handoff_path",
+                return_value=tmp_path / "missing-standing-handoff.md",
+            ),
         ):
             return await _hop_dispatch(
                 thread="12286",
@@ -460,6 +464,58 @@ def test_hop_relays_full_handoff_prompt(reason: str) -> None:
         inflight_rows=None,
     )
     assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
+
+
+def test_hop_emits_inflight_rows_when_sidecar_has_in_flight(tmp_path) -> None:
+    """Sidecar IN FLIGHT rows become ``inflight_rows: N`` on the handoff body."""
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### IN FLIGHT\n"
+        '- todo:a · worker 111 · poll_hint {"thread":"12286"}\n'
+        '- todo:b · worker 222 · poll_hint {"thread":"12286"}\n'
+        "### OWED / NEXT\nok\n"
+    )
+    sidecar_file = tmp_path / "12286-standing-handoff.md"
+    sidecar_file.write_text(sidecar, encoding="utf-8")
+    handoff = StandingHandoffFreshness(
+        status="current",
+        uri="cortex://notes/system/threads/12286-standing-handoff.md",
+        mtime_epoch=1.0,
+        age_s=10.0,
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-inflight"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=handoff,
+            ),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch(
+                "hop_handoff.standing_handoff.standing_handoff_path",
+                return_value=sidecar_file,
+            ),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="relay-inflight-count",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "inflight_rows: 2" in prompt
 
 
 def test_hop_relays_prompt_past_long_turn_cap() -> None:

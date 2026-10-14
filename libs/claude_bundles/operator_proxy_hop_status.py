@@ -28,6 +28,7 @@ from claude_bundles.journal_hop_projection import (
     ReadJournalHead,
     hop_journal_projection_fields,
 )
+from claude_bundles.maestro_runbook_load import load_maestro_runbook
 from claude_bundles.operator_proxy_bus_fetch import lineage_status_for_execution
 from claude_bundles.operator_proxy_live_leg import (
     FoldStateSaver,
@@ -45,7 +46,6 @@ from claude_bundles.operator_proxy_standing_render import (
     render_inflight_block,
     render_pointers_block,
 )
-from claude_bundles.maestro_runbook_load import load_maestro_runbook
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)

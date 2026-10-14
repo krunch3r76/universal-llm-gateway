@@ -277,15 +277,20 @@ async def _hop_dispatch(
     )
     inflight_count: int | None = None
     try:
-        from claude_bundles.operator_proxy_standing_render import render_checkpoint_block
+        from claude_bundles.operator_proxy_hop_status import house_rules_section
+        from claude_bundles.operator_proxy_standing_render import (
+            render_checkpoint_block,
+        )
         from hop_handoff.standing_handoff import standing_handoff_path
 
         sidecar_path = standing_handoff_path(thread_id)
         if sidecar_path.is_file():
             sidecar_text = sidecar_path.read_text(encoding="utf-8")
+            inline_rules = house_rules_section(sidecar_text)
             _checkpoint, ck_meta = render_checkpoint_block(
                 sidecar_text,
                 lane=thread_id,
+                inline_house_rules=inline_rules,
                 superseded_registration_id=cse_registration_id,
             )
             inflight_count = len(ck_meta.get("inflight_rows") or [])
