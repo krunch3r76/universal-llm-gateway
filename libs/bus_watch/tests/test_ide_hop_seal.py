@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from bus_watch.ide_hop import fire_ide_hop
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 pytestmark = pytest.mark.offline
 
@@ -456,3 +460,75 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["phase"] == "expired"
     assert payload.get("operator_gate") is True
+
+
+def test_hop_refuses_without_root_no_bus_post(capsys) -> None:
+    """K35 — missing --root must exit before any agent-bus I/O."""
+    hop_mod = _load_hop_module()
+    bus_entered = False
+
+    class _NoBus:
+        def __enter__(self):
+            nonlocal bus_entered
+            bus_entered = True
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    with patch.object(hop_mod, "_bus", return_value=_NoBus()):
+        with patch.object(sys, "argv", ["liaison-ide-hop.py", "--row", "x"]):
+            with pytest.raises(SystemExit) as exc:
+                hop_mod.main()
+    assert exc.value.code != 0
+    assert bus_entered is False
+    err = capsys.readouterr().err
+    assert "--root" in err
+
+
+@pytest.mark.offline
+def test_hop_cli_refuses_without_root_subprocess() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--row",
+            "R test",
+            "--transcript-id",
+            "11111111-1111-1111-1111-111111111111",
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "EMAIL_BRIDGE_SOCK": "/nonexistent",
+            "PYTHONPATH": str(_REPO_ROOT / "libs"),
+        },
+    )
+    assert proc.returncode != 0
+    assert "--root" in (proc.stderr + proc.stdout)
+    assert not proc.stdout.strip().startswith("{")
+
+
+def test_hop_accepts_explicit_root_dry_run(capsys) -> None:
+    hop_mod = _load_hop_module()
+    with (
+        patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(hop_mod, "tick_register", return_value="attended"),
+        patch.object(hop_mod, "policy_gui_host", return_value="jupiter"),
+        patch.object(
+            hop_mod, "seal_hop_window", return_value={"ok": True, "phase": "sealed"}
+        ),
+        patch.object(
+            hop_mod,
+            "fire_ide_hop",
+            return_value={"ok": True, "dry_run": True, "root": "11667"},
+        ),
+        patch.object(hop_mod, "build_ide_hop_message", return_value="resume 11667\n"),
+        patch.object(sys, "argv", _HOP_ARGS),
+    ):
+        code = hop_mod.main()
+    assert code == 0

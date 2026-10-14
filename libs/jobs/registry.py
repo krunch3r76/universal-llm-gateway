@@ -49,7 +49,7 @@ class _Forbid(BaseModel):
 class IdeHopArgs(_Forbid):
     """Host hop arguments. GUI host, remote repo, and force stay off the wire."""
 
-    root: str = "10479"
+    root: str
     row: str
     transcript_id: str
     arm: list[str] = Field(default_factory=list)

@@ -109,7 +109,14 @@ def test_stale_clock_actually_reaches_the_pager(tmp_path: Path) -> None:
 def test_healthy_clock_does_not_page(tmp_path: Path) -> None:
     now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     with mock.patch.object(wd, "claim_tick_sos") as claim:
-        rc = wd.main(["--state-file", str(_state(tmp_path, now_iso))])
+        rc = wd.main(
+            [
+                "--root",
+                "10479",
+                "--state-file",
+                str(_state(tmp_path, now_iso)),
+            ]
+        )
     assert rc == 0
     assert not claim.called
 
@@ -118,5 +125,32 @@ def test_healthy_clock_does_not_page(tmp_path: Path) -> None:
 def test_dedupe_suppression_is_not_an_error(tmp_path: Path) -> None:
     """A suppressed re-page is a normal outcome, not a failed watchdog run."""
     with mock.patch.object(wd, "claim_tick_sos", return_value=False):
-        rc = wd.main(["--state-file", str(_state(tmp_path, "2020-01-01T00:00:00Z"))])
+        rc = wd.main(
+            [
+                "--root",
+                "10479",
+                "--state-file",
+                str(_state(tmp_path, "2020-01-01T00:00:00Z")),
+            ]
+        )
     assert rc == 0
+
+
+@pytest.mark.offline
+def test_refuses_without_root(tmp_path: Path) -> None:
+    with mock.patch.object(wd, "claim_tick_sos") as claim:
+        with mock.patch.object(wd, "notify_tick_sos") as notify:
+            with pytest.raises(SystemExit) as exc:
+                wd.main(["--state-file", str(_state(tmp_path, "2020-01-01T00:00:00Z"))])
+    assert exc.value.code != 0
+    assert not claim.called
+    assert not notify.called
+
+
+@pytest.mark.offline
+def test_accepts_explicit_root_healthy(tmp_path: Path) -> None:
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with mock.patch.object(wd, "claim_tick_sos") as claim:
+        rc = wd.main(["--root", "11667", "--state-file", str(_state(tmp_path, now_iso))])
+    assert rc == 0
+    assert not claim.called
