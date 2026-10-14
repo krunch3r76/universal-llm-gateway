@@ -138,7 +138,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 3. The live leg above is computed from the bus; the file is the HOUSE RULES and pointer source. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. agent_bus_read fetch thread {lane}, last 3, compact. Then mark_read through the latest turn with agent web-anthropic.
-6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Keep it at or under 2000 characters: measure with wc -m before you send.
+6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Include one line: induction: RULE <entry id> — <one sentence in the seat's own words> · specimen <turn or sha>, citing a ## heading and specimen from cortex://notes/system/maestro/journal.md. Keep it at or under 2000 characters: measure with wc -m before you send.
 7. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
 
 ## How this seat works

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from claude_bundles.journal_lesson import (
     capture_lesson,
+    check_induction,
     journal_has_source_turn_id,
     should_append_lesson,
     writer_mode,
@@ -58,6 +59,68 @@ def test_writer_mode_marker() -> None:
     assert writer_mode("- projector_live: abc-123\n") == "projector"
     assert writer_mode("**projector_live: abc-123\n") == "projector"
     assert writer_mode("- bullet **projector_live:** mid-bullet does not count\n") == "seat"
+
+
+def _maestro_journal_fixture() -> str:
+    return (
+        "Purpose preamble.\n"
+        "## 2026-10-14 — entry 157\n"
+        "RULE: [route] poll with poll_hint unchanged\n"
+        "observed specimen token 16671#9 in this entry only\n"
+        "## 2026-10-01 — entry 1\n"
+        "RULE: [route] older rule\n"
+        "misplaced specimen token 16671#other belongs under this heading\n"
+    )
+
+
+def _other_role_journal_fixture() -> str:
+    return (
+        "## 2026-10-14 — entry 157\n"
+        "other-role-only specimen token 16671#other\n"
+    )
+
+
+def _registration_body(*extra: str) -> str:
+    lines = ["TYPE: SEAT_REGISTRATION", *extra]
+    return "\n".join(lines) + "\n"
+
+
+def test_induction_ok() -> None:
+    journal = _maestro_journal_fixture()
+    body = _registration_body(
+        "induction: RULE 2026-10-14 — entry 157 — I poll with poll_hint unchanged"
+        " · specimen 16671#9",
+    )
+    assert check_induction(body, journal_text=journal) == "ok"
+
+
+def test_induction_missing_entry() -> None:
+    journal = _maestro_journal_fixture()
+    body = _registration_body(
+        "induction: RULE 2099-01-01 — missing entry — no such heading"
+        " · specimen 16671#9",
+    )
+    assert check_induction(body, journal_text=journal) == "register_not_carried"
+
+
+def test_induction_missing_specimen() -> None:
+    journal = _maestro_journal_fixture()
+    body = _registration_body(
+        "induction: RULE 2026-10-14 — entry 157 — cites wrong entry body"
+        " · specimen 16671#other",
+    )
+    assert check_induction(body, journal_text=journal) == "register_not_carried"
+
+
+def test_induction_does_not_read_other_role_journal() -> None:
+    maestro = _maestro_journal_fixture()
+    other = _other_role_journal_fixture()
+    body = _registration_body(
+        "induction: RULE 2026-10-14 — entry 157 — specimen lives only elsewhere"
+        " · specimen 16671#other",
+    )
+    assert check_induction(body, journal_text=maestro) == "register_not_carried"
+    assert check_induction(body, journal_text=other) == "ok"
 
 
 def test_midline_lesson_ignored() -> None:

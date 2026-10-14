@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agent_bus_store.disposition import body_has_disposition_type
+from maestro_induct.parse import parse_journal_entries
 
 # Same optional bullet / bold prefix rule as ``RULE:`` in ``journal_hop_projection``.
 _LESSON_LINE_RE = re.compile(
@@ -21,8 +22,18 @@ _SOURCE_TURN_ID_RE = re.compile(
     r"^\s*(?:[-*]\s+)?(?:\*\*)?source_turn_id:\s*(\S+)",
     re.IGNORECASE,
 )
+_INDUCTION_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?(?:\*\*)?induction:",
+    re.IGNORECASE,
+)
+_INDUCTION_RULE_PREFIX_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?(?:\*\*)?induction:\s*RULE\s+(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_SPECIMEN_SUFFIX = " · specimen "
 
 WriterMode = Literal["seat", "projector"]
+InductionResult = Literal["ok", "register_not_carried"]
 
 
 @dataclass(frozen=True)
@@ -79,3 +90,57 @@ def journal_has_source_turn_id(journal_text: str, turn_id: str) -> bool:
 def should_append_lesson(capture: LessonCapture, *, journal_text: str) -> bool:
     """False when the dedupe key (source bus turn id) is already in the journal."""
     return not journal_has_source_turn_id(journal_text, capture.turn_id)
+
+
+def _line_has_induction_prefix(line: str) -> bool:
+    return _INDUCTION_LINE_RE.match(line or "") is not None
+
+
+def _first_induction_line(body: str) -> str | None:
+    for line in (body or "").splitlines():
+        if _line_has_induction_prefix(line):
+            return line.rstrip()
+    return None
+
+
+def _journal_entries_by_title(journal_text: str) -> dict[str, str]:
+    entries = parse_journal_entries(journal_text or "", limit=10_000)
+    return {item["title"]: item["body"] for item in entries}
+
+
+def check_induction(text: str, *, journal_text: str) -> InductionResult:
+    """Validate seat-authored ``induction:`` against one role journal (L3, test-only)."""
+    line = _first_induction_line(text)
+    if line is None:
+        return "register_not_carried"
+    match = _INDUCTION_RULE_PREFIX_RE.match(line)
+    if not match:
+        return "register_not_carried"
+    rest = match.group(1).strip()
+    if _SPECIMEN_SUFFIX not in rest:
+        return "register_not_carried"
+    before_specimen, specimen = rest.rsplit(_SPECIMEN_SUFFIX, 1)
+    specimen = specimen.strip()
+    if not specimen:
+        return "register_not_carried"
+
+    by_title = _journal_entries_by_title(journal_text)
+    if not by_title:
+        return "register_not_carried"
+
+    entry_id: str | None = None
+    for title in sorted(by_title, key=len, reverse=True):
+        if before_specimen == title:
+            entry_id = title
+            break
+        prefix = f"{title} — "
+        if before_specimen.startswith(prefix):
+            entry_id = title
+            break
+    if entry_id is None:
+        return "register_not_carried"
+
+    entry_body = by_title[entry_id]
+    if specimen not in entry_body:
+        return "register_not_carried"
+    return "ok"
