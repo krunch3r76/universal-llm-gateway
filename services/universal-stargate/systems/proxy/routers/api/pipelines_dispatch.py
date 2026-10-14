@@ -479,6 +479,15 @@ async def admit_dispatch(
     }
     if dispatch.target_thread is not None:
         response_body["thread"] = dispatch.target_thread
+    delivery = dispatch.result_delivery
+    if delivery is not None and delivery.bus_thread:
+        from systems.frontier_consult.handoff_response import build_poll_hint_wait
+
+        response_body["poll_hint"] = build_poll_hint_wait(
+            thread_id=delivery.bus_thread,
+            from_agent=delivery.bus_to_agent,
+            execution_id=execution_id,
+        )
     hint = _canonical_dispatch_hint_for(dispatch)
     if hint is not None:
         response_body["hint"] = hint

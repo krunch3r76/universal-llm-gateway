@@ -28,6 +28,10 @@ from .admission_checks import (
     warn_caller_mcp_disabled,
 )
 from .cdp_dispatch import build_cdp_admission_result, is_cdp_dispatch_model
+from .cursor_sdk_dispatch import (
+    build_cursor_sdk_admission_result,
+    is_cursor_sdk_dispatch_model,
+)
 from .request import (
     resolve_agent,
     resolve_model,
@@ -90,6 +94,15 @@ async def run_admission_gate(
     model = await resolve_model(opts, step, context, agent=agent)
     if is_cdp_dispatch_model(model):
         return build_cdp_admission_result(
+            handler,
+            step,
+            context,
+            model=model,
+            opts=opts,
+            role=agent,
+        )
+    if is_cursor_sdk_dispatch_model(model):
+        return build_cursor_sdk_admission_result(
             handler,
             step,
             context,

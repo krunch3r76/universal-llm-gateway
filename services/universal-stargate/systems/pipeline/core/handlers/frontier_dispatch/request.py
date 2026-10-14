@@ -87,6 +87,8 @@ def normalize_frontier_wire_model(model: str) -> str:
     resolution = resolve_wire_model_id(model, require_cloud=True)
     if resolution.backend_type == "cdp":
         return resolution.wire_id
+    if resolution.backend_type == "cursor_sdk":
+        return resolution.wire_id
     return require_cloud_api_backend(
         resolution,
         capability="frontier_dispatch",
@@ -318,6 +320,27 @@ def resolve_messages(
     return [{"role": "user", "content": user_prompt}]
 
 
+def _system_prompt_template_context(
+    step: StepConfig, context: PipelineContext
+) -> dict[str, Any]:
+    if not step.handler_inputs:
+        return {}
+    resolver = NamespaceResolver(context)
+    ctx: dict[str, Any] = {}
+    for field_name, binding in step.handler_inputs.items():
+        root = resolver.resolve(binding)
+        value = traverse_path(
+            root,
+            binding.field_path,
+            step_name=step.id,
+            field_name=field_name,
+            binding_repr=str(binding),
+            resolver=resolver,
+        )
+        ctx[field_name] = "" if value is None else value
+    return ctx
+
+
 def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:
     """Persona-free system prompt.
 
@@ -326,12 +349,21 @@ def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:
     carries the caller-supplied prompt for MCP ``team_dispatch`` and internal
     frontier HTTP dispatches; for persona dispatches the Stargate
     endpoint also auto-assembles birth + briefing + continuation upstream.
+
+    When ``step.system_prompt`` contains ``{placeholders}``, values are taken
+    from resolved ``handler_inputs`` (same binding syntax as generate steps).
     """
     opt_system = context.options.get("system")
     if isinstance(opt_system, str) and opt_system:
         return opt_system
     if step.system_prompt:
-        return step.system_prompt
+        raw = step.system_prompt
+        if "{" in raw and step.handler_inputs:
+            from ...prompts import get_prompt_builder
+
+            ctx = _system_prompt_template_context(step, context)
+            return get_prompt_builder().render_safe(raw, ctx)
+        return raw
     msgs = context.messages or []
     for m in msgs:
         if isinstance(m, dict) and m.get("role") == "system":

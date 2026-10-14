@@ -7,9 +7,15 @@ from typing import Any
 
 import pytest
 
+from claude_bundles.journal_hop_projection import (
+    MAESTRO_JOURNAL_URI,
+    MAESTRO_REGISTER_URI,
+    project_lessons_in_force,
+)
 from claude_bundles.operator_proxy_hop_status import (
     MISSING_HANDOFF_INSTRUCTION,
     extract_thread_id,
+    hop_successor_fields,
     house_rules_section,
     standing_handoff_text_for_prompt,
 )
@@ -24,6 +30,8 @@ _HANDOFF_HEAD = (
 )
 _SECTION_ORDER = (
     "## What is running now",
+    "## Lessons in force",
+    "## Register",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
@@ -67,11 +75,23 @@ def test_loader_seam_does_not_touch_disk() -> None:
 
 
 def test_house_rules_extracted_verbatim() -> None:
-    sidecar = "## HOUSE RULES\nrule A\n\n## LEG 11\nstale\n"
+    sidecar = "## HOUSE RULES\nrule A on lane {lane}\n\n## LEG 11\nstale\n"
     rules = house_rules_section(sidecar)
     assert rules is not None
     assert "rule A" in rules
+    assert "{lane}" in rules
     assert "LEG 11" not in rules
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 1\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert "{lane}" in out
+    house = out.split("## Lessons in force", 1)[0]
+    assert "rule A on lane {lane}" in house
 
 
 def test_fixture_head_does_not_copy_leg_stack() -> None:
@@ -84,6 +104,8 @@ def test_fixture_head_does_not_copy_leg_stack() -> None:
         roster_text="| N | Display name | Lane | Mailbox | State |\n",
         fetch_turns=_noop_fetch,
         execution_id="exec-from-satellite",
+        journal_text="",
+        register_text="",
     )
     assert "LEG 11 ~21:00Z" not in out
     assert "LEG 10 ~20:55Z" not in out
@@ -101,6 +123,8 @@ def test_missing_handoff_renders_the_author_instruction() -> None:
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert MISSING_HANDOFF_INSTRUCTION in out
     assert "Author the standing handoff before you leave." in out
@@ -134,6 +158,8 @@ def test_rendered_prompt_section_order() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
         execution_id="exec-1",
+        journal_text="",
+        register_text="",
     )
     positions = [out.index(marker) for marker in _SECTION_ORDER]
     assert positions == sorted(positions)
@@ -148,6 +174,8 @@ def test_first_acts_are_numbered_in_order() -> None:
         "# Mission\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     start = out.index("## Your first acts, in order")
     end = out.index("## How this seat works")
@@ -165,6 +193,8 @@ def test_mission_ensure_opens_on_successor_template() -> None:
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert out.startswith("# Hop on agent-bus:")
     assert out.index("## What is running now") < out.index("## Hard refusals")
@@ -172,11 +202,166 @@ def test_mission_ensure_opens_on_successor_template() -> None:
     assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
 
 
+def _journal_fixture_seven_plus_fleet() -> str:
+    lines = [
+        "Purpose preamble.\n",
+    ]
+    for index in range(7, 0, -1):
+        lines.append(f"## 2026-10-{index:02d} — entry {index}\n")
+        lines.append(f"RULE: [route] newest rule number {index}\n")
+        if index == 7:
+            lines.append("## 2026-10-06 — entry fleet-only\n")
+            lines.append("RULE: [fleet] must omit for maestro\n")
+    return "".join(lines)
+
+
+def test_untagged_rule_line_omitted_from_projection() -> None:
+    journal = (
+        "## 2026-10-14 — entry untagged\n"
+        "RULE: no facet tags must not project for any role\n"
+        "## 2026-10-13 — entry tagged\n"
+        "RULE: [route] tagged rule keeps\n"
+    )
+    out = project_lessons_in_force(journal, role="maestro")
+    assert "no facet tags must not project" not in out
+    assert "tagged rule keeps" in out
+
+
+def test_lessons_in_force_bounds_k_and_facets() -> None:
+    journal = _journal_fixture_seven_plus_fleet()
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+    )
+    lessons_block = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    assert "must omit for maestro" not in lessons_block
+    assert "newest rule number 7" in lessons_block
+    assert "newest rule number 3" in lessons_block
+    assert "newest rule number 2" not in lessons_block
+    assert lessons_block.index("newest rule number 7") < lessons_block.index(
+        "newest rule number 6"
+    )
+    assert lessons_block.count("RULE: [route]") == 5
+
+
+def test_first_act_does_not_read_journal_offset_0() -> None:
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert "journal.md with offset 0, limit 40" not in out
+    assert "arrival projection" in out
+
+
+def test_lessons_ignore_standing_rule_headings_and_midline_rule() -> None:
+    journal = (
+        "## STANDING RULE — lean verification\n"
+        "RULE: [route] must not project from standing heading\n"
+        "## 2026-10-14 — entry 157\n"
+        "- **A tool that refuses early execution** when the only executor is the seat **RULE:** mid-bullet must not match\n"
+        "   - RULE: [route] indented line-start keeps\n"
+        "RULE: [bus] line-start keeps\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+    )
+    lessons_block = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    assert "must not project from standing heading" not in lessons_block
+    assert "mid-bullet must not match" not in lessons_block
+    assert "indented line-start keeps" in lessons_block
+    assert "line-start keeps" in lessons_block
+
+
+def test_register_absent_is_named() -> None:
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text=None,
+        read_cortex_uri=lambda _uri: None,
+    )
+    assert f"Register card absent at {MAESTRO_REGISTER_URI}" in out
+    assert "Kaywan" not in out.split("## Register", 1)[1].split("## Live leg", 1)[0]
+
+
+def test_inflight_projection_does_not_block() -> None:
+    journal = "## 2026-10-01 — entry 1\nRULE: [route] durable\n"
+
+    def _lookup() -> str | None:
+        return "exec-inflight-99"
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+        inflight_projection_lookup=_lookup,
+    )
+    assert "exec-inflight-99" in out
+    assert "durable" in out
+
+    def _raise() -> str | None:
+        raise OSError("down")
+
+    out2 = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+        inflight_projection_lookup=_raise,
+    )
+    assert "durable" in out2
+    assert "exec-inflight" not in out2
+
+
+def test_journal_read_oserror_renders_unavailable() -> None:
+    def _read(uri: str) -> str | None:
+        if uri == MAESTRO_JOURNAL_URI:
+            raise OSError("disk")
+        return None
+
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        read_cortex_uri=_read,
+    )
+    assert "journal unavailable" in out
+    assert out.startswith("# Hop on agent-bus:")
+
+
+def test_hop_journal_default_uri_is_maestro() -> None:
+    assert MAESTRO_JOURNAL_URI == "cortex://notes/system/maestro/journal.md"
+    fields = hop_successor_fields(
+        "thread_id: 1\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert fields["lessons_in_force"].startswith("## Lessons in force")
+
+
 def test_mission_ensure_idempotent_with_this_hop() -> None:
     once = ensure_operator_proxy_mission_prompt(
         "TYPE: DIRECTIVE\nintent: birth\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.rstrip("\n") == once.rstrip("\n")

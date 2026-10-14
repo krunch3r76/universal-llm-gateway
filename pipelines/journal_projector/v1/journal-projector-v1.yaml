@@ -1,0 +1,38 @@
+# journal-projector — lesson capture via cursor-sdk admit (L2)
+#
+# Async admit returns execution_id + poll_hint; journal append is
+# journal-projector-commit after poll completes (not this DAG).
+
+schema_version: 6
+id: journal-projector
+version: "1.0"
+type: journal_projector
+category: journal_projector
+description: >
+  Parse a disposition for line-start lesson:, then admit cursor-sdk projection
+  when a lesson exists. No append in this execution.
+output: project
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: parse
+    type: journal_projector_parse_v1
+  - name: project
+    type: frontier_dispatch_v1
+    condition: "parse.json.get('has_lesson')"
+    model: cursor/composer-2.5
+    model_knobs:
+      fast: "true"
+    role: cursor-sdk
+    system_prompt: |
+      Project the disposition lesson into one maestro journal entry.
+      Output contract: exactly one line-start RULE: with facet tags in brackets,
+      and one line-start source_turn_id: {turn_id}.
+      Use the `journal-digest` skill for emit shape.
+    handler_inputs:
+      turn_id: parse.json.turn_id
+    reads_from:
+      - step: parse
+        fields: [json]

@@ -15,6 +15,7 @@ from typing import Any
 from hop_handoff.body import parse_successor_birth_id
 from hop_handoff.standing_handoff import standing_handoff_path
 
+from claude_bundles.journal_hop_projection import hop_journal_projection_fields
 from claude_bundles.operator_proxy_live_leg import (
     POINTERS_BLOCK,
     house_lanes,
@@ -121,6 +122,11 @@ def hop_successor_fields(
     roster_text: str | None = None,
     fetch_turns: Callable[[str], list[dict[str, Any]]] | None = None,
     execution_id: str = "",
+    journal_text: str | None = None,
+    register_text: str | None = None,
+    read_cortex_uri: Callable[[str], str | None] | None = None,
+    inflight_projection_lookup: Callable[[], str | None] | None = None,
+    role: str = "maestro",
 ) -> dict[str, str]:
     """Fill the hop-successor template from the prompt, handoff, and bus state."""
     lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
@@ -156,6 +162,14 @@ def hop_successor_fields(
         )
         house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
 
+    journal_fields = hop_journal_projection_fields(
+        journal_text=journal_text,
+        register_text=register_text,
+        read_uri=read_cortex_uri,
+        role=role,
+        inflight_projection_lookup=inflight_projection_lookup,
+    )
+
     return {
         "lane": lane,
         "successor_birth_id": birth,
@@ -163,6 +177,8 @@ def hop_successor_fields(
         "handoff_sha": digest,
         "running_now_line": running_now,
         "house_rules_verbatim": house_rules_verbatim,
+        "lessons_in_force": journal_fields["lessons_in_force"],
+        "register_card": journal_fields["register_card"],
         "live_leg": live_leg,
         "pointers": POINTERS_BLOCK,
     }

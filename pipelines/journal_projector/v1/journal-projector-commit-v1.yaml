@@ -1,0 +1,18 @@
+# journal-projector-commit — durable journal append from closeout (L2)
+
+schema_version: 6
+id: journal-projector-commit
+version: "1.0"
+type: journal_projector
+category: journal_projector
+description: >
+  Read tmp/reviews/closeouts/{dispatch_id}.md and append one RULE entry to the
+  maestro journal when projector_live is already present (seat wrote marker).
+output: append
+
+options:
+  timeout_seconds: 60
+
+steps:
+  - name: append
+    type: journal_projector_append_v1
