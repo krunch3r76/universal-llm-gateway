@@ -52,6 +52,24 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     assert cse.json()["detail"]["code"] == "endpoint_cse_delegated"
 
 
+def test_cursor_surface_unconfirmed_writes_no_row(client: TestClient) -> None:
+    thread = _thread("cursor-refuse")
+    with patch("agent_bus_store.db.endpoint_subscriptions.normalize_target") as norm:
+        resp = _sub(
+            client,
+            agent="cursor",
+            thread_scope=thread,
+            surface="cursor",
+            display="8",
+            title="c",
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "endpoint_surface_unconfirmed"
+    assert norm.call_count == 0
+    listed = client.get("/endpoint-subscriptions", params={"agent": "cursor"})
+    assert listed.json()["subscriptions"] == []
+
+
 def test_exact_beats_wildcard_and_tombstone_falls_through(client: TestClient) -> None:
     thread = _thread("lane")
     assert _sub(client, thread_scope="*", title="wild").status_code == 200

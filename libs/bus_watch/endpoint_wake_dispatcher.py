@@ -163,7 +163,18 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     agent = rows[0]["agent"]
     thread = rows[0]["thread_id"]
     if agent == "web-anthropic":
-        holder = store.holder(thread)
+        try:
+            holder = store.holder(thread)
+        except Exception as exc:
+            store.result(
+                wake_id=wake_id,
+                outcome="unknown",
+                reason=type(exc).__name__,
+                route="cse",
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+            return claimed
         if not holder:
             store.result(
                 wake_id=wake_id,

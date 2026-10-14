@@ -97,6 +97,8 @@ def subscribe_endpoint(
         surface != "grok" or canon in {"all", "team"} or _GROK_BOT.match(canon) is None
     ):
         raise SubscribeError("endpoint_wildcard_refused")
+    if str(surface).strip().lower() == "cursor":
+        raise SubscribeError("endpoint_surface_unconfirmed")
     if not (title or agent_id):
         raise SubscribeError("endpoint_title_or_agent_required")
     target = normalize_target(display, surface)
