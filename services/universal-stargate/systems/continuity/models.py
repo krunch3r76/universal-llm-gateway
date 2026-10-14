@@ -28,7 +28,11 @@ class CheckpointRequest(BaseModel):
     transcript_id: str | None = None
     jsonl_path: str | None = None
     chat_url: str | None = None
-    residue: str | None = Field(default=None, max_length=800)
+    residue: str | None = Field(default=None)
+    preamble: dict[str, str] | None = None
+    stance: str | None = None
+    facts: str | None = None
+    next_action: str | None = None
     pre_consolidate: bool = True
     tools: Tools = "none"
     pipeline_options: dict[str, Any] | None = None

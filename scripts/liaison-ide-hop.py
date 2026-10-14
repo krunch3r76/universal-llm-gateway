@@ -35,6 +35,7 @@ from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.hop_qualify import hop_qualifies
 from bus_watch.ide_hop import (
     DEFAULT_REMOTE_REPO,
+    build_hop_preamble,
     build_ide_hop_message,
     find_transcript_id,
     fire_ide_hop,
@@ -215,9 +216,18 @@ def main() -> int:
             )
         )
         return 2
+    reg = tick_register(args.root)
+    preamble = build_hop_preamble(
+        args.root,
+        row=row,
+        arm_labels=labels,
+        tip_cp_ordinal=args.tip_cp,
+        register=reg,
+    )
     seal = seal_hop_window(
         args.root,
         transcript_id=args.transcript_id,
+        preamble=preamble,
     )
     if not seal.get("ok"):
         print(json.dumps({"ok": False, "root": args.root, **seal}, indent=2))

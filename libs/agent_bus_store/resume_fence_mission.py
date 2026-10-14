@@ -40,6 +40,15 @@ _ASSERTION_ID_RE = re.compile(r"\ba:(\d+)\b")
 _CLAIM_CHARS = 240
 _CLAIMS_BUDGET_CHARS = 4000
 _SUPERSEDE_HOPS = 5
+_SIDECAR_LINE_RE = re.compile(r"(?m)^Sidecar:\s*(cortex://notes/\S+)\s*$")
+_DERIVED_SERVER_HEADER = "## Derived (server-owned)"
+_PRIOR_CHECKPOINTS_HEADER = "### Prior checkpoints"
+_PREAMBLE_SECTION_RE = {
+    "stance": re.compile(r"(?ms)^## Stance\s*\n(.*?)(?=^## |\Z)"),
+    "facts": re.compile(r"(?ms)^## Facts\s*\n(.*?)(?=^## |\Z)"),
+    "next_action": re.compile(r"(?ms)^## Next action\s*\n(.*?)(?=^## |\Z)"),
+}
+_FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 # cortex_store.routes.assertions._shared._VALID_REVIEW_STATUS. There is no
 # withdrawn review_status. Expiry is valid_until
 # (cortex_store.dispatch_ops._todo_gate_distillation_impl._retract_assertion).
@@ -76,6 +85,44 @@ _LETTER_STALE_STEP = (
     "read bundle.letter.body as intent dated as_of_message_index "
     "({messages_behind} messages behind the seal); tip and tape for later facts"
 )
+
+
+def _tip_sidecar_search_region(tip_body: str) -> str:
+    """Authored checkpoint head only — never treat derived history as the tip sidecar."""
+    region = tip_body or ""
+    for marker in (_DERIVED_SERVER_HEADER, _PRIOR_CHECKPOINTS_HEADER):
+        idx = region.find(marker)
+        if idx >= 0:
+            region = region[:idx]
+    return region
+
+
+def extract_tip_preamble(tip_body: str) -> dict[str, Any] | None:
+    """Load stance/facts/next_action from the tip turn's own Sidecar markdown file."""
+    region = _tip_sidecar_search_region(tip_body)
+    match = _SIDECAR_LINE_RE.search(region)
+    if not match:
+        return None
+    uri = match.group(1).strip()
+    rel = uri.removeprefix("cortex://")
+    try:
+        from implement_admission.closeout_helpers import cortex_files_root
+
+        path = cortex_files_root() / rel
+    except Exception:  # noqa: BLE001
+        return None
+    if not path.is_file():
+        return None
+    raw = path.read_text(encoding="utf-8")
+    content = _FRONTMATTER_RE.sub("", raw, count=1).strip()
+    parsed: dict[str, Any] = {"sidecar_uri": uri, "raw": content}
+    for key, pattern in _PREAMBLE_SECTION_RE.items():
+        section = pattern.search(content)
+        if section:
+            parsed[key] = section.group(1).strip()
+    if not any(parsed.get(k) for k in ("stance", "facts", "next_action")):
+        return None
+    return parsed
 
 
 def _sketchboard_in_tip(tip_body: str) -> str | None:
@@ -418,8 +465,40 @@ _PROTOCOL_NOTE = (
 )
 
 
+def _handoff_steps_structured(
+    steps: list[str],
+    *,
+    preamble: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Numbered handoff steps; inject read_preamble immediately after rename_chat."""
+    structured: list[dict[str, Any]] = []
+    for index, detail in enumerate(steps, start=1):
+        structured.append({"step": index, "action": "handoff", "detail": detail})
+    if not preamble:
+        return structured
+    read_detail = (
+        "Read mission.preamble (stance -> facts -> next_action) before any reference "
+        "section; mission.next_action is repeated at the bundle tail"
+    )
+    insert_at = next(
+        (i + 1 for i, row in enumerate(structured) if "rename_chat" in row["detail"]),
+        len(structured),
+    )
+    structured.insert(
+        insert_at,
+        {"step": insert_at + 1, "action": "read_preamble", "detail": read_detail},
+    )
+    for offset, row in enumerate(structured):
+        row["step"] = offset + 1
+    return structured
+
+
 def _mission_handoff(
-    thread_id: str, steps: list[str], letter: dict[str, Any] | None
+    thread_id: str,
+    steps: list[str],
+    letter: dict[str, Any] | None,
+    *,
+    preamble: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     protocol = {
         "role": "orchestrator_successor",
@@ -433,6 +512,7 @@ def _mission_handoff(
             "new implement until oriented",
         ],
         "steps": steps,
+        "handoff_steps": _handoff_steps_structured(steps, preamble=preamble),
     }
     if isinstance(letter, dict) and letter.get("binding") == "bound":
         return {"protocol_defaults": protocol, "note": _PROTOCOL_NOTE}
@@ -456,6 +536,7 @@ def build_mission_block(
     memos: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Hoist orientation fields + clone handoff into ``mission`` (FIX-18)."""
+    preamble = extract_tip_preamble(tip_body or "")
     residue = extract_authored_residue(tip_body or "")
     window = _window_anchor(tip_body or "")
     tip_sketchboard = _sketchboard_in_tip(tip_body or "")
@@ -545,9 +626,21 @@ def build_mission_block(
             _ORIENTATION_STEP,
         ]
     )
+    if preamble:
+        read_step = (
+            "read mission.preamble (stance -> facts -> next_action) before any "
+            "reference section; mission.next_action is repeated at the bundle tail"
+        )
+        rename_idx = next(
+            (i for i, step in enumerate(steps) if step.startswith("rename_chat")),
+            None,
+        )
+        insert_at = (rename_idx + 1) if rename_idx is not None else 0
+        steps.insert(insert_at, read_step)
 
     tail, gap, tail_source, notices_dropped = _bound_tape_tail(letter or {}, envelope)
     mission: dict[str, Any] = {
+        "preamble": preamble,
         "highlight": envelope.get("checkpoint_highlight"),
         "object": envelope.get("checkpoint_object")
         if "checkpoint_object" in envelope
@@ -588,9 +681,11 @@ def build_mission_block(
             "release": "pour_terminal",
             "fence_path": ["armed", "poured", "released"],
         },
-        "handoff": _mission_handoff(thread_id, steps, letter),
+        "handoff": _mission_handoff(thread_id, steps, letter, preamble=preamble),
         "rules_held": _rules_held(letter, standing_rules),
     }
+    if preamble:
+        mission["next_action"] = preamble.get("next_action")
     if rulings_block is not None:
         mission["rulings_after_letter"] = [
             item["ref"] for item in rulings_block["items"]

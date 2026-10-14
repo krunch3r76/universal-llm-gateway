@@ -38,6 +38,20 @@ def test_validate_worker_payload_requires_mission() -> None:
     assert reason == "missing_mission"
 
 
+def test_validate_worker_payload_accepts_preamble_without_residue() -> None:
+    ok, reason = validate_worker_payload(
+        {
+            "card_patch": {"resume_open": "line"},
+            "stance": "House open on 10223.",
+            "facts": "Observed one turn.",
+            "next_action": "Run the next bounded step.",
+            "mission": "resume house",
+        }
+    )
+    assert ok
+    assert reason == "ok"
+
+
 def test_parse_worker_json_follows_sdk_envelope_to_sidecar(tmp_path, monkeypatch) -> None:
     sidecar = tmp_path / "closeout.md"
     sidecar.write_text(
@@ -202,13 +216,13 @@ def test_validate_worker_payload_clamps_soft_overflow() -> None:
     assert len(clamped) >= int(RESIDUE_CAP_CHARS * 0.6)
 
 
-def test_validate_worker_payload_rejects_double_cap() -> None:
+def test_validate_worker_payload_accepts_uncapped_residue() -> None:
     residue = "Mission: ok\n" + ("x" * 1600)
     ok, reason = validate_worker_payload(
         {"card_patch": {"resume_open": "line"}, "residue": residue}
     )
-    assert not ok
-    assert reason == "residue_too_long"
+    assert ok
+    assert reason == "ok"
 
 
 @pytest.mark.asyncio

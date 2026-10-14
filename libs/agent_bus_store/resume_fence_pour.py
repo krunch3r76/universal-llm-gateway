@@ -165,7 +165,12 @@ def assemble_resume_fence_in_txn(
         mission.get("standing_rules") or []
     )
 
-    bundle: dict[str, Any] = {
+    mission_preamble = mission.get("preamble")
+    bundle: dict[str, Any] = {}
+    if mission_preamble:
+        bundle["preamble"] = mission_preamble
+    bundle.update(
+        {
         "bundle_version": _BUNDLE_VERSION,
         "fence": {
             "fence_id": fence_id,
@@ -242,6 +247,11 @@ def assemble_resume_fence_in_txn(
             ],
         },
     }
+    )
+    if mission_preamble and mission_preamble.get("next_action"):
+        bundle["tail"] = {"next_action": mission_preamble.get("next_action")}
+    elif mission.get("next_action"):
+        bundle["tail"] = {"next_action": mission.get("next_action")}
     if pre_pour_harvest is not None:
         bundle["pre_pour_harvest"] = pre_pour_harvest
 

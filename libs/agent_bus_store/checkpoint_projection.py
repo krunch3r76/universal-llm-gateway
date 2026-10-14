@@ -187,9 +187,21 @@ def _residue_after_derived(body: str) -> str:
     return text
 
 
+_SIDECAR_POINTER_RE = re.compile(r"(?m)^Sidecar:\s*cortex://notes/\S+\s*$")
+
+
+def _strip_trailing_sidecar_pointer(text: str) -> str:
+    """Drop a trailing ``Sidecar: cortex://…`` line appended after the RESUME footer."""
+    lines = text.splitlines()
+    while lines and _SIDECAR_POINTER_RE.match(lines[-1].strip()):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 def extract_authored_residue(body: str) -> str:
     """Return authored residue text, stripping any prior derived zone and footer."""
-    return _strip_resume_footer(_residue_after_derived(body)).strip()
+    stripped = _strip_resume_footer(_residue_after_derived(body))
+    return _strip_trailing_sidecar_pointer(stripped)
 
 
 def extract_authored_resume_footer(body: str) -> str | None:
