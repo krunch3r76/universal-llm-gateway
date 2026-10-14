@@ -10,12 +10,12 @@ from claude_bundles.catalog import get_skill_catalog
 from claude_bundles.cdp_inline_read_cue import READ_BLOCK_HEADING
 from claude_bundles.cowork_skill_delivery import (
     SkillDeliveryError,
-    check_delivery_channels_before_submit,
-    combine_induction_with_body,
     attest_delivery_channels,
     attest_injected_slugs,
     attest_skills_chip_enabled,
+    check_delivery_channels_before_submit,
     classify_skill_delivery,
+    combine_induction_with_body,
     github_cannot_load_skill_trees_note,
     induction_panel_ready,
     ledger_skills_channels,
