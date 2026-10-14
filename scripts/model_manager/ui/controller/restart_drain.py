@@ -419,11 +419,8 @@ def default_restart_witnesses() -> dict[str, list[InFlightWitness]]:
     pinned or already-dead process still yields a named busy or a real idle.
     """
     from .cdp_ask_inflight_witness import CdpAskInFlightWitness
-    from .stargate_inflight_witness import StargateDownWitness
 
-    witnesses: dict[str, list[InFlightWitness]] = {
-        "stargate": [StargateDownWitness()],
-    }
+    witnesses: dict[str, list[InFlightWitness]] = {}
     if cdp_ask_url_config() is not None:
         witnesses["cdp_ask"] = [CdpAskInFlightWitness()]
     return witnesses
