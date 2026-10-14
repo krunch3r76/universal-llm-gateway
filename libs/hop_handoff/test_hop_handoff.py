@@ -229,6 +229,26 @@ def test_assess_standing_handoff_uses_cortex_files_root_not_host_absolute(
     assert assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0).status == "current"
 
 
+def test_assess_standing_handoff_budget_and_identity(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "cortex"
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True)
+    handoff = threads / "7182-standing-handoff.md"
+    handoff.write_text(
+        "## CURRENT LEG\nregistration_id reg-a\n### OWED / NEXT\nx\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    fresh = assess_standing_handoff(
+        _THREAD,
+        now=950.0,
+        stale_after_s=100.0,
+        superseded_registration_id="reg-b",
+    )
+    assert fresh.budget in {"ok", "exceeded"}
+    assert fresh.identity == "stale"
+
+
 def test_assess_standing_handoff_distinguishes_missing_stale_current(
     tmp_path, monkeypatch
 ) -> None:

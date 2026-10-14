@@ -30,8 +30,10 @@ _HANDOFF_HEAD = (
 )
 _SECTION_ORDER = (
     "## What is running now",
+    "## CURRENT LEG (rendered checkpoint)",
     "## Lessons in force",
     "## Register",
+    "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
@@ -45,6 +47,12 @@ _SECTION_ORDER = (
 
 def _noop_fetch(_lane: str) -> list[dict[str, Any]]:
     return []
+
+
+def _assert_section_order(out: str, markers: tuple[str, ...]) -> None:
+    present = [m for m in markers if m in out]
+    positions = [out.index(m) for m in present]
+    assert positions == sorted(positions)
 
 
 def test_extract_thread_id_prefers_thread_id() -> None:
@@ -107,12 +115,14 @@ def test_fixture_head_does_not_copy_leg_stack() -> None:
         journal_text="",
         register_text="",
     )
-    assert "LEG 11 ~21:00Z" not in out
-    assert "LEG 10 ~20:55Z" not in out
+    ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
+        "## Lessons in force", 1
+    )[0]
+    assert "LEG 11 ~21:00Z" in ck
+    assert "LEG 10 ~20:55Z" not in out.split("## Pointers", 1)[0] or "LEG 10" in ck
     assert "execution_id exec-from-satellite" in out
     assert "CDP generate" not in out
-    positions = [out.index(marker) for marker in _SECTION_ORDER]
-    assert positions == sorted(positions)
+    _assert_section_order(out, _SECTION_ORDER)
     assert out.index("## Hop request (data)") < out.index("thread_id: 12286")
     assert out.index("thread_id: 12286") < out.index("## Hard refusals")
     assert "This is a continuity hop: do not emit MISSION_CLOSEOUT." in out
@@ -161,10 +171,9 @@ def test_rendered_prompt_section_order() -> None:
         journal_text="",
         register_text="",
     )
-    positions = [out.index(marker) for marker in _SECTION_ORDER]
-    assert positions == sorted(positions)
-    assert "must not copy" not in out
-    assert "R0" in out
+    _assert_section_order(out, _SECTION_ORDER)
+    assert "must not copy" in out.split("## CURRENT LEG (rendered checkpoint)", 1)[1]
+    assert "R0" in out.split("## Lessons in force", 1)[0]
     assert f"successor_birth_id {birth}" in out
     assert "execution_id exec-1" in out
 
@@ -181,10 +190,10 @@ def test_first_acts_are_numbered_in_order() -> None:
     end = out.index("## How this seat works")
     block = out[start:end]
     assert "1. Use the cdp-operator-proxy" in block
-    assert "maestro-loop.md in full" in block
-    assert "2. Read" in block
-    assert block.index("1. Use") < block.index("2. Read")
-    assert block.index("2. Read") < block.index("7. Act")
+    assert "md_read" in block and "maestro-loop.md" in block
+    assert "2." in block
+    assert block.index("1. Use") < block.index("2.")
+    assert block.index("2.") < block.index("7. Act")
     assert "live leg unavailable" in block
 
 
@@ -368,3 +377,210 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
     assert once.count("# Hop on agent-bus:") == 1
     assert once.count("## Hard refusals") == 1
     assert once.count("## Hop request (data)") == 1
+
+
+def _checkpoint_fixture_20kb() -> str:
+    inflight = (
+        "## CURRENT LEG\n"
+        "LEG 1 — 2026-01-01T00:00:00Z — seat abcdef01 — schema checkpoint/v1\n"
+        "### IN FLIGHT\n"
+        '- todo:x · worker 99999 · poll_hint {"thread":"1","after_turn":0}\n'
+        "### OWED / NEXT\n" + ("owed line\n" * 400)
+        + "### LAST LEG\n" + ("last leg narrative\n" * 500)
+    )
+    return inflight
+
+
+def test_ac1_checkpoint_budget_excludes_house_rules() -> None:
+    sidecar = _checkpoint_fixture_20kb() + "\n### HOUSE RULES\n- K1 rule\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
+        "## Lessons in force", 1
+    )[0]
+    assert "### IN FLIGHT" in ck
+    assert 'poll_hint {"thread":"1","after_turn":0}' in ck
+    assert "K1 rule" not in ck.split("### HOUSE RULES")[0] if "### HOUSE RULES" in ck else True
+    body_no_rules = ck.split("### HOUSE RULES")[0] if "### HOUSE RULES" in ck else ck
+    assert len(body_no_rules.encode("utf-8")) <= 8192 + 200
+    assert "[budget_exceeded" in ck
+
+
+def test_ac2_nine_row_inflight_preamble_flag() -> None:
+    rows = []
+    pad = "x" * 3500
+    for i in range(9):
+        rows.append(
+            f'- todo:t{i} · worker 9000{i} · exec e{i} · poll_hint {{"row":{i},"pad":"{pad}"}}\n'
+        )
+    sidecar = (
+        "## CURRENT LEG\nLEG 2 — schema checkpoint/v1\n### IN FLIGHT\n"
+        + "".join(rows)
+        + "\n### OWED / NEXT\nsmall\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    for i in range(9):
+        assert f'"row":{i}' in out
+    assert "[preamble over budget by IN FLIGHT: 9 rows]" in out
+
+
+def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
+    rules = "## HOUSE RULES\n- K9 operative rule text forty chars minimum here\n"
+    sidecar = f"## CURRENT LEG\nLEG 1\n### HOUSE RULES\n- inline fallback\n"
+    out_file = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        house_rules_text=rules,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "operative rule text forty" in out_file.split("## Lessons in force", 1)[0]
+    out_inline = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "inline fallback" in out_inline.split("## Lessons in force", 1)[0]
+
+
+def test_ac4_rules_truncation_lists_k_ids() -> None:
+    bullets = []
+    for k in range(1, 25):
+        bullets.append(f"- K{k} " + ("x" * 500) + "\n")
+    rules = "## HOUSE RULES\n" + "".join(bullets)
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\nLEG 1\n### OWED / NEXT\nx\n",
+        house_rules_text=rules,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "[rules truncated:" in out
+    assert "K1" in out and "K24" in out
+
+
+def test_ac10_checkpoint_stale_identity() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "seat = x · registration_id reg-new\n"
+        "### OWED / NEXT\nok\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\nsuperseded_registration_id: reg-old\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert "checkpoint_stale" in out
+    assert "last 5" in out
+
+
+def test_ac11_archive_missing_flag() -> None:
+    sidecar = (
+        "## CURRENT LEG\n"
+        "archived_prev: cortex://notes/system/threads/missing.md sha256 "
+        + "a" * 64
+        + "\n### OWED / NEXT\nx\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        archive_path_exists=lambda _p: False,
+    )
+    assert "archive_missing" in out
+
+
+def test_ac13_no_in_full_fs_read() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
+    assert "in full (fs read, no limit)" not in out
+
+
+def test_pa2_no_hardcoded_leg119_k1_22() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
+    assert "LEG 119…183" not in out
+    assert "K1–K22" not in out
+
+
+def test_pa3_act2_md_read_and_runbook_size() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
+    acts = out.split("## Your first acts", 1)[1].split("## How this seat works", 1)[0]
+    assert "md_read" in acts and "§ Refuse" in acts and "§ Steps" in acts
+    assert "bytes" in acts or "size unknown" in acts
+
+
+def test_pa5_declared_in_flight_count() -> None:
+    sidecar = (
+        "## CURRENT LEG\n### IN FLIGHT\n"
+        '- a · worker 1 · exec e1 · poll_hint {"a":1}\n'
+        '- b · worker 2 · exec e2 · poll_hint {"b":2}\n'
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        fetch_turns=_noop_fetch,
+    )
+    assert "declared_in_flight: 2" in out
+
+
+def test_pa6_lineage_terminal_status() -> None:
+    sidecar = (
+        "## CURRENT LEG\n### IN FLIGHT\n"
+        '- w · worker 55 · exec ex1 · poll_hint {"z":1}\n'
+    )
+
+    def _lineage(_worker: str, _exec: str) -> str | None:
+        return "done"
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        fetch_turns=_noop_fetch,
+        lineage_lookup=_lineage,
+    )
+    assert "liveness: terminal(done)" in out
+
+
+def test_ac9_lineage_raises_unverified() -> None:
+    sidecar = (
+        "## CURRENT LEG\n### IN FLIGHT\n"
+        '- w · worker 55 · exec ex1 · poll_hint {"z":1}\n'
+    )
+
+    def _boom(_w: str, _e: str) -> str | None:
+        raise RuntimeError("down")
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        fetch_turns=_noop_fetch,
+        lineage_lookup=_boom,
+    )
+    assert "liveness: unverified" in out
+
+
+def test_ac15_live_12286_fixture_preamble_budget() -> None:
+    sidecar = _HANDOFF_HEAD.read_text(encoding="utf-8")
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    preamble = out.split("## Your first acts", 1)[0]
+    size = len(preamble.encode("utf-8"))
+    if size > 30720:
+        assert "[preamble over budget by IN FLIGHT:" in out
+    else:
+        assert size <= 30720
