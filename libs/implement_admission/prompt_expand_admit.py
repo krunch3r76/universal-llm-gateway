@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 PIPELINE_ID = "prompt-expand"
-# 10479 = original night-hop dogfood; 11667 = navigator-unification house;
-# 11738 = music-lexicon-accord house; 11834 = direct-dispatch (no CDP modem).
-_DEFAULT_ROOTS = "10479,11667,11738,11834"
+# 11667 = navigator-unification house; 11738 = music-lexicon-accord house;
+# 11834 = direct-dispatch (no CDP modem). Closed roots (e.g. 10479) need env.
+_DEFAULT_ROOTS = "11667,11738,11834"
 _WAKE_PREFIXES = ("WAKE —", "WAKE -", "WAKE ")
 _EXPAND_HEADER = "pipeline: prompt-expand"
 _TICKER_CALLERS = frozenset({"liaison-ticker"})
@@ -53,7 +53,7 @@ class ExpandDecision:
 
 
 def admit_roots() -> frozenset[str]:
-    """Roots that opt into the caller door. Default is 10479, 11667, 11738, and 11834."""
+    """Roots that opt into the caller door. Default is 11667, 11738, and 11834."""
     raw = os.environ.get("PROMPT_EXPAND_ADMIT_ROOTS", _DEFAULT_ROOTS)
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 

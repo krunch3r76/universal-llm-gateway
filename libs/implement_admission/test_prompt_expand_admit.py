@@ -6,6 +6,7 @@ import pytest
 
 from implement_admission.prompt_expand_admit import (
     PIPELINE_ID,
+    admit_roots,
     expand_options,
     should_expand,
 )
@@ -18,15 +19,23 @@ _WAKE = (
 
 
 @pytest.mark.offline
+def test_default_admit_roots_exclude_10479(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PROMPT_EXPAND_ADMIT_ROOTS", raising=False)
+    roots = admit_roots()
+    assert "10479" not in roots
+    assert roots >= frozenset({"11667", "11738", "11834"})
+
+
+@pytest.mark.offline
 def test_10479_implement_skipped() -> None:
     decision = should_expand(
         prompt=_TASK,
         contract="implement",
         caller_agent="web-anthropic",
-        parent_thread="10479",
+        parent_thread="11667",
     )
     assert decision.admit is False
-    assert decision.root == "10479"
+    assert decision.root == "11667"
     assert decision.skip_reason == "implement"
 
 
@@ -121,10 +130,10 @@ def test_enrolled_conductor_skipped() -> None:
         prompt=_TASK,
         contract="conductor",
         caller_agent="cursor",
-        dispatch_thread_id="10479",
+        dispatch_thread_id="11667",
     )
     assert decision.admit is False
-    assert decision.root == "10479"
+    assert decision.root == "11667"
     assert decision.skip_reason == "implement"
 
 
@@ -134,10 +143,10 @@ def test_enrolled_none_skipped_residual() -> None:
         prompt=_TASK,
         contract="none",
         caller_agent="cursor",
-        dispatch_thread_id="10479",
+        dispatch_thread_id="11667",
     )
     assert decision.admit is False
-    assert decision.root == "10479"
+    assert decision.root == "11667"
     assert decision.skip_reason == "residual"
 
 
@@ -147,10 +156,10 @@ def test_enrolled_unknown_contract_skipped_residual() -> None:
         prompt=_TASK,
         contract="not-a-real-contract",
         caller_agent="cursor",
-        dispatch_thread_id="10479",
+        dispatch_thread_id="11667",
     )
     assert decision.admit is False
-    assert decision.root == "10479"
+    assert decision.root == "11667"
     assert decision.skip_reason == "residual"
 
 
@@ -160,10 +169,10 @@ def test_enrolled_sketch_admits() -> None:
         prompt=_TASK,
         contract="sketch",
         caller_agent="cursor",
-        dispatch_thread_id="10479",
+        dispatch_thread_id="11667",
     )
     assert decision.admit is True
-    assert decision.root == "10479"
+    assert decision.root == "11667"
     assert decision.skip_reason is None
 
 
@@ -185,7 +194,7 @@ def test_wrap_still_mechanical() -> None:
         prompt=_TASK,
         contract="wrap",
         caller_agent="cursor",
-        parent_thread="10479",
+        parent_thread="11667",
     )
     assert decision.admit is False
     assert decision.skip_reason == "mechanical"

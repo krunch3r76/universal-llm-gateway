@@ -34,7 +34,7 @@ When steps 1–6 run (**Attended** only):
    after #115). Any tab model may seat the liaison (skill § Seat model).
    This tab becomes the one liaison seat: the loop claims the seat lock as
    `ide:<transcript_id>` — resolve it with `scripts/liaison-ide-hop.py
-   --find-transcript` on the tab's **first user message**. That is `resume
+   --root <root> --find-transcript` on the tab's **first user message**. That is `resume
    <root>` when the operator typed resume first (this tab's specimen:
    `931b214d…`); `"/liaison <root>"` only when that slash line is the first turn
    — bare `"/liaison"` can resolve a **foreign** tab (specimen `866948bb…`).
