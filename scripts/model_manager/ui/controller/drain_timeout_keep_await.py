@@ -15,6 +15,7 @@ from typing import Any
 
 from .restart_intent_states import (
     STATUS_CANCELLED,
+    STATUS_DRAINED_RESTARTING,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
@@ -136,6 +137,46 @@ async def preempt_giw_keep_await_if_needed(
     )
 
 
+async def preempt_stargate_idle_drain_if_needed(
+    ctl: Any, service: str, force: bool
+) -> dict[str, Any] | None:
+    """Claim ``cas_force_preempt`` for Stargate idle-drain before ``run_gated`` force."""
+    if service != "stargate" or not force:
+        return None
+    store = ctl.restart_intent_store
+    existing = store.active_for_service("stargate")
+    if existing is None:
+        return None
+    if existing.status == STATUS_DRAINED_RESTARTING:
+        if not await wait_supervise_exit("stargate"):
+            return {
+                "status": "error",
+                "reason": "force_preempt_supervise_still_running",
+                "intent_id": existing.intent_id,
+                "service": "stargate",
+            }
+        return None
+    if existing.status != STATUS_PENDING_DRAIN:
+        return None
+    won = cas_force_preempt(store, existing.intent_id)
+    if won:
+        from .restart_window_ctl import clear_service_windows
+
+        await cancel_or_join_supervise_task("stargate")
+        await clear_service_windows(store, "stargate", reason="force_preempt_idle_drain")
+        return None
+    refreshed = store.active_for_service("stargate")
+    intent_id = refreshed.intent_id if refreshed is not None else existing.intent_id
+    if not await wait_supervise_exit("stargate"):
+        return {
+            "status": "error",
+            "reason": "force_preempt_supervise_still_running",
+            "intent_id": intent_id,
+            "service": "stargate",
+        }
+    return None
+
+
 def repair_timeout_intent_gap(store: Any) -> list[dict[str, str]]:
     """Close hidden ``timeout`` rows: restore keep-await or cancel as superseded.
 
@@ -202,8 +243,10 @@ def repair_timeout_intent_gap(store: Any) -> list[dict[str, str]]:
 
 __all__ = [
     "cas_force_preempt",
+    "cancel_or_join_supervise_task",
     "preempt_giw_keep_await_if_needed",
     "preempt_keep_awaiting_giw",
+    "preempt_stargate_idle_drain_if_needed",
     "register_supervise_task",
     "repair_timeout_intent_gap",
     "timeout_affordances",

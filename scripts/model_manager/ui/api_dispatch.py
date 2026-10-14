@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any
 
 from deploy_identity.code_version import process_age_s, resolve_code_version
 
-from .controller.drain_timeout_keep_await import preempt_giw_keep_await_if_needed
+from .controller.drain_timeout_keep_await import (
+    cancel_or_join_supervise_task,
+    preempt_giw_keep_await_if_needed,
+    preempt_stargate_idle_drain_if_needed,
+)
 from .controller.fleet_liveness import build_snapshot
 from .controller.restart_drain import (
     BackgroundCompleteHook,
@@ -39,7 +43,10 @@ from .controller.restart_intent_store import (
     RestartIntentCancelError,
     RestartIntentStore,
 )
-from .controller.restart_window_ctl import lifecycle_with_restart_window
+from .controller.restart_window_ctl import (
+    clear_service_windows,
+    lifecycle_with_restart_window,
+)
 from .lifecycle_envelope import start_envelope
 
 if TYPE_CHECKING:
@@ -208,6 +215,11 @@ async def execute(
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
                 return preempted
+            preempted = await preempt_stargate_idle_drain_if_needed(
+                ctl, service, force
+            )
+            if preempted is not None:
+                return preempted
             return await run_gated(
                 ctl.restart_gate,
                 "stop",
@@ -251,6 +263,11 @@ async def execute(
                 )
             else:
                 preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
+                if preempted is not None:
+                    return preempted
+                preempted = await preempt_stargate_idle_drain_if_needed(
+                    ctl, service, force
+                )
                 if preempted is not None:
                     return preempted
                 result = await run_gated(
@@ -362,6 +379,11 @@ async def execute(
                         caller_agent=caller_agent_from_manage_request(params),
                     )
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
+            if preempted is not None:
+                return preempted
+            preempted = await preempt_stargate_idle_drain_if_needed(
+                ctl, service, force
+            )
             if preempted is not None:
                 return preempted
             return await run_gated(
@@ -959,6 +981,8 @@ async def orchestrate_cancel_restart_intent(
             "intent_status": exc.status,
             "drain_release": drain_release,
         }
+    await cancel_or_join_supervise_task(cancelled.service)
+    await clear_service_windows(store, cancelled.service, reason="intent_cancelled")
     return {
         "status": "cancelled",
         "intent_id": cancelled.intent_id,
