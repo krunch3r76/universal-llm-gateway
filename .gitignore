@@ -186,6 +186,8 @@ docker/docs/
 tasks/*
 !tasks/specs/
 !tasks/specs/README.md
+!tasks/plans/
+!tasks/plans/*.md
 terminals/
 snapshots/
 
