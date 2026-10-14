@@ -36,8 +36,7 @@ _LANE_ID_RE = re.compile(r"(\d{5})")
 
 GOVERNING_RULE: dict[str, str] = {
     "REQUEST": (
-        "R5: no PICKUP|<work_key> within 10 min ⇒ ask a live sidekick to recover "
-        "the peer"
+        "awaiting house pickup/progress; poll lane in R2 before posting a new REQUEST"
     ),
     "PICKUP": (
         "R3: read DONE / FAILED / QUESTION and nothing in between; answer QUESTION "
@@ -420,13 +419,11 @@ def render_live_leg(leg: LiveLeg) -> str:
     return "\n".join(lines)
 
 
-POINTERS_BLOCK = """\
-- Prior LEG blocks (LEG 119…183): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
-- K-row rulings (K1–K22): runbook Appendix § Rulings (K-rows) — current binds are restated in step 5 R lines and in the hard refusals (K22 opus-5.5-extra, no fable).
-- Conductor trajectories (2026-09-30): runbook Appendix § Conductor trajectories — C1 routes conductor lanes to the sidekick; `contract=conductor` is inline in hard refusals.
-- Journal entries: `cortex://notes/system/maestro/journal.md` — narrative; first act 4 reads its head.
-- Roster detail (bots, hop history): `cortex://notes/system/operational/maestro-sidekick-roster.md` — lane ids used at render are named in the running-now line.
-- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal against re-arming send_later stays inline."""
+POINTERS_BLOCK = (
+    "- House loop & R1–R9 / C1 / E8–E11: `runbook:maestro-loop` (`cortex://notes/runbooks/maestro-loop.md`)\n"
+    "- House roster (active lanes): `cortex://notes/system/operational/maestro-sidekick-roster.md`\n"
+    "- Standing handoff & HOUSE RULES: `cortex://notes/system/threads/12286-standing-handoff.md`"
+)
 
 
 __all__ = [
