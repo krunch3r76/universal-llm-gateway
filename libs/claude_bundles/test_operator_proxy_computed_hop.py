@@ -117,8 +117,9 @@ def test_computed_hop_rendering() -> None:
         fetch_turns=fetch_turns,
     )
 
-    assert "SENTINEL-LEG-" not in out
-    assert "LEG 170" not in out
+    assert "SENTINEL-LEG-184" in out
+    for n in range(119, 184):
+        assert f"SENTINEL-LEG-{n}" not in out
     assert _HR_SENTINEL in out
     assert out.index(_HR_SENTINEL) < out.index("## Live leg")
 
@@ -213,7 +214,9 @@ def test_amendment_4_act3_house_rules_inline_limit_fifty_only_on_degraded() -> N
     assert "limit 50" in line3
     assert "unavailable" in line3
     assert out.index(_HR_SENTINEL) < out.index("## Live leg")
-    assert "SENTINEL-LEG-" not in out
+    assert "SENTINEL-LEG-184" in out
+    for n in range(119, 184):
+        assert f"SENTINEL-LEG-{n}" not in out
 
 
 def test_amendment_2_paging_reaches_open_beyond_first_page() -> None:
@@ -423,6 +426,7 @@ def test_project_live_leg_lane_status_fetch_exception_turn_only_fold(
         lane: str,
         *,
         page_fetch: object | None = None,
+        **_kw: object,
     ) -> tuple[list[dict[str, Any]], bool]:
         del page_fetch
         assert lane == "15857"
