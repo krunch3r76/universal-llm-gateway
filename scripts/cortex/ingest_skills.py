@@ -63,6 +63,39 @@ except ImportError:  # pragma: no cover — libs on PYTHONPATH in normal venv
     MAX_SKILL_DESCRIPTION_LEN = 200
 
 
+_HOLDOUT_EXCUSE_REASON = "listed in _INGEST_CHECK_DRIFT_HOLDOUTS"
+
+
+def _drift_line_slug(line: str) -> str | None:
+    """Return the agent_skill slug token at the start of a drift line."""
+    marker = "agent_skill:"
+    if not line.startswith(marker):
+        return None
+    token = line[len(marker) :].split(None, 1)[0]
+    return token or None
+
+
+def partition_check_drifts(
+    drifted: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split drift lines into failing rows and explicit holdout excuses.
+
+    A slug in ``_INGEST_CHECK_DRIFT_HOLDOUTS`` is an excuse, not a silent
+    drop: callers print ``(slug, reason)`` and omit that line from the
+    fail count. Every other line stays in the failing list. Side effect:
+    none; the lists are new.
+    """
+    failing: list[str] = []
+    excused: list[tuple[str, str]] = []
+    for line in drifted:
+        slug = _drift_line_slug(line)
+        if slug is not None and slug in _INGEST_CHECK_DRIFT_HOLDOUTS:
+            excused.append((slug, _HOLDOUT_EXCUSE_REASON))
+        else:
+            failing.append(line)
+    return failing, excused
+
+
 def _description_length_failures(
     scanned: dict[str, dict[str, object]],
 ) -> list[str]:
@@ -172,6 +205,12 @@ def _sync_live_only_skill(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Scan skill files, then check drift or upsert projections.
+
+    ``--check`` prints each unexcused drift slug and returns 1 when any
+    remain. Holdout slugs print as ``EXCUSED`` and stay out of that count.
+    Returns 2 when cortex-api is unreachable or the slug is invalid.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check", action="store_true")
@@ -281,17 +320,12 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     )
         desc_fails = _description_length_failures(merged)
+        drifted, excused = partition_check_drifts(drifted)
+        for slug, reason in excused:
+            print(f"EXCUSED: {slug} — {reason}", file=sys.stderr)
         report = build_drift_report(drifted)
         if args.report:
             print(json.dumps(report, sort_keys=True))
-        if drifted:
-            drifted = [
-                line
-                for line in drifted
-                if not any(
-                    f"agent_skill:{slug}" in line for slug in _INGEST_CHECK_DRIFT_HOLDOUTS
-                )
-            ]
         if drifted:
             for line in drifted:
                 print(f"DRIFT: {line}", file=sys.stderr)

@@ -116,3 +116,58 @@ def test_source_uri_non_catalog_falls_back_to_workspace(
 @pytest.mark.offline
 def test_delegate_to_grok_suppressed_lifecycle_unchanged() -> None:
     assert "deprecated" in _SUPPRESSED
+
+
+def _stub_check_scans(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ingest_skills
+
+    monkeypatch.setattr(ingest_skills, "_scan_skills", lambda _root: {"probe": {}})
+    monkeypatch.setattr(ingest_skills, "_scan_life_local_skills", lambda _root: {})
+    monkeypatch.setattr(ingest_skills, "_scan_cortex_sot_metadata", lambda _root: {})
+    monkeypatch.setattr(ingest_skills, "_scan_cortex_sot_declared", lambda _root: {})
+    monkeypatch.setattr(ingest_skills, "_scan_cortex_sot_skills", lambda _root: {})
+    monkeypatch.setattr(ingest_skills, "make_sync_client", lambda _url: object())
+    monkeypatch.setattr(
+        ingest_skills, "_description_length_failures", lambda _merged: []
+    )
+
+
+@pytest.mark.offline
+def test_check_unexcused_drift_does_not_print_ok(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unexcused drift must name the slug and exit 1; OK is a clean run only.
+
+    The previous check dropped holdout lines and then printed OK while
+    ``drift_count`` still counted them. A slug outside the holdout set is
+    the failing case this guards.
+    """
+    import ingest_skills
+
+    _stub_check_scans(monkeypatch)
+    line = "agent_skill:not-a-holdout missing from cortex"
+    monkeypatch.setattr(ingest_skills, "_drifts", lambda *_a, **_k: [line])
+    code = ingest_skills.main(["--check", "--report"])
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert "OK ingest_skills --check" not in out
+    assert "not-a-holdout" in err
+    assert '"drift_count": 1' in out
+
+
+@pytest.mark.offline
+def test_check_holdout_is_printed_excuse_not_silent_ok(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Existing holdouts stay non-failing only when named with a reason."""
+    import ingest_skills
+
+    _stub_check_scans(monkeypatch)
+    line = "agent_skill:refine-pipeline missing from cortex"
+    monkeypatch.setattr(ingest_skills, "_drifts", lambda *_a, **_k: [line])
+    code = ingest_skills.main(["--check", "--report"])
+    out, err = capsys.readouterr()
+    assert code == 0
+    assert "EXCUSED: refine-pipeline —" in err
+    assert '"drift_count": 0' in out
+    assert '"clean": true' in out
