@@ -3,10 +3,10 @@
 | Seat | Duty |
 |---|---|
 | **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below). **Harvest reader** of any after-ship overlay the conductor fires — quote the sidecar or name why unread |
-| **Liaison** (IDE continuity lead when not the conductor) | **Default register** = liaison register (BINDING — operator 2026-08-27). Speak so the human does not need the bus, scoreboard, `SCORE_RESURFACE`, or closeout open. Gloss IDs only when they change what he does next. Skill `audience-register` plain half is the closest written match; the duty name is **liaison register**, not that skill. Off when this seat *is* the conductor. **Decide** = § Liaison-decide |
+| **Impresario** (IDE continuity lead when not the conductor) | **Default register** = Impresario register (BINDING — operator 2026-08-27). Speak so the human does not need the bus, scoreboard, `SCORE_RESURFACE`, or closeout open. Gloss IDs only when they change what he does next. Skill `audience-register` plain half is the closest written match; the duty name is **Impresario register**, not that skill. Off when this seat *is* the conductor. **Decide** = § Impresario-decide |
 | **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code any G-row whose remainder is files+tests after a pick |
 
-### Liaison-decide (binding)
+### Impresario-decide (binding)
 
 Operator direction ≠ hop recipe. Anticipate harvested score / `NEXT_ADMIT: none` /
 spawn-stale materialize / in-flight orphan; choose the next useful move. Inform;
@@ -38,7 +38,7 @@ W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
 **After land (binding):** path-explicit commit of session paths, then prompt
 go-live (recycle) for each serving process that loaded those paths (hub GIW vs
 satellite — name the process and what “live” means). Do not recycle-and-call-
-finished while session paths are uncommitted. OR if this liaison chooses not to
+finished while session paths are uncommitted. OR if this Impresario chooses not to
 recycle: announce skip in the same turn — process, why skipped, what stays
 landed-not-live. When the land was a named
 `todo:`: stamp that entity (`todo-close` or LANDED assertion) in the same
@@ -53,11 +53,11 @@ Joint convention — the human-visible box lives on the continuity card
 (`## Follow up`). Any one phrase is enough. Distinct from page-on-stall and
 from CHECKPOINT (reconstitution index, not a follow-up ask).
 
-| Phrase | Liaison |
+| Phrase | Impresario |
 |---|---|
 | `follow up` | Harvest what's terminal. One Been / Are / Going paragraph in the summoning IDE chat. ¬ new hop unless the last bind already said to admit. |
 | `follow up on the pager` · `page me when done` · `I'm leaving — follow up` | Same harvest + Use the `pager-notify` skill (awareness; ¬ `COME TO IDE` unless they said come to IDE). Aligns to that skill's “ping me when X”. |
-| `status` | **HOPS / BLOCKERS / PENDING / SCORES / BREAKS / LAND-LIVE**. PENDING = leftovers this liaison already named or still dirty on this arc (Mission/resume WIP, in-seat files, landed-not-live, branch-debt). Land → path-explicit commit → recycle is the default sequence to report. After any land: commit session paths, then prompt recycle of each serving process, or announce skip (process · why · landed-not-live). LAND-LIVE names skipped recycles, not only “not live.” Recon-spawn fills the continuity `## Scores / breaks / land-live` box — ¬ dump tables into this skill. ¬ decide-and-admit. |
+| `status` | **HOPS / BLOCKERS / PENDING / SCORES / BREAKS / LAND-LIVE**. PENDING = leftovers this Impresario already named or still dirty on this arc (Mission/resume WIP, in-seat files, landed-not-live, branch-debt). Land → path-explicit commit → recycle is the default sequence to report. After any land: commit session paths, then prompt recycle of each serving process, or announce skip (process · why · landed-not-live). LAND-LIVE names skipped recycles, not only “not live.” Recon-spawn fills the continuity `## Scores / breaks / land-live` box — ¬ dump tables into this skill. ¬ decide-and-admit. |
 
 Named subject (`follow up when hedges land`) is the trigger. Hops still in
 flight → say so; do not invent done. `follow up` ≠ remint conductor ≠

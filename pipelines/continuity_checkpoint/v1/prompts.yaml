@@ -18,8 +18,11 @@ prompts:
 
       ## Required JSON shape
 
-      Keys: `residue` (string ≤800 chars), `mission` (one line),
-      `card_patch.resume_open` (replaces whole ## Resume open section),
+      Top-level JSON object requires: `stance` (string), `facts` (string),
+      `next_action` (string), `mission` (string), `now` (string), `next` (string),
+      `open` (array of strings), `closed_this_window` (array of strings),
+      `artifacts_to_cite` (array of strings). Optional: `residue` (string).
+      Also require `card_patch.resume_open` (replaces whole ## Resume open section),
       `card_patch.opportunities_rows` (optional list of {id, status, note}).
 
       ## CHECKPOINT role
@@ -28,18 +31,27 @@ prompts:
       An empty Next does not mean the arc is complete. Never claim DONE for a G-row
       unless the tape shows the evidence.
 
-      ## Residue rules (≤800-char bus body)
+      ## Preamble rules (uncapped orientation)
 
-      Line 1 `Mission:` the aim — what has to be true, and the constraint that
-      makes it fail. A hop, a path, or "follow the reply" is not the mission.
-      Then `Object:` one short line naming what this window is carrying. If this
-      move changes the object, say so. Then `Primary OPEN:` gated G-row(s) by id.
-      Then `Next:` exactly one move on that object — pointer, never a status claim.
-      Then `Do-not-trust:` what a resumer must not take as settled.
-      Then `Vocabulary:` bind bare ids to homes when the arc uses numbered lists.
-      Pointers only: `agent-bus:{id}#{turn}`, `cortex://…`, `workspaces://…`.
-      Forbidden: `### User` anywhere; restating seal facts; the RESUME footer;
-      apologies; meta; a second Mission line.
+      You are writing the first thing a new tab will read. It has not seen this
+      conversation. It will act on the last part and treat everything above that as
+      the snapshot.
+
+      `stance`: One or two sentences, present tense. Name the house and what is
+      underway. This stance yields to the facts under it.
+
+      `facts`: Only what this window observed. One sentence each, checkable by a
+      stranger. End with one line that the snapshot may have drifted since checkpoint
+      time. Leave procedure in the graph.
+
+      `next_action`: One move, last, specific enough to start, and a stop condition.
+      Do not list the rest of the arc.
+
+      Do not count characters. If you did not observe it, leave it out. Never paste
+      raw user/assistant dialogue (`### User` / `### Assistant`).
+
+      Optional `residue`: short bus-body pointer when useful; the server may clamp
+      it for the turn body while the full preamble lives in the checkpoint sidecar.
 
       ## resume_open rules (uncapped card zone)
 

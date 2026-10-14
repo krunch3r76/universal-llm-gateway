@@ -92,6 +92,13 @@ models:
     output_rate_per_m: 3.5
     source: manual_seed
     pinned: true
+  # Other Models pool — cursor.com/docs/models-and-pricing (2026-10-13).
+  - model_id: cursor/gemini-4-argon
+    input_rate_per_m: 2.0
+    cache_read_rate_per_m: 0.1
+    output_rate_per_m: 10.0
+    source: manual_seed
+    pinned: true
   - model_id: cursor/glm-5.2
     input_rate_per_m: 1.4
     cache_read_rate_per_m: 0.26

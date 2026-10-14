@@ -1,6 +1,6 @@
 # display-chat-wake — paste one BRIDGE_WAKE when the sidebar title matches.
 #
-# One step. Options: display, app, thread, slug, turn.
+# One step. Options: display, app, thread, slug, title, turn.
 # A title mismatch finishes the run with ok false. It does not fail the pipeline.
 #
 #   pipeline(op="run", pipeline_id="display-chat-wake",
@@ -8,9 +8,9 @@
 #            options={
 #              "display": "9",
 #              "app": "grok",
-#              "thread": "16416",
-#              "slug": "io-cursor-grok-control",
-#              "turn": 9,
+#              "thread": "15851",
+#              "title": "Grok Coordinator 1",
+#              "turn": 285,
 #            })
 
 schema_version: 6
@@ -20,8 +20,9 @@ type: display_chat_wake
 category: display_chat_wake
 description: >
   Paste BRIDGE_WAKE thread=<id> turn=<n> into the named display app when
-  the active sidebar title is exactly "<thread> <slug>". Any other gate
-  result completes with ok false and pasted false.
+  the active sidebar title matches the specified `title` (or "<thread> <slug>"
+  when `title` is omitted). Any other gate result completes with ok false
+  and pasted false.
 output: display-chat-wake
 
 options:
@@ -36,11 +37,15 @@ options:
     default: ""
   thread:
     type: string
-    description: agent-bus thread id whose sidebar title is "<thread> <slug>"
+    description: agent-bus thread id for BRIDGE_WAKE thread=<id> turn=<n>
     default: ""
   slug:
     type: string
-    description: thread slug, the second token of the sidebar title
+    description: thread slug when sidebar title is "<thread> <slug>" (optional if title is set)
+    default: ""
+  title:
+    type: string
+    description: exact sidebar title to match (overrides "<thread> <slug>" when set)
     default: ""
   turn:
     type: integer

@@ -35,6 +35,43 @@ def _load_hop_module():
     return mod
 
 
+def test_liaison_ide_hop_passes_preamble_to_seal(capsys) -> None:
+    hop_mod = _load_hop_module()
+    captured: dict = {}
+
+    def fake_seal(root, *, transcript_id, preamble=None, **_k):
+        captured["root"] = root
+        captured["preamble"] = preamble
+        return {"ok": True, "phase": "sealed", "bus_turn": 42}
+
+    args = [a for a in _HOP_ARGS if a != "--dry-run"]
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("R16 test", "arg")),
+        patch.object(hop_mod, "format_now_line", return_value="R16 test"),
+        patch.object(hop_mod, "seal_hop_window", side_effect=fake_seal),
+        patch.object(
+            hop_mod, "fire_ide_hop", return_value={"ok": True, "root": "10479"}
+        ),
+        patch.object(hop_mod, "retire_departing_tab", return_value={"ok": True}),
+        patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(hop_mod, "tick_register", return_value="attended"),
+        patch.object(hop_mod, "policy_gui_host", return_value="jupiter"),
+        patch.object(hop_mod, "build_ide_hop_message", return_value="resume 10479\n"),
+        patch.object(sys, "argv", args),
+    ):
+        hop_mod.main()
+    preamble = captured.get("preamble") or {}
+    assert captured["root"] == "10479"
+    assert preamble.get("stance")
+    assert preamble.get("facts")
+    assert preamble.get("next_action")
+
+
 def test_hop_retires_departing_tab_after_land(capsys) -> None:
     hop_mod = _load_hop_module()
     call_order: list[str] = []
@@ -324,7 +361,12 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
             kwargs_result = on_fired()
             assert kwargs_result.get("phase") == "quiesced"
         # Script-level paths under test via returned phases.
-        return {"ok": True, "phase": "landed", "root": "10479", "quiesce": {"phase": "quiesced"}}
+        return {
+            "ok": True,
+            "phase": "landed",
+            "root": "10479",
+            "quiesce": {"phase": "quiesced"},
+        }
 
     def fake_retire(root, holder, **_k):
         calls.append("retire")
@@ -343,7 +385,11 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
         ),
         patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
         patch.object(hop_mod, "retire_departing_tab", side_effect=fake_retire),
-        patch.object(hop_mod, "quiesce_departing_tab", side_effect=lambda *a, **k: {"ok": True, "phase": "quiesced"}),
+        patch.object(
+            hop_mod,
+            "quiesce_departing_tab",
+            side_effect=lambda *a, **k: {"ok": True, "phase": "quiesced"},
+        ),
         patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
         patch.object(hop_mod, "live_watcher_labels", return_value=[]),
         patch.object(hop_mod, "tick_register", return_value="attended"),

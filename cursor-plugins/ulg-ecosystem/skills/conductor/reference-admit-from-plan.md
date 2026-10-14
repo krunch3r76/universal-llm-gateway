@@ -10,7 +10,7 @@ Select and follow this map; do not rebuild the path from source reading and 422s
 | Hop | Wire | Product | Written by |
 |---|---|---|---|
 | **Sketch** | `job=sketch` + `source_ref=todo:` (materializer reads todo `problem` / `scope`) | **shape bind** — R1 four blocks (`scope_pin` · `negative_space` · `output_envelope` · `transfer_predicate`) at `cortex://notes/system/consults/{slug}-sketch.md` | dispatched Sketch, or a **substitute** (below) |
-| **Mission Composer** | `runbook:score-composer-author` — `job=freeform` + `prompt=` (¬ a materializer contract) | **conductor score** = the **densified todo**: dense spec at `source_uri`, implement-lane attrs, `stop_after` / `conductor_profile` pins, S5 attach when architecture is closed. ¬ a hand-written six-block file | dispatched Composer worker |
+| **Scoring** | `runbook:score-composer-author` — `job=freeform` + `prompt=` (¬ a materializer contract) | **conductor score** = the **densified todo**: dense spec at `source_uri`, implement-lane attrs, `stop_after` / `conductor_profile` pins, S5 attach when architecture is closed. ¬ a hand-written six-block file | dispatched Composer worker |
 | **Conductor** | `job=conductor` + `source_ref=todo:` · `packet_path` **refused** (`conductor_with_packet_path`) · `prompt` refused | Stargate **materializes** the packet and **births the scoreboard** from the todo at admit | substrate |
 
 `job=freeform` + `source_ref` is refused (`none_with_source_ref`) — it is not a
@@ -23,7 +23,7 @@ A plan is a valid Sketch substitute when it carries the four R1 blocks (prepend
 them as a header when missing) and is registered as a sidecar the todo points at
 (`scope:` / description / `density_triage_evidence_uri`). Frontmatter:
 `consult_kind: sketch` · `substitute_for:` · `as_of:` HEAD sha · `status:` naming
-that its decisions are **not independently checked** — the Mission Composer read
+that its decisions are **not independently checked** — the Scoring read
 is that check. A substitute sketch closes the **Sketch hop**; it does **not**
 close **G1**.
 

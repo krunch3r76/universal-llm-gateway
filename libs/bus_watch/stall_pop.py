@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sys
-from typing import TextIO
+from collections.abc import Mapping
+from typing import Any, TextIO
 
 _STALL_POP_PREFIX = "stall-pop:"
 
@@ -20,6 +21,18 @@ def should_emit_stall_pop(
     if reason == last_reason:
         return False, last_reason
     return True, reason
+
+
+def closeout_terminal_stall_reason(snap: Mapping[str, Any]) -> str:
+    """Stall-pop reason when ``first_reply_from`` wait is open but producer is terminal."""
+    if snap.get("complete"):
+        return ""
+    producer = snap.get("producer")
+    if not isinstance(producer, Mapping):
+        return ""
+    if producer.get("state") != "terminal":
+        return ""
+    return format_producer_terminal_reason(dict(producer))
 
 
 def format_producer_terminal_reason(

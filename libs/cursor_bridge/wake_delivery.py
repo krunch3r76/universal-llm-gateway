@@ -96,15 +96,18 @@ async def deliver_wake(
     display: object,
     app: object,
     thread: object,
-    slug: object,
+    slug: object = "",
+    title: object = "",
     turn: object,
 ) -> dict[str, Any]:
     """Paste one wake when the active sidebar title matches, else refuse.
 
-    Returns ``ok``, ``reason``, and ``pasted``. A title mismatch, a down
-    debug port, or a missing composer is ``ok`` false with ``pasted``
-    false. The only mutation is the paste after a match. Does not raise
-    for those gate outcomes.
+    Returns ``ok``, ``reason``, and ``pasted``. ``title`` specifies the
+    exact sidebar title to match (e.g. a Grok Bot name); when omitted,
+    ``"<thread> <slug>"`` is used. A title mismatch, a down debug port, or
+    a missing composer is ``ok`` false with ``pasted`` false. The only
+    mutation is the paste after a match. Does not raise for those gate
+    outcomes.
     """
     target = normalize_target(display, app)
     if not target.get("ok"):
@@ -112,10 +115,13 @@ async def deliver_wake(
             "unknown_target", display=target.get("display"), app=target.get("app")
         )
     number = _turn(turn)
-    if number is None or not str(thread or "").strip() or not str(slug or "").strip():
+    thread_s = str(thread or "").strip()
+    slug_s = str(slug or "").strip()
+    title_s = str(title or "").strip()
+    if number is None or not thread_s or (not title_s and not slug_s):
         return _refuse("bad_options", display=target["display"], app=target["app"])
     try:
-        line = wake_line(str(thread), number)
+        line = wake_line(thread_s, number)
     except ValueError:
         return _refuse("bad_options", display=target["display"], app=target["app"])
     try:
@@ -145,7 +151,12 @@ async def deliver_wake(
             detail=type(exc).__name__,
         )
     try:
-        verdict = wake_decision(surface, thread=str(thread), slug=str(slug))
+        verdict = wake_decision(
+            surface,
+            thread=thread_s,
+            slug=slug_s,
+            title=title_s or None,
+        )
     except ValueError:
         return _refuse("bad_options", display=target["display"], app=target["app"])
     if not verdict.get("ok"):

@@ -92,6 +92,8 @@ async def bus_send(
     subject: str,
     body: str,
     after_turn: int | None,
+    sidecar_content: str | None = None,
+    sidecar_slug: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     """POST ``/threads/send`` and return ``(payload, status_code)``."""
     payload: dict[str, Any] = {
@@ -103,6 +105,10 @@ async def bus_send(
     }
     if after_turn is not None:
         payload["after_turn"] = after_turn
+    if sidecar_content:
+        payload["sidecar_content"] = sidecar_content
+        if sidecar_slug:
+            payload["sidecar_slug"] = sidecar_slug
     async with make_async_client(
         DEFAULT_AGENT_BUS_URL, timeout=_HTTP_TIMEOUT_S
     ) as client:

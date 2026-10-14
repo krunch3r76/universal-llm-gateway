@@ -19,7 +19,15 @@ identified by its handle and parent association, never inferred from spine.
 
 ## Root birth
 
-Triggered by `/orchestrate` only. The `checkpoint` verb is `checkpoint-discipline` lean fire — ¬ this gate, ¬ a birth synonym.
+Root birth is the **Attended lowering** when the house is missing — not a separate mode the operator
+chooses manually ahead of `/liaison`. The **Impresario** invokes this gate when gear inference yields
+**Attended** and `thread_get` lacks `role:root` (or the root thread does not exist yet), whether the
+operator typed `/orchestrate`, `/liaison <slug> — <objective>`, or opened the tab with a durable objective
+or `todo:`. If `role:root` already exists, skip birth and seat only (`ide-continuity`).
+
+The `checkpoint` verb is `checkpoint-discipline` lean fire — ¬ this gate, ¬ a birth synonym. Bare
+`/orchestrate` or `/liaison` with no root and no objective stays **Light** — do not mint an empty
+`role:root`.
 
 1. Bind one objective sentence describing the topic being continued.
 2. Create the root thread (`create_thread` may precede the card mint so the card is `{id}`-named).

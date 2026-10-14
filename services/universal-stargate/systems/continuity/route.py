@@ -132,6 +132,14 @@ async def continuity_checkpoint(
         pipeline_options["chat_url"] = body.chat_url
     if body.residue is not None:
         pipeline_options["residue"] = body.residue
+    if body.preamble:
+        pipeline_options["preamble"] = body.preamble
+    if body.stance:
+        pipeline_options["stance"] = body.stance
+    if body.facts:
+        pipeline_options["facts"] = body.facts
+    if body.next_action:
+        pipeline_options["next_action"] = body.next_action
     if body.handoff is not None:
         pipeline_options["handoff"] = body.handoff
     if body.pipeline_options:

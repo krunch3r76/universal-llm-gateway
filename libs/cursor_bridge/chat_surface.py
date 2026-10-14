@@ -81,14 +81,21 @@ def classify_surface(labels: list[str], items: list[dict[str, Any]]) -> dict[str
     return {"state": state, "active_title": active, "titles": titles}
 
 
-def wake_decision(surface: dict[str, Any], *, thread: str, slug: str) -> dict[str, Any]:
+def wake_decision(
+    surface: dict[str, Any],
+    *,
+    thread: str = "",
+    slug: str = "",
+    title: str | None = None,
+) -> dict[str, Any]:
     """Refuse a wake unless ``surface`` shows the exact liaison title.
 
-    ``signed_out`` and ``unknown`` fail before the title compare. A chat
-    list uses ``selection_verdict``. Returns that verdict plus ``state``
-    and ``titles``. No I/O.
+    ``title`` overrides ``"<thread> <slug>"`` when provided. ``signed_out``
+    and ``unknown`` fail before the title compare. A chat list uses
+    ``selection_verdict``. Returns that verdict plus ``state`` and
+    ``titles``. No I/O.
     """
-    expected = chat_title(thread, slug)
+    expected = chat_title(thread, slug, title=title)
     state = str(surface.get("state") or "unknown")
     titles = list(surface.get("titles") or [])
     if state != "chat_list":

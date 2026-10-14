@@ -6,6 +6,20 @@ structured result object on stdout for codeblind disposition.
 
 from __future__ import annotations
 
+import sys
+
+# Real stdout for the JSON result; incidental prints (e.g. workspace validation
+# during deploy_identity import) must not land on stdout for jq callers.
+_JSON_STDOUT = sys.stdout
+
+
+def _emit_json(payload: str) -> None:
+    print(payload, file=_JSON_STDOUT, flush=True)
+
+
+if __name__ == "__main__":
+    sys.stdout = sys.stderr
+
 import argparse
 import json
 import subprocess
@@ -111,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.detach and args.execute:
-        print(
+        _emit_json(
             json.dumps(
                 {
                     "status": "refused",
@@ -131,13 +145,13 @@ def main(argv: list[str] | None = None) -> int:
             target_ref=target_ref,
             tmux_target=args.tmux_target,
         )
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        _emit_json(json.dumps(payload, indent=2, sort_keys=True))
         return code
 
     dry_run = not args.execute
     result_path = Path(args.result_path) if args.result_path else None
     if args.recover and not args.execute:
-        print(
+        _emit_json(
             json.dumps(
                 {"status": "refused", "reason": "recover_requires_execute"},
                 indent=2,
@@ -176,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 1
     if effective_result_path is not None and result is not None:
         _write_result_file(effective_result_path, result)
-    print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    _emit_json(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return exit_code
 
 

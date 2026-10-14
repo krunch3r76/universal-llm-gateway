@@ -126,6 +126,8 @@ OPERATOR_LOOP = (
     "You run the bus. Do not ask the operator to abort, hire, or edit. "
     "A finished watch with no next leg is not a situation report."
 )
+
+
 def _pid_alive(pid: Any) -> bool:
     try:
         n = int(pid)
@@ -263,11 +265,49 @@ def _bus_auth_headers() -> dict[str, str]:
     return agent_bus_bearer_headers()
 
 
+def build_hop_preamble(
+    root_id: str,
+    *,
+    row: str,
+    arm_labels: list[str] | None = None,
+    tip_cp_ordinal: int | None = None,
+    register: str = "attended",
+) -> dict[str, str]:
+    """Structured stance/facts/next_action sealed into the hop checkpoint sidecar."""
+    labels = arm_labels or []
+    arm_text = ", ".join(labels) if labels else "none live"
+    tip_token = (
+        f"tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else "tip_cp=unknown"
+    )
+    stance = (
+        f"Role:root {root_id} on universal-llm-gateway ({register} register); "
+        "this seat resumes the continuity house (LOAD ide-continuity, LOAD "
+        "liaison-cursor)."
+    )
+    facts = (
+        f"{tip_token}. ARM watchers: {arm_text}. NOW: {row.strip() or '(empty)'}. "
+        "These facts are a snapshot taken at checkpoint time and may have drifted."
+    )
+    if row.strip():
+        next_action = (
+            "Dispatch the first leg of NOW via team_dispatch or life_dispatch per "
+            "the liaison ladder; attach tail --label for each live ARM label; stop "
+            "when the dispatch admits or the leg completes."
+        )
+    else:
+        next_action = (
+            f"Run scripts/liaison-tick.py --root {root_id} --once, harvest wakes, "
+            "fold scoreboard; STAY if no playable row and no live watcher."
+        )
+    return {"stance": stance, "facts": facts, "next_action": next_action}
+
+
 def seal_hop_window(
     root_id: str,
     *,
     transcript_id: str,
     residue: str | None = None,
+    preamble: dict[str, str] | None = None,
     timeout_s: float = 120.0,
     from_agent: str = "cursor",
 ) -> dict[str, Any]:
@@ -287,6 +327,11 @@ def seal_hop_window(
     }
     if residue is not None:
         body["residue"] = residue
+    if preamble:
+        body["preamble"] = preamble
+        for key in ("stance", "facts", "next_action"):
+            if preamble.get(key):
+                body[key] = preamble[key]
     try:
         with make_sync_client(
             DEFAULT_STARGATE_URL, timeout=_CHECKPOINT_TIMEOUT_S
@@ -316,9 +361,7 @@ def seal_hop_window(
         return {"ok": False, "phase": "checkpoint_bad_response"}
     poll_hint = accepted.get("poll_hint") if isinstance(accepted, dict) else None
     args = (
-        poll_hint.get("arguments_json")
-        if isinstance(poll_hint, dict)
-        else None
+        poll_hint.get("arguments_json") if isinstance(poll_hint, dict) else None
     ) or {}
     after_turn = int(args.get("after_turn") or 0)
     wait_from = str(args.get("from_agent") or from_agent)
@@ -634,7 +677,15 @@ def fire_ide_hop(
     try:
         try:
             proc = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
+                [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=20",
+                    gui_host,
+                    cmd,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=90,

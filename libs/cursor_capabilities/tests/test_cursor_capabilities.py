@@ -31,7 +31,23 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "gpt-5.5": "reasoner",
     "glm-5.2": "reasoner",
     "grok-4.7": "reasoner",
+    "gemini-4-argon": "reasoner",
 }
+
+
+def test_gemini_4_argon_stays_unprobed_until_listmodels() -> None:
+    """Production card: no probe stamp and no guessed context knob.
+
+    GIW conftest stamps other unprobed cards for hermetic admits. This assert
+    reads the module dict, so that stamp cannot hide a premature ``probed_at``.
+    """
+    cap = CURSOR_MODEL_CAPABILITIES["gemini-4-argon"]
+    assert cap.probed_at is None
+    assert set(cap.knobs) == {"effort"}
+    assert cap.knobs["effort"].accepted == ("minimal", "low", "medium", "high")
+    assert cap.knobs["effort"].default == "medium"
+    assert cap.default_variant == {"effort": "medium"}
+    assert cap.context_window_tokens is None
 
 
 def test_model_capability_default_instruction_profile_is_mechanical() -> None:
@@ -40,7 +56,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 21
+    assert len(CURSOR_MODEL_CAPABILITIES) == 22
     opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert opus55.knobs == opus5.knobs

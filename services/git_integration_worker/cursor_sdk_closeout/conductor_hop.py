@@ -1513,6 +1513,8 @@ async def post_conductor_hop_team_dispatch(
             "status_code": resp.status_code,
             "error": payload,
         }
+    # Empty payload dispatch/execution id falls back to admit_dispatch_id so steer
+    # inherit still targets the row we reserved on admit.
     successor_dispatch_id = (
         str(payload.get("dispatch_id") or payload.get("execution_id") or "").strip()
         or admit_dispatch_id

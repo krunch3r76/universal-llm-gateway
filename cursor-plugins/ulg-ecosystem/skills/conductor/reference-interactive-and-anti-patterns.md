@@ -26,8 +26,8 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | `git-posture` | Lane-B hub-land = actuator (`land_lane_branch_onto_hub_master`) or attended IDE `git merge`; ¬ path-copy onto master. Conductor admit = standing merge authorization for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
 | `consult-routing` | Model split / non-primary gate · **cursor-sdk `lane=` caller recipe** (this skill does not own omit semantics) |
-| `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) — named hop is direction, not a recipe when harvest conflicts |
-| `reasoning-posture` | Liaison decide-before-admit — pin Question / OOS / detent |
+| `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Scoring → conductor score · this seat plays it) — named hop is direction, not a recipe when harvest conflicts |
+| `reasoning-posture` | Impresario decide-before-admit — pin Question / OOS / detent |
 | `runbook:extraordinary-aperture` | Named hop vs harvested state — in-seat widen; ¬ path-sim cascade |
 | `todo:conductor-hop-wait-protocol` | GIW hop reactor occupancy + witness fold — this skill names seat doctrine; substrate detail in R2 review |
 
@@ -70,7 +70,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Author a nested CDP width prompt without `retrieval_report: cortex://…` (or claim RAG in-stream with no sidecar) | Run `retrieval-before-authoring` for real; write the report sidecar (Queries / Yields / Choice-to-evidence); cite it on the prompt body — substrate refuses admit without it (a:37183) |
 | Open a G4 / `gate_path=SKEPTIC` / adversarial-spec prompt with delivery/code-review chrome ("packet carries the code under review", checkout-pytest waive) | Spec-skeptic genre only; job=delivery-review delivery charter is for G6 / `contract=delivery-review`, never G4 — substrate refuses chrome-on-SKEPTIC |
 | Hop closeout lists nested prompt URIs with no report bundle | Closeout check: every nested CDP prompt authored this hop has a resolvable report bundle (`hop_prompts_missing_report_bundles`) |
-| Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
+| Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Impresario-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Path-explicit commit of session paths, then prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |
 | Assume `ROW_HOP` ⇒ immediate successor while a CDP gate still streams on the mission lane | Reactor skip `live_external_gate` is correct — harvest the gate first |

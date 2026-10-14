@@ -251,6 +251,60 @@ async def test_checkpoint_handoff_lands_in_pipeline_options() -> None:
 
 
 @pytest.mark.asyncio
+async def test_checkpoint_forwards_uncapped_residue_and_preamble() -> None:
+    from systems.continuity.models import CheckpointRequest
+
+    route_mod = _import_route_module(with_dispatch=True)
+    posted: dict[str, object] = {}
+    long_residue = "Mission: ok\n" + ("y" * 1200)
+    preamble = {
+        "stance": "House open.",
+        "facts": "One fact.",
+        "next_action": "Next move.",
+    }
+
+    @asynccontextmanager
+    async def _capture(*_args, **_kwargs):
+        client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.json.return_value = {
+            "execution_id": "exec-preamble",
+            "started_at": "2026-10-13T00:00:00Z",
+        }
+
+        async def _post(url, json=None):
+            posted["body"] = json
+            return mock_resp
+
+        client.post = _post
+        yield client
+
+    body = CheckpointRequest(
+        thread="16416",
+        surface="cursor",
+        from_agent="cursor",
+        residue=long_residue,
+        preamble=preamble,
+        stance="House open.",
+        facts="One fact.",
+        next_action="Next move.",
+    )
+    with (
+        patch.object(route_mod, "make_async_client", _capture),
+        patch("agent_bus_store.db.get_thread_turn_count", return_value=1),
+    ):
+        resp = await route_mod.continuity_checkpoint(
+            body, current_user={"agent": "cursor"}
+        )
+    assert resp.status_code == 202
+    options = posted["body"]["pipeline_options"]
+    assert options["residue"] == long_residue
+    assert options["preamble"] == preamble
+    assert options["stance"] == "House open."
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_omits_handoff_when_absent() -> None:
     from systems.continuity.models import CheckpointRequest
 

@@ -16,9 +16,10 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 
 
 class DisplayChatWakeHandler(BaseHandler):
-    """Paste ``BRIDGE_WAKE`` when the sidebar title matches the house.
+    """Paste ``BRIDGE_WAKE`` when the sidebar title matches the target.
 
-    Options are ``display``, ``app``, ``thread``, ``slug``, and ``turn``.
+    Options are ``display``, ``app``, ``thread``, ``slug``, ``title``, and
+    ``turn``. ``title`` overrides ``"<thread> <slug>"`` when provided.
     The step awaits ``deliver_wake`` and returns that dict as JSON. It
     does not raise when the gate refuses, so the pipeline run completes
     with ``ok`` false. No model call.
@@ -34,6 +35,7 @@ class DisplayChatWakeHandler(BaseHandler):
             app=opts.get("app"),
             thread=opts.get("thread"),
             slug=opts.get("slug"),
+            title=opts.get("title"),
             turn=opts.get("turn"),
         )
         raw = json.dumps(result)
