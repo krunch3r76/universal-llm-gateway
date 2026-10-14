@@ -19,6 +19,10 @@ from ..registry import register_handler
 from .admission_checks import validate_frontier_dispatch_step
 from .admission_gate import run_admission_gate
 from .cdp_dispatch import is_cdp_dispatch_model, run_cdp_dispatch
+from .cursor_sdk_dispatch import (
+    is_cursor_sdk_dispatch_model,
+    run_cursor_sdk_dispatch,
+)
 from .completion import build_dispatch_output
 from .gen_params import build_frontier_request
 from .native_loop import run_dispatch_loop
@@ -62,6 +66,9 @@ class FrontierDispatchHandler(BaseHandler):
             "download_output",
             "timeout_seconds",
             "skills",
+            "model_knobs",
+            "work_key",
+            "caller_agent",
         }
     )
 
@@ -73,6 +80,8 @@ class FrontierDispatchHandler(BaseHandler):
         admission = await run_admission_gate(self, step, context)
         if is_cdp_dispatch_model(admission.model):
             return await run_cdp_dispatch(self, step, context, admission)
+        if is_cursor_sdk_dispatch_model(admission.model):
+            return await run_cursor_sdk_dispatch(self, step, context, admission)
         bundle = build_frontier_request(self, step, context, admission)
         outcome = await run_dispatch_loop(self, step, context, admission, bundle.req)
         return build_dispatch_output(context, step, admission, outcome, bundle.system)

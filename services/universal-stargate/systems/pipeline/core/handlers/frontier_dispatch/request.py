@@ -87,6 +87,8 @@ def normalize_frontier_wire_model(model: str) -> str:
     resolution = resolve_wire_model_id(model, require_cloud=True)
     if resolution.backend_type == "cdp":
         return resolution.wire_id
+    if resolution.backend_type == "cursor_sdk":
+        return resolution.wire_id
     return require_cloud_api_backend(
         resolution,
         capability="frontier_dispatch",
