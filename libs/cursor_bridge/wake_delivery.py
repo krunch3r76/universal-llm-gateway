@@ -1,9 +1,12 @@
 """Deliver one display wake, or refuse it without raising.
 
 Callers are the ``display-chat-wake`` pipeline step. The debug port is
-chosen from ``app`` and ``display``; the sidebar title comes from
-``read_surface``. A match pastes ``BRIDGE_WAKE thread=<id> turn=<n>``
-into that app's composer and submits it. Any other outcome returns
+chosen from ``app`` and ``display``; the sidebar observation comes from
+``probe_surface``. When ``select=True`` (default) and the target row is
+present in the sidebar, the step can switch to that row provided the
+currently active chat is not generating and its composer is empty. A
+match pastes ``BRIDGE_WAKE thread=<id> turn=<n>`` into that app's
+composer, submits it, and verifies delivery. Any other outcome returns
 ``ok`` false. This module does not fail a pipeline run.
 """
 
@@ -15,7 +18,11 @@ from typing import Any
 from urllib.error import URLError
 
 from cursor_bridge.cdp_pages import list_pages
-from cursor_bridge.chat_surface import probe_surface, wake_decision
+from cursor_bridge.chat_surface import (
+    probe_surface,
+    select_sidebar_target,
+    wake_decision,
+)
 from cursor_bridge.chat_target import wake_line
 
 _TARGETS: dict[tuple[str, str], str] = {
@@ -23,11 +30,14 @@ _TARGETS: dict[tuple[str, str], str] = {
     ("grok", "9"): "http://127.0.0.1:9339",
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
+_DISPLAY_LOCKS: dict[str, asyncio.Lock] = {}
 _COMPOSER_JS = {
     "grok": r"""
 (() => {
   const el = document.querySelector('[aria-label="Prompt"][contenteditable="true"]');
   if (!el) return {ok: false};
+  const draft = (el.innerText || '').trim();
+  if (draft.length > 0) return {ok: false, reason: 'composer_not_empty', draft};
   el.focus();
   const sel = window.getSelection();
   if (sel) {
@@ -42,13 +52,12 @@ _COMPOSER_JS = {
 }
 
 
-def normalize_target(display: object, app: object) -> dict[str, Any]:
-    """Map one display and app to its debug-port origin.
+def _display_lock(display: str) -> asyncio.Lock:
+    return _DISPLAY_LOCKS.setdefault(display, asyncio.Lock())
 
-    ``display`` accepts ``8`` or ``:8``. ``app`` accepts ``cursor``,
-    ``grok``, or ``grok-bot``. An unknown pair returns ``ok`` false and
-    ``reason`` ``unknown_target``. No I/O.
-    """
+
+def normalize_target(display: object, app: object) -> dict[str, Any]:
+    """Map one display and app to its debug-port origin."""
     disp = str(display or "").strip().lstrip(":").lower()
     name = str(app or "").strip().lower().replace("_", "-")
     if name in {"grok-bot", "grokbot"}:
@@ -71,23 +80,25 @@ def _turn(value: object) -> int | None:
 
 
 def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
-    body: dict[str, Any] = {"ok": False, "reason": reason, "pasted": False}
-    body.update(extra)
-    return body
+    return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
 
 
 def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
     wanted = _WINDOW_TITLE.get(app, "")
     named = [
-        page
-        for page in pages
-        if page.get("title") == wanted and page.get("web_socket_debugger_url")
+        p for p in pages if p.get("title") == wanted and p.get("web_socket_debugger_url")
     ]
     if len(named) == 1:
         return named[0]
-    usable = [page for page in pages if page.get("web_socket_debugger_url")]
-    if len(usable) == 1:
-        return usable[0]
+    usable = [p for p in pages if p.get("web_socket_debugger_url")]
+    return usable[0] if len(usable) == 1 else None
+
+
+def _busy_or_draft_reason(surface: dict[str, Any]) -> str | None:
+    if surface.get("generating"):
+        return "active_chat_busy"
+    if str(surface.get("composer_draft") or "").strip():
+        return "composer_not_empty"
     return None
 
 
@@ -98,126 +109,162 @@ async def deliver_wake(
     thread: object,
     slug: object = "",
     title: object = "",
+    agent_id: object = "",
+    select: bool = True,
     turn: object,
 ) -> dict[str, Any]:
-    """Paste one wake when the active sidebar title matches, else refuse.
-
-    Returns ``ok``, ``reason``, and ``pasted``. ``title`` specifies the
-    exact sidebar title to match (e.g. a Grok Bot name); when omitted,
-    ``"<thread> <slug>"`` is used. A title mismatch, a down debug port, or
-    a missing composer is ``ok`` false with ``pasted`` false. The only
-    mutation is the paste after a match. Does not raise for those gate
-    outcomes.
-    """
+    """Select (when allowed) and paste one wake into the target sidebar chat."""
     target = normalize_target(display, app)
     if not target.get("ok"):
-        return _refuse(
-            "unknown_target", display=target.get("display"), app=target.get("app")
-        )
+        return _refuse("unknown_target", display=target.get("display"), app=target.get("app"))
     number = _turn(turn)
     thread_s = str(thread or "").strip()
     slug_s = str(slug or "").strip()
     title_s = str(title or "").strip()
-    if number is None or not thread_s or (not title_s and not slug_s):
+    aid_s = str(agent_id or "").strip()
+    if number is None or not thread_s or (not title_s and not slug_s and not aid_s):
         return _refuse("bad_options", display=target["display"], app=target["app"])
     try:
         line = wake_line(thread_s, number)
     except ValueError:
         return _refuse("bad_options", display=target["display"], app=target["app"])
+
+    async with _display_lock(target["display"]):
+        return await _deliver_locked(
+            target=target,
+            thread_s=thread_s,
+            slug_s=slug_s,
+            title_s=title_s,
+            aid_s=aid_s,
+            select=bool(select),
+            line=line,
+        )
+
+
+async def _deliver_locked(
+    *,
+    target: dict[str, Any],
+    thread_s: str,
+    slug_s: str,
+    title_s: str,
+    aid_s: str,
+    select: bool,
+    line: str,
+) -> dict[str, Any]:
+    disp, app = target["display"], target["app"]
     try:
         pages = list_pages(target["origin"])
     except URLError as exc:
-        return _refuse(
-            "debug_unreachable",
-            display=target["display"],
-            app=target["app"],
-            detail=type(exc).__name__,
-        )
-    page = _pick_page(pages, target["app"])
+        return _refuse("debug_unreachable", display=disp, app=app, detail=type(exc).__name__)
+    page = _pick_page(pages, app)
     if page is None:
-        return _refuse(
-            "no_page",
-            display=target["display"],
-            app=target["app"],
-            pages=len(pages),
-        )
+        return _refuse("no_page", display=disp, app=app, pages=len(pages))
+    ws_url = page["web_socket_debugger_url"]
     try:
-        surface = await probe_surface(page["web_socket_debugger_url"])
+        surface = await probe_surface(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
-        return _refuse(
-            "surface_probe_failed",
-            display=target["display"],
-            app=target["app"],
-            detail=type(exc).__name__,
-        )
+        return _refuse("surface_probe_failed", display=disp, app=app, detail=type(exc).__name__)
     try:
         verdict = wake_decision(
-            surface,
-            thread=thread_s,
-            slug=slug_s,
-            title=title_s or None,
+            surface, thread=thread_s, slug=slug_s, title=title_s or None, agent_id=aid_s or None
         )
     except ValueError:
-        return _refuse("bad_options", display=target["display"], app=target["app"])
+        return _refuse("bad_options", display=disp, app=app)
+
+    selected = False
+    if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
+        guard = _busy_or_draft_reason(surface)
+        if guard:
+            return _refuse(
+                guard,
+                display=disp,
+                app=app,
+                active_title=verdict.get("active_title"),
+                expected_title=verdict.get("expected_title"),
+                expected_agent_id=verdict.get("expected_agent_id"),
+            )
+        click_res = await select_sidebar_target(
+            ws_url,
+            expected_title=str(verdict.get("expected_title") or ""),
+            expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+        )
+        if click_res.get("clicked"):
+            selected = True
+            await asyncio.sleep(0.25)
+            surface = await probe_surface(ws_url)
+            verdict = wake_decision(
+                surface, thread=thread_s, slug=slug_s, title=title_s or None, agent_id=aid_s or None
+            )
+
     if not verdict.get("ok"):
-        verdict["pasted"] = False
-        verdict["display"] = target["display"]
-        verdict["app"] = target["app"]
-        return verdict
-    composer = _COMPOSER_JS.get(target["app"])
+        return {**verdict, "pasted": False, "delivered": False, "selected": selected, "display": disp, "app": app}
+
+    guard = _busy_or_draft_reason(surface)
+    if guard:
+        return _refuse(
+            guard,
+            display=disp,
+            app=app,
+            selected=selected,
+            active_title=verdict.get("active_title"),
+            expected_title=verdict.get("expected_title"),
+        )
+    composer = _COMPOSER_JS.get(app)
     if composer is None:
-        verdict["ok"] = False
-        verdict["reason"] = "composer_unconfirmed"
-        verdict["pasted"] = False
-        return verdict
+        return {**verdict, "ok": False, "reason": "composer_unconfirmed", "pasted": False, "delivered": False, "selected": selected}
     try:
-        pasted = await _paste(page["web_socket_debugger_url"], composer, line)
+        paste_res = await _paste(ws_url, composer, line)
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _refuse(
             "paste_failed",
-            display=target["display"],
-            app=target["app"],
+            display=disp,
+            app=app,
+            selected=selected,
             detail=type(exc).__name__,
             expected_title=verdict.get("expected_title"),
             active_title=verdict.get("active_title"),
         )
-    if not pasted:
+    if not paste_res.get("ok"):
         return _refuse(
-            "no_composer",
-            display=target["display"],
-            app=target["app"],
+            str(paste_res.get("reason") or "no_composer"),
+            display=disp,
+            app=app,
+            selected=selected,
             expected_title=verdict.get("expected_title"),
             active_title=verdict.get("active_title"),
         )
-    verdict["pasted"] = True
-    verdict["display"] = target["display"]
-    verdict["app"] = target["app"]
-    verdict["wake"] = line
-    return verdict
+    await asyncio.sleep(0.25)
+    post = await probe_surface(ws_url)
+    delivered = bool(
+        not str(post.get("composer_draft") or "").strip()
+        or any(line in msg for msg in (post.get("recent_messages") or []))
+    )
+    return {
+        **verdict,
+        "ok": delivered,
+        "reason": verdict.get("reason", "match") if delivered else "delivery_unconfirmed",
+        "pasted": True,
+        "delivered": delivered,
+        "selected": selected,
+        "display": disp,
+        "app": app,
+        "wake": line,
+    }
 
 
-async def _paste(ws_url: str, focus_js: str, line: str) -> bool:
+async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": focus_js, "returnByValue": True},
-                }
-            )
+            json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": focus_js, "returnByValue": True}})
         )
         focused = await asyncio.wait_for(_response(ws, 1), 5.0)
         value = ((focused.get("result") or {}).get("result") or {}).get("value")
         if not isinstance(value, dict) or not value.get("ok"):
-            return False
-        await ws.send(
-            json.dumps(
-                {"id": 2, "method": "Input.insertText", "params": {"text": line}}
-            )
-        )
+            reason = value.get("reason") if isinstance(value, dict) and value.get("reason") else "no_composer"
+            return {"ok": False, "reason": reason}
+        await ws.send(json.dumps({"id": 2, "method": "Input.insertText", "params": {"text": line}}))
         await asyncio.wait_for(_response(ws, 2), 5.0)
         for mid, phase in ((3, "keyDown"), (4, "keyUp")):
             await ws.send(
@@ -236,7 +283,7 @@ async def _paste(ws_url: str, focus_js: str, line: str) -> bool:
                 )
             )
             await asyncio.wait_for(_response(ws, mid), 5.0)
-    return True
+    return {"ok": True}
 
 
 async def _response(ws: Any, mid: int) -> dict[str, Any]:
