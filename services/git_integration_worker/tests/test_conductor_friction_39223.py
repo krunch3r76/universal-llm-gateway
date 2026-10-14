@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
@@ -13,6 +12,8 @@ from agent_bus_store.body_auto_spill import AUTO_OVERFLOW_BRIEFING
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
+    build_hop_team_dispatch_body,
+    hop_body_build_refused,
     maybe_fire_conductor_hop_reactor,
     release_deferred_conductor_hops,
 )
@@ -176,6 +177,17 @@ def _no_registry_watermark() -> patch:
     )
 
 
+def _set_row_started_at(ledger: CursorDispatchLedger, dispatch_id: str, iso: str) -> None:
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=? WHERE dispatch_id=?",
+            (iso, dispatch_id),
+        )
+
+
+_ADMIT_ISO = "2026-10-13T10:00:00+00:00"
+
+
 @pytest.mark.asyncio
 async def test_shape_a_restart_live_child_stamps_then_sweep_admits() -> None:
     ledger = CursorDispatchLedger.instance()
@@ -221,7 +233,69 @@ async def test_shape_a_restart_live_child_stamps_then_sweep_admits() -> None:
                 ("completed", nest_id),
             )
         assert await release_deferred_conductor_hops() == 1
-    post.assert_awaited_once()
+        assert await release_deferred_conductor_hops() == 0
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_shape_a_open_park_live_child_sweep_zero() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-open-park"
+    nest_id = "child-open"
+    _parked_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout_tokens=["PARKED_TRANSPORT"],
+        child_status="running",
+        park_kind="open_park",
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-open"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={"observed_at": "2026-10-13T00:00:00+00:00", "rows": []},
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+        assert await release_deferred_conductor_hops() == 0
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shape_a_confirm_pending_terminal_nest_zero_posts() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-confirm-pending"
+    nest_id = "child-cp"
+    _parked_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout_tokens=["PARKED_TRANSPORT", "CONFIRM_PENDING"],
+        child_status="completed",
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-cp"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={"observed_at": "2026-10-13T00:00:00+00:00", "rows": []},
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+        await release_deferred_conductor_hops()
+    post.assert_not_awaited()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    rec = json.loads(mapped["record_json"])
+    assert hop_body_build_refused(mapped, rec)
 
 
 @pytest.mark.asyncio
@@ -315,6 +389,7 @@ def test_shape_b_wrong_id_then_pre_closeout_match() -> None:
         },
     )
     ledger.mark_terminal(dispatch_id=parent_id, terminal_status="completed")
+    _set_row_started_at(ledger, parent_id, _ADMIT_ISO)
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -326,6 +401,7 @@ def test_shape_b_wrong_id_then_pre_closeout_match() -> None:
         {
             "turn_number": 70,
             "from_agent": "web-anthropic",
+            "created_at": "2026-10-13T10:05:00+00:00",
             "body": f"execution_id: `{_SHAPE_B_OTHER}`\nmentions {_SHAPE_B_FULL}",
         },
     ]
@@ -336,11 +412,23 @@ def test_shape_b_wrong_id_then_pre_closeout_match() -> None:
         {
             "turn_number": 60,
             "from_agent": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
             "subject": f"cdp reply — {_SHAPE_B_FULL}",
         },
     ]
     with _thread_turns(both_turns), _no_registry_watermark():
         assert park_harvest_continue_owed(mapped)
+
+    stale_before_admit = [
+        {
+            "turn_number": 55,
+            "from_agent": "web-anthropic",
+            "created_at": "2026-10-13T09:59:00+00:00",
+            "subject": f"cdp reply — {_SHAPE_B_FULL}",
+        },
+    ]
+    with _thread_turns(stale_before_admit), _no_registry_watermark():
+        assert not _reply_matches_harvest_execution(mapped, _SHAPE_B_FULL)
 
     assert _harvest_id_boundary_match(_SHAPE_B_FULL, "994dc2b4")
     assert not _harvest_id_boundary_match("994dc2b4abcd", "994dc2b4")
@@ -416,13 +504,108 @@ def test_spill_subject_still_matches_overflow_body() -> None:
             "body": f"mentions {_SHAPE_B_FULL}",
         },
     ]
+    _set_row_started_at(ledger, parent_id, _ADMIT_ISO)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    ok_turns[0]["created_at"] = "2026-10-13T10:01:00+00:00"
     with _thread_turns(ok_turns), _no_registry_watermark():
         assert _reply_matches_harvest_execution(mapped, _SHAPE_B_FULL)
     with _thread_turns(bad_turns), _no_registry_watermark():
         assert not _reply_matches_harvest_execution(mapped, _SHAPE_B_FULL)
 
 
-def test_reactor_evaluates_continue_on_worker_thread() -> None:
-    source = inspect.getsource(maybe_fire_conductor_hop_reactor)
-    assert "asyncio.to_thread" in source
-    assert "park_harvest_continue_owed" in source
+def test_shape_b_no_bounds_fail_closed() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-no-bound"
+    _admit(ledger, _req(dispatch_id=parent_id), contract="conductor")
+    ledger.merge_record_json(
+        dispatch_id=parent_id,
+        patch={
+            "closeout_body": f"NEXT_ADMIT: harvest {_SHAPE_B_FULL}\n",
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_turn": 10,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=parent_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=NULL WHERE dispatch_id=?",
+            (parent_id,),
+        )
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    turns = [
+        {
+            "turn_number": 99,
+            "from_agent": "web-anthropic",
+            "subject": f"cdp reply — {_SHAPE_B_FULL}",
+        },
+    ]
+    with _thread_turns(turns), _no_registry_watermark():
+        assert not _reply_matches_harvest_execution(mapped, _SHAPE_B_FULL)
+
+
+def test_hop_body_refused_row_pinned_with_parked_transport_nest() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-row-pinned"
+    nest_id = "child-rp"
+    _parked_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout_tokens=["PARKED_TRANSPORT", "ROW_PINNED"],
+        child_status="completed",
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    rec = json.loads(row["record_json"])
+    assert hop_body_build_refused(mapped, rec)
+    assert build_hop_team_dispatch_body(mapped) is None
+
+
+@pytest.mark.asyncio
+async def test_reactor_routes_continue_before_park_harvest_owed() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-continue-route"
+    _admit(ledger, _req(dispatch_id=parent_id), contract="conductor")
+    ledger.merge_record_json(
+        dispatch_id=parent_id,
+        patch={
+            "closeout_body": f"NEXT_ADMIT: harvest {_SHAPE_B_FULL}\n",
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_turn": 62,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=parent_id, terminal_status="completed")
+    _set_row_started_at(ledger, parent_id, _ADMIT_ISO)
+    continue_mock = AsyncMock(return_value=True)
+    park_mock = AsyncMock()
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.fire_park_harvest_continue",
+        continue_mock,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.park_harvest_owed",
+        park_mock,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.park_harvest_continue_owed",
+        return_value=True,
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+    continue_mock.assert_awaited_once()
+    park_mock.assert_not_called()

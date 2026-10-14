@@ -517,6 +517,8 @@ def _turn_cdp_reply_candidate_id(turn: dict[str, Any]) -> str | None:
         match = pattern.match(subject)
         if match:
             return str(match.group("id")).strip()
+    if subject:
+        return None
     body = str(turn.get("body") or "")
     from agent_bus_store.body_auto_spill import AUTO_OVERFLOW_BRIEFING
 
@@ -527,6 +529,36 @@ def _turn_cdp_reply_candidate_id(turn: dict[str, Any]) -> str | None:
         if line_match:
             return str(line_match.group("id")).strip()
     return None
+
+
+def _row_admitted_at_iso(row: dict[str, Any]) -> str | None:
+    text = str(row.get("started_at") or "").strip()
+    return text or None
+
+
+def _harvest_reply_lower_bound_watermark(
+    *,
+    thread_id: str,
+    started_iso: str | None,
+    row_admit_iso: str | None,
+) -> int | None:
+    """Latest turn at or before max(CDP start, row admit); None stays fail-closed."""
+    if started_iso is None and row_admit_iso is None:
+        return None
+    bounds: list[int] = []
+    for instant in (started_iso, row_admit_iso):
+        if instant is None:
+            continue
+        wm = resolve_consult_summoning_watermark_at_instant(
+            thread_id=thread_id,
+            closeout_instant=instant,
+        )
+        if wm is None:
+            return None
+        bounds.append(wm)
+    if not bounds:
+        return None
+    return max(bounds)
 
 
 def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
@@ -550,18 +582,20 @@ def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
     if not thread_ids:
         return False
     started_iso = _harvest_execution_started_at_iso(token)
-    watermarks: dict[str, int | None] = {}
-    if started_iso is not None:
-        for tid in thread_ids:
-            watermarks[tid] = resolve_consult_summoning_watermark_at_instant(
-                thread_id=tid,
-                closeout_instant=started_iso,
-            )
+    row_admit_iso = _row_admitted_at_iso(row)
+    if started_iso is None and row_admit_iso is None:
+        return False
     for tid in thread_ids:
         turns = _fetch_thread_turns(tid)
         if turns is None:
             return False
-        watermark = watermarks.get(tid)
+        watermark = _harvest_reply_lower_bound_watermark(
+            thread_id=tid,
+            started_iso=started_iso,
+            row_admit_iso=row_admit_iso,
+        )
+        if watermark is None:
+            return False
         for turn in sorted(turns, key=lambda t: t.get("turn_number", 0)):
             turn_number = turn.get("turn_number")
             if not isinstance(turn_number, int):
@@ -571,7 +605,7 @@ def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
             candidate = _turn_cdp_reply_candidate_id(turn)
             if candidate is None or not _harvest_id_boundary_match(candidate, token):
                 continue
-            if isinstance(watermark, int) and turn_number <= watermark:
+            if turn_number <= watermark:
                 continue
             return True
     return False
@@ -857,6 +891,16 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
 
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
+    if dispatch_id:
+        ledger = CursorDispatchLedger.instance()
+        with ledger._connect() as conn:
+            fresh = conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if fresh is not None:
+            row = {k: fresh[k] for k in fresh.keys()}
+            thread_id = str(row.get("thread_id") or "")
     if _park_harvest_stop_claim_exhausted(row):
         return False
     body = build_hop_team_dispatch_body(row, hop_reason_override="park_harvest")
