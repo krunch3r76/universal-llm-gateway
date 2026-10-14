@@ -53,7 +53,9 @@ def test_liaison_ide_hop_passes_preamble_to_seal(capsys) -> None:
         patch.object(hop_mod, "resolve_now_row", return_value=("R16 test", "arg")),
         patch.object(hop_mod, "format_now_line", return_value="R16 test"),
         patch.object(hop_mod, "seal_hop_window", side_effect=fake_seal),
-        patch.object(hop_mod, "fire_ide_hop", return_value={"ok": True, "root": "10479"}),
+        patch.object(
+            hop_mod, "fire_ide_hop", return_value={"ok": True, "root": "10479"}
+        ),
         patch.object(hop_mod, "retire_departing_tab", return_value={"ok": True}),
         patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
         patch.object(hop_mod, "live_watcher_labels", return_value=[]),
@@ -359,7 +361,12 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
             kwargs_result = on_fired()
             assert kwargs_result.get("phase") == "quiesced"
         # Script-level paths under test via returned phases.
-        return {"ok": True, "phase": "landed", "root": "10479", "quiesce": {"phase": "quiesced"}}
+        return {
+            "ok": True,
+            "phase": "landed",
+            "root": "10479",
+            "quiesce": {"phase": "quiesced"},
+        }
 
     def fake_retire(root, holder, **_k):
         calls.append("retire")
@@ -378,7 +385,11 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
         ),
         patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
         patch.object(hop_mod, "retire_departing_tab", side_effect=fake_retire),
-        patch.object(hop_mod, "quiesce_departing_tab", side_effect=lambda *a, **k: {"ok": True, "phase": "quiesced"}),
+        patch.object(
+            hop_mod,
+            "quiesce_departing_tab",
+            side_effect=lambda *a, **k: {"ok": True, "phase": "quiesced"},
+        ),
         patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
         patch.object(hop_mod, "live_watcher_labels", return_value=[]),
         patch.object(hop_mod, "tick_register", return_value="attended"),

@@ -126,6 +126,8 @@ OPERATOR_LOOP = (
     "You run the bus. Do not ask the operator to abort, hire, or edit. "
     "A finished watch with no next leg is not a situation report."
 )
+
+
 def _pid_alive(pid: Any) -> bool:
     try:
         n = int(pid)
@@ -359,9 +361,7 @@ def seal_hop_window(
         return {"ok": False, "phase": "checkpoint_bad_response"}
     poll_hint = accepted.get("poll_hint") if isinstance(accepted, dict) else None
     args = (
-        poll_hint.get("arguments_json")
-        if isinstance(poll_hint, dict)
-        else None
+        poll_hint.get("arguments_json") if isinstance(poll_hint, dict) else None
     ) or {}
     after_turn = int(args.get("after_turn") or 0)
     wait_from = str(args.get("from_agent") or from_agent)
@@ -677,7 +677,15 @@ def fire_ide_hop(
     try:
         try:
             proc = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
+                [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=20",
+                    gui_host,
+                    cmd,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=90,

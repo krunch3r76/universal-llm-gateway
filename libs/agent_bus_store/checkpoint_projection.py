@@ -122,9 +122,7 @@ class CheckpointBodyTooLargeError(Exception):
         excess = body_chars - limit_chars
         residue_shed = excess
         cited_shed = (
-            min(cited_row_count, max(1, excess // 200))
-            if cited_row_count
-            else 0
+            min(cited_row_count, max(1, excess // 200)) if cited_row_count else 0
         )
         message = (
             f"Projected CHECKPOINT body is {body_chars:,} chars "
@@ -237,11 +235,7 @@ def _extract_artifact_uris(body: str) -> tuple[str, ...]:
 
 
 def _cited_thread_ids(tokens: tuple[CitationToken, ...]) -> tuple[str, ...]:
-    return tuple(
-        token.identifier
-        for token in tokens
-        if token.kind == "agent_bus"
-    )
+    return tuple(token.identifier for token in tokens if token.kind == "agent_bus")
 
 
 def _truncate_claim(text: str, limit: int = _CLAIM_HEAD_MAX) -> str:
@@ -273,7 +267,7 @@ def _render_entity_row(row: EntityAssertionRow, *, summary_mode: bool) -> str:
     flag_text = f" · {' · '.join(flags)}" if flags else ""
     return (
         f"- {row.row_id} · {row.entity} · "
-        f"\"{_truncate_claim(row.claim_head)}\"{conf}{flag_text}"
+        f'"{_truncate_claim(row.claim_head)}"{conf}{flag_text}'
     )
 
 
