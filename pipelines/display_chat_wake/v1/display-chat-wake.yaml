@@ -1,7 +1,9 @@
-# display-chat-wake — paste one BRIDGE_WAKE when the sidebar title matches.
+# display-chat-wake — select and paste one BRIDGE_WAKE into the target sidebar chat.
 #
-# One step. Options: display, app, thread, slug, title, turn.
-# A title mismatch finishes the run with ok false. It does not fail the pipeline.
+# One step. Options: display, app, thread, slug, title, agent_id, select, turn.
+# When select is true (default), switches to the target sidebar row if the active
+# chat is idle and its composer is empty. Any gate refusal finishes the run with
+# ok false without failing the pipeline.
 #
 #   pipeline(op="run", pipeline_id="display-chat-wake",
 #            messages=[{"role":"user","content":"wake"}],
@@ -9,20 +11,21 @@
 #              "display": "9",
 #              "app": "grok",
 #              "thread": "15851",
-#              "title": "Grok Coordinator 1",
-#              "turn": 285,
+#              "title": "Coordinator Relay 2",
+#              "agent_id": "5e5acdab-7081-4eef-ba5f-9c5a4fb0e071",
+#              "turn": 286,
 #            })
 
 schema_version: 6
 id: display-chat-wake
-version: "1.0"
+version: "1.1"
 type: display_chat_wake
 category: display_chat_wake
 description: >
-  Paste BRIDGE_WAKE thread=<id> turn=<n> into the named display app when
-  the active sidebar title matches the specified `title` (or "<thread> <slug>"
-  when `title` is omitted). Any other gate result completes with ok false
-  and pasted false.
+  Select (when needed and safe) and paste BRIDGE_WAKE thread=<id> turn=<n>
+  into the named display app matching `agent_id` or `title` (or "<thread> <slug>"
+  when both are omitted). Refuses with ok false when the active chat is
+  generating, the composer holds draft text, or the target is missing.
 output: display-chat-wake
 
 options:
@@ -41,12 +44,20 @@ options:
     default: ""
   slug:
     type: string
-    description: thread slug when sidebar title is "<thread> <slug>" (optional if title is set)
+    description: thread slug when sidebar title is "<thread> <slug>" (optional if title or agent_id is set)
     default: ""
   title:
     type: string
     description: exact sidebar title to match (overrides "<thread> <slug>" when set)
     default: ""
+  agent_id:
+    type: string
+    description: surface data-agent-id UUID to match first when set
+    default: ""
+  select:
+    type: boolean
+    description: automatically click the target sidebar row when not already active
+    default: true
   turn:
     type: integer
     description: bus turn to wake; the paste does not include the turn body

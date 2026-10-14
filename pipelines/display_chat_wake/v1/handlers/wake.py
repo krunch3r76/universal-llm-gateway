@@ -1,8 +1,9 @@
-"""One pipeline step that pastes a display wake or returns ok false.
+"""One pipeline step that selects and pastes a display wake or returns ok false.
 
-The run completes either way. A title mismatch is a finished result, not
-a failed step. claude.ai reads ``ok`` and does not retry a mismatch as
-an infrastructure error.
+The run completes either way. A gate refusal (busy chat, non-empty draft,
+or missing row) is a finished result, not a failed step. Callers read
+``ok`` and ``delivered`` without retrying a refusal as an infrastructure
+error.
 """
 
 from __future__ import annotations
@@ -16,13 +17,13 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 
 
 class DisplayChatWakeHandler(BaseHandler):
-    """Paste ``BRIDGE_WAKE`` when the sidebar title matches the target.
+    """Select (when needed) and paste ``BRIDGE_WAKE`` into the target chat.
 
-    Options are ``display``, ``app``, ``thread``, ``slug``, ``title``, and
-    ``turn``. ``title`` overrides ``"<thread> <slug>"`` when provided.
-    The step awaits ``deliver_wake`` and returns that dict as JSON. It
-    does not raise when the gate refuses, so the pipeline run completes
-    with ``ok`` false. No model call.
+    Options are ``display``, ``app``, ``thread``, ``slug``, ``title``,
+    ``agent_id``, ``select``, and ``turn``. ``agent_id`` matches first when
+    provided; ``title`` overrides ``"<thread> <slug>"``. The step awaits
+    ``deliver_wake`` and returns that dict as JSON without raising on gate
+    refusals. No model call.
     """
 
     step_type = "display_chat_wake_v1"
@@ -30,12 +31,15 @@ class DisplayChatWakeHandler(BaseHandler):
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         opts = getattr(context, "options", {}) or {}
+        select_opt = opts.get("select")
         result = await deliver_wake(
             display=opts.get("display"),
             app=opts.get("app"),
             thread=opts.get("thread"),
             slug=opts.get("slug"),
             title=opts.get("title"),
+            agent_id=opts.get("agent_id"),
+            select=True if select_opt is None else bool(select_opt),
             turn=opts.get("turn"),
         )
         raw = json.dumps(result)

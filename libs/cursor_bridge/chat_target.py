@@ -36,6 +36,13 @@ def chat_title(
     return f"{thread_s} {slug_s}"
 
 
+def normalize_agent_id(agent_id: str | None) -> str:
+    """Normalize an optional surface agent UUID/id (single line, stripped)."""
+    if agent_id is None or not str(agent_id).strip():
+        return ""
+    return _one_line(str(agent_id), "agent_id")
+
+
 def name_instruction(title: str) -> str:
     """First-paste sentence that creates the title selection will look up.
 
