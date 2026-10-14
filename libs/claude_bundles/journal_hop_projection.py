@@ -110,16 +110,10 @@ def render_register_card(
 ) -> str:
     """Render ``## Register`` — whole card capped at *max_lines*, or absence line."""
     if register_text is None:
-        return (
-            "## Register\n\n"
-            f"Register card absent at {register_uri}.\n"
-        )
+        return f"## Register\n\nRegister card absent at {register_uri}.\n"
     lines = [ln for ln in (register_text or "").splitlines() if ln.strip()]
     if not lines:
-        return (
-            "## Register\n\n"
-            f"Register card absent at {register_uri}.\n"
-        )
+        return f"## Register\n\nRegister card absent at {register_uri}.\n"
     capped = "\n".join(lines[:max_lines])
     return f"## Register\n\n{capped}\n"
 
@@ -134,11 +128,11 @@ def _read_cortex_uri(
             return read_uri(uri)
         rel = uri.removeprefix("cortex://").lstrip("/")
         path = cortex_files_root() / rel
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    except OSError:
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
-    return None
 
 
 def load_journal_text_for_hop(
@@ -202,7 +196,7 @@ def hop_journal_projection_fields(
     else:
         try:
             reg_body = _read_cortex_uri(MAESTRO_REGISTER_URI, read_uri=read_uri)
-        except UnicodeError as exc:
+        except (OSError, UnicodeError) as exc:
             register = (
                 "## Register\n\n"
                 f"[render_failed register_card: {type(exc).__name__} — "

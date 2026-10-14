@@ -11,13 +11,16 @@ import pytest
 from claude_bundles.journal_hop_projection import (
     MAESTRO_JOURNAL_URI,
     MAESTRO_REGISTER_URI,
+    _read_cortex_uri,
     project_lessons_in_force,
 )
 from claude_bundles.operator_proxy_hop_status import (
     MISSING_HANDOFF_INSTRUCTION,
+    cortex_archive_path_exists,
     extract_thread_id,
     hop_successor_fields,
     house_rules_section,
+    read_cortex_uri_from_root,
     standing_handoff_text_for_prompt,
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
@@ -845,4 +848,200 @@ def test_ac8_journal_projection_raise_replaces_only_those_blocks(
     assert "[render_failed register_card: RuntimeError" in out
     assert "rules-still-here" in out
     assert "checkpoint-x" in out
+    assert "## Hard refusals" in out
+
+
+_ABSENT_HANDOFF = "standing handoff file absent"
+_ABSENT_REGISTER = f"Register card absent at {MAESTRO_REGISTER_URI}"
+_SHA = "a" * 64
+
+
+def _cortex_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+
+
+def test_standing_handoff_absent_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    loaded = standing_handoff_text_for_prompt("thread_id: 42\n")
+    assert loaded is None
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 42\n",
+        standing_handoff_text=loaded,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert _ABSENT_HANDOFF in out
+
+
+def test_standing_handoff_oserror_is_render_failed() -> None:
+    def _read(_thread_id: str) -> str | None:
+        raise OSError("disk")
+
+    loaded = standing_handoff_text_for_prompt("thread_id: 42\n", read_path=_read)
+    assert loaded == (
+        "[render_failed standing_handoff: OSError — read "
+        "cortex://notes/system/threads/42-standing-handoff.md]"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 42\n",
+        standing_handoff_text=loaded,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert loaded in out
+    assert _ABSENT_HANDOFF not in out
+    assert "is absent" not in out
+
+
+def test_standing_handoff_non_utf8_is_render_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    path = tmp_path / "notes/system/threads/42-standing-handoff.md"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff")
+    loaded = standing_handoff_text_for_prompt("thread_id: 42\n")
+    assert loaded is not None
+    assert "UnicodeDecodeError" in loaded
+    assert loaded.startswith("[render_failed standing_handoff:")
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 42\n",
+        standing_handoff_text=loaded,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert loaded in out
+    assert _ABSENT_HANDOFF not in out
+    assert "## Hard refusals" in out
+
+
+def test_archive_path_absent_is_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    assert (
+        cortex_archive_path_exists("cortex://notes/system/threads/missing.md") is False
+    )
+
+
+def test_archive_path_oserror_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(self: Path) -> bool:
+        raise OSError("stat")
+
+    monkeypatch.setattr(Path, "is_file", _boom)
+    with pytest.raises(OSError, match="stat"):
+        cortex_archive_path_exists("cortex://notes/system/threads/x.md")
+    monkeypatch.undo()
+    sidecar = (
+        "## CURRENT LEG\n"
+        "archived_prev: cortex://notes/system/threads/x.md sha256 "
+        + _SHA
+        + "\n### OWED / NEXT\nx\n"
+    )
+
+    def _exists(_path: str) -> bool:
+        raise OSError("stat")
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 42\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        archive_path_exists=_exists,
+    )
+    assert (
+        "[render_failed archive_path: OSError — read cortex://notes/system/threads/x.md]"
+        in out
+    )
+    assert "archive_missing" not in out
+
+
+def test_archive_path_non_utf8_still_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    path = tmp_path / "notes/system/threads/bin.md"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff")
+    assert cortex_archive_path_exists("cortex://notes/system/threads/bin.md") is True
+
+
+def test_read_cortex_uri_absent_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    assert (
+        read_cortex_uri_from_root("cortex://notes/system/maestro/register.md") is None
+    )
+    assert _read_cortex_uri(MAESTRO_REGISTER_URI) is None
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text=None,
+        read_cortex_uri=read_cortex_uri_from_root,
+    )
+    assert _ABSENT_REGISTER in out
+
+
+def test_read_cortex_uri_oserror_is_render_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    path = tmp_path / "notes/system/maestro/register.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("card\n", encoding="utf-8")
+
+    def _boom(self: Path, *args: object, **kwargs: object) -> str:
+        raise OSError("read")
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+    with pytest.raises(OSError, match="read"):
+        read_cortex_uri_from_root(MAESTRO_REGISTER_URI)
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text=None,
+        read_cortex_uri=read_cortex_uri_from_root,
+    )
+    assert "[render_failed register_card: OSError — read " in out
+    assert _ABSENT_REGISTER not in out
+
+
+def test_read_cortex_uri_non_utf8_is_render_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    path = tmp_path / "notes/system/maestro/register.md"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff")
+    with pytest.raises(UnicodeDecodeError):
+        read_cortex_uri_from_root(MAESTRO_REGISTER_URI)
+    with pytest.raises(UnicodeDecodeError):
+        _read_cortex_uri(MAESTRO_REGISTER_URI)
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text=None,
+    )
+    assert (
+        "[render_failed register_card: UnicodeDecodeError — read "
+        f"{MAESTRO_REGISTER_URI}]"
+    ) in out
+    assert _ABSENT_REGISTER not in out
     assert "## Hard refusals" in out

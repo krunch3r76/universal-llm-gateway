@@ -527,8 +527,11 @@ def render_checkpoint_block(
         if exists_check is not None:
             try:
                 missing = not exists_check(path)
-            except Exception:  # noqa: BLE001
-                missing = True
+            except Exception as exc:  # noqa: BLE001 — unreadable ≠ absent
+                meta["flags"].append(
+                    f"[render_failed archive_path: {type(exc).__name__} — read {path}]"
+                )
+                missing = False
         if missing:
             meta["flags"].append("archive_missing")
 

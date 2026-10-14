@@ -72,6 +72,14 @@ def extract_thread_id(text: str) -> str | None:
     return None
 
 
+def _render_failed(block: str, exc: BaseException, uri: str) -> str:
+    return f"[render_failed {block}: {type(exc).__name__} — read {uri}]"
+
+
+def _is_standing_handoff_failure(text: str | None) -> bool:
+    return bool(text) and text.startswith("[render_failed standing_handoff:")
+
+
 def standing_handoff_text_for_prompt(
     prompt: str,
     *,
@@ -80,20 +88,25 @@ def standing_handoff_text_for_prompt(
     """Load the standing-handoff sidecar for the thread id named in *prompt*.
 
     Returns None when no thread id is parseable or the file is absent.
+    Read and decode failures return a ``[render_failed standing_handoff: …]``
+    line (truthy, so callers do not treat them as absence).
     *read_path* is a test seam; production reads ``standing_handoff_path``.
     """
     thread_id = extract_thread_id(prompt)
     if not thread_id:
         return None
-    if read_path is not None:
-        return read_path(thread_id)
-    path = standing_handoff_path(thread_id)
+    uri = standing_handoff_uri(thread_id)
     try:
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    except OSError:
+        if read_path is not None:
+            return read_path(thread_id)
+        path = standing_handoff_path(thread_id)
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
-    return None
+    except (OSError, UnicodeError) as exc:
+        return _render_failed("standing_handoff", exc, uri)
 
 
 def _heading_sections(text: str) -> list[tuple[str, str]]:
@@ -137,19 +150,27 @@ def _cortex_path(uri_or_path: str) -> Path:
 
 
 def cortex_archive_path_exists(path: str) -> bool:
-    """True when *path* is a file under the cortex files root."""
-    try:
-        return _cortex_path(path).is_file()
-    except OSError:
-        return False
+    """True when *path* is a file under the cortex files root.
+
+    Missing → False. ``OSError`` (permission, IO) propagates so callers do not
+    report the archive as absent.
+    """
+    return _cortex_path(path).is_file()
 
 
 def read_cortex_uri_from_root(uri: str) -> str | None:
-    """Read a ``cortex://`` URI from the cortex files root. Missing → None; read errors propagate."""
+    """Read a ``cortex://`` URI from the cortex files root.
+
+    Missing → None. ``OSError`` other than ``FileNotFoundError``, and
+    ``UnicodeError``, propagate.
+    """
     path = _cortex_path(uri)
-    if not path.is_file():
+    try:
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
-    return path.read_text(encoding="utf-8")
 
 
 def production_standing_seams() -> dict[str, Any]:
@@ -163,10 +184,6 @@ def production_standing_seams() -> dict[str, Any]:
         "archive_path_exists": cortex_archive_path_exists,
         "read_cortex_uri": read_cortex_uri_from_root,
     }
-
-
-def _render_failed(block: str, exc: BaseException, uri: str) -> str:
-    return f"[render_failed {block}: {type(exc).__name__} — read {uri}]"
 
 
 def hop_successor_fields(
@@ -193,7 +210,12 @@ def hop_successor_fields(
     """Fill the hop-successor template from the prompt, handoff, and bus state."""
     lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
     birth = parse_successor_birth_id(prompt or "") or UNKNOWN_FIELD
-    sidecar = standing_handoff_text or ""
+    handoff_failure = (
+        standing_handoff_text
+        if _is_standing_handoff_failure(standing_handoff_text)
+        else ""
+    )
+    sidecar = "" if handoff_failure else (standing_handoff_text or "")
     exec_id = (execution_id or "").strip()
     execution_clause = f", execution_id {exec_id}" if exec_id else ""
 
@@ -243,7 +265,9 @@ def hop_successor_fields(
             act5_fetch_last = 5
 
     try:
-        if not sidecar:
+        if handoff_failure:
+            house_rules_verbatim = handoff_failure
+        elif not sidecar:
             house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
         else:
             house_rules_verbatim, _rules_budget = render_house_rules_block(
@@ -268,7 +292,13 @@ def hop_successor_fields(
         live_leg = _render_failed("live_leg", exc, handoff_uri)
     lane_list = ", ".join(lanes) if lanes else "none"
 
-    if sidecar:
+    if handoff_failure:
+        digest = ""
+        running_now = (
+            "## What is running now (computed at render from agent-bus state on "
+            f"lanes {lane_list}; {handoff_failure})"
+        )
+    elif sidecar:
         digest = handoff_file_sha256(sidecar)
         running_now = (
             "## What is running now (computed at render from agent-bus state on "
