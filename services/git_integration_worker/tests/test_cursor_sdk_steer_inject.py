@@ -1323,14 +1323,18 @@ def test_inherit_while_append_serializes(spool: Path) -> None:
     t_append.start()
     t_inherit.join()
     t_append.join()
-    child = json.loads(spool_path(spool, "child-t2").read_text(encoding="utf-8"))
-    auths = {
+    parent = json.loads(spool_path(spool, "parent-t2").read_text(encoding="utf-8"))
+    parent_auths = {
         str(r.get("authority_turn_id"))
-        for r in child.get("pending") or []
+        for r in parent.get("pending") or []
         if isinstance(r, dict)
     }
-    assert auths <= {"auth-base", "auth-late"}
-    assert len(auths) == len(set(auths))
+    assert parent_auths == {"auth-base", "auth-late"}
+    child = json.loads(spool_path(spool, "child-t2").read_text(encoding="utf-8"))
+    child_pending = [r for r in child.get("pending") or [] if isinstance(r, dict)]
+    child_auths = [str(r.get("authority_turn_id")) for r in child_pending]
+    assert "auth-base" in child_auths
+    assert len(child_auths) == len(set(child_auths))
 
 
 def test_inherit_then_successor_cancel_expires_child_pending(
@@ -1389,7 +1393,7 @@ def test_inherit_fresh_deposited_at_delivers_after_old_ttl(spool: Path) -> None:
         child_id="child-t6",
         spool_dir=spool,
     )
-    envelope = consume_next_steer_envelope("child-t6", spool_dir=spool, live=True)
+    envelope = consume_next_steer_envelope("child-t6", spool_dir=spool)
     assert envelope is not None
     assert "ttl refresh" in envelope
 
