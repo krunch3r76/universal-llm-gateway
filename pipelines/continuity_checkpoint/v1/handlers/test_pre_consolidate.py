@@ -52,7 +52,9 @@ def test_validate_worker_payload_accepts_preamble_without_residue() -> None:
     assert reason == "ok"
 
 
-def test_parse_worker_json_follows_sdk_envelope_to_sidecar(tmp_path, monkeypatch) -> None:
+def test_parse_worker_json_follows_sdk_envelope_to_sidecar(
+    tmp_path, monkeypatch
+) -> None:
     sidecar = tmp_path / "closeout.md"
     sidecar.write_text(
         '```json\n{"card_patch": {"resume_open": "line"}, '
@@ -126,7 +128,11 @@ async def test_pre_consolidate_fetches_closeout_from_qualifying_reply_turn() -> 
     dispatch_resp = {
         "thread_id": "10435",
         "poll_hint": {
-            "arguments": {"thread": "10435", "after_turn": 1, "from_agent": "cursor-sdk"}
+            "arguments": {
+                "thread": "10435",
+                "after_turn": 1,
+                "from_agent": "cursor-sdk",
+            }
         },
         "reply_from_agent": "cursor-sdk",
         "dispatch_id": "d1",
@@ -249,7 +255,11 @@ async def test_seed_is_folded_and_worker_awaited() -> None:
     dispatch_resp = {
         "thread_id": "10435",
         "poll_hint": {
-            "arguments": {"thread": "10435", "after_turn": 1, "from_agent": "cursor-sdk"}
+            "arguments": {
+                "thread": "10435",
+                "after_turn": 1,
+                "from_agent": "cursor-sdk",
+            }
         },
         "reply_from_agent": "cursor-sdk",
         "dispatch_id": "d1",
@@ -321,9 +331,7 @@ async def test_waits_past_non_closeout_first_reply() -> None:
     async def _wait_side_effect(**_kwargs: object) -> tuple[dict[str, object], int]:
         return wait_responses.pop(0), 200
 
-    async def _fetch_side_effect(
-        *, thread: str, turn_number: int
-    ) -> dict[str, object]:
+    async def _fetch_side_effect(*, thread: str, turn_number: int) -> dict[str, object]:
         del thread
         if turn_number == 2:
             return {
@@ -343,7 +351,11 @@ async def test_waits_past_non_closeout_first_reply() -> None:
     dispatch_resp = {
         "thread_id": "10435",
         "poll_hint": {
-            "arguments": {"thread": "10435", "after_turn": 1, "from_agent": "cursor-sdk"}
+            "arguments": {
+                "thread": "10435",
+                "after_turn": 1,
+                "from_agent": "cursor-sdk",
+            }
         },
         "reply_from_agent": "cursor-sdk",
         "dispatch_id": "d1",

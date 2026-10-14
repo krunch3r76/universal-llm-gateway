@@ -244,10 +244,9 @@ def main() -> int:
         tip_cp_ordinal=tip_cp,
         register=tick_register(args.root),
     )
+
     def _on_fired() -> dict:
-        return quiesce_departing_tab(
-            args.root, transcript_id=args.transcript_id
-        )
+        return quiesce_departing_tab(args.root, transcript_id=args.transcript_id)
 
     out = fire_ide_hop(
         message,

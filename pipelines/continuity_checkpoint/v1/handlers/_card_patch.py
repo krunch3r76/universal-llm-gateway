@@ -41,9 +41,7 @@ def render_preamble_markdown(
 ) -> str:
     """Render uncapped preamble markdown for checkpoint sidecar storage."""
     header = (
-        f"# RESUME PREAMBLE — thread {thread_id}"
-        if thread_id
-        else "# RESUME PREAMBLE"
+        f"# RESUME PREAMBLE — thread {thread_id}" if thread_id else "# RESUME PREAMBLE"
     )
     parts = [header]
     stance = str(preamble.get("stance") or "").strip()
@@ -85,7 +83,9 @@ def derive_pointer_residue(
         clamped, _ = clamp_residue(raw)
         return clamped
     if preamble and not raw:
-        mission_line = _first_line(mission) or _first_line(str(preamble.get("stance") or ""))
+        mission_line = _first_line(mission) or _first_line(
+            str(preamble.get("stance") or "")
+        )
         next_line = _first_line(str(preamble.get("next_action") or ""))
         pointer = (
             f"Mission: {mission_line}\nNext: {next_line}\n"
@@ -185,7 +185,13 @@ def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
     residue = str(data.get("residue") or "")
     mission = str(data.get("mission") or "")
     preamble = normalize_preamble(data) or {}
-    for field in (residue, mission, preamble.get("stance", ""), preamble.get("facts", ""), preamble.get("next_action", "")):
+    for field in (
+        residue,
+        mission,
+        preamble.get("stance", ""),
+        preamble.get("facts", ""),
+        preamble.get("next_action", ""),
+    ):
         if "### User" in field or "### Assistant" in field:
             return False, "speech_in_residue"
     has_preamble = normalize_preamble(data) is not None

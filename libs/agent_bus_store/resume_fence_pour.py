@@ -171,82 +171,85 @@ def assemble_resume_fence_in_txn(
         bundle["preamble"] = mission_preamble
     bundle.update(
         {
-        "bundle_version": _BUNDLE_VERSION,
-        "fence": {
-            "fence_id": fence_id,
-            "root_thread": thread_id,
-            "transcript_id": transcript_id,
-            "state": "poured",
-            "opened_at": datetime.now(UTC).isoformat(),
-            "head_sha": resolve_code_version(),
-        },
-        "mission": mission,
-        "skills_to_use": mission.get("skills_to_use") or [],
-        "letter": letter,
-        "fence_carriage": {
-            "fence_id": fence_id,
-            "transcript_id": transcript_id,
-            "durable_send_requires_fence_id": False,
-            "first_hop": _resume_first_hop(
-                thread_id,
-                transcript_id=transcript_id,
-                surface=surface,
-            ),
-        },
-        "tip_checkpoint": {
-            "turn_number": tip["turn_number"],
-            "turn_id": tip["id"],
-            "subject": tip["subject"],
-            "body": tip["body"],
-            "supersedes_turn": tip.get("supersedes_turn"),
-            "created_at": tip.get("created_at"),
-        },
-        "resume_envelope": envelope,
-        "tape": {
-            "message_count": envelope.get("message_count", len(verbal)),
-            "truncated": envelope.get("tape_truncated", False),
-            "degraded": envelope.get("tape_degraded"),
-            "bytes": tape_bytes,
-            "scope": envelope.get("scope", "last_session"),
-            "read_via": {
-                "tool": "continuity",
-                "op": "tape_read",
-                "thread": thread_id,
-                "scope": "last_session",
+            "bundle_version": _BUNDLE_VERSION,
+            "fence": {
+                "fence_id": fence_id,
+                "root_thread": thread_id,
+                "transcript_id": transcript_id,
+                "state": "poured",
+                "opened_at": datetime.now(UTC).isoformat(),
+                "head_sha": resolve_code_version(),
             },
-        },
-        "card": (
-            {
-                "uri": card.uri,
-                "sha256": card.sha256,
-                "read_via": {"tool": "fs", "op": "read", "path": card.uri},
-            }
-            if card.status == "found"
-            else {"status": "missing", "tried": list(card.tried)}
-        ),
-        "projection": {
-            "uri": projection_uri,
-            "sha256": None,
-            "open_line": open_line,
-        },
-        "opportunities": {
-            "uri": _OPPORTUNITIES_URI.format(thread=thread_id),
-            "sha256": None,
-        },
-        "read_set": read_set,
-        "stance": "Use the ulg-for-llms skill.",
-        "provenance": {
-            "built_at": datetime.now(UTC).isoformat(),
-            "sources": (
-                [{"uri": card.uri, "sha256": card.sha256}]
+            "mission": mission,
+            "skills_to_use": mission.get("skills_to_use") or [],
+            "letter": letter,
+            "fence_carriage": {
+                "fence_id": fence_id,
+                "transcript_id": transcript_id,
+                "durable_send_requires_fence_id": False,
+                "first_hop": _resume_first_hop(
+                    thread_id,
+                    transcript_id=transcript_id,
+                    surface=surface,
+                ),
+            },
+            "tip_checkpoint": {
+                "turn_number": tip["turn_number"],
+                "turn_id": tip["id"],
+                "subject": tip["subject"],
+                "body": tip["body"],
+                "supersedes_turn": tip.get("supersedes_turn"),
+                "created_at": tip.get("created_at"),
+            },
+            "resume_envelope": envelope,
+            "tape": {
+                "message_count": envelope.get("message_count", len(verbal)),
+                "truncated": envelope.get("tape_truncated", False),
+                "degraded": envelope.get("tape_degraded"),
+                "bytes": tape_bytes,
+                "scope": envelope.get("scope", "last_session"),
+                "read_via": {
+                    "tool": "continuity",
+                    "op": "tape_read",
+                    "thread": thread_id,
+                    "scope": "last_session",
+                },
+            },
+            "card": (
+                {
+                    "uri": card.uri,
+                    "sha256": card.sha256,
+                    "read_via": {"tool": "fs", "op": "read", "path": card.uri},
+                }
                 if card.status == "found"
-                else []
-            )
-            + [
-                {"uri": f"agent-bus:{thread_id}#{tip['turn_number']}", "sha256": None},
-            ],
-        },
-    }
+                else {"status": "missing", "tried": list(card.tried)}
+            ),
+            "projection": {
+                "uri": projection_uri,
+                "sha256": None,
+                "open_line": open_line,
+            },
+            "opportunities": {
+                "uri": _OPPORTUNITIES_URI.format(thread=thread_id),
+                "sha256": None,
+            },
+            "read_set": read_set,
+            "stance": "Use the ulg-for-llms skill.",
+            "provenance": {
+                "built_at": datetime.now(UTC).isoformat(),
+                "sources": (
+                    [{"uri": card.uri, "sha256": card.sha256}]
+                    if card.status == "found"
+                    else []
+                )
+                + [
+                    {
+                        "uri": f"agent-bus:{thread_id}#{tip['turn_number']}",
+                        "sha256": None,
+                    },
+                ],
+            },
+        }
     )
     if mission_preamble and mission_preamble.get("next_action"):
         bundle["tail"] = {"next_action": mission_preamble.get("next_action")}

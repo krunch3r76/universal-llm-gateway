@@ -91,7 +91,9 @@ def test_extract_tip_preamble_reads_sidecar_file(root_with_sidecar) -> None:
     assert parsed["next_action"].startswith("Run the first bounded leg")
 
 
-def test_build_mission_block_includes_preamble_and_next_action(root_with_sidecar) -> None:
+def test_build_mission_block_includes_preamble_and_next_action(
+    root_with_sidecar,
+) -> None:
     _root, uri = root_with_sidecar
     tip_body = (
         "## Residue (authored — cap ~800 chars)\n"
