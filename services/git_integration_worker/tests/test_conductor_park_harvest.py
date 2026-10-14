@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
+import pwd
 import time
+import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from bus_watch.park_harvest import harvest_still_owed
 
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CURSOR_SDK_DISPATCH_LEDGER_ENV,
+    CursorDispatchLedger,
+    resolve_cursor_sdk_dispatch_ledger_path,
+)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
@@ -71,22 +79,43 @@ hop_seq: 1
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    root = tmp_path / "giw-ledger-root"
+    root.mkdir(parents=True, exist_ok=True)
+    isolated_db = root / "cursor-sdk-dispatch.db"
+    monkeypatch.setenv("DATA_DIR", str(root))
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, str(isolated_db))
+    SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
-    yield tmp_path
+    yield root
+    SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    dispatch_id = str(overrides.get("dispatch_id", uuid.uuid4().hex[:20]))
+    execution_id = str(overrides.get("execution_id", f"exec-{dispatch_id}"))
     base = {
         "thread_id": "10065",
         "model": "cursor/composer-2.5",
-        "dispatch_id": "pred-park-1",
-        "execution_id": "exec-pred-park-1",
+        "dispatch_id": dispatch_id,
+        "execution_id": execution_id,
         "message": "conductor",
     }
     base.update(overrides)
     return CursorDispatchRequest(**base)
+
+
+def test_park_harvest_module_pins_dispatch_ledger_away_from_live_gateway() -> None:
+    """Module autouse must pin CURSOR_SDK_DISPATCH_LEDGER so bridge export cannot win."""
+    pinned = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
+    assert pinned, "module autouse must set CURSOR_SDK_DISPATCH_LEDGER"
+    resolved = resolve_cursor_sdk_dispatch_ledger_path()
+    live_gateway = (Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway").resolve()
+    assert resolved == Path(pinned).resolve()
+    assert resolved != (live_gateway / "cursor-sdk-dispatch.db").resolve()
+    assert not resolved.is_relative_to(live_gateway)
 
 
 def _admit_conductor(
