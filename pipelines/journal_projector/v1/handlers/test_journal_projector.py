@@ -15,6 +15,13 @@ from systems.pipeline.core.execution.async_tracker import (
     TrackerCapacityError,
 )
 from systems.pipeline.core.execution.async_tracker import lifecycle as lifecycle_mod
+from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
+from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
+    reject_unknown_runtime_options,
+)
+from systems.pipeline.core.handlers.frontier_dispatch.handler import (
+    FrontierDispatchHandler,
+)
 from systems.pipeline.core.handlers.frontier_dispatch.request import (
     resolve_system_prompt,
 )
@@ -31,13 +38,6 @@ from pipelines.journal_projector.v1.handlers.append_closeout import (
 )
 from pipelines.journal_projector.v1.handlers.parse_lesson import (
     JournalProjectorParseHandler,
-)
-from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
-from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
-    reject_unknown_runtime_options,
-)
-from systems.pipeline.core.handlers.frontier_dispatch.handler import (
-    FrontierDispatchHandler,
 )
 from pipelines.journal_projector.v1.handlers.projector_guard import (
     reject_projector_wire_model,
@@ -260,7 +260,9 @@ def test_append_fails_closed_without_projector_live(
     assert "seat-owned" in journal.read_text(encoding="utf-8")
 
 
-def test_append_dedupes_turn_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_append_dedupes_turn_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     journal = tmp_path / "notes/system/maestro/journal.md"
     _seed_projector_journal(journal)
@@ -300,31 +302,42 @@ def test_append_conflict_fails_closed(
 
 def test_running_is_not_failure() -> None:
     assert projection_poll_is_delay(tracker_status="running") is True
-    assert projection_poll_is_delay(tracker_status="completed", wait_status="predicate_unmet")
-    assert seat_may_fallback_after_projector_failure(
-        journal_text="projector_live: d1\n",
-        tracker_status="running",
-    ) is False
+    assert projection_poll_is_delay(
+        tracker_status="completed", wait_status="predicate_unmet"
+    )
+    assert (
+        seat_may_fallback_after_projector_failure(
+            journal_text="projector_live: d1\n",
+            tracker_status="running",
+        )
+        is False
+    )
 
 
 def test_provider_error_is_failure() -> None:
     closeout = "provider_error\nmodel unavailable\n"
     assert closeout_indicates_provider_error(closeout) is True
-    assert seat_may_fallback_after_projector_failure(
-        journal_text="projector_live: d1\n",
-        closeout_text=closeout,
-        tracker_status="completed",
-    ) is True
+    assert (
+        seat_may_fallback_after_projector_failure(
+            journal_text="projector_live: d1\n",
+            closeout_text=closeout,
+            tracker_status="completed",
+        )
+        is True
+    )
     assert writer_mode("projector_live: d1\n") == "projector"
 
 
 def test_capacity_error_is_failed() -> None:
     err = TrackerCapacityError("full")
     assert isinstance(err, TrackerCapacityError)
-    assert seat_may_fallback_after_projector_failure(
-        journal_text="projector_live: x\n",
-        capacity_error=True,
-    ) is True
+    assert (
+        seat_may_fallback_after_projector_failure(
+            journal_text="projector_live: x\n",
+            capacity_error=True,
+        )
+        is True
+    )
 
 
 def test_async_admit_poll_hint_shape() -> None:
