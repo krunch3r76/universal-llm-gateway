@@ -49,7 +49,7 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert "watcher 10479-10586-r9-none complete" in text
     assert "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
     assert (
-        "do not re-read): liaison skill · reasoning-posture skill · git-posture § Land"
+        "do not re-read): ide-continuity skill · reasoning-posture skill · git-posture § Land"
         in text
     )
     assert "register=autonomous · hopper paused (10479#210)" in text
@@ -245,7 +245,7 @@ def test_induction_cse_fire_keeps_skill_activation_when_summary_row_stale() -> N
     )
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
-    assert 'slug="liaison"' in cse
+    assert 'slug="ide-continuity"' in cse
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "IN FLIGHT lane 11364" not in cse
@@ -287,7 +287,7 @@ def test_induction_cse_surface_use_lines() -> None:
     cse = build_wake_induction(_digest(), surface="cse")
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
-    assert 'slug="liaison"' in cse
+    assert 'slug="ide-continuity"' in cse
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "Use the git-posture skill" not in cse
@@ -299,7 +299,7 @@ def test_induction_cse_use_lines_are_bare_slugs() -> None:
     """claude.ai mounts a body only on an exact slug — a label leaks and mounts nothing."""
     cse = build_wake_induction(
         _digest(
-            policy={"induction_loaded": ["liaison skill", "git-posture § Land", "`fs`"]}
+            policy={"induction_loaded": ["ide-continuity skill", "git-posture § Land", "`fs`"]}
         ),
         surface="cse",
     )
@@ -308,16 +308,16 @@ def test_induction_cse_use_lines_are_bare_slugs() -> None:
     assert "Use the fs skill" in cse
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
-    assert 'slug="liaison"' in cse
+    assert 'slug="ide-continuity"' in cse
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
 
 
 def test_induction_cse_liaison_cursor_only_inlines_sot_body_in_skills_inline() -> None:
-    """``liaison`` is ``cursor_only`` — SOT body in ``<skills_inline>``, not Use-the."""
+    """``ide-continuity`` is ``cursor_only`` — SOT body in ``<skills_inline>``, not Use-the."""
     cse = build_wake_induction(_digest(policy={}), surface="cse")
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
-    assert 'slug="liaison"' in cse
+    assert 'slug="ide-continuity"' in cse
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
 
@@ -326,7 +326,7 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
     """Loaded fence must mirror navigator_doorbell_skills_from_policy (delivery list)."""
     policy = {
         "navigator_skills": [
-            "liaison",
+            "ide-continuity",
             "reasoning-posture",
             "architecture-invariants",
             "ulg-architecture",
@@ -335,7 +335,7 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
     }
     text = build_wake_induction(_digest(policy=policy))
     assert (
-        "Loaded already (do not re-read): liaison skill · reasoning-posture skill · "
+        "Loaded already (do not re-read): ide-continuity skill · reasoning-posture skill · "
         "architecture-invariants skill · ulg-architecture skill · git-posture § Land"
         in text
     )
@@ -343,7 +343,7 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
     assert "Use the architecture-invariants skill" not in cse
     assert "Use the ulg-architecture skill" not in cse
     assert "<skills_inline>" in cse
-    assert 'slug="liaison"' in cse
+    assert 'slug="ide-continuity"' in cse
     assert 'slug="architecture-invariants"' in cse
     assert 'slug="ulg-architecture"' in cse
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
@@ -367,7 +367,7 @@ def test_induction_cse_cap_trims_use_lines_last() -> None:
     assert "Standing: register=" in text
     assert "Use the reasoning-posture skill" in text
     assert "<skills_inline>" in text
-    assert 'slug="liaison"' in text
+    assert 'slug="ide-continuity"' in text
     assert CSE_INLINE_TRUNCATION_MARKER in text
 
 

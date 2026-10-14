@@ -44,7 +44,7 @@ CSE_INLINE_SKILL_MAX_CHARS = 800
 CSE_INLINE_TRUNCATION_MARKER = "full SOT not sealed"
 # Distinctive SOT lines the successor must receive inside ``<skills_inline>`` (not via fetch).
 _CSE_INLINE_ANCHORS: dict[str, str] = {
-    "liaison": "harvests → folds → decides → admits one conductor → checkpoints → hops",
+    "ide-continuity": "harvests → folds → decides → admits one conductor → checkpoints → hops",
 }
 _INLINE_SLUG_RE = re.compile(r'<skill slug="([^"]+)"')
 _EVENT_ITEMS = 3
