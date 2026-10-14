@@ -50,6 +50,10 @@ def _run_arm(
     )
 
 
+def _proc_fd_inode(pid: int, fd: int) -> int:
+    return os.stat(f"/proc/{pid}/fd/{fd}").st_ino
+
+
 def _last_json(stdout: str) -> dict:
     for line in reversed(stdout.splitlines()):
         line = line.strip()
@@ -96,10 +100,23 @@ def test_arm_detaches_and_writes_meta(watch_dir: Path) -> None:
         pid = int(row["pid"])
         assert (watch_dir / f"liaison-loop-{root}.meta.json").is_file()
         assert (watch_dir / f"liaison-loop-{root}.monitor-heartbeat").is_file()
+        log_path = watch_dir / f"liaison-loop-{root}.log"
+        attempt_path = watch_dir / f"liaison-loop-{root}.attempt.log"
+        assert log_path.is_file()
+        assert not attempt_path.exists()
+        ino_log = log_path.stat().st_ino
+        assert ino_log == _proc_fd_inode(pid, 1) == _proc_fd_inode(pid, 2)
+        marker = "AGENT_LOOP_TICK_liaison inode-fd-regression\n"
+        with open(f"/proc/{pid}/fd/1", "w", encoding="utf-8") as loop_out:
+            loop_out.write(marker)
+            loop_out.flush()
+        assert marker.strip() in log_path.read_text(encoding="utf-8")
         # Detached from the arm shell (setsid → reparent).
         status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
         ppid = int(
-            next(line for line in status.splitlines() if line.startswith("PPid:")).split()[1]
+            next(
+                line for line in status.splitlines() if line.startswith("PPid:")
+            ).split()[1]
         )
         assert ppid == 1
         os.kill(pid, signal.SIGTERM)
