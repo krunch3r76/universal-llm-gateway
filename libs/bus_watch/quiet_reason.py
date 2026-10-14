@@ -334,7 +334,7 @@ def _post_holder_lost_turn(thread_id: str, execution_id: str) -> bool:
     payload = {
         "thread": thread_id,
         "from": "liaison-ticker",
-        "to": "web-anthropic",
+        "to": "web",
         "subject": f"holder_lost {execution_id}",
         "body": (
             f"execution_id={execution_id}\n"

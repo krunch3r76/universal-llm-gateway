@@ -88,7 +88,7 @@ def _mint_child(
         "parent_thread": root,
         "lane_role": "hop",
         "from": "cursor",
-        "to": "web-anthropic",
+        "to": "web",
         "subject": f"LOOP-TAPE {root}",
         "body": body,
     }
