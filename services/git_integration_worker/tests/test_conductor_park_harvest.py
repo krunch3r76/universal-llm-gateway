@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
     _evaluate_harvest_reply_execution,
+    _park_harvest_target_token,
     _reply_matches_harvest_execution,
     build_park_harvest_arm_recipe,
     fire_park_harvest_continue,
@@ -1393,3 +1394,58 @@ def test_evaluate_harvest_reply_id_mismatch() -> None:
         )
     assert not matched
     assert predicate == "reply_id_mismatch"
+
+
+_HARVEST_124_INLINE = "fa67d1a2-ea32-4262-b258-287834b4bb51"
+_HARVEST_LINE_ANCHORED = "994dc2b4-d1dd-4206-bd97-2ad0109478bc"
+
+
+def test_park_harvest_target_token_midline_next_admit_124_class() -> None:
+    """16671#124: inline NEXT_ADMIT harvest id when no line-anchored payload."""
+    guard = (
+        "status: complete\n"
+        f"prose continues NEXT_ADMIT: harvest {_HARVEST_124_INLINE} on same line\n"
+    )
+    assert _park_harvest_target_token(guard) == _HARVEST_124_INLINE
+
+
+def test_park_harvest_target_token_line_anchored_beats_older_inline() -> None:
+    """Line-anchored last NEXT_ADMIT wins over an earlier inline mention."""
+    older = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    guard = (
+        f"quoted earlier NEXT_ADMIT: harvest {older} in prose\n"
+        f"NEXT_ADMIT: harvest {_HARVEST_LINE_ANCHORED}\n"
+    )
+    assert _park_harvest_target_token(guard) == _HARVEST_LINE_ANCHORED
+
+
+def test_park_harvest_continue_uses_midline_harvest_token() -> None:
+    """Continue path resolves inline harvest token (not no_harvest_token refusal)."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-midline-124")
+    _production_parked_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_body": (
+                "stop: PARKED_TRANSPORT\n"
+                f"done with leg NEXT_ADMIT: harvest {_HARVEST_124_INLINE}\n"
+            ),
+        },
+    )
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_evaluate_harvest_reply_execution",
+        return_value=(False, "reply_absent"),
+    ) as evaluate:
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+        ) as emit_refused:
+            assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_called_once()
+        assert emit_refused.call_args.kwargs["predicate"] == "reply_absent"
+        assert emit_refused.call_args.kwargs["harvest_token"] == _HARVEST_124_INLINE
+    evaluate.assert_called_once()
+    assert evaluate.call_args[0][1] == _HARVEST_124_INLINE

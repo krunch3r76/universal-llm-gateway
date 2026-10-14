@@ -491,6 +491,30 @@ _CDP_REPLY_SUBJECT_PLAIN_RE = re.compile(
 _EXECUTION_ID_LINE_RE = re.compile(
     r"(?i)^execution_id:\s*`?(?P<id>[^`\n]+)`?\s*$"
 )
+# Park-harvest continue only: inline NEXT_ADMIT when line-anchored parse misses (#124).
+_MIDLINE_NEXT_ADMIT_HARVEST_RE = re.compile(
+    r"(?i)NEXT_ADMIT\s*:\s*harvest\s+"
+    r"(?:`?"
+    r"(?P<id>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    r"|[0-9a-f]{12}-[0-9a-f]{8}"
+    r"|[0-9a-f]{8,32})"
+    r"`?)"
+)
+
+
+def _park_harvest_target_token(guard: str) -> str | None:
+    """Harvest id for park-harvest continue; line-anchored NEXT_ADMIT wins over inline."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _harvest_target_token,
+    )
+
+    token = _harvest_target_token(guard)
+    if token is not None:
+        return token
+    last_id: str | None = None
+    for match in _MIDLINE_NEXT_ADMIT_HARVEST_RE.finditer(guard or ""):
+        last_id = str(match.group("id"))
+    return last_id
 
 
 def _harvest_id_boundary_match(candidate: str, token: str) -> bool:
@@ -909,7 +933,6 @@ def park_harvest_continue_owed(
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _nested_harvest_head,
         _next_admit_guard_text,
-        _harvest_target_token,
         conductor_has_live_nested,
         live_conductor_row_on_thread,
         mission_open_for_row,
@@ -918,7 +941,7 @@ def park_harvest_continue_owed(
     if _nested_harvest_head(row, rec) is not None:
         return False
     guard = _next_admit_guard_text(row, rec)
-    harvest_token = _harvest_target_token(guard)
+    harvest_token = _park_harvest_target_token(guard)
     if harvest_token is None:
         _maybe_record_park_harvest_continue_refused(
             row, predicate="no_harvest_token", harvest_token=None
