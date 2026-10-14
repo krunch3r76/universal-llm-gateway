@@ -10,6 +10,7 @@ from typing import Any
 from hop_handoff.standing_handoff import standing_handoff_uri
 
 from claude_bundles.maestro_runbook_load import load_maestro_runbook
+from claude_bundles.runbook_excerpt import extract_sections
 
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
@@ -617,15 +618,26 @@ def render_pointers_block(
     )
 
 
+def runbook_refuse_steps_bytes(body: str | None) -> int | None:
+    """UTF-8 length of ``## Refuse`` plus ``## Steps``, or None when unreadable."""
+    if body is None:
+        return None
+    try:
+        excerpt = extract_sections(body, ("Refuse", "Steps"))
+    except ValueError:
+        return None
+    return _utf8_len(excerpt)
+
+
 def maestro_runbook_act2_line() -> str:
     """Act-2 body for the hop template (ordinal ``2.`` lives on the template line)."""
     body, _err = load_maestro_runbook()
-    if not body:
+    size = runbook_refuse_steps_bytes(body)
+    if size is None:
         return (
             "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
             "§ Refuse and § Steps only (size unknown)."
         )
-    size = _utf8_len(body)
     return (
         "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
         f"§ Refuse and § Steps only (runbook {size} bytes)."

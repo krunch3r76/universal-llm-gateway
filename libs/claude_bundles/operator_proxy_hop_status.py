@@ -45,6 +45,7 @@ from claude_bundles.operator_proxy_standing_render import (
     render_house_rules_block,
     render_inflight_block,
     render_pointers_block,
+    runbook_refuse_steps_bytes,
 )
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
@@ -399,14 +400,11 @@ def hop_successor_fields(
     runbook_bytes: int | None = None
     try:
         runbook_body, _runbook_err = load_maestro_runbook()
-        runbook_bytes = (
-            len(runbook_body.encode("utf-8")) if runbook_body else None
-        )
+        runbook_bytes = runbook_refuse_steps_bytes(runbook_body)
     except Exception:  # noqa: BLE001 — budgets table is fail-open
         runbook_bytes = None
-    journal_head_bytes = (
-        len((journal_text or "").encode("utf-8")) if journal_text else None
-    )
+    raw_journal_bytes = journal_fields.get("journal_head_bytes")
+    journal_head_bytes = int(raw_journal_bytes) if raw_journal_bytes else None
     try:
         budgets_table = render_budgets_table_block(
             lane=lane,
@@ -415,6 +413,9 @@ def hop_successor_fields(
             runbook_bytes=runbook_bytes,
             journal_head_bytes=journal_head_bytes,
         )
+        over_budget = journal_fields.get("journal_over_budget_flag") or ""
+        if hop_kind == "housekeeping" and over_budget:
+            budgets_table = f"{budgets_table}\n\n{over_budget}"
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
         budgets_table = _render_failed("budgets_table", exc, standing_handoff_uri(lane))
 

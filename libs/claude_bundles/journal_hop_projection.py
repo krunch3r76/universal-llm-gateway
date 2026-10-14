@@ -167,6 +167,14 @@ def _journal_preamble(head_text: str) -> str:
     return body[: match.start()]
 
 
+def journal_over_budget_flag(total_bytes: int) -> str:
+    """The single over-budget line ``_journal_head_flags`` emits."""
+    return (
+        f"[journal_over_budget {total_bytes}/{JOURNAL_HEAD_BYTES}"
+        " — rotation owed at next hop]"
+    )
+
+
 def _journal_head_flags(
     head_text: str,
     *,
@@ -175,10 +183,7 @@ def _journal_head_flags(
 ) -> list[str]:
     flags: list[str] = []
     if total_bytes is not None and total_bytes > JOURNAL_HEAD_BYTES:
-        flags.append(
-            f"[journal_over_budget {total_bytes}/{JOURNAL_HEAD_BYTES}"
-            " — rotation owed at next hop]"
-        )
+        flags.append(journal_over_budget_flag(total_bytes))
     preamble = _journal_preamble(head_text)
     archived = _ARCHIVED_PREV_RE.search(preamble)
     if not archived:
@@ -290,11 +295,16 @@ def hop_journal_projection_fields(
     else:
         lessons = project_lessons_in_force(text, role=role)
 
+    over_budget_flag = ""
     try:
         flags = _journal_head_flags(
             text or "",
             total_bytes=total_bytes,
             archive_path_exists=archive_path_exists,
+        )
+        over_budget_flag = next(
+            (flag for flag in flags if flag.startswith("[journal_over_budget ")),
+            "",
         )
         lessons = _prepend_journal_flags(lessons, flags)
     except Exception:  # noqa: BLE001 — flags must not abort hop projection
@@ -322,7 +332,12 @@ def hop_journal_projection_fields(
         else:
             register = render_register_card(reg_body)
 
-    return {"lessons_in_force": lessons, "register_card": register}
+    fields = {"lessons_in_force": lessons, "register_card": register}
+    if total_bytes is not None:
+        fields["journal_head_bytes"] = str(total_bytes)
+    if over_budget_flag:
+        fields["journal_over_budget_flag"] = over_budget_flag
+    return fields
 
 
 __all__ = [

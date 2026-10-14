@@ -31,6 +31,7 @@ from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_
 from claude_bundles.operator_proxy_standing_render import (
     assess_render_budget_and_identity,
 )
+from claude_bundles.runbook_excerpt import extract_sections
 
 pytestmark = pytest.mark.offline
 
@@ -454,7 +455,10 @@ def test_read_cortex_journal_head_unreadable_renders_unavailable(
     finally:
         os.chmod(journal_path, 0o644)
     assert "journal unavailable" in out
-    assert "(none)" not in out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    assert (
+        "(none)"
+        not in out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
+    )
 
 
 def test_journal_head_trim_drops_severed_rule_line(
@@ -537,6 +541,101 @@ def test_journal_head_over_budget_renders_flag() -> None:
     assert "rule 7" in lessons
     assert "rule 3" in lessons
     assert "rule 2" not in lessons
+
+
+def _exact_utf8(text: str, total: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) > total:
+        raise AssertionError(f"prefix {len(encoded)} exceeds {total}")
+    pad = total - len(encoded)
+    if pad == 0:
+        return text
+    return text + ("x" * (pad - 1)) + "\n"
+
+
+def test_housekeeping_journal_over_budget_from_head_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    journal_path = tmp_path / "notes/system/maestro/journal.md"
+    journal_path.parent.mkdir(parents=True)
+    entry = "## 2026-10-01 — entry\nRULE: [route] r\n"
+    journal_path.write_bytes(_exact_utf8(entry, 70000).encode("utf-8"))
+    out = ensure_operator_proxy_mission_prompt(
+        "hop_kind: housekeeping\nthread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\n### OWED / NEXT\nx\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    assert "[journal_over_budget 70000/65536 — rotation owed at next hop]" in out
+    assert "| 70000/65536 |" in out
+
+    journal_path.write_bytes(_exact_utf8(entry, 1000).encode("utf-8"))
+    under = ensure_operator_proxy_mission_prompt(
+        "hop_kind: housekeeping\nthread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\n### OWED / NEXT\nx\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    assert "[journal_over_budget" not in under
+    assert "| 1000/65536 |" in under
+
+
+def test_runbook_cost_is_refuse_plus_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cortex_root(tmp_path, monkeypatch)
+    runbook = tmp_path / "notes/runbooks/maestro-loop.md"
+    runbook.parent.mkdir(parents=True)
+    body = (
+        "## Refuse\n"
+        + ("r\n" * 200)
+        + "## Steps\n"
+        + ("s\n" * 200)
+        + "## Appendix\n"
+        + ("a" * 40000)
+        + "\n"
+    )
+    runbook.write_text(body, encoding="utf-8")
+    n = len(extract_sections(body, ("Refuse", "Steps")).encode("utf-8"))
+    whole = len(body.encode("utf-8"))
+    assert n < 32768 < whole
+    housekeeping = ensure_operator_proxy_mission_prompt(
+        "hop_kind: housekeeping\nthread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\n### OWED / NEXT\nx\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    mission = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\n### OWED / NEXT\nx\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    assert f"| {n}/32768 |" in housekeeping
+    assert f"(runbook {n} bytes)." in mission
+    assert str(whole) not in housekeeping
+    assert str(whole) not in mission
+
+    over = "## Refuse\n" + "r\n" + "## Steps\n" + ("s" * 40000) + "\n"
+    runbook.write_text(over, encoding="utf-8")
+    over_n = len(extract_sections(over, ("Refuse", "Steps")).encode("utf-8"))
+    assert over_n > 32768
+    over_out = ensure_operator_proxy_mission_prompt(
+        "hop_kind: housekeeping\nthread_id: 12286\n",
+        standing_handoff_text="## CURRENT LEG\n### OWED / NEXT\nx\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        register_text="",
+    )
+    cell = f"| {over_n}/32768 |"
+    assert cell in over_out
+    numerator = cell.split("|")[1].strip().split("/")[0]
+    assert int(numerator) > 32768
 
 
 def test_journal_archived_prev_missing_flags_archive_missing() -> None:
@@ -805,7 +904,10 @@ def test_friction_39270_roster_unreadable_surfaces_and_matches_absent_lanes(
     assert "roster unreadable: UnicodeDecodeError" in unreadable_out
     unreadable_rn = _running_now_segment(unreadable_out)
     absent_rn = _running_now_segment(absent_out)
-    assert unreadable_rn.split("; roster unreadable:")[0] == absent_rn.split("; standing")[0]
+    assert (
+        unreadable_rn.split("; roster unreadable:")[0]
+        == absent_rn.split("; standing")[0]
+    )
 
 
 def test_friction_39270_absent_roster_omits_unreadable_clause() -> None:
