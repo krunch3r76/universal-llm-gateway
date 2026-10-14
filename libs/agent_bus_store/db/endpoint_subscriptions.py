@@ -44,7 +44,9 @@ def list_subscriptions(
     agent: str | None = None, thread_scope: str | None = None
 ) -> list[dict[str, Any]]:
     """List current rows (MAX id per key), optionally filtered."""
-    clauses = ["id IN (SELECT MAX(id) FROM agent_endpoint_subscriptions GROUP BY agent, thread_scope)"]
+    clauses = [
+        "id IN (SELECT MAX(id) FROM agent_endpoint_subscriptions GROUP BY agent, thread_scope)"
+    ]
     params: list[str] = []
     if agent is not None:
         clauses.append("agent=?")
@@ -93,19 +95,29 @@ def subscribe_endpoint(
     if canon == "web-anthropic":
         raise SubscribeError("endpoint_cse_delegated")
     scope = thread_scope.strip()
-    if scope == "*" and (
-        surface != "grok" or canon in {"all", "team"} or _GROK_BOT.match(canon) is None
-    ):
+    surface_raw = str(surface).strip().lower()
+    wildcard_ok = (
+        surface_raw == "grok"
+        and canon not in {"all", "team"}
+        and _GROK_BOT.match(canon) is not None
+    ) or (surface_raw == "cse" and canon == "maestro")
+    if scope == "*" and not wildcard_ok:
         raise SubscribeError("endpoint_wildcard_refused")
-    if str(surface).strip().lower() == "cursor":
+    if surface_raw == "cursor":
         raise SubscribeError("endpoint_surface_unconfirmed")
     if not (title or agent_id):
         raise SubscribeError("endpoint_title_or_agent_required")
-    target = normalize_target(display, surface)
-    if not target.get("ok"):
-        raise SubscribeError("endpoint_target_refused")
-    surface_n = str(target["app"])
-    display_n = str(target["display"])
+    if surface_raw == "cse":
+        if not agent_id:
+            raise SubscribeError("endpoint_title_or_agent_required")
+        surface_n = "cse"
+        display_n = str(display or "cse").strip().lower() or "cse"
+    else:
+        target = normalize_target(display, surface)
+        if not target.get("ok"):
+            raise SubscribeError("endpoint_target_refused")
+        surface_n = str(target["app"])
+        display_n = str(target["display"])
     proposed = {
         "state": "subscribed",
         "surface": surface_n,
@@ -132,7 +144,17 @@ def subscribe_endpoint(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
-            (canon, scope, "subscribed", surface_n, display_n, title, agent_id, bound_by, evidence),
+            (
+                canon,
+                scope,
+                "subscribed",
+                surface_n,
+                display_n,
+                title,
+                agent_id,
+                bound_by,
+                evidence,
+            ),
         )
         new_id = int(cur.lastrowid)
         row = _row(

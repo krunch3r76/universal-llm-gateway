@@ -137,6 +137,34 @@ def test_fire_cse_followup_no_identity() -> None:
     assert out["source"] == "local"
 
 
+def test_fire_cse_followup_giw_fallback_populates_chat_url() -> None:
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": None,
+                "registration_id": None,
+                "url": None,
+                "source": "local",
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+    ):
+        out = fire_cse_followup(
+            "wake turns 3",
+            "12286",
+            dry_run=True,
+            fallback_chat_url="https://claude.ai/chat/streaming",
+            fallback_registration_id="reg-giw",
+        )
+    assert out["ok"] is True
+    assert out["body"]["chat_url"] == "https://claude.ai/chat/streaming"
+    assert out["body"]["registration_id"] == "reg-giw"
+
+
 def test_fire_cse_followup_transport_error_never_raises() -> None:
     def _post(method: str, url: str, *, json=None, timeout: float):  # noqa: ANN001
         raise httpx.ConnectError("connection refused")

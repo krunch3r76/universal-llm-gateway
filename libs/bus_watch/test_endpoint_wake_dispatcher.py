@@ -64,6 +64,50 @@ def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     assert claim_due_wakes(now="2020-01-01 00:20:00")["wake_id"] is None
 
 
+def test_debounce_cleared_after_target_reply(db: None) -> None:
+    from agent_bus_store.db.connection import write_connect
+
+    detail = create_thread(thread_id=None, slug="deb-reply")
+    assert detail is not None
+    thread = str(detail["id"])
+    a_id, _t, a_n, _c = insert_turn(
+        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|a", body="a"
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher", 0, a_id,
+        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")
+    record_wake_result(wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 00:00:02")
+    reply_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="REPLY|x",
+        body="r",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:05", reply_id),
+        )
+    c_id, _t3, c_n, _c3 = insert_turn(
+        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|c", body="c"
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher", a_id, c_id,
+        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": c_id, "turn_number": c_n}],
+        now="2020-01-01 00:00:30",
+    )
+    early = claim_due_wakes(now="2020-01-01 00:00:40")
+    assert early["wake_id"]
+    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [c_id]
+
+
 def test_debounce_second_turn_waits(db: None) -> None:
     detail = create_thread(thread_id=None, slug="deb")
     assert detail is not None
@@ -188,6 +232,93 @@ def test_scan_holders_exception_propagates() -> None:
 
     with pytest.raises(httpx.ConnectError):
         scan_once(Boom())  # type: ignore[arg-type]
+
+
+def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
+    from unittest.mock import patch
+
+    detail = create_thread(thread_id=None, slug="maestro-cse")
+    assert detail is not None
+    bus_thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=bus_thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="CONSULT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": bus_thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert claimed["wake_id"]
+    holder = {
+        "chat_url": "https://claude.ai/chat/maestro",
+        "registration_id": "reg-maestro",
+    }
+    bodies: list[str] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            assert lane_thread_id == "12286"
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    def _capture(induction: str, root_id: str, **kwargs: object) -> dict:
+        bodies.append(induction)
+        return {
+            "ok": True,
+            "dry_run": kwargs.get("dry_run"),
+            "registration_id": "reg-maestro",
+            "url": holder["chat_url"],
+            "body": {
+                "chat_url": holder["chat_url"],
+                "registration_id": "reg-maestro",
+            },
+        }
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_capture):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert bodies[0] == f"wake thread {bus_thread} turns {number}"
+    assert bodies[1] == f"wake thread {bus_thread} turns {number}"
 
 
 def test_scan_store_connect_error_propagates() -> None:

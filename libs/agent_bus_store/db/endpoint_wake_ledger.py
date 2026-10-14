@@ -135,6 +135,15 @@ def claim_due_wakes(
                 SELECT 1 FROM endpoint_wake_ledger d
                 WHERE d.agent=p.agent AND d.thread_id=p.thread_id
                   AND d.state='delivered' AND d.finished_at>?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turns t
+                    WHERE t.thread=p.thread_id
+                      AND t.created_at > d.finished_at
+                      AND (
+                        lower(trim(t.from_agent))=lower(trim(p.agent))
+                        OR lower(trim(t.from_agent))='web-anthropic'
+                      )
+                  )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger u
