@@ -32,6 +32,7 @@ from .checks import (
     observe_nonterminal_intents,
 )
 from .client import call_manage
+from .detach import TMUX_BIN
 from .pane import (
     TreeContainsFn,
     find_tmux_target_hosting_manage,
@@ -45,7 +46,6 @@ from .result import (
     GuardedReexecResult,
     prove_pickup,
 )
-from .detach import TMUX_BIN
 from .seat_prelude import (
     PANE_RULING,
     caller_dispatch_id,
@@ -370,9 +370,11 @@ def run_guarded_reexec(
         require_drain_clear=False,
     )
 
-    # Same occupant guard on dry-run and execute; the caller counts as one.
+    # Dry-run may exclude the caller; execute still counts the caller as an occupant.
     occupant_finding = observe_giw_occupants(
-        report.busy_status or {}, caller_dispatch=caller_dispatch_id()
+        report.busy_status or {},
+        caller_dispatch=caller_dispatch_id(),
+        dry_run=dry_run,
     )
     _attach_finding(report, occupant_finding)
 

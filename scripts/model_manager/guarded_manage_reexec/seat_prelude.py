@@ -106,6 +106,56 @@ def giw_has_claimed_occupants(busy: dict[str, Any]) -> bool:
     return False
 
 
+def giw_foreign_claimed_occupants(
+    busy: dict[str, Any], *, exclude_dispatch_id: str
+) -> bool:
+    """True when busy_status shows GIW work other than ``exclude_dispatch_id``."""
+    services = busy.get("services")
+    if not isinstance(services, dict):
+        return False
+    entry = services.get(_GIW)
+    if not isinstance(entry, dict):
+        return False
+    active_work = entry.get("active_work")
+    if not isinstance(active_work, dict) or not active_work:
+        return False
+    lease = active_work.get("write_lease")
+    if isinstance(lease, dict):
+        holder = lease.get("holder_dispatch_id")
+        if holder and holder != exclude_dispatch_id:
+            return True
+    gate = active_work.get("cursor_sdk_gate")
+    if isinstance(gate, dict):
+        busy_st = gate.get("busy_status")
+        if isinstance(busy_st, dict):
+            holder = busy_st.get("active_holder")
+            if isinstance(holder, dict):
+                dispatch_id = holder.get("dispatch_id")
+                if dispatch_id and dispatch_id != exclude_dispatch_id:
+                    return True
+    for key in ("active_count", "total", "running_count", "running"):
+        val = active_work.get(key)
+        if isinstance(val, int) and val > 1:
+            return True
+    queued = active_work.get("queued")
+    if isinstance(queued, list):
+        for row in queued:
+            if isinstance(row, dict):
+                dispatch_id = row.get("dispatch_id")
+                if dispatch_id and dispatch_id != exclude_dispatch_id:
+                    return True
+    return False
+
+
+def _foreign_giw_offenders(
+    busy: dict[str, Any], *, exclude_dispatch_id: str
+) -> list[dict[str, Any]]:
+    """Offender rows for foreign GIW claims (never the excluded dispatch id)."""
+    del exclude_dispatch_id
+    entry = busy["services"][_GIW]
+    return [{"occupant": "busy_status", "active_work": entry.get("active_work")}]
+
+
 def caller_dispatch_id() -> str | None:
     """cursor-sdk dispatch id of this process, when it runs inside one."""
     value = os.environ.get(_CALLER_DISPATCH_ENV, "").strip()
@@ -116,14 +166,26 @@ def observe_giw_occupants(
     busy: dict[str, Any],
     *,
     caller_dispatch: str | None,
+    dry_run: bool = False,
 ) -> RefuseFinding | None:
-    """Refuse when GIW has claimed occupants, counting the calling dispatch.
+    """Refuse when GIW has claimed occupants.
 
     Independent of ``manage_inflight_others`` and of whether GIW is a manage
-    child: a seat running inside a cursor-sdk dispatch is itself a GIW
-    occupant even when busy_status has not caught up with it. Read-only, so
-    dry-run and execute run the same check.
+    child: on execute, a seat running inside a cursor-sdk dispatch is itself
+    a GIW occupant even when busy_status has not caught up. Dry-run with a
+    caller id uses ``giw_foreign_claimed_occupants`` only (caller excluded).
     """
+    if caller_dispatch and dry_run:
+        if giw_foreign_claimed_occupants(
+            busy, exclude_dispatch_id=caller_dispatch
+        ):
+            return RefuseFinding(
+                reason="giw_claimed_occupants",
+                offenders=_foreign_giw_offenders(
+                    busy, exclude_dispatch_id=caller_dispatch
+                ),
+            )
+        return None
     offenders: list[dict[str, Any]] = []
     if caller_dispatch:
         offenders.append(
@@ -292,6 +354,7 @@ __all__ = [
     "IntentWaitResult",
     "InflightWaitResult",
     "caller_dispatch_id",
+    "giw_foreign_claimed_occupants",
     "giw_has_claimed_occupants",
     "giw_is_manage_child",
     "intent_store_for_manage",

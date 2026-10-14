@@ -14,7 +14,9 @@ from scripts.model_manager.guarded_manage_reexec.pane import (
 )
 from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexec
 from scripts.model_manager.guarded_manage_reexec.seat_prelude import (
+    InflightWaitResult,
     _nudge_dead_intent_converge,
+    giw_foreign_claimed_occupants,
     giw_has_claimed_occupants,
     observe_giw_occupants,
     resolve_manage_inflight_for_seat,
@@ -371,6 +373,112 @@ def test_execute_counts_calling_dispatch_as_occupant(
         {"occupant": "caller_dispatch", "dispatch_id": "d-self"}
     ]
     assert "charter_pause" not in calls
+
+
+def test_dry_run_self_lease_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: dry-run excludes caller when holder is self and count is 1."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=True)
+    assert result.status == "dry-run"
+    assert result.reason == "checks_passed_stopped_before_quit"
+    assert result.executed is False
+
+
+def test_dry_run_refuses_foreign_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC2: dry-run refuses a foreign write lease while env is d-self."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = {"write_lease": {"holder_dispatch_id": "d-foreign"}}
+    busy = _occupant_busy(active_work=active_work)
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=True)
+    assert result.status == "dry-run"
+    assert result.reason == "giw_claimed_occupants"
+    assert result.checks["refused"] is True
+
+
+def test_dry_run_refuses_second_occupant_when_holder_is_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: dry-run refuses when active_count > 1 even if holder is caller."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 2,
+    }
+    busy = _occupant_busy(active_work=active_work)
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=True)
+    assert result.reason == "giw_claimed_occupants"
+
+
+def test_dry_run_refuses_foreign_queued_id_when_holder_is_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: dry-run refuses queued dispatch other than caller."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "queued": [{"dispatch_id": "d-other"}],
+    }
+    busy = _occupant_busy(active_work=active_work)
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=True)
+    assert result.reason == "giw_claimed_occupants"
+
+
+def test_dry_run_missing_giw_service_is_not_a_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC5: missing GIW service entry is not a foreign claim on dry-run."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    busy = {
+        "process": {"manage_inflight": 1, "activities": []},
+        "services": {},
+    }
+    assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is False
+    assert (
+        observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
+    )
+
+
+def test_execute_empty_active_work_keeps_caller_and_skips_paired_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC4: execute counts caller when active_work is empty; no paired stop."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    paired_stop_calls: list[bool] = []
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.run_giw_paired_stop",
+        lambda *_a, **_k: paired_stop_calls.append(True) or {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.resolve_manage_inflight_for_seat",
+        lambda *_a, **_k: InflightWaitResult(
+            cleared=True, waited_s=0.0, giw_paired_required=True
+        ),
+    )
+    busy = _occupant_busy(active_work={})
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=False)
+    assert result.status == "refused"
+    assert result.reason == "giw_claimed_occupants"
+    assert result.checks["findings"][0]["offenders"] == [
+        {"occupant": "caller_dispatch", "dispatch_id": "d-self"}
+    ]
+    assert paired_stop_calls == []
 
 
 def test_zero_occupants_passes_guard(tmp_path: Path) -> None:

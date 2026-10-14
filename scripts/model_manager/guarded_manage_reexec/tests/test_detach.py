@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from libs.manage_handover import write_armed_record
 import scripts.model_manager.guarded_manage_reexec as guarded_pkg
+from libs.manage_handover import write_armed_record
 from scripts.model_manager.guarded_manage_reexec import __main__ as cli
+from scripts.model_manager.guarded_manage_reexec.checks import RefuseFinding
 from scripts.model_manager.guarded_manage_reexec.detach import (
-    HUB_ROOT,
     LOG_PATH,
     build_child_env,
     build_systemd_run_cmd,
@@ -23,7 +23,6 @@ from scripts.model_manager.guarded_manage_reexec.detach import (
     parse_active_reexec_units,
     read_env_local_subset,
 )
-from scripts.model_manager.guarded_manage_reexec.checks import RefuseFinding
 from scripts.model_manager.guarded_manage_reexec.runner import (
     DEFAULT_TMUX_TARGET,
     run_guarded_reexec,
@@ -141,6 +140,94 @@ def test_detach_refuses_active_unit(tmp_path: Path) -> None:
     assert code == 2
     assert payload["reason"] == "reexec_unit_already_active"
     assert not any(c and c[0] == "systemd-run" for c in calls)
+
+
+def test_recover_waits_launcher_write_lease_before_paired_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC6: recover waits launcher write lease clear before paired stop."""
+    record_path = tmp_path / "armed.json"
+    sock = str(tmp_path / "manage.sock")
+    busy_polls = {"n": 0}
+    paired_stop_at_poll: list[int] = []
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_ID", raising=False)
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner._publish_reexec",
+        lambda _e: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.time.sleep",
+        lambda _s: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.resolve_manage_inflight_for_seat",
+        lambda *_a, **_k: InflightWaitResult(
+            cleared=True, waited_s=0.0, giw_paired_required=True
+        ),
+    )
+
+    def _paired_stop(*_a, **_k):
+        paired_stop_at_poll.append(busy_polls["n"])
+        return {"status": "ok"}
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.run_giw_paired_stop",
+        _paired_stop,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner.run_giw_paired_start",
+        lambda *_a, **_k: {"status": "ok"},
+    )
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            busy_polls["n"] += 1
+            if busy_polls["n"] <= 2:
+                return {
+                    "process": {"manage_inflight": 1, "activities": []},
+                    "services": {
+                        "git_integration_worker": {
+                            "active_work": {
+                                "write_lease": {
+                                    "holder_dispatch_id": "d-launcher",
+                                },
+                            },
+                        },
+                    },
+                }
+            return {"process": {"manage_inflight": 1, "activities": []}}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fail")
+        return _ok_tmux(9)(cmd)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        recover=True,
+        manage_call=manage_call,
+        run_cmd=run_cmd,
+        armed_record_path=record_path,
+        sock_path=sock,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        intent_db=tmp_path / "intents.db",
+    )
+    assert busy_polls["n"] >= 3
+    assert len(paired_stop_at_poll) == 1
+    assert paired_stop_at_poll[0] > 2
+    assert result.status == "refused"
+    assert result.reason == "successor_spawn_failed"
 
 
 def test_recover_waits_busy_occupant_then_reaches_paired_stop(
@@ -645,8 +732,13 @@ def test_recover_pre_q_recheck_triggers_stage_a(
 
     observe_calls = {"n": 0}
 
-    def observe(busy: dict[str, Any], *, caller_dispatch: str | None):  # noqa: ANN001
-        del busy
+    def observe(  # noqa: ANN001
+        busy: dict[str, Any],
+        *,
+        caller_dispatch: str | None,
+        dry_run: bool = False,
+    ):
+        del busy, dry_run
         observe_calls["n"] += 1
         if observe_calls["n"] == 2 and caller_dispatch is None:
             return RefuseFinding(
