@@ -621,10 +621,10 @@ def test_friction_39270_roster_unreadable_surfaces_and_matches_absent_lanes(
         journal_text="",
         register_text="",
     )
-    assert "unreadable: UnicodeDecodeError" in unreadable_out
+    assert "roster unreadable: UnicodeDecodeError" in unreadable_out
     unreadable_rn = _running_now_segment(unreadable_out)
     absent_rn = _running_now_segment(absent_out)
-    assert unreadable_rn.split("; unreadable:")[0] == absent_rn.split("; standing")[0]
+    assert unreadable_rn.split("; roster unreadable:")[0] == absent_rn.split("; standing")[0]
 
 
 def test_friction_39270_absent_roster_omits_unreadable_clause() -> None:

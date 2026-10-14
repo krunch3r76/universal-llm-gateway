@@ -42,17 +42,6 @@ def _utf8_len(text: str) -> int:
     return len((text or "").encode("utf-8"))
 
 
-def _strip_leading_current_leg_heading(body: str) -> str:
-    """Drop a leading ``## CURRENT LEG`` line; the render wrapper supplies it."""
-    lines = (body or "").splitlines()
-    if not lines or not _CURRENT_LEG_RE.match(lines[0]):
-        return body or ""
-    rest = lines[1:]
-    while rest and not rest[0].strip():
-        rest = rest[1:]
-    return "\n".join(rest)
-
-
 def _truncate_utf8(text: str, max_bytes: int) -> str:
     raw = (text or "").encode("utf-8")
     if len(raw) <= max_bytes:
@@ -103,6 +92,11 @@ def _extract_current_leg_block(sidecar: str) -> str | None:
 def _parse_h3_sections(block: str) -> dict[str, str]:
     """Parse ### sections inside ## CURRENT LEG."""
     lines = (block or "").splitlines()
+    # Drop the source H2 here so flag lines prepended at render cannot hide it.
+    if lines and _CURRENT_LEG_RE.match(lines[0]):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
     preamble_lines: list[str] = []
     sections: dict[str, list[str]] = {}
     current_key: str | None = None
@@ -494,7 +488,13 @@ def render_checkpoint_block(
     path_exists: Callable[[str], bool] | None = None,
     superseded_registration_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Render ## CURRENT LEG checkpoint block and metadata flags."""
+    """Render the checkpoint block callers inject into a hop prompt.
+
+    ``sidecar`` is the standing-handoff body. The returned text always uses one
+    ``## CURRENT LEG`` wrapper; a source heading in ``__preamble__`` is dropped
+    at parse time so ``checkpoint_stale`` and ``budget_exceeded`` flags cannot
+    leave a second ATX line. Metadata carries budget, identity, and flags.
+    """
     uri = standing_handoff_uri(lane)
     meta: dict[str, Any] = {
         "budget": "ok",
@@ -575,7 +575,6 @@ def render_checkpoint_block(
     if meta["flags"]:
         body = "\n".join(meta["flags"]) + ("\n\n" + body if body else "")
     if body:
-        body = _strip_leading_current_leg_heading(body)
         return prefix + body, meta
     if meta["flags"]:
         return prefix + "\n".join(meta["flags"]), meta

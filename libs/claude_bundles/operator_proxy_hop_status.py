@@ -228,7 +228,7 @@ def hop_successor_fields(
         roster_unreadable = loaded.unreadable
     lanes = house_lanes(roster)
     roster_clause = (
-        f"unreadable: {roster_unreadable}; " if roster_unreadable else ""
+        f"roster unreadable: {roster_unreadable}; " if roster_unreadable else ""
     )
     if fetch_turns is None:
         from claude_bundles.operator_proxy_bus_fetch import fetch_turns_for_lane

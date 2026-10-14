@@ -980,7 +980,7 @@ def test_ac7_non_utf8_roster_does_not_block_hop(
     for text in texts:
         assert "## Hard refusals" in text
         assert "## Live leg" in text
-        assert "unreadable: UnicodeDecodeError" in text
+        assert "roster unreadable: UnicodeDecodeError" in text
 
 
 def test_ac8_non_utf8_journal_and_register_degrade(
