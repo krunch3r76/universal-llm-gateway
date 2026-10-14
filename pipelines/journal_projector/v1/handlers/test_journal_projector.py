@@ -9,8 +9,18 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from claude_bundles.journal_lesson import writer_mode
+from systems.pipeline.core.execution.async_tracker import (
+    PipelineExecutionTracker,
+    TrackerCapacityError,
+)
+from systems.pipeline.core.execution.async_tracker import lifecycle as lifecycle_mod
+from systems.proxy.routers.api.pipelines_dispatch import (
+    DispatchRequest,
+    ResultDeliveryConfig,
+    admit_dispatch,
+)
+
 from pipelines.journal_projector.v1.handlers.append_closeout import (
     append_journal_from_closeout,
 )
@@ -24,16 +34,6 @@ from pipelines.journal_projector.v1.handlers.projector_status import (
     closeout_indicates_provider_error,
     projection_poll_is_delay,
     seat_may_fallback_after_projector_failure,
-)
-from systems.pipeline.core.execution.async_tracker import (
-    PipelineExecutionTracker,
-    TrackerCapacityError,
-)
-from systems.pipeline.core.execution.async_tracker import lifecycle as lifecycle_mod
-from systems.proxy.routers.api.pipelines_dispatch import (
-    DispatchRequest,
-    ResultDeliveryConfig,
-    admit_dispatch,
 )
 
 

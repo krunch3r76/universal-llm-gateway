@@ -11,9 +11,6 @@ from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
 )
 from systems.pipeline.core.handlers.frontier_dispatch import (
-    cursor_sdk_dispatch as cursor_mod,
-)
-from systems.pipeline.core.handlers.frontier_dispatch import (
     native_loop as fd_native_mod,
 )
 from systems.pipeline.core.handlers.frontier_dispatch.cursor_sdk_dispatch import (
@@ -31,7 +28,7 @@ def test_is_cursor_sdk_dispatch_model() -> None:
 async def test_cursor_model_skips_cloud_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Acceptance 3: cursor/composer-2.5 uses dispatch_cursor_sdk_generate, not cloud loop."""
+    """Acceptance 3: cursor/composer-2.5 uses SDK generate, not cloud loop."""
     handler = FrontierDispatchHandler()
     monkeypatch.setattr(handler, "_publish_bus_event", lambda *_a, **_k: None)
 
@@ -107,12 +104,15 @@ async def test_cursor_model_skips_cloud_backend(
 
 @pytest.mark.asyncio
 async def test_model_knobs_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Runtime model_knobs must pass admission (UnknownPipelineOptionsError otherwise)."""
+    """model_knobs must pass admission (else UnknownPipelineOptionsError)."""
     handler = FrontierDispatchHandler()
     monkeypatch.setattr(handler, "_publish_bus_event", lambda *_a, **_k: None)
 
     async def fake_sdk_generate(**_kwargs: Any) -> dict[str, Any]:
-        return {"execution_id": "e-knobs", "poll_hint": {"tool": "wait", "arguments": {}}}
+        return {
+            "execution_id": "e-knobs",
+            "poll_hint": {"tool": "wait", "arguments": {}},
+        }
 
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_generate",

@@ -42,7 +42,9 @@ def is_cursor_sdk_dispatch_model(model: str) -> bool:
         return False
 
 
-def _resolve_model_knobs(opts: dict[str, Any], step: StepConfig) -> dict[str, str] | None:
+def _resolve_model_knobs(
+    opts: dict[str, Any], step: StepConfig
+) -> dict[str, str] | None:
     raw = opts.get("model_knobs")
     if raw is None:
         raw = step.get_domain_field("model_knobs")
@@ -137,8 +139,10 @@ async def run_cursor_sdk_dispatch(
     context: PipelineContext,
     admission: AdmissionResult,
 ) -> StepOutput:
-    """Admit a cursor-sdk generate and return the poll envelope in ``StepOutput.json``."""
-    from systems.frontier_consult.cursor_sdk_generate import dispatch_cursor_sdk_generate
+    """Admit cursor-sdk generate; return poll envelope in ``StepOutput.json``."""
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_cursor_sdk_generate,
+    )
 
     model = admission.model
     opts = admission.opts

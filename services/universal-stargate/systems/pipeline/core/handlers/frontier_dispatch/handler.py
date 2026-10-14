@@ -19,11 +19,11 @@ from ..registry import register_handler
 from .admission_checks import validate_frontier_dispatch_step
 from .admission_gate import run_admission_gate
 from .cdp_dispatch import is_cdp_dispatch_model, run_cdp_dispatch
+from .completion import build_dispatch_output
 from .cursor_sdk_dispatch import (
     is_cursor_sdk_dispatch_model,
     run_cursor_sdk_dispatch,
 )
-from .completion import build_dispatch_output
 from .gen_params import build_frontier_request
 from .native_loop import run_dispatch_loop
 
