@@ -8,6 +8,13 @@ own replacement. Entry points are the CLI and ``--detach``. Manage stays out of
 """
 
 from .result import GuardedReexecResult
-from .runner import run_guarded_reexec
 
 __all__ = ["GuardedReexecResult", "run_guarded_reexec"]
+
+
+def __getattr__(name: str):
+    if name == "run_guarded_reexec":
+        from .runner import run_guarded_reexec
+
+        return run_guarded_reexec
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
