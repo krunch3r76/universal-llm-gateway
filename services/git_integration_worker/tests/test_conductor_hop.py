@@ -2001,9 +2001,21 @@ def test_ac7_none_fold_entry_gate_does_not_fall_through_to_tip_table(
     (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
         body, encoding="utf-8"
     )
+    from implement_admission.conductor_witness_types import FoldResult
+
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    fold_stub = object()
+    fold_stub = FoldResult(
+        slug="stub",
+        raw_body="",
+        folded_body="",
+        row_status={},
+        witnesses={},
+        witnessed_done=frozenset(),
+        rows_claimed=frozenset(),
+        entry_gate="",
+        fold_failed=False,
+    )
     with patch(
         "implement_admission.conductor_witness.fold_scoreboard",
         return_value=fold_stub,
@@ -2130,9 +2142,21 @@ def test_ac7_stale_header_entry_gate_fold_wins_over_harvest_next_admit(
     (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
         body, encoding="utf-8"
     )
+    from implement_admission.conductor_witness_types import FoldResult
+
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    fold_stub = object()
+    fold_stub = FoldResult(
+        slug="stub",
+        raw_body="",
+        folded_body="",
+        row_status={"G1": "DONE", "G2": "OPEN"},
+        witnesses={},
+        witnessed_done=frozenset(),
+        rows_claimed=frozenset(),
+        entry_gate="G2",
+        fold_failed=False,
+    )
     with patch(
         "implement_admission.conductor_witness.fold_scoreboard",
         return_value=fold_stub,
