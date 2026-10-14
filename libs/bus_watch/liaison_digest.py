@@ -140,6 +140,7 @@ def build_digest(
             fetch_turns=lambda tid: (
                 _get(client, "/turns", thread=tid, last=10) or {}
             ).get("turns"),
+            parent_thread=root,
         )
 
     policy = effective_policy(state)

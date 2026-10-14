@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from bus_watch.events import LiaisonLaneCloseoutObserved
@@ -383,7 +384,7 @@ def test_query_lane_closeouts_from_bus_turns_only() -> None:
     body = format_closeout_body(record)
     client = MagicMock()
     with patch(
-        "bus_watch.lane_closeout._get",
+        "bus_watch.lane_closeout_parse._get",
         return_value={
             "turns": [
                 {
@@ -476,13 +477,143 @@ def test_query_survives_without_tick_json(tmp_path) -> None:
     body = format_closeout_body(record)
     client = MagicMock()
     with patch(
-        "bus_watch.lane_closeout._get",
+        "bus_watch.lane_closeout_parse._get",
         return_value={"turns": [{"subject": "LANE CLOSEOUT", "body": body}]},
     ):
         rows = query_lane_closeouts(client, "11667")
     tick = tmp_path / "liaison-11667.tick.json"
     assert not tick.exists()
     assert rows[0]["landed"] == "0e6653cdf"
+
+
+def test_observe_terminal_lane_closeouts_batches_bulk_abandoned() -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 90}}
+    client.post.return_value = resp
+    lanes = [
+        {"id": "10923", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
+        {"id": "10925", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
+        {"id": "10927", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
+    ]
+    state: dict = {}
+
+    def fetch(_tid: str) -> list:
+        return []
+
+    with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+        posted = observe_terminal_lane_closeouts(
+            "11667",
+            lanes,
+            state,
+            client,
+            fetch_turns=fetch,
+            parent_thread={"status": "active", "updated_at": "2026-10-12T00:00:00Z"},
+        )
+    assert client.post.call_count == 1
+    payload = client.post.call_args.kwargs["json"]
+    assert (
+        payload["subject"]
+        == "LANE ABANDONED agent-bus:10923..10927 (3 abandoned)"
+    )
+    assert payload["to"] == "web-anthropic"
+    assert len(posted) == 1
+    assert posted[0]["count"] == 3
+    assert posted[0]["lanes"] == ["10923", "10925", "10927"]
+    for lane_id in ("10923", "10925", "10927"):
+        key = closeout_idempotency_key(lane_id, "abandoned")
+        assert key in state["lane_closeouts_emitted"]
+
+
+def test_observe_terminal_lane_closeouts_skips_closed_or_idle_parent() -> None:
+    client = MagicMock()
+    lanes = [
+        {"id": "11001", "lifecycle": "completed", "updated_at": "2026-10-01T00:00:00Z"},
+    ]
+    state_closed: dict = {}
+    with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+        observe_terminal_lane_closeouts(
+            "11667",
+            lanes,
+            state_closed,
+            client,
+            fetch_turns=lambda _tid: [],
+            parent_thread={"status": "closed", "updated_at": "2026-10-12T00:00:00Z"},
+        )
+    assert client.post.call_count == 0
+    assert closeout_idempotency_key("11001", "completed") in state_closed[
+        "lane_closeouts_emitted"
+    ]
+
+    client2 = MagicMock()
+    state_idle: dict = {}
+    with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+        observe_terminal_lane_closeouts(
+            "11667",
+            lanes,
+            state_idle,
+            client2,
+            fetch_turns=lambda _tid: [],
+            parent_thread={
+                "status": "active",
+                "updated_at": "2026-09-01T00:00:00Z",
+            },
+        )
+    assert client2.post.call_count == 0
+    assert closeout_idempotency_key("11001", "completed") in state_idle[
+        "lane_closeouts_emitted"
+    ]
+
+
+def test_observe_terminal_lane_closeouts_skips_stale_child_lane() -> None:
+    client = MagicMock()
+    lane = {
+        "id": "11002",
+        "lifecycle": "completed",
+        "updated_at": "2026-09-13T16:51:58Z",
+    }
+    state: dict = {}
+    turns = [
+        {"turn_number": 1, "subject": "cursor-sdk CLOSEOUT", "body": _worker_closeout()}
+    ]
+
+    def fetch(_tid: str) -> list:
+        return turns
+
+    with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+        posted = observe_terminal_lane_closeouts(
+            "11667",
+            [lane],
+            state,
+            client,
+            fetch_turns=fetch,
+            parent_thread={"status": "active", "updated_at": "2026-10-12T00:00:00Z"},
+        )
+    assert client.post.call_count == 0
+    assert posted == []
+    assert closeout_idempotency_key("11002", "completed") in state[
+        "lane_closeouts_emitted"
+    ]
+
+
+def test_post_lane_closeout_blocks_live_httpx_client_under_pytest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_lane_closeout.py::test_x")
+    monkeypatch.delenv("BUS_WATCH_ALLOW_LIVE_BUS_IN_TESTS", raising=False)
+    client = httpx.Client(base_url="http://localhost")
+    try:
+        record = build_closeout_record(
+            {"id": "11692", "lifecycle": "completed"},
+            parent_root="11667",
+        )
+        result = post_lane_closeout(
+            client, parent_root="11667", record=record, abandoned=False
+        )
+    finally:
+        client.close()
+    assert result == {"ok": False, "error": "pytest_live_bus_blocked"}
 
 
 def test_pinned_conductor_closeout_records_stop() -> None:

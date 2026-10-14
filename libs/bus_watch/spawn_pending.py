@@ -142,6 +142,7 @@ def observe_terminal_lane_closeouts(
     client: Any,
     *,
     fetch_turns: Callable[[str], Any],
+    parent_thread: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """At ``row_is_terminal`` transition, post one parent-root closeout row."""
     from bus_watch.lane_closeout import observe_terminal_lane_closeouts as _emit
@@ -152,6 +153,7 @@ def observe_terminal_lane_closeouts(
         state,
         client,
         fetch_turns=fetch_turns,
+        parent_thread=parent_thread,
     )
 
 
