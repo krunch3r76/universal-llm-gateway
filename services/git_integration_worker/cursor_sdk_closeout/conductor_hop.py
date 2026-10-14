@@ -1513,6 +1513,34 @@ async def post_conductor_hop_team_dispatch(
             "status_code": resp.status_code,
             "error": payload,
         }
+    successor_dispatch_id = (
+        str(payload.get("dispatch_id") or payload.get("execution_id") or "").strip()
+        or admit_dispatch_id
+    )
+    if successor_dispatch_id != admit_dispatch_id:
+        logger.warning(
+            "conductor hop steer inherit skipped: payload id=%s admit id=%s",
+            successor_dispatch_id,
+            admit_dispatch_id,
+        )
+    else:
+        try:
+            from services.git_integration_worker.cursor_sdk_steer_inject import (
+                inherit_undelivered_steer_inject,
+            )
+
+            await asyncio.to_thread(
+                inherit_undelivered_steer_inject,
+                parent_id=stop_id,
+                child_id=successor_dispatch_id,
+                inherited_via="conductor_hop",
+            )
+        except Exception:  # noqa: BLE001 — POST already succeeded
+            logger.exception(
+                "steer-inject inherit failed open parent=%s child=%s",
+                stop_id,
+                successor_dispatch_id,
+            )
     return True, payload
 
 

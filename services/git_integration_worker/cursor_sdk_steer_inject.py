@@ -15,6 +15,7 @@ from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_event_bus import Event, event_factory
+from universal_logging import get_logger
 
 from scripts.mcp_bridge_steer_inject import (
     TERMINAL_UNDELIVERED_REASON,
@@ -22,6 +23,9 @@ from scripts.mcp_bridge_steer_inject import (
     expire_pending_entries,
     read_delivery_ack,
     spool_path,
+)
+from scripts.mcp_bridge_steer_inject import (
+    inherit_undelivered_steer_inject as _inherit_undelivered_steer_inject,
 )
 from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
 from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
@@ -33,6 +37,7 @@ from services.git_integration_worker.cursor_sdk_park_for_restart import (
 DEFAULT_TTL_S = 300
 _STEER_FROM = "git-integration-worker"
 _STEER_SUBJECT = "STEER directive"
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +139,104 @@ def SdkSteerInjectEscalated(  # noqa: N802
         payload={"dispatch_id": dispatch_id, "entry_id": entry_id, "reason": reason},
         scope="node",
     )
+
+
+@event_factory
+def SdkSteerInjectInherited(  # noqa: N802
+    parent_dispatch_id: str,
+    child_dispatch_id: str,
+    entry_id: str,
+    authority_turn_id: str,
+    inherited_via: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.steer.inject.inherited",
+        payload={
+            "parent_dispatch_id": parent_dispatch_id,
+            "child_dispatch_id": child_dispatch_id,
+            "entry_id": entry_id,
+            "authority_turn_id": authority_turn_id,
+            "inherited_via": inherited_via,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def SdkSteerInjectInheritFailed(  # noqa: N802
+    parent_dispatch_id: str,
+    child_dispatch_id: str,
+    inherited_via: str,
+    error: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.steer.inject.inherit_failed",
+        payload={
+            "parent_dispatch_id": parent_dispatch_id,
+            "child_dispatch_id": child_dispatch_id,
+            "inherited_via": inherited_via,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+def inherit_undelivered_steer_inject(
+    *,
+    parent_id: str,
+    child_id: str,
+    spool_dir: Path | None = None,
+    inherited_via: str = "",
+) -> list[str]:
+    """Fail-open hop inherit: copy spool rows and emit frontier events."""
+    parent = parent_id.strip()
+    child = child_id.strip()
+    via = inherited_via.strip()
+    root = spool_dir or steer_spool_dir()
+    try:
+        copied = _inherit_undelivered_steer_inject(
+            parent_id=parent,
+            child_id=child,
+            spool_dir=root,
+            inherited_via=via,
+        )
+    except Exception as exc:  # noqa: BLE001 — never block conductor hop admit
+        logger.exception(
+            "steer-inject inherit failed open parent=%s child=%s",
+            parent,
+            child,
+        )
+        emit_frontier_event(
+            SdkSteerInjectInheritFailed(
+                parent_dispatch_id=parent,
+                child_dispatch_id=child,
+                inherited_via=via,
+                error=str(exc),
+            )
+        )
+        return []
+    for entry_id in copied:
+        path = spool_path(root, child)
+        authority_turn_id = ""
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for raw in data.get("pending") or []:
+                    if isinstance(raw, dict) and str(raw.get("entry_id")) == entry_id:
+                        authority_turn_id = str(raw.get("authority_turn_id") or "")
+                        break
+            except (json.JSONDecodeError, OSError):
+                pass
+        emit_frontier_event(
+            SdkSteerInjectInherited(
+                parent_dispatch_id=parent,
+                child_dispatch_id=child,
+                entry_id=entry_id,
+                authority_turn_id=authority_turn_id,
+                inherited_via=via,
+            )
+        )
+    return copied
 
 
 def _bus_headers() -> dict[str, str]:

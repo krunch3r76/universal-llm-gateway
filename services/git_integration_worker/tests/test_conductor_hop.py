@@ -537,6 +537,207 @@ async def test_omitted_dispatch_id_mints_12hex_8hex(monkeypatch) -> None:
     assert posted[1]["dispatch_id"] == reserved
 
 
+def _hop_post_client_mocks(monkeypatch: pytest.MonkeyPatch, post_fn: Any) -> None:
+    client = MagicMock()
+    client.post = post_fn
+
+    async def _enter(*_a: object, **_k: object) -> MagicMock:
+        return client
+
+    async def _exit(*_a: object, **_k: object) -> None:
+        return None
+
+    holder = MagicMock()
+    holder.__aenter__ = _enter
+    holder.__aexit__ = _exit
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.make_async_client",
+        lambda *_a, **_k: holder,
+    )
+
+
+@pytest.mark.asyncio
+async def test_hop_inherit_skipped_when_post_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spool = tmp_path / "steer-spool"
+    spool.mkdir()
+    monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from scripts.mcp_bridge_steer_inject import append_spool_entry, spool_path
+
+    append_spool_entry(
+        "pred-hop-fail",
+        authority_turn_id="1",
+        directive="stay",
+        ttl_s=300,
+        spool_dir=spool,
+    )
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-hop-fail", terminal_status="completed")
+
+    async def _post(_endpoint: str, *, json: dict[str, Any]) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 503
+        resp.json.return_value = {"error": "down"}
+        return resp
+
+    _hop_post_client_mocks(monkeypatch, _post)
+    ok, _detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-hop-fail", "seat": "cursor-sdk"},
+    )
+    assert ok is False
+    assert not spool_path(spool, "any-child").exists()
+    for path in spool.glob("*.json"):
+        assert path.name == "pred-hop-fail.json"
+
+
+@pytest.mark.asyncio
+async def test_inherit_fail_open_copy_lost_no_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    spool = tmp_path / "steer-spool"
+    spool.mkdir()
+    monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from scripts.mcp_bridge_steer_inject import append_spool_entry, spool_path
+
+    append_spool_entry(
+        "pred-hop-copyfail",
+        authority_turn_id="1",
+        directive="lost on copy",
+        ttl_s=300,
+        spool_dir=spool,
+    )
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-hop-copyfail", terminal_status="completed")
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    calls = {"n": 0}
+
+    def _boom(**_kwargs: object) -> list[str]:
+        calls["n"] += 1
+        raise RuntimeError("copy boom")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject._inherit_undelivered_steer_inject",
+        _boom,
+    )
+
+    async def _post(_endpoint: str, *, json: dict[str, Any]) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 202
+        resp.json.return_value = {
+            "dispatch_id": json["dispatch_id"],
+            "status": "queued",
+        }
+        return resp
+
+    _hop_post_client_mocks(monkeypatch, _post)
+    ok, _detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-hop-copyfail", "seat": "cursor-sdk"},
+    )
+    assert ok is True
+    assert calls["n"] == 1
+    child_paths = [p for p in spool.glob("*.json") if p.name != "pred-hop-copyfail.json"]
+    assert child_paths == []
+    assert any(ev.signal == "frontier.sdk.steer.inject.inherit_failed" for ev in events)
+
+
+@pytest.mark.asyncio
+async def test_hop_inherit_skipped_when_payload_id_differs_from_admit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    spool = tmp_path / "steer-spool"
+    spool.mkdir()
+    monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from scripts.mcp_bridge_steer_inject import append_spool_entry, spool_path
+
+    append_spool_entry(
+        "pred-hop-mismatch",
+        authority_turn_id="1",
+        directive="no copy",
+        ttl_s=300,
+        spool_dir=spool,
+    )
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-hop-mismatch", terminal_status="completed")
+
+    async def _post(_endpoint: str, *, json: dict[str, Any]) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 202
+        resp.json.return_value = {
+            "dispatch_id": "payload-not-admit-id",
+            "status": "queued",
+        }
+        return resp
+
+    _hop_post_client_mocks(monkeypatch, _post)
+    ok, _detail = await post_conductor_hop_team_dispatch(
+        {
+            "op": "generate",
+            "hop_from": "pred-hop-mismatch",
+            "seat": "cursor-sdk",
+            "dispatch_id": "wire-admit-id",
+        },
+    )
+    assert ok is True
+    assert not spool_path(spool, "wire-admit-id").exists()
+    assert not spool_path(spool, "payload-not-admit-id").exists()
+    assert "steer inherit skipped" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_hop_inherit_copies_pending_on_post_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spool = tmp_path / "steer-spool"
+    spool.mkdir()
+    monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(spool))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from scripts.mcp_bridge_steer_inject import append_spool_entry, claim_pending, spool_path
+
+    append_spool_entry(
+        "pred-hop-ok",
+        authority_turn_id="auth-hop",
+        directive="successor sees",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="parent-entry",
+    )
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-hop-ok", terminal_status="completed")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+
+    async def _post(_endpoint: str, *, json: dict[str, Any]) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 202
+        resp.json.return_value = {
+            "dispatch_id": json["dispatch_id"],
+            "status": "queued",
+        }
+        return resp
+
+    _hop_post_client_mocks(monkeypatch, _post)
+    ok, detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-hop-ok", "seat": "cursor-sdk"},
+    )
+    assert ok is True
+    child_id = detail["dispatch_id"]
+    parent = json.loads(spool_path(spool, "pred-hop-ok").read_text(encoding="utf-8"))
+    assert parent["pending"][0]["entry_id"] == "parent-entry"
+    pending = claim_pending(child_id, spool_dir=spool)
+    assert pending is not None
+    assert pending.directive == "successor sees"
+
+
 def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
     ledger = CursorDispatchLedger.instance()
     knobs = {"effort": "low", "fast": "true"}

@@ -1214,3 +1214,207 @@ def test_ac19_sibling_payloads_omit_submitted_id() -> None:
     es = SdkSteerInjectEscalated(dispatch_id="d", entry_id="e", reason="r")
     for ev in (sp, de, ex, es):
         assert "submitted_id" not in ev.payload
+
+
+def test_inherit_reads_expired_after_terminal_closeout(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    append_spool_entry(
+        "parent-t4",
+        authority_turn_id="auth-t4",
+        directive="carry me",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-parent-t4",
+    )
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        TERMINAL_UNDELIVERED_REASON,
+        apply_steer_undelivered_closeout,
+    )
+
+    apply_steer_undelivered_closeout(
+        json.dumps({"status": "complete"}),
+        dispatch_id="parent-t4",
+        spool_dir=spool,
+    )
+    parent = json.loads(spool_path(spool, "parent-t4").read_text(encoding="utf-8"))
+    assert parent["pending"] == []
+    assert len(parent["expired"]) == 1
+    copied = inherit_undelivered_steer_inject(
+        parent_id="parent-t4",
+        child_id="child-t4",
+        spool_dir=spool,
+        inherited_via="test",
+    )
+    assert len(copied) == 1
+    pending = claim_pending("child-t4", spool_dir=spool)
+    assert pending is not None
+    assert pending.directive == "carry me"
+    assert pending.authority_turn_id == "auth-t4"
+
+
+def test_inherit_skips_delivered_parent_rows(spool: Path) -> None:
+    append_spool_entry(
+        "parent-t7",
+        authority_turn_id="auth-t7",
+        directive="done on parent",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-t7",
+    )
+    pending = claim_pending("parent-t7", spool_dir=spool)
+    assert pending is not None
+    mark_delivered(pending, spool_dir=spool)
+    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+
+    copied = inherit_undelivered_steer_inject(
+        parent_id="parent-t7",
+        child_id="child-t7",
+        spool_dir=spool,
+    )
+    assert copied == []
+    assert not spool_path(spool, "child-t7").exists()
+
+
+def test_inherit_while_append_serializes(spool: Path) -> None:
+    import threading
+
+    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+
+    append_spool_entry(
+        "parent-t2",
+        authority_turn_id="auth-base",
+        directive="base",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-base",
+    )
+    barrier = threading.Barrier(2)
+
+    def _append_late() -> None:
+        barrier.wait()
+        append_spool_entry(
+            "parent-t2",
+            authority_turn_id="auth-late",
+            directive="late",
+            ttl_s=300,
+            spool_dir=spool,
+        )
+
+    def _inherit() -> None:
+        barrier.wait()
+        inherit_undelivered_steer_inject(
+            parent_id="parent-t2",
+            child_id="child-t2",
+            spool_dir=spool,
+        )
+
+    t_append = threading.Thread(target=_append_late)
+    t_inherit = threading.Thread(target=_inherit)
+    t_inherit.start()
+    t_append.start()
+    t_inherit.join()
+    t_append.join()
+    child = json.loads(spool_path(spool, "child-t2").read_text(encoding="utf-8"))
+    auths = {
+        str(r.get("authority_turn_id"))
+        for r in child.get("pending") or []
+        if isinstance(r, dict)
+    }
+    assert auths <= {"auth-base", "auth-late"}
+    assert len(auths) == len(set(auths))
+
+
+def test_inherit_then_successor_cancel_expires_child_pending(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    append_spool_entry(
+        "parent-t5",
+        authority_turn_id="auth-t5",
+        directive="child only",
+        ttl_s=300,
+        spool_dir=spool,
+    )
+    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        apply_steer_undelivered_closeout,
+    )
+
+    inherit_undelivered_steer_inject(
+        parent_id="parent-t5",
+        child_id="child-t5",
+        spool_dir=spool,
+    )
+    apply_steer_undelivered_closeout(
+        json.dumps({"status": "cancel_discard"}),
+        dispatch_id="child-t5",
+        spool_dir=spool,
+    )
+    child = json.loads(spool_path(spool, "child-t5").read_text(encoding="utf-8"))
+    assert child["pending"] == []
+    assert len(child["expired"]) == 1
+    parent = json.loads(spool_path(spool, "parent-t5").read_text(encoding="utf-8"))
+    assert len(parent["pending"]) == 1
+
+
+def test_inherit_fresh_deposited_at_delivers_after_old_ttl(spool: Path) -> None:
+    append_spool_entry(
+        "parent-t6",
+        authority_turn_id="auth-t6",
+        directive="ttl refresh",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-t6",
+    )
+    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+
+    path = spool_path(spool, "parent-t6")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["pending"][0]["deposited_at"] = "2020-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    inherit_undelivered_steer_inject(
+        parent_id="parent-t6",
+        child_id="child-t6",
+        spool_dir=spool,
+    )
+    envelope = consume_next_steer_envelope("child-t6", spool_dir=spool, live=True)
+    assert envelope is not None
+    assert "ttl refresh" in envelope
+
+
+def test_inherit_idempotent_on_authority_turn_id(spool: Path) -> None:
+    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+
+    append_spool_entry(
+        "parent-idem",
+        authority_turn_id="auth-idem",
+        directive="once",
+        ttl_s=300,
+        spool_dir=spool,
+    )
+    first = inherit_undelivered_steer_inject(
+        parent_id="parent-idem",
+        child_id="child-idem",
+        spool_dir=spool,
+    )
+    second = inherit_undelivered_steer_inject(
+        parent_id="parent-idem",
+        child_id="child-idem",
+        spool_dir=spool,
+    )
+    assert len(first) == 1
+    assert second == []
+    child = json.loads(spool_path(spool, "child-idem").read_text(encoding="utf-8"))
+    assert len(child["pending"]) == 1

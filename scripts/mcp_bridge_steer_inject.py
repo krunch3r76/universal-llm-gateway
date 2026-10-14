@@ -380,6 +380,106 @@ def consume_next_steer_envelope(
         return None
 
 
+def _bucket_authority_ids(data: dict[str, Any]) -> set[str]:
+    known: set[str] = set()
+    for bucket in ("pending", "delivered", "expired"):
+        for raw in data.get(bucket) or []:
+            if isinstance(raw, dict) and raw.get("authority_turn_id"):
+                known.add(str(raw["authority_turn_id"]))
+    return known
+
+
+def _parent_delivered_authority_ids(data: dict[str, Any]) -> set[str]:
+    delivered_auth: set[str] = set()
+    for raw in data.get("delivered") or []:
+        if isinstance(raw, dict) and raw.get("authority_turn_id"):
+            delivered_auth.add(str(raw["authority_turn_id"]))
+    return delivered_auth
+
+
+def _eligible_parent_inherit_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pending rows and expired-never-delivered rows with directive text."""
+    delivered_auth = _parent_delivered_authority_ids(data)
+    eligible: list[dict[str, Any]] = []
+    for raw in data.get("pending") or []:
+        if not isinstance(raw, dict):
+            continue
+        if not str(raw.get("directive") or "").strip():
+            continue
+        eligible.append(raw)
+    for raw in data.get("expired") or []:
+        if not isinstance(raw, dict):
+            continue
+        auth = str(raw.get("authority_turn_id") or "")
+        if not auth or auth in delivered_auth:
+            continue
+        if not str(raw.get("directive") or "").strip():
+            continue
+        eligible.append(raw)
+    return eligible
+
+
+def inherit_undelivered_steer_inject(
+    *,
+    parent_id: str,
+    child_id: str,
+    spool_dir: Path | str | None = None,
+    inherited_via: str = "",
+) -> list[str]:
+    """Copy parent pending / expired-never-delivered steer rows onto child pending.
+
+    Parent spool is read-only. Child rows get fresh ``entry_id`` and
+    ``deposited_at``; parent values are preserved in ``origin_*`` fields.
+    Returns copied child ``entry_id`` values. Idempotent on ``authority_turn_id``.
+    """
+    parent = parent_id.strip()
+    child = child_id.strip()
+    if not parent or not child or parent == child:
+        return []
+    root = _spool_root(spool_dir)
+    if root is None:
+        return []
+    parent_path = spool_path(root, parent)
+    child_path = spool_path(root, child)
+    with _spool_lock(parent_path):
+        parent_data = _load_spool(parent_path)
+        snapshot = [dict(raw) for raw in _eligible_parent_inherit_rows(parent_data)]
+    if not snapshot:
+        return []
+    copied_ids: list[str] = []
+    with _spool_lock(child_path):
+        child_data = _load_spool(child_path)
+        child_data["dispatch_id"] = child
+        known = _bucket_authority_ids(child_data)
+        pending = list(child_data.get("pending") or [])
+        now_iso = datetime.now(UTC).isoformat()
+        for raw in snapshot:
+            auth = str(raw.get("authority_turn_id") or "")
+            if not auth or auth in known:
+                continue
+            new_eid = uuid.uuid4().hex
+            pending.append(
+                {
+                    "entry_id": new_eid,
+                    "authority_turn_id": auth,
+                    "directive": str(raw.get("directive") or ""),
+                    "deposited_at": now_iso,
+                    "ttl_s": int(raw.get("ttl_s") or 0),
+                    "claimed": False,
+                    "origin_entry_id": str(raw.get("entry_id") or ""),
+                    "origin_deposited_at": str(raw.get("deposited_at") or ""),
+                    "inherited_from": parent,
+                    "inherited_via": inherited_via,
+                }
+            )
+            known.add(auth)
+            copied_ids.append(new_eid)
+        if copied_ids:
+            child_data["pending"] = pending
+            _write_spool(child_path, child_data)
+    return copied_ids
+
+
 def expire_pending_entries(
     dispatch_id: str,
     *,
