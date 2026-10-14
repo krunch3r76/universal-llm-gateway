@@ -130,8 +130,22 @@ def _default_kill_pid(pid: int) -> None:
         pass
 
 
-def _tmux_send(target: str, keys: str, *, run_cmd: RunCmd) -> None:
-    run_cmd(["tmux", "send-keys", "-t", target, keys, "Enter"])
+def _tmux_send(
+    target: str,
+    keys: str,
+    *,
+    run_cmd: RunCmd,
+    submit: bool = True,
+) -> None:
+    """Send ``keys`` to tmux pane ``target``.
+
+    ``submit=True`` appends Enter. Textual treats Enter as a button press, so
+    the quit step must pass ``submit=False`` or a focused widget activates.
+    """
+    argv = ["tmux", "send-keys", "-t", target, keys]
+    if submit:
+        argv.append("Enter")
+    run_cmd(argv)
 
 
 def _wait_sock(
@@ -664,7 +678,7 @@ def run_guarded_reexec(
                 return _refuse_after_arm(occupant_recheck.reason)
 
         stage = "quit_sent"
-        _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
+        _tmux_send(tmux_effective, "q", run_cmd=run_cmd, submit=False)
         quit_sent = True
         _publish_reexec(ManageReexecQuitCommitted(tmux_target=tmux_effective))
 

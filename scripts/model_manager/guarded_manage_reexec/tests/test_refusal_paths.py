@@ -643,6 +643,12 @@ def test_quit_sock_still_up_tears_down_successor(tmp_path: Any) -> None:
     )
     assert result.status == "quit"
     assert result.reason == "quit_sock_still_up"
+    quit_sends = [
+        c
+        for c in tmux_log
+        if c[:2] == ["tmux", "send-keys"] and len(c) > 4 and c[4] == "q"
+    ]
+    assert quit_sends == [["tmux", "send-keys", "-t", "0:0", "q"]]
     assert result.executed is True
     assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%77" for c in tmux_log)
     assert os.getpid() in killed_pids
