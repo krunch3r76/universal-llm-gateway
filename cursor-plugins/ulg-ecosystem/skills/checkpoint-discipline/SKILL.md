@@ -271,7 +271,7 @@ get a window.
 
 1. **Seal + mechanical post.** The call tears down every background terminal
    this tab started (`stop_tab_background(transcript_id)` — the id is the JSONL
-   directory name above, not the agent-store path). The house ticker
+   directory name above, not the agent-store path). The **Metronome** house ticker
    (`liaison-tick.py`) survives. Then
    `dispatch(tool="continuity")` or
    `continuity(op=checkpoint, surface=cursor, transcript_id=<tab UUID>, thread=<house resolved this turn>, from_agent=cursor, pre_consolidate=false, handoff=<step 0 letter>)`.

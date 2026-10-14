@@ -221,17 +221,17 @@ Two axes only. Spec: `docs/specs/agent-bus-thread-classification-thin.md`.
 
 Only reserved spine tag: `role:root`. Other `role:*` tags are rejected on write. Not classification: `bus_lifecycle:*`, DB `status` / `bus_lifecycle_state`, facet tags (`type:*`, `project:*`, …), thread `480`.
 
-### Liaison house and monitor
+### Impresario house and monitor
 
-`role:root` is the house spine. It does not by itself mean a liaison house.
+`role:root` is the house spine. It does not by itself mean an Impresario house.
 
 | Read, in order | Kind |
 |---|---|
 | a `watches:<id>` tag | monitor of that thread |
-| `lane:liaison` and `role:root`, and no `watches:` tag | liaison house |
+| `lane:liaison` and `role:root`, and no `watches:` tag | Impresario house |
 | anything else | neither |
 
-`type:monitor` without `watches:<id>` is not a monitor. `lane:liaison` on a child lane that lacks `role:root` is not a liaison house. Birth of a monitor sets `type:monitor` and `watches:<id>` and does not set `type:continuity`. Birth of a liaison house sets `lane:liaison` and `role:root`. `watch:<id>` is the same key as `watches:<id>`.
+`type:monitor` without `watches:<id>` is not a monitor. `lane:liaison` on a child lane that lacks `role:root` is not an Impresario house. Birth of a monitor sets `type:monitor` and `watches:<id>` and does not set `type:continuity`. Birth of an Impresario house sets `lane:liaison` and `role:root`. `watch:<id>` is the same key as `watches:<id>`.
 
 CHECKPOINT profile still follows enrollment only (`tick_charter` iff enrolled; else `orchestrator_continuity`).
 
@@ -246,7 +246,7 @@ Operator English → you translate (do not correct their wording):
 | “watch that / don’t post / just look” | custodial · monitor |
 | “the main arc / standing root / keep this open” | orchestration thread (`role:root`) |
 | “do the work here / implement on this / this is the job” | productive (this thread) |
-| “have cursor do X / just do it / make it real” | remaining hops — Use the `life-operator-do-chain` skill; ¬ quiz. Named Sketch / Mission Composer / Conductor pin that hop |
+| “have cursor do X / just do it / make it real” | remaining hops — Use the `life-operator-do-chain` skill; ¬ quiz. Named Sketch / Scoring / Conductor pin that hop |
 | “what is this thread?” | you label it (spine + genus + species if useful) |
 | “don’t mix the watch with the work” | keep 9471-class and 9482-class apart |
 
@@ -264,7 +264,7 @@ Do not mint `genus:` tags until that decision's promotion trigger fires.
 
 **Three registers (BINDING — Fable 9518 / `decision:thread-genus`):** do not
 read `slug` or `type:*` as the current contract. They are birth graffiti.
-Exception: the liaison/monitor reader above. `watches:` and
+Exception: the Impresario/monitor reader above. `watches:` and
 `lane:liaison` together with `role:root` are that discriminator. Other
 `type:*` and `lane:*` tags stay graffiti.
 

@@ -22,6 +22,8 @@ carried with its basis — the seat treats ``stop_class`` as a designed stop,
 never as proof of exhaustion.
 
 Bus access mirrors scripts/watch-cursor-bridge-inbox.py (UDS + AGENT_BUS_TOKEN).
+
+Orchestra CLI alias: ``scripts/metronome.py`` (Metronome; ``--loop`` / ``--spawn-on-wake``).
 """
 
 from __future__ import annotations

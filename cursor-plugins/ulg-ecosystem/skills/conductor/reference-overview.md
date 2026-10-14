@@ -10,11 +10,11 @@ gates. This is how models finish together on one graph after the lid closes
 
 | Term | Means |
 |---|---|
-| **conductor score** | the **densified todo** (dense spec + implement-lane attrs + pins) — Mission Composer product; what this seat plays. Packet + scoreboard are **derived** from it at admit |
+| **conductor score** | the **densified todo** (dense spec + implement-lane attrs + pins) — Scoring product; what this seat plays. Packet + scoreboard are **derived** from it at admit |
 | **conductor packet** | six-block file Stargate **materializes** from `source_ref=todo:` at `job=conductor` admit. Hand-authored `packet_path=` is refused on that contract (`conductor_with_packet_path`) |
 | **scoreboard** | G-row table the materializer births from the todo (`birth_scoreboard`); re-admit never rewinds it |
 
-¬ admit package. ¬ shorten conductor score to **score**. Mission Composer ≠ `cursor/composer-2.5`.
+¬ admit package. ¬ shorten conductor score to **score**. Scoring ≠ `cursor/composer-2.5`.
 Hop → wire → product map: § Admit from an existing plan.
 
 **Default is run, don't ask.** Once admitted, the conductor drives every open

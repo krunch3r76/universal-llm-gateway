@@ -41,7 +41,7 @@ Required in `<scope>` / `<invariants>`:
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
-- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `ide-continuity`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
+- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. An Impresario admits that conductor for a played todo (§ Play in `ide-continuity`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
   implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
@@ -82,7 +82,7 @@ team_dispatch(
 ```
 
 First-utterance **mint** only. Harvested score / `NEXT_ADMIT: none` is the
-rematerialize trap (§ Liaison-decide), not this recipe.
+rematerialize trap (§ Impresario-decide), not this recipe.
 
 `{root}` = continuity root that already has turns and is not an operator lane
 (shape 1), **or** a `lifecycle_state=pending` ∧ `turn_count==0` child of that
@@ -229,7 +229,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
     failure.
   - **Exit-and-continue:** `ROW_HOP` — persist (journal → CHECKPOINT), then
     exit; the substrate admits the successor immediately. Nobody consulted;
-    not a page; not visible in the liaison register. Seventh token in
+    not a page; not visible in the Impresario register. Seventh token in
     `STOP_TOKENS`; new class `CHAIN_STOPS`.
   - **Open mission, no `land_disposition`.** At any stop other than `DONE`,
     do not declare `land_disposition`. The substrate retains the lane for the
@@ -282,7 +282,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   land-then-background-review. Resume only after (1) CDP restored **and** the
   owed picker harvests a quotable verdict URI, or (2) the operator **explicitly**
   rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
-  silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
+  silent. Impresario / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
   on ACTIVE (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
   summoning thread as a report whose body cites CDP exec id + review sha
@@ -291,9 +291,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   `OPERATOR_GATE`.
 - No live summoning chat = confer-and-finish via `team_dispatch` (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
-  explicit, **or** when the summoning IDE is liaison (human not in that chat).
+  explicit, **or** when the summoning IDE is Impresario (human not in that chat).
   No pager only when the live summoning chat **is the human operator**.
-  Liaison IDE ≠ operator-present. Bus `Quiet with work in flight` is not a page
+  Impresario IDE ≠ operator-present. Bus `Quiet with work in flight` is not a page
   (`qwa-*` on the worker thread → `to=cursor` is the named miss; 9638#187).
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
@@ -345,7 +345,7 @@ Planned hops and crash-resume are **one substrate path**: conductor row
 terminal ∧ mission open ∧ no exit-and-persist/`DONE` token ⇒ successor on the
 same thread. `ROW_HOP` = immediate; token-less terminal (crash, silent exit) =
 same successor under the crash / no-progress budgets, then `PARKED_TRANSPORT` +
-page. The liaison fires a resume only when the reactor has parked — never as
+page. The Impresario fires a resume only when the reactor has parked — never as
 the first responder.
 
 `CONSULT_PENDING` is **not** a designed-stop terminate. Exit-and-persist stops
@@ -358,7 +358,7 @@ run and posts the PARKED turn itself with the wake record
 `PARKED_TRANSPORT wake=giw_restart:{intent_id}` — a designed stop, not a crash
 (no hop budget charge). The wake is GIW's own `resume_of` child after restart
 (PARK-RESUME preamble + your unchanged packet, `hop_successor` stamped); no CDP
-harvest is owed and the liaison fires nothing. On resume: treat the last tool
+harvest is owed and the Impresario fires nothing. On resume: treat the last tool
 call as unverified, continue from your CHECKPOINT/journal, never restart the row.
 
 **Seat-initiated park (`team_dispatch op=steer`):** IDE lead or cursor-sdk may park one live
@@ -371,7 +371,7 @@ record may read `giw_restart:none` when no restart intent is bound.
 
 | Conductor stop | Continuation | Mechanism | Who initiates |
 |---|---|---|---|
-| `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | liaison / IDE lead when the pin lifts |
+| `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | Impresario / IDE lead when the pin lifts |
 | `ROW_HOP` (planned), crash, silent, watchdog | **fresh agent** | GIW hop reactor → Stargate generate with `reuse_thread` + `hop_*`, **no `resume_of`** | substrate |
 
 **Designed-stop CLOSEOUT identity (binding — a:32548):** exit-and-persist
@@ -398,7 +398,7 @@ persist scoreboard + journal, then exit. **¬** absorb the G-row in-seat as G5;
 `nest_under=<conductor dispatch_id>`).
 
 If the worker is **terminal** on a **hop** path, the substrate fires the hop
-successor (fresh agent). On **`ROW_PINNED`**, the liaison fires **`resume_of`**
+successor (fresh agent). On **`ROW_PINNED`**, the Impresario fires **`resume_of`**
 when the pin lifts — do not mint a sibling worker while the pinned agent is
 reusable. New `dispatch_id` is required (dead execution ≠ dead thread). House
 folds (pager, nest-orphan, scoreboard) ride **on** that resume — they do not
@@ -425,7 +425,7 @@ team_dispatch(
 **Packet carry is mandatory.** GIW preambles extract from **packet text only**.
 Re-admit with `source_ref` materialize (or the same packet + Use-line) only
 when the conductor is **unfinished**. Harvested / `NEXT_ADMIT: none` is not
-resume — rematerialize trap (§ Liaison-decide).
+resume — rematerialize trap (§ Impresario-decide).
 
 **Identity rewrite (binding on the new seat):**
 
