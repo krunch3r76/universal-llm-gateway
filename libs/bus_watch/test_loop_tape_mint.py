@@ -129,6 +129,7 @@ def test_mint_wire_payload(tmp_path: Path) -> None:
     assert payload["new_slug"] == "11960-loop-tape"
     assert payload["parent_thread"] == "11960"
     assert payload["lane_role"] == "hop"
+    assert payload["to"] == "web-anthropic"
     assert "LOOP-TAPE 11960" in payload["body"]
 
 

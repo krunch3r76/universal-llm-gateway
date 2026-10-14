@@ -410,6 +410,7 @@ def _stage_inputs(
     packet_path: str | None,
     skills: list[str] | None = None,
     purpose: str | None = None,
+    contract: str | None = None,
     request_id: str | None = None,
     dispatch_thread_id: str | None = None,
 ) -> Any:
@@ -451,6 +452,7 @@ def _stage_inputs(
             sidecar_ref=staged_sidecar,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
+            contract=contract,
             dispatch_thread_id=dispatch_thread_id,
         )
     except CdpStagingError:
@@ -559,6 +561,7 @@ async def dispatch_cdp_generate(
             packet_path=packet_path,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
+            contract=contract,
             request_id=request_id,
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )

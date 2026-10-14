@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
+import pwd
 import time
+import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from bus_watch.park_harvest import harvest_still_owed
 
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CURSOR_SDK_DISPATCH_LEDGER_ENV,
+    CursorDispatchLedger,
+    resolve_cursor_sdk_dispatch_ledger_path,
+)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    _evaluate_harvest_reply_execution,
+    _park_harvest_target_token,
+    _reply_matches_harvest_execution,
     build_park_harvest_arm_recipe,
     fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
@@ -54,8 +65,9 @@ _HARVEST_REPLY_UUID = "994dc2b4-d1dd-4206-bd97-2ad0109478bc"
 def _stub_shape_b_reply_match() -> patch:
     """Hermetic stand-in for a matching CDP reply header (shape B)."""
     return patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._reply_matches_harvest_execution",
-        return_value=True,
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_evaluate_harvest_reply_execution",
+        return_value=(True, None),
     )
 
 _ROW_HOP_CLOSEOUT = """\
@@ -67,22 +79,43 @@ hop_seq: 1
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    root = tmp_path / "giw-ledger-root"
+    root.mkdir(parents=True, exist_ok=True)
+    isolated_db = root / "cursor-sdk-dispatch.db"
+    monkeypatch.setenv("DATA_DIR", str(root))
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, str(isolated_db))
+    SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
-    yield tmp_path
+    yield root
+    SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    dispatch_id = str(overrides.get("dispatch_id", uuid.uuid4().hex[:20]))
+    execution_id = str(overrides.get("execution_id", f"exec-{dispatch_id}"))
     base = {
         "thread_id": "10065",
         "model": "cursor/composer-2.5",
-        "dispatch_id": "pred-park-1",
-        "execution_id": "exec-pred-park-1",
+        "dispatch_id": dispatch_id,
+        "execution_id": execution_id,
         "message": "conductor",
     }
     base.update(overrides)
     return CursorDispatchRequest(**base)
+
+
+def test_park_harvest_module_pins_dispatch_ledger_away_from_live_gateway() -> None:
+    """Module autouse must pin CURSOR_SDK_DISPATCH_LEDGER so bridge export cannot win."""
+    pinned = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
+    assert pinned, "module autouse must set CURSOR_SDK_DISPATCH_LEDGER"
+    resolved = resolve_cursor_sdk_dispatch_ledger_path()
+    live_gateway = (Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway").resolve()
+    assert resolved == Path(pinned).resolve()
+    assert resolved != (live_gateway / "cursor-sdk-dispatch.db").resolve()
+    assert not resolved.is_relative_to(live_gateway)
 
 
 def _admit_conductor(
@@ -626,7 +659,12 @@ def test_park_harvest_continue_rejects_done_in_body() -> None:
     record = json.loads(row["record_json"])
     record["closeout_body"] = "stop: PARKED_TRANSPORT\nstop: DONE\n"
     row["record_json"] = json.dumps(record)
-    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
 
 
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
@@ -1167,3 +1205,458 @@ def test_park_harvest_admit_error_increment_race_safe() -> None:
     bad_err = json.loads(bad)["hop_admit_error"]
     assert bad_err["attempts"] == 1
     assert bad_err.get("stop_not_claimed_attempts", 0) <= 1
+
+
+def _thread_turns(turns: list[dict]) -> patch:
+    return patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest._fetch_thread_turns",
+        side_effect=lambda _tid: list(turns),
+    )
+
+
+def _no_harvest_started_at() -> patch:
+    return patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._harvest_execution_started_at_iso",
+        return_value=None,
+    )
+
+
+def _set_row_started_at(ledger: CursorDispatchLedger, dispatch_id: str, iso: str) -> None:
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=? WHERE dispatch_id=?",
+            (iso, dispatch_id),
+        )
+
+
+def test_reply_matches_harvest_execution_accepts_from_bus_key() -> None:
+    """Agent-bus ``/turns`` exposes author on ``from``, not ``from_agent``."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-from-key")
+    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        assert _reply_matches_harvest_execution(mapped, _HARVEST_REPLY_UUID)
+
+
+def test_reply_matches_harvest_execution_accepts_from_agent_key() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-from-agent-key")
+    row = _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    turns = [
+        {
+            "turn_number": 50,
+            "from_agent": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        assert _reply_matches_harvest_execution(mapped, _HARVEST_REPLY_UUID)
+
+
+def _row_without_harvest_token(
+    ledger: CursorDispatchLedger, req: CursorDispatchRequest
+) -> dict:
+    _production_parked_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_body": "stop: PARKED_TRANSPORT\nprose only\n"},
+    )
+    return _reload_row(ledger, req.dispatch_id)
+
+
+def test_park_harvest_continue_emits_no_harvest_token_refusal() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-no-token")
+    row = _row_without_harvest_token(ledger, req)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    emit_refused.assert_called_once()
+    assert emit_refused.call_args.kwargs["predicate"] == "no_harvest_token"
+
+
+def test_park_harvest_refusal_emits_once_per_predicate() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-refusal-cardinality")
+    row = _row_without_harvest_token(ledger, req)
+    emit_path = (
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    )
+    with patch(emit_path) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_called_once()
+    row2 = _reload_row(ledger, req.dispatch_id)
+    with patch(emit_path) as emit_refused:
+        assert not park_harvest_continue_owed(row2, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_park_harvest_refusal_not_emitted_before_wake_fired() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-pre-wake")
+    _production_parked_row(ledger, req, fired=False)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_body": "stop: PARKED_TRANSPORT\nprose only\n"},
+    )
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_park_harvest_refusal_not_emitted_when_already_continued() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-continued-stamp")
+    row = _production_parked_row(ledger, req)
+    record = json.loads(row["record_json"])
+    record["hop_park_harvest_continued_at"] = time.time()
+    row["record_json"] = json.dumps(record)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_not_called()
+
+
+def test_evaluate_harvest_reply_reply_absent() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-reply-absent")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    with _thread_turns([]), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_absent"
+
+
+def test_evaluate_harvest_reply_author_mismatch_from_key() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-author-mismatch")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "cursor",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "author_mismatch"
+
+
+def test_evaluate_harvest_reply_echo_then_genuine_web_reply() -> None:
+    """39237: non-web echo must not block a later genuine web-anthropic reply."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-echo-then-genuine")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    short = _HARVEST_REPLY_UUID[:8]
+    worker_turns = [
+        {
+            "turn_number": 30,
+            "from": "cursor",
+            "created_at": "2026-10-13T10:00:30+00:00",
+            "subject": f"cdp reply — {short}",
+        },
+    ]
+    summoning_turns = [
+        {
+            "turn_number": 80,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:05:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+
+    def _turns_for_thread(tid: str) -> list[dict]:
+        if tid == "9638":
+            return summoning_turns
+        return worker_turns
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_fetch_thread_turns",
+        side_effect=lambda tid: _turns_for_thread(tid),
+    ), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert matched
+    assert predicate is None
+
+
+def test_evaluate_harvest_reply_at_most_two_thread_fetches() -> None:
+    """39237: watermark from fetched turns — one GET per thread per evaluation."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-fetch-budget")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    fetch = patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_fetch_thread_turns",
+        side_effect=lambda _tid: [],
+    )
+    with fetch as mocked, _no_harvest_started_at():
+        _evaluate_harvest_reply_execution(mapped, _HARVEST_REPLY_UUID)
+    assert mocked.call_count == 2
+
+
+def test_evaluate_harvest_reply_reply_failed_for_cdp_failed_subject() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-reply-failed")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    short = _HARVEST_REPLY_UUID[:8]
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp FAILED — {short}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_failed"
+
+
+def test_evaluate_harvest_reply_started_at_floor() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-started-floor")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:05:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {_HARVEST_REPLY_UUID}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "started_at_floor"
+
+
+def test_evaluate_harvest_reply_id_mismatch() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-id-mismatch")
+    _production_parked_row(ledger, req, closeout_turn=48)
+    _set_row_started_at(ledger, req.dispatch_id, "2026-10-13T10:00:00+00:00")
+    mapped = _reload_row(ledger, req.dispatch_id)
+    other = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    turns = [
+        {
+            "turn_number": 50,
+            "from": "web-anthropic",
+            "created_at": "2026-10-13T10:01:00+00:00",
+            "subject": f"cdp reply — {other}",
+        },
+    ]
+    with _thread_turns(turns), _no_harvest_started_at():
+        matched, predicate = _evaluate_harvest_reply_execution(
+            mapped, _HARVEST_REPLY_UUID
+        )
+    assert not matched
+    assert predicate == "reply_id_mismatch"
+
+
+_HARVEST_124_INLINE = "fa67d1a2-ea32-4262-b258-287834b4bb51"
+_HARVEST_LINE_ANCHORED = "994dc2b4-d1dd-4206-bd97-2ad0109478bc"
+
+
+def test_park_harvest_target_token_midline_next_admit_124_class() -> None:
+    """16671#124: inline NEXT_ADMIT harvest id when no line-anchored payload."""
+    guard = (
+        "status: complete\n"
+        f"prose continues NEXT_ADMIT: harvest {_HARVEST_124_INLINE} on same line\n"
+    )
+    assert _park_harvest_target_token(guard) == _HARVEST_124_INLINE
+
+
+def test_park_harvest_target_token_line_anchored_beats_older_inline() -> None:
+    """Line-anchored last NEXT_ADMIT wins over an earlier inline mention."""
+    older = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    guard = (
+        f"quoted earlier NEXT_ADMIT: harvest {older} in prose\n"
+        f"NEXT_ADMIT: harvest {_HARVEST_LINE_ANCHORED}\n"
+    )
+    assert _park_harvest_target_token(guard) == _HARVEST_LINE_ANCHORED
+
+
+def test_park_harvest_target_token_line_anchored_g1_ignores_inline() -> None:
+    guard = (
+        "stop: PARKED_TRANSPORT\n"
+        "NEXT_ADMIT: harvest G1\n"
+        f"prose cites NEXT_ADMIT: harvest {_HARVEST_124_INLINE} inline\n"
+    )
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_two_inline_ids_same_line() -> None:
+    a = "f01914a3-015c-4449-be62-1ac2911bf02b"
+    b = "642fe99c-45e4-487d-9abb-132c1023a679"
+    guard = f"notes NEXT_ADMIT: harvest {a} and NEXT_ADMIT: harvest {b} together\n"
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_fenced_only_no_line_admit() -> None:
+    guard = (
+        "```\n"
+        f"NEXT_ADMIT: harvest {_HARVEST_124_INLINE}\n"
+        "```\n"
+    )
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_target_token_rejects_hex_suffix_extension() -> None:
+    base = _HARVEST_LINE_ANCHORED[:8]
+    guard = f"NEXT_ADMIT: harvest {base}abcd_retry\n"
+    assert _park_harvest_target_token(guard) is None
+
+
+def test_park_harvest_continue_uses_midline_harvest_token() -> None:
+    """Continue path resolves inline harvest token (not no_harvest_token refusal)."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-midline-124")
+    _production_parked_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_body": (
+                "stop: PARKED_TRANSPORT\n"
+                f"done with leg NEXT_ADMIT: harvest {_HARVEST_124_INLINE}\n"
+            ),
+        },
+    )
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_evaluate_harvest_reply_execution",
+        return_value=(False, "reply_absent"),
+    ) as evaluate:
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+        ) as emit_refused:
+            assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        emit_refused.assert_called_once()
+        assert emit_refused.call_args.kwargs["predicate"] == "reply_absent"
+        assert emit_refused.call_args.kwargs["harvest_token"] == _HARVEST_124_INLINE
+    evaluate.assert_called_once()
+    assert evaluate.call_args[0][1] == _HARVEST_124_INLINE
+
+
+@pytest.mark.asyncio
+async def test_consult_pending_identical_signatures_park() -> None:
+    """Three identical CONSULT_PENDING signatures park once via park_conductor.
+
+    This is the loop park, not the inspection-deferred admit path. The
+    inspection pager must stay idle; paging happens inside park_conductor.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        _PARK_REASON_NO_PROGRESS_CAP,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        fire_consult_pending_continue,
+    )
+
+    stuck = {
+        "hop_entry_gate": "G2",
+        "hop_witnessed_done": ["G1"],
+        "hop_lane_tip": "lane-a",
+        "hop_scoreboard_tip": "board-a",
+        "hop_next_admit": "harvest G3",
+        "summoning_thread_id": "9638",
+        "consult_summoning_after_turn": 1,
+        "closeout_turn": 2,
+    }
+    ledger = CursorDispatchLedger.instance()
+    prior = "spawn-parent"
+    last_id = "cp-3"
+    for idx in range(1, 4):
+        dispatch_id = f"cp-{idx}"
+        req = _req(dispatch_id=dispatch_id)
+        _admit_conductor(ledger, req, record_patch={**stuck, "closeout_stop_tokens": ["CONSULT_PENDING"]})
+        ledger.merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={"hop_seq": idx, "hop_from": prior},
+        )
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+        prior = dispatch_id
+        last_id = dispatch_id
+    row = _reload_row(ledger, last_id)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.park_conductor_hop_mission",
+            AsyncMock(),
+        ) as park_mock,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
+            AsyncMock(return_value=True),
+        ) as page_mock,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-cp"})),
+        ) as post_mock,
+    ):
+        assert await fire_consult_pending_continue(row) is False
+    park_mock.assert_awaited_once()
+    assert park_mock.await_args.kwargs["reason"] == _PARK_REASON_NO_PROGRESS_CAP
+    page_mock.assert_not_awaited()
+    post_mock.assert_not_awaited()

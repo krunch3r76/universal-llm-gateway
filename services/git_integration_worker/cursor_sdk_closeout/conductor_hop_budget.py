@@ -221,10 +221,17 @@ def _no_progress_verdict(
     signature = progress_signature_for_row(row)
     streak = 0
     last = signature
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        _loop_eligible,
+    )
+
     for prior in reversed(chain):
         if prior.get("dispatch_id") == dispatch_id:
             continue
-        if not _planned_closeout(prior, closeout_tokens=prior_record_tokens(prior)):
+        if str(prior.get("park_kind") or "") == PARK_KIND_RESTART:
+            continue
+        prior_tokens = prior_record_tokens(prior)
+        if not _loop_eligible(prior, closeout_tokens=prior_tokens):
             break
         prior_signature = progress_signature_for_row(prior, live=False)
         if signature_advanced(last, prior_signature):
@@ -290,9 +297,8 @@ def evaluate_hop_budget(
     Order matters: an already-parked row stays refused; a closeout that carries
     an exempt stop (``DONE``, ``ROW_PINNED``, ``HOLD_MERGE``, ``OPERATOR_GATE``)
     and no continue-owed stop (``CONSULT_PENDING``, ``PARKED_TRANSPORT``) is
-    never parked by a budget. A continue-owed stop falls through to the mission
-    cap even when an exempt token shares the closeout. Only then do the
-    no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
+    never parked by a budget. Continue-owed stops and planned ``ROW_HOP`` rows
+    are judged by ``inspect_hop_loop``; crash cap applies to tokenless failures.
     The watchdog calls this before ``hop_owed``, so a budget park on a
     no-successor stop would page and lock a mission that is merely waiting.
 
@@ -333,33 +339,75 @@ def evaluate_hop_budget(
         return HopBudgetVerdict(ok=True)
 
     dispatch_id = str(row.get("dispatch_id") or "")
-    chain = list_mission_terminal_chain(work_key=work_key, exclude_dispatch_id=None)
-    mission_hops = count_hop_attempts(chain)
-    hops_since_release = mission_hops - mission_cap_baseline(chain)
-    if cfg.mission_cap > 0 and hops_since_release >= cfg.mission_cap:
-        return HopBudgetVerdict(
-            ok=False,
-            park=True,
-            reason=PARK_REASON_MISSION_CAP,
+    try:
+        chain = list_mission_terminal_chain(
+            work_key=work_key, exclude_dispatch_id=None
+        )
+    except sqlite3.OperationalError:
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+            REASON_INSPECTION_DEFERRED,
         )
 
-    if planned:
-        # A mission-cap release resets the hop window only; no-progress is unchanged.
-        return _no_progress_verdict(
-            row, chain=chain, dispatch_id=dispatch_id, config=cfg
+        return HopBudgetVerdict(
+            ok=False,
+            park=False,
+            reason=REASON_INSPECTION_DEFERRED,
         )
+
+    continues_owed = bool(closeout_tokens & _BUDGET_ONLY_SUCCESSOR_STOPS)
+    if planned or continues_owed:
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+            inspect_hop_loop,
+            inspection_to_verdict,
+        )
+
+        inspection = inspect_hop_loop(
+            row, chain, config=cfg, closeout_tokens=closeout_tokens
+        )
+        return inspection_to_verdict(inspection, config=cfg)
 
     if not _is_crash(closeout_tokens=closeout_tokens):
         return HopBudgetVerdict(ok=True)
 
     signature = progress_signature_for_row(row)
     if not signature_can_prove_crash(signature):
-        return HopBudgetVerdict(ok=True)
+        crash_streak = 1
+        for prior in reversed(chain):
+            if prior.get("dispatch_id") == dispatch_id:
+                continue
+            if str(prior.get("park_kind") or "") == PARK_KIND_RESTART:
+                continue
+            prior_tokens = prior_record_tokens(prior)
+            if prior_tokens & STOP_TOKENS:
+                break
+            if not _is_crash(closeout_tokens=prior_tokens):
+                break
+            prior_signature = progress_signature_for_row(prior, live=False)
+            if signature_can_prove_crash(prior_signature):
+                break
+            crash_streak += 1
+        backoff = 300.0 if crash_streak >= cfg.crash_cap_per_row else _crash_backoff_s(
+            crash_streak=crash_streak, config=cfg
+        )
+        if cfg.crash_cap_per_row > 0 and crash_streak >= cfg.crash_cap_per_row:
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+                REASON_INSPECTION_REQUESTED,
+            )
+
+            return HopBudgetVerdict(
+                ok=True,
+                park=False,
+                reason=REASON_INSPECTION_REQUESTED,
+                backoff_s=backoff,
+            )
+        return HopBudgetVerdict(ok=True, backoff_s=backoff)
 
     crash_streak = 1
     last = signature
     for prior in reversed(chain):
         if prior.get("dispatch_id") == dispatch_id:
+            continue
+        if str(prior.get("park_kind") or "") == PARK_KIND_RESTART:
             continue
         prior_tokens = prior_record_tokens(prior)
         if prior_tokens & STOP_TOKENS:

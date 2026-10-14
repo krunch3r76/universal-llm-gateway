@@ -17,13 +17,14 @@ _LEADING_SKILL_HASH = re.compile(
     r"^Hash these skills from your local skill server and quote each digest before you answer:.*\n"
 )
 REVIEW_READING_CHARTER = (
-    "Review seat: the packet carries the code under review. "
-    "Read that, and browse the live tree for other code. "
+    "Review seat: the packet names or carries the modules under review. "
+    "Read the full modules and browse the live tree via fs(sandbox='workspaces') "
+    "to expand to related modules, callers, and constants as warranted. "
     "Do not REJECT because you cannot check out a commit, run pytest, or run quality_gate. "
     "A conflict between this live tree and land is reconciled later by a reasoning seat.\n"
 )
 _LEADING_REVIEW_CHARTER = re.compile(
-    r"^Review seat: the packet carries the code under review\..*\n"
+    r"^Review seat: the packet (?:names or )?carries the (?:code|modules) under review\..*\n"
 )
 _LEADING_INLINE_BLOCK = re.compile(
     r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
@@ -183,30 +184,42 @@ def peel_sealed_cdp_skill_prefix(
     return attach, inline, rest
 
 
+_REVIEW_CHARTER_CONTRACTS = frozenset(
+    {"code-review", "delivery-review", "check-review"}
+)
+
+
 def ensure_review_reading_charter(
     text: str,
     purpose: str | None,
     *,
     author_body: str | None = None,
+    contract: str | None = None,
 ) -> str:
     """Place the reading-review line after the skill hash. Idempotent under peel.
 
-    ``job=delivery-review`` delivery/code-review only. The packet carries the code.
-    CDP reads the live tree. Checkout, pytest, and quality_gate are not this
-    seat's reject grounds.
+    Fires for ``purpose=review`` or review-class ``contract`` (code/delivery/check).
+    CDP reads modules via ``fs(sandbox='workspaces')``. Checkout, pytest, and
+    quality_gate are not this seat's reject grounds.
 
     a:37183 — never inject this chrome onto G4 / SKEPTIC / adversarial-spec
     *author* bodies; those are spec-skeptic seats, not delivery review.
     Shape detection uses ``author_body`` when provided (A1 — pre-skill text).
     """
-    if (purpose or "").strip().lower() != "review":
+    purpose_key = (purpose or "").strip().lower()
+    contract_key = (contract or "").strip().lower()
+    if purpose_key != "review" and contract_key not in _REVIEW_CHARTER_CONTRACTS:
         return text
     from claude_bundles.nested_cdp_prompt_gate import is_skeptic_shaped
 
     shape_src = author_body if author_body is not None else text
     if is_skeptic_shaped(shape_src):
         return text
-    if "the packet carries the code under review" in text.casefold():
+    folded = text.casefold()
+    if (
+        "the packet carries the code under review" in folded
+        or "the packet names or carries the modules under review" in folded
+    ):
         return text
     marker = "Hash these skills from your local skill server"
     idx = text.find(marker)

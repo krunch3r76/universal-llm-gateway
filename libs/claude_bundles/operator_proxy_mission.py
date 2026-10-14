@@ -15,6 +15,7 @@ from typing import Any
 
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
+from claude_bundles.operator_proxy_standing_render import maestro_runbook_act2_line
 from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
@@ -29,6 +30,7 @@ OPERATOR_PROXY_MISSION_PURPOSES: frozenset[str] = frozenset(
 # (decision:reasoning-frontier-skill-pair).
 MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
+    "lean-dispatch",
     "reasoning-posture",
     "hypothesize-simulate",
     # Member 6: status/rank/liveness register at mission-close authoring.
@@ -120,6 +122,13 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 {house_rules_verbatim}
 
+{checkpoint_block}
+
+{lessons_in_force}
+{register_card}
+
+{inflight_block}
+
 ## Live leg (data, projected from the bus)
 
 {live_leg}
@@ -130,12 +139,12 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 ## Your first acts, in order
 
-1. Use the cdp-operator-proxy, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
-2. Read cortex://notes/runbooks/maestro-loop.md in full (fs read, no limit).
-3. The live leg above is computed from the bus; the file is the HOUSE RULES and pointer source. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
-4. Read cortex://notes/system/maestro/journal.md with offset 0, limit 40.
-5. agent_bus_read fetch thread {lane}, last 3, compact. Then mark_read through the latest turn with agent web-anthropic.
-6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Keep it at or under 2000 characters: measure with wc -m before you send.
+1. Use the cdp-operator-proxy, lean-dispatch, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+2. {act2_runbook_line}
+3. The checkpoint, HOUSE RULES, and in-flight rows above are the arrival projection from the standing handoff; use the live leg for bus-derived open items. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
+4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
+5. agent_bus_read fetch thread {lane}, last {fetch_last}, compact. Then mark_read through the latest turn with agent web-anthropic.
+6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Include one line: induction: RULE <entry id> — <one sentence in the seat's own words> · specimen <turn or sha>, citing a ## heading and specimen from cortex://notes/system/maestro/journal.md. Keep it at or under 2000 characters: measure with wc -m before you send.
 7. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
 
 ## How this seat works
@@ -146,7 +155,7 @@ Commission: ulg-code team_dispatch(op=generate, seat=cursor-sdk, lane=B, contrac
 Poll with the response's poll_hint unchanged (tool=wait; never job_state, which is the deprecated agent_bus.request hint). "predicate_unmet" means not yet: re-call the same hint; do not re-dispatch. Sleep at most 290 s between polls; quiet past about 10 minutes trips the watchdog even after TYPE: PARKED.
 Conductor admit and re-admit (the call most hops need first): team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:<slug>, work_key=todo:<slug>, lane=B, reuse_thread=<worker>, dispatch_thread_id=<worker>, model=cursor/grok-4.7, model_knobs={"fast":"true","effort":"low"}), with no prompt. Add generation_options={"hop_park_release": true} when it parked on a hop budget. Rulings reach a conductor only through team_dispatch(op=steer, steer=inject, dispatch_id=<that dispatch>, directive=…, reason=…). A DISPOSITION on {lane} does not reach it.
 Prompts another model will act on: a cursor seat drafts after retrieval-before-authoring, and you review and add before dispatch for sensitive legs (conductor packets, skills, operator prompts, admission or restart paths, lands).
-Verify one thing yourself before you report: a sha, a file line, a fleet_liveness answer. Report each leg as a DISPOSITION on {lane}. Page Kaywan through notify at material moves, in plain language; the subject is never COME TO IDE unless every other option is exhausted.
+Verify one thing yourself before you report: a sha, a file line, a fleet_liveness answer. Report each leg as a DISPOSITION on {lane}; when a disposition carries a line-start `lesson:`, until the journal contains a line-start `projector_live:` this seat is the only appender, in the same step as the standing-handoff replace (interim `team_dispatch` and `append_journal_from_closeout` do not append in that window). The seat's append of the first verified interim closeout includes a line-start `source_turn_id: <bus turn id>` and `projector_live: <dispatch_id>` in that same write; after the marker this seat does not append (dedupe key is the source bus turn id). The seat appends again only when `append_journal_from_closeout` has failed, not while a poll is still `predicate_unmet`. Page Kaywan through notify at material moves, in plain language; the subject is never COME TO IDE unless every other option is exhausted.
 Your own hop: when any trigger in runbook step 9 holds (KERNEL-H, which you read in first act 2; counters start at your SEAT_REGISTRATION), update the standing handoff's CURRENT block by replace, never prepend (runbook step 6; expected_sha256 from the handoff file sha256 at render), then between legs, never mid-harvest: agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…). If hop returns seat.identity_unresolvable: ulg-code team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, mission_kind=hop, parent_thread={lane}, dispatch_thread_id={lane}, prompt=…). K22: no cdp/fable hop target on this account. Lean chair: runbook step 5 R1 (KERNEL-L); this seat keeps REQUEST/ACK/RULING/AMEND/PARK/CANCEL and fleet actions.
 
 ## Standing authority
@@ -187,7 +196,17 @@ _FIELD_ORDER = (
     "execution_clause",
     "running_now_line",
 )
-_LATE_FIELD_ORDER = ("house_rules_verbatim", "live_leg", "pointers")
+_LATE_FIELD_ORDER = (
+    "house_rules_verbatim",
+    "checkpoint_block",
+    "lessons_in_force",
+    "register_card",
+    "inflight_block",
+    "live_leg",
+    "pointers",
+    "act2_runbook_line",
+    "fetch_last",
+)
 
 
 def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
@@ -195,7 +214,7 @@ def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
     for key in _FIELD_ORDER:
         part = part.replace("{" + key + "}", fields[key])
     for key in _LATE_FIELD_ORDER:
-        part = part.replace("{" + key + "}", fields[key])
+        part = part.replace("{" + key + "}", fields.get(key, ""))
     return part
 
 
@@ -234,6 +253,18 @@ def ensure_operator_proxy_mission_prompt(
     roster_text: str | None = None,
     fetch_turns: Callable[[str], list[dict[str, Any]]] | None = None,
     execution_id: str = "",
+    journal_text: str | None = None,
+    register_text: str | None = None,
+    read_cortex_uri: Callable[[str], str | None] | None = None,
+    inflight_projection_lookup: Callable[[], str | None] | None = None,
+    role: str = "maestro",
+    house_rules_text: str | None = None,
+    lineage_lookup: Callable[[str, str], str | None] | None = None,
+    archive_path_exists: Callable[[str], bool] | None = None,
+    page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
+    | None = None,
+    fold_state_load: Callable[[], dict | None] | None = None,
+    fold_state_save: Callable[[dict], None] | None = None,
 ) -> str:
     """Prepend the hop-successor template when it is not already the opening.
 
@@ -256,7 +287,23 @@ def ensure_operator_proxy_mission_prompt(
         roster_text=roster_text,
         fetch_turns=fetch_turns,
         execution_id=execution_id,
+        journal_text=journal_text,
+        register_text=register_text,
+        read_cortex_uri=read_cortex_uri,
+        inflight_projection_lookup=inflight_projection_lookup,
+        role=role,
+        house_rules_text=house_rules_text,
+        lineage_lookup=lineage_lookup,
+        archive_path_exists=archive_path_exists,
+        page_fetch=page_fetch,
+        fold_state_load=fold_state_load,
+        fold_state_save=fold_state_save,
     )
+    fields["act2_runbook_line"] = maestro_runbook_act2_line()
+    if "fetch_last" not in fields:
+        fields["fetch_last"] = "3"
+    for key in ("checkpoint_block", "inflight_block"):
+        fields.setdefault(key, "")
     return (
         render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
     )

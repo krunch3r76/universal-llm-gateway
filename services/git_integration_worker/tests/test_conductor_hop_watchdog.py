@@ -10,7 +10,7 @@ import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    PARK_REASON_MISSION_CAP,
+    _PARK_REASON_NO_PROGRESS_CAP,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
     maybe_fire_conductor_hop_watchdog,
@@ -534,10 +534,10 @@ async def test_cdp_probe_indeterminate_permanent_error_stamps_and_drops() -> Non
 
 
 @pytest.mark.asyncio
-async def test_cdp_probe_indeterminate_crash_cap_parks_and_stamps(
+async def test_cdp_probe_indeterminate_crash_cap_pages_not_parks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Admit-retry cap parks the row and burns the one-shot."""
+    """Admit-retry exhaustion pages once via the inspection pager, not a park."""
     monkeypatch.setenv("CONDUCTOR_HOP_CRASH_CAP_PER_ROW", "1")
     ledger = CursorDispatchLedger.instance()
     dispatch_id = "pred-watchdog-1"
@@ -558,14 +558,15 @@ async def test_cdp_probe_indeterminate_crash_cap_parks_and_stamps(
             post,
         ),
         patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
-        ),
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
+            AsyncMock(return_value=True),
+        ) as page_mock,
     ):
         failed = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
     assert failed is False
     record = _record(ledger, dispatch_id)
-    assert record.get("hop_parked") is True
-    assert record.get("hop_park_reason") == "hop_budget_admit_retry_cap"
+    assert record.get("hop_parked") is not True
+    page_mock.assert_awaited_once()
     assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
 
 
@@ -791,57 +792,89 @@ async def test_watchdog_fires_park_harvest_continue_before_arm_recipe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_parks_on_budget_exhaustion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mission_cap = 24
-    monkeypatch.setenv("CONDUCTOR_HOP_MISSION_CAP", str(mission_cap))
+async def test_watchdog_parks_on_loop_evidence() -> None:
+    """Watchdog parks only when signatures prove a loop, not on hop count."""
+    stuck = {
+        "hop_entry_gate": "G4",
+        "hop_witnessed_done": [],
+        "hop_lane_tip": "aaaaaaa",
+        "hop_scoreboard_tip": "bbbbbbb",
+    }
     ledger = CursorDispatchLedger.instance()
-    for idx in range(mission_cap):
+    prior = "spawn-parent"
+    last_id = "pred-cap-0"
+    for idx in range(1, 4):
         dispatch_id = f"pred-cap-{idx}"
-        _terminal_row(
-            ledger,
-            dispatch_id=dispatch_id,
-            closeout_tokens=["ROW_HOP"],
-            terminal_at_offset_s=-200.0 - idx,
+        req = _req(dispatch_id=dispatch_id)
+        ledger.admit(
+            req=req,
+            fingerprint=ledger.fingerprint(req),
+            execution_id=req.execution_id,
+            caller_agent="cursor",
+            resolved_model="composer-2.5",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id=dispatch_id,
+                thread_id=req.thread_id,
+                model_id="composer-2.5",
+            ),
+            contract="conductor",
+            source_repo="/repo",
+            lease_key="/repo",
+            work_key=_WORK_KEY,
+            source_ref=_WORK_KEY,
+            hop_seq=idx,
+            hop_from=prior if idx > 1 else "spawn-parent",
+            hop_reason="planned" if idx > 1 else "spawn",
         )
+        ledger.merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={
+                "contract": "conductor",
+                "closeout_stop_tokens": ["ROW_HOP"],
+                **stuck,
+            },
+        )
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+        prior = dispatch_id
+        last_id = dispatch_id
     with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_conductor_hop_mission",
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.park_conductor_hop_mission",
         AsyncMock(),
     ) as park_mock:
-        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-cap-0")
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=last_id)
     assert ok is False
     park_mock.assert_awaited_once()
-    assert park_mock.await_args.kwargs["reason"] == PARK_REASON_MISSION_CAP
+    assert park_mock.await_args.kwargs["reason"] == _PARK_REASON_NO_PROGRESS_CAP
 
 
 @pytest.mark.asyncio
-async def test_watchdog_does_not_budget_park_cancel_discard(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """a:37149 — discard at mission_cap must not page/lock via watchdog budget.
+async def test_watchdog_does_not_budget_park_cancel_discard() -> None:
+    """a:37149 — cancel_discard must not park even when signatures prove a loop.
 
-    Reviewer falsifier: discard row past grace → sweep/fire must not call
-    ``park_conductor_hop_mission`` and must leave ``mission_park_state`` clear.
-
-    a:38783 — the seed count is the effective cap. A hardcoded ``range(24)``
-    against the default of 48 never reaches the budget, so deleting the
-    ``PARK_KIND_DISCARD`` early-return still leaves this test green.
+    Identical provable ROW_HOP stamps would be ``inspection_requested`` or a
+    loop park if ``PARK_KIND_DISCARD`` stopped returning early. Deleting that
+    return calls ``park_conductor_hop_mission``.
     """
     from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
         mission_park_state,
     )
 
-    mission_cap = 24
-    monkeypatch.setenv("CONDUCTOR_HOP_MISSION_CAP", str(mission_cap))
+    stuck = {
+        "hop_entry_gate": "G4",
+        "hop_witnessed_done": ["G1"],
+        "hop_lane_tip": "lane-discard",
+        "hop_scoreboard_tip": "board-discard",
+        "hop_next_admit": "same admit",
+    }
     ledger = CursorDispatchLedger.instance()
-    for idx in range(mission_cap):
-        dispatch_id = f"pred-disc-{idx}"
+    for idx in range(3):
         _terminal_row(
             ledger,
-            dispatch_id=dispatch_id,
-            closeout_tokens=["ROW_HOP"] if idx else [],
-            terminal_at_offset_s=-200.0 - idx,
+            dispatch_id=f"pred-disc-{idx}",
+            closeout_tokens=["ROW_HOP"],
+            record_patch=stuck,
+            terminal_at_offset_s=-400.0 - idx,
         )
     with ledger._connect() as conn:
         conn.execute(
@@ -850,7 +883,7 @@ async def test_watchdog_does_not_budget_park_cancel_discard(
             "WHERE dispatch_id='pred-disc-0'"
         )
     with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog."
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park."
         "park_conductor_hop_mission",
         AsyncMock(),
     ) as park_mock:
@@ -1275,3 +1308,367 @@ def test_watchdog_hops_owed_off_event_loop() -> None:
         / "conductor_hop_watchdog.py"
     ).read_text(encoding="utf-8")
     assert "await asyncio.to_thread(hop_owed," in source
+
+
+def test_candidate_sweep_survives_hop_owed_raise() -> None:
+    """One row's hop_owed failure must not drop the rest of the sweep."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        dispatch_id="pred-boom",
+        closeout_tokens=["ROW_HOP"],
+        terminal_at_offset_s=-200.0,
+    )
+    _terminal_row(
+        ledger,
+        dispatch_id="pred-ok",
+        closeout_tokens=["ROW_HOP"],
+        terminal_at_offset_s=-200.0,
+        thread_id="9966",
+    )
+
+    def _owed(row: dict, **_kwargs: object) -> bool:
+        if str(row.get("dispatch_id")) == "pred-boom":
+            raise RuntimeError("hop_owed failed")
+        return True
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.hop_owed",
+        side_effect=_owed,
+    ):
+        found = conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S)
+    assert "pred-ok" in found
+
+
+_PROVABLE = {
+    "hop_entry_gate": "G4",
+    "hop_witnessed_done": ["G1"],
+    "hop_lane_tip": "lane-same",
+    "hop_scoreboard_tip": "board-same",
+    "hop_next_admit": "harvest G5",
+}
+
+
+@pytest.mark.asyncio
+async def test_admit_retry_park_503_stays_unserviced_and_retries() -> None:
+    """POST 503 must not stamp hop_park_serviced; the next sweep retries."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-retry-park"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_admit_retry_cap",
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    post = AsyncMock(return_value=(False, {"status_code": 503, "error": "down"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+        post,
+    ):
+        first = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        record = _record(ledger, dispatch_id)
+        assert record.get("hop_park_serviced") is not True
+        second = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert first is False
+    assert second is False
+    assert post.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_inspection_page_once_across_failed_admit() -> None:
+    """Two provable ROW_HOP priors, POST 503, two sweeps: pager awaited once."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        dispatch_id="sus-prior",
+        closeout_tokens=["ROW_HOP"],
+        record_patch=_PROVABLE,
+        terminal_at_offset_s=-500.0,
+    )
+    dispatch_id = "sus-current"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch=_PROVABLE,
+        terminal_at_offset_s=-200.0,
+        thread_id="9967",
+    )
+    post = AsyncMock(return_value=(False, {"status_code": 503, "error": "down"}))
+    page = AsyncMock(return_value=True)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
+            page,
+        ),
+    ):
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert page.await_count == 1
+    assert post.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_main_path_crash_cap_holds_backoff_and_does_not_service_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S3 AC6 main path: cap pages, hop_park_serviced stays unset, 300s hold."""
+    monkeypatch.setenv("CONDUCTOR_HOP_CRASH_CAP_PER_ROW", "1")
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-cap-main"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_entry_gate": "G4", "hop_lane_tip": "moving"},
+        terminal_at_offset_s=-200.0,
+    )
+    post = AsyncMock(return_value=(False, {"status_code": 503, "error": "down"}))
+    page = AsyncMock(return_value=True)
+    emit_cleared = patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    )
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_inspection_requested",
+            page,
+        ),
+        emit_cleared as cleared_mock,
+    ):
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert post.await_count == 1
+    assert page.await_count == 1
+    cleared_mock.assert_not_called()
+    record = _record(ledger, dispatch_id)
+    assert record.get("hop_park_serviced") is not True
+    assert record.get("hop_parked") is not True
+
+
+def test_operational_error_defers_without_park_or_post() -> None:
+    """S3 AC4 — sqlite lock is inspection_deferred, not a park and not a POST."""
+    import sqlite3
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        REASON_INSPECTION_DEFERRED,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"], terminal_at_offset_s=-200.0)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.list_mission_terminal_chain",
+        side_effect=sqlite3.OperationalError("locked"),
+    ):
+        verdict = evaluate_hop_budget(row, closeout_tokens=frozenset({"ROW_HOP"}))
+    assert verdict.reason == REASON_INSPECTION_DEFERRED
+    assert verdict.park is False
+    assert verdict.ok is False
+
+
+@pytest.mark.asyncio
+async def test_watchdog_operational_error_does_not_post() -> None:
+    import sqlite3
+
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], terminal_at_offset_s=-200.0)
+    post = AsyncMock()
+    park = AsyncMock()
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.list_mission_terminal_chain",
+            side_effect=sqlite3.OperationalError("locked"),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.park_conductor_hop_mission",
+            park,
+        ),
+    ):
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert ok is False
+    post.assert_not_called()
+    park.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_second_announcer_on_parked_row_does_not_page() -> None:
+    """S3 AC3 — a parked row's second announcer call does not page."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        terminal_at_offset_s=-200.0,
+    )
+    page = AsyncMock(return_value=True)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
+            page,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ),
+    ):
+        first = await apply_hop_budget_announcer(
+            row,
+            HopBudgetVerdict(ok=False, park=True, reason="hop_budget_loop"),
+        )
+        fresh = _record(ledger, "pred-watchdog-1")
+        row["record_json"] = json.dumps(fresh)
+        second = await apply_hop_budget_announcer(
+            row,
+            HopBudgetVerdict(ok=False, park=False, reason="already_parked"),
+        )
+    assert first is False
+    assert second is False
+    assert page.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_inspection_page_body_does_not_say_parked() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
+        page_hop_inspection_requested,
+    )
+
+    pager = AsyncMock(return_value=True)
+    with patch("pager_notify.client.notify_pager", pager):
+        await page_hop_inspection_requested(
+            dispatch_id="d1",
+            thread_id="t1",
+            reason="inspection_requested",
+            work_key="todo:x",
+        )
+    subject, body = pager.await_args.args[:2]
+    assert "parked" not in subject.lower()
+    assert "parked" not in body.lower()
+
+
+@pytest.mark.asyncio
+async def test_clear_after_inspection_window_emits_once() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_inspection_paged_for": "abc"},
+        terminal_at_offset_s=-200.0,
+    )
+    emit = patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    )
+    with emit as emit_mock:
+        await apply_hop_budget_announcer(row, HopBudgetVerdict(ok=True))
+        fresh = _record(ledger, "pred-watchdog-1")
+        row["record_json"] = json.dumps(fresh)
+        await apply_hop_budget_announcer(row, HopBudgetVerdict(ok=True))
+    assert emit_mock.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_clear_without_inspection_window_does_not_emit() -> None:
+    """A clear with no suspicion window is the common admit path.
+
+    Removing the early return in ``_maybe_emit_inspection_cleared`` emits here.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        dispatch_id="cold-clear-1",
+        closeout_tokens=["ROW_HOP"],
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    ) as emit_mock:
+        await apply_hop_budget_announcer(row, HopBudgetVerdict(ok=True))
+    emit_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successor_clear_after_prior_inspection_window_emits_once() -> None:
+    """Window stamped on row N; successor N+1 with an advanced tip clears once."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HopBudgetVerdict,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_inspection import (
+        signature_key_for,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
+        progress_signature_for_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    prior = _terminal_row(
+        ledger,
+        dispatch_id="insp-n",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_entry_gate": "G4", "hop_lane_tip": "tip-n"},
+        terminal_at_offset_s=-400.0,
+    )
+    window_key = signature_key_for(progress_signature_for_row(prior, live=False))
+    ledger.merge_record_json(
+        dispatch_id="insp-n",
+        patch={"hop_inspection_paged_for": window_key, "hop_seq": 1},
+    )
+    successor = _terminal_row(
+        ledger,
+        dispatch_id="insp-n1",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G4",
+            "hop_lane_tip": "tip-n-advanced",
+            "hop_seq": 2,
+            "hop_from": "insp-n",
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_inspection_cleared",
+    ) as emit_mock:
+        await apply_hop_budget_announcer(successor, HopBudgetVerdict(ok=True))
+        fresh = _record(ledger, "insp-n1")
+        successor["record_json"] = json.dumps(fresh)
+        await apply_hop_budget_announcer(successor, HopBudgetVerdict(ok=True))
+    assert emit_mock.call_count == 1

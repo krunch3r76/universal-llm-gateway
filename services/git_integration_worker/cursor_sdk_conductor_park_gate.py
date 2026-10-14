@@ -15,12 +15,8 @@ from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
     HOP_PARK_REASON_KEY,
     HOP_PARKED_KEY,
-    PARK_REASON_MISSION_CAP,
-    count_hop_attempts,
-    list_mission_terminal_chain,
 )
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
@@ -311,40 +307,6 @@ def refuse_parked_conductor_mission(
         raise ConductorMissionParked(park_state=state)
 
 
-def _stamp_mission_cap_baseline_on_latest_terminal(
-    conn: sqlite3.Connection,
-    *,
-    work_key: str | None,
-) -> None:
-    """Record the mission-cap window on the latest terminal hop for *work_key*.
-
-    Used when an admit carries ``hop_park_release`` and no budget park is open.
-    The UPDATE shares *conn* with the admit so the stamp commits with it.
-    """
-    key = str(work_key or "").strip()
-    if not key:
-        return
-    chain = list_mission_terminal_chain(work_key=key, conn=conn)
-    if not chain:
-        return
-    target = chain[-1]
-    dispatch_id = str(target.get("dispatch_id") or "")
-    if not dispatch_id:
-        return
-    raw = str(target.get("record_json") or "")
-    if _record_is_partial(raw):
-        return
-    data = _record_dict(raw)
-    data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = count_hop_attempts(chain)
-    conn.execute(
-        "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
-        (
-            json.dumps(data, sort_keys=True, separators=(",", ":")),
-            dispatch_id,
-        ),
-    )
-
-
 def release_linked_no_progress_park(
     conn: sqlite3.Connection,
     *,
@@ -421,18 +383,11 @@ def release_mission_parks(
     caller_agent: str,
     post_commit_emits: list[Callable[[], None]],
 ) -> tuple[ParkState, ...]:
-    """Stamp every open budget park in scope; queue one emit per row after commit.
-
-    An empty park set is still a release for *work_key*: the mission-cap
-    baseline is written onto the latest terminal hop. Any non-empty budget
-    park set (mission-cap, crash-cap, no-progress, admit-retry) skips that
-    fallback; only a mission-cap row in the loop receives the baseline.
-    """
+    """Stamp every open budget park in scope; queue one emit per row after commit."""
     parks = open_parks(
         conn, work_key=work_key, thread_id=thread_id, kinds=frozenset({"budget"})
     )
     released: list[ParkState] = []
-    baseline_by_work_key: dict[str, int] = {}
     for p in parks:
         row = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -442,17 +397,6 @@ def release_mission_parks(
             continue
         data = _record_dict(str(row["record_json"] or ""))
         data[HOP_PARK_RELEASED_AT_KEY] = time.time()
-        park_work_key = str(p.work_key or "").strip()
-        if p.reason == PARK_REASON_MISSION_CAP and park_work_key:
-            if park_work_key not in baseline_by_work_key:
-                chain = list_mission_terminal_chain(
-                    work_key=park_work_key,
-                    conn=conn,
-                )
-                baseline_by_work_key[park_work_key] = count_hop_attempts(chain)
-            data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = baseline_by_work_key[
-                park_work_key
-            ]
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
             (
@@ -491,8 +435,6 @@ def release_mission_parks(
                 parked_at=p.parked_at,
             )
         )
-    if not parks:
-        _stamp_mission_cap_baseline_on_latest_terminal(conn, work_key=work_key)
     return tuple(released)
 
 

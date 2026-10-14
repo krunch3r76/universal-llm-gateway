@@ -79,6 +79,8 @@ Flip: `scripts/liaison-tick.py --root R --register autonomous|attended`. Return 
 
 **When:** operator overnight/departure — **not** attended `CONTEXT_BUDGET` mid-arc (§ Tick step 7 **ide-hop**). PARK ¬ a step while `NOW` or unread lanes remain.
 
+Metronome (Overnight gear) never pages the Castle (12286), which keeps its own cadence; bus turns keep canonical `to="web-anthropic"` (`¬ to="web"`, per `decision:identity-doctrine-endpoint-provenance`) while envelope subject/sender subscriptions suppress wake noise.
+
 Overnight leftover = **hold | play | sit** (`spawn_wake.play_classify`): hold = live conductor owns addressed `todo:{slug}`; play = `now_row` names `todo:{slug}` and no live owner → admit conductor; sit = house attention, no addressed todo → headless liaison. Default `--go-under` is play-aware; `--go-under --sit` is the old 10534 chain. `successor_contract=conductor` on house generate ≠ play path.
 
 **Come up** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" — **not** `resume R`, which is check-in and leaves ticker driving): (1) SIGTERM `--loop --spawn-on-wake` ticker; (2) `--register attended --set ready=false`; (3) drop `induction_binds` that forbid IDE hop; (4) then `resume R` may `--take-over`. One driver: IDE-hop ⇒ `ready=false`; ticker ⇒ `--go-under` only on overnight/departure. Check-in `resume R` while UNDER must not run this sequence.

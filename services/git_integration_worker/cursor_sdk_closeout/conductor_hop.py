@@ -54,9 +54,6 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     build_budget_authority_patch,
     evaluate_hop_budget,
 )
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
-    park_conductor_hop_mission,
-)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
     HOP_NEXT_ADMIT_KEY,
     next_admit_in_closeout,
@@ -87,6 +84,9 @@ _HOP_SEQ_LINE_RE = re.compile(r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$")
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
 HOP_DEFERRAL_GATE_KEY = "hop_deferral_gate"
+_LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
+    {"DONE", "CONFIRM_PENDING", "CONSULT_PENDING"}
+)
 _TRANSIENT_DEFERRAL_GATES = frozenset(
     {SKIP_GATE_LIVE_EXTERNAL, SKIP_GATE_NEXT_ADMIT_BLOCKED}
 )
@@ -445,6 +445,13 @@ def _nested_harvest_head(
     return _execution_id_target_for_parent(token, parent_id)
 
 
+def exit_persist_hold_is_parked_transport_only(
+    closeout_tokens: frozenset[str],
+) -> bool:
+    """True when ``PARKED_TRANSPORT`` is the sole exit-persist hold token."""
+    return (closeout_tokens & EXIT_PERSIST_STOPS) == frozenset({"PARKED_TRANSPORT"})
+
+
 def _parked_transport_nested_lift(
     row: dict[str, Any],
     *,
@@ -456,7 +463,7 @@ def _parked_transport_nested_lift(
         head = _nested_harvest_head(row)
     if head is None or not head[1]:
         return False
-    if (closeout_tokens & EXIT_PERSIST_STOPS) != frozenset({"PARKED_TRANSPORT"}):
+    if not exit_persist_hold_is_parked_transport_only(closeout_tokens):
         return False
     dispatch_id = str(row.get("dispatch_id") or "")
     if not dispatch_id:
@@ -601,9 +608,14 @@ def hop_body_build_refused(
     # owed. Exit-persist tokens, DONE, CONFIRM_PENDING, and CONSULT_PENDING
     # keep blocking, including when they appear only in the closeout prose.
     if ledger_hit is not None and ledger_hit[1]:
-        if tokens & frozenset(
-            {"DONE", "CONFIRM_PENDING", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"}
-        ):
+        nested_lift = _parked_transport_nested_lift(row, closeout_tokens=tokens)
+        if nested_lift:
+            refuse = (EXIT_PERSIST_STOPS - frozenset({"PARKED_TRANSPORT"})) | frozenset(
+                {"DONE", "CONFIRM_PENDING"}
+            )
+        else:
+            refuse = _LIFT_HOLD_TOKENS
+        if tokens & refuse:
             return True
         if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
             return True
@@ -860,8 +872,17 @@ def _hop_skip_gate(
             return "mission_closed"
         tokens = closeout_tokens
         head = _nested_harvest_head(row, _record_data(row))
-        parked_nested = head is not None and "PARKED_TRANSPORT" in tokens
-        if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})) and not parked_nested:
+        nested_lift = _parked_transport_nested_lift(
+            row, closeout_tokens=tokens, head=head
+        )
+        shape_a_parked = (
+            exit_persist_hold_is_parked_transport_only(tokens) and head is not None
+        )
+        if (
+            tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"}))
+            and not nested_lift
+            and not shape_a_parked
+        ):
             return "mission_closed"
         thread_id = str(row.get("thread_id") or "")
         dispatch_id = str(row.get("dispatch_id") or "")
@@ -943,11 +964,6 @@ def _emit_hop_skipped(
             dispatch_id=dispatch_id,
             patch={HOP_DEFERRAL_GATE_KEY: stamp_gate},
         )
-
-
-_LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
-    {"DONE", "CONFIRM_PENDING", "CONSULT_PENDING"}
-)
 
 
 def _lift_hold_tokens(row: dict[str, Any]) -> frozenset[str]:
@@ -1420,6 +1436,11 @@ def _merge_conductor_closeout_hop_authority(
 
 
 def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
+    """Stable team-dispatch idempotency key for one predecessor hop.
+
+    Stargate uses the returned string to collapse a retried admit of the
+    same predecessor into a single successor.
+    """
     return f"conductor-hop:{predecessor_dispatch_id}"
 
 
@@ -1741,8 +1762,11 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if skip_gate is not None:
         if skip_gate == "budget":
             verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
-            if verdict.park and verdict.reason:
-                await park_conductor_hop_mission(row, reason=verdict.reason)
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                apply_hop_budget_announcer,
+            )
+
+            if not await apply_hop_budget_announcer(row, verdict):
                 return
         _emit_hop_skipped(row, gate=skip_gate)
         return
@@ -1762,11 +1786,18 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if "dispatch_thread_id" not in body:
         _emit_hop_skipped(row, gate="summoning_unresolved")
         return
+    verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        apply_hop_budget_announcer,
+    )
+
+    if not await apply_hop_budget_announcer(row, verdict):
+        return
     thread_id = str(row.get("thread_id") or "")
     hop_seq = int(body.get("hop_seq") or 1)
     hop_reason = str(body.get("hop_reason") or "planned")
     ok, detail = await post_conductor_hop_team_dispatch(body)
-    record_json = str(row.get("record_json") or "")
+    record_json = str((_load_row(dispatch_id) or row).get("record_json") or "")
     if ok:
         successor = str(detail.get("dispatch_id") or "") or str(
             detail.get("execution_id") or ""

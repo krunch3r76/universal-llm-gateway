@@ -18,6 +18,9 @@ from claude_bundles.cdp_model_endpoint_staging import (
 
 REVIEW_PROMPT_MIN_BYTES = 512
 REVIEW_CONTRACTS = frozenset({"code-review", "delivery-review"})
+_FORBIDDEN_REVIEW_ACCESS = re.compile(
+    r"(?i)\b(?:you\s+have\s+no\s+repo\s+access|no\s+repo\s+access|reason\s+only\s+from\s+the\s+diff|reads\s+the\s+diff,\s+not\s+the\s+repo)\b"
+)
 _PLACEHOLDER_TOKENS = frozenset({"placeholder", "todo", "tbd"})
 _LONE_HEADING = re.compile(r"^#{1,6}\s+\S")
 _WORD = re.compile(r"[A-Za-z]+")
@@ -77,10 +80,23 @@ def enforce_review_prompt_gate(
     )
     raw = body.encode("utf-8")
     placeholder = is_review_prompt_placeholder(body)
+    field = "sidecar_ref" if kind == "sidecar_ref" else "prompt"
+    if _FORBIDDEN_REVIEW_ACCESS.search(body):
+        raise CdpStagingError(
+            "CDP review prompts must not forbid repo access or diff-only reasoning; "
+            "review seats use fs(sandbox='workspaces') to read modules and expand "
+            "to related modules, callers, and constants as warranted",
+            code="review_prompt_no_repo_access_forbidden",
+            field=field,
+            details={
+                "prompt_byte_count": len(raw),
+                "prompt_sha256": hashlib.sha256(raw).hexdigest(),
+                "source_ref": source_ref,
+            },
+        )
     if not placeholder and len(raw) >= REVIEW_PROMPT_MIN_BYTES:
         return
     code = "review_prompt_placeholder" if placeholder else "review_prompt_too_small"
-    field = "sidecar_ref" if kind == "sidecar_ref" else "prompt"
     raise CdpStagingError(
         f"CDP {contract} prompt refused ({code})",
         code=code,

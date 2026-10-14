@@ -59,10 +59,18 @@ class StandingHandoffFreshness:
     uri: str
     mtime_epoch: float | None
     age_s: float | None
+    budget: str = "ok"  # ok | exceeded (renderer-side; ok when not computed)
+    identity: str = "unknown"  # match | stale | unknown
 
 
 def assess_standing_handoff(
-    thread_id: str, *, now: float | None = None, stale_after_s: float | None = None
+    thread_id: str,
+    *,
+    now: float | None = None,
+    stale_after_s: float | None = None,
+    sidecar_text: str | None = None,
+    superseded_registration_id: str | None = None,
+    house_rules_text: str | None = None,
 ) -> StandingHandoffFreshness:
     """Classify the standing-handoff sidecar as current, stale, missing, or unreachable.
 
@@ -87,4 +95,26 @@ def assess_standing_handoff(
     mtime = path.stat().st_mtime
     age = max(0.0, ts - mtime)
     status = "stale" if age > limit else "current"
-    return StandingHandoffFreshness(status, uri, mtime, age)
+    budget = "ok"
+    identity = "unknown"
+    text = sidecar_text
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = None
+    if text:
+        from claude_bundles.operator_proxy_hop_status import house_rules_section
+        from claude_bundles.operator_proxy_standing_render import (
+            assess_render_budget_and_identity,
+        )
+
+        inline = house_rules_section(text)
+        budget, identity = assess_render_budget_and_identity(
+            text,
+            lane=thread_id,
+            superseded_registration_id=superseded_registration_id,
+            inline_house_rules=inline,
+            house_rules_text=house_rules_text,
+        )
+    return StandingHandoffFreshness(status, uri, mtime, age, budget, identity)

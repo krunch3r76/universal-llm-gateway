@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from claude_bundles.journal_hop_projection import MAESTRO_REGISTER_URI
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
     _HOP_REFUSALS_MARKER,
@@ -39,6 +40,10 @@ def test_purpose_recognition() -> None:
 
 _SECTION_ORDER = (
     "## What is running now",
+    "## CURRENT LEG (rendered checkpoint)",
+    "## Lessons in force",
+    "## Register",
+    "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
@@ -54,16 +59,23 @@ def _noop_fetch(_lane: str) -> list:
     return []
 
 
+def _assert_section_order(out: str, markers: tuple[str, ...]) -> None:
+    present = [m for m in markers if m in out]
+    positions = [out.index(m) for m in present]
+    assert positions == sorted(positions)
+
+
 def test_ensure_injects_briefing_without_slash_prefix() -> None:
     out = ensure_operator_proxy_mission_prompt(
         "# Mission\nDo the thing.\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert not out.startswith("/cdp-operator-proxy")
     assert out.startswith("# Hop on agent-bus:")
-    positions = [out.index(marker) for marker in _SECTION_ORDER]
-    assert positions == sorted(positions)
+    _assert_section_order(out, _SECTION_ORDER)
     assert "cdp-operator-proxy" in out
     assert "agent-bus-discipline" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
@@ -414,6 +426,8 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
         "TYPE: CONTINUITY_HANDOFF\n# body\n",
         roster_text="",
         fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
     )
     assert len(out.encode()) < 16000
     for needle in (
@@ -608,6 +622,8 @@ def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
         "execution_clause": "",
         "running_now_line": "## What is running now",
         "house_rules_verbatim": house_rules,
+        "lessons_in_force": "## Lessons in force\n\n(none)\n",
+        "register_card": f"## Register\n\nRegister card absent at {MAESTRO_REGISTER_URI}.\n",
         "live_leg": "(none)",
         "pointers": "- prior LEG blocks: handoff file",
     }

@@ -35,6 +35,10 @@ CDP_PURPOSE_PROFILES: dict[str, tuple[str, ...]] = {
 
 _DEFAULT_FLOOR: tuple[str, ...] = ("reasoning-posture",)
 
+REVIEW_CONTRACT_SKILL_FLOOR = frozenset(
+    {"code-review", "delivery-review", "check-review"}
+)
+
 
 def infer_cdp_purpose(purpose: str | None, model: str | None) -> str:
     """Explicit purpose wins; omitted + Sonnet → produce; else ask."""
@@ -47,13 +51,21 @@ def infer_cdp_purpose(purpose: str | None, model: str | None) -> str:
     return "ask"
 
 
-def profile_slugs_for_purpose(purpose: str | None) -> tuple[str, ...]:
+def profile_slugs_for_purpose(
+    purpose: str | None,
+    *,
+    contract: str | None = None,
+) -> tuple[str, ...]:
     """Return the staging floor for a purpose tag.
 
-    ``None`` / blank / unknown → judgment skill only (pre-B2 behavior).
+    ``None`` / blank / unknown → judgment skill only, except review-class
+    ``contract`` without ``purpose`` (K30 — ``leg.purpose`` stays unset).
     """
     key = (purpose or "").strip().lower()
     if not key:
+        contract_key = (contract or "").strip().lower()
+        if contract_key in REVIEW_CONTRACT_SKILL_FLOOR:
+            return CDP_PURPOSE_PROFILES["review"]
         return _DEFAULT_FLOOR
     return CDP_PURPOSE_PROFILES.get(key, _DEFAULT_FLOOR)
 

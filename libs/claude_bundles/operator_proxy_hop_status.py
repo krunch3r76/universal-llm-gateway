@@ -12,15 +12,24 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from hop_handoff.body import parse_successor_birth_id
+from hop_handoff.body import parse_successor_birth_id, parse_superseded_registration_id
 from hop_handoff.standing_handoff import standing_handoff_path
 
+from claude_bundles.journal_hop_projection import hop_journal_projection_fields
 from claude_bundles.operator_proxy_live_leg import (
-    POINTERS_BLOCK,
+    FoldStateSaver,
+    FoldStateStore,
     house_lanes,
     load_maestro_roster_text,
     project_live_leg,
     render_live_leg,
+)
+from claude_bundles.operator_proxy_standing_render import (
+    compute_preamble_over_inflight_flag,
+    render_checkpoint_block,
+    render_house_rules_block,
+    render_inflight_block,
+    render_pointers_block,
 )
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
@@ -121,6 +130,19 @@ def hop_successor_fields(
     roster_text: str | None = None,
     fetch_turns: Callable[[str], list[dict[str, Any]]] | None = None,
     execution_id: str = "",
+    journal_text: str | None = None,
+    register_text: str | None = None,
+    read_cortex_uri: Callable[[str], str | None] | None = None,
+    inflight_projection_lookup: Callable[[], str | None] | None = None,
+    role: str = "maestro",
+    house_rules_text: str | None = None,
+    lineage_lookup: Callable[[str, str], str | None] | None = None,
+    archive_path_exists: Callable[[str], bool] | None = None,
+    page_fetch: Callable[..., tuple[list[dict[str, Any]], bool, int | None]]
+    | None = None,
+    fold_state_load: FoldStateStore | None = None,
+    fold_state_save: FoldStateSaver | None = None,
+    act5_fetch_last: int | None = None,
 ) -> dict[str, str]:
     """Fill the hop-successor template from the prompt, handoff, and bus state."""
     lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
@@ -136,8 +158,50 @@ def hop_successor_fields(
 
         fetch_turns = fetch_turns_for_lane
 
-    leg = project_live_leg(lanes, fetch_turns)
-    live_leg = render_live_leg(leg)
+    superseded_reg = parse_superseded_registration_id(prompt or "")
+    inline_rules = house_rules_section(sidecar) if sidecar else None
+
+    checkpoint_block = ""
+    inflight_block = ""
+    inflight_count = 0
+    checkpoint_preamble = ""
+    if sidecar:
+        checkpoint_block, ck_meta = render_checkpoint_block(
+            sidecar,
+            lane=lane,
+            inline_house_rules=inline_rules,
+            path_exists=archive_path_exists,
+            superseded_registration_id=superseded_reg,
+        )
+        inflight_rows = ck_meta.get("inflight_rows") or []
+        inflight_count = len(inflight_rows)
+        if inflight_rows:
+            inflight_block = render_inflight_block(
+                inflight_rows,
+                lineage_lookup=lineage_lookup,
+            )
+        checkpoint_preamble = checkpoint_block
+        if ck_meta.get("identity") == "stale":
+            act5_fetch_last = 5
+
+    if not sidecar:
+        house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
+    else:
+        house_rules_verbatim, _rules_budget = render_house_rules_block(
+            lane=lane,
+            inline_rules=inline_rules,
+            house_rules_text=house_rules_text,
+            read_cortex_uri=read_cortex_uri,
+        )
+
+    leg = project_live_leg(
+        lanes,
+        fetch_turns,
+        page_fetch=page_fetch,
+        fold_state_load=fold_state_load,
+        fold_state_save=fold_state_save,
+    )
+    live_leg = render_live_leg(leg, declared_in_flight=inflight_count)
     lane_list = ", ".join(lanes) if lanes else "none"
 
     if sidecar:
@@ -146,15 +210,37 @@ def hop_successor_fields(
             "## What is running now (computed at render from agent-bus state on "
             f"lanes {lane_list}; handoff file sha256 at render {digest})"
         )
-        rules = house_rules_section(sidecar)
-        house_rules_verbatim = rules if rules is not None else ""
     else:
         digest = ""
         running_now = (
             "## What is running now (computed at render from agent-bus state on "
             f"lanes {lane_list}; standing handoff file absent)"
         )
-        house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
+
+    pointers = render_pointers_block(
+        checkpoint_preamble=checkpoint_preamble,
+        rules_text=house_rules_verbatim,
+    )
+
+    preamble_parts = [
+        running_now,
+        house_rules_verbatim,
+        checkpoint_block,
+    ]
+    preamble_staged = "\n\n".join(p for p in preamble_parts if p)
+    inflight_flag = compute_preamble_over_inflight_flag(preamble_staged, inflight_count)
+    if inflight_flag:
+        checkpoint_block = (checkpoint_block + "\n" + inflight_flag).strip()
+
+    journal_fields = hop_journal_projection_fields(
+        journal_text=journal_text,
+        register_text=register_text,
+        read_uri=read_cortex_uri,
+        role=role,
+        inflight_projection_lookup=inflight_projection_lookup,
+    )
+
+    fetch_last = act5_fetch_last if act5_fetch_last is not None else 3
 
     return {
         "lane": lane,
@@ -163,8 +249,13 @@ def hop_successor_fields(
         "handoff_sha": digest,
         "running_now_line": running_now,
         "house_rules_verbatim": house_rules_verbatim,
+        "checkpoint_block": checkpoint_block,
+        "inflight_block": inflight_block,
+        "lessons_in_force": journal_fields["lessons_in_force"],
+        "register_card": journal_fields["register_card"],
         "live_leg": live_leg,
-        "pointers": POINTERS_BLOCK,
+        "pointers": pointers,
+        "fetch_last": str(fetch_last),
     }
 
 

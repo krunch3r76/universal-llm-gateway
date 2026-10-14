@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from bus_watch.quiet_reason import (
+    _post_holder_lost_turn,
     close_unharvested_quiet_lanes,
     fetch_held_execution_ids,
     reconcile_holder_lost,
@@ -40,6 +42,23 @@ def _admitted_lane(*, execution_id: str = "exec-orphan-1", **extra: object) -> d
     }
     lane.update(extra)
     return lane
+
+
+@pytest.mark.offline
+def test_post_holder_lost_turn_addresses_web_anthropic() -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    client.post.return_value = resp
+    with patch(
+        "bus_watch.quiet_reason._bus",
+        return_value=MagicMock(__enter__=MagicMock(return_value=client), __exit__=MagicMock()),
+    ):
+        assert _post_holder_lost_turn("12711", "exec-orphan-1") is True
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["to"] == "web-anthropic"
+    assert payload["from"] == "liaison-ticker"
+    assert payload["thread"] == "12711"
 
 
 def test_reconcile_holder_lost_posts_when_not_held() -> None:
