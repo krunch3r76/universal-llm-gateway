@@ -26,9 +26,14 @@ class GuardedReexecResult:
     executed: bool = False
     boot_timeout_s: float | None = None
     quit_timeout_s: float | None = None
+    unit: str | None = None
+    recovery: str | None = None
+    stage: str | None = None
+    old_pid_exited: bool | None = None
+    traceback: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "status": self.status,
             "reason": self.reason,
             "dry_run": self.dry_run,
@@ -44,6 +49,11 @@ class GuardedReexecResult:
                 "process_start_later_ok": self.process_start_later_ok,
             },
         }
+        for key in ("unit", "recovery", "stage", "old_pid_exited", "traceback"):
+            value = getattr(self, key)
+            if value is not None:
+                payload[key] = value
+        return payload
 
 
 def parse_iso(value: Any) -> datetime | None:

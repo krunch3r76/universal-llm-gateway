@@ -11,6 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from .detach import RESULT_PATH, launch_detach
 from .runner import run_guarded_reexec
 
 
@@ -29,6 +30,24 @@ def _resolve_target_ref(explicit: str | None, repo_root: Path) -> str:
             f"{proc.stderr.strip()})"
         )
     return proc.stdout.strip()
+
+
+def _exit_for_result(result_status: str, *, checks_refused: bool = False) -> int:
+    if result_status == "proof-satisfied":
+        return 0
+    if result_status == "dry-run" and not checks_refused:
+        return 0
+    if result_status == "dry-run" and checks_refused:
+        return 2
+    if result_status == "refused":
+        return 2
+    if result_status == "proof-failed":
+        return 3
+    if result_status == "start-failed":
+        return 4
+    if result_status == "crashed":
+        return 1
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,6 +71,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Actually pause/quit/reexec/resume (operator-authorized only)",
     )
     parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Launch detached systemd user service (never quit in this process)",
+    )
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help="Detached execute only: enable failure recovery hooks",
+    )
+    parser.add_argument(
+        "--result-path",
+        default=None,
+        help="Detached execute: JSON result file path",
+    )
+    parser.add_argument(
         "--target-ref",
         default=None,
         help="Expected post-boot whoami.code_version (default: git HEAD)",
@@ -73,9 +107,43 @@ def main(argv: list[str] | None = None) -> int:
         help="Bounded start-leg retries after quit (default: 3)",
     )
     args = parser.parse_args(argv)
-    dry_run = not args.execute
+
+    if args.detach and args.execute:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": "detach_and_execute_mutually_exclusive",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2
+
     repo_root = Path(__file__).resolve().parents[3]
     target_ref = _resolve_target_ref(args.target_ref, repo_root)
+
+    if args.detach:
+        code, payload = launch_detach(
+            target_ref=target_ref,
+            tmux_target=args.tmux_target,
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return code
+
+    dry_run = not args.execute
+    result_path = Path(args.result_path) if args.result_path else None
+    if args.recover and not args.execute:
+        print(
+            json.dumps(
+                {"status": "refused", "reason": "recover_requires_execute"},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2
+
     result = run_guarded_reexec(
         target_ref=target_ref,
         dry_run=dry_run,
@@ -83,23 +151,14 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         intent_db=Path(args.intent_db) if args.intent_db else None,
         max_start_attempts=args.max_start_attempts,
+        recover=args.recover,
+        result_path=result_path or (RESULT_PATH if args.recover else None),
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
-    if result.status == "proof-satisfied":
-        return 0
-    if result.status == "dry-run" and not result.checks.get("refused"):
-        return 0
-    if result.status == "dry-run" and result.checks.get("refused"):
-        return 2
-    if result.status == "refused":
-        # Precondition refuse — manage still up; nothing destroyed.
-        return 2
-    if result.status == "proof-failed":
-        return 3
-    if result.status == "start-failed":
-        # Quit landed; start/health did not — opposite of precondition refuse.
-        return 4
-    return 1
+    return _exit_for_result(
+        result.status,
+        checks_refused=bool(result.checks.get("refused")),
+    )
 
 
 if __name__ == "__main__":

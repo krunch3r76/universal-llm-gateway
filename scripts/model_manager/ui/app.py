@@ -321,8 +321,8 @@ class ModelManagerApp(App):
 
         Exits on ManageSocketBusyError — another live manage appeared while we
         were retrying, and a socket-less manage must not keep running its
-        charter/digest loops alongside it. Auto-rebinding would resurrect
-        Failure 1 (silent orphaning).
+        digest tick, stargate health restart, and mcp edge probe loops alongside
+        it. Auto-rebinding would resurrect Failure 1 (silent orphaning).
         """
         if self._api_server is not None:
             return  # already running

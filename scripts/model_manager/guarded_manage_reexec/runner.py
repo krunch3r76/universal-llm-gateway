@@ -6,10 +6,12 @@ recheck → quit incumbent → dual whoami proof. Dry-run stops before spawn.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
 import time
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -43,9 +45,11 @@ from .result import (
     GuardedReexecResult,
     prove_pickup,
 )
+from .detach import TMUX_BIN
 from .seat_prelude import (
     PANE_RULING,
     caller_dispatch_id,
+    giw_has_claimed_occupants,
     intent_store_for_manage,
     observe_giw_occupants,
     resolve_manage_inflight_for_seat,
@@ -161,6 +165,60 @@ def _teardown_successor(
     remove_armed_record(record_path)
 
 
+def _proc_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    return Path(f"/proc/{pid}").exists()
+
+
+def _wait_proc_exit(pid: int | None, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not _proc_alive(pid):
+            return True
+        time.sleep(0.25)
+    return not _proc_alive(pid)
+
+
+def _giw_paired_stop_succeeded(giw_paired: dict[str, Any] | None) -> bool:
+    if not giw_paired:
+        return False
+    stop = giw_paired.get("stop")
+    if not isinstance(stop, dict):
+        return False
+    return stop.get("status") == "ok"
+
+
+def _wait_detached_occupants_clear(
+    busy_fn: Callable[[], dict[str, Any]],
+    *,
+    timeout_s: float = 600.0,
+    poll_s: float = 2.0,
+) -> tuple[bool, str]:
+    deadline = time.monotonic() + timeout_s
+    saw_observable = False
+    while time.monotonic() < deadline:
+        busy = busy_fn()
+        if busy.get("status") == "error":
+            time.sleep(poll_s)
+            continue
+        saw_observable = True
+        if not giw_has_claimed_occupants(busy):
+            return True, ""
+        time.sleep(poll_s)
+    if not saw_observable:
+        return False, "busy_status_unobservable"
+    return False, "giw_claimed_occupants_timeout"
+
+
+def _write_result_file(path: Path, result: GuardedReexecResult) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _poll_armed_record(
     record_path: Path,
     *,
@@ -232,9 +290,14 @@ def run_guarded_reexec(
     intent_wait_s: float = 600.0,
     inflight_wait_s: float = 120.0,
     max_start_attempts: int | None = None,
+    recover: bool = False,
+    result_path: Path | None = None,
+    unit: str | None = None,
 ) -> GuardedReexecResult:
     del max_start_attempts, pause_reason  # CLI compat; arm-then-quit uses a single successor spawn.
     """Run refuse/arm/quit/proof path; dry_run never spawns a successor."""
+    stage = "occupant_wait"
+    quit_sent = False
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
     kill_pid_fn = kill_pid_fn or _default_kill_pid
@@ -433,183 +496,307 @@ def run_guarded_reexec(
             quit_timeout_s=quit_timeout_s,
         )
 
-    giw_paired: dict[str, Any] | None = None
-    if giw_paired_required:
-        stop_payload = run_giw_paired_stop(manage_call, manage_pid=manage_pid_i or 0)
-        giw_paired = {"stop": stop_payload}
-        if stop_payload.get("status") == "refused":
-            _emit_refused("giw_claimed_occupants")
-            return GuardedReexecResult(
-                status="refused",
-                reason="giw_claimed_occupants",
+    if recover:
+        cleared, occ_reason = _wait_detached_occupants_clear(_busy)
+        if not cleared:
+            _emit_refused(occ_reason)
+            refused = _refused_result(
                 dry_run=False,
-                checks={**report_dict, "giw_paired": giw_paired},
+                reason=occ_reason,
                 whoami_before=whoami_before,
                 target_ref=target_ref,
-                executed=False,
+                report_dict=report_dict,
                 boot_timeout_s=boot_timeout_s,
                 quit_timeout_s=quit_timeout_s,
             )
+            refused.stage = stage
+            if result_path is not None:
+                _write_result_file(result_path, refused)
+            return refused
+    stage = "pre_stop"
 
-    successor_pane_id: str | None = None
-    record_pid: int | None = None
-    t_arm_start = time.monotonic()
+    giw_paired: dict[str, Any] | None = None
+    execute_result: GuardedReexecResult | None = None
 
-    def _refuse_after_arm(reason: str) -> GuardedReexecResult:
-        _emit_refused(reason)
-        _teardown_successor(
-            pane_id=successor_pane_id,
-            record_path=record_path,
-            record_pid=record_pid,
-            run_cmd=run_cmd,
-            kill_pid_fn=kill_pid_fn,
-        )
-        return GuardedReexecResult(
-            status="refused",
-            reason=reason,
-            dry_run=False,
-            checks={
-                **report_dict,
-                "successor_pane_id": successor_pane_id,
-                "armed_record_path": str(record_path),
-                "elapsed_arm_s": round(time.monotonic() - t_arm_start, 3),
-            },
-            whoami_before=whoami_before,
-            target_ref=target_ref,
-            executed=False,
-            boot_timeout_s=boot_timeout_s,
-            quit_timeout_s=quit_timeout_s,
-        )
+    def _deliver(result: GuardedReexecResult) -> GuardedReexecResult:
+        nonlocal execute_result
+        if unit:
+            result.unit = unit
+        execute_result = result
+        return result
 
-    remove_armed_record(record_path)
-    successor_pane_id = spawn_successor_pane(
-        tmux_target=tmux_effective,
-        repo_root=repo_root,
-        python_bin=python_bin,
-        record_path=record_path,
-        run_cmd=run_cmd,
-    )
-    if not successor_pane_id:
-        return _refuse_after_arm("successor_spawn_failed")
-
-    armed_ok, arm_detail, record = _poll_armed_record(
-        record_path,
-        target_ref=target_ref,
-        whoami_before=whoami_before,
-        boot_timeout_s=boot_timeout_s,
-    )
-    if not armed_ok:
-        if record is not None:
-            record_pid_val = record.get("pid")
-            record_pid = (
-                int(record_pid_val) if isinstance(record_pid_val, int) else None
+    try:
+        if giw_paired_required:
+            stop_payload = run_giw_paired_stop(
+                manage_call, manage_pid=manage_pid_i or 0
             )
-        reason = arm_detail if arm_detail == "successor_not_armed" else arm_detail
-        return _refuse_after_arm(reason)
+            giw_paired = {"stop": stop_payload}
+            if stop_payload.get("status") == "refused":
+                _emit_refused("giw_claimed_occupants")
+                return _deliver(
+                    GuardedReexecResult(
+                        status="refused",
+                        reason="giw_claimed_occupants",
+                        dry_run=False,
+                        checks={**report_dict, "giw_paired": giw_paired},
+                        whoami_before=whoami_before,
+                        target_ref=target_ref,
+                        executed=False,
+                        boot_timeout_s=boot_timeout_s,
+                        quit_timeout_s=quit_timeout_s,
+                        stage=stage,
+                    )
+                )
 
-    assert record is not None
-    record_pid_val = record.get("pid")
-    record_pid = int(record_pid_val) if isinstance(record_pid_val, int) else None
+        successor_pane_id: str | None = None
+        record_pid: int | None = None
+        t_arm_start = time.monotonic()
 
-    _publish_reexec(
-        ManageReexecArmed(
-            pane_id=successor_pane_id or "",
-            record_path=str(record_path),
-        )
-    )
+        def _refuse_after_arm(reason: str) -> GuardedReexecResult:
+            nonlocal giw_paired
+            recovery: str | None = None
+            if recover and _giw_paired_stop_succeeded(giw_paired):
+                start_payload = run_giw_paired_start(manage_call)
+                giw_paired = giw_paired or {}
+                giw_paired["start"] = start_payload
+                recovery = "giw_restarted_before_quit"
+            _emit_refused(reason)
+            _teardown_successor(
+                pane_id=successor_pane_id,
+                record_path=record_path,
+                record_pid=record_pid,
+                run_cmd=run_cmd,
+                kill_pid_fn=kill_pid_fn,
+            )
+            return _deliver(
+                GuardedReexecResult(
+                    status="refused",
+                    reason=reason,
+                    dry_run=False,
+                    checks={
+                        **report_dict,
+                        "successor_pane_id": successor_pane_id,
+                        "armed_record_path": str(record_path),
+                        "elapsed_arm_s": round(time.monotonic() - t_arm_start, 3),
+                        "giw_paired": giw_paired,
+                    },
+                    whoami_before=whoami_before,
+                    target_ref=target_ref,
+                    executed=False,
+                    boot_timeout_s=boot_timeout_s,
+                    quit_timeout_s=quit_timeout_s,
+                    recovery=recovery,
+                    stage=stage,
+                )
+            )
 
-    intent_finding = observe_nonterminal_intents(store)
-    if intent_finding is not None:
-        return _refuse_after_arm("nonterminal_restart_intent")
-
-    busy_recheck = _busy()
-    if busy_recheck.get("status") == "error":
-        return _refuse_after_arm("busy_status_unobservable")
-    inflight_recheck, _, _, _ = observe_manage_inflight(busy_recheck)
-    if inflight_recheck is not None:
-        return _refuse_after_arm(inflight_recheck.reason)
-
-    _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
-    _publish_reexec(ManageReexecQuitCommitted(tmux_target=tmux_effective))
-
-    if not _wait_sock(
-        sock_path, manage_call=manage_call, timeout_s=quit_timeout_s, want_up=False
-    ):
-        _teardown_successor(
-            pane_id=successor_pane_id,
+        stage = "armed"
+        remove_armed_record(record_path)
+        successor_pane_id = spawn_successor_pane(
+            tmux_target=tmux_effective,
+            repo_root=repo_root,
+            python_bin=python_bin,
             record_path=record_path,
-            record_pid=record_pid,
             run_cmd=run_cmd,
-            kill_pid_fn=kill_pid_fn,
         )
-        _publish_reexec(ManageReexecProof(status="quit", reason="quit_sock_still_up"))
-        return GuardedReexecResult(
-            status="quit",
-            reason="quit_sock_still_up",
-            dry_run=False,
-            whoami_before=whoami_before,
-            target_ref=target_ref,
-            executed=True,
-            boot_timeout_s=boot_timeout_s,
-            quit_timeout_s=quit_timeout_s,
-            checks={
-                "successor_pane_id": successor_pane_id,
-                "record_pid": record_pid,
-            },
-        )
+        if not successor_pane_id:
+            return _refuse_after_arm("successor_spawn_failed")
 
-    if not _wait_sock(
-        sock_path,
-        manage_call=manage_call,
-        timeout_s=boot_timeout_s,
-        want_up=True,
-    ):
+        armed_ok, arm_detail, record = _poll_armed_record(
+            record_path,
+            target_ref=target_ref,
+            whoami_before=whoami_before,
+            boot_timeout_s=boot_timeout_s,
+        )
+        if not armed_ok:
+            if record is not None:
+                record_pid_val = record.get("pid")
+                record_pid = (
+                    int(record_pid_val) if isinstance(record_pid_val, int) else None
+                )
+            reason = arm_detail if arm_detail == "successor_not_armed" else arm_detail
+            return _refuse_after_arm(reason)
+
+        assert record is not None
+        record_pid_val = record.get("pid")
+        record_pid = int(record_pid_val) if isinstance(record_pid_val, int) else None
+
         _publish_reexec(
-            ManageReexecProof(
-                status="proof-failed", reason="successor_bind_not_observed"
+            ManageReexecArmed(
+                pane_id=successor_pane_id or "",
+                record_path=str(record_path),
             )
         )
-        return GuardedReexecResult(
-            status="proof-failed",
-            reason="successor_bind_not_observed",
+
+        intent_finding = observe_nonterminal_intents(store)
+        if intent_finding is not None:
+            return _refuse_after_arm("nonterminal_restart_intent")
+
+        busy_recheck = _busy()
+        if busy_recheck.get("status") == "error":
+            return _refuse_after_arm("busy_status_unobservable")
+        inflight_recheck, _, _, _ = observe_manage_inflight(busy_recheck)
+        if inflight_recheck is not None:
+            return _refuse_after_arm(inflight_recheck.reason)
+
+        if recover:
+            occupant_recheck = observe_giw_occupants(
+                busy_recheck, caller_dispatch=None
+            )
+            if occupant_recheck is not None:
+                return _refuse_after_arm(occupant_recheck.reason)
+
+        stage = "quit_sent"
+        _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
+        quit_sent = True
+        _publish_reexec(ManageReexecQuitCommitted(tmux_target=tmux_effective))
+
+        if not _wait_sock(
+            sock_path,
+            manage_call=manage_call,
+            timeout_s=quit_timeout_s,
+            want_up=False,
+        ):
+            _teardown_successor(
+                pane_id=successor_pane_id,
+                record_path=record_path,
+                record_pid=record_pid,
+                run_cmd=run_cmd,
+                kill_pid_fn=kill_pid_fn,
+            )
+            _publish_reexec(
+                ManageReexecProof(status="quit", reason="quit_sock_still_up")
+            )
+            recovery = "none" if recover else None
+            return _deliver(
+                GuardedReexecResult(
+                    status="quit",
+                    reason="quit_sock_still_up",
+                    dry_run=False,
+                    whoami_before=whoami_before,
+                    target_ref=target_ref,
+                    executed=True,
+                    boot_timeout_s=boot_timeout_s,
+                    quit_timeout_s=quit_timeout_s,
+                    checks={
+                        "successor_pane_id": successor_pane_id,
+                        "record_pid": record_pid,
+                    },
+                    recovery=recovery,
+                    stage=stage,
+                )
+            )
+
+        stage = "sock_down"
+        if not _wait_sock(
+            sock_path,
+            manage_call=manage_call,
+            timeout_s=boot_timeout_s,
+            want_up=True,
+        ):
+            recovery = None
+            old_pid_exited: bool | None = None
+            if recover:
+                _teardown_successor(
+                    pane_id=successor_pane_id,
+                    record_path=record_path,
+                    record_pid=record_pid,
+                    run_cmd=run_cmd,
+                    kill_pid_fn=kill_pid_fn,
+                )
+                old_pid_exited = _wait_proc_exit(manage_pid_i, 30.0)
+                run_cmd(
+                    [TMUX_BIN, "new-window", "-d", "-c", str(repo_root), "./manage"]
+                )
+                stage = "relaunched"
+                relaunch_ok = _wait_sock(
+                    sock_path,
+                    manage_call=manage_call,
+                    timeout_s=boot_timeout_s,
+                    want_up=True,
+                )
+                if relaunch_ok and _giw_paired_stop_succeeded(giw_paired):
+                    giw_paired = giw_paired or {}
+                    giw_paired["start"] = run_giw_paired_start(manage_call)
+                recovery = (
+                    "manage_relaunched"
+                    if relaunch_ok
+                    else "manage_relaunch_unconfirmed"
+                )
+            _publish_reexec(
+                ManageReexecProof(
+                    status="proof-failed", reason="successor_bind_not_observed"
+                )
+            )
+            return _deliver(
+                GuardedReexecResult(
+                    status="proof-failed",
+                    reason="successor_bind_not_observed",
+                    dry_run=False,
+                    whoami_before=whoami_before,
+                    target_ref=target_ref,
+                    executed=True,
+                    boot_timeout_s=boot_timeout_s,
+                    quit_timeout_s=quit_timeout_s,
+                    checks={
+                        "successor_pane_id": successor_pane_id,
+                        "armed_record_path": str(record_path),
+                        "record_pid": record_pid,
+                        "giw_paired": giw_paired,
+                    },
+                    recovery=recovery,
+                    stage=stage,
+                    old_pid_exited=old_pid_exited,
+                )
+            )
+
+        whoami_after = manage_call("whoami", {}, sock_path=sock_path)
+        if giw_paired_required:
+            giw_paired = giw_paired or {}
+            giw_paired["start"] = run_giw_paired_start(manage_call)
+        version_ok, start_ok, proof_reason = prove_pickup(
+            before=whoami_before, after=whoami_after, target_ref=target_ref
+        )
+        proof_status = "proof-satisfied" if (version_ok and start_ok) else "proof-failed"
+        recovery = "none" if recover and proof_status == "proof-failed" else None
+        _publish_reexec(ManageReexecProof(status=proof_status, reason=proof_reason))
+        return _deliver(
+            GuardedReexecResult(
+                status=proof_status,
+                reason=proof_reason,
+                dry_run=False,
+                whoami_before=whoami_before,
+                whoami_after=whoami_after,
+                target_ref=target_ref,
+                code_version_ok=version_ok,
+                process_start_later_ok=start_ok,
+                executed=True,
+                boot_timeout_s=boot_timeout_s,
+                quit_timeout_s=quit_timeout_s,
+                checks={
+                    "seat_prelude": prelude,
+                    "giw_paired": giw_paired,
+                    "tmux_target_effective": tmux_effective,
+                    "successor_pane_id": successor_pane_id,
+                },
+                recovery=recovery,
+                stage=stage,
+            )
+        )
+    except Exception as exc:
+        crashed = GuardedReexecResult(
+            status="crashed",
+            reason=str(exc),
             dry_run=False,
             whoami_before=whoami_before,
             target_ref=target_ref,
-            executed=True,
+            executed=quit_sent,
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
-            checks={
-                "successor_pane_id": successor_pane_id,
-                "armed_record_path": str(record_path),
-                "record_pid": record_pid,
-            },
+            stage=stage,
+            traceback=traceback.format_exc(),
         )
-
-    whoami_after = manage_call("whoami", {}, sock_path=sock_path)
-    if giw_paired_required:
-        giw_paired = giw_paired or {}
-        giw_paired["start"] = run_giw_paired_start(manage_call)
-    version_ok, start_ok, proof_reason = prove_pickup(
-        before=whoami_before, after=whoami_after, target_ref=target_ref
-    )
-    status = "proof-satisfied" if (version_ok and start_ok) else "proof-failed"
-    _publish_reexec(ManageReexecProof(status=status, reason=proof_reason))
-    return GuardedReexecResult(
-        status=status,
-        reason=proof_reason,
-        dry_run=False,
-        whoami_before=whoami_before,
-        whoami_after=whoami_after,
-        target_ref=target_ref,
-        code_version_ok=version_ok,
-        process_start_later_ok=start_ok,
-        executed=True,
-        boot_timeout_s=boot_timeout_s,
-        quit_timeout_s=quit_timeout_s,
-        checks={
-            "seat_prelude": prelude,
-            "giw_paired": giw_paired,
-            "tmux_target_effective": tmux_effective,
-            "successor_pane_id": successor_pane_id,
-        },
-    )
+        return _deliver(crashed)
+    finally:
+        if result_path is not None and execute_result is not None:
+            _write_result_file(result_path, execute_result)

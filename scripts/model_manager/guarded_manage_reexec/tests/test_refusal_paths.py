@@ -356,10 +356,18 @@ def test_run_refuses_when_tmux_pane_mismatches(tmp_path: Any) -> None:
     assert sends == []
 
 
-def test_execute_skips_charter_pause_after_checks(tmp_path: Any) -> None:
+def test_execute_skips_charter_pause_after_checks(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """S1: guarded reexec no longer calls charter_pause / charter_hold_status."""
     store = _store(tmp_path)
     calls: list[str] = []
+    record_path = tmp_path / "manage.armed.json"
+    sock = str(tmp_path / "manage.sock")
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.runner._publish_reexec",
+        lambda _event: None,
+    )
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
@@ -391,6 +399,8 @@ def test_execute_skips_charter_pause_after_checks(tmp_path: Any) -> None:
         manage_call=manage_call,
         run_cmd=run_cmd,
         intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
+        sock_path=sock,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         boot_timeout_s=0.2,
     )
