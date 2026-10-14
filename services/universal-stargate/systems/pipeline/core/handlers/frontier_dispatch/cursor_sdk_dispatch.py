@@ -143,6 +143,13 @@ async def run_cursor_sdk_dispatch(
     model = admission.model
     opts = admission.opts
     publish = admission.publish
+    pipeline_domain = getattr(getattr(context, "pipeline", None), "domain", None)
+    if pipeline_domain == "journal_projector":
+        from pipelines.journal_projector.v1.handlers.projector_guard import (
+            reject_projector_wire_model,
+        )
+
+        reject_projector_wire_model(model)
     role = (
         (admission.agent or "").strip()
         or str(step.get_domain_field("role") or "").strip()
