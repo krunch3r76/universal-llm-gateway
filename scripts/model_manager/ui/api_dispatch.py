@@ -981,8 +981,9 @@ async def orchestrate_cancel_restart_intent(
             "intent_status": exc.status,
             "drain_release": drain_release,
         }
-    await cancel_or_join_supervise_task(cancelled.service)
-    await clear_service_windows(store, cancelled.service, reason="intent_cancelled")
+    if cancelled.service == "stargate":
+        await cancel_or_join_supervise_task(cancelled.service)
+        await clear_service_windows(store, cancelled.service, reason="intent_cancelled")
     return {
         "status": "cancelled",
         "intent_id": cancelled.intent_id,
