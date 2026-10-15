@@ -300,6 +300,24 @@ def _holder_pid_alive(pid: int | None) -> bool:
         return True
 
 
+def _cmdline_matches_root(cmdline: str, root_id: str) -> bool:
+    """Token-bound ``--root`` match (``6164`` must not match ``61640``)."""
+    tokens = cmdline.split()
+    for idx, tok in enumerate(tokens):
+        if tok == "--root" and idx + 1 < len(tokens):
+            if tokens[idx + 1] == root_id:
+                return True
+        elif tok.startswith("--root=") and tok.split("=", 1)[1] == root_id:
+            return True
+    return False
+
+
+def _is_gear3_ticker_cmdline(cmdline: str) -> bool:
+    return (
+        "liaison-tick.py" in cmdline or "metronome.py" in cmdline
+    ) and "--loop" in cmdline and "--spawn-on-wake" in cmdline
+
+
 def _legacy_spawn_loop_alive(
     root_id: str, *, proc_root: Path | None = None
 ) -> bool:
@@ -321,11 +339,9 @@ def _legacy_spawn_loop_alive(
         except OSError:
             continue
         cmd = raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
-        if "liaison-tick.py" not in cmd or "--loop" not in cmd:
+        if not _is_gear3_ticker_cmdline(cmd):
             continue
-        if "--spawn-on-wake" not in cmd:
-            continue
-        if f"--root {root_id}" in cmd or f"--root={root_id}" in cmd:
+        if _cmdline_matches_root(cmd, root_id):
             return True
     return False
 

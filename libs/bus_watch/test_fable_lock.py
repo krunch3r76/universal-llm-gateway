@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -311,12 +312,13 @@ def test_ticker_lease_age_zero_not_stale(
         b"--loop\x00--spawn-on-wake\x00"
     )
     monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
-    fl.ticker_lock_path("10534").write_text(
-        json.dumps({"holder": "ticker:10534", "age_s": 0.0, "root": "10534"}),
-        encoding="utf-8",
-    )
-    lock = fl.read_ticker_lock("10534")
+    lock = {
+        "holder": "ticker:10534",
+        "age_s": 0.0,
+        "root": "10534",
+    }
     assert fl.ticker_lease_live(lock, root_id="10534") is True
+    fl.ticker_lock_path("10534").write_text(json.dumps(lock), encoding="utf-8")
     assert fl.claim_ticker_lease("10534")["ok"] is False
 
 
@@ -341,15 +343,61 @@ def test_ticker_lease_refuses_real_dead_holder_pid_reclaim(
             ),
             encoding="utf-8",
         )
+        from bus_watch.go_under import ticker_alive
+
         assert fl.claim_ticker_lease("10534")["ok"] is False
+        assert ticker_alive("10534") is True
         child.terminate()
         child.wait(timeout=5)
         assert fl.ticker_lease_live(root_id="10534") is False
+        assert ticker_alive("10534") is False
         assert fl.claim_ticker_lease("10534")["ok"] is True
     finally:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)
+
+
+def test_claim_reclaims_stale_pidless_when_only_self_in_proc(
+    watch_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    self_dir = proc_root / str(os.getpid())
+    self_dir.mkdir(parents=True)
+    (self_dir / "cmdline").write_bytes(
+        b"python\x00scripts/liaison-tick.py\x00--root\x0010534\x00"
+        b"--loop\x00--spawn-on-wake\x00"
+    )
+    monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
+    path = fl.ticker_lock_path("10534")
+    path.write_text(
+        json.dumps({"holder": "ticker:10534", "root": "10534"}),
+        encoding="utf-8",
+    )
+    os.utime(path, (time.time() - 60, time.time() - 60))
+    lock = fl.read_ticker_lock("10534")
+    assert 0 < float(lock["age_s"]) < fl.LOCK_STALE_S
+    assert fl.claim_ticker_lease("10534")["ok"] is True
+
+
+def test_legacy_scan_detects_metronome_cmdline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    foreign = proc_root / "626262"
+    foreign.mkdir(parents=True)
+    (foreign / "cmdline").write_bytes(
+        b"python\x00scripts/metronome.py\x00--root\x0010534\x00"
+        b"--loop\x00--spawn-on-wake\x00"
+    )
+    monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
+    assert fl._legacy_spawn_loop_alive("10534") is True
+
+
+def test_cmdline_root_rejects_prefix_id() -> None:
+    cmd = "python scripts/liaison-tick.py --root 61640 --loop --spawn-on-wake"
+    assert fl._cmdline_matches_root(cmd, "6164") is False
+    assert fl._cmdline_matches_root(cmd, "61640") is True
 
 
 def test_ticker_lease_two_claimers_loser_refresh_false(

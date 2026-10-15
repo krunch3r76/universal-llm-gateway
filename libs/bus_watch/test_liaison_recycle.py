@@ -51,8 +51,9 @@ def _run_recycle(
 def _write_fake_systemctl(
     bin_dir: Path,
     *,
-    load_state: str = "",
+    load_state: str = "not-found",
     main_pid: str = "0",
+    unreachable: bool = False,
 ) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     log_file = str(bin_dir / "systemctl.log")
@@ -63,6 +64,14 @@ def _write_fake_systemctl(
         set -eu
         LOG_FILE={log_file!r}
         printf '%s\\n' "$*" >>"$LOG_FILE"
+        if [[ "$*" == *"Version"* ]]; then
+          if [[ {unreachable!r} == "True" ]]; then
+            echo "Failed to connect to bus" >&2
+            exit 1
+          fi
+          printf '252\\n'
+          exit 0
+        fi
         if [[ "$*" == *"LoadState"* ]]; then
           printf '%s\\n' {load_state!r}
           exit 0
@@ -90,6 +99,8 @@ def _write_fake_kill(
     *,
     clear_proc: bool = True,
     clear_lock: bool = True,
+    delay_clear_proc_s: float = 0.0,
+    exit_code: int = 0,
 ) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "kill"
@@ -102,7 +113,12 @@ def _write_fake_kill(
             echo "KILL_SENT $*" >>{log_file!r}
             if [[ "$1" == "-TERM" || "$1" == "-SIGTERM" || "$1" == "TERM" ]]; then
               target="$2"
-              if [[ "{clear_proc}" == "True" && -n "${{LIAISON_PROC_ROOT:-}}" && -n "$target" ]]; then
+              delay={delay_clear_proc_s}
+              if [[ "$delay" != "0.0" && "$delay" != "0" ]]; then
+                if [[ -n "${{LIAISON_PROC_ROOT:-}}" && -n "$target" ]]; then
+                  ( sleep "$delay"; rm -rf "${{LIAISON_PROC_ROOT}}/$target" ) &
+                fi
+              elif [[ "{clear_proc}" == "True" && -n "${{LIAISON_PROC_ROOT:-}}" && -n "$target" ]]; then
                 rm -rf "${{LIAISON_PROC_ROOT}}/$target" 2>/dev/null || true
               fi
               if [[ "{clear_lock}" == "True" && -n "${{WATCH_DIR:-}}" && -n "${{ROOT:-}}" ]]; then
@@ -112,7 +128,7 @@ def _write_fake_kill(
                 fi
               fi
             fi
-            exit 0
+            exit {exit_code}
             """
         ),
         encoding="utf-8",
@@ -205,7 +221,7 @@ def test_recycle_refuses_attended_register(tmp_path: Path) -> None:
     )
     bin_dir = tmp_path / "bin"
     signal_log = tmp_path / "signals.log"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(bin_dir, signal_log)
     _fake_proc(
         tmp_path,
@@ -298,7 +314,7 @@ def test_recycle_orphan_sigterm_then_systemd_run(tmp_path: Path) -> None:
     )
     bin_dir = tmp_path / "bin"
     signal_log = tmp_path / "signals.log"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(bin_dir, signal_log)
     _write_fake_systemd_run(bin_dir)
     _fake_proc(
@@ -333,7 +349,7 @@ def test_recycle_orphan_systemd_run_failure_after_sigterm(tmp_path: Path) -> Non
     )
     bin_dir = tmp_path / "bin"
     signal_log = tmp_path / "signals.log"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(bin_dir, signal_log)
     run_script = bin_dir / "systemd-run"
     run_script.write_text(
@@ -376,7 +392,7 @@ def test_recycle_orphan_lease_timeout_still_attempts_systemd_run(
     )
     bin_dir = tmp_path / "bin"
     signal_log = tmp_path / "signals.log"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(
         bin_dir, signal_log, clear_proc=False, clear_lock=False
     )
@@ -396,7 +412,7 @@ def test_recycle_orphan_lease_timeout_still_attempts_systemd_run(
             ROOT=root,
         ),
     )
-    assert proc.returncode == 0
+    assert proc.returncode == 4
     assert "timeout" in proc.stderr.lower() or "reap" in proc.stderr.lower()
     assert (bin_dir / "systemd-run.log").exists()
 
@@ -415,9 +431,13 @@ def test_recycle_waits_until_orphan_reaped_before_systemd_run(
     bin_dir = tmp_path / "bin"
     signal_log = tmp_path / "signals.log"
     proc_root = tmp_path / "proc"
-    _write_fake_systemctl(bin_dir, load_state="")
-    _write_delayed_proc_removal_kill(
-        bin_dir, signal_log, proc_root, orphan_pid, delay_s=0.15
+    _write_fake_systemctl(bin_dir, load_state="not-found")
+    _write_fake_kill(
+        bin_dir,
+        signal_log,
+        clear_proc=False,
+        clear_lock=False,
+        delay_clear_proc_s=0.15,
     )
     _write_fake_systemd_run(bin_dir, fail_if_proc_exists=str(orphan_pid))
     _fake_proc(
@@ -437,7 +457,7 @@ def test_recycle_waits_until_orphan_reaped_before_systemd_run(
 def test_recycle_zero_orphans_still_systemd_run(tmp_path: Path) -> None:
     root = "16401"
     bin_dir = tmp_path / "bin"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(bin_dir, tmp_path / "signals.log")
     _write_fake_systemd_run(bin_dir)
     proc = _run_recycle(
@@ -504,7 +524,7 @@ def test_recycle_attended_loop_without_tick_exit_2(tmp_path: Path) -> None:
 def test_recycle_two_orphans_exit_3(tmp_path: Path) -> None:
     root = "16416"
     bin_dir = tmp_path / "bin"
-    _write_fake_systemctl(bin_dir, load_state="")
+    _write_fake_systemctl(bin_dir, load_state="not-found")
     _write_fake_kill(bin_dir, tmp_path / "signals.log")
     _write_fake_systemd_run(bin_dir)
     _fake_proc(
@@ -553,6 +573,211 @@ def test_recycle_dry_run_leaves_tick_and_lease_bytes(
         },
     )
     assert proc.returncode == 0
+    assert "dry_run:" in proc.stdout
     assert hashlib.sha256(tick.read_bytes()).hexdigest() == tick_hash
     assert hashlib.sha256(lease.read_bytes()).hexdigest() == lease_hash
     assert "restart" not in (bin_dir / "systemctl.log").read_text(encoding="utf-8")
+
+
+def test_recycle_user_manager_unreachable_exit_2(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    _write_fake_systemctl(bin_dir, load_state="not-found", unreachable=True)
+    _write_fake_kill(bin_dir, signal_log)
+    _fake_proc(
+        tmp_path,
+        8888,
+        f"{_PY} scripts/liaison-tick.py --root 10534 --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root="10534",
+        env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode == 2
+    assert "user_manager_unreachable" in proc.stderr
+    assert not signal_log.exists()
+
+
+def test_spawn_scan_rejects_prefix_root_id(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(bin_dir, tmp_path / "signals.log")
+    _write_fake_systemd_run(bin_dir)
+    _fake_proc(
+        tmp_path,
+        7001,
+        f"{_PY} scripts/liaison-tick.py --root 61640 --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root="6164",
+        env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode == 0
+    assert "cold_start" in proc.stdout
+    assert not (bin_dir / "systemd-run.log").read_text(encoding="utf-8").count(
+        "61640"
+    )
+
+
+def test_recycle_orphan_timeout_exits_nonzero_still_systemd_run(
+    tmp_path: Path,
+) -> None:
+    root = "16401"
+    orphan_pid = 999992
+    watch = tmp_path / "watchers"
+    watch.mkdir()
+    (watch / f"liaison-ticker-{root}.lock").write_text(
+        json.dumps(
+            {"holder": f"ticker:{root}", "holder_pid": os.getpid(), "root": root}
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(
+        bin_dir, tmp_path / "signals.log", clear_proc=False, clear_lock=False
+    )
+    _write_fake_systemd_run(bin_dir)
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(
+            bin_dir, tmp_path / "proc", LIAISON_REAP_TIMEOUT_S="0.1", ROOT=root
+        ),
+    )
+    assert proc.returncode != 0
+    assert (bin_dir / "systemd-run.log").exists()
+
+
+def test_recycle_kill_failure_not_silent(tmp_path: Path) -> None:
+    root = "16401"
+    orphan_pid = 999991
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(
+        bin_dir, tmp_path / "signals.log", exit_code=1
+    )
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(bin_dir, tmp_path / "proc", ROOT=root),
+    )
+    assert proc.returncode != 0
+    assert "kill_failed" in proc.stderr.lower()
+
+
+def test_recycle_orphan_sigterm_waits_before_cold_start(tmp_path: Path) -> None:
+    root = "16401"
+    orphan_pid = 999991
+    watch = tmp_path / "watchers"
+    watch.mkdir()
+    (watch / f"liaison-ticker-{root}.lock").write_text(
+        json.dumps({"holder": None, "root": root}),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    proc_root = tmp_path / "proc"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(
+        bin_dir,
+        signal_log,
+        clear_proc=False,
+        clear_lock=False,
+        delay_clear_proc_s=0.3,
+    )
+    _write_fake_systemd_run(bin_dir, fail_if_proc_exists=str(orphan_pid))
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(bin_dir, proc_root, ROOT=root),
+    )
+    assert proc.returncode == 0
+    assert "KILL_SENT" in signal_log.read_text(encoding="utf-8")
+    assert "cold_start" not in proc.stdout
+
+
+def test_recycle_pre_kill_requires_ticker_lease_live_api(tmp_path: Path) -> None:
+    stub = tmp_path / "stub_libs"
+    (stub / "bus_watch").mkdir(parents=True)
+    (stub / "bus_watch" / "__init__.py").write_text("", encoding="utf-8")
+    (stub / "bus_watch" / "fable_lock.py").write_text(
+        "def read_ticker_lock(root):\n    return {}\n",
+        encoding="utf-8",
+    )
+    root = "16401"
+    orphan_pid = 999991
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(bin_dir, signal_log)
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(
+            bin_dir,
+            tmp_path / "proc",
+            ROOT=root,
+            LIAISON_PYTHONPATH=str(stub),
+        ),
+    )
+    assert proc.returncode == 2
+    assert not signal_log.exists()
+
+
+def test_dry_run_prints_branch_loaded(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir, load_state="loaded", main_pid="0")
+    proc = _run_recycle(
+        tmp_path,
+        root="10534",
+        extra_args=["--dry-run"],
+        env={
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "LIAISON_PROC_ROOT": str(tmp_path / "proc"),
+        },
+    )
+    assert proc.returncode == 0
+    assert "dry_run: loaded_restart" in proc.stdout
+
+
+def test_dry_run_prints_branch_orphan(tmp_path: Path) -> None:
+    root = "16401"
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(bin_dir, tmp_path / "signals.log")
+    _fake_proc(
+        tmp_path,
+        999991,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        extra_args=["--dry-run"],
+        env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode == 0
+    assert "dry_run: orphan_recycle" in proc.stdout
