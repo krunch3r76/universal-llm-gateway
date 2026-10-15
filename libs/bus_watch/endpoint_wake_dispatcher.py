@@ -21,6 +21,9 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
     {
         "CONSULT",
         "QUESTION",
+        "ASK",
+        "REQUEST",
+        "AMEND",
         "DONE",
         "FAILED",
         "FACT",
@@ -28,11 +31,24 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "PLAN",
         "LANDED",
         "VERDICT",
+        "RESULT",
+        "REPORT",
+        "RETURN",
+        "NUDGE",
+        "SYNTHESIS",
+        "CORRECTION",
+        "RESTARTED",
+        "GATE MISS",
+        "ESCALATE",
+        "BLOCKED",
+        "HOP",
+        "READY",
     }
 )
 GROK_WAKE_SUBJECT_HEADS = frozenset(
     {
         "REQUEST",
+        "REVIEW-REQUEST",
         "RULING",
         "ACK",
         "AMEND",
@@ -44,6 +60,7 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "WAKE",
         "CONSULT",
         "QUESTION",
+        "ASK",
         "DONE",
         "FAILED",
         "FACT",
@@ -52,6 +69,20 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "PICKUP",
         "LANDED",
         "VERDICT",
+        "RESULT",
+        "REPORT",
+        "RETURN",
+        "NUDGE",
+        "RELAY",
+        "SEND",
+        "UPDATE",
+        "PASS",
+        "SYNTHESIS",
+        "CORRECTION",
+        "RESTARTED",
+        "GATE MISS",
+        "ESCALATE",
+        "BLOCKED",
         "HOP",
         "READY",
     }
@@ -68,9 +99,15 @@ def subject_allowed(subject: str | None, *, cse: bool) -> bool:
         return True
     if not cse and text.startswith(_ROUTE_CONTROL_TYPE):
         return True
-    head = text.split("|", 1)[0].strip().upper()
     allowed = CSE_WAKE_SUBJECT_HEADS if cse else GROK_WAKE_SUBJECT_HEADS
-    return head in allowed
+    head = text.split("|", 1)[0].strip().upper()
+    if head in allowed:
+        return True
+    if "|" in text and head:
+        first_token = head.split()[0]
+        if first_token in allowed:
+            return True
+    return False
 
 
 def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:

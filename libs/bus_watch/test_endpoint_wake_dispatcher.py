@@ -38,13 +38,27 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cse_allowlist_not_display(db: None) -> None:
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT|x"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-aab1", "subject": "ASK|escrow in opening only?"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-aab1", "subject": "RESULT|escrow-in-opening panel"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "NUDGE|16934#11 ASK"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "web-drive-impresario", "subject": "PLAN r2|web-drive-impresario"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "AMEND #712|Composio mail scope"}, cse=True)
     assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT_REPLY|x"}, cse=True)
     assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "CLOSEOUT|x"}, cse=True)
+    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "DONE #359 RAG without pipe"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "TYPE: DIRECTIVE — go"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"}, cse=True)
     assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "FACT|x"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "RULING|x"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-aab1", "from_agent": "grok-bot-gc1", "subject": "RELAY|maestro ACK"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor-sdk", "subject": "RESULT|39359"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-r1", "from_agent": "web-drive-impresario", "subject": "REVIEW-REQUEST|R1"}, cse=False)
     assert subject_allowed("TYPE: ROUTE/CONTROL", cse=False)
     assert not subject_allowed("TYPE: ROUTE/CONTROL", cse=True)
     assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=False)
@@ -56,6 +70,9 @@ def test_cse_allowlist_not_display(db: None) -> None:
     assert CSE_WAKE_SUBJECT_HEADS == {
         "CONSULT",
         "QUESTION",
+        "ASK",
+        "REQUEST",
+        "AMEND",
         "DONE",
         "FAILED",
         "FACT",
@@ -63,9 +80,22 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "PLAN",
         "LANDED",
         "VERDICT",
+        "RESULT",
+        "REPORT",
+        "RETURN",
+        "NUDGE",
+        "SYNTHESIS",
+        "CORRECTION",
+        "RESTARTED",
+        "GATE MISS",
+        "ESCALATE",
+        "BLOCKED",
+        "HOP",
+        "READY",
     }
     assert GROK_WAKE_SUBJECT_HEADS == {
         "REQUEST",
+        "REVIEW-REQUEST",
         "RULING",
         "ACK",
         "AMEND",
@@ -77,6 +107,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "WAKE",
         "CONSULT",
         "QUESTION",
+        "ASK",
         "DONE",
         "FAILED",
         "FACT",
@@ -85,6 +116,20 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "PICKUP",
         "LANDED",
         "VERDICT",
+        "RESULT",
+        "REPORT",
+        "RETURN",
+        "NUDGE",
+        "RELAY",
+        "SEND",
+        "UPDATE",
+        "PASS",
+        "SYNTHESIS",
+        "CORRECTION",
+        "RESTARTED",
+        "GATE MISS",
+        "ESCALATE",
+        "BLOCKED",
         "HOP",
         "READY",
     }
