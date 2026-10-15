@@ -1,5 +1,5 @@
 ---
-description: Load when the deliverable is outbound text the operator will send — ghostwriting, replies, emails, correspondence, workplace comments, or life-representation liaison on vortex-life / personal matters. Use outbound-voice-spec; pair prose-discipline.
+description: Load when the deliverable is outbound text the operator will send — ghostwriting, replies, emails, correspondence, workplace comments, or life-representation / Impresario liaison on vortex-life / personal matters. Use outbound-voice-spec; pair prose-discipline. Hard gate: OUTBOUND SPEC in-turn before draft.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
@@ -15,6 +15,9 @@ trigger_match_terms:
   - write as me
   - liaison
   - operator voice
+  - HOLD_SEND
+  - tAIm voice
+  - impresario fonzi
 ---
 # Outbound Voice Spec (life surfaces)
 
@@ -22,21 +25,25 @@ trigger_match_terms:
 
 `outbound_artifact(operator_will_send) ⇒ Use the outbound-voice-spec skill` ∧ `Use the prose-discipline skill` — bind **OUTBOUND SPEC** before the first sentence; `¬ instruct(model_identity)`.
 
-**Scope gate (OR):** fires when **either** a claude.ai life session **or** a Cursor **life-representation** seat holds the work (correspondence liaison, `vortex-life` MCP, agent_bus on personal/outbound deliverables). Code-lane engineering without life rep → per-task OUTBOUND SPEC only when an outbound artifact is in scope.
+**Hard gate:** `outbound_draft_in_turn ⇒ visible_OUTBOUND_SPEC_block_precedes_draft_in_same_turn` (or same-thread turn-ref to a bound SPEC). Continuity `## Skills` list alone does **not** satisfy the gate. Next-pickup commissioning outbound must say `Bind OUTBOUND SPEC (Use outbound-voice-spec + prose-discipline) → draft <artifact>`.
 
-Full binding (L1–L6, OUTBOUND SPEC fields, liaison pack, verifier): Use the `outbound-voice-spec` skill. Register and tells: Use the `prose-discipline` skill.
+**Scope gate (OR):** fires when **either** a claude.ai life session **or** a Cursor **life-representation** / Impresario seat holds the work (correspondence liaison, `vortex-life` MCP, agent_bus on personal/outbound deliverables — including Impresario Fonzi house 17007 for Fonzi outreach drafts). Code-lane engineering without life rep → per-task OUTBOUND SPEC only when an outbound artifact is in scope.
+
+Full binding (L1–L7, tAIm register, FACT ceiling, HOLD_SEND, HOLD/wake guard, liaison pack, verifier): Use the `outbound-voice-spec` skill. Register craft: Use the `prose-discipline` skill. Session-open tables: Use `life-session-engagement`.
 
 ## Life-session placement
 
 | Layer | Surface | Loads |
 |---|---|---|
 | Session orientation | `cortex_brief` once | Lean seat card, deadlines, skills index |
-| Matter facts | `recall(op="matter", q=<matter>)` when outbound ties to hub correspondence | Scoped factual recall only |
-| Per draft | OUTBOUND SPEC Signer + Standing limits + Material attested | Attested for *this* message only |
+| Matter facts | `recall(op="matter", q=<matter>)` when outbound ties to hub correspondence | Scoped factual recall only — promote into Material attested before use |
+| Per draft | OUTBOUND SPEC (Signer, Standing limits, Material attested, Channel/format, Deliverable) | Attested for *this* message only |
 | Persistence | claude.ai Project instructions or Customize skills | Across phone sessions — template: `docs/agent-guides/templates/life-project-instructions.md` |
 
 **Avoid:** bare person-entity recall seeds alone as standing boot — cross-domain graph noise invites invention from records not attested for this message.
 
-## Liaison (Cursor, operator not at IDE)
+**HOLD / wake:** refuse outbound draft when matter/mailbox has HOLD or wake does not commission outbound.
 
-Harvest thread → operator attests material + limits → insert OUTBOUND SPEC + skill invokes → deliverable = **one outbound body** (liaison does not rewrite in liaison voice on the bus).
+## Liaison (Cursor / Impresario, operator not at IDE)
+
+Harvest thread → operator attests material + limits → insert OUTBOUND SPEC + skill invokes → deliverable = **one outbound body or HOLD_SEND** (liaison does not rewrite in Stage Manager / Great Conversation / bus voice). Impresario Fonzi (17007) owns Fonzi outreach drafts — do not spawn a parallel Fonzi voice bot.
