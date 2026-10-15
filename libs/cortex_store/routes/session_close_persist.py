@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -402,6 +403,8 @@ def persist_session_close(
     prior_seal_snapshot: str | None = None
     prior_source_snapshot: bytes | None = None
     source_abs_path: Path | None = None
+    source_jsonl_uri_persist: str | None = None
+    source_jsonl_sha256_persist: str | None = None
     prior_codec: str | None = None
     letter_status: str | None = None
     seal_letter_sha12: str | None = None
@@ -514,6 +517,8 @@ def persist_session_close(
                     files_root=_FILES_ROOT,
                 )
                 prior_source_snapshot = relocate_result.prior_snapshot
+                source_jsonl_uri_persist = f"files://{source_rel}"
+                source_jsonl_sha256_persist = relocate_result.written_sha256
             try:
                 durable_write_text(
                     seal_abs_path, seal_payload, retain_store_root=_FILES_ROOT
@@ -611,6 +616,18 @@ def persist_session_close(
     journal_row_id = 0
     audit_warnings: list[dict] | None = None
     try:
+        if (
+            source_jsonl_uri_persist is None
+            and ctx.transcript_path is not None
+        ):
+            source_rel = transcript_source_path(ctx.transcript_path)
+            source_abs = _FILES_ROOT / source_rel
+            if source_abs.is_file():
+                source_jsonl_uri_persist = f"files://{source_rel}"
+                source_jsonl_sha256_persist = hashlib.sha256(
+                    source_abs.read_bytes()
+                ).hexdigest()
+
         if ctx.transcript_entity_id is not None:
             tx_traits = transcript_birth_traits()
             trait_cols, trait_vals = trait_insert_extras(conn, tx_traits)
@@ -652,6 +669,21 @@ def persist_session_close(
                 tx_attributes["messages_uri"] = f"files://{ctx.messages_path}"
             if ctx.envelope is not None:
                 tx_attributes["surface"] = ctx.envelope.meta.surface
+            if source_jsonl_uri_persist:
+                tx_attributes["source_jsonl_uri"] = source_jsonl_uri_persist
+            if source_jsonl_sha256_persist:
+                tx_attributes["source_jsonl_sha256"] = source_jsonl_sha256_persist
+            existing_row = conn.execute(
+                "SELECT attributes FROM entities WHERE id = ?",
+                (ctx.transcript_entity_id,),
+            ).fetchone()
+            if existing_row and existing_row[0]:
+                try:
+                    prior_attrs = json.loads(existing_row[0])
+                    if isinstance(prior_attrs, dict):
+                        tx_attributes = {**prior_attrs, **tx_attributes}
+                except json.JSONDecodeError:
+                    pass
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 ctx.transcript_entity_id,

@@ -10,10 +10,12 @@ import os
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, "libs")
+_REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO / "libs"))
 
-from cortex_store.dispatch_ops import execute_op
+from cortex_store.dispatch_ops import execute_op  # noqa: E402
 
 _SEALS_REL = Path("notes/system/seals")
 _AGENT = "cursor-sdk"
@@ -79,8 +81,8 @@ def _apply_one(source_path: Path, *, dry_run: bool) -> dict[str, object]:
     raw = source_path.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     rel = source_path.relative_to(_files_root())
-    uri = f"cortex://{rel.as_posix()}"
-    patch = {
+    uri = f"files://{rel.as_posix()}"
+    patch: dict[str, Any] = {
         "attributes": {
             "source_jsonl_uri": uri,
             "source_jsonl_sha256": sha,
@@ -90,10 +92,12 @@ def _apply_one(source_path: Path, *, dry_run: bool) -> dict[str, object]:
         return {"entity_id": entity_id, "dry_run": True, **patch}
     result = execute_op(
         "entity_update",
-        entity_id=entity_id,
-        agent=_AGENT,
-        session_id=_SESSION,
-        **patch,
+        {
+            "entity_id": entity_id,
+            "agent": _AGENT,
+            "session_id": _SESSION,
+            **patch,
+        },
     )
     return {"entity_id": entity_id, "result": result}
 
@@ -134,7 +138,7 @@ def main() -> int:
         "l1_without_l2_count": len(inventory["l1_without_l2"]),
         "surface_counts": inventory["surface_counts"],
         "entity_updates_planned": len(inventory["sources"]),
-        "entity_update_op": "cortex entity_update (execute_op) attributes source_jsonl_uri + source_jsonl_sha256",
+        "entity_update_op": "execute_op(entity_update, {entity_id, attributes: {source_jsonl_uri, source_jsonl_sha256}})",
         "mode": "dry_run" if args.dry_run else "apply",
     }
     updates: list[dict[str, object]] = []
@@ -143,7 +147,9 @@ def main() -> int:
             updates.append(_apply_one(source_path, dry_run=False))
         report["updates"] = updates
         report["applied"] = sum(
-            1 for u in updates if "error" not in (u.get("result") or {})
+            1
+            for u in updates
+            if isinstance(u.get("result"), dict) and "error" not in u["result"]
         )
     else:
         for source_path in inventory["sources"][:5]:

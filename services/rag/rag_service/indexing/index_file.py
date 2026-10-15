@@ -9,7 +9,6 @@ immediately — extraction enrichment arrives later.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -17,6 +16,7 @@ from uuid import uuid4
 from universal_logging import get_logger
 
 from services.rag.chunkers import chunk_file
+from services.rag.chunkers.messages_chunker import indexing_source_hash
 from services.rag.embeddings import require_healthy
 from services.rag.events.indexing import (
     rag_file_indexing_failed,
@@ -157,7 +157,7 @@ async def _index_file_impl(
 
     await require_healthy()
     raw = await asyncio.to_thread(file_path.read_bytes)
-    source_hash = hashlib.sha256(raw).hexdigest()
+    source_hash = indexing_source_hash(raw, file_path)
 
     article_sync_old_path = await _run_article_sync_phase(
         source=source,

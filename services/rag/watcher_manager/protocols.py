@@ -33,6 +33,19 @@ def normalize_extensions(extensions: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def path_matches_extensions(path: Path, extensions: Sequence[str]) -> bool:
+    """True when ``path`` matches any configured extension (incl. multi-dot suffixes)."""
+    name = path.name.lower()
+    for ext in extensions:
+        normalized = f".{ext.strip().lower().lstrip('.')}"
+        if normalized.count(".") > 1:
+            if name.endswith(normalized):
+                return True
+        elif path.suffix.lower() == normalized:
+            return True
+    return False
+
+
 def effective_extensions(
     watch_directory: WatchDirectory,
     baseline_extensions: tuple[str, ...],

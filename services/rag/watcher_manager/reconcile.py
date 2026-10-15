@@ -24,6 +24,7 @@ from services.rag.events.lifecycle import (
 from services.rag.watcher_manager.protocols import (
     _RECONCILE_BUSY_INTERVAL_S,
     effective_extensions,
+    path_matches_extensions,
 )
 
 logger = get_logger(__name__)
@@ -100,7 +101,7 @@ class ReconcileMixin:
             fp
             for fp in walker
             if fp.is_file()
-            and fp.suffix.lower() in extensions
+            and path_matches_extensions(fp, extensions)
             and not matches_watch_exclude(fp, watch_root=watch_path, patterns=exclude)
         ]
         if not file_paths:

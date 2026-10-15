@@ -31,6 +31,7 @@ from services.rag.events.lifecycle import (
     rag_pending_reconciled,
 )
 from services.rag.indexing_failure_classifier import classify_http_status_error
+from services.rag.watcher_manager.protocols import path_matches_extensions
 
 from . import indexing, state
 from .lifecycle_constants import RECONCILE_FILE_TIMEOUT_S
@@ -295,7 +296,7 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
             if watch_directory.extensions
             else baseline
         )
-        if resolved_file.suffix.lower() not in effective_extensions:
+        if not path_matches_extensions(resolved_file, tuple(effective_extensions)):
             continue
         if matches_watch_exclude(
             resolved_file,

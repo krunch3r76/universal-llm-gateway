@@ -24,7 +24,10 @@ from services.rag.events.lifecycle import (
     rag_watch_initial_started,
 )
 from services.rag.indexing_failure_classifier import classify_indexing_failure
-from services.rag.watcher_manager.protocols import _INITIAL_REINDEX_MAX_ATTEMPTS
+from services.rag.watcher_manager.protocols import (
+    _INITIAL_REINDEX_MAX_ATTEMPTS,
+    path_matches_extensions,
+)
 
 logger = get_logger(__name__)
 
@@ -53,7 +56,9 @@ class InitialReindexMixin:
         exclude = watch_directory.exclude
         file_paths: list[Path] = []
         for file_path in walker:
-            if not file_path.is_file() or file_path.suffix.lower() not in extensions:
+            if not file_path.is_file() or not path_matches_extensions(
+                file_path, extensions
+            ):
                 continue
             if matches_watch_exclude(
                 file_path, watch_root=watch_path, patterns=exclude

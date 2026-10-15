@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 import sqlite3
 from collections.abc import Callable, Sequence
@@ -16,11 +18,13 @@ from continuity_tape.messages import (
     TOOL_MARKER_RE,
     ContinuityMessagesEnvelope,
 )
-from continuity_tape.notice import is_notice_row, unwrap_operator_utterance
+from continuity_tape.notice import is_notice_row
 
 from services.rag.chunkers.paragraph_utils import Chunk
 
-CHUNKER_VERSION = "conversation-messages/1"
+logger = logging.getLogger(__name__)
+
+CHUNKER_VERSION = "conversation-messages/2"
 
 DEFAULT_EXCLUDE_LANES: frozenset[str] = frozenset({"16934"})
 
@@ -36,36 +40,72 @@ CASE_CONTENT_MARKERS: tuple[str, ...] = (
 LaneTags = tuple[str, ...]
 LaneResolver = Callable[[ContinuityMessagesEnvelope, Path], tuple[str | None, LaneTags]]
 
+_LANE_RESOLVER_LOGGED = False
+
+_HARNESS_BLOCK_RES = [
+    re.compile(r"<timestamp>[\s\S]*?</timestamp>\s*", re.IGNORECASE),
+    re.compile(r"<manually_attached_skills>[\s\S]*?</manually_attached_skills>\s*", re.IGNORECASE),
+    re.compile(r"<available_subagent_types>[\s\S]*?</available_subagent_types>\s*", re.IGNORECASE),
+    re.compile(
+        r"<dynamic_tool_namespaces>[\s\S]*?</dynamic_tool_namespaces>\s*", re.IGNORECASE
+    ),
+    re.compile(r"<dynamic_tool_catalog>[\s\S]*?</dynamic_tool_catalog>\s*", re.IGNORECASE),
+    re.compile(r"<cursor_commands>[\s\S]*?</cursor_commands>\s*", re.IGNORECASE),
+    re.compile(r"<system_reminder>[\s\S]*?</system_reminder>\s*", re.IGNORECASE),
+    re.compile(r"<agent_skills>[\s\S]*?</agent_skills>\s*", re.IGNORECASE),
+    re.compile(r"<user_rules>[\s\S]*?</user_rules>\s*", re.IGNORECASE),
+    re.compile(
+        r"<available_subagent_models>[\s\S]*?</available_subagent_models>\s*", re.IGNORECASE
+    ),
+]
+_USER_QUERY_RE = re.compile(r"<user_query>\s*([\s\S]*?)\s*</user_query>", re.IGNORECASE)
+_INLINE_TIMESTAMP_RE = re.compile(
+    r"<timestamp>\s*([\s\S]*?)\s*</timestamp>", re.IGNORECASE
+)
 _TOOL_CALL_PARA_RE = re.compile(
     r"^\[tool call: [^\]]+\]$",
     re.MULTILINE,
 )
 _TOOL_USE_INLINE_RE = re.compile(r"\[tool call: [^\]]+\]")
 _REASONING_FENCE_RE = re.compile(
-    r"<\s*(?:think|thinking|reasoning)[^>]*>.*?</\s*(?:think|thinking|reasoning)\s*>",
-    re.DOTALL | re.IGNORECASE,
+    r"<\s*(?:redacted_thinking|think|thinking|reasoning)[^>]*>[\s\S]*?"
+    r"(?:</\s*(?:redacted_thinking|think|thinking|reasoning)\s*>|$)",
+    re.IGNORECASE,
 )
-_JSON_BLOB_RE = re.compile(r"\{[^{}]*\"(?:type|tool_use_id|input)\"[^{}]*\}", re.DOTALL)
+_TOOL_JSON_RE = re.compile(
+    r"\{[^{}]*\"(?:type|tool_use_id|input|name)\"[^{}]*\}",
+    re.DOTALL,
+)
 
 _API_KEY_RE = re.compile(
-    r"(?i)\b(?:sk-[a-z0-9_-]{10,}|"
+    r"(?i)(?:"
+    r"\b(?:sk-[a-z0-9_-]{10,}|sk-ant-[a-z0-9_-]{10,}|"
+    r"ghp_[a-z0-9]{20,}|gho_[a-z0-9]{20,}|ghs_[a-z0-9]{20,}|"
+    r"github_pat_[a-z0-9_]{20,}|xai-[a-z0-9_-]{10,}|AIza[a-z0-9_-]{20,}|"
+    r"xox[baprs]-[a-z0-9-]{10,})|"
     r"Bearer\s+[A-Za-z0-9._\-+/=]{20,}|"
-    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)"
+    r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?"
+    r"-----END (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----)"
 )
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 _STREET_RE = re.compile(
-    r"\b\d{1,5}\s+[A-Za-z0-9.'-]+\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Lane|Dr|Drive)\b",
+    r"\b\d{1,5}\s+(?:[A-Za-z0-9.'-]+\s+){1,4}"
+    r"(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Lane|Dr|Drive|Way|Ct|Court|Pl|Place|Cir|Pkwy|Hwy)\b",
     re.IGNORECASE,
 )
 _ENV_DUMP_RE = re.compile(
-    r"(?m)^(?:[A-Z][A-Z0-9_]{2,})=(?:[^\n\\]|\\.)+$"
+    r"(?m)^(?:export\s+)?(?:DATABASE_URL|[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z0-9_]*)="
+    r"(?:[^\n\\]|\\.)+$"
 )
 
-_SYNTHETIC_USER_SUBSTRINGS = (
+_SYNTHETIC_PREFIXES = (
     "briefly inform the user about the task result",
+    "you are the attended liaison for house",
+    "conductors on house",
     "liaison ide hop",
+    "this chat monitors house",
 )
 
 
@@ -82,10 +122,19 @@ class _TurnPair:
     user_text: str
     assistant_text: str
     user_ts: str | None = None
+    has_real_user: bool = True
 
 
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def indexing_source_hash(raw: bytes, path: Path) -> str:
+    """Source identity for RAG skip guards (includes chunker version for messages seals)."""
+    if path.name.endswith(".messages.json"):
+        payload = raw + b"\n" + CHUNKER_VERSION.encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _source_sha256(envelope: ContinuityMessagesEnvelope, path: Path) -> str:
@@ -127,24 +176,119 @@ def exchange_matches_case_markers(text: str) -> bool:
     return any(marker in lowered for marker in CASE_CONTENT_MARKERS)
 
 
+def _strip_harness_blocks(content: str) -> str:
+    text = content
+    for pattern in _HARNESS_BLOCK_RES:
+        text = pattern.sub("", text)
+    return text.strip()
+
+
+def _synthetic_unwrapped_text(text: str) -> bool:
+    folded = text.casefold().strip()
+    if not folded:
+        return True
+    if any(folded.startswith(prefix) for prefix in _SYNTHETIC_PREFIXES):
+        return True
+    if folded.startswith("[grok_bot_hidden_prompt") or folded.startswith("[sand_hidden_prompt"):
+        return True
+    if re.match(r"^\[a background task\b", folded):
+        return True
+    if re.match(r"^resume\s+\d+\b", folded) and re.search(
+        r"\bliaison ide hop\b", folded[:320]
+    ):
+        return True
+    if re.search(r"\bliaison ide hop\s*\(", folded[:400]):
+        return True
+    return False
+
+
+def _extract_last_user_query(content: str) -> str:
+    stripped = _strip_harness_blocks(content)
+    queries = [m.group(1).strip() for m in _USER_QUERY_RE.finditer(stripped)]
+    non_synthetic = [q for q in queries if q and not _synthetic_unwrapped_text(q)]
+    if non_synthetic:
+        return non_synthetic[-1]
+    if queries:
+        remainder = _USER_QUERY_RE.sub("", stripped).strip()
+        if remainder and not _synthetic_unwrapped_text(remainder):
+            return remainder
+        return ""
+    return stripped.strip()
+
+
+def _inline_timestamp(content: str) -> str | None:
+    matches = list(_INLINE_TIMESTAMP_RE.finditer(content))
+    if matches:
+        return matches[-1].group(1).strip()
+    return None
+
+
 def _is_synthetic_user(content: str) -> bool:
     if is_notice_row("user", content):
         return True
-    probe = unwrap_operator_utterance(content) if "<user_query>" in content else content
-    folded = probe.casefold()
-    return any(sub in folded for sub in _SYNTHETIC_USER_SUBSTRINGS)
+    unwrapped = _extract_last_user_query(content)
+    if not unwrapped:
+        return True
+    return _synthetic_unwrapped_text(unwrapped)
 
 
 def _verbatim_user(content: str) -> str:
-    """User text for indexing: envelope content verbatim (a:1627), not paraphrased."""
-    return content if isinstance(content, str) else ""
+    """Operator utterance after harness strip (a:1627 — not paraphrased)."""
+    return _extract_last_user_query(content)
+
+
+def _strip_balanced_json_objects(text: str) -> str:
+    """Remove JSON objects that look like tool-use payloads (supports nesting)."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] != "{":
+            out.append(text[i])
+            i += 1
+            continue
+        depth = 0
+        start = i
+        j = i
+        while j < n:
+            ch = text[j]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    j += 1
+                    break
+            j += 1
+        else:
+            out.append(text[i])
+            i += 1
+            continue
+        candidate = text[start:j]
+        if re.search(r'"(?:type|tool_use_id|input|name)"', candidate):
+            i = j
+            continue
+        out.append(candidate)
+        i = j
+    return "".join(out)
+
+
+def _strip_tool_json_blobs(text: str) -> str:
+    out = text
+    for _ in range(32):
+        new = _strip_balanced_json_objects(out)
+        new = _TOOL_JSON_RE.sub("", new)
+        if new == out:
+            break
+        out = new
+    return out
 
 
 def _normalize_assistant(content: str) -> str:
     if not content:
         return ""
     text = _REASONING_FENCE_RE.sub("", content)
-    text = _JSON_BLOB_RE.sub("", text)
+    text = _strip_tool_json_blobs(text)
     paragraphs = text.split("\n\n")
     kept: list[str] = []
     for para in paragraphs:
@@ -173,15 +317,27 @@ def scrub_chunk_text(text: str) -> str:
     return out
 
 
-def _message_ts(msg: dict[str, Any]) -> str | None:
+def _message_ts(msg: dict[str, Any], envelope: ContinuityMessagesEnvelope) -> str | None:
+    content = msg.get("content")
+    if isinstance(content, str):
+        ts = _inline_timestamp(content)
+        if ts:
+            return ts
     for key in ("ts", "timestamp", "created_at"):
         val = msg.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
+    meta = envelope.meta
+    if meta.observed_at:
+        return meta.observed_at
+    if meta.sealed_at:
+        return meta.sealed_at
     return None
 
 
-def _iter_turn_pairs(messages: list[dict[str, Any]]) -> list[_TurnPair]:
+def _iter_turn_pairs(
+    messages: list[dict[str, Any]], envelope: ContinuityMessagesEnvelope
+) -> list[_TurnPair]:
     pairs: list[_TurnPair] = []
     pending_user: dict[str, Any] | None = None
     for msg in messages:
@@ -193,7 +349,9 @@ def _iter_turn_pairs(messages: list[dict[str, Any]]) -> list[_TurnPair]:
             if not isinstance(content, str) or not content.strip():
                 continue
             if _is_synthetic_user(content):
-                pending_user = None
+                continue
+            user_text = _verbatim_user(content)
+            if not user_text.strip():
                 continue
             if pending_user is not None:
                 pairs.append(
@@ -201,7 +359,8 @@ def _iter_turn_pairs(messages: list[dict[str, Any]]) -> list[_TurnPair]:
                         turn_index=int(pending_user.get("turn_index") or 0),
                         user_text=_verbatim_user(str(pending_user.get("content") or "")),
                         assistant_text="",
-                        user_ts=_message_ts(pending_user),
+                        user_ts=_message_ts(pending_user, envelope),
+                        has_real_user=True,
                     )
                 )
             pending_user = msg
@@ -214,35 +373,41 @@ def _iter_turn_pairs(messages: list[dict[str, Any]]) -> list[_TurnPair]:
                     turn_index=turn_index,
                     user_text=user_text,
                     assistant_text=assistant_text,
-                    user_ts=_message_ts(pending_user),
+                    user_ts=_message_ts(pending_user, envelope),
+                    has_real_user=bool(user_text.strip()),
                 )
             )
             pending_user = None
     if pending_user is not None:
-        pairs.append(
-            _TurnPair(
-                turn_index=int(pending_user.get("turn_index") or 0),
-                user_text=_verbatim_user(str(pending_user.get("content") or "")),
-                assistant_text="",
-                user_ts=_message_ts(pending_user),
+        user_text = _verbatim_user(str(pending_user.get("content") or ""))
+        if user_text.strip():
+            pairs.append(
+                _TurnPair(
+                    turn_index=int(pending_user.get("turn_index") or 0),
+                    user_text=user_text,
+                    assistant_text="",
+                    user_ts=_message_ts(pending_user, envelope),
+                    has_real_user=True,
+                )
             )
-        )
     return pairs
 
 
 def _pair_exchange_text(pair: _TurnPair) -> str:
-    parts = [pair.user_text]
+    parts: list[str] = []
+    if pair.user_text.strip():
+        parts.append(pair.user_text)
     if pair.assistant_text:
         parts.append(pair.assistant_text)
-    return "\n\n".join(p for p in parts if p.strip())
+    return "\n\n".join(parts)
 
 
 def _resolve_transcript_id(envelope: ContinuityMessagesEnvelope, path: Path) -> str:
     meta = envelope.meta
-    if meta.transcript_id:
-        return meta.transcript_id
     if meta.session_id:
         return meta.session_id
+    if meta.transcript_id:
+        return meta.transcript_id
     stem = path.name
     if stem.endswith(".messages.json"):
         return stem[: -len(".messages.json")]
@@ -260,6 +425,72 @@ def _surface_label(meta_surface: str | None, path: Path) -> str:
     if "claude" in name or "anthropic" in name:
         return "claude_ai"
     return meta_surface or "mixed"
+
+
+def _agent_bus_db_path() -> Path:
+    env = os.environ.get("AGENT_BUS_DB_PATH")
+    if env:
+        return Path(env)
+    return Path.home() / ".agent-bus" / "agent_bus.db"
+
+
+def _load_thread_tags(thread_id: str) -> list[str]:
+    db_path = _agent_bus_db_path()
+    if not db_path.is_file():
+        return []
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT tags FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or row[0] is None:
+        return []
+    raw = row[0]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return [raw]
+        if isinstance(parsed, list):
+            return [str(t) for t in parsed]
+    return []
+
+
+def default_lane_resolver(
+    envelope: ContinuityMessagesEnvelope, path: Path
+) -> tuple[str | None, LaneTags]:
+    """Dominant lane + bus thread tags for transcript lane exclusion."""
+    global _LANE_RESOLVER_LOGGED
+    session_id = envelope.meta.session_id or _resolve_transcript_id(envelope, path)
+    lane_id: str | None = None
+    try:
+        from cortex_store.schema_snapshot import open_live_db_readonly
+
+        conn = open_live_db_readonly()
+        try:
+            row = conn.execute(
+                "SELECT dominant_lane FROM session_journals WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row and row[0]:
+                lane_id = str(row[0]).strip() or None
+        finally:
+            conn.close()
+    except (ImportError, OSError, sqlite3.Error) as exc:
+        if not _LANE_RESOLVER_LOGGED:
+            logger.warning("messages_chunker lane resolver (cortex): %s", exc)
+            _LANE_RESOLVER_LOGGED = True
+    tags: list[str] = []
+    try:
+        tags = _load_thread_tags(lane_id) if lane_id else []
+    except OSError as exc:
+        if not _LANE_RESOLVER_LOGGED:
+            logger.warning("messages_chunker lane resolver (agent-bus): %s", exc)
+            _LANE_RESOLVER_LOGGED = True
+    return lane_id, tuple(tags)
 
 
 def chunk_messages(
@@ -280,10 +511,8 @@ def chunk_messages(
     transcript_id = _resolve_transcript_id(envelope, file_path)
     surface = _surface_label(envelope.meta.surface, file_path)
 
-    lane_id: str | None = None
-    lane_tags: LaneTags = ()
-    if cfg.lane_resolver is not None:
-        lane_id, lane_tags = cfg.lane_resolver(envelope, file_path)
+    resolver = cfg.lane_resolver or default_lane_resolver
+    lane_id, lane_tags = resolver(envelope, file_path)
     if transcript_lane_excluded(
         lane_id,
         lane_tags,
@@ -293,7 +522,7 @@ def chunk_messages(
         return []
 
     chunks: list[Chunk] = []
-    for pair in _iter_turn_pairs(envelope.messages):
+    for pair in _iter_turn_pairs(envelope.messages, envelope):
         exchange = _pair_exchange_text(pair)
         if not exchange.strip():
             continue
@@ -302,7 +531,13 @@ def chunk_messages(
         body = scrub_chunk_text(exchange)
         if not body.strip():
             continue
-        speaker: Literal["user", "assistant"] = "user"
+        speaker: Literal["user", "assistant", "exchange"]
+        if pair.has_real_user and pair.assistant_text:
+            speaker = "exchange"
+        elif pair.has_real_user:
+            speaker = "user"
+        else:
+            speaker = "assistant"
         meta: dict[str, str | int | float | bool] = {
             "transcript_id": transcript_id,
             "turn_index": pair.turn_index,
@@ -319,41 +554,6 @@ def chunk_messages(
     return chunks
 
 
-def default_lane_resolver(envelope: ContinuityMessagesEnvelope, path: Path) -> tuple[str | None, LaneTags]:
-    """Best-effort dominant lane + tags from cortex session_journals and agent_bus."""
-    session_id = envelope.meta.session_id or _resolve_transcript_id(envelope, path)
-    lane_id: str | None = None
-    tags: list[str] = []
-    try:
-        from cortex_store.schema_snapshot import open_live_db_readonly
-    except ImportError:
-        return None, ()
-    try:
-        conn = open_live_db_readonly()
-    except (OSError, sqlite3.Error):
-        return None, ()
-    try:
-        row = conn.execute(
-            "SELECT dominant_lane FROM session_journals WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        if row and row[0]:
-            lane_id = str(row[0]).strip() or None
-    finally:
-        conn.close()
-    if lane_id:
-        try:
-            from agent_bus_store.db.threads import get_thread
-
-            thread = get_thread(lane_id)
-            if thread and thread.get("tags"):
-                raw_tags = thread["tags"]
-                if isinstance(raw_tags, list):
-                    tags = [str(t) for t in raw_tags]
-        except Exception:
-            pass
-    return lane_id, tuple(tags)
-
 __all__ = [
     "CHUNKER_VERSION",
     "CASE_CONTENT_MARKERS",
@@ -362,6 +562,7 @@ __all__ = [
     "chunk_messages",
     "default_lane_resolver",
     "exchange_matches_case_markers",
+    "indexing_source_hash",
     "scrub_chunk_text",
     "transcript_lane_excluded",
 ]
