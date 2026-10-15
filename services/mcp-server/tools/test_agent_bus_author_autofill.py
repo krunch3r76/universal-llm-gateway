@@ -11,11 +11,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from agent_bus_store.author_attestation import attest, reset_peer_node_cache_for_tests
 from request_profile import bind_request
 
 from tools import agent_bus as agent_bus_module
-from agent_bus_store.author_attestation import attest, reset_peer_node_cache_for_tests
-
 from tools._agent_bus_author import (
     default_from_for_surface,
     reconcile_author_arguments,

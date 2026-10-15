@@ -15,13 +15,13 @@ import json
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from cursor_bridge.chat_target import (
     chat_title,
     normalize_agent_id,
     selection_verdict,
 )
+
+logger = logging.getLogger(__name__)
 
 _PROBE_JS = r"""
 (() => {

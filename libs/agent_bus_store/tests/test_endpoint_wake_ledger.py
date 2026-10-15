@@ -7,15 +7,16 @@ import threading
 import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn
-from agent_bus_store.db.turns import get_turns
-from agent_bus_store.db.connection import connect
+from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_wake_ledger import (
     WakeConflictError,
     advance_scan,
     claim_due_wakes,
     fold_expired_claims,
     get_cursor,
+    record_wake_result,
 )
+from agent_bus_store.db.turns import get_turns
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
@@ -122,3 +123,147 @@ def test_claim_once_and_ttl_folds_unknown(db: TestClient) -> None:
             "SELECT state FROM endpoint_wake_ledger WHERE wake_id=?", (wake,)
         ).fetchone()["state"]
     assert state == "unknown"
+
+
+def test_stage_manager_equivalence_already_answered_and_debounce(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="sm-equiv")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 10:00:00",
+    )
+    # Reply from grok-bot-gc1 before claim marks the stage-manager wake already_answered
+    reply_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="ACK|x",
+        body="ack",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01T10:00:00Z", reply_id),
+        )
+    claimed = claim_due_wakes(now="2020-01-01 10:00:01")
+    assert claimed["wake_id"] is None
+    assert claimed["rows"][0]["state"] == "skipped"
+    assert claimed["rows"][0]["reason"] == "already_answered"
+
+    # Now test delivered wake for stage-manager has debounce cleared when grok-bot-gc1 replies
+    t2_id, _ts2, t2_n, _c2 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|y",
+        body="b2",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t1_id,
+        t2_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": t2_id,
+                "turn_number": t2_n,
+            }
+        ],
+        now="2020-01-01 10:01:00",
+    )
+    w2 = claim_due_wakes(now="2020-01-01 10:01:01")
+    assert w2["wake_id"] is not None
+    record_wake_result(
+        w2["wake_id"],
+        "delivered",
+        "ok",
+        "wildcard",
+        1,
+        None,
+        now="2020-01-01 10:01:02",
+    )
+    t3_id, _ts3, t3_n, _c3 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|z",
+        body="b3",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t2_id,
+        t3_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": t3_id,
+                "turn_number": t3_n,
+            }
+        ],
+        now="2020-01-01 10:01:10",
+    )
+    # Still within 600s debounce before reply
+    assert claim_due_wakes(now="2020-01-01 10:01:20")["wake_id"] is None
+    # Reply from grok-bot-gc1 after finished_at clears debounce for stage-manager
+    r2_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="FACT|done",
+        body="done",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01T10:01:30Z", r2_id),
+        )
+    # Need a new turn after r2_id so it is not skipped by already_answered
+    t4_id, _ts4, t4_n, _c4 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|w",
+        body="b4",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t3_id,
+        t4_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": t4_id,
+                "turn_number": t4_n,
+            }
+        ],
+        now="2020-01-01 10:01:35",
+    )
+    w4 = claim_due_wakes(now="2020-01-01 10:01:40")
+    assert w4["wake_id"] is not None
+

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
-from typing import Any
 
 _PEER_NODES_PATH = (
     Path(__file__).resolve().parent.parent.parent / "config" / "mcp" / "peer_nodes.yaml"

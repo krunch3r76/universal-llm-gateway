@@ -269,3 +269,40 @@ def test_lifecycle_refused_when_not_from_gc1(bus_db: TestClient) -> None:
 
 def test_lifecycle_kinds_frozen() -> None:
     assert "WAKE" in _LIFECYCLE_KINDS
+
+
+@patch.dict(os.environ, {"AGENT_BUS_RULING_GATE": "on"}, clear=False)
+def test_stage_manager_wake_accepted_with_gate_on(bus_db: TestClient) -> None:
+    thread_id = _sidekick_thread()
+    assert (
+        _send(
+            bus_db,
+            thread_id,
+            from_agent="stage-manager",
+            subject="WAKE|plan:test",
+            body="wake house\n",
+        )
+        == 201
+    )
+
+
+@patch.dict(
+    os.environ,
+    {"AGENT_BUS_RULING_GATE": "on", "AGENT_BUS_GC1_ACTING_MAESTRO": "1"},
+    clear=False,
+)
+def test_stage_manager_ruling_accepted_with_acting_maestro(
+    bus_db: TestClient,
+) -> None:
+    thread_id = _sidekick_thread()
+    assert (
+        _send(
+            bus_db,
+            thread_id,
+            from_agent="stage-manager",
+            subject="ACK|plan:test",
+            body=_envelope_body(authority="operator"),
+        )
+        == 201
+    )
+
