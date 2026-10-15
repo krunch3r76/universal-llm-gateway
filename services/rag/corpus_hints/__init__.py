@@ -19,6 +19,7 @@ from services.rag.corpus_hints.update import update_corpus_hints
 __all__ = [
     "compute_scope_files_hash",
     "detect_stale_scopes",
+    "detect_stale_scopes_off_loop",
     "filter_hints_by_cooccurrence",
     "format_register_hints",
     "get_hints_for_scopes",

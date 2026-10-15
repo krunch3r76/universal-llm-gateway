@@ -23,7 +23,10 @@ from services.rag.watcher_manager import WatcherManager
 from . import indexing, state
 from .background_tasks import track_background_task
 from .lifecycle_constants import POST_INDEX_STEPS
-from .scope_freshness import _post_reconcile_scope_freshness
+from .scope_freshness import (
+    _check_watermarks_off_loop,
+    _post_reconcile_scope_freshness,
+)
 from .startup_cleanup import (
     _purge_excluded_sources,
     _purge_orphans,
@@ -77,7 +80,9 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
 
     post_index_steps = list(POST_INDEX_STEPS)
     if state._property_index is not None:
-        stale = state._property_index.check_watermarks(post_index_steps)
+        stale = await _check_watermarks_off_loop(
+            state._property_index, post_index_steps, reference="reindex"
+        )
         if stale:
             logger.error(
                 "Post-index enrichment stale after last reindex: %s  "

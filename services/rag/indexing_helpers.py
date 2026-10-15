@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
 
 import chromadb
 
@@ -19,14 +18,6 @@ from services.rag.chroma_writer import chroma_get_where, chroma_update_metadatas
 from services.rag.models import IndexResult
 
 logger = logging.getLogger(__name__)
-
-# Release the GIL on the chroma writer thread between collection calls so the
-# asyncio loop can run while duplicate checks wait on Rust (friction:39420).
-_CHROMA_WRITER_COOP_SLEEP_S = 0.01
-
-
-def _chroma_writer_cooperate() -> None:
-    time.sleep(_CHROMA_WRITER_COOP_SLEEP_S)
 
 
 def migrate_chroma_source(
@@ -94,33 +85,18 @@ def check_pdf_duplicate(
     None when no duplicate exists or when the ChromaDB query fails (logged).
     """
     try:
-        metadatas: list[object] = []
-        where = {"source_hash": source_hash}
-        offset = 0
-        page_limit = 2
-        max_ids = 10
-        while offset < max_ids:
-            _chroma_writer_cooperate()
-            page = chroma_get_where(
-                collection,
-                where=where,
-                include=["metadatas"],
-                limit=page_limit,
-                offset=offset,
-            )
-            _chroma_writer_cooperate()
-            ids = page.get("ids") or []
-            raw_metadatas = page.get("metadatas")
-            page_metas = raw_metadatas if isinstance(raw_metadatas, list) else []
-            metadatas.extend(page_metas)
-            if len(ids) < page_limit:
-                break
-            offset += len(ids)
+        existing = collection.get(
+            where={"source_hash": source_hash},
+            include=["metadatas"],
+            limit=10,
+        )
     except chromadb.errors.ChromaError as e:
         logger.warning(
             "Failed to query ChromaDB for PDF duplicate check: %s", e, exc_info=True
         )
         return None
+    raw_metadatas = existing.get("metadatas")
+    metadatas = raw_metadatas if isinstance(raw_metadatas, list) else []
     for metadata in metadatas:
         if isinstance(metadata, dict):
             existing_source = metadata.get("source")
