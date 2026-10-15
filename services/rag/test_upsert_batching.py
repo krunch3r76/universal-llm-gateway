@@ -11,9 +11,8 @@ import pytest
 from services.rag.rag_service.api import health
 from services.rag.rag_service.indexing.chroma import _upsert_chroma_chunk_batches
 from services.rag.rag_service.loop_instrumentation import (
+    _gil_gap_monitor,
     _loop_drift_monitor,
-    start_loop_instrumentation,
-    stop_loop_instrumentation,
 )
 
 
@@ -108,19 +107,67 @@ async def test_loop_drift_and_gil_gap_are_distinct_fields(
     await asyncio.sleep(0.05)
     stop.set()
     await asyncio.gather(task, return_exceptions=True)
-    drift_lines = [r.message for r in caplog.records if "loop_drift_ms=" in r.message]
-    assert drift_lines
     assert not any("loop_lag_ms" in r.message for r in caplog.records)
     caplog.clear()
+    ticks = iter([0.0, 0.08])
+
+    class _Stop:
+        n = 0
+
+        def wait(self, _seconds: float) -> bool:
+            self.n += 1
+            return self.n >= 2
+
     with patch(
-        "services.rag.rag_service.loop_instrumentation.time.sleep"
-    ) as mock_sleep:
-        mock_sleep.side_effect = lambda _s: None
-        start_loop_instrumentation()
-        await asyncio.sleep(0.05)
-        await stop_loop_instrumentation()
+        "services.rag.rag_service.loop_instrumentation.time.perf_counter",
+        side_effect=lambda: next(ticks),
+    ):
+        _gil_gap_monitor(_Stop())  # type: ignore[arg-type]
     gil_lines = [r.message for r in caplog.records if "gil_gap_ms=" in r.message]
-    assert any("GIL" in line for line in gil_lines) or caplog.records
+    assert gil_lines == ["gil_gap_ms=70.000 GIL"]
+
+
+@pytest.mark.asyncio
+async def test_loop_drift_logs_only_above_threshold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """M1: sub-threshold schedule slack must not emit; a stall above 50 ms must.
+
+    Fails on 54447c40, which logs whenever drift_ms > 0.
+    """
+    caplog.set_level(logging.INFO)
+    stop = asyncio.Event()
+    clock = {"t": 0.0}
+    step = {"n": 0}
+
+    class _Loop:
+        def time(self) -> float:
+            return clock["t"]
+
+    async def _sleep(_seconds: float) -> None:
+        step["n"] += 1
+        if step["n"] == 1:
+            clock["t"] = 0.011
+            return
+        if step["n"] == 2:
+            clock["t"] = 0.081
+            return
+        stop.set()
+
+    with (
+        patch(
+            "services.rag.rag_service.loop_instrumentation.asyncio.get_running_loop",
+            return_value=_Loop(),
+        ),
+        patch(
+            "services.rag.rag_service.loop_instrumentation.asyncio.sleep",
+            side_effect=_sleep,
+        ),
+    ):
+        await _loop_drift_monitor(stop)
+
+    drift_lines = [r.message for r in caplog.records if "loop_drift_ms=" in r.message]
+    assert drift_lines == ["loop_drift_ms=60.000"]
 
 
 @pytest.mark.asyncio

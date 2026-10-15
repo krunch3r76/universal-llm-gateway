@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 _LOOP_SLEEP_S = 0.01
 _GIL_GAP_LOG_THRESHOLD_MS = 50.0
+# Same floor as the GIL series. Logging every positive drift (~100 Hz) makes
+# the pass-bar series measure its own log I/O (friction:39359 M1).
+_LOOP_DRIFT_LOG_THRESHOLD_MS = _GIL_GAP_LOG_THRESHOLD_MS
 
 _loop_drift_task: asyncio.Task[None] | None = None
 _loop_drift_stop: asyncio.Event | None = None
@@ -29,14 +32,14 @@ _gil_stop: threading.Event | None = None
 
 
 async def _loop_drift_monitor(stop: asyncio.Event) -> None:
-    """Log ``loop_drift_ms`` when the 10 ms asyncio sleep overshoots schedule."""
+    """Log ``loop_drift_ms`` when the 10 ms sleep overshoots by more than 50 ms."""
     loop = asyncio.get_running_loop()
     next_target = loop.time() + _LOOP_SLEEP_S
     while not stop.is_set():
         await asyncio.sleep(_LOOP_SLEEP_S)
         now = loop.time()
         drift_ms = max(0.0, (now - next_target) * 1000.0)
-        if drift_ms > 0:
+        if drift_ms > _LOOP_DRIFT_LOG_THRESHOLD_MS:
             logger.info("loop_drift_ms=%.3f", drift_ms)
         next_target = now + _LOOP_SLEEP_S
 
