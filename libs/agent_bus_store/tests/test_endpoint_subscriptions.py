@@ -52,6 +52,25 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     assert cse.json()["detail"]["code"] == "endpoint_cse_delegated"
 
 
+def test_maestro_cse_wildcard_subscription(client: TestClient) -> None:
+    resp = client.post(
+        "/endpoint-subscriptions",
+        json={
+            "agent": "maestro",
+            "thread_scope": "*",
+            "surface": "cse",
+            "display": "cse",
+            "agent_id": "12286",
+        },
+    )
+    assert resp.status_code == 200
+    row = resp.json()["row"]
+    assert row["agent"] == "maestro"
+    assert row["surface"] == "cse"
+    assert row["thread_scope"] == "*"
+    assert row["agent_id"] == "12286"
+
+
 def test_cursor_surface_unconfirmed_writes_no_row(client: TestClient) -> None:
     thread = _thread("cursor-refuse")
     with patch("agent_bus_store.db.endpoint_subscriptions.normalize_target") as norm:

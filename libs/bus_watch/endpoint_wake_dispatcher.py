@@ -62,17 +62,26 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     pending: list[dict[str, Any]] = []
     for turn in turns:
         agent = normalize_bus_address(str(turn.get("to_agent") or ""))
-        cse = agent == "web-anthropic"
+        thread = str(turn["thread"])
+        if agent == "web-anthropic":
+            resolved = None
+            cse = True
+        else:
+            resolved = store.subscription(agent, thread)
+            cse = (
+                resolved is not None and str(resolved[1].get("surface") or "") == "cse"
+            )
         if not qualifies(turn, cse=cse):
             continue
-        if cse:
-            holder = store.holder(str(turn["thread"]))
-            if not holder:
+        if agent == "web-anthropic":
+            if not store.holder(thread):
                 continue
-        else:
-            route = store.subscription(agent, str(turn["thread"]))
-            if route is None:
+        elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
+            lane = str(resolved[1].get("agent_id") or "").strip()
+            if not lane or not store.holder(lane):
                 continue
+        elif resolved is None:
+            continue
         pending.append(_pending_item(turn))
     new_hw = int(turns[-1]["id"])
     if not pending:
@@ -124,22 +133,37 @@ def _display_post(
 def _cse_agree(holder: dict[str, Any], dry: dict[str, Any]) -> bool:
     left = str(holder.get("registration_id") or "")
     right = str(dry.get("registration_id") or "")
-    if left and left == right:
-        return True
+    if left and right:
+        return left == right
     a = holder_id_from_chat_url(str(holder.get("chat_url") or ""))
     b = holder_id_from_chat_url(str(dry.get("url") or dry.get("chat_url") or ""))
     return bool(a and a == b)
 
 
 def _deliver_cse(
-    rows: list[dict[str, Any]], holder: dict[str, Any]
+    rows: list[dict[str, Any]],
+    holder: dict[str, Any],
+    *,
+    target_lane: str | None = None,
 ) -> tuple[str, str, str | None]:
     from bus_watch.cse_followup import fire_cse_followup
 
     thread = str(rows[0]["thread_id"])
+    lane = str(target_lane or thread).strip() or thread
     numbers = ", ".join(str(r["turn_number"]) for r in rows)
-    induction = f"wake turns {numbers}"
-    dry = fire_cse_followup(induction, thread, dry_run=True)
+    if thread != lane:
+        induction = f"wake thread {thread} turns {numbers}"
+    else:
+        induction = f"wake turns {numbers}"
+    fallback_url = holder.get("chat_url")
+    fallback_reg = holder.get("registration_id")
+    dry = fire_cse_followup(
+        induction,
+        lane,
+        dry_run=True,
+        fallback_chat_url=str(fallback_url) if fallback_url else None,
+        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+    )
     if dry.get("error") == "no_identity" and dry.get("source") == "unavailable":
         return "pending", "connect", None
     if not _cse_agree(holder, dry):
@@ -148,7 +172,13 @@ def _deliver_cse(
             f"cse_authority_split giw={holder.get('registration_id')} cdp={dry.get('registration_id')}",
             None,
         )
-    live = fire_cse_followup(induction, thread, dry_run=False)
+    live = fire_cse_followup(
+        induction,
+        lane,
+        dry_run=False,
+        fallback_chat_url=str(fallback_url) if fallback_url else None,
+        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+    )
     state, reason = classify_cse(live if isinstance(live, dict) else {})
     return state, reason, str(live.get("registration_id") or "") or None
 
@@ -185,7 +215,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
             return claimed
-        state, reason, reg = _deliver_cse(rows, holder)
+        state, reason, reg = _deliver_cse(rows, holder, target_lane=thread)
         store.result(
             wake_id=wake_id,
             outcome=state,
@@ -207,6 +237,50 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
         return claimed
     route, sub = resolved
+    if str(sub.get("surface") or "") == "cse":
+        lane = str(sub.get("agent_id") or "").strip()
+        if not lane:
+            store.result(
+                wake_id=wake_id,
+                outcome="skipped",
+                reason="no_route",
+                route=None,
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+            return claimed
+        try:
+            holder = store.holder(lane)
+        except Exception as exc:
+            store.result(
+                wake_id=wake_id,
+                outcome="unknown",
+                reason=type(exc).__name__,
+                route="cse",
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+            return claimed
+        if not holder:
+            store.result(
+                wake_id=wake_id,
+                outcome="skipped",
+                reason="no_route",
+                route=route,
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+            return claimed
+        state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
+        store.result(
+            wake_id=wake_id,
+            outcome=state,
+            reason=reason,
+            route="cse",
+            subscription_id=sub.get("id"),
+            cse_registration_id=reg,
+        )
+        return claimed
     lowest = min(int(r["turn_number"]) for r in rows)
     state, reason = _display_post(rows[0], sub, lowest)
     store.result(

@@ -66,6 +66,8 @@ def fire_cse_followup(
     dry_run: bool = False,
     post: HttpPoster | None = None,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
+    fallback_chat_url: str | None = None,
+    fallback_registration_id: str | None = None,
 ) -> dict[str, Any]:
     """POST induction to the liaison CSE on ``parent_thread=root_id``; never raises."""
     root = str(root_id or "").strip()
@@ -74,9 +76,17 @@ def fire_cse_followup(
         return {"ok": False, "error": "no_prompt", "root": root}
 
     identity = resolve_cse_identity(root)
-    chat_url = identity.get("chat_url")
-    registration_id = identity.get("registration_id")
-    url = identity.get("url")
+    chat_url = (
+        identity.get("chat_url")
+        or (str(fallback_chat_url).strip() if fallback_chat_url else None)
+        or None
+    )
+    registration_id = (
+        identity.get("registration_id")
+        or (str(fallback_registration_id).strip() if fallback_registration_id else None)
+        or None
+    )
+    url = identity.get("url") or chat_url
     if not chat_url and not registration_id:
         return {
             "ok": False,

@@ -25,6 +25,7 @@ from . import (
     migration_014,
     migration_015,
     migration_016,
+    migration_017,
 )
 
 # Ordered list — append new migration modules here.
@@ -45,6 +46,7 @@ MIGRATIONS = [
     migration_014,
     migration_015,
     migration_016,
+    migration_017,
 ]
 
 
