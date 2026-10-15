@@ -64,7 +64,9 @@ _is_gear3_ticker_cmd() {
 }
 
 _user_manager_reachable() {
-  systemctl --user show --property=Version --value >/dev/null 2>&1
+  local rc=0
+  systemctl --user show --property=Version --value >/dev/null 2>&1 || rc=$?
+  return "$rc"
 }
 
 _attended_loop_pids() {
@@ -155,10 +157,22 @@ if ! _user_manager_reachable; then
   exit 2
 fi
 
-LOAD="$(
-  systemctl --user show -p LoadState --value "$UNIT" 2>/dev/null
-)"
+set +e
+LOAD_ERR_FILE="$(mktemp)"
+LOAD="$(systemctl --user show -p LoadState --value "$UNIT" 2>"$LOAD_ERR_FILE")"
+LOAD_RC=$?
+LOAD_ERR="$(tr -d '\n' <"$LOAD_ERR_FILE")"
+rm -f "$LOAD_ERR_FILE"
+set -e
+if [[ "$LOAD_RC" -ne 0 ]]; then
+  echo "loadstate_probe_failed: '${LOAD}'${LOAD_ERR:+ stderr='${LOAD_ERR}'}" >&2
+  exit 2
+fi
 LOAD="${LOAD//$'\n'/}"
+if [[ "$LOAD" != "loaded" && "$LOAD" != "not-found" ]]; then
+  echo "unsupported_loadstate: '${LOAD}'" >&2
+  exit 2
+fi
 
 ORPHANS=()
 while IFS= read -r line; do
@@ -233,8 +247,17 @@ PY
   fi
   export WATCH_DIR="$WATCH"
   export ROOT
-  if ! env "${KILL}" -TERM "$pid"; then
-    echo "kill_failed: SIGTERM ${pid}" >&2
+  KILL_ERR=""
+  set +e
+  KILL_ERR="$(env "${KILL}" -TERM "$pid" 2>&1)"
+  KILL_RC=$?
+  set -e
+  if [[ "$KILL_RC" -ne 0 ]]; then
+    if [[ "$KILL_ERR" == *"No such process"* ]]; then
+      echo "kill_esrch: SIGTERM ${pid}" >&2
+    else
+      echo "kill_failed: SIGTERM ${pid}: ${KILL_ERR}" >&2
+    fi
     exit 1
   fi
   WAIT_RC=0
