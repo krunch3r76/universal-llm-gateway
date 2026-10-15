@@ -22,6 +22,7 @@ from services.rag.chunkers._sizing import (
 from services.rag.chunkers.code_chunking import chunk_code
 from services.rag.chunkers.epub_html import chunk_epub, chunk_html
 from services.rag.chunkers.markdown_pdf import chunk_markdown, chunk_pdf
+from services.rag.chunkers.messages_chunker import chunk_messages
 from services.rag.chunkers.paragraph_utils import Chunk
 
 _DOCX_HEADING_PREFIX: dict[str, str] = {
@@ -144,6 +145,9 @@ def chunk_file(
     disk. Raises ``ValueError`` for unsupported extensions; format chunkers may
     raise ``RuntimeError`` or ``ValueError`` on missing deps or empty text.
     """
+    if path.name.endswith(".messages.json"):
+        return chunk_messages(path)
+
     suffix = path.suffix.lower()
     kwargs: dict[str, int] = {
         k: v

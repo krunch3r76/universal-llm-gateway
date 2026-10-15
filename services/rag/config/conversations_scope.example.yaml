@@ -1,0 +1,26 @@
+# Example fragment for ~/.gateway/rag.yaml (merge into live config on the hub seat).
+# Scope `conversations` indexes sealed continuity message envelopes only; it is
+# excluded from union scope `all` via exclude_from_union.
+
+watch_directories:
+  - path: /mnt/torus/mcp-data/files/notes/system/seals
+    extensions: [.messages.json]
+    recursive: false
+    exclude:
+      - "*.source.jsonl"
+      - "*.lock.*"
+
+scopes:
+  conversations:
+    description: "Sealed operator/model dialogue tapes (L2 messages envelopes)"
+    prefixes:
+      - /mnt/torus/mcp-data/files/notes/system/seals/
+    exclude_from_union: true
+    vocab_mode: none
+  all:
+    union: true
+    description: "Union of explicit scopes (excludes exclude_from_union scopes)"
+
+knowledge_extraction:
+  exclude_scopes:
+    - conversations

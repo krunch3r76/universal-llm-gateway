@@ -52,6 +52,9 @@ class ScopeDefinition:
     # classification are skipped: IDF ≈ 0 for high-frequency terms across all
     # paths, so results are structurally noise.
     is_union: bool = False
+    # When True, this scope's prefixes are omitted from union:`all` aggregation
+    # (e.g. sealed conversation tapes indexed under a dedicated scope only).
+    exclude_from_union: bool = False
 
 
 @dataclass(slots=True, kw_only=True)

@@ -157,6 +157,8 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
             continue
         if scope_data.get("union") is True:
             continue
+        if scope_data.get("exclude_from_union") is True:
+            continue
         prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
         if prefixes:
             all_explicit_prefixes.update(prefixes)
@@ -178,6 +180,8 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
             else ""
         )
 
+        exclude_from_union = scope_data.get("exclude_from_union") is True
+
         if scope_data.get("union") is True:
             scopes[scope_name] = ScopeDefinition(
                 prefixes=sorted(all_explicit_prefixes),
@@ -193,6 +197,7 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
                 prefixes=prefixes,
                 description=description,
                 vocab_mode=vocab_mode,
+                exclude_from_union=exclude_from_union,
             )
     return scopes
 
