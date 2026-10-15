@@ -9,6 +9,7 @@ from __future__ import annotations
 from .articles_ops import (
     ArticleListingItem,
     ArticleListingResponse,
+    ArticleStatusRow,
     ArticleUpsertRequest,
     ArticleUpsertResponse,
     CoverageResponse,
@@ -23,7 +24,6 @@ from .articles_ops import (
     ScopeCoverage,
     ScopeRegisterRequest,
     ScopeRegisterResponse,
-    ArticleStatusRow,
     SourceStatusItem,
     SourceStatusResponse,
 )

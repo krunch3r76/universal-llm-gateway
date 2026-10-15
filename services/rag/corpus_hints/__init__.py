@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from services.rag.corpus_hints.cooccurrence import filter_hints_by_cooccurrence
-from services.rag.corpus_hints.formatting import format_register_hints, get_hints_for_scopes
+from services.rag.corpus_hints.formatting import (
+    format_register_hints,
+    get_hints_for_scopes,
+)
 from services.rag.corpus_hints.freshness import (
     compute_scope_files_hash,
     detect_stale_scopes,
