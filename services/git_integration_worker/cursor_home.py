@@ -456,12 +456,16 @@ def setup_cursor_dispatch_home(
     *,
     real_home: Path | str | None = None,
     root: Path | None = None,
+    bare: bool = False,
 ) -> Path:
     """Create dispatch HOME and seed cursor credentials by copy (never symlink).
 
     Copies identity, credential, user rules, plugins, mcp.yaml, and mcp.json
     from the operator home, then strips copied ``vortex-code``/``vortex-life``
     entries so Cursor does not classify those names as OAuth on this seat.
+    When ``bare=True`` (``contract=bare``), user rules, plugins, and the seat
+    overlay are omitted (and removed if reusing an existing directory) so the
+    model runs without ambient rules or plugin skills while retaining MCP access.
     ``$HOME/.venvs`` is a pointer at the operator venv, not a copied
     interpreter root. ``$HOME/.cache/ms-playwright`` is the same pattern for
     the operator Playwright browser cache (a:37291).
@@ -496,27 +500,33 @@ def setup_cursor_dispatch_home(
 
     real_cursor = real / CURSOR_CONFIG_DIRNAME
     _copy_path_if_present(
-        real_cursor / CURSOR_USER_RULES_DIRNAME,
-        cursor_dir / CURSOR_USER_RULES_DIRNAME,
-    )
-    _copy_path_if_present(
         real_cursor / CURSOR_MCP_FILENAME,
         cursor_dir / CURSOR_MCP_FILENAME,
     )
     _strip_copied_oauth_mcp_servers(cursor_dir / CURSOR_MCP_FILENAME)
-    _copy_path_if_present(
-        real_cursor / CURSOR_PLUGINS_DIRNAME,
-        cursor_dir / CURSOR_PLUGINS_DIRNAME,
-    )
     # Vortex stdio bridge reads ~/.gateway/mcp.yaml via Path.home(). Omitting
     # this copy is the cursor-sdk discovery outage (empty tools / 401).
     _copy_path_if_present(
         real / ".gateway" / "mcp.yaml",
         home / ".gateway" / "mcp.yaml",
     )
-    # Plugin parity with the IDE is wrong for the human-facing operator register:
-    # a headless seat has no human reader. Swap it for the interagent counterpart.
-    apply_cursor_sdk_seat_overlay(cursor_dir)
+    if bare:
+        for dirname in (CURSOR_USER_RULES_DIRNAME, CURSOR_PLUGINS_DIRNAME):
+            target_dir = cursor_dir / dirname
+            if target_dir.exists() or target_dir.is_symlink():
+                shutil.rmtree(target_dir, ignore_errors=True)
+    else:
+        _copy_path_if_present(
+            real_cursor / CURSOR_USER_RULES_DIRNAME,
+            cursor_dir / CURSOR_USER_RULES_DIRNAME,
+        )
+        _copy_path_if_present(
+            real_cursor / CURSOR_PLUGINS_DIRNAME,
+            cursor_dir / CURSOR_PLUGINS_DIRNAME,
+        )
+        # Plugin parity with the IDE is wrong for the human-facing operator register:
+        # a headless seat has no human reader. Swap it for the interagent counterpart.
+        apply_cursor_sdk_seat_overlay(cursor_dir)
     _install_steer_native_hook(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)

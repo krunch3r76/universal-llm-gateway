@@ -113,9 +113,18 @@ def derive_cursor_sdk_prompt_preamble(
     pointer: str,
     packet_text: str = "",
 ) -> str | None:
-    """Single imperative paragraph for implement dispatches (1b from pointer)."""
+    """Implement paragraph, plus packet-named invariant bodies.
+
+    ``contract=bare`` skips the implement paragraph. It does not skip
+    invariant injection: ids in the packet ``<invariants>`` block are
+    explicit, and bare has removed the plugin census that would otherwise
+    make those bodies discoverable. Returns ``None`` when bare has nothing
+    to inject. Other contracts return the implement paragraph, the injected
+    section, or both. No I/O beyond the inject-registry body lookup.
+    """
+    is_bare = (handoff_contract or "").strip().lower() == "bare"
     preamble: str | None = None
-    if handoff_contract == "implement":
+    if not is_bare and handoff_contract == "implement":
         for line in pointer.splitlines():
             stripped = line.strip()
             if stripped.startswith("Contract:"):
@@ -127,7 +136,7 @@ def derive_cursor_sdk_prompt_preamble(
                 )
                 break
     if not packet_text:
-        return preamble
+        return None if is_bare else preamble
     from agent_seat.inject_registry import (
         parse_packet_invariant_skill_ids,
         resolve_injected_bodies,
@@ -135,7 +144,7 @@ def derive_cursor_sdk_prompt_preamble(
 
     packet_ids = parse_packet_invariant_skill_ids(packet_text)
     if not packet_ids:
-        return preamble
+        return None if is_bare else preamble
     resolution = resolve_injected_bodies(
         "",
         role="cursor-sdk",
@@ -145,11 +154,11 @@ def derive_cursor_sdk_prompt_preamble(
         budget_bytes=None,
     )
     if not resolution.block_md:
-        return preamble
+        return None if is_bare else preamble
     injected_section = f"## Injected invariant bodies\n{resolution.block_md.strip()}\n"
-    if preamble:
-        return f"{injected_section}\n{preamble}"
-    return injected_section.strip()
+    if is_bare or not preamble:
+        return injected_section.strip()
+    return f"{injected_section}\n{preamble}"
 
 
 def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, Any]:

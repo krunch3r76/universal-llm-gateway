@@ -114,6 +114,15 @@ _LANE_B_WORKTREE_TEMPLATE = (
     "changing cwd."
 )
 
+# One line. Bare drops user rules, plugins, and the seat overlay, so this
+# line is the only prompt carrier for these four refusals.
+_BARE_REFUSAL_LINE = (
+    "forward_only: never move a shared branch backward; no push or PR unless "
+    "the packet names it; no pkill/kill/docker stop of fleet services — use "
+    "manage; never force git_integration_worker; do not cancel a live dispatch "
+    "or kill an in-flight execution."
+)
+
 # Verbatim. Also copied in full in reporting_contract.py and two skills.
 # 431 bytes. Do not paraphrase.
 _FAILURE_PATHS_BLOCK = (
@@ -551,6 +560,23 @@ def _bare_skill_slug(skill_id: str) -> str:
     return raw
 
 
+def _append_bare_refusal_line(
+    parts: list[str],
+    *,
+    existing_text: str | None,
+) -> None:
+    """Append the bare refusal line unless the packet or prefix already has it.
+
+    Bare removes the always-apply rules that carry forward_only, the no-push
+    rule, the no-pkill rule, and the in-flight guard. This line is that floor.
+    """
+    if _BARE_REFUSAL_LINE in (existing_text or ""):
+        return
+    if any(_BARE_REFUSAL_LINE in part for part in parts):
+        return
+    parts.append(_BARE_REFUSAL_LINE)
+
+
 def _append_lane_b_worktree(
     parts: list[str],
     *,
@@ -702,6 +728,12 @@ def resolve_prompt_preamble(
     the mount supplies the *invoke*; ``cursor_sdk_skills_mount`` stages the bodies so
     the invoke can resolve. Slugs already invoked by a fixed preamble or by the
     packet body are skipped rather than repeated.
+
+    ``contract=bare`` drops ambient rules, plugins, the seat overlay, and the
+    harness stack. It still emits a fixed floor: the lane-B worktree warning,
+    the failure-paths block, and one refusal line (forward_only, no push or PR
+    unless the packet names it, no pkill of fleet services, no cancel or kill
+    of an in-flight execution). Caller ``skills=`` invokes still prepend.
     """
     contract = sdk_contract_or_missing(handoff_contract, inferred_contract)
     if prompt_preamble:
@@ -710,6 +742,36 @@ def resolve_prompt_preamble(
         preamble = _IMPLEMENT_PREAMBLE
     else:
         preamble = ""
+
+    if contract == "bare":
+        parts_bare: list[str] = []
+        skill_block = _skill_invoke_block(
+            list(skills or []),
+            prompt_preamble,
+            existing_text,
+        )
+        if skill_block:
+            parts_bare.append(skill_block)
+        if preamble:
+            parts_bare.append(preamble.strip())
+        _append_lane_b_worktree(
+            parts_bare,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+        )
+        _append_failure_paths_block(
+            parts_bare,
+            contract=contract,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+            has_packet_path=has_packet_path,
+        )
+        _append_bare_refusal_line(parts_bare, existing_text=existing_text)
+        if not parts_bare:
+            return ""
+        return "\n\n".join(parts_bare) + "\n\n"
 
     if contract_is_freeform(contract):
         parts: list[str] = []
