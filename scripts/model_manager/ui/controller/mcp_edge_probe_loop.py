@@ -11,7 +11,9 @@ exceptions that stop the loop. This loop does not restart mcp.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from deploy_identity.listener_liveness import LOOKBACK_MS, silent_listeners
@@ -54,9 +56,11 @@ class McpEdgeProbeLoop:
         *,
         workspace_root: Path,
         interval_s: float = _INTERVAL_S,
+        restart_in_progress: Callable[[], bool] | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._interval_s = interval_s
+        self._restart_in_progress = restart_in_progress or (lambda: False)
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -89,7 +93,35 @@ class McpEdgeProbeLoop:
 
     async def _tick(self) -> None:
         await self._probe_edge()
+        await self._maybe_backup_restore()
         await self._probe_listeners()
+
+    async def _maybe_backup_restore(self) -> None:
+        """Local-docker backup restore when the script did not stick (not public probe)."""
+        from deploy_identity.mcp_restart_gate import (
+            docker_container_image_id,
+            execute_restore,
+        )
+
+        image_id = await asyncio.to_thread(docker_container_image_id)
+        if not image_id:
+            return
+        mcp_data = Path(
+            os.environ.get("MCP_DATA_DIR", str(Path.home() / "mcp-data"))
+        ).expanduser()
+
+        compose_args = ["docker", "compose", "-f", str(self._workspace_root / "docker" / "compose" / "mcp-server.yml")]
+
+        await asyncio.to_thread(
+            execute_restore,
+            workspace_root=self._workspace_root,
+            mcp_data_dir=mcp_data,
+            checked_image_id=image_id,
+            compose_args=compose_args,
+            firer="backup",
+            restart_in_progress=self._restart_in_progress,
+            emit=None,
+        )
 
     async def _probe_edge(self) -> None:
         host = external_probe_hostname()

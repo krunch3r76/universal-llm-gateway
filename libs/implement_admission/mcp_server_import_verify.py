@@ -85,6 +85,25 @@ def _run_import(module: str, *, mcp_dir: str, libs_dir: str) -> bool:
     return result.returncode == 0
 
 
+def mcp_server_entrypoint_import_smoke(
+    paths: list[str],
+    *,
+    root: Path | None = None,
+) -> ImportPathStatus:
+    """Container-layout entrypoint probe (cwd mcp-server, PYTHONPATH=libs only)."""
+    if not any(is_mcp_server_path(p) for p in paths):
+        return "not_probed"
+    from deploy_identity.mcp_restart_gate import mcp_server_entrypoint_probe
+
+    base = root if root is not None else repo_root()
+    result = mcp_server_entrypoint_probe(base)
+    if result == "verified":
+        return "verified"
+    if result == "contradicted":
+        return "contradicted"
+    return "indeterminate"
+
+
 def mcp_server_import_smoke(
     paths: list[str],
     *,

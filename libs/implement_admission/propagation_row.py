@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from implement_admission.consumer_import_verify import (
     format_verification_tags,
+    repo_root,
     verification_tags_fragment,
     verify_consumer_import,
 )
@@ -728,12 +729,14 @@ def rows_from_service_paths(
     mcp-server lands run ``mcp_server_import_smoke``; other services stay
     ``not_probed`` until probed (Fork 3 / Fork 4).
     """
+    from deploy_identity.mcp_restart_gate import mcp_server_entrypoint_probe
+
     from implement_admission.mcp_server_import_verify import mcp_server_import_smoke
 
-    mcp_import_status = (
-        mcp_server_import_smoke(paths)
-        if any(slug_for_path(p) == "mcp" for p in paths)
-        else None
+    touches_mcp = any(slug_for_path(p) == "mcp" for p in paths)
+    mcp_import_status = mcp_server_import_smoke(paths) if touches_mcp else None
+    mcp_entrypoint_status = (
+        mcp_server_entrypoint_probe(repo_root()) if touches_mcp else None
     )
 
     rows: list[PropagationRow] = []
@@ -743,6 +746,11 @@ def rows_from_service_paths(
         if slug is None or slug in seen:
             continue
         seen.add(slug)
+        if (
+            slug == "mcp"
+            and mcp_entrypoint_status in ("contradicted", "indeterminate")
+        ):
+            continue
         pc = default_proof_class(slug)
         if slug == "mcp" and mcp_import_status is not None:
             import_path = mcp_import_status

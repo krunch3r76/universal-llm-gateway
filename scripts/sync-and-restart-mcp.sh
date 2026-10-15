@@ -41,6 +41,8 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PYTHON="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+GATE=("$PYTHON" -m deploy_identity.mcp_restart_gate --workspace-root "$WORKSPACE_ROOT")
 
 MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
 if [[ ! -f "$MCP_YAML" ]]; then
@@ -83,7 +85,6 @@ print(
     + shlex.quote('true' if parse_bool(cfg.get('refresh_cursor_descriptors_after_rebuild', False)) else 'false')
 )
 print('export ENABLE_CONTEXT_TOOLS=' + shlex.quote('false' if cfg.get('enable_context_tools') is False else 'true'))
-# Full read/write by default; mounts are rw and writes are unconditional.
 print('export MCP_PROJECT_MOUNT_MODE=rw')
 print('export MCP_TASKS_MOUNT_MODE=rw')
 brave = (cfg.get('BRAVE_SEARCH_API_KEY') or cfg.get('brave_search_api_key') or '').strip()
@@ -121,8 +122,6 @@ for key in (
 mcp_url = (cfg.get('mcp_server_url') or '').strip()
 if mcp_url:
     print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))
-    # MCP_PUBLIC_URL is the canonical env name used by libs/llm_adapters/_mcp_entry.resolve_mcp_env;
-    # kept in sync with MCP_SERVER_URL so both strict (adapter) and existing callers resolve.
     print('export MCP_PUBLIC_URL=' + shlex.quote(mcp_url))
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
@@ -176,11 +175,37 @@ if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
+CHECKED_IMAGE_ID=""
+CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
+_RESTORE_HANDLER_RAN=0
+
+gate() {
+  "$PYTHON" -m deploy_identity.mcp_restart_gate --workspace-root "$WORKSPACE_ROOT" --mcp-data-dir "$MCP_DATA_DIR" "$@"
+}
+
+_restore_window_exit() {
+  trap '' PIPE
+  trap - EXIT
+  set +e
+  if [[ "$_RESTORE_HANDLER_RAN" == 1 ]]; then
+    exit 1
+  fi
+  _RESTORE_HANDLER_RAN=1
+  local img="${CHECKED_IMAGE_ID:-}"
+  if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
+    img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
+  fi
+  if [[ -n "$img" ]]; then
+    gate restore --firer script --checked-image-id "$img" || true
+  fi
+  exit 1
+}
+
+arm_restore_window() {
+  trap _restore_window_exit EXIT
+}
+
 purge_mcp_compose_orphans() {
-  # `docker compose up` recreate-on-image-change can leave behind a rename-pattern
-  # orphan (e.g. `d1e48bbeb4e3_mcp-server`) in Created state when the rename
-  # succeeds but the subsequent create step fails. These orphans then block
-  # future `up` attempts. Purge any such leftovers before attempting the up.
   local orphans
   orphans="$(
     docker ps -a --format '{{.Names}}' 2>/dev/null \
@@ -194,12 +219,6 @@ purge_mcp_compose_orphans() {
 
 remove_mcp_container_for_image_recreate() {
   purge_mcp_compose_orphans
-  # After a full image rebuild the existing mcp-server container (if any) must
-  # be removed before `docker compose up` attempts to create a new one — compose
-  # performs an internal rename-then-create that fails with a "name already in
-  # use" conflict when the old container is still present and the daemon cannot
-  # atomically swap it. NOT used on the routine sync path: docker cp into /app
-  # lives in the container writable layer and must survive stop→start.
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
     echo "Removing existing mcp-server container before image recreate..."
     docker rm -f mcp-server >/dev/null 2>&1 || true
@@ -207,30 +226,8 @@ remove_mcp_container_for_image_recreate() {
 }
 
 wait_for_mcp_healthy() {
-  local timeout_s="${1:-90}"
-  local start_ts status
-  start_ts="$(date +%s)"
-  while true; do
-    status="$(
-      docker inspect \
-        -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
-        mcp-server 2>/dev/null || true
-    )"
-    case "$status" in
-      healthy|running)
-        return 0
-        ;;
-      unhealthy|exited|dead)
-        echo "WARNING: MCP server entered state '${status}'." >&2
-        return 1
-        ;;
-    esac
-    if (( $(date +%s) - start_ts >= timeout_s )); then
-      echo "WARNING: Timed out waiting for MCP server to become healthy." >&2
-      return 1
-    fi
-    sleep 2
-  done
+  local timeout_s="${1:-120}"
+  gate wait-healthy --timeout "$timeout_s"
 }
 
 write_source_sync_stamp() {
@@ -258,8 +255,6 @@ write_source_sync_stamp() {
   echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
 }
 
-# Written into the container *before* restart; must survive stop/start.
-# If compose recreate wiped the docker-cp layer, this nonce is gone.
 _SYNC_NONCE=""
 
 write_sync_nonce() {
@@ -309,46 +304,101 @@ ensure_mcp_container() {
     return 0
   fi
   echo "MCP container not found — creating from existing image (no rebuild)..."
+  arm_restore_window
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
   wait_for_mcp_healthy || return 1
 }
 
 restart_mcp_gracefully() {
-  # Must be docker stop/start on the *existing* container — never
-  # `compose up -d`. Compose recreate-on-config/image-change replaces the
-  # container and drops the writable-layer docker cp (dogfood 6538: sync
-  # stamped ok, /app still pre-followup until targeted cp + docker restart).
   local c=mcp-server
   if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
     echo "ERROR: ${c} missing after sync — refusing compose recreate (would wipe docker cp)." >&2
     return 1
   fi
   echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
+  arm_restore_window
   docker stop -t 30 "$c" >/dev/null
   docker start "$c" >/dev/null
 }
 
+record_checked_image_if_healthy() {
+  local status
+  status="$(
+    docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+      mcp-server 2>/dev/null || true
+  )"
+  if [[ "$status" != "healthy" ]]; then
+    return 0
+  fi
+  CHECKED_IMAGE_ID="$(docker inspect -f '{{.Image}}' mcp-server 2>/dev/null || true)"
+  if [[ -n "$CHECKED_IMAGE_ID" ]]; then
+    mkdir -p "$(dirname "$CHECKED_IMAGE_FILE")"
+    printf '%s\n' "$CHECKED_IMAGE_ID" > "$CHECKED_IMAGE_FILE"
+  fi
+  gate snapshot-if-healthy || true
+}
+
+run_import_probe_or_refuse() {
+  local rc=0
+  set +e
+  gate import-probe
+  rc=$?
+  set -e
+  if [[ "$rc" == 2 ]]; then
+    echo "ERROR: MCP import probe timed out (120s wall cap)." >&2
+    exit 1
+  fi
+  if [[ "$rc" != 0 ]]; then
+    echo "ERROR: MCP import probe failed — refusing restart (no cp/stop/rm)." >&2
+    exit 1
+  fi
+}
+
+# Pin snapshot and import probe before ensure_mcp_container (:338) on the routine path.
+record_checked_image_if_healthy
+
+if [[ "$NO_CACHE" != "true" ]]; then
+  run_import_probe_or_refuse
+fi
+
 if [[ "$NO_CACHE" == "true" ]]; then
+  record_checked_image_if_healthy
+  gate tag-last-healthy || true
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
+  set +e
+  gate import-probe
+  probe_rc=$?
+  set -e
+  if [[ "$probe_rc" != 0 ]]; then
+    gate retag-local-from-last-healthy || true
+    echo "ERROR: post-build MCP import probe failed — reverted :local to :last-healthy." >&2
+    exit 1
+  fi
+  INCOMING_SHA="$(gate source-tree-sha)"
+  gate write-pending "$INCOMING_SHA"
+  arm_restore_window
   remove_mcp_container_for_image_recreate
   echo "Starting MCP server..."
+  arm_restore_window
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 else
   ensure_mcp_container
   sync_source_into_container
+  INCOMING_SHA="$(gate source-tree-sha)"
+  gate write-pending "$INCOMING_SHA"
   restart_mcp_gracefully
-  verify_sync_nonce_survived
 fi
 
-# Stamp must run after the container is up; never gate on health (fleet can pass
-# sync while health is still warming). Fail-soft so a stamp error does not mask
-# a successful sync.
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
-  write_source_sync_stamp || echo "WARNING: failed to write /app/.source_sync_stamp" >&2
-fi
+trap - EXIT
 
 if wait_for_mcp_healthy; then
+  verify_sync_nonce_survived
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+    write_source_sync_stamp || echo "WARNING: failed to write /app/.source_sync_stamp" >&2
+  fi
+  gate promote-booted
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
     REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
     if [[ -f "$REFRESH_SCRIPT" ]]; then
@@ -362,7 +412,16 @@ if wait_for_mcp_healthy; then
   fi
 else
   echo "WARNING: MCP server not healthy after sync/restart (check docker ps / logs)." >&2
-  echo "WARNING: Skipping descriptor refresh because MCP server is not healthy." >&2
+  img="${CHECKED_IMAGE_ID:-}"
+  if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
+    img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
+  fi
+  if [[ -n "$img" ]]; then
+    gate restore --firer script --checked-image-id "$img" || true
+    wait_for_mcp_healthy || exit 1
+  else
+    exit 1
+  fi
 fi
 
 echo "Done. Check: docker ps --filter name=mcp-server"
