@@ -141,12 +141,17 @@ async def test_check_pdf_duplicate_cooperative_pages_under_drift_cap(
             _hold_gil(0.3)
             return {
                 "ids": ["a", "b"],
-                "metadatas": [{"source": "/new.pdf"}, {"source": "/new.pdf"}],
+                "metadatas": [
+                    {"source": "/new.pdf"},
+                    {"source": "/already.pdf"},
+                ],
             }
 
         collection.get.side_effect = _slow_get
         result = await run_chroma(check_pdf_duplicate, collection, "hash", "/new.pdf")
-        assert result is None
+        assert result is not None
+        assert result.duplicate is True
+        assert result.duplicate_of == "/already.pdf"
         assert collection.get.call_count == 1
         await asyncio.sleep(0.05)
         assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
