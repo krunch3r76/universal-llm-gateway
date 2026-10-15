@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from llm_adapters._mcp_entry import (
+    AnthropicCallbackTokenError,
     anthropic_mcp_server_entry,
     openai_xai_mcp_tool_entry,
+    resolve_anthropic_callback_token,
 )
 from universal_logging import get_logger
 
@@ -22,19 +24,35 @@ def inject_native_mcp(provider_key: str, body: dict) -> None:
         return
 
     config = get_mcp_config_for_provider(provider_key)
-    if not config or not config.get("token"):
+    if not config:
         return
 
-    url = config["url"]
+    url = config.get("url") or ""
+    if provider_key == "anthropic":
+        if not url:
+            return
+        try:
+            token = resolve_anthropic_callback_token()
+        except AnthropicCallbackTokenError:
+            return
+        config_token = str(config.get("token") or "").strip()
+        if config_token and config_token == token:
+            return
+        existing = body.get("mcp_servers") or []
+        server_entry = anthropic_mcp_server_entry(url, token, name=_MCP_SERVER_NAME)
+        body["mcp_servers"] = [*existing, server_entry]
+        body["tools"] = [
+            *(body.get("tools") or []),
+            {"type": "mcp_toolset", "mcp_server_name": server_entry["name"]},
+        ]
+        return
+
+    if not config.get("token"):
+        return
+
     token = config["token"]
 
-    if provider_key == "anthropic":
-        existing = body.get("mcp_servers") or []
-        body["mcp_servers"] = [
-            *existing,
-            anthropic_mcp_server_entry(url, token, name=_MCP_SERVER_NAME),
-        ]
-    elif provider_key in {"openai", "xai"}:
+    if provider_key in {"openai", "xai"}:
         if provider_key == "xai":
             logger.info(
                 "remote MCP injection skipped — xAI does not yet support type:mcp"

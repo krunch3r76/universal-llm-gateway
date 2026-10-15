@@ -15,6 +15,7 @@ from universal_logging import get_logger
 
 from llm_adapters._mcp_entry import (
     anthropic_mcp_server_entry,
+    resolve_anthropic_callback_token,
     resolve_mcp_env,
 )
 from llm_adapters.anthropic._helpers import (
@@ -130,7 +131,8 @@ class AnthropicAdapter:
                     "remote_mcp=True rejects any req.tools for Anthropic "
                     "(client-side tools cannot fire with the loop disabled)"
                 )
-            url, token = resolve_mcp_env()
+            url, _admin_token = resolve_mcp_env()
+            token = resolve_anthropic_callback_token()
             server_entry = anthropic_mcp_server_entry(url, token)
             existing_servers = body.get("mcp_servers") or []
             body["mcp_servers"] = [*existing_servers, server_entry]

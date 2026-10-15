@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tool_access import (
+    ANTHROPIC_API_CLIENT_ID,
     GROK_CONNECTOR_CLIENT_ID,
     oauth_client_denial_reason,
     oauth_client_tool_allowed,
@@ -45,3 +46,28 @@ def test_denial_reason_names_client_and_tool() -> None:
     reason = oauth_client_denial_reason(GROK_CONNECTOR_CLIENT_ID, "manage")
     assert GROK_CONNECTOR_CLIENT_ID in reason
     assert "manage" in reason
+
+
+def test_anthropic_api_allows_read_surface() -> None:
+    assert oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "rag", {"op": "search", "query": "x"}
+    )
+    assert oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "cortex", {"tool": "entity_get", "arguments": "{}"}
+    )
+    assert oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "fs", {"op": "read", "path": "cortex://x"}
+    )
+
+
+def test_anthropic_api_denies_writes() -> None:
+    assert not oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "fs", {"op": "write", "path": "cortex://x"}
+    )
+    assert not oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "cortex", {"tool": "assert", "arguments": "{}"}
+    )
+    assert not oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID, "rag", {"op": "upsert_article"}
+    )
+    assert not oauth_client_tool_allowed(ANTHROPIC_API_CLIENT_ID, "manage", {})

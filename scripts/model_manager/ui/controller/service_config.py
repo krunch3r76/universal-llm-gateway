@@ -157,6 +157,20 @@ def build_service_env(
             env["MCP_AUTH_TOKEN"] = cfg.auth_token
         if not env.get("MCP_PUBLIC_URL") and cfg.mcp_server_url:
             env["MCP_PUBLIC_URL"] = cfg.mcp_server_url
+    if _MCP_CONFIG_PATH.exists():
+        try:
+            from llm_adapters._mcp_entry import anthropic_callback_yaml_backfill
+
+            raw_yaml = yaml.safe_load(_MCP_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            if isinstance(raw_yaml, dict):
+                backfill = anthropic_callback_yaml_backfill(raw_yaml, env)
+                if backfill:
+                    env["MCP_ANTHROPIC_CALLBACK_TOKEN"] = backfill
+        except Exception:
+            logger.debug(
+                "Skipping MCP_ANTHROPIC_CALLBACK_TOKEN backfill from mcp.yaml",
+                exc_info=True,
+            )
     cortex_http = load_cortex_api_config()
     # Operator-owned bind — always mirror yaml so stale shell env cannot narrow it.
     env["CORTEX_API_HTTP_HOST"] = cortex_http.http_host

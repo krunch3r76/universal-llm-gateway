@@ -16,6 +16,7 @@ from typing import Any, Final, Literal
 
 from _derive import derive_cortex_surface
 from cortex_gate_events import McpCortexOpRejected
+from fs_roots import LIFE_WORKSPACES_READ_OPS
 from mcp_events import record
 
 Surface = Literal["life", "code"]
@@ -30,10 +31,25 @@ _CURSOR_DISPATCH_DENY: Final[frozenset[str]] = frozenset()
 # xAI remote-MCP inbound probe client — read-only surface only.
 # See todo:xai-remote-mcp-inbound-setup / decision:xai-remote-mcp-inbound-access.
 GROK_CONNECTOR_CLIENT_ID: Final[str] = "grok-connector"
+ANTHROPIC_API_CLIENT_ID: Final[str] = "anthropic-api"
 GROK_CONNECTOR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"cortex", "agent_bus_read"}
 )
 GROK_CONNECTOR_CORTEX_OPS: Final[frozenset[str]] = frozenset({"stats"})
+
+ANTHROPIC_API_RAG_OPS: Final[frozenset[str]] = frozenset(
+    {
+        "search",
+        "list_mapped",
+        "list_scopes",
+        "coverage",
+        "orphaned_articles",
+    }
+)
+
+RESTRICTED_OAUTH_CLIENT_IDS: Final[frozenset[str]] = frozenset(
+    {GROK_CONNECTOR_CLIENT_ID, ANTHROPIC_API_CLIENT_ID}
+)
 
 _LifeSpecCache: Any | None = None
 _CodeSpecCache: Any | None = None
@@ -127,6 +143,23 @@ def dispatch_denial_reason(tool_name: str) -> str:
     )
 
 
+def _anthropic_api_tool_allowed(tool_name: str, tool_args: dict[str, Any] | None) -> bool:
+    args = tool_args or {}
+    if tool_name == "rag":
+        op = str(args.get("op") or "").strip()
+        return op in ANTHROPIC_API_RAG_OPS
+    if tool_name == "cortex":
+        op = str(args.get("tool") or "").strip()
+        if not op:
+            return False
+        family = _surface_spec("code").families.get(op)
+        return family == "read"
+    if tool_name == "fs":
+        op = str(args.get("op") or "").strip()
+        return op in LIFE_WORKSPACES_READ_OPS
+    return False
+
+
 def oauth_client_tool_allowed(
     client_id: str | None,
     tool_name: str,
@@ -134,18 +167,36 @@ def oauth_client_tool_allowed(
 ) -> bool:
     """Return True iff ``client_id`` may invoke ``tool_name`` (with args).
 
-    Non-``grok-connector`` clients are unrestricted here (other auth paths
-    apply). ``grok-connector`` is limited to read-only MCP tools; for
-    ``cortex``, only the ``stats`` sub-op is admitted.
+    Falsy ``client_id`` is fail-open. ``grok-connector`` and ``anthropic-api``
+    are read-only gated; every other id is unrestricted here.
     """
-    if not client_id or client_id != GROK_CONNECTOR_CLIENT_ID:
+    if not client_id:
         return True
-    if tool_name not in GROK_CONNECTOR_ALLOWED_TOOLS:
-        return False
-    if tool_name == "cortex":
-        op = str((tool_args or {}).get("tool") or "").strip()
-        return op in GROK_CONNECTOR_CORTEX_OPS
+    if client_id == GROK_CONNECTOR_CLIENT_ID:
+        if tool_name not in GROK_CONNECTOR_ALLOWED_TOOLS:
+            return False
+        if tool_name == "cortex":
+            op = str((tool_args or {}).get("tool") or "").strip()
+            return op in GROK_CONNECTOR_CORTEX_OPS
+        return True
+    if client_id == ANTHROPIC_API_CLIENT_ID:
+        return _anthropic_api_tool_allowed(tool_name, tool_args)
     return True
+
+
+def restricted_oauth_client_unknown_call_denied(
+    client_id: str | None,
+    mcp_method: str,
+    tool_name: str,
+) -> bool:
+    """Deny restricted ids when the buffered body does not identify a safe call."""
+    if not client_id or client_id not in RESTRICTED_OAUTH_CLIENT_IDS:
+        return False
+    if not mcp_method:
+        return True
+    if mcp_method == "tools/call" and not tool_name:
+        return True
+    return False
 
 
 def oauth_client_denial_reason(client_id: str, tool_name: str) -> str:

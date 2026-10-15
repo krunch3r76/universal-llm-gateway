@@ -24,12 +24,17 @@ from typing import TYPE_CHECKING, Any
 
 from dual_endpoint_http import is_mcp_endpoint_path
 from endpoint_surface import surface_from_path
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
 from mcp_events import monotonic_now, record
 from mcp_tools_call_log import ToolsCallIsErrorScan
 from request_profile import bind_request
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from tool_access import oauth_client_denial_reason, oauth_client_tool_allowed
+from tool_access import (
+    oauth_client_denial_reason,
+    oauth_client_tool_allowed,
+    restricted_oauth_client_unknown_call_denied,
+)
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -171,6 +176,30 @@ def _extract_request_tool_context(
     return context
 
 
+async def _buffer_mcp_post_body(
+    receive: Receive,
+    *,
+    max_body_size: int,
+) -> tuple[bytes | None, list[Message]]:
+    """Read the full POST body up to ``max_body_size`` (413 ⇒ ``body is None``)."""
+    messages: list[Message] = []
+    body_parts: list[bytes] = []
+    more_body = True
+    while more_body:
+        message = await receive()
+        if message.get("type") != "http.request":
+            messages.append(message)
+            break
+        chunk = message.get("body", b"") or b""
+        current_len = sum(len(part) for part in body_parts)
+        if current_len + len(chunk) > max_body_size:
+            return None, messages
+        body_parts.append(chunk)
+        messages.append(message)
+        more_body = bool(message.get("more_body", False))
+    return b"".join(body_parts), messages
+
+
 def _is_suspected_fs_timeout(
     tool_name: str,
     duration_s: float,
@@ -234,8 +263,27 @@ class McpRequestEventsMiddleware:
         ).strip()
 
         if method == "POST":
-            msg = await receive()
-            body = msg.get("body", b"")
+            max_body_size = DEFAULT_MAX_REQUEST_BODY_SIZE
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    pass
+                else:
+                    if declared_size > max_body_size:
+                        response = Response("Request body too large", status_code=413)
+                        await response(scope, receive, send)
+                        return
+
+            body, buffered_messages = await _buffer_mcp_post_body(
+                receive, max_body_size=max_body_size
+            )
+            if body is None:
+                response = Response("Request body too large", status_code=413)
+                await response(scope, receive, send)
+                return
+
             jsonrpc_id = _extract_jsonrpc_id(body)
             mcp_method, tool_name, tool_args = _extract_call_metadata(body)
             if mcp_method == "tools/call":
@@ -246,13 +294,14 @@ class McpRequestEventsMiddleware:
 
                 note_life_tools_activity()
             orig_receive = receive
-            body_sent = False
+            replay_index = 0
 
             async def tee_receive() -> Message:
-                nonlocal body_sent
-                if not body_sent:
-                    body_sent = True
-                    return msg
+                nonlocal replay_index
+                if replay_index < len(buffered_messages):
+                    message = buffered_messages[replay_index]
+                    replay_index += 1
+                    return message
                 return await orig_receive()
 
             receive = tee_receive
@@ -291,6 +340,38 @@ class McpRequestEventsMiddleware:
             summary = _summarize_tool_args(tool_name, tool_args)
             log_detail = f" {summary}" if summary else ""
             logger.info("MCP tool call: %s%s", tool_name, log_detail)
+
+        if restricted_oauth_client_unknown_call_denied(
+            oauth_client_id or None, mcp_method, tool_name
+        ):
+            reason = oauth_client_denial_reason(
+                oauth_client_id,
+                tool_name or mcp_method or "unknown",
+            )
+            record(
+                "mcp.oauth.client.tool.denied",
+                role="coordination",
+                oauth_client_id=oauth_client_id,
+                tool_name=tool_name or "",
+                reason=reason,
+                seat_class=seat_class,
+                client_ip=client_ip,
+            )
+            logger.warning(
+                "MCP oauth client call denied (unknown): client=%s method=%s tool=%s",
+                oauth_client_id,
+                mcp_method,
+                tool_name,
+            )
+            deny_unknown: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32001, "message": reason},
+            }
+            if jsonrpc_id is not None:
+                deny_unknown["id"] = jsonrpc_id
+            response = JSONResponse(deny_unknown, status_code=200)
+            await response(scope, receive, send)
+            return
 
         # Server-side OAuth-client allowlist (grok-connector read-only).
         # Must run before FastMCP handles tools/call — client-side

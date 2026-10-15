@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,14 @@ logger = logging.getLogger(__name__)
 # Stargate agent_seat client-side injection must hit a live mount or tools/list
 # returns empty and falls back to STATIC_TOOL_FALLBACK (cortex+agent_bus, no fs).
 _DEFUNCT_BARE_MCP_SUFFIX = "/mcp"
+
+
+class AnthropicCallbackTokenError(RuntimeError):
+    """Raised when the dedicated Anthropic MCP callback token is missing or collides."""
+
+    def __init__(self, message: str, *, keys: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.keys = keys or []
 
 
 class RemoteMcpEnvMissingError(RuntimeError):
@@ -69,6 +81,93 @@ def normalize_mcp_public_url(url: str) -> str:
         )
         return rewritten
     return stripped
+
+
+def _mcp_config_path() -> Path:
+    configured = os.environ.get("MCP_CONFIG_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".gateway" / "mcp.yaml"
+
+
+def _load_mcp_yaml_raw() -> dict[str, Any]:
+    path = _mcp_config_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _yaml_resolved_admin_token(raw: dict[str, Any]) -> str:
+    token_env_name = raw.get("auth_token_env")
+    if isinstance(token_env_name, str) and token_env_name.strip():
+        env_val = os.environ.get(token_env_name.strip(), "").strip()
+        if env_val:
+            return env_val
+    raw_token = raw.get("auth_token", "")
+    if isinstance(raw_token, str):
+        return raw_token.strip()
+    return ""
+
+
+def anthropic_callback_collides_with_admin(
+    callback: str,
+    raw: dict[str, Any] | None = None,
+    *,
+    mcp_auth_token: str | None = None,
+) -> bool:
+    """True when ``callback`` equals a configured admin bearer (keys only in errors)."""
+    if not callback:
+        return True
+    env_admin = (mcp_auth_token if mcp_auth_token is not None else os.environ.get("MCP_AUTH_TOKEN", "")).strip()
+    if env_admin and callback == env_admin:
+        return True
+    data = raw if raw is not None else _load_mcp_yaml_raw()
+    yaml_admin = _yaml_resolved_admin_token(data)
+    return bool(yaml_admin and callback == yaml_admin)
+
+
+def resolve_anthropic_callback_token() -> str:
+    """Return the Anthropic API MCP callback bearer (never log the value)."""
+    env_val = os.environ.get("MCP_ANTHROPIC_CALLBACK_TOKEN", "").strip()
+    if env_val:
+        token = env_val
+    else:
+        raw = _load_mcp_yaml_raw()
+        yaml_val = raw.get("anthropic_callback_token", "")
+        token = str(yaml_val).strip() if yaml_val is not None else ""
+    if not token:
+        raise AnthropicCallbackTokenError(
+            "anthropic callback token is empty",
+            keys=["MCP_ANTHROPIC_CALLBACK_TOKEN", "anthropic_callback_token"],
+        )
+    raw = _load_mcp_yaml_raw()
+    if anthropic_callback_collides_with_admin(token, raw):
+        raise AnthropicCallbackTokenError(
+            "anthropic callback token collides with admin MCP credentials",
+            keys=["MCP_AUTH_TOKEN", "auth_token", "auth_token_env"],
+        )
+    return token
+
+
+def anthropic_callback_yaml_backfill(
+    raw: dict[str, Any], env: dict[str, str]
+) -> str | None:
+    """Yaml ``anthropic_callback_token`` for ``build_service_env`` when env unset."""
+    if env.get("MCP_ANTHROPIC_CALLBACK_TOKEN", "").strip():
+        return None
+    candidate = raw.get("anthropic_callback_token", "")
+    token = str(candidate).strip() if candidate is not None else ""
+    if not token:
+        return None
+    if anthropic_callback_collides_with_admin(
+        token, raw, mcp_auth_token=env.get("MCP_AUTH_TOKEN", "")
+    ):
+        return None
+    return token
 
 
 def resolve_mcp_env() -> tuple[str, str]:

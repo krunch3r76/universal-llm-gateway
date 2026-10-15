@@ -21,14 +21,18 @@ _PATCH_CONFIG = (
 _FAKE_CONFIG = {"url": "https://mcp.example.com/mcp", "token": "test-token"}
 
 
-def _call_inject(provider_key: str) -> dict:
+def _call_inject_with_config(provider_key: str, config: dict) -> dict:
     body: dict = {"model": "test-model"}
     with (
         patch(_PATCH_EXECUTOR, return_value=MagicMock()),
-        patch(_PATCH_CONFIG, return_value=_FAKE_CONFIG),
+        patch(_PATCH_CONFIG, return_value=config),
     ):
         inject_native_mcp(provider_key, body)
     return body
+
+
+def _call_inject(provider_key: str) -> dict:
+    return _call_inject_with_config(provider_key, _FAKE_CONFIG)
 
 
 def test_xai_mcp_injection_skipped() -> None:
@@ -55,3 +59,37 @@ def test_openai_mcp_injection_succeeds() -> None:
     assert entry["type"] == "mcp"
     assert entry["server_label"] == "vortex"
     assert "Bearer" in entry["authorization"]
+
+
+def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    monkeypatch.delenv("MCP_ANTHROPIC_CALLBACK_TOKEN", raising=False)
+    body: dict = {"model": "claude-sonnet-4-6"}
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body)
+    assert body["mcp_servers"][0]["authorization_token"] == "callback-tok"
+    assert {"type": "mcp_toolset", "mcp_server_name": "vortex"} in body["tools"]
+
+
+def test_anthropic_inject_skipped_when_config_token_equals_callback_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: same-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    body = _call_inject_with_config(
+        "anthropic", {"url": _FAKE_CONFIG["url"], "token": "same-tok"}
+    )
+    assert "mcp_servers" not in body
+
+
+def test_openai_still_skips_when_config_token_empty() -> None:
+    body = _call_inject_with_config("openai", {"url": _FAKE_CONFIG["url"], "token": ""})
+    assert "tools" not in body

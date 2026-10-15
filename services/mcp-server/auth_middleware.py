@@ -25,6 +25,10 @@ from cortex_proxy import (
     handle_cortex_preflight,
     handle_cortex_proxy,
 )
+from llm_adapters._mcp_entry import (
+    AnthropicCallbackTokenError,
+    resolve_anthropic_callback_token,
+)
 from llm_proxy import (
     _CORS_HEADERS as LLM_CORS_HEADERS,
 )
@@ -35,6 +39,7 @@ from llm_proxy import (
 from mcp_events import record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from tool_access import ANTHROPIC_API_CLIENT_ID
 from universal_logging import get_logger
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
@@ -120,6 +125,13 @@ class AuthMiddleware:
         self._bearer_tokens: frozenset[str] = frozenset(tokens)
         self._bearer_labels = labels
         self._primary_caller_label = os.getenv("MCP_PRIMARY_CALLER_LABEL", "").strip()
+        self._anthropic_callback_token: str | None = None
+        try:
+            resolved_callback = resolve_anthropic_callback_token()
+        except AnthropicCallbackTokenError:
+            resolved_callback = None
+        if resolved_callback and resolved_callback != self._token:
+            self._anthropic_callback_token = resolved_callback
 
     @staticmethod
     def _extract_authorization_token(authorization: str) -> str | None:
@@ -187,6 +199,29 @@ class AuthMiddleware:
             or (token is not None and token in self._bearer_tokens)
         )
 
+    def _anthropic_callback_bearer(self, auth_header: str) -> bool:
+        token = self._extract_authorization_token(auth_header)
+        return (
+            self._anthropic_callback_token is not None
+            and token is not None
+            and token == self._anthropic_callback_token
+        )
+
+    async def _reject_anthropic_callback_non_mcp(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        *,
+        headers: dict[str, str],
+    ) -> None:
+        response = JSONResponse(
+            {"error": "Unauthorized"},
+            status_code=401,
+            headers=headers,
+        )
+        await response(scope, receive, send)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
@@ -231,6 +266,11 @@ class AuthMiddleware:
                 response = JSONResponse({"status": "ok"}, headers=CLIP_CORS_HEADERS)
                 await response(scope, receive, send)
                 return
+            if self._anthropic_callback_bearer(auth):
+                await self._reject_anthropic_callback_non_mcp(
+                    scope, receive, send, headers=CLIP_CORS_HEADERS
+                )
+                return
             if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
@@ -257,6 +297,11 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
+            if self._anthropic_callback_bearer(auth):
+                await self._reject_anthropic_callback_non_mcp(
+                    scope, receive, send, headers=RELAY_CORS_HEADERS
+                )
+                return
             if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
@@ -283,6 +328,11 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
+            if self._anthropic_callback_bearer(auth):
+                await self._reject_anthropic_callback_non_mcp(
+                    scope, receive, send, headers=CORTEX_CORS_HEADERS
+                )
+                return
             if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
@@ -301,6 +351,11 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
+            if self._anthropic_callback_bearer(auth):
+                await self._reject_anthropic_callback_non_mcp(
+                    scope, receive, send, headers=LLM_CORS_HEADERS
+                )
+                return
             if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
@@ -325,6 +380,30 @@ class AuthMiddleware:
         client_ip = request.client.host if request.client else "unknown"
         client_port = request.client.port if request.client else 0
         user_agent = request.headers.get("user-agent", "")
+
+        if self._anthropic_callback_bearer(auth_header):
+            scope["auth_mode"] = "static"
+            scope["oauth_client_id"] = ANTHROPIC_API_CLIENT_ID
+            scope["mcp_profile"] = "default"
+            scope["mcp_caller_identity"] = ANTHROPIC_API_CLIENT_ID
+            record(
+                "mcp.auth.admitted",
+                role="coordination",
+                client_ip=client_ip,
+                client_port=client_port,
+                auth_mode="static",
+                oauth_client_id=ANTHROPIC_API_CLIENT_ID,
+                caller_identity=ANTHROPIC_API_CLIENT_ID,
+                path=path,
+                user_agent=user_agent,
+            )
+            record(
+                "mcp.profile.bound",
+                profile="default",
+                auth_mode="static",
+            )
+            await self._app(scope, receive, send)
+            return
 
         if self._is_static_token_authorized(auth_header):
             caller_identity = self._resolve_static_caller_identity(auth_header)

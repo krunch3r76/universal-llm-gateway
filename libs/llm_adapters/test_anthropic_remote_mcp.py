@@ -18,9 +18,13 @@ from llm_adapters.anthropic import AnthropicAdapter
 
 
 @pytest.fixture(autouse=True)
-def _mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _mcp_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin-token\nanthropic_callback_token: callback-token\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
     monkeypatch.setenv("MCP_PUBLIC_URL", "https://mcp.example.com/mcp")
-    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token-xyz")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "admin-token")
+    monkeypatch.delenv("MCP_ANTHROPIC_CALLBACK_TOKEN", raising=False)
 
 
 def _adapter() -> AnthropicAdapter:
@@ -46,7 +50,7 @@ def test_remote_mcp_populates_mcp_servers() -> None:
             "type": "url",
             "name": "vortex",
             "url": "https://mcp.example.com/mcp/code/",
-            "authorization_token": "test-token-xyz",
+            "authorization_token": "callback-token",
         }
     ]
     assert "mcp-client-2025-11-20" in headers["anthropic-beta"]
