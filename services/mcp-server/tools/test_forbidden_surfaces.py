@@ -5,9 +5,10 @@ MCP surface names that were retired in phase-c of the document ingestion
 redesign (ingest_document → extract_document; document_ocr_directory →
 extract_directory; document_ocr → extract_document).
 
-``ingest_binary`` is not a tracked private tool (path never in git;
-``promote_document_to_evidence`` is a fresh surface). The inventory records
-every live mention, including ``_coherence_allowlist.py`` (77fd360b0).
+``ingest_binary`` is not a tracked private tool (``.gitignore`` excludes
+``services/mcp-server/tools/local/``). The inventory records tracked mentions,
+including ``_coherence_allowlist.py`` (77fd360b0), and skips that private
+layer so a primary checkout that still has the file matches a lane worktree.
 A new stray mention under services/libs/config/.cursor still fails equality.
 To inventory ``ingest_binary`` mentions, exclude ephemeral
 ``./tmp`` (consult-run JSON dumps reference the name heavily)::
@@ -155,14 +156,29 @@ def collect_violations() -> list[tuple[Path, int, str, str]]:
     return violations
 
 
+def _under_private_tool_layer(path: Path) -> bool:
+    """True for the gitignored tools/local layer (.gitignore services/mcp-server/tools/local/).
+
+    Inventory-only. Not part of _SKIP_DIR_PARTS: the forbidden-surface scan
+    still covers tracked helpers that live beside that layer.
+    """
+    try:
+        path.resolve().relative_to(
+            (_REPO_ROOT / "services/mcp-server/tools/local").resolve()
+        )
+    except ValueError:
+        return False
+    return True
+
+
 def _collect_ingest_binary_files() -> set[Path]:
-    """Paths under live roots that mention ingest_binary; ./tmp excluded."""
+    """Tracked ingest_binary mentions. Skips ./tmp and gitignored tools/local."""
     found: set[Path] = set()
     for root in _INGEST_BINARY_SEARCH_ROOTS:
         if not root.exists():
             continue
         for path in root.rglob("*"):
-            if _skip_dir(path) or not path.is_file():
+            if _skip_dir(path) or _under_private_tool_layer(path) or not path.is_file():
                 continue
             if path.suffix not in {".py", ".md", ".yaml", ".yml", ".json"}:
                 continue
@@ -176,7 +192,7 @@ def _collect_ingest_binary_files() -> set[Path]:
 
 
 def test_ingest_binary_reference_inventory_excludes_tmp() -> None:
-    """ingest_binary lives in tools/local; stray mentions must not hide in ./tmp."""
+    """Tracked ingest_binary mentions; private tools/local must not change the set."""
     found = _collect_ingest_binary_files()
     assert found == {p.resolve() for p in _EXPECTED_INGEST_BINARY_FILES}
 
