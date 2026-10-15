@@ -381,22 +381,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"effort": "high"},
         instruction_profile="mechanical",
     ),
-    # Gemini 4 Argon (Google frontier, Cursor GA 2026-10-13). Effort values
-    # match cursor.com/docs/models/gemini-4-argon. Context is omitted: the
-    # models-and-pricing row has no context note, and a guessed 200k/1m knob
-    # (or its wire id) is Invalid parameters until ListModels. probed_at stays
-    # unset so admit returns CURSOR_MODEL_UNPROBED before any knob is sent.
-    # Stamp probed_at only after ListModels shows no divergence for this id,
-    # and replace the context knob from that probe.
+    # Gemini 4 Argon (Google frontier, Cursor GA 2026-10-13). Live ListModels
+    # probe 2026-10-14: id=gemini-4-argon, single parameter reasoning_effort
+    # accepted=(low, medium, high), default_variant={reasoning_effort: medium},
+    # no context parameter knob (Cursor standard Agent harness compacts at 200k).
     "gemini-4-argon": ModelCapability(
         knobs={
             "effort": KnobSpec(
-                accepted=("minimal", "low", "medium", "high"),
+                accepted=("low", "medium", "high"),
                 default="medium",
             ),
         },
         default_variant={"effort": "medium"},
         instruction_profile="reasoner",
+        context_window_tokens=200_000,
+        probed_at="2026-10-14",
     ),
     "glm-5.2": ModelCapability(
         knobs={

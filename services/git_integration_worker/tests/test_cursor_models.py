@@ -183,9 +183,15 @@ def test_assert_capability_descriptor_fresh_live_catalog() -> None:
     assert_capability_descriptor_fresh()
 
 
-def test_card_knob_wire_map_is_single_grok_effort_pair() -> None:
-    assert set(cm_mod._CARD_KNOB_WIRE_ID.keys()) == {("grok-4.7", "effort")}
+def test_card_knob_wire_map_maps_reasoning_effort_pairs() -> None:
+    assert set(cm_mod._CARD_KNOB_WIRE_ID.keys()) == {
+        ("grok-4.7", "effort"),
+        ("gemini-4-argon", "effort"),
+    }
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
+    cfg = resolve_cursor("cursor/gemini-4-argon")
+    sel = build_model_selection(cfg, {"effort": "high"})
+    assert {p.id: p.value for p in sel.params} == {"reasoning_effort": "high"}
 
 
 def test_auto_selection_uses_listmodels_id_and_refuses_knobs() -> None:

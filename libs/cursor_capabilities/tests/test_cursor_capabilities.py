@@ -35,19 +35,15 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
 }
 
 
-def test_gemini_4_argon_stays_unprobed_until_listmodels() -> None:
-    """Production card: no probe stamp and no guessed context knob.
-
-    GIW conftest stamps other unprobed cards for hermetic admits. This assert
-    reads the module dict, so that stamp cannot hide a premature ``probed_at``.
-    """
+def test_gemini_4_argon_stamped_from_listmodels_probe() -> None:
+    """Production card: stamped from live ListModels probe (2026-10-14)."""
     cap = CURSOR_MODEL_CAPABILITIES["gemini-4-argon"]
-    assert cap.probed_at is None
+    assert cap.probed_at == "2026-10-14"
     assert set(cap.knobs) == {"effort"}
-    assert cap.knobs["effort"].accepted == ("minimal", "low", "medium", "high")
+    assert cap.knobs["effort"].accepted == ("low", "medium", "high")
     assert cap.knobs["effort"].default == "medium"
     assert cap.default_variant == {"effort": "medium"}
-    assert cap.context_window_tokens is None
+    assert cap.context_window_tokens == 200_000
 
 
 def test_model_capability_default_instruction_profile_is_mechanical() -> None:
