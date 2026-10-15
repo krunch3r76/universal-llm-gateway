@@ -152,7 +152,7 @@ def render_tape(
         budget_source=budget_source,
         deadline=deadline,
     )
-    if scope == "window" and transcript_id:
+    if scope in ("window", "last_session"):
         segments = _window_segments(segments, cells)
     from cortex_store.events_tape import (
         agent_bus_tape_hop_cells_skipped,

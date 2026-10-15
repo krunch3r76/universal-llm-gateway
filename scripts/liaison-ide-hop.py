@@ -55,21 +55,47 @@ from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
 
 
-def _post_root_checkpoint(root_id: str, body: str) -> bool:
-    # agent-bus posts turns at POST /turns with thread in the body — not
-    # /threads/{id}/turns (that path 404s and blocked CONTEXT_BUDGET hops).
-    with _bus() as client:
-        r = client.post(
-            "/turns",
-            json={
-                "thread": root_id,
-                "from": "cursor",
-                "to": "cursor",
-                "subject": f"HARVEST judgment — {root_id}",
-                "body": body,
-            },
-        )
-        return r.status_code < 400
+def _jsonl_turn_count(transcript_id: str) -> int | None:
+    from bus_watch.ide_budget import AGENT_TRANSCRIPTS
+    from cortex_store.dispatch_ops.ops_transcript_discover import _live_jsonl_turn_count
+    from cortex_store.transcript_session_id import jsonl_path_for_uuid
+
+    path = jsonl_path_for_uuid(AGENT_TRANSCRIPTS, transcript_id)
+    if not path.is_file():
+        return None
+    try:
+        return _live_jsonl_turn_count(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _post_root_checkpoint_factory(transcript_id: str | None):
+    def _post_root_checkpoint(root_id: str, body: str) -> bool:
+        # agent-bus posts turns at POST /turns with thread in the body — not
+        # /threads/{id}/turns (that path 404s and blocked CONTEXT_BUDGET hops).
+        lines: list[str] = []
+        if transcript_id:
+            turn_count = _jsonl_turn_count(transcript_id)
+            if turn_count is not None:
+                lines.append(
+                    f"Window: transcript_id={transcript_id} · turns@cp={turn_count}"
+                )
+        lines.append(body)
+        full_body = "\n".join(lines)
+        with _bus() as client:
+            r = client.post(
+                "/turns",
+                json={
+                    "thread": root_id,
+                    "from": "cursor",
+                    "to": "cursor",
+                    "subject": f"HARVEST judgment — {root_id}",
+                    "body": full_body,
+                },
+            )
+            return r.status_code < 400
+
+    return _post_root_checkpoint
 
 
 def _mark_turns_read(root_id: str, turn_numbers: list[int]) -> None:
@@ -197,7 +223,7 @@ def main() -> int:
     harvest = harvest_judgment_turns(
         args.root,
         get_turns=_fetch_turns,
-        post_checkpoint=_post_root_checkpoint,
+        post_checkpoint=_post_root_checkpoint_factory(args.transcript_id),
         mark_read=_mark_turns_read,
         now_row_set_at=str(now_row_set_at or "") or None,
     )

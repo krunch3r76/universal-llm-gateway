@@ -167,3 +167,23 @@ def test_catalog_blocks_plus_operator_prose_kept() -> None:
 def test_cursor_commands_only_is_not_a_catalog_turn() -> None:
     messages = [{"role": "user", "content": "<cursor_commands>/checkpoint</cursor_commands>"}]
     assert exclude_ide_catalog_turns(messages) == messages
+
+
+def test_dynamic_tool_catalog_only_turn_excluded() -> None:
+    content = "<dynamic_tool_catalog>" + ("z" * 100) + "</dynamic_tool_catalog>"
+    messages = [{"role": "user", "content": content}]
+    assert exclude_ide_catalog_turns(messages) == []
+
+
+def test_subagent_tags_elided_outside_user_query() -> None:
+    content = (
+        "<available_subagent_types>types</available_subagent_types>"
+        "<available_subagent_models>models</available_subagent_models>"
+        "<user_query>go</user_query>"
+    )
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])
+    body = out[0]["content"]
+    assert "<available_subagent_types>" not in body
+    assert "<available_subagent_models>" not in body
+    assert "[elided available_subagent_types:" in body
+    assert "go" in body

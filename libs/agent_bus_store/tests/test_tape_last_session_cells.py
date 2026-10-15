@@ -125,7 +125,7 @@ def _channel_cell(
     }
 
 
-def test_wall_skips_hop_cells() -> None:
+def test_wall_anchors_at_latest_hop_checkpoint() -> None:
     cells = [
         _channel_cell(cp_ordinal=1, channel="continuity", bus_turn_id=100, turn_hi=5),
         _channel_cell(cp_ordinal=2, channel="hop", bus_turn_id=200, turn_lo=5, turn_hi=7),
@@ -134,8 +134,8 @@ def test_wall_skips_hop_cells() -> None:
     scoped, skipped, foreign, unresolved = _last_session_cells(
         cells, thread_id=_ROOT, channel="continuity"
     )
-    assert [c["cp_ordinal"] for c in scoped] == [1, 3]
-    assert skipped == 1
+    assert [c["cp_ordinal"] for c in scoped] == [2, 3]
+    assert skipped == 0
     assert foreign == 0
     assert unresolved == 0
 

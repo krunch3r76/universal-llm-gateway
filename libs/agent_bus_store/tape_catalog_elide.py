@@ -11,6 +11,8 @@ _ELIDE_TAG_NAMES = (
     "manually_attached_skills",
     "dynamic_tool_catalog",
     "open_and_recently_viewed_files",
+    "available_subagent_types",
+    "available_subagent_models",
 )
 
 # Whole-turn harness injection (Cursor IDE catalog user messages). A turn whose
@@ -27,6 +29,7 @@ _USER_QUERY_RE = re.compile(
     r"<user_query>\s*(.*?)\s*</user_query>",
     re.DOTALL | re.IGNORECASE,
 )
+_ELIDED_MARKER_RE = re.compile(r"\[elided [^:]+: \d+ B\]", re.IGNORECASE)
 
 
 def _tag_block_re(tag: str) -> re.Pattern[str]:
@@ -84,16 +87,22 @@ def _elide_catalog_in_content(content: str) -> str:
 def _is_ide_catalog_turn(content: str) -> bool:
     """True when ``content`` is only IDE catalog blocks and whitespace.
 
-    Requires at least one catalog-turn tag so a checkpoint command or other
-    harness text without these tags is left for the block elider.
+    Requires at least one catalog-turn or elide-tag block (or prior elision
+    markers) so a checkpoint command or other harness text without these tags
+    is left for the block elider.
     """
-    if not any(f"<{tag}>" in content for tag in _CATALOG_TURN_TAGS):
+    detect_tags = set(_CATALOG_TURN_TAGS) | {"dynamic_tool_catalog"}
+    strip_tags = detect_tags | set(_ELIDE_TAG_NAMES)
+    if not any(f"<{tag}>" in content for tag in detect_tags) and not _ELIDED_MARKER_RE.search(
+        content
+    ):
         return False
     if any(substantive for _start, _end, substantive in _user_query_spans(content)):
         return False
     residual = content
-    for tag in _CATALOG_TURN_TAGS:
+    for tag in strip_tags:
         residual = _tag_block_re(tag).sub("", residual)
+    residual = _ELIDED_MARKER_RE.sub("", residual)
     return not residual.strip()
 
 

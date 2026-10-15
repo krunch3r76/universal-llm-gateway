@@ -65,7 +65,7 @@ def test_from_agent_not_a_discriminator() -> None:
     assert cells_a == cells_b
 
 
-def test_wall_skips_hop_under_continuity_channel() -> None:
+def test_wall_includes_hop_under_continuity_channel() -> None:
     cells = [
         {
             "cp_ordinal": 1,
@@ -86,5 +86,5 @@ def test_wall_skips_hop_under_continuity_channel() -> None:
     ]
     scoped, skipped, _, _ = _last_session_cells(cells, thread_id="10479", channel="continuity")
     assert len(scoped) == 1
-    assert scoped[0]["channel"] == "continuity"
-    assert skipped == 1
+    assert scoped[0]["channel"] == "hop"
+    assert skipped == 0

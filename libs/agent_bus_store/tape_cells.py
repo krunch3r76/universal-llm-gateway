@@ -209,31 +209,17 @@ def _last_session_cells(
     thread_id: str,
     channel: str = "continuity",
 ) -> tuple[list[dict[str, Any]], int, int, int]:
-    """Select last_session cells; skip hop wall; drop foreign dominant_lane cells."""
-    skip_hop_wall = channel == "continuity"
+    """Select last_session cells at the latest checkpoint wall; drop foreign cells."""
+    del channel  # hop and continuity checkpoints both anchor the resume wall
     wall_ordinal: int | None = None
     for cell in reversed(cells):
         if cell.get("bus_turn_id") is None:
             continue
-        if skip_hop_wall and cell.get("channel") == "hop":
-            continue
         wall_ordinal = int(cell.get("cp_ordinal") or 0)
         break
     if wall_ordinal is None:
-        if skip_hop_wall:
-            filtered = [
-                c
-                for c in cells
-                if c.get("bus_turn_id") is None or c.get("channel") != "hop"
-            ]
-            skipped = sum(
-                1
-                for c in cells
-                if c.get("bus_turn_id") is not None and c.get("channel") == "hop"
-            )
-        else:
-            filtered = list(cells)
-            skipped = 0
+        filtered = list(cells)
+        skipped = 0
     else:
         filtered = [
             cell
@@ -241,16 +227,7 @@ def _last_session_cells(
             if cell.get("bus_turn_id") is None
             or int(cell.get("cp_ordinal") or 0) == wall_ordinal
         ]
-        if skip_hop_wall:
-            skipped = sum(
-                1
-                for c in cells
-                if c.get("bus_turn_id") is not None
-                and c.get("channel") == "hop"
-                and c not in filtered
-            )
-        else:
-            skipped = 0
+        skipped = 0
     ownership_unresolved = sum(
         1 for c in filtered if c.get("ownership_source") == "unresolved"
     )
@@ -283,10 +260,36 @@ def _filter_messages_to_cells(
     return [msg for msg in messages if any(_message_in_cell(msg, cell) for cell in cells)]
 
 
+def _narrow_last_session_pour_cells(
+    cells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pour post-checkpoint open tail only, or a minimal sealed tail when fully sealed."""
+    open_cells = [c for c in cells if c.get("bus_turn_id") is None]
+    open_turns = sum(
+        max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0))
+        for c in open_cells
+    )
+    if open_turns > 0:
+        return open_cells
+    sealed = [c for c in cells if c.get("bus_turn_id") is not None]
+    if not sealed:
+        return cells
+    narrowed: list[dict[str, Any]] = []
+    for cell in sealed:
+        copy = dict(cell)
+        turn_lo = int(copy.get("turn_lo") or 0)
+        turn_hi = int(copy.get("turn_hi") or 0)
+        if turn_hi - turn_lo > 2:
+            copy["turn_lo"] = turn_hi - 2
+        narrowed.append(copy)
+    return narrowed
+
+
 __all__ = [
     "_cells_for_lane",
     "_filter_messages_to_cells",
     "_last_session_cells",
     "_window_cells",
     "_window_segments",
+    "_narrow_last_session_pour_cells",
 ]

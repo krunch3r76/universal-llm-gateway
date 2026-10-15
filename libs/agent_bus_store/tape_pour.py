@@ -17,7 +17,9 @@ from .tape_cells import (
     _cells_for_lane,
     _filter_messages_to_cells,
     _last_session_cells,
+    _narrow_last_session_pour_cells,
     _window_cells,
+    _window_segments,
 )
 
 # Reasons ``filter_lane_journals`` can emit — not discover-door keys (foreign_dominant, no_touch).
@@ -78,6 +80,20 @@ def pour_lane_messages(
     cells = _cells_for_lane(
         thread_id=thread_id, lane_journals=lane_journals, files_root=files_root
     )
+    hop_cells_skipped = 0
+    foreign_cells_excluded = 0
+    ownership_unresolved = 0
+    if scope == "window" and transcript_id:
+        cells = _window_cells(
+            cells, transcript_id=transcript_id, prior_cells=prior_cells
+        )
+    elif scope == "last_session":
+        cells, hop_cells_skipped, foreign_cells_excluded, ownership_unresolved = (
+            _last_session_cells(cells, thread_id=thread_id, channel=channel)
+        )
+        cells = _narrow_last_session_pour_cells(cells)
+    if scope in ("window", "last_session"):
+        segments = _window_segments(segments, cells)
     messages: list[dict[str, Any]] = []
     codec_fallback_count = 0
     deadline_hit = False
@@ -105,18 +121,7 @@ def pour_lane_messages(
             codec_fallback_count += 1
         seg["codec_used"] = codec_used
         messages.extend(row_messages)
-    hop_cells_skipped = 0
-    foreign_cells_excluded = 0
-    ownership_unresolved = 0
-    if scope == "window" and transcript_id:
-        cells = _window_cells(
-            cells, transcript_id=transcript_id, prior_cells=prior_cells
-        )
-        messages = _filter_messages_to_cells(messages, cells)
-    elif scope == "last_session":
-        cells, hop_cells_skipped, foreign_cells_excluded, ownership_unresolved = (
-            _last_session_cells(cells, thread_id=thread_id, channel=channel)
-        )
+    if scope in ("window", "last_session"):
         messages = _filter_messages_to_cells(messages, cells)
     messages = exclude_ide_catalog_turns(messages)
     messages = elide_ide_catalog_blocks(messages)
