@@ -8,7 +8,6 @@ import os
 import stat
 import subprocess
 import textwrap
-import time
 from pathlib import Path
 
 import pytest
@@ -760,9 +759,7 @@ def test_dry_run_prints_branch_orphan(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("bad_state", ["masked", "error", "bad-setting"])
-def test_recycle_unsupported_loadstate_no_kill(
-    tmp_path: Path, bad_state: str
-) -> None:
+def test_recycle_unsupported_loadstate_no_kill(tmp_path: Path, bad_state: str) -> None:
     root = "16401"
     orphan_pid = 999991
     bin_dir = tmp_path / "bin"
@@ -780,7 +777,7 @@ def test_recycle_unsupported_loadstate_no_kill(
         env=_bin_env(bin_dir, tmp_path / "proc"),
     )
     assert proc.returncode != 0
-    assert f"unsupported_loadstate: {bad_state}" in proc.stderr
+    assert f"unsupported_loadstate: '{bad_state}'" in proc.stderr
     assert not signal_log.exists()
 
 

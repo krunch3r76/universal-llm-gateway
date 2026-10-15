@@ -158,18 +158,19 @@ if ! _user_manager_reachable; then
 fi
 
 set +e
-LOAD="$(
-  systemctl --user show -p LoadState --value "$UNIT" 2>&1
-)"
+LOAD_ERR_FILE="$(mktemp)"
+LOAD="$(systemctl --user show -p LoadState --value "$UNIT" 2>"$LOAD_ERR_FILE")"
 LOAD_RC=$?
+LOAD_ERR="$(tr -d '\n' <"$LOAD_ERR_FILE")"
+rm -f "$LOAD_ERR_FILE"
 set -e
 if [[ "$LOAD_RC" -ne 0 ]]; then
-  echo "loadstate_probe_failed: ${LOAD}" >&2
+  echo "loadstate_probe_failed: '${LOAD}'${LOAD_ERR:+ stderr='${LOAD_ERR}'}" >&2
   exit 2
 fi
 LOAD="${LOAD//$'\n'/}"
 if [[ "$LOAD" != "loaded" && "$LOAD" != "not-found" ]]; then
-  echo "unsupported_loadstate: ${LOAD}" >&2
+  echo "unsupported_loadstate: '${LOAD}'" >&2
   exit 2
 fi
 
