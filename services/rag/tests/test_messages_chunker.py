@@ -25,6 +25,35 @@ from services.rag.watcher_manager.protocols import path_matches_extensions
 pytestmark = pytest.mark.offline
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_messages_chunker(monkeypatch: pytest.MonkeyPatch) -> None:
+    import services.rag.chunkers.messages_chunker as mc
+
+    mc._THREAD_TAGS_CACHE.clear()
+    mc._THREAD_TAGS_BUS_WARNED.clear()
+    mc._LANE_RESOLVER_LOGGED = False
+
+    class _FakeConn:
+        def execute(self, _q: str, _params: tuple[str, ...]) -> object:
+            class _Row:
+                def fetchone(self) -> None:
+                    return None
+
+            return _Row()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "cortex_store.schema_snapshot.open_live_db_readonly",
+        lambda: _FakeConn(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        lambda _tid: {"tags": []},
+    )
+
+
 def _write_envelope(path: Path, messages: list[dict[str, object]]) -> None:
     payload = {
         "schema": "ulg.continuity.messages/1",
@@ -106,9 +135,7 @@ def test_lane_exclusion(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("marker", CASE_CONTENT_MARKERS)
-def test_case_content_marker_excludes_exchange(
-    tmp_path: Path, marker: str
-) -> None:
+def test_case_content_marker_excludes_exchange(tmp_path: Path, marker: str) -> None:
     path = tmp_path / "s.messages.json"
     display = {
         "flintridge": "Flintridge Prep",
@@ -224,7 +251,11 @@ def test_case_marker_in_assistant_excludes(tmp_path: Path) -> None:
     _write_envelope(
         path,
         [
-            {"role": "user", "content": "<user_query>generic</user_query>", "turn_index": 1},
+            {
+                "role": "user",
+                "content": "<user_query>generic</user_query>",
+                "turn_index": 1,
+            },
             {"role": "assistant", "content": "Parcel 25.7489 details", "turn_index": 1},
         ],
     )
@@ -278,8 +309,6 @@ def test_liaison_hop_synthetic_dropped(tmp_path: Path) -> None:
 def test_agent_bus_thread_tags_via_http(monkeypatch: pytest.MonkeyPatch) -> None:
     import services.rag.chunkers.messages_chunker as mc
 
-    mc._THREAD_TAGS_CACHE.clear()
-    mc._THREAD_TAGS_BUS_WARNED.clear()
     calls: list[str] = []
 
     def _fake_detail(tid: str) -> dict[str, object]:
@@ -293,6 +322,121 @@ def test_agent_bus_thread_tags_via_http(monkeypatch: pytest.MonkeyPatch) -> None
     assert mc._load_thread_tags("16934") == ["case:aab"]
     assert mc._load_thread_tags("16934") == ["case:aab"]
     assert calls == ["16934"]
+
+
+def test_thread_tags_retry_after_failed_lookup(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import services.rag.chunkers.messages_chunker as mc
+
+    calls = 0
+
+    def _flaky_detail(tid: str) -> dict[str, object] | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return {"id": tid, "tags": ["case:retry"]}
+
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        _flaky_detail,
+    )
+    with caplog.at_level(logging.WARNING):
+        assert mc._load_thread_tags("10223") == []
+        assert mc._load_thread_tags("10223") == ["case:retry"]
+    assert calls == 2
+    assert sum(1 for r in caplog.records if "thread tags (agent-bus)" in r.message) == 1
+
+
+def test_load_thread_tags_logs_once_when_fetch_raises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import services.rag.chunkers.messages_chunker as mc
+
+    def _boom(_tid: str) -> dict[str, object]:
+        raise ConnectionError("bus down")
+
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        _boom,
+    )
+    with caplog.at_level(logging.WARNING):
+        assert mc._load_thread_tags("10223") == []
+        assert mc._load_thread_tags("10223") == []
+    assert sum(1 for r in caplog.records if "thread tags (agent-bus)" in r.message) == 1
+
+
+def test_default_lane_resolver_excludes_case_tag_from_bus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.rag.chunkers.messages_chunker as mc
+
+    class _FakeConn:
+        def execute(self, _q: str, _params: tuple[str, ...]) -> object:
+            class _Row:
+                def fetchone(self) -> tuple[str]:
+                    return ("10223",)
+
+            return _Row()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "cortex_store.schema_snapshot.open_live_db_readonly",
+        lambda: _FakeConn(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        lambda _tid: {"tags": ["case:x"]},
+    )
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {"role": "user", "content": "<user_query>x</user_query>", "turn_index": 1},
+            {"role": "assistant", "content": "y", "turn_index": 1},
+        ],
+    )
+    cfg = MessagesChunkerConfig(lane_resolver=mc.default_lane_resolver)
+    assert chunk_messages(path, config=cfg) == []
+
+
+def test_lane_resolver_programming_error_logs_exc_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import services.rag.chunkers.messages_chunker as mc
+
+    mc._LANE_RESOLVER_LOGGED = False
+
+    def _type_error() -> object:
+        raise TypeError("bad cortex row shape")
+
+    monkeypatch.setattr(
+        "cortex_store.schema_snapshot.open_live_db_readonly",
+        _type_error,
+    )
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {"role": "user", "content": "<user_query>x</user_query>", "turn_index": 1},
+            {"role": "assistant", "content": "y", "turn_index": 1},
+        ],
+    )
+    with caplog.at_level(logging.ERROR):
+        chunks = chunk_messages(path, config=MessagesChunkerConfig())
+    assert len(chunks) == 1
+    exc_records = [r for r in caplog.records if r.exc_info is not None]
+    assert exc_records
+    assert any("lane resolver (cortex)" in r.message for r in exc_records)
 
 
 def test_chunk_yields_empty_tags_when_bus_endpoint_errors(

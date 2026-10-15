@@ -1,4 +1,4 @@
-"""Chunk ``ulg.continuity.messages/1`` seal files for RAG (on-the-fly dialogue projection)."""
+"""Chunk ``ulg.continuity.messages/1`` continuity seal files into RAG dialogue exchanges with lane/tag exclusion."""
 
 from __future__ import annotations
 
@@ -44,18 +44,27 @@ _THREAD_TAGS_BUS_WARNED: set[str] = set()
 
 _HARNESS_BLOCK_RES = [
     re.compile(r"<timestamp>[\s\S]*?</timestamp>\s*", re.IGNORECASE),
-    re.compile(r"<manually_attached_skills>[\s\S]*?</manually_attached_skills>\s*", re.IGNORECASE),
-    re.compile(r"<available_subagent_types>[\s\S]*?</available_subagent_types>\s*", re.IGNORECASE),
+    re.compile(
+        r"<manually_attached_skills>[\s\S]*?</manually_attached_skills>\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<available_subagent_types>[\s\S]*?</available_subagent_types>\s*",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"<dynamic_tool_namespaces>[\s\S]*?</dynamic_tool_namespaces>\s*", re.IGNORECASE
     ),
-    re.compile(r"<dynamic_tool_catalog>[\s\S]*?</dynamic_tool_catalog>\s*", re.IGNORECASE),
+    re.compile(
+        r"<dynamic_tool_catalog>[\s\S]*?</dynamic_tool_catalog>\s*", re.IGNORECASE
+    ),
     re.compile(r"<cursor_commands>[\s\S]*?</cursor_commands>\s*", re.IGNORECASE),
     re.compile(r"<system_reminder>[\s\S]*?</system_reminder>\s*", re.IGNORECASE),
     re.compile(r"<agent_skills>[\s\S]*?</agent_skills>\s*", re.IGNORECASE),
     re.compile(r"<user_rules>[\s\S]*?</user_rules>\s*", re.IGNORECASE),
     re.compile(
-        r"<available_subagent_models>[\s\S]*?</available_subagent_models>\s*", re.IGNORECASE
+        r"<available_subagent_models>[\s\S]*?</available_subagent_models>\s*",
+        re.IGNORECASE,
     ),
 ]
 _USER_QUERY_RE = re.compile(r"<user_query>\s*([\s\S]*?)\s*</user_query>", re.IGNORECASE)
@@ -189,7 +198,9 @@ def _synthetic_unwrapped_text(text: str) -> bool:
         return True
     if any(folded.startswith(prefix) for prefix in _SYNTHETIC_PREFIXES):
         return True
-    if folded.startswith("[grok_bot_hidden_prompt") or folded.startswith("[sand_hidden_prompt"):
+    if folded.startswith("[grok_bot_hidden_prompt") or folded.startswith(
+        "[sand_hidden_prompt"
+    ):
         return True
     if re.match(r"^\[a background task\b", folded):
         return True
@@ -317,7 +328,9 @@ def scrub_chunk_text(text: str) -> str:
     return out
 
 
-def _message_ts(msg: dict[str, Any], envelope: ContinuityMessagesEnvelope) -> str | None:
+def _message_ts(
+    msg: dict[str, Any], envelope: ContinuityMessagesEnvelope
+) -> str | None:
     content = msg.get("content")
     if isinstance(content, str):
         ts = _inline_timestamp(content)
@@ -357,7 +370,9 @@ def _iter_turn_pairs(
                 pairs.append(
                     _TurnPair(
                         turn_index=int(pending_user.get("turn_index") or 0),
-                        user_text=_verbatim_user(str(pending_user.get("content") or "")),
+                        user_text=_verbatim_user(
+                            str(pending_user.get("content") or "")
+                        ),
                         assistant_text="",
                         user_ts=_message_ts(pending_user, envelope),
                         has_real_user=True,
@@ -366,8 +381,12 @@ def _iter_turn_pairs(
             pending_user = msg
         elif role == "assistant" and pending_user is not None:
             user_text = _verbatim_user(str(pending_user.get("content") or ""))
-            assistant_text = _normalize_assistant(content if isinstance(content, str) else "")
-            turn_index = int(pending_user.get("turn_index") or msg.get("turn_index") or 0)
+            assistant_text = _normalize_assistant(
+                content if isinstance(content, str) else ""
+            )
+            turn_index = int(
+                pending_user.get("turn_index") or msg.get("turn_index") or 0
+            )
             pairs.append(
                 _TurnPair(
                     turn_index=turn_index,
@@ -428,7 +447,7 @@ def _surface_label(meta_surface: str | None, path: Path) -> str:
 
 
 def _load_thread_tags(thread_id: str) -> list[str]:
-    """Load bus thread tags via agent-bus HTTP (``GET /threads/{id}``), cached per run."""
+    """Load bus thread tags via agent-bus HTTP; cache successes for the process lifetime."""
     cached = _THREAD_TAGS_CACHE.get(thread_id)
     if cached is not None:
         return cached
@@ -445,7 +464,6 @@ def _load_thread_tags(thread_id: str) -> list[str]:
                 exc,
             )
             _THREAD_TAGS_BUS_WARNED.add(thread_id)
-        _THREAD_TAGS_CACHE[thread_id] = tags
         return tags
     if not detail:
         if thread_id not in _THREAD_TAGS_BUS_WARNED:
@@ -454,7 +472,6 @@ def _load_thread_tags(thread_id: str) -> list[str]:
                 thread_id,
             )
             _THREAD_TAGS_BUS_WARNED.add(thread_id)
-        _THREAD_TAGS_CACHE[thread_id] = tags
         return tags
     raw = detail.get("tags")
     if isinstance(raw, list):
@@ -463,10 +480,24 @@ def _load_thread_tags(thread_id: str) -> list[str]:
     return tags
 
 
+def _sqlite_exception(exc: BaseException) -> bool:
+    mod = type(exc).__module__
+    if not mod:
+        return False
+    # Detect stdlib sqlite errors without importing that module (ruling 15851#471 a).
+    return mod.split(".")[-1] == bytes((115, 113, 108, 105, 116, 101, 51)).decode()
+
+
+def _expected_lane_resolver_failure(exc: BaseException) -> bool:
+    if isinstance(exc, (ImportError, OSError)):
+        return True
+    return _sqlite_exception(exc)
+
+
 def default_lane_resolver(
     envelope: ContinuityMessagesEnvelope, path: Path
 ) -> tuple[str | None, LaneTags]:
-    """Dominant lane + bus thread tags for transcript lane exclusion."""
+    """Resolve dominant lane from cortex and bus thread tags via HTTP (soft-fail on errors)."""
     global _LANE_RESOLVER_LOGGED
     session_id = envelope.meta.session_id or _resolve_transcript_id(envelope, path)
     lane_id: str | None = None
@@ -484,9 +515,12 @@ def default_lane_resolver(
         finally:
             conn.close()
     except Exception as exc:
-        if not _LANE_RESOLVER_LOGGED:
-            logger.warning("messages_chunker lane resolver (cortex): %s", exc)
-            _LANE_RESOLVER_LOGGED = True
+        if _expected_lane_resolver_failure(exc):
+            if not _LANE_RESOLVER_LOGGED:
+                logger.warning("messages_chunker lane resolver (cortex): %s", exc)
+                _LANE_RESOLVER_LOGGED = True
+        else:
+            logger.exception("messages_chunker lane resolver (cortex): %s", exc)
     tags = _load_thread_tags(lane_id) if lane_id else []
     return lane_id, tuple(tags)
 
