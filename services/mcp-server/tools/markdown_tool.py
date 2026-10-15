@@ -654,6 +654,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         if op == "delete_section":
             return _section_delete_result(resolved, path, sandbox, section)
         if op == "from_dict":
+            # Excluded from the house-rules size gate (ACK 658 gated md_insert
+            # only). A from_dict body can exceed 8192 B on *-house-rules.md.
             if is_converted_format(resolved):
                 return {
                     "error": (

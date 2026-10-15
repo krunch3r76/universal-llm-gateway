@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from tools import markdown_tool
-from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
 from tools.filesystem import _write_authority as authority
@@ -144,13 +143,11 @@ def test_md_delete_house_rules_size_gate_binds(
     assert len(path.read_bytes()) < len(before)
     assert len(path.read_bytes()) > authority.HOUSE_RULES_MAX_BYTES
     path.write_text(body, encoding="utf-8")
+    sentinel = {"error": "gate-sentinel", "reason": "house_rules.over_budget"}
     with patch.object(
         markdown_tool,
         "evaluate_house_rules_post_edit_size",
-        return_value={
-            "error": "Use rotation — 12286-rulings-archive.md",
-            "reason": "house_rules.over_budget",
-        },
+        return_value=sentinel,
     ):
         rejected = markdown_tool._section_delete_result(
             path,
@@ -158,5 +155,55 @@ def test_md_delete_house_rules_size_gate_binds(
             "cortex",
             "Annex",
         )
-    _assert_rotation_refusal(rejected)
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert rejected.get("error") == "gate-sentinel"
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("op", "kwargs"),
+    [
+        ("append_section", {"section": "HOUSE RULES", "content": "Z" * 64}),
+        ("rewrite_section", {"section": "HOUSE RULES", "content": "Y" * 9000}),
+        (
+            "insert_section",
+            {
+                "heading": "Extra",
+                "section": "HOUSE RULES",
+                "content": "z" * 64,
+                "level": 2,
+                "position": "after",
+            },
+        ),
+    ],
+)
+def test_markdown_dispatcher_house_rules_growth_refused(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    op: str,
+    kwargs: dict,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    monkeypatch.setattr(markdown_tool, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    _house_rules_over_budget(sandbox_root, rel)
+    before = (sandbox_root / rel).read_bytes()
+    monkeypatch.setattr(
+        markdown_tool,
+        "_resolve_sandbox",
+        lambda *_a, **_k: sandbox_root / rel,
+    )
+    captured: dict = {}
+
+    class Capture:
+        def tool(self, **_kwargs):
+            def deco(fn):
+                captured["markdown"] = fn
+                return fn
+
+            return deco
+
+    markdown_tool.register_markdown_tools(Capture())
+    rejected = captured["markdown"](op=op, path=rel, sandbox="cortex", **kwargs)
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert (sandbox_root / rel).read_bytes() == before

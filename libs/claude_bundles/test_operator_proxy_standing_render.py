@@ -262,6 +262,37 @@ def test_bullet_ident_leading_token_widens_k23_is_not_k23() -> None:
     )
 
 
+def _body_within_budget(intro_len: int, target: int) -> str:
+    intro = "I" * intro_len
+    rows: list[str] = []
+    index = 1
+    body = f"## HOUSE RULES\n{intro}"
+    while len(body.encode("utf-8")) < target - 80:
+        row = f"- K{index} " + ("r" * 80)
+        rows.append(row)
+        body = f"## HOUSE RULES\n{intro}\n" + "\n".join(rows)
+        index += 1
+    encoded = body.encode("utf-8")
+    if len(encoded) > target:
+        body = encoded[:target].decode("utf-8", errors="ignore")
+    return body
+
+
+@pytest.mark.parametrize("target", [8100, 8192])
+def test_intro_included_does_not_consume_budget_twice(target: int) -> None:
+    body = _body_within_budget(500, target)
+    assert len(body.encode("utf-8")) <= RULES_BUDGET_B
+    assert len(body.encode("utf-8")) >= 8000
+    text, truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=body,
+    )
+    assert truncated is False
+    assert "[rules truncated:" not in text
+    assert "K1" in text
+
+
 def test_friction_39340_post_trim_live_copy_within_budget_no_truncation_flag() -> None:
     from pathlib import Path
 

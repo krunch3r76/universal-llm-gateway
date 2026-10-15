@@ -53,7 +53,7 @@ from ._search_helpers import (
     build_search_warnings,
     load_text_for_search_file,
 )
-from .file_editor import perform_edit
+from .file_editor import HouseRulesSizeRejectedError, perform_edit
 from .filesystem._ops_search import (
     DEFAULT_MAX_RESULTS,
     SEARCH_CONVERTED_BUDGET_S,
@@ -977,6 +977,8 @@ def register_project_tools(mcp: FastMCP) -> None:
                 target_str=target_str if target_str else None,
                 all_occurrences=all_occurrences,
             )
+        except HouseRulesSizeRejectedError as exc:
+            return cast("dict[str, str | int]", exc.rejection)
         except WriteVerifyError as exc:
             return cast("dict[str, str | int]", write_verify_error_dict(exc))
         rel = str(target.relative_to(_PROJECT_ROOT.resolve()))

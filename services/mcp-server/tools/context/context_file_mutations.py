@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from mcp_events import record
 from universal_logging import get_logger
 
-from ..file_editor import perform_edit
+from ..file_editor import HouseRulesSizeRejectedError, perform_edit
 from .tasks_path_policy import (
     safe_tasks_path,
 )
@@ -158,6 +158,8 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
             record("mcp.tool.file.edited", **event_payload)
             logger.info("edit_context_file: %s on %s", operation, path)
             return result
+        except HouseRulesSizeRejectedError as exc:
+            return exc.rejection
         except (FileNotFoundError, ValueError, OSError) as exc:
             if isinstance(exc, FileNotFoundError):
                 reason = "not_found"

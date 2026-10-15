@@ -1,10 +1,19 @@
-"""Keep-set trim for 12286 house-rules (#649 items 1–7) and ordered cortex writes."""
+"""Keep-set trim for 12286 house-rules (#649 items 1–7) and ordered cortex writes.
+
+Cortex note writes go through ``durable_io.atomic.durable_write_text`` (flock,
+temp, fsync, replace, CAS). The house-rules pre-image is checked before any
+write. A second append is skipped when the seven verbatim blocks are already
+in the archive.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from durable_io.atomic import durable_write_text
 
 K36_VERBATIM_MARKERS = (
     "Argon five-plan trial done and reported 2026-10-15 04:17Z",
@@ -93,6 +102,22 @@ class KeepSetTrimReceipts:
     fixture_written: bool
 
 
+def _house_rules_size_rejection(path: Path, trimmed: str, before_len: int) -> dict | None:
+    """Call the MCP house-rules gate without importing the filesystem package."""
+    mcp_root = Path(__file__).resolve().parents[2] / "services" / "mcp-server"
+    root_s = str(mcp_root)
+    if root_s not in sys.path:
+        sys.path.insert(0, root_s)
+    from tools.filesystem._write_authority import evaluate_house_rules_post_edit_size
+
+    return evaluate_house_rules_post_edit_size(
+        path=path.name,
+        post_edit_text=trimmed,
+        before_len=before_len,
+        dest_exists=True,
+    )
+
+
 def apply_keep_set_trim(
     archive: Path,
     house_rules: Path,
@@ -101,22 +126,49 @@ def apply_keep_set_trim(
     expected_archive_sha: str,
     expected_house_rules_sha: str,
 ) -> KeepSetTrimReceipts:
-    """Append archive blocks, trim house-rules, then copy post-trim bytes to fixture."""
+    """Check both pre-images, then append, trim, and copy the fixture.
+
+    House-rules sha drift raises before any write. Archive append is skipped
+    when ``archive_append_blocks`` is already present, so a retry does not
+    duplicate the seven verbatim blocks.
+    """
     archive_bytes = archive.read_bytes()
     if hashlib.sha256(archive_bytes).hexdigest() != expected_archive_sha:
         raise ValueError("archive sha drift at step 1")
-    append = archive_append_blocks()
-    archive.write_text(archive.read_text(encoding="utf-8") + "\n" + append, encoding="utf-8")
-    if not archive_has_k36_verbatim(archive.read_text(encoding="utf-8")):
-        raise ValueError("archive missing K36 verbatim block after append")
     hr_bytes = house_rules.read_bytes()
     if hashlib.sha256(hr_bytes).hexdigest() != expected_house_rules_sha:
         raise ValueError("house-rules sha drift before trim write")
-    trimmed = trim_house_rules_body(hr_bytes.decode("utf-8"))
-    house_rules.write_text(trimmed, encoding="utf-8")
-    fixture.write_text(trimmed, encoding="utf-8")
+    append = archive_append_blocks()
+    archive_text = archive_bytes.decode("utf-8")
+    archive_written = False
+    if append.strip() not in archive_text:
+        durable_write_text(
+            archive,
+            archive_text + "\n" + append,
+            expected_pre_image=expected_archive_sha,
+        )
+        archive_written = True
+    if not archive_has_k36_verbatim(archive.read_text(encoding="utf-8")):
+        raise ValueError("archive missing K36 verbatim block after append")
+    hr_sha = hashlib.sha256(hr_bytes).hexdigest()
+    if hr_sha == POST_TRIM_SHA:
+        trimmed = hr_bytes.decode("utf-8")
+    else:
+        trimmed = trim_house_rules_body(hr_bytes.decode("utf-8"))
+    rejection = _house_rules_size_rejection(house_rules, trimmed, len(hr_bytes))
+    if rejection is not None:
+        raise ValueError(str(rejection["reason"]))
+    durable_write_text(
+        house_rules,
+        trimmed,
+        expected_pre_image=expected_house_rules_sha,
+    )
+    fixture_pre = (
+        hashlib.sha256(fixture.read_bytes()).hexdigest() if fixture.is_file() else None
+    )
+    durable_write_text(fixture, trimmed, expected_pre_image=fixture_pre)
     return KeepSetTrimReceipts(
-        archive_written=True,
+        archive_written=archive_written,
         house_rules_written=True,
         fixture_written=True,
     )

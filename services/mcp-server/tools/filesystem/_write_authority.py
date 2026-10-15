@@ -25,6 +25,8 @@ class HouseRulesSizeRejectedError(Exception):
     Callers inside ``path_flock`` turn this into a structured fs refusal without
     persisting bytes. ``write_binary`` / ``append_binary`` / ``copy`` / ``move`` are
     out of scope for r5 (proposal §15): they bypass this helper until a later ACK.
+    ``markdown(op="from_dict")`` is the same exclusion: ACK 658 gated ``md_insert``
+    only, and ``from_dict`` still replaces the whole document with no size check.
     """
 
     def __init__(self, rejection: dict[str, Any]) -> None:

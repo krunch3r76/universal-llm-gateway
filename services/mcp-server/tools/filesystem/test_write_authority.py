@@ -436,6 +436,109 @@ def test_house_rules_edit_over_budget_growth_refused_bytes_unchanged(
     assert (sandbox_root / rel).read_bytes() == before
 
 
+def test_ops_text_passes_post_edit_image_and_surfaces_size_rejection(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan §6 name for the replace case: small fragment, post-edit image grows."""
+    test_house_rules_edit_over_budget_growth_refused_bytes_unchanged(
+        sandbox_root,
+        monkeypatch,
+        "replace",
+        "SENTINELX",
+        {"target": "SENTINEL"},
+    )
+
+
+def test_house_rules_create_over_8192_refused(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/new-house-rules.md"
+    rejected = ops_text.write_file_impl(rel, "x" * 8193)
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert not (sandbox_root / rel).exists()
+
+
+def test_edit_file_surfaces_unknown_authority_reason(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    monkeypatch.setattr(ops_text, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    _seed_house_rules(sandbox_root, rel, _house_rules_body_exactly(100))
+    before = (sandbox_root / rel).read_bytes()
+
+    def future(**_kwargs):
+        return {
+            "reason": "future.reason",
+            "error": "later gate",
+            "artifact_class": "shared",
+        }
+
+    monkeypatch.setattr(ops_text, "evaluate_write_authority", future)
+    rejected = ops_text.edit_file_impl(rel, "append", "Z")
+    assert rejected.get("reason") == "future.reason"
+    assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_edit_project_file_house_rules_growth_returns_structured_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import project
+
+    monkeypatch.setattr(project, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(project, "record", lambda *_a, **_k: None)
+    target = tmp_path / "x-house-rules.md"
+    target.write_text("x" * 8300, encoding="utf-8")
+    before = target.read_bytes()
+    captured: dict = {}
+
+    class Capture:
+        def tool(self, **_kwargs):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return deco
+
+    project.register_project_tools(Capture())
+    rejected = captured["edit_project_file"]("x-house-rules.md", "append", "Z")
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert target.read_bytes() == before
+
+
+def test_edit_context_file_house_rules_growth_returns_structured_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools.context import context_file_mutations as mutations
+    from tools.context import tasks_path_policy
+
+    monkeypatch.setattr(tasks_path_policy, "TASKS_ROOT", tmp_path)
+    monkeypatch.setattr(mutations, "record", lambda *_a, **_k: None)
+    target = tmp_path / "x-house-rules.md"
+    target.write_text("x" * 8300, encoding="utf-8")
+    before = target.read_bytes()
+    captured: dict = {}
+
+    class Capture:
+        def tool(self, **_kwargs):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return deco
+
+    mutations.register_context_file_mutation_tools(Capture())
+    rejected = captured["edit_context_file"]("x-house-rules.md", "append", "Z")
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert target.read_bytes() == before
+
+
 def test_file_editor_house_rules_growth_refused(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,

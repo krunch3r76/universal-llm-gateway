@@ -489,9 +489,6 @@ def render_house_rules_block(
         intro_parts.append(intro)
         if _utf8_len("\n".join(intro_parts)) <= budget:
             intro_included = True
-            budget -= _utf8_len(intro)
-            if heading_line:
-                budget -= _utf8_len(heading_line) + 1
         else:
             intro_dropped = True
 
@@ -525,10 +522,9 @@ def render_house_rules_block(
             drop_start=drop_start,
             uri=uri,
         )
-        intro_extra = 0
         if intro_included and intro:
-            intro_extra = _utf8_len(intro) + (1 if heading_line else 0)
-        if total + intro_extra <= budget:
+            total += _utf8_len(intro) + (1 if heading_line else 0)
+        if total <= budget:
             break
         if accept_count == 0:
             break
@@ -844,6 +840,7 @@ __all__ = [
     "CHECKPOINT_BUDGET_B",
     "JOURNAL_HEAD_BUDGET_B",
     "PREAMBLE_SOFT_CAP_B",
+    "RULES_BUDGET_B",
     "RUNBOOK_BUDGET_B",
     "InflightRow",
     "assess_render_budget_and_identity",

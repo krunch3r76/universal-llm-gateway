@@ -199,6 +199,17 @@ def _edit_file_impl_locked(
             ),
             artifact_class="consult",
         )
+    if class_decision is not None:
+        return write_rejection(
+            path=path,
+            resolved=dest,
+            reason=str(class_decision.get("reason") or "write_authority.rejected"),
+            message=str(class_decision.get("error") or "write refused"),
+            actual_sha256=(
+                None if actual_sha256 is None else format_sha256_uri(actual_sha256)
+            ),
+            artifact_class=class_decision.get("artifact_class"),
+        )
     if expected_sha256 is not None and not sha256_hex_equal(
         actual_sha256, expected_sha256
     ):
