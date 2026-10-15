@@ -134,14 +134,28 @@ async def _index_file_impl(
             )
         return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
+    raw: bytes | None = None
     if prop_index is not None:
         cached_source = prop_index.get_indexed_source(source)
+        current_hash_for_skip: str | None = None
+        if (
+            cached_source is not None
+            and file_path.name.endswith(".messages.json")
+            and not force
+            and operation != "reindex"
+            and cached_source.mtime_ns == source_stat.st_mtime_ns
+            and cached_source.size_bytes == source_stat.st_size
+        ):
+            raw = await asyncio.to_thread(file_path.read_bytes)
+            current_hash_for_skip = indexing_source_hash(raw, file_path)
         if _should_skip_cached_source(
             force=force,
             operation=operation,
             cached_source=cached_source,
             source_mtime_ns=source_stat.st_mtime_ns,
             source_size_bytes=source_stat.st_size,
+            file_path=file_path,
+            current_source_hash=current_hash_for_skip,
         ):
             await prop_index.clear_pending(source)
             if emit_skip_event and state._event_bus is not None:
@@ -156,7 +170,8 @@ async def _index_file_impl(
             return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
     await require_healthy()
-    raw = await asyncio.to_thread(file_path.read_bytes)
+    if raw is None:
+        raw = await asyncio.to_thread(file_path.read_bytes)
     source_hash = indexing_source_hash(raw, file_path)
 
     article_sync_old_path = await _run_article_sync_phase(

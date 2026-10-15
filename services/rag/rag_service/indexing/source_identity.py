@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from services.rag.config import RagConfig
 
 
+def _is_messages_seal_path(file_path: Path | None) -> bool:
+    return file_path is not None and file_path.name.endswith(".messages.json")
+
+
 def _should_skip_cached_source(
     *,
     force: bool,
@@ -25,18 +29,33 @@ def _should_skip_cached_source(
     cached_source: object | None,
     source_mtime_ns: int,
     source_size_bytes: int,
+    file_path: Path | None = None,
+    current_source_hash: str | None = None,
 ) -> bool:
     """Return whether the stat-first cache may short-circuit this source.
 
     With extraction decoupled, the skip check only compares file identity
     (mtime + size). Extraction staleness is handled by the extraction worker.
+
+    For ``*.messages.json`` seals, ``indexing_source_hash`` folds
+    ``CHUNKER_VERSION`` into ``indexed_sources.source_hash``. Stat match alone
+    is insufficient: skip only when ``current_source_hash`` matches the cached
+    row (caller supplies hash after reading bytes).
     """
     if force or operation == "reindex" or cached_source is None:
         return False
     cached = cached_source
-    return bool(
-        cached.mtime_ns == source_mtime_ns and cached.size_bytes == source_size_bytes
-    )
+    if not (
+        cached.mtime_ns == source_mtime_ns
+        and cached.size_bytes == source_size_bytes
+    ):
+        return False
+    if _is_messages_seal_path(file_path):
+        cached_hash = getattr(cached, "source_hash", "") or ""
+        if not cached_hash or not current_source_hash:
+            return False
+        return cached_hash == current_source_hash
+    return True
 
 
 def _derive_subdirectory(source: str, config: RagConfig) -> str:

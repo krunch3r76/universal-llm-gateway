@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.rag.chunkers.messages_chunker import indexing_source_hash
 from services.rag.directory_ops import index_directory_contents
 from services.rag.indexing_helpers import migrate_chroma_source
 from services.rag.models import IndexResult
@@ -48,6 +50,56 @@ def test_should_not_skip_cached_source_for_reindex() -> None:
         cached_source=_cached_source(),
         source_mtime_ns=123,
         source_size_bytes=456,
+    )
+
+
+def test_messages_json_stat_match_old_chunker_version_does_not_skip() -> None:
+    raw = b'{"schema":"ulg.continuity.messages/1","messages":[]}'
+    path = Path("/data/seals/cursor-test.messages.json")
+    current_hash = indexing_source_hash(raw, path)
+    stale_hash = hashlib.sha256(raw + b"\nconversation-messages/1").hexdigest()
+    assert stale_hash != current_hash
+    cached = IndexedSourceSnapshot(
+        source=str(path),
+        mtime_ns=999,
+        size_bytes=len(raw),
+        extraction_schema_version=7,
+        extraction_model="rag-extraction",
+        updated_at="2026-04-03T00:00:00Z",
+        source_hash=stale_hash,
+    )
+    assert not _should_skip_cached_source(
+        force=False,
+        operation="index",
+        cached_source=cached,
+        source_mtime_ns=999,
+        source_size_bytes=len(raw),
+        file_path=path,
+        current_source_hash=current_hash,
+    )
+
+
+def test_messages_json_stat_match_current_hash_skips() -> None:
+    raw = b'{"schema":"ulg.continuity.messages/1","messages":[]}'
+    path = Path("/data/seals/cursor-test.messages.json")
+    current_hash = indexing_source_hash(raw, path)
+    cached = IndexedSourceSnapshot(
+        source=str(path),
+        mtime_ns=999,
+        size_bytes=len(raw),
+        extraction_schema_version=7,
+        extraction_model="rag-extraction",
+        updated_at="2026-04-03T00:00:00Z",
+        source_hash=current_hash,
+    )
+    assert _should_skip_cached_source(
+        force=False,
+        operation="index",
+        cached_source=cached,
+        source_mtime_ns=999,
+        source_size_bytes=len(raw),
+        file_path=path,
+        current_source_hash=current_hash,
     )
 
 
