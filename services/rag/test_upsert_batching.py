@@ -380,6 +380,27 @@ async def test_slice_failure_does_not_call_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_sources_passes_none_not_chunk_ids() -> None:
+    """Full-source delete must not hand the chunk-id list to metadata cleanup.
+
+    A non-empty id list takes the unsliced ``chunk_id IN (...)`` branch
+    (SQLITE_MAX_VARIABLE_NUMBER). ``WHERE source = ?`` already covers the rows.
+    """
+    from services.rag.directory_ops import delete_sources
+
+    collection = MagicMock()
+    collection.get.return_value = {"ids": ["c1", "c2"]}
+    metadata = AsyncMock()
+    deleted_sources, deleted_chunks = await delete_sources(
+        collection=collection,
+        sources={"/src/a.md"},
+        remove_source_metadata_fn=metadata,
+    )
+    assert (deleted_sources, deleted_chunks) == (1, 2)
+    metadata.assert_awaited_once_with("/src/a.md", None)
+
+
+@pytest.mark.asyncio
 async def test_full_source_retry_deletes_properties_by_source(tmp_path) -> None:
     """N3: source-column delete removes non-survivor rows even when ids are partial."""
     from pathlib import Path

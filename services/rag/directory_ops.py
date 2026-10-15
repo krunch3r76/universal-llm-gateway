@@ -266,7 +266,10 @@ async def delete_sources(
                 await run_chroma(chroma_delete_ids, collection, chunk_ids)
                 deleted_chunks += len(chunk_ids)
             if remove_source_metadata_fn is not None:
-                await remove_source_metadata_fn(source, chunk_ids or None)
+                # None, not the id list: an unsliced IN (...) of every chunk
+                # can hit SQLITE_MAX_VARIABLE_NUMBER. WHERE source = ? covers
+                # the rows (friction:39359 review 15851#723).
+                await remove_source_metadata_fn(source, None)
             deleted_sources += 1
         except Exception:
             logger.error(
