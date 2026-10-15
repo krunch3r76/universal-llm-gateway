@@ -131,6 +131,14 @@ def main() -> int:
         help="type into the window the operator has focused; skip compositor activate",
     )
     p.add_argument(
+        "--model-query",
+        default=None,
+        help=(
+            "override policy.hop_model_query for this hop (default: 'Gemini 4 Argon'; "
+            "pass '' to keep last-used model)"
+        ),
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="write the message, print the remote command, no keys",
@@ -262,6 +270,7 @@ def main() -> int:
         no_raise=args.no_raise,
         departing_transcript_id=args.transcript_id,
         on_fired=None if args.dry_run else _on_fired,
+        model_query=args.model_query,
     )
     out["arm_labels"] = labels
     out["seal"] = seal

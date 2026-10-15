@@ -76,6 +76,7 @@ KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 # qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
+DEFAULT_HOP_MODEL_QUERY = "Gemini 4 Argon"
 _CHECKPOINT_TIMEOUT_S = 15.0
 _WAIT_SLICE_S = 55.0
 
@@ -101,6 +102,19 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
     title = effective_policy(state).get("hop_focus_title")
     return str(title) if title else None
+
+
+def policy_hop_model_query(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
+    """``policy.hop_model_query`` — Ctrl+/ filter after Glass ``Ctrl+N``; default Argon.
+
+    Missing key → ``DEFAULT_HOP_MODEL_QUERY``. An explicit empty string in policy
+    disables ``--model-query`` so the tab keeps the operator's last model pick.
+    """
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    val = effective_policy(state).get("hop_model_query")
+    if val is None:
+        return DEFAULT_HOP_MODEL_QUERY
+    return str(val).strip()
 
 
 TAIL_RECIPE = (
@@ -438,6 +452,7 @@ def remote_launch_command(
     remote_repo: str,
     focus_title: str | None = None,
     no_raise: bool = False,
+    model_query: str = DEFAULT_HOP_MODEL_QUERY,
 ) -> str:
     """Build the GUI-host Glass hop command.
 
@@ -445,14 +460,18 @@ def remote_launch_command(
     Ctrl+Enter via ``glass-launch``. IDE ``launch`` (Ctrl+T) hits the wrong
     toplevel and does not open a Glass agent. ``focus_title`` / ``no_raise`` are
     accepted for call-site compatibility; Glass picks the Agents window itself.
+    Non-empty ``model_query`` appends ``--model-query`` so Ctrl+/ selects that model.
     """
     del focus_title, no_raise  # Glass path focuses Agents; IDE flags unused
-    return (
+    base = (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} glass-launch "
         f"--message-file {shlex.quote(remote_msg_path)} "
         f"--repo {shlex.quote(remote_repo)}"
     )
+    if model_query:
+        return f"{base} --model-query {shlex.quote(model_query)}"
+    return base
 
 
 def _parse_keystroke_stdout(stdout: str) -> dict[str, Any]:
@@ -566,6 +585,7 @@ def fire_ide_hop(
     departing_transcript_id: str | None = None,
     on_fired: Any | None = None,
     armed_since: Any | None = None,
+    model_query: str | None = None,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -604,6 +624,9 @@ def fire_ide_hop(
             "fix": GUI_HOST_UNSET_FIX,
         }
     focus_title = None if no_raise else focus_title_for(policy_focus_title(root_id))
+    resolved_model_query = (
+        policy_hop_model_query(root_id) if model_query is None else model_query
+    )
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
@@ -614,6 +637,7 @@ def fire_ide_hop(
         remote_repo=remote_repo,
         focus_title=focus_title,
         no_raise=no_raise,
+        model_query=resolved_model_query,
     )
     result: dict[str, Any] = {
         "root": root_id,
@@ -621,6 +645,7 @@ def fire_ide_hop(
         "gui_host": gui_host,
         "raise_uri": None,
         "focus_title": focus_title,
+        "model_query": resolved_model_query,
         "remote_cmd": cmd,
         "bus_turn": seal.get("bus_turn"),
         "execution_id": seal.get("execution_id"),
