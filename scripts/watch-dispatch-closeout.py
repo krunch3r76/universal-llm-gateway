@@ -45,7 +45,9 @@ from bus_watch.state import write_state
 
 _REPO = Path(__file__).resolve().parents[1]
 _QUERY_EVENTS = _REPO / "scripts" / "query-events"
-_AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+_AGENT_BUS_SOCK = os.environ.get(
+    "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
+)
 _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
 )
@@ -135,7 +137,9 @@ def _wait_closeout(
 
 
 def _fetch_closeout_turn(
-    client: httpx.Client, thread_id: str, turn: int,
+    client: httpx.Client,
+    thread_id: str,
+    turn: int,
 ) -> dict[str, Any]:
     resp = client.get(
         f"http://localhost/turns?{urlencode({'thread': thread_id, 'last': 5, 'compact': 'false'})}"
@@ -166,64 +170,138 @@ def _is_sdk_closeout_turn(row: dict[str, Any]) -> bool:
     return bool(_parse_closeout_json(str(row.get("body") or "")).get("schema_version"))
 
 
+def _closeout_thread_id(closeout: dict[str, Any], *, fallback: str = "") -> str:
+    effects = closeout.get("effects_manifest")
+    if isinstance(effects, dict):
+        tid = str(effects.get("thread_id") or "").strip()
+        if tid:
+            return tid
+    evidence = closeout.get("evidence_uris")
+    if isinstance(evidence, dict):
+        buses = evidence.get("bus_threads") or []
+        if buses:
+            return str(buses[0]).strip()
+    return str(fallback or "").strip()
+
+
+def _failed_verification_commands(closeout: dict[str, Any]) -> list[str]:
+    failed: list[str] = []
+    for row in closeout.get("verification") or []:
+        if not isinstance(row, dict):
+            continue
+        exit_code = row.get("exit_code")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            continue
+        if exit_code != 0:
+            failed.append(str(row.get("command") or "unknown"))
+    return failed
+
+
 def _arc_outcome_line(
     closeout: dict[str, Any],
     *,
     label: str,
-    parent_harvest_subject: str | None,
+    thread_id: str = "",
 ) -> tuple[str, str]:
-    """Return (subject, body) for operator pager — outcome-first NL."""
+    """Return (subject, body) for operator pager from this closeout payload only."""
     summary = str(closeout.get("summary") or "").strip()
     work_outcome = str(closeout.get("work_outcome") or "").strip()
-    offgit = closeout.get("files_offgit_produced") or []
-    spec_uri = ""
-    for item in offgit:
-        s = str(item)
-        if "g3-spec" in s.lower() or s.endswith("g3-spec.md"):
-            spec_uri = s
-            break
-    if not spec_uri and offgit:
-        spec_uri = str(offgit[0])
+    status = str(closeout.get("status") or "").strip()
+    outcome_token = work_outcome or status or "closeout"
+    bus_thread = _closeout_thread_id(closeout, fallback=thread_id)
 
-    spec_landed = bool(spec_uri and "g3-spec" in spec_uri.lower())
-    checks_failed = work_outcome == "checks_failed"
+    subject_bits = [label]
+    if bus_thread:
+        subject_bits.append(f"thread {bus_thread}")
+    subject_bits.append(outcome_token)
+    subject = " · ".join(subject_bits)[:120]
 
-    if parent_harvest_subject:
-        lead = parent_harvest_subject
-    elif spec_landed and checks_failed:
-        lead = f"{label}: implementation spec revised and landed (capture partial)"
-    elif spec_landed:
-        lead = f"{label}: implementation spec landed"
-    elif work_outcome == "complete":
-        lead = f"{label}: dispatch complete"
-    elif checks_failed:
-        lead = f"{label}: dispatch finished with capture gaps"
-    else:
-        lead = f"{label}: dispatch closeout"
-
-    subject = lead[:120]
-    vision = (
-        "ULG event-store durability: embedded SQLite DBs must survive off NFS "
-        "with retention and visible write-fail signals for trading audit."
-    )
-    architecture = (
-        "Cortex spec + agent-bus scoreboard on the event-db corruption recovery "
-        "arc — G3 locks files_expected before G4 skeptic and G5 implement."
-    )
-    body_parts = [vision, architecture]
-    if spec_uri:
-        body_parts.append(f"Spec: {spec_uri}")
+    body_parts: list[str] = []
     if summary:
         body_parts.append(summary[:500])
-    if checks_failed:
-        body_parts.append(
-            "Worker closeout flagged capture partial (typical: off-git Cortex deliverables). "
-            "Verify spec sha on thread 9938 before G4."
-        )
-    body_parts.append(
-        "Next: G4 Opus skeptic re-run on rev 3 spec. Thread 9938 for detail."
-    )
+    work_key = str(closeout.get("work_key") or "").strip()
+    if work_key:
+        body_parts.append(f"work_key: {work_key}")
+    failed = _failed_verification_commands(closeout)
+    if failed:
+        shown = [" ".join(cmd.split())[:120] for cmd in failed[:3]]
+        more = f" (+{len(failed) - 3} more)" if len(failed) > 3 else ""
+        body_parts.append("checks_failed: " + "; ".join(shown) + more)
+    if bus_thread:
+        body_parts.append(f"thread: {bus_thread}")
     return subject, "\n\n".join(body_parts)
+
+
+def _generic_dispatch_page(
+    *,
+    label: str,
+    thread_id: str,
+    outcome: str,
+    elapsed_s: float,
+    duration: float | int | None,
+    model: str,
+    worker_subject: str,
+    parent_harvest_subject: str | None = None,
+) -> tuple[str, str]:
+    if parent_harvest_subject:
+        page_subject = parent_harvest_subject[:120]
+    else:
+        page_subject = f"ULG dispatch done — {label}"
+    page_body = (
+        f"thread {thread_id} · {outcome}"
+        f" · elapsed {elapsed_s:.0f}s"
+        f"{f' · worker {duration:.0f}s' if isinstance(duration, (int, float)) else ''}"
+        f"{f' · {model}' if model else ''}"
+        f"{f' · {worker_subject}' if worker_subject else ''}"
+    )
+    return page_subject, page_body
+
+
+def _closeout_page_text(
+    *,
+    closeout_json: dict[str, Any],
+    parent_subj: str | None,
+    label: str,
+    thread_id: str,
+    outcome: str,
+    elapsed_s: float,
+    duration: float | int | None,
+    model: str,
+    worker_subject: str,
+) -> tuple[str, str]:
+    """Choose pager copy from closeout JSON, parent harvest, or generic fallback."""
+    if closeout_json and str(closeout_json.get("summary") or "").strip():
+        return _arc_outcome_line(closeout_json, label=label, thread_id=thread_id)
+    if parent_subj and not closeout_json:
+        return _generic_dispatch_page(
+            label=label,
+            thread_id=thread_id,
+            outcome=outcome,
+            elapsed_s=elapsed_s,
+            duration=duration,
+            model=model,
+            worker_subject=worker_subject,
+            parent_harvest_subject=parent_subj,
+        )
+    if closeout_json and not str(closeout_json.get("summary") or "").strip():
+        return _generic_dispatch_page(
+            label=label,
+            thread_id=thread_id,
+            outcome=outcome,
+            elapsed_s=elapsed_s,
+            duration=duration,
+            model=model,
+            worker_subject=worker_subject,
+        )
+    return _generic_dispatch_page(
+        label=label,
+        thread_id=thread_id,
+        outcome=outcome,
+        elapsed_s=elapsed_s,
+        duration=duration,
+        model=model,
+        worker_subject=worker_subject,
+    )
 
 
 def _parent_harvest_subject(
@@ -450,9 +528,7 @@ def main() -> int:
         watch_id = watch_id or latest_dispatch
         execution_id = execution_id or latest_execution
 
-    wait_execution_id = _resolve_execution_id(
-        watch_id=watch_id, explicit=execution_id
-    )
+    wait_execution_id = _resolve_execution_id(watch_id=watch_id, explicit=execution_id)
     arm_error = require_producer_declaration(
         wait_execution_id, no_producer=bool(args.no_producer)
     )
@@ -490,13 +566,18 @@ def main() -> int:
     with _bus_client(token) as client:
         while True:
             elapsed_s = time.monotonic() - started_at
-            if float(args.max_hours) > 0 and elapsed_s >= float(args.max_hours) * 3600.0:
+            if (
+                float(args.max_hours) > 0
+                and elapsed_s >= float(args.max_hours) * 3600.0
+            ):
                 print(
                     f"watcher expired label={args.label!r} elapsed={elapsed_s:.0f}s",
                     flush=True,
                 )
                 if state_path is not None:
-                    write_state(state_path, status="expired", elapsed_s=round(elapsed_s, 1))
+                    write_state(
+                        state_path, status="expired", elapsed_s=round(elapsed_s, 1)
+                    )
                 return 2
             print(
                 f"… heartbeat label={args.label} thread={thread_id} "
@@ -506,7 +587,10 @@ def main() -> int:
             if from_agent == "cursor-sdk" and not _worker_completed(watch_id):
                 print(_queue_status_line(watch_id, thread_id), flush=True)
             elif from_agent != "cursor-sdk":
-                print(f"phase=waiting for {from_agent} reply on thread {thread_id}", flush=True)
+                print(
+                    f"phase=waiting for {from_agent} reply on thread {thread_id}",
+                    flush=True,
+                )
             snap = _wait_closeout(
                 client,
                 thread_id=thread_id,
@@ -532,7 +616,9 @@ def main() -> int:
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
                 closeout_row = _fetch_closeout_turn(client, thread_id, reply_turn)
-                if from_agent == "cursor-sdk" and not _is_sdk_closeout_turn(closeout_row):
+                if from_agent == "cursor-sdk" and not _is_sdk_closeout_turn(
+                    closeout_row
+                ):
                     subject = str(closeout_row.get("subject") or "")
                     print(
                         f"… non-closeout turn={reply_turn} subject={subject!r}; "
@@ -549,7 +635,9 @@ def main() -> int:
                         )
                     continue
                 subject = str(closeout_row.get("subject") or "")
-                closeout_json = _parse_closeout_json(str(closeout_row.get("body") or ""))
+                closeout_json = _parse_closeout_json(
+                    str(closeout_row.get("body") or "")
+                )
                 parent_subj = _parent_harvest_subject(
                     client,
                     str(args.parent_thread or "").strip(),
@@ -585,20 +673,17 @@ def main() -> int:
                         f" · elapsed {elapsed_s:.0f}s"
                         f"{f' · {subject}' if subject else ''}"
                     )
-                elif closeout_json or parent_subj:
-                    page_subject, page_body = _arc_outcome_line(
-                        closeout_json,
-                        label=args.label,
-                        parent_harvest_subject=parent_subj,
-                    )
                 else:
-                    page_subject = f"ULG dispatch done — {args.label}"
-                    page_body = (
-                        f"thread {thread_id} · {outcome}"
-                        f" · elapsed {elapsed_s:.0f}s"
-                        f"{f' · worker {duration:.0f}s' if isinstance(duration, (int, float)) else ''}"
-                        f"{f' · {model}' if model else ''}"
-                        f"{f' · {subject}' if subject else ''}"
+                    page_subject, page_body = _closeout_page_text(
+                        closeout_json=closeout_json,
+                        parent_subj=parent_subj,
+                        label=args.label,
+                        thread_id=thread_id,
+                        outcome=outcome,
+                        elapsed_s=elapsed_s,
+                        duration=duration,
+                        model=model,
+                        worker_subject=subject,
                     )
                 _page_operator(
                     subject=page_subject,
