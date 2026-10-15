@@ -26,17 +26,45 @@ if [[ -z "$ROOT" ]]; then
   exit 1
 fi
 
+if ! [[ "$ROOT" =~ ^[0-9]+$ ]]; then
+  echo "invalid --root: must be numeric continuity id" >&2
+  exit 1
+fi
+
 HUB="${LIAISON_HUB_ROOT:-/mnt/torus/projects/universal-llm-gateway}"
 WATCH="${WATCH_DIR:-$HUB/tmp/watchers}"
 PROC_ROOT="${LIAISON_PROC_ROOT:-/proc}"
-SIGNAL_LOG="${LIAISON_SIGNAL_LOG:-/dev/null}"
 PYTHON="${LIAISON_PYTHON:-$HOME/.venvs/universal/bin/python}"
+BUS_WATCH_PATH="${LIAISON_PYTHONPATH:-${HUB}/libs}"
+if [[ ! -x "$PYTHON" ]]; then
+  echo "LIAISON_PYTHON not executable: $PYTHON" >&2
+  exit 2
+fi
 UNIT="liaison-ticker-${ROOT}.service"
 TICK="$WATCH/liaison-${ROOT}.tick.json"
+KILL="${LIAISON_KILL:-kill}"
+REAP_TIMEOUT="${LIAISON_REAP_TIMEOUT_S:-30}"
 
 _read_cmdline() {
   local pid="$1"
   tr '\0' ' ' <"${PROC_ROOT}/${pid}/cmdline" 2>/dev/null || true
+}
+
+_cmdline_matches_root() {
+  local cmd="$1"
+  [[ "$cmd" == *"--root ${ROOT} "* ]] || [[ "$cmd" == *"--root=${ROOT} "* ]] \
+    || [[ "$cmd" == *"--root=${ROOT}" ]]
+}
+
+_is_gear3_ticker_cmd() {
+  local cmd="$1"
+  { [[ "$cmd" == *liaison-tick.py* ]] || [[ "$cmd" == *metronome.py* ]]; } \
+    && [[ "$cmd" == *"--loop"* ]] \
+    && [[ "$cmd" == *"--spawn-on-wake"* ]]
+}
+
+_user_manager_reachable() {
+  systemctl --user show --property=Version --value >/dev/null 2>&1
 }
 
 _attended_loop_pids() {
@@ -46,11 +74,7 @@ _attended_loop_pids() {
     [[ -d "$d" ]] || continue
     cmd="$(_read_cmdline "${d##*/}")"
     [[ -n "$cmd" ]] || continue
-    if [[ "$cmd" == *"--root ${ROOT}"* ]] || [[ "$cmd" == *"--root=${ROOT}"* ]]; then
-      :
-    else
-      continue
-    fi
+    _cmdline_matches_root "$cmd" || continue
     if [[ "$cmd" == *"--register attended"* ]]; then
       if [[ "$cmd" == *liaison-tick.py* ]] || [[ "$cmd" == *liaison-arm-loop* ]]; then
         out+=("${d##*/}")
@@ -60,9 +84,37 @@ _attended_loop_pids() {
   printf '%s\n' "${out[@]}"
 }
 
+_attended_loop_without_spawn_pids() {
+  local out=()
+  local d cmd
+  for d in "${PROC_ROOT}"/[0-9]*; do
+    [[ -d "$d" ]] || continue
+    cmd="$(_read_cmdline "${d##*/}")"
+    [[ -n "$cmd" ]] || continue
+    [[ "$cmd" == *liaison-tick.py* ]] || continue
+    [[ "$cmd" == *"--loop"* ]] || continue
+    [[ "$cmd" == *"--spawn-on-wake"* ]] && continue
+    _cmdline_matches_root "$cmd" && out+=("${d##*/}")
+  done
+  printf '%s\n' "${out[@]}"
+}
+
 _tick_register_attended() {
   [[ -f "$TICK" ]] || return 1
-  TICK="$TICK" "$PYTHON" -c 'import json, os, sys; from pathlib import Path; data=json.loads(Path(os.environ["TICK"]).read_text(encoding="utf-8")); sys.exit(0 if str(data.get("register") or "") == "attended" else 1)' || return 1
+  set +e
+  TICK="$TICK" "$PYTHON" -c 'import json, os, sys; from pathlib import Path
+try:
+    data = json.loads(Path(os.environ["TICK"]).read_text(encoding="utf-8"))
+except (OSError, ValueError, json.JSONDecodeError):
+    sys.exit(2)
+sys.exit(0 if str(data.get("register") or "") == "attended" else 1)'
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 2 ]]; then
+    echo "tick json parse failed: $TICK" >&2
+    exit 2
+  fi
+  return "$rc"
 }
 
 _spawn_orphan_pids() {
@@ -72,26 +124,39 @@ _spawn_orphan_pids() {
     [[ -d "$d" ]] || continue
     cmd="$(_read_cmdline "${d##*/}")"
     [[ -n "$cmd" ]] || continue
-    [[ "$cmd" == *liaison-tick.py* ]] || continue
-    [[ "$cmd" == *"--loop"* ]] || continue
-    [[ "$cmd" == *"--spawn-on-wake"* ]] || continue
+    _is_gear3_ticker_cmd "$cmd" || continue
     [[ "$cmd" == *"--register attended"* ]] && continue
-    if [[ "$cmd" == *"--root ${ROOT}"* ]] || [[ "$cmd" == *"--root=${ROOT}"* ]]; then
-      out+=("${d##*/}")
-    fi
+    _cmdline_matches_root "$cmd" && out+=("${d##*/}")
   done
   printf '%s\n' "${out[@]}"
 }
 
 if _tick_register_attended; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: exit_attended"
+  fi
   exit 2
 fi
 if [[ -n "$(_attended_loop_pids | head -1)" ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: exit_attended"
+  fi
+  exit 2
+fi
+if [[ -n "$(_attended_loop_without_spawn_pids | head -1)" ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: exit_attended"
+  fi
+  exit 2
+fi
+
+if ! _user_manager_reachable; then
+  echo "user_manager_unreachable" >&2
   exit 2
 fi
 
 LOAD="$(
-  systemctl --user show -p LoadState --value "$UNIT" 2>/dev/null || true
+  systemctl --user show -p LoadState --value "$UNIT" 2>/dev/null
 )"
 LOAD="${LOAD//$'\n'/}"
 
@@ -101,54 +166,123 @@ while IFS= read -r line; do
 done < <(_spawn_orphan_pids || true)
 
 if [[ "$LOAD" == "loaded" ]]; then
+  MAIN_PID="$(
+    systemctl --user show -p MainPID --value "$UNIT" 2>/dev/null
+  )"
+  MAIN_PID="${MAIN_PID//$'\n'/}"
+  FILTERED=()
+  for o in "${ORPHANS[@]}"; do
+    if [[ -n "$MAIN_PID" && "$MAIN_PID" != "0" && "$o" == "$MAIN_PID" ]]; then
+      continue
+    fi
+    FILTERED+=("$o")
+  done
+  ORPHANS=("${FILTERED[@]}")
   if ((${#ORPHANS[@]} > 0)); then
+    echo "loaded unit has orphan ticker pids: ${ORPHANS[*]}" >&2
     exit 3
   fi
-  if [[ "$DRY_RUN" -eq 0 ]]; then
-    systemctl --user restart "$UNIT"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: loaded_restart"
+    exit 0
   fi
+  systemctl --user restart "$UNIT"
   exit 0
 fi
 
 if ((${#ORPHANS[@]} > 1)); then
+  echo "multiple orphan ticker pids: ${ORPHANS[*]}" >&2
   exit 3
 fi
 
+_start_cold() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: cold_start"
+    return 0
+  fi
+  echo "cold_start"
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
+  systemd-run --user --unit="liaison-ticker-${ROOT}" --collect \
+    --working-directory="$HUB" \
+    --setenv="PYTHONPATH=${HUB}/libs" \
+    -- "$PYTHON" scripts/liaison-tick.py --root "$ROOT" --loop --spawn-on-wake
+}
+
 if ((${#ORPHANS[@]} == 1)); then
   pid="${ORPHANS[0]}"
-  if [[ "$DRY_RUN" -eq 0 ]]; then
-    echo "SIGTERM ${pid}" >>"$SIGNAL_LOG"
-    kill -TERM "$pid" 2>/dev/null || true
-    WATCH_DIR="$WATCH" PYTHONPATH="$HUB/libs" "$PYTHON" - <<PY
-import os, time
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run: orphan_recycle"
+    exit 0
+  fi
+  if ! WATCH_DIR="$WATCH" PYTHONPATH="$BUS_WATCH_PATH" ROOT="$ROOT" "$PYTHON" - <<'PY'
+import os
+import sys
 from pathlib import Path
+
+import bus_watch.fable_lock as fl
+
+if not hasattr(fl, "ticker_lease_live"):
+    print("missing ticker_lease_live API", file=sys.stderr)
+    sys.exit(2)
+fl.WATCH_DIR = Path(os.environ["WATCH_DIR"])
+_ = fl.read_ticker_lock(os.environ["ROOT"])
+PY
+  then
+    echo "orphan branch: pre-kill import check failed" >&2
+    exit 2
+  fi
+  export WATCH_DIR="$WATCH"
+  export ROOT
+  if ! env "${KILL}" -TERM "$pid"; then
+    echo "kill_failed: SIGTERM ${pid}" >&2
+    exit 1
+  fi
+  WAIT_RC=0
+  set +e
+  WATCH_DIR="$WATCH" PYTHONPATH="$BUS_WATCH_PATH" ROOT="$ROOT" \
+    LIAISON_PROC_ROOT="$PROC_ROOT" LIAISON_REAP_TIMEOUT_S="$REAP_TIMEOUT" \
+    ORPHAN_PID="$pid" "$PYTHON" - <<'PY'
+import os
+import sys
+import time
+from pathlib import Path
+
 import bus_watch.fable_lock as fl
 
 fl.WATCH_DIR = Path(os.environ["WATCH_DIR"])
-deadline = time.time() + 30.0
+root = os.environ["ROOT"]
+orphan = os.environ["ORPHAN_PID"]
+proc_root = Path(os.environ["LIAISON_PROC_ROOT"])
+timeout = float(os.environ.get("LIAISON_REAP_TIMEOUT_S", "30"))
+deadline = time.time() + timeout
 while time.time() < deadline:
-    if fl.claim_ticker_lease("${ROOT}")["ok"]:
-        fl.release_ticker_lease("${ROOT}")
-        break
+    proc_gone = not (proc_root / orphan).is_dir()
+    lock = fl.read_ticker_lock(root)
+    if proc_gone and not fl.ticker_lease_live(lock, root_id=root):
+        sys.exit(0)
     time.sleep(0.05)
-else:
-    raise SystemExit(1)
+print("orphan reap timeout: proc or lease still live", file=sys.stderr)
+sys.exit(4)
 PY
-    systemctl --user reset-failed "$UNIT" 2>/dev/null || true
-    systemd-run --user --unit="liaison-ticker-${ROOT}" --collect \
-      --working-directory="$HUB" \
-      --setenv="PYTHONPATH=${HUB}/libs" \
-      -- "$PYTHON" scripts/liaison-tick.py --root "$ROOT" --loop --spawn-on-wake
+  WAIT_RC=$?
+  set -e
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
+  if ! systemd-run --user --unit="liaison-ticker-${ROOT}" --collect \
+    --working-directory="$HUB" \
+    --setenv="PYTHONPATH=${HUB}/libs" \
+    -- "$PYTHON" scripts/liaison-tick.py --root "$ROOT" --loop --spawn-on-wake; then
+    echo "orphan branch: systemd-run failed" >&2
+    exit 1
+  fi
+  if [[ "$WAIT_RC" -ne 0 ]]; then
+    exit "$WAIT_RC"
   fi
   exit 0
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "dry_run: cold_start"
   exit 0
 fi
 
-systemctl --user reset-failed "$UNIT" 2>/dev/null || true
-systemd-run --user --unit="liaison-ticker-${ROOT}" --collect \
-  --working-directory="$HUB" \
-  --setenv="PYTHONPATH=${HUB}/libs" \
-  -- "$PYTHON" scripts/liaison-tick.py --root "$ROOT" --loop --spawn-on-wake
+_start_cold

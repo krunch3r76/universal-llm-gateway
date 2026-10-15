@@ -349,3 +349,38 @@ def test_liaison_tick_go_under_exits_3_on_refused_ticker(
         ],
     )
     assert mod.main() == 3
+
+
+def test_ticker_alive_false_when_holder_pid_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch import fable_lock as fl
+    from bus_watch.go_under import ticker_alive
+
+    monkeypatch.setattr(fl, "WATCH_DIR", tmp_path)
+    fl.ticker_lock_path("10534").write_text(
+        json.dumps(
+            {"holder": "ticker:10534", "holder_pid": 999999, "root": "10534"}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fl, "_holder_pid_alive", lambda _pid: False)
+    assert ticker_alive("10534") is False
+
+
+def test_ticker_alive_false_wrong_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch import fable_lock as fl
+    from bus_watch.go_under import ticker_alive
+
+    monkeypatch.setattr(fl, "WATCH_DIR", tmp_path)
+    fl.ticker_lock_path("10534").write_text(
+        json.dumps(
+            {"holder": "ticker:99999", "holder_pid": 424242, "root": "10534"}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fl, "_holder_pid_alive", lambda _pid: True)
+    assert ticker_alive("10534") is False
+    assert fl.claim_ticker_lease("10534")["ok"] is True
