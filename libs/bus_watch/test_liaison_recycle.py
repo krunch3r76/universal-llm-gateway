@@ -8,7 +8,6 @@ import os
 import stat
 import subprocess
 import textwrap
-import threading
 import time
 from pathlib import Path
 
@@ -54,6 +53,7 @@ def _write_fake_systemctl(
     load_state: str = "not-found",
     main_pid: str = "0",
     unreachable: bool = False,
+    loadstate_probe_fail: bool = False,
 ) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     log_file = str(bin_dir / "systemctl.log")
@@ -73,6 +73,10 @@ def _write_fake_systemctl(
           exit 0
         fi
         if [[ "$*" == *"LoadState"* ]]; then
+          if [[ {loadstate_probe_fail!r} == "True" ]]; then
+            echo "Failed to get properties: Connection refused" >&2
+            exit 1
+          fi
           printf '%s\\n' {load_state!r}
           exit 0
         fi
@@ -101,6 +105,7 @@ def _write_fake_kill(
     clear_lock: bool = True,
     delay_clear_proc_s: float = 0.0,
     exit_code: int = 0,
+    esrch: bool = False,
 ) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "kill"
@@ -110,6 +115,10 @@ def _write_fake_kill(
             f"""\
             #!/usr/bin/env bash
             set -eu
+            if [[ {esrch!r} == "True" && ( "$1" == "-TERM" || "$1" == "-SIGTERM" || "$1" == "TERM" ) ]]; then
+              echo "kill: ($2): No such process" >&2
+              exit 1
+            fi
             echo "KILL_SENT $*" >>{log_file!r}
             if [[ "$1" == "-TERM" || "$1" == "-SIGTERM" || "$1" == "TERM" ]]; then
               target="$2"
@@ -162,39 +171,6 @@ def _write_fake_systemd_run(
         encoding="utf-8",
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-
-def _write_delayed_proc_removal_kill(
-    bin_dir: Path,
-    signal_log: Path,
-    proc_root: Path,
-    pid: int,
-    delay_s: float,
-) -> None:
-    """Fake kill that removes proc after delay; never touches lock bytes."""
-
-    def _delayed_rm() -> None:
-        time.sleep(delay_s)
-        import shutil
-
-        shutil.rmtree(proc_root / str(pid), ignore_errors=True)
-
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    log_file = str(signal_log)
-    script = bin_dir / "kill"
-    script.write_text(
-        textwrap.dedent(
-            f"""\
-            #!/usr/bin/env bash
-            set -eu
-            echo "KILL_SENT $*" >>{log_file!r}
-            exit 0
-            """
-        ),
-        encoding="utf-8",
-    )
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    threading.Thread(target=_delayed_rm, daemon=True).start()
 
 
 def _fake_proc(tmp_path: Path, pid: int, cmdline: str) -> None:
@@ -778,6 +754,105 @@ def test_dry_run_prints_branch_orphan(tmp_path: Path) -> None:
         root=root,
         extra_args=["--dry-run"],
         env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode == 0
+    assert "dry_run: orphan_recycle" in proc.stdout
+
+
+@pytest.mark.parametrize("bad_state", ["masked", "error", "bad-setting"])
+def test_recycle_unsupported_loadstate_no_kill(
+    tmp_path: Path, bad_state: str
+) -> None:
+    root = "16401"
+    orphan_pid = 999991
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    _write_fake_systemctl(bin_dir, load_state=bad_state)
+    _write_fake_kill(bin_dir, signal_log)
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode != 0
+    assert f"unsupported_loadstate: {bad_state}" in proc.stderr
+    assert not signal_log.exists()
+
+
+def test_recycle_loadstate_probe_failed_stderr(tmp_path: Path) -> None:
+    root = "16401"
+    orphan_pid = 999991
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    _write_fake_systemctl(bin_dir, loadstate_probe_fail=True)
+    _write_fake_kill(bin_dir, signal_log)
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(bin_dir, tmp_path / "proc"),
+    )
+    assert proc.returncode != 0
+    assert "loadstate_probe_failed:" in proc.stderr
+    assert not signal_log.exists()
+
+
+def test_recycle_kill_esrch_exit_1(tmp_path: Path) -> None:
+    root = "16401"
+    orphan_pid = 999991
+    bin_dir = tmp_path / "bin"
+    signal_log = tmp_path / "signals.log"
+    _write_fake_systemctl(bin_dir)
+    _write_fake_kill(bin_dir, signal_log, esrch=True)
+    _fake_proc(
+        tmp_path,
+        orphan_pid,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        env=_bin_env(bin_dir, tmp_path / "proc", ROOT=root),
+    )
+    assert proc.returncode == 1
+    assert "kill_esrch:" in proc.stderr
+    assert not signal_log.exists()
+
+
+def test_dry_run_orphan_skips_pre_kill_api(tmp_path: Path) -> None:
+    stub = tmp_path / "stub_libs"
+    (stub / "bus_watch").mkdir(parents=True)
+    (stub / "bus_watch" / "__init__.py").write_text("", encoding="utf-8")
+    (stub / "bus_watch" / "fable_lock.py").write_text(
+        "def read_ticker_lock(root):\n    return {}\n",
+        encoding="utf-8",
+    )
+    root = "16401"
+    bin_dir = tmp_path / "bin"
+    _write_fake_systemctl(bin_dir)
+    _fake_proc(
+        tmp_path,
+        999991,
+        f"{_PY} scripts/liaison-tick.py --root {root} --loop --spawn-on-wake",
+    )
+    proc = _run_recycle(
+        tmp_path,
+        root=root,
+        extra_args=["--dry-run"],
+        env=_bin_env(
+            bin_dir,
+            tmp_path / "proc",
+            LIAISON_PYTHONPATH=str(stub),
+        ),
     )
     assert proc.returncode == 0
     assert "dry_run: orphan_recycle" in proc.stdout
