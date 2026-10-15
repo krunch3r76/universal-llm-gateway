@@ -15,8 +15,9 @@ belief base with full revision history (AGM postulate suite: 25/25 in
 multi-agent coordination, and network-isolated inference with one
 audited path out.
 
-**Status:** working alpha. Daily production use, daily breaking
-changes. Watch the repo if the shape resonates.
+**Status:** working alpha. Daily production use on single-GPU and
+multi-node federated deployments, and daily breaking changes. Issues
+and contributions are welcome from builders comfortable with churn.
 
 ## Why this exists
 
@@ -25,10 +26,10 @@ life under material pressure (deadlines, disputes, seasons that punish
 dropped threads) needed a mind that doesn't reset, and the substrate
 that held is the product.
 
-Growth is a compound loop across seats (Cursor and web-anthropic) on
-that house. Judgment rents a frontier model when it must. Long and
-repeated pipelines run on the open-model local gateway, with OpenRouter
-as the scout for what earns a local slot.
+Work in the Cursor IDE and work in claude.ai share this house, so a
+session in one can continue the other. A hard judgment rents a frontier
+model. Long and repeated pipelines run on the open-model local gateway,
+with OpenRouter as the scout for what earns a local slot.
 
 ## Architecture
 
@@ -94,12 +95,6 @@ cd universal-llm-gateway
 launches the terminal management interface. Inference, memory, and
 coordination start and stop through `./manage`. Config:
 `~/.gateway/stargate.yaml`.
-
-## Status
-
-Working alpha, production-used on single-GPU and multi-node federated
-deployments. Issues and contributions are welcome from builders
-comfortable with churn.
 
 ## Documentation
 

@@ -155,6 +155,8 @@ README_REVISED.md
 !/docs/architecture/design/*.md
 # Public-promoted reference docs (linked from README; see docs-write-guard_ws.mdc)
 !/docs/agm-compliance-report.md
+!/docs/stack-detail.md
+!/docs/for-ai-agents.md
 # Agent guidance docs — public agent surface (operator-directed; see docs-write-guard_ws.mdc)
 !/docs/agent-guides/skills/*.md
 !/docs/agent-guides/templates/*.md
