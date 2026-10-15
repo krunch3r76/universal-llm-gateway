@@ -293,6 +293,44 @@ def test_intro_included_does_not_consume_budget_twice(target: int) -> None:
     assert "K1" in text
 
 
+def test_headingless_intro_with_oversized_first_row_stays_within_budget() -> None:
+    """Intro fits and the first row does not: the flag still has to fit.
+
+    accept_count stays 0, so the drop loop used to return intro+flag over budget.
+    """
+    intro = "I" * 8180
+    row = "- K1 " + ("x" * 9000)
+    body = "\n".join((intro, row))
+    assert not body.startswith("#")
+    text, truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=body,
+    )
+    assert truncated is True
+    assert len(text.encode("utf-8")) <= RULES_BUDGET_B
+    assert "I" * 8180 not in text
+
+
+def test_intro_dropped_with_rows_at_budget_stays_within_budget() -> None:
+    """A dropped intro appends a flag even when every row already fills the budget."""
+    heading = "## HOUSE RULES"
+    intro = "H" * (RULES_BUDGET_B + 32)
+    row_len = RULES_BUDGET_B - len(heading.encode("utf-8")) - 1
+    row = "- K1 " + ("r" * (row_len - len("- K1 ")))
+    body = "\n".join((heading, intro, row))
+    packed = "\n".join((heading, row))
+    assert len(packed.encode("utf-8")) == RULES_BUDGET_B
+    text, truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=body,
+    )
+    assert truncated is True
+    assert "intro" in text
+    assert len(text.encode("utf-8")) <= RULES_BUDGET_B
+
+
 def test_headingless_truncation_stays_within_budget() -> None:
     """Flag-room accounting charges the intro separator even with no heading.
 
@@ -306,7 +344,9 @@ def test_headingless_truncation_stays_within_budget() -> None:
     flag = _rules_truncation_flag(
         ["K2"], "cortex://notes/system/threads/12286-house-rules.md"
     )
-    kept_len = RULES_BUDGET_B - len(flag.encode("utf-8")) - len(intro.encode("utf-8")) - 1
+    kept_len = (
+        RULES_BUDGET_B - len(flag.encode("utf-8")) - len(intro.encode("utf-8")) - 1
+    )
     kept = "- K1 " + ("r" * (kept_len - len("- K1 ")))
     dropped = "- K2 " + ("z" * 400)
     body = "\n".join((intro, kept, dropped))

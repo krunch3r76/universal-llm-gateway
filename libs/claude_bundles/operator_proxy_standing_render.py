@@ -531,25 +531,42 @@ def render_house_rules_block(
         accept_count -= 1
         drop_start = accept_count
 
-    assembled: list[str] = []
-    if heading_line:
-        assembled.append(heading_line)
-    if intro_included and intro:
-        assembled.append(intro)
-    for index in range(accept_count):
-        assembled.append(rows[index][1])
-    truncated = intro_dropped or drop_start < len(rows)
-    if truncated:
-        dropped: list[str] = []
-        if intro_dropped:
-            dropped.append("intro")
-        if drop_start < len(rows):
-            dropped.extend(_dropped_suffix_oldest_first(rows, drop_start))
-        flag = _rules_truncation_flag(dropped, uri)
-        assembled.append(flag)
-    if unreadable_line:
-        assembled.append(unreadable_line)
-    return "\n".join(assembled), truncated
+    def _assemble() -> tuple[str, bool]:
+        assembled: list[str] = []
+        if heading_line:
+            assembled.append(heading_line)
+        if intro_included and intro:
+            assembled.append(intro)
+        for index in range(accept_count):
+            assembled.append(rows[index][1])
+        truncated = intro_dropped or drop_start < len(rows)
+        if truncated:
+            dropped: list[str] = []
+            if intro_dropped:
+                dropped.append("intro")
+            if drop_start < len(rows):
+                dropped.extend(_dropped_suffix_oldest_first(rows, drop_start))
+            assembled.append(_rules_truncation_flag(dropped, uri))
+        if unreadable_line:
+            assembled.append(unreadable_line)
+        return "\n".join(assembled), truncated
+
+    # The reservation loop misses two assemblies: intro kept with accept_count
+    # 0 (flag never reserved) and intro_dropped with no row drops (rows already
+    # fill the budget). Shrink until the bytes that will be returned fit.
+    while True:
+        text, truncated = _assemble()
+        if _utf8_len(text) <= RULES_BUDGET_B:
+            return text, truncated
+        if accept_count > 0:
+            accept_count -= 1
+            drop_start = accept_count
+            continue
+        if intro_included and intro:
+            intro_included = False
+            intro_dropped = True
+            continue
+        return text, truncated
 
 
 def render_checkpoint_block(

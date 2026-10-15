@@ -581,3 +581,32 @@ def test_file_editor_and_surface_registration_import_order_no_cycle() -> None:
         )
         assert proc.returncode == 0, f"{stmt!r} failed:\n{proc.stderr}"
 
+
+def test_register_filesystem_tools_fresh_subprocess_no_blanket_except() -> None:
+    """The registration body must import in a fresh interpreter.
+
+    ``test_derive_coherence`` calls this function under ``except Exception``,
+    so a cycle inside the body stays green there and fails only at mcp startup.
+    """
+    import subprocess
+    import sys
+
+    mcp_dir = str(Path(__file__).resolve().parents[2])
+    stmt = (
+        "import tools.file_editor\n"
+        "class Stub:\n"
+        "    def tool(self, *args, **kwargs):\n"
+        "        def deco(fn):\n"
+        "            return fn\n"
+        "        return deco\n"
+        "from tools.filesystem import register_filesystem_tools\n"
+        "register_filesystem_tools(Stub())\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", stmt],
+        cwd=mcp_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
