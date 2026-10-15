@@ -48,7 +48,7 @@ def _stamp_path() -> Path:
     return Path(override) if override else _DEFAULT_STAMP_PATH
 
 
-def _read_stamp_sha(path: Path) -> str | None:
+def read_stamp_sha(path: Path) -> str | None:
     """Return the Git ancestry label from stamp line 2 when present."""
     try:
         if not path.is_file():
@@ -139,7 +139,7 @@ def resolve_code_version() -> str:
     env_override = _resolve_env_override()
     if env_override is not None:
         return env_override
-    stamped = _read_stamp_sha(_stamp_path())
+    stamped = read_stamp_sha(_stamp_path())
     if stamped:
         return stamped
     if not _git_head_attributable():
@@ -182,6 +182,7 @@ __all__ = [
     "normalize_code_ref",
     "process_age_s",
     "read_checkout_head",
+    "read_stamp_sha",
     "reset_code_version_cache_for_tests",
     "resolve_code_version",
 ]

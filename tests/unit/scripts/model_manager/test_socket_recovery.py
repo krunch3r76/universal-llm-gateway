@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,6 +30,9 @@ class TestRecoverRootOwnedSocketDir:
         assert result is True
         docker_args = mock_run.call_args_list[0].args[0]
         assert docker_args[0:2] == ["docker", "run"]
+        script = docker_args[-1]
+        assert "$(id -u)" not in script
+        assert f"chown {os.getuid()}:{os.getgid()}" in script
 
     def test_docker_cleanup_failure_then_user_rmtree(self, tmp_path: Path) -> None:
         socket_dir = tmp_path / "universal-protocol"

@@ -192,17 +192,23 @@ def apply_cortex_digest_close_env_pin(
 def apply_checkout_code_version(
     env: dict[str, str], workspace_root: Path
 ) -> dict[str, str]:
-    """Seal ``ULG_CODE_VERSION`` from checkout HEAD for edge compose passthrough.
+    """Seal ``ULG_CODE_VERSION`` for edge compose passthrough.
 
     The gpu-edge container has no ``git`` binary and no ``.git`` mount; without
     this seal ``resolve_code_version()`` returns the ``unknown`` sentinel.
+    Relay deploys rsync to ``~/universal-llm-gateway`` with ``.git`` excluded, so
+    checkout HEAD is absent there. The source-sync stamp written at deploy time
+    is the seal for that tree.
 
-    Docker Compose interpolates an undefined ``${ULG_CODE_VERSION}`` to the empty
-    string without warning, which still satisfies presence checks in the
-    container. Callers must invoke this before ``docker compose up``; an empty or
-    malformed host value is replaced, and failure to read checkout HEAD raises.
+    Order: an already-valid env value, then ``.source_sync_stamp`` line 2, then
+    checkout HEAD. Raises when none of those yield a 40-hex SHA.
     """
-    from deploy_identity.code_version import is_valid_sha40, read_checkout_head
+    from deploy_identity.code_version import (
+        is_valid_sha40,
+        read_checkout_head,
+        read_stamp_sha,
+    )
+    from deploy_identity.source_sync_stamp import STAMP_BASENAME
 
     existing = env.get("ULG_CODE_VERSION", "").strip()
     if existing and is_valid_sha40(existing):
@@ -210,11 +216,16 @@ def apply_checkout_code_version(
         return env
 
     env.pop("ULG_CODE_VERSION", None)
+    stamped = read_stamp_sha(workspace_root / STAMP_BASENAME)
+    if stamped:
+        env["ULG_CODE_VERSION"] = stamped
+        return env
+
     sha = read_checkout_head(workspace_root)
     if not sha or not is_valid_sha40(sha):
         msg = (
-            f"Cannot seal ULG_CODE_VERSION from checkout HEAD at {workspace_root} "
-            "(git unavailable or HEAD is not a 40-hex SHA)"
+            f"Cannot seal ULG_CODE_VERSION at {workspace_root} "
+            "(no deploy stamp and git HEAD is unavailable or not a 40-hex SHA)"
         )
         logger.error(msg)
         raise RuntimeError(msg)
@@ -1297,7 +1308,7 @@ def _recover_root_owned_socket_dir(
             f"rm -rf /host-tmp/{socket_dir.name} && "
             f"mkdir -p /host-tmp/{socket_dir.name} && "
             f"chmod 777 /host-tmp/{socket_dir.name} && "
-            f"chown $(id -u):$(id -g) /host-tmp/{socket_dir.name} 2>/dev/null || true",
+            f"chown {os.getuid()}:{os.getgid()} /host-tmp/{socket_dir.name}",
         ]
         result = subprocess.run(
             cleanup_cmd,

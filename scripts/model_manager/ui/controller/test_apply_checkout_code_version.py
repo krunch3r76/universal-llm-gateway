@@ -32,11 +32,30 @@ def test_apply_checkout_code_version_replaces_empty_override(monkeypatch):
     assert env["ULG_CODE_VERSION"] == sha
 
 
-def test_apply_checkout_code_version_raises_when_head_unavailable():
+def test_apply_checkout_code_version_seals_deploy_stamp_without_git(tmp_path: Path):
     env: dict[str, str] = {}
+    sha = "a" * 40
+    stamp = tmp_path / ".source_sync_stamp"
+    stamp.write_text(f"2026-10-14T12:51:55Z\n{sha}\n", encoding="utf-8")
     with patch(
         "deploy_identity.code_version.read_checkout_head",
         return_value=None,
+    ):
+        apply_checkout_code_version(env, tmp_path)
+    assert env["ULG_CODE_VERSION"] == sha
+
+
+def test_apply_checkout_code_version_raises_when_head_unavailable():
+    env: dict[str, str] = {}
+    with (
+        patch(
+            "deploy_identity.code_version.read_checkout_head",
+            return_value=None,
+        ),
+        patch(
+            "deploy_identity.code_version.read_stamp_sha",
+            return_value=None,
+        ),
     ):
         with pytest.raises(RuntimeError, match="Cannot seal ULG_CODE_VERSION"):
             apply_checkout_code_version(env, Path("/repo"))

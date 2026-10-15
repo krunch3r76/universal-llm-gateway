@@ -215,6 +215,26 @@ def _hostname_from_url(url: str) -> str:
         return "unknown"
 
 
+def _node_env_for_remote(stargate_id: str, url: str) -> str | None:
+    """Resolve ``~/.gateway/nodes/<name>.env`` for a federation remote.
+
+    Deploy files are named for the node (``jupiter.env``). Federation URLs are
+    often an IP (``http://10.0.0.76:9999``), so the URL host is only a fallback
+    after the ``relay-`` stargate id.
+    """
+    names: list[str] = []
+    if stargate_id.startswith("relay-"):
+        names.append(stargate_id.removeprefix("relay-"))
+    host = _hostname_from_url(url)
+    if host not in names:
+        names.append(host)
+    for name in names:
+        path = _NODES_DIR / f"{name}.env"
+        if path.is_file():
+            return str(path)
+    return None
+
+
 _EVENTS_QUERY_SOCKET = Path(
     os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
 )
@@ -360,9 +380,7 @@ def _build_remotes(
     for rc in remote_cfgs:
         sid = str(rc.get("stargate_id", "unknown"))
         url = str(rc.get("url", ""))
-        hostname = _hostname_from_url(url)
-        node_env_path = _NODES_DIR / f"{hostname}.env"
-        node_env = str(node_env_path) if node_env_path.exists() else None
+        node_env = _node_env_for_remote(sid, url)
 
         model_count = sources.get(sid) if sources is not None else None
         status_reason: str | None = None
