@@ -293,6 +293,33 @@ def test_intro_included_does_not_consume_budget_twice(target: int) -> None:
     assert "K1" in text
 
 
+def test_headingless_truncation_stays_within_budget() -> None:
+    """Flag-room accounting charges the intro separator even with no heading.
+
+    The kept row plus the truncation flag is built to be RULES_BUDGET_B + 1
+    bytes. The old flag-room total omitted that separator when heading_line
+    was empty, so it accepted the extra byte.
+    """
+    from claude_bundles.operator_proxy_standing_render import _rules_truncation_flag
+
+    intro = "Prose standing line"
+    flag = _rules_truncation_flag(
+        ["K2"], "cortex://notes/system/threads/12286-house-rules.md"
+    )
+    kept_len = RULES_BUDGET_B - len(flag.encode("utf-8")) - len(intro.encode("utf-8")) - 1
+    kept = "- K1 " + ("r" * (kept_len - len("- K1 ")))
+    dropped = "- K2 " + ("z" * 400)
+    body = "\n".join((intro, kept, dropped))
+    assert not body.startswith("#")
+    text, truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=body,
+    )
+    assert truncated is True
+    assert len(text.encode("utf-8")) <= RULES_BUDGET_B
+
+
 def test_friction_39340_post_trim_live_copy_within_budget_no_truncation_flag() -> None:
     from pathlib import Path
 

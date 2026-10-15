@@ -19,6 +19,9 @@ def sandbox_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     root.mkdir()
     monkeypatch.setattr(paths, "SANDBOX_ROOT", root)
     monkeypatch.setattr(markdown_tool, "_FILES_ROOT", root)
+    # Cortex writes resolve through cortex_files_root(), which reads this env
+    # per call. Patching _FILES_ROOT alone does not redirect that branch.
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
     return root
 
 
@@ -188,11 +191,6 @@ def test_markdown_dispatcher_house_rules_growth_refused(
     rel = "notes/system/threads/12286-house-rules.md"
     _house_rules_over_budget(sandbox_root, rel)
     before = (sandbox_root / rel).read_bytes()
-    monkeypatch.setattr(
-        markdown_tool,
-        "_resolve_sandbox",
-        lambda *_a, **_k: sandbox_root / rel,
-    )
     captured: dict = {}
 
     class Capture:

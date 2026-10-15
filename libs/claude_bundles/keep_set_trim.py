@@ -103,12 +103,23 @@ class KeepSetTrimReceipts:
 
 
 def _house_rules_size_rejection(path: Path, trimmed: str, before_len: int) -> dict | None:
-    """Call the MCP house-rules gate without importing the filesystem package."""
+    """Call the MCP house-rules gate without importing the filesystem package.
+
+    ``tools.*`` resolves only when ``services/mcp-server`` is on ``sys.path``.
+    The libs test runner does not put it there, so the insert is required for
+    this import. It is removed before return so it does not shadow ``tools``
+    for the rest of the process.
+    """
     mcp_root = Path(__file__).resolve().parents[2] / "services" / "mcp-server"
     root_s = str(mcp_root)
-    if root_s not in sys.path:
+    inserted = root_s not in sys.path
+    if inserted:
         sys.path.insert(0, root_s)
-    from tools.filesystem._write_authority import evaluate_house_rules_post_edit_size
+    try:
+        from tools.filesystem._write_authority import evaluate_house_rules_post_edit_size
+    finally:
+        if inserted:
+            sys.path.remove(root_s)
 
     return evaluate_house_rules_post_edit_size(
         path=path.name,

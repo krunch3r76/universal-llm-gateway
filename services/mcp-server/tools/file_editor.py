@@ -22,6 +22,8 @@ from tools._durable_write import (
     verify_persisted,
 )
 from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes, sha256_hex_of_file
+from tools.filesystem._overwrite_retain import retain_before_overwrite
+from tools.filesystem._write_authority import evaluate_house_rules_post_edit_size
 
 __all__ = ["PreImageMismatchError", "HouseRulesSizeRejectedError", "perform_edit", "preview_modified_text"]
 
@@ -182,11 +184,6 @@ def _perform_edit_locked(
                 f"Unknown operation: {operation!r}. Must be one of: prepend, append, "
                 + "insert_at_line, replace."
             )
-
-    # Lazy import: filesystem.__init__ pulls _ops_text → file_editor; a top-level
-    # import of tools.filesystem.* re-enters that cycle and crash-loops mcp.
-    from tools.filesystem._overwrite_retain import retain_before_overwrite
-    from tools.filesystem._write_authority import evaluate_house_rules_post_edit_size
 
     authority_path = rel_path or str(path)
     size_decision = evaluate_house_rules_post_edit_size(

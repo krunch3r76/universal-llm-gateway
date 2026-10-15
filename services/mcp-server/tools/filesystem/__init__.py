@@ -11,14 +11,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._files_dispatcher import register_files_tool
-from ._tool_registrations import register_individual_tools
-
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 
 def register_filesystem_tools(mcp: FastMCP) -> None:
-    """Register all filesystem tools on *mcp*."""
+    """Register all filesystem tools on *mcp*.
+
+    Dispatcher imports stay inside this function. A module-level import pulls
+    ``_ops_text``, which imports ``tools.file_editor``, and ``file_editor``
+    imports filesystem leaves — that cycle crash-loops mcp at startup.
+    """
+    from ._files_dispatcher import register_files_tool
+    from ._tool_registrations import register_individual_tools
+
     register_individual_tools(mcp)
     register_files_tool(mcp)

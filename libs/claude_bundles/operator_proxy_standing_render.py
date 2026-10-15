@@ -523,7 +523,7 @@ def render_house_rules_block(
             uri=uri,
         )
         if intro_included and intro:
-            total += _utf8_len(intro) + (1 if heading_line else 0)
+            total += _utf8_len(intro) + 1
         if total <= budget:
             break
         if accept_count == 0:
