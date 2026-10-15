@@ -309,7 +309,7 @@ def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
     assert run_idx >= 0, log
     assert run_idx > cp_idx, log
     assert proc.returncode == -signal.SIGTERM, (proc.returncode, proc.stderr[-400:])
-    assert "compose" not in log[run_idx:], log
+    assert "compose" not in log, log
 
 
 def test_nocache_unhealthy_does_not_start_build(tmp_path: Path) -> None:
