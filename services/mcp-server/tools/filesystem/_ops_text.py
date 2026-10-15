@@ -15,7 +15,7 @@ from .._durable_write import (
 )
 from .._file_helpers import read_file_result, read_files_batch
 from .._hashing import format_sha256_uri, sha256_hex_equal
-from ..file_editor import perform_edit
+from ..file_editor import HouseRulesSizeRejectedError, perform_edit
 from ._ops_write import write_file_impl, write_rejection
 from ._paths import (
     EDITABLE_SUFFIXES,
@@ -227,6 +227,7 @@ def _edit_file_impl_locked(
             target_str=target,
             all_occurrences=all_occurrences,
             expected_sha256=expected_sha256,
+            rel_path=path,
         )
         event_payload: dict[str, str | int | bool] = {
             "sandbox": "cortex",
@@ -244,6 +245,23 @@ def _edit_file_impl_locked(
         record("mcp.tool.file.edited", **event_payload)
         logger.info("edit_file: %s on %s", operation, path)
         return result
+    except HouseRulesSizeRejectedError as exc:
+        rejection = exc.rejection
+        extra = {
+            k: v
+            for k, v in rejection.items()
+            if k not in ("error", "reason", "path")
+        }
+        return write_rejection(
+            path=path,
+            resolved=dest,
+            reason=str(rejection["reason"]),
+            message=str(rejection["error"]),
+            actual_sha256=(
+                None if actual_sha256 is None else format_sha256_uri(actual_sha256)
+            ),
+            **extra,
+        )
     except PreImageMismatchError as exc:
         record(
             "mcp.tool.file.edit_failed",

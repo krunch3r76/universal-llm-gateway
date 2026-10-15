@@ -37,6 +37,10 @@ from markdown_sections import (
 from mcp_events import record
 
 from tools._hashing import format_sha256_uri
+from tools.filesystem._write_authority import (
+    HouseRulesSizeRejectedError,
+    evaluate_house_rules_post_edit_size,
+)
 
 from ._durable_write import (
     PreImageMismatchError,
@@ -141,6 +145,33 @@ def _rmw_error_payload(
     return payload
 
 
+def _gate_house_rules_post_image(*, path: str, before_text: str, after_text: str) -> None:
+    """Apply the hop byte gate on the locked pre-image and post-transform body."""
+    before_len = len(before_text.encode("utf-8"))
+    decision = evaluate_house_rules_post_edit_size(
+        path=path,
+        post_edit_text=after_text,
+        before_len=before_len,
+        dest_exists=True,
+    )
+    if decision is not None:
+        raise HouseRulesSizeRejectedError(decision)
+
+
+def _house_rules_size_error(path: str, exc: HouseRulesSizeRejectedError) -> dict[str, Any]:
+    rejection = exc.rejection
+    return {
+        "error": rejection["error"],
+        "reason": rejection["reason"],
+        "path": path,
+        **{
+            k: v
+            for k, v in rejection.items()
+            if k not in ("error", "reason", "path")
+        },
+    }
+
+
 def _durable_markdown_rmw(
     resolved: Path,
     path: str,
@@ -195,6 +226,11 @@ def _section_write_result(
             return updated
         return raw
 
+    def _gated_transform(text: str) -> str:
+        updated = _apply_transform(text)
+        _gate_house_rules_post_image(path=path, before_text=text, after_text=updated)
+        return updated
+
     text, err = _load_text(resolved)
     if err:
         return {"error": err}
@@ -211,9 +247,11 @@ def _section_write_result(
     try:
         rmw = durable_rmw_text(
             resolved,
-            _apply_transform,
+            _gated_transform,
             retain_store_root=_retain_root_for_sandbox(sandbox),
         )
+    except HouseRulesSizeRejectedError as exc:
+        return _house_rules_size_error(path, exc)
     except FileNotFoundError as exc:
         return {"error": str(exc)}
     except SectionError as exc:
@@ -278,29 +316,51 @@ def _section_patch_result(
     if err:
         return {"error": err}
     try:
-        prior_body = md_read_section(text, section)
-        after_text, replacements_made = md_patch_section_body(
-            text,
+        md_read_section(text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+
+    def _patch_transform(locked_text: str) -> str:
+        after_text, _replacements = md_patch_section_body(
+            locked_text,
             section,
             target,
             content,
             all_occurrences=all_occurrences,
         )
-        new_body = md_read_section(after_text, section)
-    except SectionError as exc:
-        return {"error": str(exc)}
+        _gate_house_rules_post_image(
+            path=path, before_text=locked_text, after_text=after_text
+        )
+        return after_text
+
     try:
-        durable_rmw_text(
+        rmw = durable_rmw_text(
             resolved,
-            lambda _: after_text,
+            _patch_transform,
             retain_store_root=_retain_root_for_sandbox(sandbox),
         )
+    except HouseRulesSizeRejectedError as exc:
+        return _house_rules_size_error(path, exc)
     except FileNotFoundError as exc:
+        return {"error": str(exc)}
+    except SectionError as exc:
         return {"error": str(exc)}
     except (PreImageMismatchError, WriteVerifyError) as exc:
         return _rmw_error_payload(path, resolved, exc)
     except OSError as exc:
         return {"error": f"Failed to write {resolved}: {exc}"}
+    try:
+        prior_body = md_read_section(rmw.before_text, section)
+        new_body = md_read_section(rmw.after_text, section)
+        replacements_made = md_patch_section_body(
+            rmw.before_text,
+            section,
+            target,
+            content,
+            all_occurrences=all_occurrences,
+        )[1]
+    except SectionError as exc:
+        return {"error": str(exc)}
     record(
         "mcp.tool.markdown.section.patched",
         path=path,
@@ -332,7 +392,9 @@ def _section_delete_result(
         }
 
     def _delete_transform(text: str) -> str:
-        return md_delete_section(text, section)
+        updated = md_delete_section(text, section)
+        _gate_house_rules_post_image(path=path, before_text=text, after_text=updated)
+        return updated
 
     try:
         rmw = durable_rmw_text(
@@ -340,6 +402,8 @@ def _section_delete_result(
             _delete_transform,
             retain_store_root=_retain_root_for_sandbox(sandbox),
         )
+    except HouseRulesSizeRejectedError as exc:
+        return _house_rules_size_error(path, exc)
     except FileNotFoundError as exc:
         return {"error": str(exc)}
     except SectionError as exc:

@@ -359,7 +359,9 @@ _BULLET_LINE_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+")
 
 
 def _bullet_ident(line: str, fallback: str) -> str:
-    km = _K_BULLET_RE.search(line)
+    """Identify a bullet row from its leading token, not embedded ``K<n>`` text."""
+    stripped = re.sub(r"^\s*(?:[-*]|\d+\.)\s+", "", line)
+    km = re.match(r"^K(\d+)\b", stripped)
     if km:
         return f"K{km.group(1)}"
     num = re.match(r"^\s*(\d+)\.\s+", line)
@@ -468,8 +470,6 @@ def render_house_rules_block(
         return "", False
     heading_line, intro, bullets = _split_rules_bullets(body)
     rows: list[tuple[str, str]] = []
-    if intro:
-        rows.append(("intro", intro))
     for index, (k_id, text) in enumerate(bullets):
         rows.append((k_id or f"bullet-{index + 1}", text))
 
@@ -480,6 +480,21 @@ def render_house_rules_block(
         else ""
     )
     budget = RULES_BUDGET_B - (_utf8_len(unreadable_line) + 1 if unreadable_line else 0)
+    intro_included = False
+    intro_dropped = False
+    if intro:
+        intro_parts: list[str] = []
+        if heading_line:
+            intro_parts.append(heading_line)
+        intro_parts.append(intro)
+        if _utf8_len("\n".join(intro_parts)) <= budget:
+            intro_included = True
+            budget -= _utf8_len(intro)
+            if heading_line:
+                budget -= _utf8_len(heading_line) + 1
+        else:
+            intro_dropped = True
+
     accept_count = 0
     drop_start = len(rows)
     for index, (_ident, text) in enumerate(rows):
@@ -490,6 +505,8 @@ def render_house_rules_block(
         parts: list[str] = []
         if heading_line:
             parts.append(heading_line)
+        if intro_included and intro:
+            parts.append(intro)
         for prior in range(accept_count):
             parts.append(rows[prior][1])
         parts.append(text)
@@ -508,7 +525,10 @@ def render_house_rules_block(
             drop_start=drop_start,
             uri=uri,
         )
-        if total <= budget:
+        intro_extra = 0
+        if intro_included and intro:
+            intro_extra = _utf8_len(intro) + (1 if heading_line else 0)
+        if total + intro_extra <= budget:
             break
         if accept_count == 0:
             break
@@ -518,14 +538,18 @@ def render_house_rules_block(
     assembled: list[str] = []
     if heading_line:
         assembled.append(heading_line)
+    if intro_included and intro:
+        assembled.append(intro)
     for index in range(accept_count):
         assembled.append(rows[index][1])
-    truncated = drop_start < len(rows)
+    truncated = intro_dropped or drop_start < len(rows)
     if truncated:
-        flag = _rules_truncation_flag(
-            _dropped_suffix_oldest_first(rows, drop_start),
-            uri,
-        )
+        dropped: list[str] = []
+        if intro_dropped:
+            dropped.append("intro")
+        if drop_start < len(rows):
+            dropped.extend(_dropped_suffix_oldest_first(rows, drop_start))
+        flag = _rules_truncation_flag(dropped, uri)
         assembled.append(flag)
     if unreadable_line:
         assembled.append(unreadable_line)

@@ -21,8 +21,59 @@ from tools._durable_write import (
     verify_persisted,
 )
 from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes, sha256_hex_of_file
+from tools.filesystem._write_authority import (
+    HouseRulesSizeRejectedError,
+    evaluate_house_rules_post_edit_size,
+)
 
-__all__ = ["PreImageMismatchError", "perform_edit"]
+__all__ = ["PreImageMismatchError", "HouseRulesSizeRejectedError", "perform_edit", "preview_modified_text"]
+
+
+def preview_modified_text(
+    original: str,
+    operation: str,
+    content: str,
+    *,
+    line: int | None = None,
+    target_str: str | None = None,
+    all_occurrences: bool = False,
+) -> str:
+    """Return the post-edit text for *operation* without touching disk."""
+    match operation:
+        case "prepend":
+            return content + original
+        case "append":
+            return original + content
+        case "insert_at_line":
+            if line is None or line < 1:
+                raise ValueError(
+                    "A positive 1-indexed line number is required for 'insert_at_line'."
+                )
+            lines = original.splitlines(keepends=True)
+            if line > len(lines) + 1:
+                raise ValueError(
+                    f"Line {line} out of range. File has {len(lines)} lines "
+                    + f"(valid: 1-{len(lines) + 1})."
+                )
+            insert_idx = line - 1
+            insert_content = content if content.endswith("\n") else f"{content}\n"
+            lines.insert(insert_idx, insert_content)
+            return "".join(lines)
+        case "replace":
+            if target_str is None:
+                raise ValueError(
+                    "A 'target' string is required for 'replace' operation."
+                )
+            if target_str not in original:
+                raise ValueError(f"Target string not found: {target_str!r}")
+            if all_occurrences:
+                return original.replace(target_str, content)
+            return original.replace(target_str, content, 1)
+        case _:
+            raise ValueError(
+                f"Unknown operation: {operation!r}. Must be one of: prepend, append, "
+                + "insert_at_line, replace."
+            )
 
 
 def perform_edit(
@@ -34,6 +85,7 @@ def perform_edit(
     target_str: str | None = None,
     all_occurrences: bool = False,
     expected_sha256: str | None = None,
+    rel_path: str | None = None,
 ) -> dict[str, str | int]:
     """Read a file, apply a text operation, write it back.
 
@@ -44,6 +96,7 @@ def perform_edit(
         line: 1-indexed line number for insert_at_line.
         target_str: String to find for replace.
         all_occurrences: Replace all vs first occurrence.
+        rel_path: Cortex-relative path for house-rules size authority.
 
     Returns:
         A dictionary confirming the operation.
@@ -66,6 +119,7 @@ def perform_edit(
         FileNotFoundError: Path does not exist.
         ValueError: Invalid arguments or operation.
         PreImageMismatchError: Dest bytes changed after the read (loud CAS).
+        HouseRulesSizeRejectedError: Post-edit image fails hop byte gate.
         WriteVerifyError: Persisted dest hash != intended write hash.
     """
     if not path.exists():
@@ -82,6 +136,7 @@ def perform_edit(
             target_str=target_str,
             all_occurrences=all_occurrences,
             expected_sha256=expected_sha256,
+            rel_path=rel_path,
         )
 
 
@@ -94,10 +149,12 @@ def _perform_edit_locked(
     target_str: str | None,
     all_occurrences: bool,
     expected_sha256: str | None = None,
+    rel_path: str | None = None,
 ) -> dict[str, str | int]:
     """RMW body; caller holds ``path_flock``."""
     raw = path.read_bytes()
     pre_image_sha256 = sha256_hex_of_bytes(raw)
+    before_len = len(raw)
     if expected_sha256 is not None and not sha256_hex_equal(
         pre_image_sha256, expected_sha256
     ):
@@ -107,47 +164,37 @@ def _perform_edit_locked(
             actual_sha256=pre_image_sha256,
         )
     original = raw.decode("utf-8", errors="replace")
-    modified: str
     replacements_made = 0
 
     match operation:
-        case "prepend":
-            modified = content + original
-        case "append":
-            modified = original + content
-        case "insert_at_line":
-            if line is None or line < 1:
-                raise ValueError(
-                    "A positive 1-indexed line number is required for 'insert_at_line'."
+        case "prepend" | "append" | "insert_at_line" | "replace":
+            modified = preview_modified_text(
+                original,
+                operation,
+                content,
+                line=line,
+                target_str=target_str,
+                all_occurrences=all_occurrences,
+            )
+            if operation == "replace" and target_str is not None:
+                replacements_made = (
+                    original.count(target_str) if all_occurrences else 1
                 )
-            lines = original.splitlines(keepends=True)
-            if line > len(lines) + 1:
-                raise ValueError(
-                    f"Line {line} out of range. File has {len(lines)} lines "
-                    + f"(valid: 1-{len(lines) + 1})."
-                )
-            insert_idx = line - 1
-            insert_content = content if content.endswith("\n") else f"{content}\n"
-            lines.insert(insert_idx, insert_content)
-            modified = "".join(lines)
-        case "replace":
-            if target_str is None:
-                raise ValueError(
-                    "A 'target' string is required for 'replace' operation."
-                )
-            if target_str not in original:
-                raise ValueError(f"Target string not found: {target_str!r}")
-            if all_occurrences:
-                replacements_made = original.count(target_str)
-                modified = original.replace(target_str, content)
-            else:
-                replacements_made = 1
-                modified = original.replace(target_str, content, 1)
         case _:
             raise ValueError(
                 f"Unknown operation: {operation!r}. Must be one of: prepend, append, "
                 + "insert_at_line, replace."
             )
+
+    authority_path = rel_path or str(path)
+    size_decision = evaluate_house_rules_post_edit_size(
+        path=authority_path,
+        post_edit_text=modified,
+        before_len=before_len,
+        dest_exists=True,
+    )
+    if size_decision is not None:
+        raise HouseRulesSizeRejectedError(size_decision)
 
     # Lazy import: filesystem.__init__ pulls _ops_text → file_editor; a top-level
     # import of _overwrite_retain re-enters that cycle and crash-loops mcp.

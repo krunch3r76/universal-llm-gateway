@@ -98,7 +98,7 @@ def test_ac4_intro_over_budget_is_dropped_whole_with_intro_in_flag() -> None:
     _assert_rules_output_within_budget(text)
     assert exceeded
     assert intro not in text
-    assert "never" not in text
+    assert "never" in text
     assert "intro" in text
     assert re.search(r"\[rules truncated: .*\bintro\b", text)
 
@@ -249,21 +249,38 @@ def test_friction_39304_unreadable_line_reserved_in_rules_budget() -> None:
     assert "[rules_file_unreadable: OSError" in text
 
 
-def test_live_12286_house_rules_k35_k36_k37_render_whole() -> None:
-    from claude_bundles.operator_proxy_hop_status import read_cortex_uri_from_root
+def test_bullet_ident_leading_token_widens_k23_is_not_k23() -> None:
+    from claude_bundles.operator_proxy_standing_render import _bullet_ident
 
-    uri = "cortex://notes/system/threads/12286-house-rules.md"
-    raw = read_cortex_uri_from_root(uri)
-    if raw is None:
-        pytest.skip("12286-house-rules.md not reachable from CORTEX_FILES_ROOT")
-    text, _exceeded = render_house_rules_block(
+    assert _bullet_ident("- K23 a:39011: restarts permitted.", "") == "K23"
+    assert (
+        _bullet_ident(
+            "- Kaywan 2026-10-09 17:40Z (Maestro chat): Widens K23.",
+            "fallback",
+        )
+        == "fallback"
+    )
+
+
+def test_friction_39340_post_trim_live_copy_within_budget_no_truncation_flag() -> None:
+    from pathlib import Path
+
+    pin = (
+        Path(__file__).resolve().parent
+        / "testdata"
+        / "12286-house-rules-fixture-3e492abe.txt"
+    )
+    raw = pin.read_text(encoding="utf-8")
+    text, truncated = render_house_rules_block(
         lane="12286",
         inline_rules=None,
         house_rules_text=raw,
     )
     _assert_rules_output_within_budget(text)
+    assert not truncated
+    assert "[rules truncated:" not in text
     assert "EMAIL_BRIDGE_SOCK=/nonexistent" in text
-    assert "until he rules on the numbers" in text
+    assert "Argon never authors and reviews one item" in text
     assert "sign from=maestro" in text
 
 

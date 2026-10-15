@@ -14,6 +14,66 @@ from tools._hashing import format_sha256_uri, normalize_sha256_hex, sha256_hex_o
 
 ArtifactClass = Literal["consult", "shared", "unclassified"]
 
+HOUSE_RULES_MAX_BYTES = 8192
+RULINGS_ARCHIVE_REL = "notes/system/threads/12286-rulings-archive.md"
+RULINGS_ARCHIVE_URI = f"cortex://{RULINGS_ARCHIVE_REL}"
+
+
+class HouseRulesSizeRejectedError(Exception):
+    """Raised when a house-rules post-edit image fails the hop byte gate.
+
+    Callers inside ``path_flock`` turn this into a structured fs refusal without
+    persisting bytes. ``write_binary`` / ``append_binary`` / ``copy`` / ``move`` are
+    out of scope for r5 (proposal §15): they bypass this helper until a later ACK.
+    """
+
+    def __init__(self, rejection: dict[str, Any]) -> None:
+        self.rejection = rejection
+        super().__init__(str(rejection.get("error")))
+
+
+def is_house_rules_path(path: str) -> bool:
+    """True when *path* is a shared house-rules document subject to the hop budget."""
+    return Path(_norm_rel(path)).name.endswith("-house-rules.md")
+
+
+def evaluate_house_rules_post_edit_size(
+    *,
+    path: str,
+    post_edit_text: str,
+    before_len: int | None = None,
+    dest_exists: bool = True,
+) -> dict[str, Any] | None:
+    """Return a rejection payload when a house-rules post-edit image must not land.
+
+    Ungated paths (including ``12286-rulings-archive.md``) return None. Whole-file
+    and section RMW callers pass ``before_len`` from the locked pre-image so a
+    non-growing edit that stays over budget still lands (#649).
+    """
+    if not is_house_rules_path(path):
+        return None
+    post_edit_bytes = len(post_edit_text.encode("utf-8"))
+    if post_edit_bytes <= HOUSE_RULES_MAX_BYTES:
+        return None
+    if dest_exists and before_len is not None and post_edit_bytes <= before_len:
+        return None
+    rel = _norm_rel(path)
+    return {
+        "error": (
+            f"Refusing write to {rel!r}: post-edit size {post_edit_bytes} B exceeds "
+            f"{HOUSE_RULES_MAX_BYTES} B hop budget while growing an over-budget "
+            f"file. Use rotation — move completed wording verbatim to "
+            f"{RULINGS_ARCHIVE_URI} under K-id headings, then leave a compressed "
+            "binding row in house-rules."
+        ),
+        "reason": "house_rules.over_budget",
+        "path": rel,
+        "artifact_class": "shared",
+        "post_edit_bytes": post_edit_bytes,
+        "limit_bytes": HOUSE_RULES_MAX_BYTES,
+    }
+
+
 # S1 funnelled the former Path.write_text bypass set onto durable_io.atomic.
 # Empty: leftover notes-tree write_text is a defect, not a silent carve-out.
 EXCLUDED_BYPASS_WRITERS: tuple[str, ...] = ()

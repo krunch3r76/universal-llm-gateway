@@ -280,3 +280,179 @@ def test_episode_collision_replay_both_peers_survive(
     # Distinct peer addresses still hold their bodies.
     assert (sandbox_root / opus_path).read_text(encoding="utf-8") == opus_body
     assert (sandbox_root / fable_path).read_text(encoding="utf-8") == fable_body
+
+
+def _house_rules_body_exactly(byte_count: int) -> str:
+    intro = "## HOUSE RULES\n"
+    filler = "x" * (byte_count - len(intro.encode("utf-8")))
+    return intro + filler
+
+
+def _assert_rotation_refusal(rejected: dict) -> None:
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert "rotation" in rejected["error"]
+    assert "12286-rulings-archive.md" in rejected["error"]
+
+
+def test_house_rules_limit_equals_rules_budget_b() -> None:
+    from claude_bundles.operator_proxy_standing_render import RULES_BUDGET_B
+
+    assert authority.HOUSE_RULES_MAX_BYTES == RULES_BUDGET_B == 8192
+
+
+def _seed_house_rules(sandbox_root: Path, rel: str, body: str) -> None:
+    dest = sandbox_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(body, encoding="utf-8")
+
+
+def test_house_rules_over_budget_nongrowing_write_lands(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    over_body = _house_rules_body_exactly(8817)
+    smaller = _house_rules_body_exactly(8500)
+    _seed_house_rules(sandbox_root, rel, over_body)
+    current = paths.sha256_of_file(sandbox_root / rel)
+    landed = ops_text.write_file_impl(
+        rel,
+        smaller,
+        expected_sha256=current,
+        artifact_class="shared",
+    )
+    assert landed["status"] == "written"
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == smaller
+
+
+def test_house_rules_over_budget_equal_size_lands(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    body = _house_rules_body_exactly(8817)
+    _seed_house_rules(sandbox_root, rel, body)
+    current = paths.sha256_of_file(sandbox_root / rel)
+    landed = ops_text.write_file_impl(
+        rel,
+        body,
+        expected_sha256=current,
+        artifact_class="shared",
+    )
+    assert landed["status"] == "written"
+
+
+def test_house_rules_over_budget_growth_refused_file_unchanged(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    under = _house_rules_body_exactly(8817)
+    _seed_house_rules(sandbox_root, rel, under)
+    before = (sandbox_root / rel).read_bytes()
+    current = paths.sha256_of_file(sandbox_root / rel)
+    rejected = ops_text.write_file_impl(
+        rel,
+        under + "X",
+        expected_sha256=current,
+        artifact_class="shared",
+    )
+    _assert_rotation_refusal(rejected)
+    assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_house_rules_under_budget_growth_past_8192_refused(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    body = _house_rules_body_exactly(8100)
+    _seed_house_rules(sandbox_root, rel, body)
+    before = (sandbox_root / rel).read_bytes()
+    current = paths.sha256_of_file(sandbox_root / rel)
+    rejected = ops_text.write_file_impl(
+        rel,
+        body + ("y" * 200),
+        expected_sha256=current,
+        artifact_class="shared",
+    )
+    _assert_rotation_refusal(rejected)
+    assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_rulings_archive_over_8192_ungated(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-rulings-archive.md"
+    big = "# archive\n" + ("a" * 9000) + "\n"
+    written = ops_text.write_file_impl(rel, big)
+    assert written["status"] == "written"
+    assert len((sandbox_root / rel).read_bytes()) > authority.HOUSE_RULES_MAX_BYTES
+
+
+@pytest.mark.parametrize(
+    ("operation", "edit_content", "edit_kwargs"),
+    [
+        ("append", "Z" * 64, {}),
+        ("prepend", "Z" * 64, {}),
+        ("replace", "SENTINELX", {"target": "SENTINEL"}),
+        ("insert_at_line", "insert\n", {"line": 2}),
+    ],
+)
+def test_house_rules_edit_over_budget_growth_refused_bytes_unchanged(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    edit_content: str,
+    edit_kwargs: dict,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    monkeypatch.setattr(ops_text, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    if operation == "replace":
+        intro = "## HOUSE RULES\n"
+        body = intro + "x" * (8192 - len(intro.encode("utf-8")) - 8) + "SENTINEL"
+        assert len(body.encode("utf-8")) == 8192
+    else:
+        body = _house_rules_body_exactly(8817)
+    _seed_house_rules(sandbox_root, rel, body)
+    before = (sandbox_root / rel).read_bytes()
+    current = paths.sha256_of_file(sandbox_root / rel)
+    rejected = ops_text.edit_file_impl(
+        rel,
+        operation,
+        edit_content,
+        expected_sha256=current,
+        artifact_class="shared",
+        **edit_kwargs,
+    )
+    _assert_rotation_refusal(rejected)
+    assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_file_editor_house_rules_growth_refused(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    monkeypatch.setattr(ops_text, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    body = _house_rules_body_exactly(8817)
+    _seed_house_rules(sandbox_root, rel, body)
+    before = (sandbox_root / rel).read_bytes()
+    current = paths.sha256_of_file(sandbox_root / rel)
+    rejected = ops_text.edit_file_impl(
+        rel,
+        "append",
+        "Z",
+        expected_sha256=current,
+        artifact_class="shared",
+    )
+    _assert_rotation_refusal(rejected)
+    assert (sandbox_root / rel).read_bytes() == before
