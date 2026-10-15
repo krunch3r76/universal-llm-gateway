@@ -22,6 +22,7 @@ to SQLite.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 
@@ -111,12 +112,15 @@ class FtsIndex:
         conn, seq = self._ensure()
 
         async def _write() -> int:
-            cursor = conn.execute(
-                f"DELETE FROM chunks_fts WHERE chunk_id IN ({','.join('?' for _ in chunk_ids)})",
-                chunk_ids,
-            )
-            conn.commit()
-            return cursor.rowcount
+            def _sync() -> int:
+                cursor = conn.execute(
+                    f"DELETE FROM chunks_fts WHERE chunk_id IN ({','.join('?' for _ in chunk_ids)})",
+                    chunk_ids,
+                )
+                conn.commit()
+                return cursor.rowcount
+
+            return await asyncio.to_thread(_sync)
 
         return await seq.run(_write())
 

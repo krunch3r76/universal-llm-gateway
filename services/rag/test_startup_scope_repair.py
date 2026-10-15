@@ -41,7 +41,11 @@ async def test_startup_scope_repair_retries_until_watermark_catches_up(
         sleeps.append(delay_s)
 
     monkeypatch.setattr(state, "_property_index", fake_index)
-    monkeypatch.setattr(scope_freshness, "detect_stale_scopes", lambda **kwargs: [])
+    async def _no_stale(**kwargs: Any) -> list[str]:
+        del kwargs
+        return []
+
+    monkeypatch.setattr(scope_freshness, "detect_stale_scopes_off_loop", _no_stale)
     monkeypatch.setattr(scope_freshness, "run_scope_freshness_repair", fake_repair)
     monkeypatch.setattr(scope_freshness.asyncio, "sleep", fake_sleep)
 

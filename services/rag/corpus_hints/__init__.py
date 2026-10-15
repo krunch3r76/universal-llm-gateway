@@ -10,6 +10,7 @@ from services.rag.corpus_hints.formatting import (
 from services.rag.corpus_hints.freshness import (
     compute_scope_files_hash,
     detect_stale_scopes,
+    detect_stale_scopes_off_loop,
     scopes_touching_watch_path,
 )
 from services.rag.corpus_hints.loaders import load_corpus_hints, load_scope_vocabulary

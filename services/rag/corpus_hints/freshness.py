@@ -9,6 +9,7 @@ mapping) and Stargate's RAG data-source handler (``rag_source.py``).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "compute_scope_files_hash",
     "detect_stale_scopes",
+    "detect_stale_scopes_off_loop",
     "scopes_touching_watch_path",
 ]
 
@@ -56,6 +58,21 @@ def detect_stale_scopes(
         if row is None or row[0] != current:
             stale.append(scope_name)
     return stale
+
+
+async def detect_stale_scopes_off_loop(
+    *,
+    property_index: PropertyIndex,
+    configured_scopes: dict[str, list[str]],
+    scope_filter: set[str] | None = None,
+) -> list[str]:
+    """``detect_stale_scopes`` on a worker thread (friction:39420 / startup repair)."""
+    return await asyncio.to_thread(
+        detect_stale_scopes,
+        property_index=property_index,
+        configured_scopes=configured_scopes,
+        scope_filter=scope_filter,
+    )
 
 
 def scopes_touching_watch_path(config: RagConfig, watch_path: Path) -> set[str]:

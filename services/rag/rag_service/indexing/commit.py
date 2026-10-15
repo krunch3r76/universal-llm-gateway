@@ -85,6 +85,7 @@ async def _run_commit_phase(
             )
         if stale_ids:
             if prop_index is not None:
+                # PropertyIndex / FtsIndex run SQLite on worker threads (friction:39420).
                 for old_id in stale_ids:
                     await prop_index.remove_chunk(old_id)
                 await prop_index.fts.remove_batch(stale_ids)

@@ -12,6 +12,8 @@ rows (``record_failure``) and article upserts. Writes are serialized through
 
 from __future__ import annotations
 
+import asyncio
+
 from ._spec import *  # noqa: F401,F403
 
 
@@ -41,12 +43,15 @@ class _PropertyIndexPart02:
         """Remove all property entries for a chunk. Returns count removed."""
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            cursor = conn.execute(
-                "DELETE FROM properties WHERE chunk_id = ?", (chunk_id,)
-            )
-            conn.commit()
-            return cursor.rowcount
+            def _sync() -> int:
+                conn = self._ensure_conn()
+                cursor = conn.execute(
+                    "DELETE FROM properties WHERE chunk_id = ?", (chunk_id,)
+                )
+                conn.commit()
+                return cursor.rowcount
+
+            return await asyncio.to_thread(_sync)
 
         return await self._seq.run(_write())
 

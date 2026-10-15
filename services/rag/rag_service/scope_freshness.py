@@ -19,7 +19,7 @@ from pathlib import Path
 
 from services.rag.config import RagConfig
 from services.rag.corpus_hints import (
-    detect_stale_scopes,
+    detect_stale_scopes_off_loop,
     scopes_touching_watch_path,
 )
 from services.rag.vocabulary import configured_scopes_map, run_scope_freshness_repair
@@ -30,23 +30,35 @@ from .lifecycle_constants import POST_INDEX_STEPS, STARTUP_SCOPE_REPAIR_RETRY_DE
 logger = logging.getLogger(__name__)
 
 
-def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:
+async def _check_watermarks_off_loop(
+    pi: object, steps: list[str], *, reference: str
+) -> list[str]:
+    return await asyncio.to_thread(pi.check_watermarks, list(steps), reference=reference)
+
+
+async def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:
     """If strict gate was set at startup, clear it once watermarks catch up."""
     if not state._post_index_stale:
         return
-    still = state._property_index.check_watermarks(
-        list(POST_INDEX_STEPS), reference="reindex"
+    pi = state._property_index
+    if pi is None:
+        return
+    still = await _check_watermarks_off_loop(
+        pi, list(POST_INDEX_STEPS), reference="reindex"
     )
     if not still:
         state._post_index_stale = False
         logger.info("Post-index strict gate cleared after automatic scope repair")
 
 
-def _post_index_still_stale() -> bool:
+async def _post_index_still_stale() -> bool:
     pi = state._property_index
     if pi is None:
         return False
-    return bool(pi.check_watermarks(list(POST_INDEX_STEPS), reference="reindex"))
+    still = await _check_watermarks_off_loop(
+        pi, list(POST_INDEX_STEPS), reference="reindex"
+    )
+    return bool(still)
 
 
 async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
@@ -58,9 +70,11 @@ async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
         start=1,
     ):
         stale_steps = set(
-            pi.check_watermarks(list(POST_INDEX_STEPS), reference="reindex")
+            await _check_watermarks_off_loop(
+                pi, list(POST_INDEX_STEPS), reference="reindex"
+            )
         )
-        stale = detect_stale_scopes(
+        stale = await detect_stale_scopes_off_loop(
             property_index=pi,
             configured_scopes=configured_scopes_map(config),
             scope_filter=None,
@@ -68,7 +82,7 @@ async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
         if not stale and stale_steps & {"corpus_hints", "vocabulary"}:
             stale = sorted(config.scopes)
         if not stale:
-            _maybe_clear_post_index_stale_after_repair(config)
+            await _maybe_clear_post_index_stale_after_repair(config)
             return
         logger.warning(
             "Automatic scope freshness repair (startup attempt %d): %d stale scopes: %s",
@@ -83,8 +97,8 @@ async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
             event_bus=state._event_bus,
             trigger="startup",
         )
-        _maybe_clear_post_index_stale_after_repair(config)
-        if not _post_index_still_stale() or delay_s is None:
+        await _maybe_clear_post_index_stale_after_repair(config)
+        if not await _post_index_still_stale() or delay_s is None:
             return
         logger.warning(
             "Startup scope freshness repair still stale; retrying in %.0fs",
@@ -102,7 +116,7 @@ async def _post_reconcile_scope_freshness(prefix_paths: list[str]) -> None:
     for p in prefix_paths:
         affected |= scopes_touching_watch_path(cfg, Path(p))
     scope_filter = affected if affected else None
-    stale = detect_stale_scopes(
+    stale = await detect_stale_scopes_off_loop(
         property_index=pi,
         configured_scopes=configured_scopes_map(cfg),
         scope_filter=scope_filter,
@@ -121,7 +135,7 @@ async def _post_reconcile_scope_freshness(prefix_paths: list[str]) -> None:
         event_bus=state._event_bus,
         trigger="reconcile",
     )
-    _maybe_clear_post_index_stale_after_repair(cfg)
+    await _maybe_clear_post_index_stale_after_repair(cfg)
 
 
 async def _watcher_debounced_scope_freshness(scopes: set[str]) -> None:
@@ -129,7 +143,7 @@ async def _watcher_debounced_scope_freshness(scopes: set[str]) -> None:
     pi = state._property_index
     if cfg is None or pi is None or not scopes:
         return
-    stale = detect_stale_scopes(
+    stale = await detect_stale_scopes_off_loop(
         property_index=pi,
         configured_scopes=configured_scopes_map(cfg),
         scope_filter=scopes,
@@ -148,4 +162,4 @@ async def _watcher_debounced_scope_freshness(scopes: set[str]) -> None:
         event_bus=state._event_bus,
         trigger="watcher",
     )
-    _maybe_clear_post_index_stale_after_repair(cfg)
+    await _maybe_clear_post_index_stale_after_repair(cfg)
