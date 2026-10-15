@@ -40,6 +40,7 @@ def test_stale_wake_draft_recognized_and_allowed() -> None:
 
 def test_grok_composer_js_clears_stale_wake_draft() -> None:
     js = wd._COMPOSER_JS["grok"]
+    assert "execCommand('delete',false,null)" in js
     assert "el.innerText=''" in js
     assert "composer_not_empty" in js
     assert "BRIDGE_WAKE" in js
@@ -132,4 +133,5 @@ async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(monkeypatch: pyt
 
     assert out.get("reason") != "composer_not_empty"
     assert out.get("pasted") is True
+    assert out.get("send_fallback_clicked") is True
     wd._paste.assert_awaited_once()

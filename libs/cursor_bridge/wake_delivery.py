@@ -39,9 +39,11 @@ _COMPOSER_JS = {
         "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(draft);"
         "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
-        "if(stale)el.innerText='';el.focus();const sel=window.getSelection();"
+        "el.focus();const sel=window.getSelection();"
         "if(sel){const range=document.createRange();range.selectNodeContents(el);"
-        "sel.removeAllRanges();sel.addRange(range);}return{ok:true};})()"
+        "sel.removeAllRanges();sel.addRange(range);}"
+        "if(stale){document.execCommand('delete',false,null);el.innerText='';}"
+        "return{ok:true};})()"
     ),
 }
 
@@ -114,7 +116,7 @@ def _send_fallback_js(line: str) -> str:
         "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
         "if(!el)return{ok:true,send_fallback_clicked:false};"
         f"const text=(el.innerText||'').trim(),line={lj};"
-        "if(!text||(text!==line.trim()&&!text.startsWith('BRIDGE_WAKE')))"
+        "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(text)))"
         "return{ok:true,send_fallback_clicked:false};"
         f"const btn=document.querySelector('{sel}');"
         "if(!btn)return{ok:true,send_fallback_clicked:false};btn.click();"
@@ -275,6 +277,7 @@ async def _deliver_locked(
         "pasted": True,
         "delivered": delivered,
         "selected": selected,
+        "send_fallback_clicked": bool(paste_res.get("send_fallback_clicked")),
         "display": disp,
         "app": app,
         "wake": line,
