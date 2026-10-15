@@ -199,6 +199,7 @@ async def test_embed_phase_append_emits_diff_evaluated_and_subsets_embed() -> No
 
     assert result.stale_ids == []
     assert len(result.ids) == 48
+    assert all(m.get("source") == source for m in result.metadatas)
     mock_embed.assert_awaited_once()
     assert mock_embed.await_args.args[0] == [embed_texts[47]]
     diff_events = [

@@ -109,6 +109,7 @@ async def _run_embed_phase(
 
     for metadata in metadatas:
         metadata["source_hash"] = source_hash
+        metadata["source"] = source
 
     for metadata, chunk in zip(metadatas, chunks, strict=True):
         nr = noise_reason(chunk.text)
