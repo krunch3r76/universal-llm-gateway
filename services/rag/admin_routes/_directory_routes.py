@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 
     from services.rag.property_index import PropertyIndex
 
+from services.rag.chroma_writer import (
+    chroma_delete_ids,
+    chroma_get_by_source_ids,
+    run_chroma,
+)
 from services.rag.directory_ops import find_sources_under_prefixes
 from services.rag.events.articles import rag_directory_sources_deleted
 from services.rag.models import DirectoryDeleteResponse
@@ -57,7 +62,7 @@ def register_directory_routes(
         collection = get_collection_fn()
         dir_prefix = path.rstrip("/") + "/"
 
-        sources = find_sources_under_prefixes(
+        sources = await find_sources_under_prefixes(
             collection=collection,
             prefixes=[dir_prefix],
             list_known_sources_fn=prop_idx.list_known_sources if prop_idx else None,
@@ -75,10 +80,11 @@ def register_directory_routes(
         total_fts_removed = 0
         total_articles = 0
         for source in sorted(sources):
-            existing = collection.get(where={"source": source}, include=[])
-            chunk_ids_: list[str] = existing.get("ids", [])
+            chunk_ids_ = await run_chroma(
+                chroma_get_by_source_ids, collection, source
+            )
             if chunk_ids_:
-                collection.delete(ids=chunk_ids_)
+                await run_chroma(chroma_delete_ids, collection, chunk_ids_)
                 total_chunks += len(chunk_ids_)
             if prop_idx is not None:
                 if chunk_ids_:

@@ -225,7 +225,7 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
             continue
         watch_path = Path(wd.path).expanduser().resolve()
         prefix = str(watch_path) + "/"
-        known = find_sources_under_prefixes(
+        known = await find_sources_under_prefixes(
             collection=state._collection,
             prefixes=[prefix],
             list_known_sources_fn=(

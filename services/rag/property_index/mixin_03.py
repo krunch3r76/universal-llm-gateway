@@ -111,6 +111,7 @@ class _PropertyIndexPart03:
                 _row_str(source_hash_row[0]) if source_hash_row else ""
             )
             conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
+            conn.execute("DELETE FROM properties WHERE source = ?", (source,))
             if remove_article:
                 conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
             conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
@@ -133,6 +134,7 @@ class _PropertyIndexPart03:
             conn.commit()
 
         await self._seq.run(_write())
+        await self.fts.remove_for_source(source)
         if normalized_chunk_ids:
             await self.fts.remove_batch(normalized_chunk_ids)
 

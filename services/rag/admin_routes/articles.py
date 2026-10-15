@@ -301,11 +301,16 @@ def register_article_routes(
         prop_idx = get_property_index_fn()
         collection = get_collection_fn()
 
-        existing = collection.get(where={"source": path}, include=[])
-        chunk_ids: list[str] = existing.get("ids", [])
+        from services.rag.chroma_writer import (
+            chroma_delete_ids,
+            chroma_get_by_source_ids,
+            run_chroma,
+        )
+
+        chunk_ids = await run_chroma(chroma_get_by_source_ids, collection, path)
         chunks_deleted = len(chunk_ids)
         if chunk_ids:
-            collection.delete(ids=chunk_ids)
+            await run_chroma(chroma_delete_ids, collection, chunk_ids)
 
         properties_removed = 0
         fts_removed = 0

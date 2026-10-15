@@ -154,7 +154,7 @@ def register_indexing_routes(
             collection = get_collection_fn()
             stale_prop_idx = get_property_index_fn()
             try:
-                removed_sources = find_removed_directory_sources(
+                removed_sources = await find_removed_directory_sources(
                     collection=collection,
                     dir_path=dir_path,
                     walked_sources=walked_sources,

@@ -120,6 +120,20 @@ class FtsIndex:
 
         return await seq.run(_write())
 
+    async def remove_for_source(self, source: str) -> int:
+        """Delete FTS rows stamped with ``source`` (UNINDEXED column)."""
+        conn, seq = self._ensure()
+
+        async def _write() -> int:
+            cursor = conn.execute(
+                "DELETE FROM chunks_fts WHERE source = ?",
+                (source,),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return await seq.run(_write())
+
     async def clear(self) -> None:
         conn, seq = self._ensure()
 

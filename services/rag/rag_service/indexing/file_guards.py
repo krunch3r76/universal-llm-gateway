@@ -21,6 +21,7 @@ from universal_logging import get_logger
 if TYPE_CHECKING:
     pass
 
+from services.rag.chroma_writer import chroma_delete_ids, run_chroma
 from services.rag.events.articles import (
     rag_article_auto_created,
     rag_article_path_moved,
@@ -57,8 +58,12 @@ async def _handle_pdf_duplicate_or_move(
     or None when the caller should continue with normal indexing.
     """
     if article_sync_old_path is not None:
-        n_migrated = migrate_chroma_source(
-            collection, source_hash, article_sync_old_path, source
+        n_migrated = await run_chroma(
+            migrate_chroma_source,
+            collection,
+            source_hash,
+            article_sync_old_path,
+            source,
         )
         if n_migrated > 0:
             logger.info(
@@ -71,7 +76,9 @@ async def _handle_pdf_duplicate_or_move(
     if file_path.suffix.lower() != ".pdf" or force:
         return None
 
-    dup_result = check_pdf_duplicate(collection, source_hash, source)
+    dup_result = await run_chroma(
+        check_pdf_duplicate, collection, source_hash, source
+    )
     if dup_result is None:
         return None
 
@@ -80,7 +87,9 @@ async def _handle_pdf_duplicate_or_move(
         # Moved PDF: old path is gone — this is a rename, not a true duplicate.
         # Migrate Chroma chunk metadata and continue; the normal "unchanged"
         # path below will update indexed_sources and create the article row.
-        n_migrated = migrate_chroma_source(collection, source_hash, old_path, source)
+        n_migrated = await run_chroma(
+            migrate_chroma_source, collection, source_hash, old_path, source
+        )
         logger.info(
             "PDF source migrated in Chroma: %s → %s (%d chunks)",
             old_path,
@@ -135,7 +144,7 @@ async def _handle_empty_chunks(
             for old_id in existing_ids:
                 await prop_index.remove_chunk(old_id)
             await prop_index.fts.remove_batch(existing_ids)
-        collection.delete(ids=existing_ids)
+        await run_chroma(chroma_delete_ids, collection, existing_ids)
     if prop_index is not None:
         await prop_index.upsert_indexed_source(
             source=source,

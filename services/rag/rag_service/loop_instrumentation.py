@@ -78,7 +78,10 @@ def start_loop_instrumentation() -> None:
 
 
 async def stop_loop_instrumentation() -> None:
-    """Stop monitors started by ``start_loop_instrumentation``."""
+    """Stop monitors started by ``start_loop_instrumentation``.
+
+    Cancels the asyncio drift task and joins the GIL-gap daemon thread.
+    """
     global _loop_drift_task, _loop_drift_stop, _gil_thread, _gil_stop
     if _loop_drift_stop is not None:
         _loop_drift_stop.set()
