@@ -114,6 +114,8 @@ def derive_cursor_sdk_prompt_preamble(
     packet_text: str = "",
 ) -> str | None:
     """Single imperative paragraph for implement dispatches (1b from pointer)."""
+    if (handoff_contract or "").strip().lower() == "bare":
+        return None
     preamble: str | None = None
     if handoff_contract == "implement":
         for line in pointer.splitlines():

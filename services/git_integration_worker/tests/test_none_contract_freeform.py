@@ -52,3 +52,34 @@ def test_confer_still_gets_judgment_stack() -> None:
     assert "DURABLE DELIVERABLE ROUTING" in preamble
     assert "Use the `reasoning-posture` skill" in preamble
     assert "Use the `hypothesize-simulate` skill" in preamble
+
+
+def test_bare_contract_emits_empty_preamble_by_default() -> None:
+    preamble = resolve_prompt_preamble(
+        handoff_contract="bare",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-bare",
+        lane_worktree="/tmp/wt-bare",
+        continuity_root_thread_id="16416",
+    )
+    assert preamble == ""
+
+
+def test_bare_contract_honors_opt_in_skills_only() -> None:
+    preamble = resolve_prompt_preamble(
+        handoff_contract="bare",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-bare",
+        lane_worktree="/tmp/wt-bare",
+        skills=["cortex-orientation"],
+    )
+    assert "Use the `cortex-orientation` skill" in preamble
+    assert "/reasoning-posture" not in preamble
+    assert "DURABLE DELIVERABLE ROUTING" not in preamble
+    assert "LANE-B" not in preamble
+    assert "WORKTREE SAFETY" not in preamble
+

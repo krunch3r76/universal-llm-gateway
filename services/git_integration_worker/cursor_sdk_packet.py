@@ -711,6 +711,21 @@ def resolve_prompt_preamble(
     else:
         preamble = ""
 
+    if contract == "bare":
+        parts_bare: list[str] = []
+        skill_block = _skill_invoke_block(
+            list(skills or []),
+            prompt_preamble,
+            existing_text,
+        )
+        if skill_block:
+            parts_bare.append(skill_block)
+        if preamble:
+            parts_bare.append(preamble.strip())
+        if not parts_bare:
+            return ""
+        return "\n\n".join(parts_bare) + "\n\n"
+
     if contract_is_freeform(contract):
         parts: list[str] = []
         resume_root = extract_resume_root_from_packet(existing_text or "")

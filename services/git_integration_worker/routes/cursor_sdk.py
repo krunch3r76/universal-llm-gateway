@@ -1176,6 +1176,7 @@ def _run_sdk_sync(
 
     ctx = ensure_spawn_workspace(ctx)
     resume_ctx = load_resume_run_context(dispatch_id=ctx.dispatch_id)
+    is_bare = (ctx.handoff_contract or "").strip().lower() == "bare"
     if resume_ctx is not None:
         store_bearing_id = resolve_store_bearing_dispatch_id(
             parent_id=resume_ctx.resume_of
@@ -1183,7 +1184,7 @@ def _run_sdk_sync(
         dispatch_home = dispatch_home_path(store_bearing_id)
         if not dispatch_home.is_dir():
             dispatch_home = setup_cursor_dispatch_home(
-                store_bearing_id, real_home=real_home
+                store_bearing_id, real_home=real_home, bare=is_bare
             )
         parent = load_parent_row(
             CursorDispatchLedger.instance(), parent_id=resume_ctx.resume_of
@@ -1195,7 +1196,9 @@ def _run_sdk_sync(
         )
         bridge_state = Path(store_path or resume_ctx.state_root)
     else:
-        dispatch_home = setup_cursor_dispatch_home(ctx.dispatch_id, real_home=real_home)
+        dispatch_home = setup_cursor_dispatch_home(
+            ctx.dispatch_id, real_home=real_home, bare=is_bare
+        )
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
         CursorDispatchLedger.instance().record_state_root(
@@ -1211,7 +1214,9 @@ def _run_sdk_sync(
             dispatch_home / ".cursor",
             skills,
             source_repo=ctx.hub,
-            workspace_roots=(ctx.dispatch_workspace, ctx.workspace_root),
+            workspace_roots=()
+            if is_bare
+            else (ctx.dispatch_workspace, ctx.workspace_root),
         )
     except Exception as exc:  # skill mount is advisory; never kill the dispatch
         logger.warning(

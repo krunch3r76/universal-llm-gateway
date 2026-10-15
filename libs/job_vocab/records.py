@@ -142,6 +142,15 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         harness_stack_skip=True,
     ),
     _inline(
+        "bare",
+        _ALL_WIRE,
+        stop_after_allowed=False,
+        recon_owed=False,
+        posture_skip=True,
+        hypothesize_on=False,
+        harness_stack_skip=False,
+    ),
+    _inline(
         "mechanical",
         _ALL_WIRE,
         stop_after_allowed=True,
@@ -207,6 +216,7 @@ ROLE_TURN_JOBS = _derived(lambda record: record.role_turn)
 # Handwritten comparands. AC9. Not computed from rows.
 _GENERATE_ADMITTED_LITERAL = frozenset(
     {
+        "bare",
         "freeform",
         "mechanical",
         "sketch",
@@ -221,14 +231,15 @@ _GENERATE_ADMITTED_LITERAL = frozenset(
     }
 )
 _TO_THREAD_ADMITTED_LITERAL = frozenset(
-    {"freeform", "mechanical", "sketch", "implement"}
+    {"bare", "freeform", "mechanical", "sketch", "implement"}
 )
 _HANDOFF_ADMITTED_LITERAL = frozenset(
-    {"freeform", "mechanical", "sketch", "implement", "confer"}
+    {"bare", "freeform", "mechanical", "sketch", "implement", "confer"}
 )
 _CURSOR_AUTO_ADMITTED_LITERAL = frozenset(
     {
         "answer",
+        "bare",
         "confer",
         "ask",
         "investigate",
@@ -247,7 +258,7 @@ _CURSOR_AUTO_ADMITTED_LITERAL = frozenset(
 )
 _SOURCE_REF_LITERAL = frozenset({"implement", "sketch", "wrap", "conductor"})
 _POSTURE_SKIP_LITERAL = frozenset(
-    {"implement", "mechanical", "propagate", "execute", "answer", "ask"}
+    {"bare", "implement", "mechanical", "propagate", "execute", "answer", "ask"}
 )
 _HYPOTHESIZE_LITERAL = frozenset({"confer", "sketch", "conductor", "freeform"})
 _HARNESS_STACK_SKIP_LITERAL = frozenset({"freeform"})

@@ -597,3 +597,32 @@ def test_steer_native_hook_tested_set_includes_host_pin() -> None:
             break
     assert pin is not None
     assert pin in STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS
+
+
+def test_bare_dispatch_home_omits_rules_and_plugins_but_keeps_mcp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bare=True omits .cursor/rules and .cursor/plugins (and removes them on reuse) while keeping MCP."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    (real / ".cursor" / "rules").mkdir(parents=True, exist_ok=True)
+    (real / ".cursor" / "rules" / "u.mdc").write_text("rule", encoding="utf-8")
+    (real / ".cursor" / "plugins" / "local" / "ulg-ecosystem" / "skills").mkdir(
+        parents=True, exist_ok=True
+    )
+    (real / ".cursor" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "echo"}}}),
+        encoding="utf-8",
+    )
+    (real / ".gateway").mkdir(parents=True, exist_ok=True)
+    (real / ".gateway" / "mcp.yaml").write_text("auth_token: secret\n", encoding="utf-8")
+    root = tmp_path / "homes"
+
+    # First seed non-bare, then reuse with bare=True to verify cleanup too
+    setup_cursor_dispatch_home("d-bare", real_home=real, root=root, bare=False)
+    home = setup_cursor_dispatch_home("d-bare", real_home=real, root=root, bare=True)
+    assert not (home / ".cursor" / "rules").exists()
+    assert not (home / ".cursor" / "plugins").exists()
+    assert (home / ".cursor" / "mcp.json").is_file()
+    assert (home / ".gateway" / "mcp.yaml").is_file()
+

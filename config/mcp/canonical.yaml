@@ -4537,6 +4537,7 @@ tools:
       contract:
         type: string
         enum:
+        - bare
         - check-review
         - code-review
         - conductor
@@ -4615,6 +4616,7 @@ tools:
       contract:
         type: string
         enum:
+        - bare
         - freeform
         - implement
         - mechanical

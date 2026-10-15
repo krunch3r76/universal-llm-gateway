@@ -41,6 +41,7 @@ _VORTEX_MCP_SERVER = "vortex-code"
 _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
+_BARE_SETTING_SOURCES: tuple[str, ...] = ("user",)
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 CURSOR_SDK_DISPATCH_ID_ENV = "CURSOR_SDK_DISPATCH_ID"
 ULG_STEER_SPOOL_DIR_ENV = "ULG_STEER_SPOOL_DIR"
@@ -266,6 +267,7 @@ def build_local_agent_options(
     *,
     workspace_root: Path | None = None,
     state_root: Path | str | None = None,
+    bare: bool = False,
 ) -> LocalAgentOptions:
     """Mirror IDE Composer ambient settings; cwd = dispatch write-surface anchor.
 
@@ -274,6 +276,9 @@ def build_local_agent_options(
     policy root != write surface), the control repo is exposed via ``local.dirs``
     — cursor-sdk's typed multi-root field for exposing a workspace's control repo
     alongside its write surface.
+    When ``bare=True`` (``contract=bare``), ``setting_sources`` is restricted to
+    ``("user",)`` so project/workspace rules and plugins are not loaded while
+    explicitly staged user-layer skills remain discoverable.
     """
     store = None
     if state_root is not None:
@@ -290,7 +295,7 @@ def build_local_agent_options(
     return LocalAgentOptions(
         cwd=cwd,
         dirs=dirs,
-        setting_sources=_SETTING_SOURCES,
+        setting_sources=_BARE_SETTING_SOURCES if bare else _SETTING_SOURCES,
         store=store,
     )
 
@@ -356,10 +361,12 @@ def build_agent_options(
     sdk_mode: Literal["agent", "plan"] = "agent",
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
+    is_bare = (handoff_contract or "").strip().lower() == "bare"
     local = build_local_agent_options(
         dispatch_workspace,
         workspace_root=workspace_root,
         state_root=state_root,
+        bare=is_bare,
     )
     local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(

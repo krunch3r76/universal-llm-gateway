@@ -433,3 +433,25 @@ def test_build_agent_options_passes_substrate_to_mcp_servers(
     )
     env = opts.mcp_servers["vortex-code"].env or {}
     assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-agent"
+
+
+def test_build_agent_options_bare_contract_sets_user_only_setting_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """handoff_contract='bare' restricts setting_sources to ('user',) while keeping vortex-code MCP."""
+    monkeypatch.setenv("MCP_TOKEN", "tok")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    repo = _stub_repo(tmp_path)
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
+    opts = build_agent_options(
+        repo,
+        dispatch_ws,
+        ModelSelection(id="grok-4.7"),
+        workspace_root=repo,
+        handoff_contract="bare",
+    )
+    assert opts.local is not None
+    assert opts.local.setting_sources == ("user",)
+    assert "vortex-code" in opts.mcp_servers
+

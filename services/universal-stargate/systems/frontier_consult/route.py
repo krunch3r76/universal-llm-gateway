@@ -120,10 +120,10 @@ implement_router = APIRouter(prefix="/api/v1/implement", tags=["implement"])
 logger = get_logger(__name__)
 
 _TO_THREAD_ADMITTED_LITERAL = frozenset(
-    {"freeform", "mechanical", "sketch", "implement"}
+    {"bare", "freeform", "mechanical", "sketch", "implement"}
 )
 _HANDOFF_ADMITTED_LITERAL = frozenset(
-    {"freeform", "mechanical", "sketch", "implement", "confer"}
+    {"bare", "freeform", "mechanical", "sketch", "implement", "confer"}
 )
 assert TO_THREAD_ADMITTED_JOBS == _TO_THREAD_ADMITTED_LITERAL
 assert HANDOFF_ADMITTED_JOBS == _HANDOFF_ADMITTED_LITERAL
