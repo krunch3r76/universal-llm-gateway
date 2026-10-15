@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 from urllib.error import URLError
 
@@ -33,23 +34,15 @@ _TARGETS: dict[tuple[str, str], str] = {
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
 _DISPLAY_LOCKS: dict[str, asyncio.Lock] = {}
 _COMPOSER_JS = {
-    "grok": r"""
-(() => {
-  const el = document.querySelector('[aria-label="Prompt"][contenteditable="true"]');
-  if (!el) return {ok: false};
-  const draft = (el.innerText || '').trim();
-  if (draft.length > 0) return {ok: false, reason: 'composer_not_empty', draft};
-  el.focus();
-  const sel = window.getSelection();
-  if (sel) {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-  return {ok: true};
-})()
-""",
+    "grok": (
+        "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
+        "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
+        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(draft);"
+        "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
+        "if(stale)el.innerText='';el.focus();const sel=window.getSelection();"
+        "if(sel){const range=document.createRange();range.selectNodeContents(el);"
+        "sel.removeAllRanges();sel.addRange(range);}return{ok:true};})()"
+    ),
 }
 
 
@@ -95,12 +88,38 @@ def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
     return usable[0] if len(usable) == 1 else None
 
 
+_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+$")
+
+
+def _is_stale_wake_draft(draft: str) -> bool:
+    return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
+
+
 def _busy_or_draft_reason(surface: dict[str, Any]) -> str | None:
     # Why: grok-bot, cursor, and claude.ai all support mid-stream steering;
-    # only an unsent composer draft blocks a wake paste.
-    if str(surface.get("composer_draft") or "").strip():
-        return "composer_not_empty"
-    return None
+    # only an unsent composer draft blocks a wake paste (except a failed prior wake).
+    draft = str(surface.get("composer_draft") or "").strip()
+    if not draft or _is_stale_wake_draft(draft):
+        return None
+    return "composer_not_empty"
+
+
+def _send_fallback_js(line: str) -> str:
+    lj = json.dumps(line)
+    sel = (
+        'button[aria-label="Send message"]:not([disabled]),'
+        'button[aria-label="Send"]:not([disabled]),button[type="submit"]:not([disabled])'
+    )
+    return (
+        "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
+        "if(!el)return{ok:true,send_fallback_clicked:false};"
+        f"const text=(el.innerText||'').trim(),line={lj};"
+        "if(!text||(text!==line.trim()&&!text.startsWith('BRIDGE_WAKE')))"
+        "return{ok:true,send_fallback_clicked:false};"
+        f"const btn=document.querySelector('{sel}');"
+        "if(!btn)return{ok:true,send_fallback_clicked:false};btn.click();"
+        "return{ok:true,send_fallback_clicked:true};})()"
+    )
 
 
 async def deliver_wake(
@@ -293,7 +312,20 @@ async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:
                 )
             )
             await asyncio.wait_for(_response(ws, mid), 5.0)
-    return {"ok": True}
+        await asyncio.sleep(0.1)
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 5,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": _send_fallback_js(line), "returnByValue": True},
+                }
+            )
+        )
+        fallback = await asyncio.wait_for(_response(ws, 5), 5.0)
+        val = ((fallback.get("result") or {}).get("result") or {}).get("value") or {}
+        clicked = bool(val.get("send_fallback_clicked"))
+    return {"ok": True, "send_fallback_clicked": clicked}
 
 
 async def _response(ws: Any, mid: int) -> dict[str, Any]:
