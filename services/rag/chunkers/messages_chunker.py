@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 

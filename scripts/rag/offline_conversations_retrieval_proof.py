@@ -14,10 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO / "libs"))
-sys.path.insert(0, str(_REPO))
+sys.path[:0] = [str(_REPO), str(_REPO / "libs")]
 
-from services.rag.chunkers.messages_chunker import chunk_messages
+from services.rag.chunkers.messages_chunker import chunk_messages  # noqa: E402
 
 _QUERIES = (
     ("8", "one claude.ai seat as the master mind"),

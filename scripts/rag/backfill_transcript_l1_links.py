@@ -133,6 +133,8 @@ def main() -> int:
         "l2_without_l1_count": len(inventory["l2_without_l1"]),
         "l1_without_l2_count": len(inventory["l1_without_l2"]),
         "surface_counts": inventory["surface_counts"],
+        "entity_updates_planned": len(inventory["sources"]),
+        "entity_update_op": "cortex entity_update (execute_op) attributes source_jsonl_uri + source_jsonl_sha256",
         "mode": "dry_run" if args.dry_run else "apply",
     }
     updates: list[dict[str, object]] = []

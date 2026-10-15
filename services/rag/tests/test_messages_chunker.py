@@ -102,18 +102,48 @@ def test_lane_exclusion(tmp_path: Path) -> None:
     assert chunk_messages(path, config=cfg) == []
 
 
-def test_case_content_marker_excludes_exchange(tmp_path: Path) -> None:
+@pytest.mark.parametrize("marker", CASE_CONTENT_MARKERS)
+def test_case_content_marker_excludes_exchange(
+    tmp_path: Path, marker: str
+) -> None:
     path = tmp_path / "s.messages.json"
-    marker = CASE_CONTENT_MARKERS[0]
+    display = {
+        "flintridge": "Flintridge Prep",
+        "assessment appeals": "Assessment Appeals",
+    }
+    sample = display.get(marker, marker)
     _write_envelope(
         path,
         [
-            {"role": "user", "content": f"Parcel {marker} appeal", "turn_index": 1},
+            {"role": "user", "content": f"Parcel {sample} appeal", "turn_index": 1},
             {"role": "assistant", "content": "ok", "turn_index": 1},
         ],
     )
     assert chunk_messages(path) == []
-    assert exchange_matches_case_markers(f"talk about {marker}")
+    assert exchange_matches_case_markers(f"talk about {sample}")
+
+
+def test_briefly_inform_synthetic_user_dropped(tmp_path: Path) -> None:
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {
+                "role": "user",
+                "content": "Briefly inform the user about the task result.",
+                "turn_index": 1,
+            },
+            {
+                "role": "user",
+                "content": "<user_query>keep me</user_query>",
+                "turn_index": 2,
+            },
+            {"role": "assistant", "content": "done", "turn_index": 2},
+        ],
+    )
+    chunks = chunk_messages(path)
+    assert len(chunks) == 1
+    assert "keep me" in chunks[0].text
 
 
 def test_scrub_secrets_on_chunk_text_only() -> None:
