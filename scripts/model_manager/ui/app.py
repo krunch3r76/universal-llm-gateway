@@ -265,7 +265,12 @@ class ModelManagerApp(App):
                 McpEdgeProbeLoop,
             )
 
-            self._mcp_edge_probe = McpEdgeProbeLoop(workspace_root=self._workspace_root)
+            self._mcp_edge_probe = McpEdgeProbeLoop(
+                workspace_root=self._workspace_root,
+                restart_in_progress=lambda: self._service_controller.restart_gate.restart_in_progress(
+                    "mcp"
+                ),
+            )
             self._mcp_edge_probe.start()
         except Exception as e:
             logger.exception("Failed to start mcp edge probe: %s", e)

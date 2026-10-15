@@ -4509,7 +4509,10 @@ tools:
     (implement|wrap|sketch|conductor), not the generic write channel; dispatch-thread
     latest turn is fallback when no packet;\n  poll via poll_hint (agent-bus wait), NOT pipeline(op=result),
     until the execution registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
-    (handoff-only). Async. Mutating. See agent_skill:dispatch."
+    (handoff-only). Async. Mutating. See agent_skill:dispatch.\n  contract=bare drops
+    user rules, project rules, plugins, the seat overlay, and posture, and keeps only
+    the bare floor (lane-B worktree, failure-paths, and one refusal line for forward_only,
+    no-push-unless-named, no-pkill, and the in-flight guard)."
   json_schema:
     type: object
     properties:
@@ -4536,6 +4539,10 @@ tools:
         type: string
       contract:
         type: string
+        description: "contract=bare drops user rules, project rules, plugins, the seat
+          overlay, and posture, and keeps only the bare floor (lane-B worktree,
+          failure-paths, and one refusal line for forward_only, no-push-unless-named,
+          no-pkill, and the in-flight guard)."
         enum:
         - bare
         - check-review
@@ -4590,7 +4597,10 @@ tools:
     server_tools (optional, present in json_schema): omit for default ALL server-side built-ins;
     set false to suppress card-derived provider built-ins.\nmcp (optional, present in json_schema):
     MCP-class tools only; omit for per-model default.\nskills (optional, present in json_schema):
-    unified skills input path.\nAsync. Mutating. See agent_skill:dispatch."
+    unified skills input path.\nAsync. Mutating. See agent_skill:dispatch.\n  contract=bare drops
+    user rules, project rules, plugins, the seat overlay, and posture, and keeps only
+    the bare floor (lane-B worktree, failure-paths, and one refusal line for forward_only,
+    no-push-unless-named, no-pkill, and the in-flight guard)."
   json_schema:
     type: object
     properties:
@@ -4615,6 +4625,10 @@ tools:
         type: string
       contract:
         type: string
+        description: "contract=bare drops user rules, project rules, plugins, the seat
+          overlay, and posture, and keeps only the bare floor (lane-B worktree,
+          failure-paths, and one refusal line for forward_only, no-push-unless-named,
+          no-pkill, and the in-flight guard)."
         enum:
         - bare
         - freeform
