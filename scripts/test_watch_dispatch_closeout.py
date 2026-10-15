@@ -204,6 +204,30 @@ def test_main_parent_subj_with_non_json_closeout_uses_generic_body(
 
 
 @pytest.mark.offline
+def test_main_come_to_ide_body_generic_return_hint(
+    wdc: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent = _run_main_capture_page(
+        wdc,
+        monkeypatch,
+        "CLOSEOUT prose, not JSON",
+        [
+            "--thread",
+            "16416",
+            "--dispatch-id",
+            "d-1",
+            "--come-to-ide",
+            "--label",
+            "39341",
+        ],
+    )
+    assert sent["subject"] == "COME TO IDE — 39341"
+    assert " · return to Cursor IDE" in sent["body"]
+    assert "529" not in sent["body"]
+    assert "friction" not in sent["body"]
+
+
+@pytest.mark.offline
 def test_unparseable_exit_code_does_not_raise(wdc: Any) -> None:
     closeout = {"summary": "s", "verification": [{"command": "c", "exit_code": "n/a"}]}
     _subj, body = wdc._arc_outcome_line(closeout, label="L", thread_id="1")

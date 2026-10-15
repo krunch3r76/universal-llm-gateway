@@ -669,7 +669,7 @@ def main() -> int:
                     page_subject = f"COME TO IDE — {args.label}"
                     page_body = (
                         f"thread {thread_id} closeout · {outcome}"
-                        f" · friction 529 bind — return to Cursor IDE"
+                        f" · return to Cursor IDE"
                         f" · elapsed {elapsed_s:.0f}s"
                         f"{f' · {subject}' if subject else ''}"
                     )
