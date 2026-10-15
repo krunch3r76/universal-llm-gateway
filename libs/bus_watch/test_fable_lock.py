@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -24,6 +25,57 @@ def test_fable_lock_path() -> None:
 
 def test_ticker_lock_path() -> None:
     assert fl.ticker_lock_path("10534").name == "liaison-ticker-10534.lock"
+
+
+def test_ticker_lease_refuses_while_holder_pid_alive(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holder_pid = 424242
+    monkeypatch.setattr(fl.os, "getpid", lambda: holder_pid)
+    assert fl.claim_ticker_lease("10534")["ok"]
+    monkeypatch.setattr(fl.os, "getpid", lambda: holder_pid + 1)
+
+    def _alive(pid: int) -> bool:
+        return pid == holder_pid
+
+    monkeypatch.setattr(fl, "_holder_pid_alive", _alive)
+    second = fl.claim_ticker_lease("10534")
+    assert second["ok"] is False
+    assert second["reason"] == "held"
+
+
+def test_ticker_lease_reclaims_after_holder_exit(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dead_pid = 424242
+    monkeypatch.setattr(fl.os, "getpid", lambda: dead_pid)
+    assert fl.claim_ticker_lease("10534")["ok"]
+    monkeypatch.setattr(fl, "_holder_pid_alive", lambda _pid: False)
+    monkeypatch.setattr(fl.os, "getpid", lambda: dead_pid + 1)
+    again = fl.claim_ticker_lease("10534")
+    assert again["ok"] is True
+    lock = fl.read_ticker_lock("10534")
+    assert lock["holder_pid"] == dead_pid + 1
+
+
+def test_ticker_lease_release_clears_on_matching_pid(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid = 515151
+    monkeypatch.setattr(fl.os, "getpid", lambda: pid)
+    claim = fl.claim_ticker_lease("10534")
+    assert claim["lock"]["holder_pid"] == pid
+    assert fl.release_ticker_lease("10534")["ok"]
+    assert fl.read_ticker_lock("10534").get("holder") is None
+
+
+def test_ticker_lease_claim_does_not_touch_tick_json(watch_dir: Path) -> None:
+    tick = watch_dir / "liaison-10534.tick.json"
+    tick.write_text('{"register":"autonomous","ticks":1}\n', encoding="utf-8")
+    digest = hashlib.sha256(tick.read_bytes()).hexdigest()
+    assert fl.claim_ticker_lease("10534")["ok"]
+    assert fl.release_ticker_lease("10534")["ok"]
+    assert hashlib.sha256(tick.read_bytes()).hexdigest() == digest
 
 
 def test_ticker_lease_does_not_block_successor(watch_dir: Path) -> None:

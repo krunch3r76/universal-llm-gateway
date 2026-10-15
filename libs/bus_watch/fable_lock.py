@@ -285,14 +285,42 @@ def release_fable_lock(
     return {"ok": True, "lock": read_lock(rid)}
 
 
+def _holder_pid_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, ValueError):
+        return False
+    else:
+        return True
+
+
+def _ticker_lease_live(current: dict[str, Any]) -> bool:
+    if not current.get("holder"):
+        return False
+    lock_pid = current.get("holder_pid")
+    if lock_pid is not None:
+        return _holder_pid_alive(int(lock_pid))
+    return float(current.get("age_s") or LOCK_STALE_S) < LOCK_STALE_S
+
+
 def claim_ticker_lease(root: str) -> dict[str, Any]:
     holder = f"ticker:{root}"
     path = ticker_lock_path(root)
     current = read_ticker_lock(root)
-    live = bool(current.get("holder")) and (current.get("age_s") or 0) < LOCK_STALE_S
-    if live and current.get("holder") != holder:
+    if _ticker_lease_live(current):
         return {"ok": False, "reason": "held", "lock": current}
-    payload = {"holder": holder, "claimed_at": _utcnow(), "root": root}
+    payload = {
+        "holder": holder,
+        "holder_pid": os.getpid(),
+        "claimed_at": _utcnow(),
+        "root": root,
+    }
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return {"ok": True, "lock": {**payload, "age_s": 0.0}}
@@ -308,11 +336,15 @@ def refresh_ticker_lease(root: str) -> bool:
     return True
 
 
-def release_ticker_lease(root: str) -> dict[str, Any]:
+def release_ticker_lease(root: str, *, pid: int | None = -1) -> dict[str, Any]:
     current = read_ticker_lock(root)
     holder = f"ticker:{root}"
     if current and current.get("holder") not in (holder, None):
         return {"ok": False, "reason": "not_holder", "lock": current}
+    caller = os.getpid() if pid == -1 else pid
+    lock_pid = current.get("holder_pid") if current else None
+    if caller is not None and lock_pid is not None and int(lock_pid) != int(caller):
+        return {"ok": False, "reason": "not_holder_process", "lock": current}
     if current:
         ticker_lock_path(root).write_text(
             json.dumps({"holder": None, "released_at": _utcnow(), "root": root}),

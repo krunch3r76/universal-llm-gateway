@@ -26,6 +26,8 @@ from typing import Any
 
 import psutil
 
+_HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
+
 from bus_watch.digest_budget import effective_policy
 from bus_watch.fable_lock import (
     LOCK_STALE_S,
@@ -37,8 +39,6 @@ from bus_watch.fable_lock import (
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.tick_state import save_state
-
-_TICK_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "liaison-tick.py"
 
 
 def _utcnow() -> str:
@@ -87,28 +87,102 @@ def ticker_alive(root: str) -> bool:
     )
 
 
-def start_ticker(root: str, *, log_dir: Path = WATCH_DIR) -> dict[str, Any]:
-    """Detach ``--loop --spawn-on-wake`` for ``root``; stdout to a file so hold
-    reasons are inspectable after the shell that started it is gone."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"liaison-ticker-{root}.log"
-    with log_path.open("ab") as log:
-        proc = subprocess.Popen(  # noqa: S603 — fixed argv, our own script
-            [
-                sys.executable,
-                str(_TICK_SCRIPT),
-                "--root",
-                root,
-                "--loop",
-                "--spawn-on-wake",
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            cwd=str(_TICK_SCRIPT.parents[1]),
+def _ticker_unit_name(root: str) -> str:
+    return f"liaison-ticker-{root}.service"
+
+
+def _user_manager_reachable() -> bool:
+    probe = subprocess.run(  # noqa: S603
+        ["systemctl", "--user", "show", "--property=Version", "--value"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return False
+    return bool((probe.stdout or "").strip())
+
+
+def start_ticker(root: str, *, log_dir: Path = WATCH_DIR) -> dict[str, Any]:  # noqa: ARG001
+    """Start gear-3 ticker via user systemd (installed unit or transient)."""
+    _ = log_dir
+    unit = _ticker_unit_name(root)
+    if not _user_manager_reachable():
+        return {
+            "started": False,
+            "pid": None,
+            "supervisor": None,
+            "reason": "user_manager_unreachable",
+        }
+    load = subprocess.run(  # noqa: S603
+        ["systemctl", "--user", "show", "-p", "LoadState", "--value", unit],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if load.returncode != 0:
+        return {
+            "started": False,
+            "pid": None,
+            "supervisor": None,
+            "reason": "user_manager_unreachable",
+        }
+    load_state = (load.stdout or "").strip()
+    hub = _HUB_ROOT
+    if load_state == "loaded":
+        start = subprocess.run(  # noqa: S603
+            ["systemctl", "--user", "start", unit],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
-    return {"started": True, "pid": proc.pid, "log": str(log_path)}
+        if start.returncode != 0:
+            return {
+                "started": False,
+                "pid": None,
+                "supervisor": None,
+                "reason": "ticker_unit_start_failed",
+            }
+    else:
+        child = [
+            sys.executable,
+            "scripts/liaison-tick.py",
+            "--root",
+            root,
+            "--loop",
+            "--spawn-on-wake",
+        ]
+        cmd = [
+            "systemd-run",
+            "--user",
+            f"--unit=liaison-ticker-{root}",
+            "--collect",
+            f"--working-directory={hub}",
+            "--setenv",
+            f"PYTHONPATH={hub}/libs",
+            "--",
+            *child,
+        ]
+        run = subprocess.run(  # noqa: S603
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
+        if run.returncode != 0:
+            return {
+                "started": False,
+                "pid": None,
+                "supervisor": None,
+                "reason": "ticker_unit_start_failed",
+            }
+    return {
+        "started": True,
+        "pid": None,
+        "log": None,
+        "supervisor": "systemd",
+        "unit": unit,
+    }
 
 
 def ensure_ticker(
@@ -202,6 +276,11 @@ def go_under(
         result["seat_release"] = {"ok": True, "reason": "already_free"}
     result["stopped_loops"] = stop_loops(root)
     result["ticker"] = ensure(root)
+    ticker = result["ticker"]
+    if not ticker.get("started") and ticker.get("alive") is not True:
+        result["ok"] = False
+        if "refused" not in result:
+            result["refused"] = ticker.get("reason") or "ticker_not_started"
     effective = effective_policy(state)
     result["armed"] = bool(effective.get("ready")) and bool(
         effective.get("successor_model")
