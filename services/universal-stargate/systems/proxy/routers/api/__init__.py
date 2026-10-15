@@ -7,6 +7,7 @@ from systems.continuity import continuity_router
 from .admin_active_work import router as admin_active_work_router
 from .admission_state import router as admission_state_router
 from .capabilities import router as capabilities_router
+from .claudeburst_read import router as claudeburst_read_router
 from .executions import router as executions_router
 from .gateways import router as gateways_router
 from .git import router as git_router
@@ -52,3 +53,4 @@ router.include_router(model_capacity_router)
 router.include_router(git_router)
 router.include_router(triggers_router)
 router.include_router(continuity_router)
+router.include_router(claudeburst_read_router)
