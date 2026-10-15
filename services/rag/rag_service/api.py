@@ -139,6 +139,8 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
     This endpoint is used by downstream workflows that need deterministic
     source/index addressing rather than semantic top-k retrieval.
     """
+    from services.rag.chroma_writer import run_chroma
+
     collection = state._get_collection()
     results: list[ChunkByIndexItem] = []
 
@@ -152,10 +154,14 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
             ]
         }
         try:
-            raw = collection.get(
-                where=where_filter,
-                include=["documents", "metadatas"],
-            )
+
+            def _get_chunks(c: object, where: dict[str, object]) -> dict:
+                return c.get(  # type: ignore[union-attr]
+                    where=where,
+                    include=["documents", "metadatas"],
+                )
+
+            raw = await run_chroma(_get_chunks, collection, where_filter)
         except Exception as e:
             logger.error(
                 "chunks_by_index: failed for source=%s: %s",

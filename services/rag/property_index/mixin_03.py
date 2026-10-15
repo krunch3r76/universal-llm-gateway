@@ -92,9 +92,11 @@ class _PropertyIndexPart03:
     ) -> None:
         """Remove source-scoped SQLite metadata for one source.
 
-        Watcher cleanup may preserve the article row so a later move-detection or
-        re-index path can reuse curated metadata. Admin delete paths keep the
-        default `remove_article=True` and remain fully destructive.
+        Watcher cleanup and admin delete both pass ``remove_article=False``.
+        The article row is removed by the caller's ``remove_article`` so a
+        move-detection path can still reuse curated metadata. ``chunk_ids``
+        adds an id-list delete; full-source callers pass None because
+        ``WHERE source = ?`` already covers those rows.
         """
         normalized_chunk_ids = list(dict.fromkeys(chunk_ids or []))
 
@@ -111,6 +113,7 @@ class _PropertyIndexPart03:
                 _row_str(source_hash_row[0]) if source_hash_row else ""
             )
             conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
+            conn.execute("DELETE FROM properties WHERE source = ?", (source,))
             if remove_article:
                 conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
             conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
@@ -133,6 +136,7 @@ class _PropertyIndexPart03:
             conn.commit()
 
         await self._seq.run(_write())
+        await self.fts.remove_for_source(source)
         if normalized_chunk_ids:
             await self.fts.remove_batch(normalized_chunk_ids)
 

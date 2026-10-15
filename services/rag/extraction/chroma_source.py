@@ -17,6 +17,11 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from services.rag.chroma_writer import (
+    chroma_get_where,
+    chroma_update_metadatas,
+    run_chroma,
+)
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.extraction.property_entries import build_property_entries
 from services.rag.knowledge_extractor import (
@@ -49,8 +54,11 @@ async def extract_source(
     Returns ``(all_done, increment_attempt, category, error, error_type)`` where
     failure details are populated only when ``all_done`` is False.
     """
-    existing = collection.get(
-        where={"source": source}, include=["documents", "metadatas"]
+    existing = await run_chroma(
+        chroma_get_where,
+        collection,
+        where={"source": source},
+        include=["documents", "metadatas"],
     )
     raw_ids: list[str] = existing.get("ids") or []
     raw_docs: list[str] = existing.get("documents") or []
@@ -123,7 +131,9 @@ async def extract_source(
                 build_property_entries(knowledge, chunk_id, scope, source)
             )
 
-        collection.update(ids=update_ids, metadatas=update_metas)
+        await run_chroma(
+            chroma_update_metadatas, collection, update_ids, update_metas
+        )
         if all_prop_entries:
             await property_index.add_batch_with_scope(all_prop_entries)
 

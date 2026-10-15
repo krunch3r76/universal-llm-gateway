@@ -24,6 +24,7 @@ from services.rag.article_registry import (
     replace_article_rows,
     to_article_rows,
 )
+from services.rag.chroma_writer import init_chroma_executor, shutdown_chroma_executor
 from services.rag.config import load_config
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
@@ -83,6 +84,7 @@ async def _startup() -> None:
         name=state.COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
+    init_chroma_executor()
     state._event_bus = EventBus()
     state._broadcaster = MinimalEventDebugBroadcaster(
         uds_publish_path=os.environ.get(
@@ -238,6 +240,7 @@ async def _shutdown() -> None:
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()
         state._watcher_manager = None
+    shutdown_chroma_executor()
     if state._property_index is not None:
         await state._property_index.stop()
         state._property_index = None

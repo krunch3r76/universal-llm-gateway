@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 import chromadb
 
+from services.rag.chroma_writer import chroma_delete_ids, run_chroma
 from services.rag.events.articles import rag_article_auto_created
 from services.rag.events.indexing import (
     rag_file_indexing_failed,
@@ -87,7 +88,7 @@ async def _run_commit_phase(
                 for old_id in stale_ids:
                     await prop_index.remove_chunk(old_id)
                 await prop_index.fts.remove_batch(stale_ids)
-            collection.delete(ids=stale_ids)
+            await run_chroma(chroma_delete_ids, collection, stale_ids)
         if prop_index is not None:
             await prop_index.upsert_indexed_source(
                 source=source,

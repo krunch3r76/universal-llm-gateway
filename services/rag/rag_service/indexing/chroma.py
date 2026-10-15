@@ -14,6 +14,7 @@ from typing import Any
 
 from chromadb.utils.batch_utils import create_batches
 
+from services.rag.chroma_writer import UPSERT_BATCH_CAP, run_chroma
 from services.rag.events.indexing import (
     rag_chroma_upsert_completed,
     rag_chroma_upsert_started,
@@ -43,9 +44,35 @@ async def _upsert_chroma_chunk_batches(
         metadatas=metadatas,
         documents=texts,
     )
-    batch_total = len(batches)
+    sub_batches: list[tuple[list[str], Any, list[dict[str, Any]], list[str]]] = []
+    for b_ids, b_embeddings, b_metadatas, b_documents in batches:
+        for start in range(0, len(b_ids), UPSERT_BATCH_CAP):
+            end = start + UPSERT_BATCH_CAP
+            sub_batches.append(
+                (
+                    b_ids[start:end],
+                    b_embeddings[start:end],
+                    b_metadatas[start:end],
+                    b_documents[start:end],
+                )
+            )
+    batch_total = len(sub_batches)
+
+    def _upsert_slice(
+        ids_: list[str],
+        embeddings_: Any,
+        documents_: list[str],
+        metadatas_: list[dict[str, Any]],
+    ) -> None:
+        collection.upsert(
+            ids=ids_,
+            embeddings=embeddings_,
+            documents=documents_,
+            metadatas=metadatas_,
+        )
+
     for batch_index, (b_ids, b_embeddings, b_metadatas, b_documents) in enumerate(
-        batches
+        sub_batches
     ):
         if event_bus is not None:
             await event_bus.publish_nowait(
@@ -58,11 +85,12 @@ async def _upsert_chroma_chunk_batches(
                     batch_total=batch_total,
                 )
             )
-        collection.upsert(
-            ids=b_ids,
-            embeddings=b_embeddings,
-            documents=b_documents,
-            metadatas=b_metadatas,
+        await run_chroma(
+            _upsert_slice,
+            b_ids,
+            b_embeddings,
+            b_documents,
+            b_metadatas,
         )
         if event_bus is not None:
             await event_bus.publish_nowait(

@@ -301,11 +301,16 @@ def register_article_routes(
         prop_idx = get_property_index_fn()
         collection = get_collection_fn()
 
-        existing = collection.get(where={"source": path}, include=[])
-        chunk_ids: list[str] = existing.get("ids", [])
+        from services.rag.chroma_writer import (
+            chroma_delete_ids,
+            chroma_get_by_source_ids,
+            run_chroma,
+        )
+
+        chunk_ids = await run_chroma(chroma_get_by_source_ids, collection, path)
         chunks_deleted = len(chunk_ids)
         if chunk_ids:
-            collection.delete(ids=chunk_ids)
+            await run_chroma(chroma_delete_ids, collection, chunk_ids)
 
         properties_removed = 0
         fts_removed = 0
@@ -315,8 +320,10 @@ def register_article_routes(
                     chunk_ids
                 )
                 fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
-            await prop_idx.clear_failures_for(path)
-            await prop_idx.remove_indexed_source(path)
+            # Source-column delete heals a retry whose Chroma get is empty (N-b).
+            # None, not the id list: an unsliced IN (...) of every chunk can hit
+            # SQLITE_MAX_VARIABLE_NUMBER (L5).
+            await prop_idx.remove_source_metadata(path, None, remove_article=False)
 
         fallback_row = None
         if prop_idx is not None:

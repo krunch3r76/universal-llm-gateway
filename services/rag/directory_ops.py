@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,11 @@ from typing import Protocol
 
 import chromadb
 
+from services.rag.chroma_writer import (
+    chroma_delete_ids,
+    chroma_get_by_source_ids,
+    run_chroma,
+)
 from services.rag.models import IndexResult
 from services.rag.watcher_manager.protocols import path_matches_extensions
 
@@ -167,25 +173,21 @@ async def index_directory_contents(
 _CHROMA_PAGE_SIZE = 500
 
 
-def find_sources_under_prefixes(
-    *,
+def _find_sources_under_prefixes_sync(
     collection: chromadb.Collection,
     prefixes: list[str],
-    list_known_sources_fn: ListKnownSourcesFn | None = None,
+    page_size: int,
 ) -> set[str]:
-    """Return source paths under the given prefixes from Chroma and metadata-only tables.
-
-    Paginates collection.get() in pages of _CHROMA_PAGE_SIZE to avoid the SQLite
-    SQLITE_MAX_VARIABLE_NUMBER limit that causes a 500 on large collections (>~999 chunks).
-    """
-    if not prefixes:
-        return set()
-
+    """Scan Chroma metadatas for prefix matches (single executor job — N1)."""
     sources: set[str] = set()
     offset = 0
     while True:
-        page = collection.get(
-            include=["metadatas"], limit=_CHROMA_PAGE_SIZE, offset=offset
+        started = time.perf_counter()
+        page = collection.get(include=["metadatas"], limit=page_size, offset=offset)
+        logger.info(
+            "chroma_call_ms=%.3f scope=call fn=collection.get n=%d",
+            (time.perf_counter() - started) * 1000.0,
+            len(page.get("metadatas") or []),
         )
         rows: list[dict[str, object]] = page.get("metadatas") or []
         for row in rows:
@@ -194,16 +196,39 @@ def find_sources_under_prefixes(
             source = row.get("source")
             if isinstance(source, str) and any(source.startswith(p) for p in prefixes):
                 sources.add(source)
-        if len(rows) < _CHROMA_PAGE_SIZE:
+        if len(rows) < page_size:
             break
-        offset += _CHROMA_PAGE_SIZE
+        offset += page_size
+    return sources
 
+
+async def find_sources_under_prefixes(
+    *,
+    collection: chromadb.Collection,
+    prefixes: list[str],
+    list_known_sources_fn: ListKnownSourcesFn | None = None,
+) -> set[str]:
+    """Return source paths under the given prefixes from Chroma and metadata-only tables.
+
+    The full paged scan runs as one ``run_chroma`` job so concurrent deletes cannot
+    interleave between pages (friction:39359 N1). ``list_known_sources_fn`` stays on
+    the loop (plan N4 deferral — property-index sqlite, not Chroma Rust).
+    """
+    if not prefixes:
+        return set()
+
+    sources = await run_chroma(
+        _find_sources_under_prefixes_sync,
+        collection,
+        prefixes,
+        _CHROMA_PAGE_SIZE,
+    )
     if list_known_sources_fn is not None:
         sources.update(list_known_sources_fn(prefixes))
     return sources
 
 
-def find_removed_directory_sources(
+async def find_removed_directory_sources(
     *,
     collection: chromadb.Collection,
     dir_path: Path,
@@ -212,7 +237,7 @@ def find_removed_directory_sources(
 ) -> set[str]:
     """Return missing source paths under dir_path after a directory reindex walk."""
     dir_prefix = f"{dir_path.resolve()}/"
-    known_sources = find_sources_under_prefixes(
+    known_sources = await find_sources_under_prefixes(
         collection=collection,
         prefixes=[dir_prefix],
         list_known_sources_fn=list_known_sources_fn,
@@ -235,14 +260,16 @@ async def delete_sources(
     deleted_chunks = 0
 
     for source in sorted(sources):
-        existing = collection.get(where={"source": source}, include=[])
-        chunk_ids: list[str] = existing.get("ids", [])
+        chunk_ids = await run_chroma(chroma_get_by_source_ids, collection, source)
         try:
             if chunk_ids:
-                collection.delete(ids=chunk_ids)
+                await run_chroma(chroma_delete_ids, collection, chunk_ids)
                 deleted_chunks += len(chunk_ids)
             if remove_source_metadata_fn is not None:
-                await remove_source_metadata_fn(source, chunk_ids or None)
+                # None, not the id list: an unsliced IN (...) of every chunk
+                # can hit SQLITE_MAX_VARIABLE_NUMBER. WHERE source = ? covers
+                # the rows (friction:39359 review 15851#723).
+                await remove_source_metadata_fn(source, None)
             deleted_sources += 1
         except Exception:
             logger.error(
@@ -268,7 +295,7 @@ async def purge_orphaned_sources(
     Returns:
         (files_purged, chunks_purged, purged_sources)
     """
-    known_sources = find_sources_under_prefixes(
+    known_sources = await find_sources_under_prefixes(
         collection=collection,
         prefixes=watch_prefixes,
         list_known_sources_fn=list_known_sources_fn,

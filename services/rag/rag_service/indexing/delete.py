@@ -15,6 +15,11 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.rag.chroma_writer import (
+    chroma_delete_ids,
+    chroma_get_by_source_ids,
+    run_chroma,
+)
 from services.rag.events.indexing import rag_file_deleted
 from services.rag.models import DeleteResult
 
@@ -35,11 +40,10 @@ async def _enqueue_for_extraction(source: str) -> None:
 async def _delete_file_impl(source: str) -> DeleteResult:
     """Delete source chunks and source-scoped metadata for a removed file."""
     collection = state._get_collection()
-    existing = collection.get(where={"source": source}, include=[])
-    existing_ids: list[str] = existing.get("ids", [])
+    existing_ids = await run_chroma(chroma_get_by_source_ids, collection, source)
 
     if existing_ids:
-        collection.delete(ids=existing_ids)
+        await run_chroma(chroma_delete_ids, collection, existing_ids)
     else:
         logger.info(
             "Watcher delete: no chunks found for source=%s; clearing metadata only",
@@ -49,7 +53,7 @@ async def _delete_file_impl(source: str) -> DeleteResult:
     if state._property_index is not None:
         await state._property_index.remove_source_metadata(
             source,
-            existing_ids if existing_ids else None,
+            None,
             remove_article=False,
         )
 

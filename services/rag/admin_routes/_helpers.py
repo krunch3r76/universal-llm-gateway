@@ -244,7 +244,7 @@ async def _clear_directory_sources(
     collection = get_collection_fn()
     dir_prefix = f"{dir_path.resolve()}/"
     prop_idx = get_property_index_fn()
-    sources = find_sources_under_prefixes(
+    sources = await find_sources_under_prefixes(
         collection=collection,
         prefixes=[dir_prefix],
         list_known_sources_fn=prop_idx.list_known_sources if prop_idx else None,
