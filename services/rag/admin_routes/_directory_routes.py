@@ -80,9 +80,7 @@ def register_directory_routes(
         total_fts_removed = 0
         total_articles = 0
         for source in sorted(sources):
-            chunk_ids_ = await run_chroma(
-                chroma_get_by_source_ids, collection, source
-            )
+            chunk_ids_ = await run_chroma(chroma_get_by_source_ids, collection, source)
             if chunk_ids_:
                 await run_chroma(chroma_delete_ids, collection, chunk_ids_)
                 total_chunks += len(chunk_ids_)
@@ -90,8 +88,9 @@ def register_directory_routes(
                 if chunk_ids_:
                     await prop_idx.remove_properties_for_chunks(chunk_ids_)
                     total_fts_removed += await prop_idx.fts.remove_batch(chunk_ids_)
+                # None: source-column delete covers the rows (L5).
                 await prop_idx.remove_source_metadata(
-                    source, chunk_ids_ or None, remove_article=False
+                    source, None, remove_article=False
                 )
                 if await prop_idx.remove_article(source):
                     total_articles += 1

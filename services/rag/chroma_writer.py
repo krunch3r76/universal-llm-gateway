@@ -35,8 +35,16 @@ _executor: ThreadPoolExecutor | None = None
 # the loop thread but must leave time for the rest of graceful shutdown.
 _CHROMA_SHUTDOWN_WAIT_S = 3.0
 
+
 def init_chroma_executor() -> None:
-    """Create the module-level single-worker executor (``lifecycle._startup``)."""
+    """Create the module-level single-worker executor (``lifecycle._startup``).
+
+    The worker must be born a daemon. ``Thread._set_tstate_lock`` records a
+    non-daemon in ``threading._shutdown_locks`` at start, and setting
+    ``_daemonic`` afterwards does not remove that lock, so process exit would
+    still wait out the job. The ``threading.Thread`` patch is only the warmup
+    ``submit`` that creates the worker.
+    """
     global _executor
     if _executor is not None:
         return
@@ -76,6 +84,26 @@ def shutdown_chroma_executor() -> None:
         logger.warning(
             "chroma_executor_shutdown_exceeded_s=%.1f", _CHROMA_SHUTDOWN_WAIT_S
         )
+        _detach_atexit_workers(executor)
+
+
+def _detach_atexit_workers(executor: ThreadPoolExecutor) -> None:
+    """Drop workers from the interpreter atexit join after the shutdown deadline.
+
+    ``concurrent.futures.thread._python_exit`` joins every thread still in
+    ``_threads_queues`` before daemon threads are reaped, so a daemon worker
+    still holds process exit. The map is a ``WeakKeyDictionary``, not a
+    ``dict``. Popping it is private API; a missing ``pop`` is a no-op.
+    """
+    import concurrent.futures.thread as cf_thread
+
+    queues = getattr(cf_thread, "_threads_queues", None)
+    pop = getattr(queues, "pop", None)
+    if not callable(pop):
+        logger.warning("chroma_executor_atexit_detach_unavailable")
+        return
+    for worker in list(getattr(executor, "_threads", ())):
+        pop(worker, None)
 
 
 def chroma_executor() -> ThreadPoolExecutor | None:
@@ -102,14 +130,16 @@ async def run_chroma[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T
         return submitted.result()
     finally:
         chroma_call_ms = (time.perf_counter() - start) * 1000.0
-        logger.info("chroma_call_ms=%.3f fn=%s", chroma_call_ms, fn_name)
+        logger.info("chroma_call_ms=%.3f scope=job fn=%s", chroma_call_ms, fn_name)
 
 
 def _log_collection_call(op: str, started: float, **fields: object) -> None:
     """One ``collection.*`` call, not the whole executor job (N5 / N-d)."""
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     extra = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("chroma_call_ms=%.3f fn=collection.%s %s", elapsed_ms, op, extra)
+    logger.info(
+        "chroma_call_ms=%.3f scope=call fn=collection.%s %s", elapsed_ms, op, extra
+    )
 
 
 def chroma_delete_ids(collection: chromadb.Collection, ids: list[str]) -> None:
@@ -139,13 +169,9 @@ def chroma_update_metadatas(
         _log_collection_call("update", started, n=len(batch_ids))
 
 
-def chroma_get_by_source_ids(
-    collection: chromadb.Collection, source: str
-) -> list[str]:
+def chroma_get_by_source_ids(collection: chromadb.Collection, source: str) -> list[str]:
     """Return all chunk ids for a source, paged at ``GET_PAGE_CAP``."""
-    existing = chroma_get_where(
-        collection, where={"source": source}, include=[]
-    )
+    existing = chroma_get_where(collection, where={"source": source}, include=[])
     return list(existing.get("ids") or [])
 
 

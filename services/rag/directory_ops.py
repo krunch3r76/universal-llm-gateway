@@ -183,11 +183,9 @@ def _find_sources_under_prefixes_sync(
     offset = 0
     while True:
         started = time.perf_counter()
-        page = collection.get(
-            include=["metadatas"], limit=page_size, offset=offset
-        )
+        page = collection.get(include=["metadatas"], limit=page_size, offset=offset)
         logger.info(
-            "chroma_call_ms=%.3f fn=collection.get n=%d",
+            "chroma_call_ms=%.3f scope=call fn=collection.get n=%d",
             (time.perf_counter() - started) * 1000.0,
             len(page.get("metadatas") or []),
         )

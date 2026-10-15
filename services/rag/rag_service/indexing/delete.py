@@ -53,7 +53,7 @@ async def _delete_file_impl(source: str) -> DeleteResult:
     if state._property_index is not None:
         await state._property_index.remove_source_metadata(
             source,
-            existing_ids if existing_ids else None,
+            None,
             remove_article=False,
         )
 

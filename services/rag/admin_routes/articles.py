@@ -321,9 +321,9 @@ def register_article_routes(
                 )
                 fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
             # Source-column delete heals a retry whose Chroma get is empty (N-b).
-            await prop_idx.remove_source_metadata(
-                path, chunk_ids or None, remove_article=False
-            )
+            # None, not the id list: an unsliced IN (...) of every chunk can hit
+            # SQLITE_MAX_VARIABLE_NUMBER (L5).
+            await prop_idx.remove_source_metadata(path, None, remove_article=False)
 
         fallback_row = None
         if prop_idx is not None:

@@ -28,9 +28,9 @@ def migrate_chroma_source(
 ) -> int:
     """Update Chroma chunk metadata from old_source to new_source.
 
-    Fetches all chunks matching ``old_source``, filters those with
-    ``source == old_source``, and updates their source field to ``new_source``
-    in a single collection.update() call.
+    Fetches chunks matching ``old_source``, keeps those whose metadata source
+    is ``old_source``, and writes ``new_source`` through
+    ``chroma_update_metadatas`` (sliced at ``UPDATE_IDS_CAP``).
     Returns the number of chunks updated; 0 when no matching chunks exist.
     """
     existing = chroma_get_where(

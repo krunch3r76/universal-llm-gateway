@@ -329,7 +329,9 @@ async def test_purge_excluded_sources_submits_one_run_chroma() -> None:
 
     with (
         patch.object(state, "_collection", collection),
-        patch.object(state, "_property_index", MagicMock(list_known_sources=lambda _p: set())),
+        patch.object(
+            state, "_property_index", MagicMock(list_known_sources=lambda _p: set())
+        ),
         patch.object(state, "_event_bus", None),
         patch(
             "services.rag.rag_service.startup_cleanup.matches_watch_exclude",
@@ -399,12 +401,10 @@ async def test_full_source_retry_deletes_properties_by_source(tmp_path) -> None:
     await idx.remove_source_metadata("/src/a.md", ["c1"])
     conn = idx._ensure_conn()
     left = {
-        row[0]
-        for row in conn.execute("SELECT chunk_id FROM properties").fetchall()
+        row[0] for row in conn.execute("SELECT chunk_id FROM properties").fetchall()
     }
     fts_left = {
-        row[0]
-        for row in conn.execute("SELECT chunk_id FROM chunks_fts").fetchall()
+        row[0] for row in conn.execute("SELECT chunk_id FROM chunks_fts").fetchall()
     }
     assert "c2" not in left
     assert "c2" not in fts_left
@@ -433,8 +433,12 @@ async def test_shutdown_cancel_still_waits_executor() -> None:
         await task
 
     with (
-        patch("services.rag.rag_service.lifecycle.stop_loop_instrumentation", AsyncMock()),
-        patch("services.rag.rag_service.lifecycle.stop_extraction_runtime", AsyncMock()),
+        patch(
+            "services.rag.rag_service.lifecycle.stop_loop_instrumentation", AsyncMock()
+        ),
+        patch(
+            "services.rag.rag_service.lifecycle.stop_extraction_runtime", AsyncMock()
+        ),
         patch(
             "services.rag.rag_service.lifecycle.shutdown_chroma_executor",
             side_effect=lambda: shutdown_order.append("executor"),
@@ -446,7 +450,9 @@ async def test_shutdown_cancel_still_waits_executor() -> None:
         patch.object(state, "_watcher_manager", None),
     ):
         prop = MagicMock()
-        prop.stop = AsyncMock(side_effect=lambda: shutdown_order.append("property_index"))
+        prop.stop = AsyncMock(
+            side_effect=lambda: shutdown_order.append("property_index")
+        )
         state._property_index = prop
         await lifecycle._shutdown()
     assert shutdown_order[0] == "executor"
@@ -459,8 +465,12 @@ async def test_shutdown_waits_executor_before_property_index_stop() -> None:
     shutdown_order: list[str] = []
 
     with (
-        patch("services.rag.rag_service.lifecycle.stop_loop_instrumentation", AsyncMock()),
-        patch("services.rag.rag_service.lifecycle.stop_extraction_runtime", AsyncMock()),
+        patch(
+            "services.rag.rag_service.lifecycle.stop_loop_instrumentation", AsyncMock()
+        ),
+        patch(
+            "services.rag.rag_service.lifecycle.stop_extraction_runtime", AsyncMock()
+        ),
         patch(
             "services.rag.rag_service.lifecycle.shutdown_chroma_executor",
             side_effect=lambda: shutdown_order.append("executor"),
@@ -505,8 +515,13 @@ async def test_migrate_and_extract_source_use_run_chroma(
     )
     logged = " ".join(r.message for r in caplog.records)
     assert "fn=migrate_chroma_source" in logged
+    assert "scope=job" in logged
     assert "fn=check_pdf_duplicate" in logged
     assert "fn=chroma_get_where" in logged
+    assert any(
+        "fn=collection." in r.message and "scope=call" in r.message
+        for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -574,6 +589,57 @@ def test_shutdown_chroma_executor_bounds_wait(monkeypatch: pytest.MonkeyPatch) -
     chroma_writer.shutdown_chroma_executor()
     assert time.perf_counter() - began < 1.5
     release.set()
+
+
+def test_blocked_writer_exits_under_graceful_window() -> None:
+    """D2: a >3 s blocked job plus shutdown must not wait out the job at exit.
+
+    Breaks when the worker stays in concurrent.futures.thread._threads_queues:
+    the atexit join waits for the job inside the SIGTERM-to-SIGKILL window.
+    """
+    import os
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    code = (
+        "import threading\n"
+        "from services.rag.chroma_writer import (\n"
+        "    chroma_executor, init_chroma_executor, shutdown_chroma_executor,\n"
+        ")\n"
+        "init_chroma_executor()\n"
+        "started = threading.Event()\n"
+        "def block():\n"
+        "    started.set()\n"
+        "    threading.Event().wait(30)\n"
+        "executor = chroma_executor()\n"
+        "assert executor is not None\n"
+        "executor.submit(block)\n"
+        "if not started.wait(2):\n"
+        "    raise SystemExit(2)\n"
+        "shutdown_chroma_executor()\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(repo), env.get("PYTHONPATH", "")]).rstrip(
+        os.pathsep
+    )
+    began = time.perf_counter()
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=repo,
+        env=env,
+        timeout=12,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    elapsed = time.perf_counter() - began
+    assert proc.returncode == 0, proc.stderr
+    # Deadline is 3 s; the job blocks 30 s. Under 6 s is the deadline plus
+    # import, and under the ~9.8 s SIGKILL window.
+    assert elapsed < 6.0, elapsed
 
 
 @pytest.mark.asyncio
@@ -668,11 +734,11 @@ async def test_admin_delete_retries_metadata_when_chroma_get_is_empty() -> None:
     from services.rag.admin_routes._directory_routes import register_directory_routes
     from services.rag.admin_routes.articles import register_article_routes
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, object, object]] = []
 
     class _Prop:
         async def remove_source_metadata(self, source: str, chunk_ids, **kwargs):
-            calls.append((source, "meta"))
+            calls.append((source, chunk_ids, kwargs.get("remove_article", "MISSING")))
 
         async def remove_properties_for_chunks(self, chunk_ids):
             return 0
@@ -703,7 +769,12 @@ async def test_admin_delete_retries_metadata_when_chroma_get_is_empty() -> None:
         and "DELETE" in getattr(route, "methods", set())
     )
     await delete_source("/src/a.md")
-    assert ("/src/a.md", "meta") in calls
+    assert ("/src/a.md", None, False) in calls
+
+    calls.clear()
+    collection.get.return_value = {"ids": ["c1", "c2"]}
+    await delete_source("/src/full.md")
+    assert ("/src/full.md", None, False) in calls
 
     calls.clear()
     router2 = APIRouter()
@@ -726,4 +797,4 @@ async def test_admin_delete_retries_metadata_when_chroma_get_is_empty() -> None:
     # find_sources uses collection.get pages; force one known source via list.
     collection.get.return_value = {"ids": [], "metadatas": []}
     await delete_directory("/dir")
-    assert ("/dir/a.md", "meta") in calls
+    assert ("/dir/a.md", None, False) in calls
