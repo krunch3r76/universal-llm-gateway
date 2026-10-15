@@ -30,11 +30,11 @@ _HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
 
 from bus_watch.digest_budget import effective_policy
 from bus_watch.fable_lock import (
-    LOCK_STALE_S,
     WATCH_DIR,
     read_lock,
     read_ticker_lock,
     release_fable_lock,
+    ticker_lease_live,
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
@@ -80,11 +80,7 @@ def stop_attended_loops(root: str) -> list[int]:
 
 
 def ticker_alive(root: str) -> bool:
-    lock = read_ticker_lock(root)
-    return (
-        lock.get("holder") == f"ticker:{root}"
-        and float(lock.get("age_s") or LOCK_STALE_S) < LOCK_STALE_S
-    )
+    return ticker_lease_live(root_id=root)
 
 
 def _ticker_unit_name(root: str) -> str:

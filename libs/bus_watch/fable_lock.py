@@ -300,20 +300,58 @@ def _holder_pid_alive(pid: int | None) -> bool:
         return True
 
 
-def _ticker_lease_live(current: dict[str, Any]) -> bool:
-    if not current.get("holder"):
+def _legacy_spawn_loop_alive(
+    root_id: str, *, proc_root: Path | None = None
+) -> bool:
+    """True when a foreign gear-3 ``--loop --spawn-on-wake`` tick process exists."""
+    root = proc_root or Path(os.environ.get("LIAISON_PROC_ROOT", "/proc"))
+    self_pid = os.getpid()
+    try:
+        entries = list(root.iterdir())
+    except OSError:
         return False
-    lock_pid = current.get("holder_pid")
+    for d in entries:
+        if not d.is_dir() or not d.name.isdigit():
+            continue
+        pid = int(d.name)
+        if pid == self_pid:
+            continue
+        try:
+            raw = (d / "cmdline").read_bytes()
+        except OSError:
+            continue
+        cmd = raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+        if "liaison-tick.py" not in cmd or "--loop" not in cmd:
+            continue
+        if "--spawn-on-wake" not in cmd:
+            continue
+        if f"--root {root_id}" in cmd or f"--root={root_id}" in cmd:
+            return True
+    return False
+
+
+def ticker_lease_live(
+    lock: dict[str, Any] | None = None, *, root_id: str
+) -> bool:
+    """Whether the gear-3 ticker lease for ``root_id`` is held and live."""
+    data = lock if lock is not None else read_ticker_lock(root_id)
+    if data.get("holder") != f"ticker:{root_id}":
+        return False
+    lock_pid = data.get("holder_pid")
     if lock_pid is not None:
         return _holder_pid_alive(int(lock_pid))
-    return float(current.get("age_s") or LOCK_STALE_S) < LOCK_STALE_S
+    raw_age = data.get("age_s")
+    age_s = float(raw_age) if raw_age is not None else LOCK_STALE_S
+    return age_s < LOCK_STALE_S and _legacy_spawn_loop_alive(
+        root_id, proc_root=Path(os.environ.get("LIAISON_PROC_ROOT", "/proc"))
+    )
 
 
 def claim_ticker_lease(root: str) -> dict[str, Any]:
     holder = f"ticker:{root}"
     path = ticker_lock_path(root)
     current = read_ticker_lock(root)
-    if _ticker_lease_live(current):
+    if ticker_lease_live(current, root_id=root):
         return {"ok": False, "reason": "held", "lock": current}
     payload = {
         "holder": holder,
@@ -330,6 +368,8 @@ def refresh_ticker_lease(root: str) -> bool:
     current = read_ticker_lock(root)
     if current.get("holder") != f"ticker:{root}":
         return False
+    if current.get("holder_pid") != os.getpid():
+        return False
     payload = {**current, "refreshed_at": _utcnow()}
     payload.pop("age_s", None)
     ticker_lock_path(root).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -341,10 +381,15 @@ def release_ticker_lease(root: str, *, pid: int | None = -1) -> dict[str, Any]:
     holder = f"ticker:{root}"
     if current and current.get("holder") not in (holder, None):
         return {"ok": False, "reason": "not_holder", "lock": current}
-    caller = os.getpid() if pid == -1 else pid
     lock_pid = current.get("holder_pid") if current else None
-    if caller is not None and lock_pid is not None and int(lock_pid) != int(caller):
-        return {"ok": False, "reason": "not_holder_process", "lock": current}
+    if pid is not None:
+        caller = os.getpid() if pid == -1 else pid
+        if caller is not None and lock_pid is None:
+            return {"ok": False, "reason": "not_holder_process", "lock": current}
+        if caller is not None and lock_pid is not None and int(lock_pid) != int(
+            caller
+        ):
+            return {"ok": False, "reason": "not_holder_process", "lock": current}
     if current:
         ticker_lock_path(root).write_text(
             json.dumps({"holder": None, "released_at": _utcnow(), "root": root}),
@@ -371,5 +416,6 @@ __all__ = [
     "release_fable_lock",
     "release_ticker_lease",
     "seat_lock_free",
+    "ticker_lease_live",
     "ticker_lock_path",
 ]

@@ -240,6 +240,131 @@ def test_legacy_global_ticker_file_does_not_block_other_root(watch_dir: Path) ->
     assert fl.read_ticker_lock("10534")["holder"] == "ticker:10534"
 
 
+def test_refresh_ticker_lease_requires_holder_pid(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid = 616161
+    monkeypatch.setattr(fl.os, "getpid", lambda: pid)
+    assert fl.claim_ticker_lease("10534")["ok"]
+    monkeypatch.setattr(fl.os, "getpid", lambda: pid + 1)
+    assert fl.refresh_ticker_lease("10534") is False
+
+
+def test_release_ticker_lease_wrong_pid_no_clear(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fl.ticker_lock_path("10534").write_text(
+        json.dumps({"holder": "ticker:10534", "root": "10534"}),
+        encoding="utf-8",
+    )
+    refused = fl.release_ticker_lease("10534")
+    assert refused["ok"] is False
+    assert refused["reason"] == "not_holder_process"
+    assert fl.release_ticker_lease("10534", pid=None)["ok"]
+
+
+def test_claim_refuses_legacy_pidless_lease_when_loop_alive(
+    watch_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    foreign = proc_root / "424242"
+    foreign.mkdir(parents=True)
+    (foreign / "cmdline").write_bytes(
+        b"python\x00scripts/liaison-tick.py\x00--root\x0010534\x00"
+        b"--loop\x00--spawn-on-wake\x00"
+    )
+    monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
+    fl.ticker_lock_path("10534").write_text(
+        json.dumps({"holder": "ticker:10534", "root": "10534"}),
+        encoding="utf-8",
+    )
+    assert fl.claim_ticker_lease("10534")["ok"] is False
+
+
+def test_claim_reclaims_stale_legacy_pidless_lease(
+    watch_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
+    path = fl.ticker_lock_path("10534")
+    path.write_text(
+        json.dumps({"holder": "ticker:10534", "root": "10534"}),
+        encoding="utf-8",
+    )
+    import os
+
+    os.utime(path, (time.time() - 60, time.time() - 60))
+    lock = fl.read_ticker_lock("10534")
+    assert 0 < float(lock["age_s"]) < fl.LOCK_STALE_S
+    assert fl.claim_ticker_lease("10534")["ok"] is True
+
+
+def test_ticker_lease_age_zero_not_stale(
+    watch_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    foreign = proc_root / "525252"
+    foreign.mkdir(parents=True)
+    (foreign / "cmdline").write_bytes(
+        b"python\x00scripts/liaison-tick.py\x00--root\x0010534\x00"
+        b"--loop\x00--spawn-on-wake\x00"
+    )
+    monkeypatch.setenv("LIAISON_PROC_ROOT", str(proc_root))
+    fl.ticker_lock_path("10534").write_text(
+        json.dumps({"holder": "ticker:10534", "age_s": 0.0, "root": "10534"}),
+        encoding="utf-8",
+    )
+    lock = fl.read_ticker_lock("10534")
+    assert fl.ticker_lease_live(lock, root_id="10534") is True
+    assert fl.claim_ticker_lease("10534")["ok"] is False
+
+
+def test_ticker_lease_refuses_real_dead_holder_pid_reclaim(
+    watch_dir: Path,
+) -> None:
+    import subprocess
+
+    child = subprocess.Popen(
+        ["sleep", "30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        fl.ticker_lock_path("10534").write_text(
+            json.dumps(
+                {
+                    "holder": "ticker:10534",
+                    "holder_pid": child.pid,
+                    "root": "10534",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert fl.claim_ticker_lease("10534")["ok"] is False
+        child.terminate()
+        child.wait(timeout=5)
+        assert fl.ticker_lease_live(root_id="10534") is False
+        assert fl.claim_ticker_lease("10534")["ok"] is True
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+
+
+def test_ticker_lease_two_claimers_loser_refresh_false(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    winner = 717171
+    monkeypatch.setattr(fl.os, "getpid", lambda: winner)
+    assert fl.claim_ticker_lease("10534")["ok"]
+    monkeypatch.setattr(fl.os, "getpid", lambda: winner + 1)
+    monkeypatch.setattr(fl, "_holder_pid_alive", lambda pid: pid == winner)
+    assert fl.claim_ticker_lease("10534")["ok"] is False
+    assert fl.refresh_ticker_lease("10534") is False
+    assert fl.release_ticker_lease("10534")["ok"] is False
+
+
 def test_missing_per_root_file_does_not_inherit_legacy_hops(
     watch_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
