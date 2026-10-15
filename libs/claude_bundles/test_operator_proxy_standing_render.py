@@ -193,14 +193,12 @@ def test_ac18_registration_id_in_leg_prose_is_not_the_header() -> None:
     assert "checkpoint_stale" not in _body
 
 
-def test_friction_39304_flag_lookahead_pops_last_row_when_flag_would_exceed_budget() -> None:
+def test_friction_39304_flag_lookahead_pops_last_row_when_flag_would_exceed_budget() -> (
+    None
+):
     """K2 fills the body to ~8160 B; K1 is 200 B — flag room pops K2 before K1."""
-    k2_body = "b" * (8160 - len("## HOUSE RULES\n- K2 ".encode()))
-    rules = (
-        "## HOUSE RULES\n"
-        f"- K2 {k2_body}\n"
-        f"- K1 {'a' * 200}\n"
-    )
+    k2_body = "b" * (8160 - len(b"## HOUSE RULES\n- K2 "))
+    rules = f"## HOUSE RULES\n- K2 {k2_body}\n- K1 {'a' * 200}\n"
     text, exceeded = render_house_rules_block(
         lane="39304",
         inline_rules=None,
@@ -214,6 +212,38 @@ def test_friction_39304_flag_lookahead_pops_last_row_when_flag_would_exceed_budg
     assert match is not None
     idents = [part.strip() for part in match.group(1).split(",")]
     assert idents == ["K1", "K2"]
+
+
+def test_friction_39304_bullet_over_600_bytes_renders_whole() -> None:
+    k35 = "- K35 " + ("r" * 620) + " sets EMAIL_BRIDGE_SOCK=/nonexistent (report)."
+    rules = f"## HOUSE RULES\n{k35}\n- K1 tail\n"
+    text, exceeded = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=rules,
+    )
+    _assert_rules_output_within_budget(text)
+    assert len(k35.encode("utf-8")) > 600
+    assert not exceeded
+    assert k35 in text
+    assert "[rules truncated:" not in text
+
+
+def test_friction_39304_unreadable_line_reserved_in_rules_budget() -> None:
+    def _raise(_uri: str) -> str:
+        raise OSError("unittest")
+
+    near_budget = "y" * 8050
+    rules = f"## HOUSE RULES\n- K1 {near_budget}\n"
+    text, _truncated = render_house_rules_block(
+        lane="12286",
+        inline_rules=rules,
+        read_cortex_uri=_raise,
+    )
+    _assert_rules_output_within_budget(text)
+    assert len(near_budget.encode("utf-8")) > 8000
+    assert "[rules_file_unreadable: OSError" in text
+    assert near_budget in text
 
 
 def test_live_12286_house_rules_k35_k36_k37_render_whole() -> None:
@@ -311,7 +341,9 @@ def test_friction_39269_over_cap_section_current_leg_heading_once() -> None:
         inline_house_rules=None,
     )
     assert meta["budget"] == "exceeded"
-    assert any(flag.startswith("[budget_exceeded OWED / NEXT") for flag in meta["flags"])
+    assert any(
+        flag.startswith("[budget_exceeded OWED / NEXT") for flag in meta["flags"]
+    )
     assert "budget_exceeded" in body.splitlines()[1]
     assert _current_leg_atx_count(body) == 1
 

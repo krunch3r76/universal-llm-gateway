@@ -409,7 +409,9 @@ def _rules_truncation_flag(dropped_oldest_first: list[str], uri: str) -> str:
     return f"[rules truncated: {', '.join(dropped_oldest_first)} — read {uri}]"
 
 
-def _dropped_suffix_oldest_first(rows: list[tuple[str, str]], drop_start: int) -> list[str]:
+def _dropped_suffix_oldest_first(
+    rows: list[tuple[str, str]], drop_start: int
+) -> list[str]:
     """Dropped row ids with the bottom-of-file (oldest) name first in the flag."""
     suffix = [ident for ident, _ in rows[drop_start:]]
     return list(reversed(suffix))
@@ -471,11 +473,18 @@ def render_house_rules_block(
     for index, (k_id, text) in enumerate(bullets):
         rows.append((k_id or f"bullet-{index + 1}", text))
 
+    unreadable_line = (
+        f"[rules_file_unreadable: {read_error} — rendered inline "
+        f"HOUSE RULES; read {uri}]"
+        if read_error
+        else ""
+    )
+    budget = RULES_BUDGET_B - (_utf8_len(unreadable_line) + 1 if unreadable_line else 0)
     accept_count = 0
     drop_start = len(rows)
     for index, (_ident, text) in enumerate(rows):
         row_len = _utf8_len(text)
-        if row_len > RULES_BUDGET_B:
+        if row_len > budget:
             drop_start = index
             break
         parts: list[str] = []
@@ -484,7 +493,7 @@ def render_house_rules_block(
         for prior in range(accept_count):
             parts.append(rows[prior][1])
         parts.append(text)
-        if _utf8_len("\n".join(parts)) > RULES_BUDGET_B:
+        if _utf8_len("\n".join(parts)) > budget:
             drop_start = index
             break
         accept_count += 1
@@ -499,7 +508,7 @@ def render_house_rules_block(
             drop_start=drop_start,
             uri=uri,
         )
-        if total <= RULES_BUDGET_B:
+        if total <= budget:
             break
         if accept_count == 0:
             break
@@ -518,11 +527,8 @@ def render_house_rules_block(
             uri,
         )
         assembled.append(flag)
-    if read_error:
-        assembled.append(
-            f"[rules_file_unreadable: {read_error} — rendered inline "
-            f"HOUSE RULES; read {uri}]"
-        )
+    if unreadable_line:
+        assembled.append(unreadable_line)
     return "\n".join(assembled), truncated
 
 
