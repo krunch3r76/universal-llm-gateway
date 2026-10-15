@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+
 from bus_watch.digest_budget import effective_policy
-from bus_watch.go_under import go_under, under_line
+from bus_watch.go_under import _HUB_ROOT, go_under, start_ticker, under_line
 from bus_watch.spawn_pending import handoff_wake, record_spawn_service
+
+_REPO = Path(__file__).resolve().parents[2]
 
 
 def _state() -> dict:
@@ -183,3 +190,162 @@ def test_second_go_under_bumps_seq_and_spawn_latches_it(
     assert handoff_wake(state) is False
     assert state["served_closeouts"] == {"10593": 2}
     assert state["successor_threads"] == ["10601"]
+
+
+def test_start_ticker_uses_systemctl_start_when_unit_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        joined = " ".join(cmd)
+        if "Version" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="255\n", stderr="")
+        if "LoadState" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="loaded\n", stderr="")
+        if cmd[:3] == ["systemctl", "--user", "start"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected cmd: {cmd!r}")
+
+    monkeypatch.setattr("bus_watch.go_under.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "bus_watch.go_under.subprocess.Popen",
+        lambda *_a, **_k: pytest.fail("Popen must not run"),
+    )
+    out = start_ticker("10534")
+    assert out == {
+        "started": True,
+        "pid": None,
+        "log": None,
+        "supervisor": "systemd",
+        "unit": "liaison-ticker-10534.service",
+    }
+    assert any(c[:3] == ["systemctl", "--user", "start"] for c in calls)
+    assert not any(c and c[0] == "systemd-run" for c in calls)
+
+
+def test_start_ticker_systemd_run_when_unit_not_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        joined = " ".join(cmd)
+        if "Version" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="255\n", stderr="")
+        if "LoadState" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="\n", stderr="")
+        if cmd and cmd[0] == "systemd-run":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected cmd: {cmd!r}")
+
+    monkeypatch.setattr("bus_watch.go_under.subprocess.run", fake_run)
+    out = start_ticker("16401")
+    assert out["unit"] == "liaison-ticker-16401.service"
+    run_cmd = next(c for c in calls if c and c[0] == "systemd-run")
+    joined = " ".join(run_cmd)
+    assert str(_HUB_ROOT) in joined
+    assert f"{_HUB_ROOT}/libs" in joined
+    assert "--root 16401" in joined or "16401" in run_cmd
+    assert "liaison-tick.py" in joined
+    worktree = str(_REPO)
+    assert worktree not in joined or worktree == str(_HUB_ROOT)
+
+
+def test_start_ticker_refuses_when_user_manager_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Failed to connect to bus")
+
+    popen_calls: list[object] = []
+    monkeypatch.setattr("bus_watch.go_under.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "bus_watch.go_under.subprocess.Popen",
+        lambda *a, **k: popen_calls.append((a, k)) or pytest.fail("Popen"),
+    )
+    out = start_ticker("10534")
+    assert out == {
+        "started": False,
+        "pid": None,
+        "supervisor": None,
+        "reason": "user_manager_unreachable",
+    }
+    assert not popen_calls
+
+
+def test_go_under_ok_false_when_ticker_start_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
+    result = go_under(
+        "10534",
+        _state(),
+        state_path=tmp_path / "s.json",
+        stop_loops=lambda root: [],
+        ensure=lambda root: {
+            "started": False,
+            "pid": None,
+            "supervisor": None,
+            "reason": "user_manager_unreachable",
+        },
+        release=lambda *_a, **_k: {"ok": True},
+        mint=lambda *_a, **_k: None,
+    )
+    assert result["ok"] is False
+    assert result["refused"] == "user_manager_unreachable"
+
+
+def test_liaison_tick_go_under_exits_3_on_refused_ticker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "liaison-10534.tick.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "register": "attended",
+                "policy": {
+                    "gear": "3-wake-on-attention",
+                    "ready": False,
+                    "successor_model": "cursor/composer-2.5",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_go_under(*_a, **_k):  # noqa: ANN002, ANN003
+        return {
+            "ok": False,
+            "refused": "user_manager_unreachable",
+            "under_line": "UNDER → liaison-ticker-10534",
+            "ticker": {
+                "started": False,
+                "reason": "user_manager_unreachable",
+            },
+        }
+
+    spec = importlib.util.spec_from_file_location(
+        "liaison_tick_go_under_exit",
+        _REPO / "scripts" / "liaison-tick.py",
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["liaison_tick_go_under_exit"] = mod
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "go_under", fake_go_under)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "liaison-tick.py",
+            "--root",
+            "10534",
+            "--go-under",
+            "--state-file",
+            str(state_path),
+        ],
+    )
+    assert mod.main() == 3
