@@ -17,26 +17,69 @@ from bus_watch.endpoint_wake_transport import (
     classify_display,
 )
 
-ENDPOINT_WAKE_SUBJECT_HEADS = {"CONSULT", "QUESTION", "DONE", "FAILED"}
+CSE_WAKE_SUBJECT_HEADS = frozenset(
+    {
+        "CONSULT",
+        "QUESTION",
+        "DONE",
+        "FAILED",
+        "FACT",
+        "REVIEW",
+        "PLAN",
+        "LANDED",
+        "VERDICT",
+    }
+)
+GROK_WAKE_SUBJECT_HEADS = frozenset(
+    {
+        "REQUEST",
+        "RULING",
+        "ACK",
+        "AMEND",
+        "PARK",
+        "CANCEL",
+        "WITHDRAW",
+        "COMMISSION",
+        "DECOMMISSION",
+        "WAKE",
+        "CONSULT",
+        "QUESTION",
+        "DONE",
+        "FAILED",
+        "FACT",
+        "REVIEW",
+        "PLAN",
+        "PICKUP",
+        "LANDED",
+        "VERDICT",
+        "HOP",
+        "READY",
+    }
+)
+ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
+_ROUTE_CONTROL_TYPE = "TYPE: ROUTE/CONTROL"
 _POLL_S = 2.0
 
 
-def subject_allowed(subject: str | None) -> bool:
-    """K25 matcher: unfiltered pipe head, or a TYPE: DIRECTIVE relay."""
+def subject_allowed(subject: str | None, *, cse: bool) -> bool:
+    """Wake envelope: CSE or Grok allowlist, plus TYPE relays."""
     text = subject or ""
     if text.startswith("TYPE: DIRECTIVE"):
         return True
+    if not cse and text.startswith(_ROUTE_CONTROL_TYPE):
+        return True
     head = text.split("|", 1)[0].strip().upper()
-    return head in ENDPOINT_WAKE_SUBJECT_HEADS
+    allowed = CSE_WAKE_SUBJECT_HEADS if cse else GROK_WAKE_SUBJECT_HEADS
+    return head in allowed
 
 
 def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
-    """Fork-1 rule 1, plus the K25 set only on cse routes."""
+    """Fork-1 rule 1, plus wake envelope allowlists on every routed turn."""
     to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
     from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
     if to_agent in {"all", "team"} or not to_agent or to_agent == from_agent:
         return False
-    if cse and not subject_allowed(turn.get("subject")):
+    if not subject_allowed(turn.get("subject"), cse=cse):
         return False
     return True
 

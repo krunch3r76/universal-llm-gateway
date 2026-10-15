@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from request_profile import bind_request
 
 from tools import agent_bus as agent_bus_module
+from agent_bus_store.author_attestation import attest, reset_peer_node_cache_for_tests
+
 from tools._agent_bus_author import (
     default_from_for_surface,
     reconcile_author_arguments,
@@ -122,6 +124,20 @@ def test_reply_dispatch_accepts_from_alias() -> None:
     assert relay_calls[0]["from"] == "web-anthropic"
 
 
+def test_attest_known_and_unknown_peer_ip() -> None:
+    reset_peer_node_cache_for_tests()
+    known = attest(
+        "static",
+        "cursor",
+        "code",
+        client_ip="10.0.0.76",
+        user_agent="Mozilla/5.0 Cursor",
+    )
+    assert known == "static:cursor@code via=jupiter(10.0.0.76) client=cursor-ide"
+    unknown = attest("static", "cursor", "code", client_ip="203.0.113.9")
+    assert unknown == "static:cursor@code via=unknown(203.0.113.9)"
+
+
 def test_send_stamps_attestation_explicit_from() -> None:
     relay_calls: list[dict[str, Any]] = []
 
@@ -140,7 +156,8 @@ def test_send_stamps_attestation_explicit_from() -> None:
         surface="code",
         auth_mode="static",
         caller_identity="cursor",
-        user_agent="probe/1",
+        user_agent="python-httpx/0.27",
+        client_ip="10.0.0.76",
     ):
         with patch.object(agent_bus_module, "_relay", side_effect=_relay):
             with patch.object(agent_bus_module, "record", lambda *_a, **_k: None):
@@ -155,8 +172,11 @@ def test_send_stamps_attestation_explicit_from() -> None:
     assert "error" not in result
     body = relay_calls[0]
     assert body["from"] == "cursor"
-    assert body["attested_by"] == "static:cursor@code"
-    assert body["user_agent"] == "probe/1"
+    assert (
+        body["attested_by"]
+        == "static:cursor@code via=jupiter(10.0.0.76) client=ulg-local"
+    )
+    assert body["user_agent"] == "python-httpx/0.27"
 
 
 def test_send_stamps_attestation_on_surface_autofill() -> None:

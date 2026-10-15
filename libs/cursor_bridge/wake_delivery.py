@@ -172,8 +172,24 @@ async def _deliver_locked(
     except ValueError:
         return _refuse("bad_options", display=disp, app=app)
 
+    if verdict.get("reason") == "ambiguous_title":
+        return _refuse(
+            "ambiguous_title",
+            display=disp,
+            app=app,
+            expected_title=verdict.get("expected_title"),
+            titles=verdict.get("titles"),
+        )
+
     selected = False
     if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
+        if verdict.get("reason") == "ambiguous_title":
+            return _refuse(
+                "ambiguous_title",
+                display=disp,
+                app=app,
+                expected_title=verdict.get("expected_title"),
+            )
         guard = _busy_or_draft_reason(surface)
         if guard:
             return _refuse(

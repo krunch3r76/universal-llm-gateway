@@ -26,6 +26,11 @@ from .profiles import (
 # Endpoint mailboxes only — sdk/subagent are capability routing, not bus addresses.
 _BUS_ADDRESS_EXCLUDED_PLATFORMS = frozenset({"sdk", "subagent"})
 
+# Stage Manager standing role — distinct bus addresses, equivalent for wake/debounce.
+STAGE_MANAGER_ADDRESSES = frozenset(
+    {"stage-manager", "grok-bot-gc1", "grok-coordinator-1"}
+)
+
 
 def _normalize_agent_key(slug: str) -> str:
     return slug.strip().lower().replace("-", "_").replace(" ", "_")

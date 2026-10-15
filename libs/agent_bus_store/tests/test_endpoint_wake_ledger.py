@@ -7,6 +7,7 @@ import threading
 import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn
+from agent_bus_store.db.turns import get_turns
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_wake_ledger import (
     WakeConflictError,
@@ -34,6 +35,26 @@ def _turn(thread: str, n_from: str = "cursor", to: str = "grok-bot-gc1") -> dict
         thread=thread, from_agent=n_from, to_agent=to, subject="FACT|x", body="b"
     )
     return {"agent": to, "thread_id": thread, "turn_id": turn_id, "turn_number": number}
+
+
+def test_compact_fetch_includes_attestation(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="compact-attest")
+    assert detail is not None
+    thread = str(detail["id"])
+    insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="FACT|x",
+        body="hidden",
+        attested_by="static:cursor@code via=io(127.0.0.1) client=cursor-ide",
+        user_agent="Mozilla/5.0",
+    )
+    rows = get_turns(thread=thread, compact=True)
+    assert len(rows) == 1
+    assert rows[0]["body"] is None
+    assert "via=io(127.0.0.1)" in rows[0]["attested_by"]
+    assert rows[0]["user_agent"] == "Mozilla/5.0"
 
 
 def test_cold_start_cursor_is_max_id(db: TestClient) -> None:

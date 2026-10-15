@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
+from agent_seat.registry import STAGE_MANAGER_ADDRESSES
 from pydantic import BaseModel, Field, ValidationError
 
 _GC1 = "grok-bot-gc1"
@@ -248,9 +249,9 @@ def would_ruling_gate_refuse_if_on(
         return False
 
     if kind in _LIFECYCLE_KINDS:
-        return from_agent != _GC1
+        return from_agent not in STAGE_MANAGER_ADDRESSES
 
-    if kind not in _RULING_KINDS or from_agent != _GC1:
+    if kind not in _RULING_KINDS or from_agent not in STAGE_MANAGER_ADDRESSES:
         return False
 
     authority = (
@@ -438,9 +439,9 @@ def apply_ruling_gate(
         return None
 
     if kind in _LIFECYCLE_KINDS:
-        if from_agent != _GC1:
+        if from_agent not in STAGE_MANAGER_ADDRESSES:
             detail = {
-                "error": f"lifecycle kind {kind} accepted only from {_GC1}",
+                "error": f"lifecycle kind {kind} accepted only from Stage Manager seats",
                 "code": "route_control.lifecycle_from_gc1_only",
                 "reason": "REJECT",
                 "kind": kind,
@@ -459,7 +460,7 @@ def apply_ruling_gate(
     if kind not in _RULING_KINDS:
         return None
 
-    if from_agent != _GC1:
+    if from_agent not in STAGE_MANAGER_ADDRESSES:
         return None
 
     authority = (envelope.authority if envelope else _line_value(body, "authority") or "").lower()
@@ -468,7 +469,7 @@ def apply_ruling_gate(
 
     detail = {
         "error": (
-            f"work ruling {kind} from {_GC1} refused without acting-Maestro fact "
+            f"work ruling {kind} from Stage Manager refused without acting-Maestro fact "
             "stamping authority=operator"
         ),
         "code": "route_control.gc1_ruling_refused",

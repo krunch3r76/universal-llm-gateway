@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from cursor_bridge.chat_target import (
     chat_title,
@@ -94,6 +97,7 @@ def classify_surface(
     with no active title. No I/O.
     """
     titles: list[str] = []
+    title_counts: dict[str, int] = {}
     agent_ids: dict[str, str] = {}
     active: str | None = None
     active_agent_id: str = ""
@@ -102,6 +106,7 @@ def classify_surface(
         aid = str(item.get("agent_id") or "").strip()
         if not text:
             continue
+        title_counts[text] = title_counts.get(text, 0) + 1
         if text not in titles:
             titles.append(text)
         if aid:
@@ -125,6 +130,7 @@ def classify_surface(
         "active_title": active,
         "active_agent_id": active_agent_id,
         "titles": titles,
+        "title_counts": title_counts,
         "agent_ids": agent_ids,
         "composer_draft": composer_draft,
         "generating": bool(generating),
@@ -155,6 +161,23 @@ def wake_decision(
     )
     state = str(surface.get("state") or "unknown")
     titles = list(surface.get("titles") or [])
+    title_counts = dict(surface.get("title_counts") or {})
+    if expected and title_counts.get(expected, 0) > 1:
+        logger.warning(
+            "wake_decision ambiguous_title expected=%r count=%s",
+            expected,
+            title_counts.get(expected),
+        )
+        return {
+            "ok": False,
+            "reason": "ambiguous_title",
+            "state": state,
+            "active_title": "",
+            "active_agent_id": "",
+            "expected_title": expected,
+            "expected_agent_id": aid,
+            "titles": titles,
+        }
     if state != "chat_list":
         return {
             "ok": False,
@@ -168,13 +191,23 @@ def wake_decision(
         }
     active_aid = str(surface.get("active_agent_id") or "").strip()
     active_title = str(surface.get("active_title") or "").strip()
+    agent_ids = dict(surface.get("agent_ids") or {})
     if aid:
-        ok = active_aid == aid
-        reason = (
-            "match"
-            if ok
-            else ("no_active_chat" if not active_title else "agent_id_mismatch")
-        )
+        if (
+            active_aid != aid
+            and expected
+            and aid not in agent_ids
+            and active_title == expected
+        ):
+            ok = True
+            reason = "match"
+        else:
+            ok = active_aid == aid
+            reason = (
+                "match"
+                if ok
+                else ("no_active_chat" if not active_title else "agent_id_mismatch")
+            )
         verdict = {
             "ok": ok,
             "reason": reason,
@@ -262,6 +295,14 @@ async def select_sidebar_target(
     const raw = (el.innerText || '').trim();
     return raw.split('\n')[0].trim();
   };
+  let titleMatches = 0;
+  for (const el of document.querySelectorAll('[role=listitem], [role=treeitem]')) {
+    const title = rowTitle(el);
+    if (targetTitle && title === targetTitle) titleMatches += 1;
+  }
+  if (targetTitle && titleMatches > 1) {
+    return {clicked: false, reason: 'ambiguous_title'};
+  }
   for (const el of document.querySelectorAll('[role=listitem], [role=treeitem]')) {
     const btn = el.querySelector('button[data-agent-id]') || el.querySelector('button, a, [role=button]') || el;
     const aid = (btn.getAttribute && btn.getAttribute('data-agent-id') || '').trim();

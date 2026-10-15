@@ -405,7 +405,10 @@ def get_turns(
     # after_turn (row-9): when set, filter turn_number > after_turn and page ASC
     # so callers can walk forward from a cursor. Tip fetches (after_turn omitted)
     # keep DESC. Distinct from POST /turns after_turn unread guard.
-    select = "id, thread, turn_number, from_agent, to_agent, subject, status, supersedes_turn, created_at, read_at"
+    select = (
+        "id, thread, turn_number, from_agent, to_agent, subject, status, "
+        "supersedes_turn, created_at, read_at, attested_by, user_agent"
+    )
     if not compact:
         select = "*"
 

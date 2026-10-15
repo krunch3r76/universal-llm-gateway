@@ -47,6 +47,10 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     coord = _sub(client, agent="grok-coordinator-1", thread_scope="*", surface="grok")
     assert coord.status_code == 422
     assert coord.json()["detail"]["code"] == "endpoint_wildcard_refused"
+    stage = _sub(client, agent="stage-manager", thread_scope="*", title="house")
+    assert stage.status_code == 200
+    assert stage.json()["row"]["agent"] == "stage-manager"
+    assert stage.json()["row"]["thread_scope"] == "*"
     cse = _sub(client, agent="web-anthropic", thread_scope="1")
     assert cse.status_code == 422
     assert cse.json()["detail"]["code"] == "endpoint_cse_delegated"

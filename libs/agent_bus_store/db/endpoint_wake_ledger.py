@@ -7,12 +7,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from agent_seat.registry import normalize_bus_address
+from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 
 from .connection import connect, write_connect
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
+_STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
 
 
 class WakeConflictError(Exception):
@@ -91,6 +92,14 @@ def advance_scan(
     return {"high_water_turn_id": new_high_water, "inserted": len(pending)}
 
 
+def _same_wake_agent(left: str, right: str) -> bool:
+    a = normalize_bus_address(left)
+    b = normalize_bus_address(right)
+    if a == b:
+        return True
+    return a in STAGE_MANAGER_ADDRESSES and b in STAGE_MANAGER_ADDRESSES
+
+
 def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     turn = conn.execute(
         "SELECT read_at, thread FROM turns WHERE id=?", (row["turn_id"],)
@@ -101,9 +110,9 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         "SELECT from_agent FROM turns WHERE thread=? AND id>?",
         (row["thread_id"], row["turn_id"]),
     ).fetchall()
-    agent = row["agent"]
+    agent = str(row["agent"])
     for nxt in later:
-        if normalize_bus_address(str(nxt["from_agent"] or "")) == agent:
+        if _same_wake_agent(str(nxt["from_agent"] or ""), agent):
             return "already_answered"
     return None
 
@@ -127,7 +136,7 @@ def claim_due_wakes(
             (ttl_before,),
         )
         group = conn.execute(
-            """
+            f"""
             SELECT agent, thread_id FROM endpoint_wake_ledger p
             WHERE p.state='pending'
               AND (p.finished_at IS NULL OR p.finished_at<=?)
@@ -141,6 +150,10 @@ def claim_due_wakes(
                       AND datetime(t.created_at) > datetime(d.finished_at)
                       AND (
                         lower(trim(t.from_agent))=lower(trim(p.agent))
+                        OR (
+                          lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
+                          AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
+                        )
                         OR (
                           d.route='cse'
                           AND lower(trim(t.from_agent))='web-anthropic'

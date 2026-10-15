@@ -25,6 +25,8 @@ def turn_author_attestation_fields() -> tuple[str | None, str | None]:
         meta.get("auth_mode"),
         meta.get("caller_identity"),
         meta.get("surface"),
+        client_ip=meta.get("client_ip"),
+        user_agent=meta.get("user_agent"),
     )
     raw_ua = meta.get("user_agent")
     user_agent: str | None = None

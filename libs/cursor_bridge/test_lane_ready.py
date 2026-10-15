@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from cursor_bridge.chat_surface import classify_surface, wake_decision
 from cursor_bridge.lane_ready import (
     assess_lane_readiness,
     lane_epoch_turn,
@@ -110,6 +111,63 @@ def test_wait_for_lane_ready_times_out() -> None:
     out = wait_for_lane_ready(fetch, timeout_s=0.05, poll_s=0.01, now=now, ttl_s=600)
     assert out["ready"] is False
     assert out["reason"] == "tab_ready_timeout"
+
+
+@pytest.mark.offline
+def test_wake_decision_title_match() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "a1"},
+        ],
+    )
+    out = wake_decision(surface, title="16416 continuity")
+    assert out["ok"] is True
+    assert out["reason"] == "match"
+
+
+@pytest.mark.offline
+def test_wake_decision_stale_agent_id_fallback() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "live-id"},
+        ],
+    )
+    out = wake_decision(surface, title="16416 continuity", agent_id="stale-id")
+    assert out["ok"] is True
+    assert out["reason"] == "match"
+
+
+@pytest.mark.offline
+def test_wake_decision_live_agent_id_mismatch() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "live-id"},
+        ],
+    )
+    surface["agent_ids"] = {
+        "live-id": "16416 continuity",
+        "other-id": "16416 continuity",
+    }
+    out = wake_decision(surface, title="16416 continuity", agent_id="other-id")
+    assert out["ok"] is False
+    assert out["reason"] == "agent_id_mismatch"
+
+
+@pytest.mark.offline
+def test_wake_decision_ambiguous_title() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "a1"},
+            {"text": "16416 continuity", "selected": False, "agent_id": "a2"},
+        ],
+    )
+    out = wake_decision(surface, title="16416 continuity", agent_id="a1")
+    assert out["ok"] is False
+    assert out["reason"] == "ambiguous_title"
 
 
 @pytest.mark.offline

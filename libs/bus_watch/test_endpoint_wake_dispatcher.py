@@ -18,11 +18,14 @@ from agent_bus_store.server import create_app
 from background_supervisor import supervise
 
 from bus_watch.endpoint_wake_dispatcher import (
+    CSE_WAKE_SUBJECT_HEADS,
+    GROK_WAKE_SUBJECT_HEADS,
     classify_cse,
     classify_display,
     fire_due_wakes,
     qualifies,
     scan_once,
+    subject_allowed,
 )
 
 
@@ -38,7 +41,20 @@ def test_cse_allowlist_not_display(db: None) -> None:
     assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT_REPLY|x"}, cse=True)
     assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "TYPE: DIRECTIVE — go"}, cse=True)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
+    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"}, cse=True)
+    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "FACT|x"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "RULING|x"}, cse=False)
+    assert subject_allowed("TYPE: ROUTE/CONTROL", cse=False)
+    assert not subject_allowed("TYPE: ROUTE/CONTROL", cse=True)
+    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=False)
+    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"}, cse=False)
+    assert not qualifies(
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "cursor-sdk generate admitted"},
+        cse=False,
+    )
+    assert CSE_WAKE_SUBJECT_HEADS <= {"CONSULT", "QUESTION", "DONE", "FAILED", "FACT", "REVIEW", "PLAN", "LANDED", "VERDICT"}
+    assert "REQUEST" in GROK_WAKE_SUBJECT_HEADS
     assert not qualifies({"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
     assert not qualifies({"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
 

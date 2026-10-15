@@ -1,0 +1,8 @@
+# MCP peer IP → node name (server-observed client_ip on attestation stamp).
+peers:
+  "10.81.0.166": orion-node
+  "10.0.0.76": jupiter
+  "10.81.0.176": jupiter-vpn
+  "127.0.0.1": io
+  "::1": io
+  "172.18.0.1": io
