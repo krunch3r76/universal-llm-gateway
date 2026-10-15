@@ -7,6 +7,7 @@ import re
 import pytest
 
 from claude_bundles.operator_proxy_standing_render import (
+    RULES_BUDGET_B,
     SECTION_OWED_CAP_B,
     assess_render_budget_and_identity,
     render_checkpoint_block,
@@ -16,14 +17,20 @@ from claude_bundles.operator_proxy_standing_render import (
 pytestmark = pytest.mark.offline
 
 
-def test_ac2_oversize_bullet_is_named_in_the_flag() -> None:
-    rules = "## HOUSE RULES\n- K40 " + ("q" * 900) + "\n"
+def _assert_rules_output_within_budget(text: str) -> None:
+    assert len(text.encode("utf-8")) <= RULES_BUDGET_B
+
+
+def test_ac2_oversize_bullet_is_dropped_whole_and_named_in_the_flag() -> None:
+    rules = "## HOUSE RULES\n- K40 " + ("q" * (RULES_BUDGET_B + 64)) + "\n"
     text, exceeded = render_house_rules_block(
         lane="12286",
         inline_rules=None,
         house_rules_text=rules,
     )
+    _assert_rules_output_within_budget(text)
     assert exceeded
+    assert ("q" * 100) not in text
     assert re.search(
         r"\[rules truncated: K40 — read cortex://notes/system/threads/12286-house-rules.md\]",
         text,
@@ -62,23 +69,61 @@ def test_ac4_intro_paragraph_is_rendered() -> None:
         inline_rules=None,
         house_rules_text=rules,
     )
+    _assert_rules_output_within_budget(text)
     assert "This intro must stay visible." in text
 
 
-def test_ac4_numbered_items_are_bullets_and_flagged() -> None:
-    rules = "## HOUSE RULES\n" + "\n".join(
-        f"{number}. " + ("n" * 700) for number in (1, 2)
+def test_ac4_intro_over_600_bytes_renders_whole() -> None:
+    intro = "I" * 650
+    rules = f"## HOUSE RULES\n{intro}\n- K1 tail\n"
+    text, exceeded = render_house_rules_block(
+        lane="1",
+        inline_rules=None,
+        house_rules_text=rules,
+    )
+    _assert_rules_output_within_budget(text)
+    assert not exceeded
+    assert intro in text
+    assert "K1 tail" in text
+
+
+def test_ac4_intro_over_budget_is_dropped_whole_with_intro_in_flag() -> None:
+    intro = "H" * (RULES_BUDGET_B + 32)
+    rules = f"## HOUSE RULES\n{intro}\n- K1 never\n"
+    text, exceeded = render_house_rules_block(
+        lane="1",
+        inline_rules=None,
+        house_rules_text=rules,
+    )
+    _assert_rules_output_within_budget(text)
+    assert exceeded
+    assert intro not in text
+    assert "never" not in text
+    assert "intro" in text
+    assert re.search(r"\[rules truncated: .*\bintro\b", text)
+
+
+def test_ac4_numbered_items_drop_whole_when_they_do_not_fit() -> None:
+    rules = (
+        "## HOUSE RULES\n1. "
+        + ("x" * (RULES_BUDGET_B - 8))
+        + "\n2. "
+        + ("n" * 700)
+        + "\n"
     )
     text, exceeded = render_house_rules_block(
         lane="1",
         inline_rules=None,
         house_rules_text=rules,
     )
+    _assert_rules_output_within_budget(text)
     assert exceeded
     match = re.search(r"\[rules truncated: ([^\]]+) —", text)
     assert match is not None
     idents = [part.strip() for part in match.group(1).split(",")]
     assert idents == ["2", "1"]
+    assert ("x" * 100) not in text
+    assert ("n" * 100) not in text
 
 
 def test_ac4_truncation_is_a_contiguous_oldest_suffix() -> None:
@@ -92,6 +137,7 @@ def test_ac4_truncation_is_a_contiguous_oldest_suffix() -> None:
         inline_rules=None,
         house_rules_text="\n".join(lines) + "\n",
     )
+    _assert_rules_output_within_budget(text)
     assert "OLDEST-TOKEN" not in text
     assert "bbbb" not in text
     match = re.search(r"\[rules truncated: ([^\]]+) —", text)
@@ -147,6 +193,47 @@ def test_ac18_registration_id_in_leg_prose_is_not_the_header() -> None:
     assert "checkpoint_stale" not in _body
 
 
+def test_friction_39304_flag_lookahead_pops_last_row_when_flag_would_exceed_budget() -> None:
+    """K2 fills the body to ~8160 B; K1 is 200 B — flag room pops K2 before K1."""
+    k2_body = "b" * (8160 - len("## HOUSE RULES\n- K2 ".encode()))
+    rules = (
+        "## HOUSE RULES\n"
+        f"- K2 {k2_body}\n"
+        f"- K1 {'a' * 200}\n"
+    )
+    text, exceeded = render_house_rules_block(
+        lane="39304",
+        inline_rules=None,
+        house_rules_text=rules,
+    )
+    _assert_rules_output_within_budget(text)
+    assert exceeded
+    assert "aaaa" not in text
+    assert k2_body not in text
+    match = re.search(r"\[rules truncated: ([^\]]+) —", text)
+    assert match is not None
+    idents = [part.strip() for part in match.group(1).split(",")]
+    assert idents == ["K1", "K2"]
+
+
+def test_live_12286_house_rules_k35_k36_k37_render_whole() -> None:
+    from claude_bundles.operator_proxy_hop_status import read_cortex_uri_from_root
+
+    uri = "cortex://notes/system/threads/12286-house-rules.md"
+    raw = read_cortex_uri_from_root(uri)
+    if raw is None:
+        pytest.skip("12286-house-rules.md not reachable from CORTEX_FILES_ROOT")
+    text, _exceeded = render_house_rules_block(
+        lane="12286",
+        inline_rules=None,
+        house_rules_text=raw,
+    )
+    _assert_rules_output_within_budget(text)
+    assert "EMAIL_BRIDGE_SOCK=/nonexistent" in text
+    assert "until he rules on the numbers" in text
+    assert "sign from=maestro" in text
+
+
 def test_ac2_unicode_decode_on_rules_reader_falls_back_inline() -> None:
     def _raise(_uri: str) -> str:
         raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
@@ -156,6 +243,7 @@ def test_ac2_unicode_decode_on_rules_reader_falls_back_inline() -> None:
         inline_rules="### HOUSE RULES\n- K1 INLINE-RULES-SENTINEL",
         read_cortex_uri=_raise,
     )
+    _assert_rules_output_within_budget(text)
     assert "INLINE-RULES-SENTINEL" in text
     assert "[rules_file_unreadable: UnicodeDecodeError" in text
     assert "[render_failed house_rules" not in text
