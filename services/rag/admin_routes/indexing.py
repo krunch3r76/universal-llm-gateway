@@ -10,6 +10,7 @@ sources no longer on disk and stamps the ``reindex`` watermark.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -313,4 +314,8 @@ def register_indexing_routes(
     @router.get("/stats", response_model=StatsResponse)
     def stats() -> StatsResponse:
         collection = get_collection_fn()
-        return StatsResponse(count=collection.count(), collection=collection_name)
+        count_start = time.perf_counter()
+        count = collection.count()
+        count_wait_ms = (time.perf_counter() - count_start) * 1000.0
+        logger.info("count_wait_ms=%.3f", count_wait_ms)
+        return StatsResponse(count=count, collection=collection_name)

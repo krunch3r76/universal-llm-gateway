@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from deploy_identity.code_version import resolve_code_version
@@ -51,6 +52,7 @@ router = APIRouter()
 @router.get("/health")
 def health() -> dict[str, object]:
     """Return liveness plus dependency and extraction-queue state."""
+    handler_start = time.perf_counter()
     collection = state._collection
     activation = state._dependency_activation
     queue_breakdown = (
@@ -58,14 +60,20 @@ def health() -> dict[str, object]:
         if state._property_index is not None
         else None
     )
-    return {
+    collection_count = 0
+    if collection is not None:
+        count_start = time.perf_counter()
+        collection_count = collection.count()
+        count_wait_ms = (time.perf_counter() - count_start) * 1000.0
+        logger.info("count_wait_ms=%.3f", count_wait_ms)
+    payload = {
         "status": "ok" if activation.phase == "ready" else "degraded",
         "phase": activation.phase,
         "waiting_on": activation.waiting_on,
         "activation_attempts": activation.attempts,
         "last_error": activation.last_error,
         "collection": state.COLLECTION_NAME if collection is not None else None,
-        "collection_count": collection.count() if collection is not None else 0,
+        "collection_count": collection_count,
         "property_index": "ready"
         if state._property_index is not None
         else "unavailable",
@@ -89,6 +97,9 @@ def health() -> dict[str, object]:
             else 0,
         },
     }
+    health_handler_ms = (time.perf_counter() - handler_start) * 1000.0
+    logger.info("health_handler_ms=%.3f", health_handler_ms)
+    return payload
 
 
 @router.post("/search", response_model=SearchResponse)

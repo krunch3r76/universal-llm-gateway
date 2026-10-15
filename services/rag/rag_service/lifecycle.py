@@ -51,6 +51,7 @@ from . import state
 from .background_tasks import track_background_task
 from .dependency_activation import _activate_dependencies_when_ready
 from .extraction_runtime import stop_extraction_runtime
+from .loop_instrumentation import start_loop_instrumentation, stop_loop_instrumentation
 from .scope_freshness import (
     _post_reconcile_scope_freshness,
     _run_startup_scope_freshness_repair,
@@ -199,6 +200,8 @@ async def _startup() -> None:
 
     await state._event_bus.publish(rag_started())
 
+    start_loop_instrumentation()
+
     state._dependency_activation.phase = "activating"
     state._dependency_activation.waiting_on = "stargate"
     state._init_task = asyncio.create_task(
@@ -211,6 +214,8 @@ async def _startup() -> None:
 async def _shutdown() -> None:
     """Shutdown RAG resources, cancel lifecycle tasks, and stop background services."""
     state._dependency_activation.phase = "shutting_down"
+
+    await stop_loop_instrumentation()
 
     await stop_extraction_runtime()
 
