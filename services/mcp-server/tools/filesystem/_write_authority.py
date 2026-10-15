@@ -10,6 +10,9 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+from tools._durable_write import (
+    HouseRulesSizeRejectedError as HouseRulesSizeRejectedError,
+)
 from tools._hashing import format_sha256_uri, normalize_sha256_hex, sha256_hex_of_bytes
 
 ArtifactClass = Literal["consult", "shared", "unclassified"]
@@ -17,21 +20,6 @@ ArtifactClass = Literal["consult", "shared", "unclassified"]
 HOUSE_RULES_MAX_BYTES = 8192
 RULINGS_ARCHIVE_REL = "notes/system/threads/12286-rulings-archive.md"
 RULINGS_ARCHIVE_URI = f"cortex://{RULINGS_ARCHIVE_REL}"
-
-
-class HouseRulesSizeRejectedError(Exception):
-    """Raised when a house-rules post-edit image fails the hop byte gate.
-
-    Callers inside ``path_flock`` turn this into a structured fs refusal without
-    persisting bytes. ``write_binary`` / ``append_binary`` / ``copy`` / ``move`` are
-    out of scope for r5 (proposal §15): they bypass this helper until a later ACK.
-    ``markdown(op="from_dict")`` is the same exclusion: ACK 658 gated ``md_insert``
-    only, and ``from_dict`` still replaces the whole document with no size check.
-    """
-
-    def __init__(self, rejection: dict[str, Any]) -> None:
-        self.rejection = rejection
-        super().__init__(str(rejection.get("error")))
 
 
 def is_house_rules_path(path: str) -> bool:

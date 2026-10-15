@@ -559,3 +559,25 @@ def test_file_editor_house_rules_growth_refused(
     )
     _assert_rotation_refusal(rejected)
     assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_file_editor_and_surface_registration_import_order_no_cycle() -> None:
+    """Importing tools.context / tools.file_editor before tools.filesystem must not circular-import."""
+    import subprocess
+    import sys
+
+    mcp_dir = str(Path(__file__).resolve().parents[2])
+    for stmt in (
+        "import tools.file_editor",
+        "import tools.context",
+        "import surface_registration",
+    ):
+        proc = subprocess.run(
+            [sys.executable, "-c", stmt],
+            cwd=mcp_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, f"{stmt!r} failed:\n{proc.stderr}"
+

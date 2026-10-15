@@ -7,6 +7,8 @@ This module keeps the historical ``tools._durable_write`` import path.
 
 from __future__ import annotations
 
+from typing import Any
+
 from durable_io.atomic import (
     PreImageMismatchError,
     RmwResult,
@@ -23,7 +25,23 @@ from durable_io.atomic import (
     write_verify_error_dict,
 )
 
+
+class HouseRulesSizeRejectedError(Exception):
+    """Raised when a house-rules post-edit image fails the hop byte gate.
+
+    Callers inside ``path_flock`` turn this into a structured fs refusal without
+    persisting bytes. Defined in ``tools._durable_write`` so both ``tools.file_editor``
+    and ``tools.filesystem._write_authority`` can import it at module load without
+    entering the ``tools.filesystem.__init__`` → ``_ops_text`` → ``file_editor`` cycle.
+    """
+
+    def __init__(self, rejection: dict[str, Any]) -> None:
+        self.rejection = rejection
+        super().__init__(str(rejection.get("error")))
+
+
 __all__ = [
+    "HouseRulesSizeRejectedError",
     "PreImageMismatchError",
     "RmwResult",
     "WriteVerifyError",
