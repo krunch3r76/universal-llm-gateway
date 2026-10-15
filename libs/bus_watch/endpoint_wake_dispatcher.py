@@ -133,8 +133,8 @@ def _display_post(
 def _cse_agree(holder: dict[str, Any], dry: dict[str, Any]) -> bool:
     left = str(holder.get("registration_id") or "")
     right = str(dry.get("registration_id") or "")
-    if left and left == right:
-        return True
+    if left and right:
+        return left == right
     a = holder_id_from_chat_url(str(holder.get("chat_url") or ""))
     b = holder_id_from_chat_url(str(dry.get("url") or dry.get("chat_url") or ""))
     return bool(a and a == b)

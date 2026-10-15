@@ -138,10 +138,13 @@ def claim_due_wakes(
                   AND NOT EXISTS (
                     SELECT 1 FROM turns t
                     WHERE t.thread=p.thread_id
-                      AND t.created_at > d.finished_at
+                      AND datetime(t.created_at) > datetime(d.finished_at)
                       AND (
                         lower(trim(t.from_agent))=lower(trim(p.agent))
-                        OR lower(trim(t.from_agent))='web-anthropic'
+                        OR (
+                          d.route='cse'
+                          AND lower(trim(t.from_agent))='web-anthropic'
+                        )
                       )
                   )
               )

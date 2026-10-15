@@ -70,6 +70,27 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
     detail = create_thread(thread_id=None, slug="deb-reply")
     assert detail is not None
     thread = str(detail["id"])
+    # Earlier same-day reply from target and from web-anthropic in production
+    # ISO-8601 'T...Z' format must NOT clear a later delivered wake's debounce.
+    early_target_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="REPLY|early",
+        body="early",
+    )
+    early_web_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="REPLY|web",
+        body="web",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id IN (?, ?)",
+            ("2020-01-01T09:00:00Z", early_target_id, early_web_id),
+        )
     a_id, _t, a_n, _c = insert_turn(
         thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|a", body="a"
     )
@@ -79,10 +100,36 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
     advance_scan(
         "endpoint-wake-dispatcher", 0, a_id,
         [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
-        now="2020-01-01 00:00:00",
+        now="2020-01-01 10:00:00",
     )
-    wake = claim_due_wakes(now="2020-01-01 00:00:01")
-    record_wake_result(wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 00:00:02")
+    wake = claim_due_wakes(now="2020-01-01 10:00:01")
+    record_wake_result(wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 10:00:02")
+    b_id, _tb, b_n, _cb = insert_turn(
+        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|b", body="b"
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher", a_id, b_id,
+        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": b_id, "turn_number": b_n}],
+        now="2020-01-01 10:00:10",
+    )
+    # Before target replies after 10:00:02, debounce holds despite 09:00:00Z turns
+    # and despite a post-delivery web-anthropic turn on a non-cse route.
+    post_web_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="REPLY|web-after",
+        body="web-after",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01T10:00:15Z", post_web_id),
+        )
+    assert claim_due_wakes(now="2020-01-01 10:00:20")["wake_id"] is None
+
+    # Target replies after 10:00:02 in production ISO-8601 'T...Z' format -> debounce clears
+    # for subsequent turn c_id posted after the reply.
     reply_id, _, _, _ = insert_turn(
         thread=thread,
         from_agent="grok-bot-gc1",
@@ -93,17 +140,62 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
     with write_connect() as conn:
         conn.execute(
             "UPDATE turns SET created_at=? WHERE id=?",
-            ("2020-01-01 00:00:05", reply_id),
+            ("2020-01-01T10:00:25Z", reply_id),
         )
     c_id, _t3, c_n, _c3 = insert_turn(
         thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|c", body="c"
     )
     advance_scan(
-        "endpoint-wake-dispatcher", a_id, c_id,
+        "endpoint-wake-dispatcher", b_id, c_id,
         [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": c_id, "turn_number": c_n}],
-        now="2020-01-01 00:00:30",
+        now="2020-01-01 10:00:30",
     )
-    early = claim_due_wakes(now="2020-01-01 00:00:40")
+    early = claim_due_wakes(now="2020-01-01 10:00:40")
+    assert early["wake_id"]
+    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [c_id]
+
+
+def test_cse_route_debounce_cleared_by_web_anthropic_reply(db: None) -> None:
+    from agent_bus_store.db.connection import write_connect
+
+    detail = create_thread(thread_id=None, slug="deb-cse-reply")
+    assert detail is not None
+    thread = str(detail["id"])
+    a_id, _t, a_n, _c = insert_turn(
+        thread=thread, from_agent="cursor", to_agent="maestro", subject="CONSULT|a", body="a"
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher", 0, a_id,
+        [{"agent": "maestro", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
+        now="2020-01-01 10:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 10:00:01")
+    record_wake_result(wake["wake_id"], "delivered", "ok", "cse", 9, "reg-1", now="2020-01-01 10:00:02")
+    c_id, _t3, c_n, _c3 = insert_turn(
+        thread=thread, from_agent="cursor", to_agent="maestro", subject="CONSULT|c", body="c"
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher", a_id, c_id,
+        [{"agent": "maestro", "thread_id": thread, "turn_id": c_id, "turn_number": c_n}],
+        now="2020-01-01 10:00:10",
+    )
+    assert claim_due_wakes(now="2020-01-01 10:00:12")["wake_id"] is None
+    reply_id, _, _, _ = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="REPLY|m",
+        body="m",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01T10:00:15Z", reply_id),
+        )
+    early = claim_due_wakes(now="2020-01-01 10:00:20")
     assert early["wake_id"]
     assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [c_id]
 
