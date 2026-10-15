@@ -29,6 +29,7 @@ from claude_bundles.operator_proxy_hop_status import (
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 from claude_bundles.operator_proxy_standing_render import (
+    RULES_BUDGET_B,
     assess_render_budget_and_identity,
 )
 from claude_bundles.runbook_excerpt import extract_sections
@@ -806,6 +807,14 @@ def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
     assert "inline fallback" in out_inline.split("## Lessons in force", 1)[0]
 
 
+def _rendered_house_rules_in_hop_prompt(out: str) -> str:
+    start = out.find("## HOUSE RULES")
+    assert start >= 0
+    end = out.find("\n## CURRENT LEG (rendered checkpoint)", start)
+    assert end > start
+    return out[start:end].strip()
+
+
 def test_ac4_rules_truncation_lists_k_ids() -> None:
     bullets = []
     for k in range(1, 25):
@@ -818,12 +827,29 @@ def test_ac4_rules_truncation_lists_k_ids() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "[rules truncated:" in out
-    match = re.search(r"\[rules truncated: ([^\]]+) —", out)
+    rules_block = _rendered_house_rules_in_hop_prompt(out)
+    assert len(rules_block.encode("utf-8")) <= RULES_BUDGET_B
+    assert "[rules truncated:" in rules_block
+    match = re.search(r"\[rules truncated: ([^\]]+) —", rules_block)
     assert match is not None
     ids = [part.strip() for part in match.group(1).split(",")]
-    assert ids == ["K24", "K23", "K22", "K21", "K20", "K19", "K18", "K17"]
+    assert ids == [
+        "K24",
+        "K23",
+        "K22",
+        "K21",
+        "K20",
+        "K19",
+        "K18",
+        "K17",
+        "K16",
+    ]
     assert "K1" not in ids
+    for k in range(1, 16):
+        assert f"- K{k} " + ("x" * 500) in rules_block
+    for k in range(16, 25):
+        assert f"- K{k} " + ("x" * 500) not in rules_block
+        assert f"- K{k} " + ("x" * 499) not in rules_block
 
 
 def test_ac10_checkpoint_stale_identity() -> None:

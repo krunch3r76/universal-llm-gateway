@@ -15,7 +15,6 @@ from claude_bundles.runbook_excerpt import extract_sections
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
 RULES_BUDGET_B = 8 * _KB
-RULES_BULLET_CAP_B = 600
 SECTION_OWED_CAP_B = 1536
 SECTION_OPEN_CAP_B = 600
 SECTION_LAST_CAP_B = 1536
@@ -406,6 +405,40 @@ def _split_rules_bullets(
     return heading, "\n".join(intro_lines).strip(), bullets
 
 
+def _rules_truncation_flag(dropped_oldest_first: list[str], uri: str) -> str:
+    return f"[rules truncated: {', '.join(dropped_oldest_first)} — read {uri}]"
+
+
+def _dropped_suffix_oldest_first(
+    rows: list[tuple[str, str]], drop_start: int
+) -> list[str]:
+    """Dropped row ids with the bottom-of-file (oldest) name first in the flag."""
+    suffix = [ident for ident, _ in rows[drop_start:]]
+    return list(reversed(suffix))
+
+
+def _render_rules_body_len(
+    *,
+    heading_line: str,
+    rows: list[tuple[str, str]],
+    accept_count: int,
+    drop_start: int,
+    uri: str,
+) -> int:
+    parts: list[str] = []
+    if heading_line:
+        parts.append(heading_line)
+    for index in range(accept_count):
+        parts.append(rows[index][1])
+    if drop_start < len(rows):
+        flag = _rules_truncation_flag(
+            _dropped_suffix_oldest_first(rows, drop_start),
+            uri,
+        )
+        parts.append(flag)
+    return _utf8_len("\n".join(parts))
+
+
 def render_house_rules_block(
     *,
     lane: str,
@@ -413,7 +446,7 @@ def render_house_rules_block(
     house_rules_text: str | None = None,
     read_cortex_uri: Callable[[str], str | None] | None = None,
 ) -> tuple[str, bool]:
-    """Render HOUSE RULES. Every cut bullet is named; drops run from the bottom."""
+    """Render HOUSE RULES. Each row is whole or dropped; drops are an oldest suffix."""
     uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     body = house_rules_text
     read_error: str | None = None
@@ -434,53 +467,69 @@ def render_house_rules_block(
             return flag, False
         return "", False
     heading_line, intro, bullets = _split_rules_bullets(body)
-    bullet_entries: list[tuple[str, str]] = []
+    rows: list[tuple[str, str]] = []
+    if intro:
+        rows.append(("intro", intro))
     for index, (k_id, text) in enumerate(bullets):
-        bullet_entries.append((k_id or f"bullet-{index + 1}", text))
+        rows.append((k_id or f"bullet-{index + 1}", text))
+
+    unreadable_line = (
+        f"[rules_file_unreadable: {read_error} — rendered inline "
+        f"HOUSE RULES; read {uri}]"
+        if read_error
+        else ""
+    )
+    budget = RULES_BUDGET_B - (_utf8_len(unreadable_line) + 1 if unreadable_line else 0)
+    accept_count = 0
+    drop_start = len(rows)
+    for index, (_ident, text) in enumerate(rows):
+        row_len = _utf8_len(text)
+        if row_len > budget:
+            drop_start = index
+            break
+        parts: list[str] = []
+        if heading_line:
+            parts.append(heading_line)
+        for prior in range(accept_count):
+            parts.append(rows[prior][1])
+        parts.append(text)
+        if _utf8_len("\n".join(parts)) > budget:
+            drop_start = index
+            break
+        accept_count += 1
+    else:
+        drop_start = len(rows)
+
+    while drop_start < len(rows):
+        total = _render_rules_body_len(
+            heading_line=heading_line,
+            rows=rows,
+            accept_count=accept_count,
+            drop_start=drop_start,
+            uri=uri,
+        )
+        if total <= budget:
+            break
+        if accept_count == 0:
+            break
+        accept_count -= 1
+        drop_start = accept_count
 
     assembled: list[str] = []
     if heading_line:
         assembled.append(heading_line)
-    size = _utf8_len("\n".join(assembled))
-    truncated_ids: list[str] = []
-
-    if intro:
-        isize = _utf8_len(intro)
-        over_cap = isize > RULES_BULLET_CAP_B
-        shown = _truncate_utf8(intro, RULES_BULLET_CAP_B) if over_cap else intro
-        isize = _utf8_len(shown)
-        if size + isize + 1 > RULES_BUDGET_B:
-            truncated_ids.append("intro")
-        else:
-            if over_cap:
-                truncated_ids.append("intro")
-            assembled.append(shown)
-            size += isize + 1
-
-    for index, (ident, text) in enumerate(bullet_entries):
-        bsize = _utf8_len(text)
-        over_cap = bsize > RULES_BULLET_CAP_B
-        if over_cap:
-            text = _truncate_utf8(text, RULES_BULLET_CAP_B)
-            bsize = _utf8_len(text)
-        if size + bsize + 1 > RULES_BUDGET_B:
-            truncated_ids.extend(item_id for item_id, _item in bullet_entries[index:])
-            break
-        if over_cap:
-            truncated_ids.append(ident)
-        assembled.append(text)
-        size += bsize + 1
-
-    if truncated_ids:
-        # Oldest first: the bottom of the source is the first name in the flag.
-        flag = f"[rules truncated: {', '.join(reversed(truncated_ids))} — read {uri}]"
-        assembled.append(flag)
-    if read_error:
-        assembled.append(
-            f"[rules_file_unreadable: {read_error} — rendered inline "
-            f"HOUSE RULES; read {uri}]"
+    for index in range(accept_count):
+        assembled.append(rows[index][1])
+    truncated = drop_start < len(rows)
+    if truncated:
+        flag = _rules_truncation_flag(
+            _dropped_suffix_oldest_first(rows, drop_start),
+            uri,
         )
-    return "\n".join(assembled), bool(truncated_ids)
+        assembled.append(flag)
+    if unreadable_line:
+        assembled.append(unreadable_line)
+    return "\n".join(assembled), truncated
 
 
 def render_checkpoint_block(
