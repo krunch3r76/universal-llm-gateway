@@ -233,17 +233,20 @@ def test_friction_39304_unreadable_line_reserved_in_rules_budget() -> None:
     def _raise(_uri: str) -> str:
         raise OSError("unittest")
 
-    near_budget = "y" * 8050
+    # 8070 B body + "\n" + 121 B unreadable line = 8192 at n=8050; n=8100 only
+    # fits when the line is NOT reserved, so pre-fix code overflows to 8242 B.
+    near_budget = "y" * 8100
     rules = f"## HOUSE RULES\n- K1 {near_budget}\n"
-    text, _truncated = render_house_rules_block(
+    text, truncated = render_house_rules_block(
         lane="12286",
         inline_rules=rules,
         read_cortex_uri=_raise,
     )
     _assert_rules_output_within_budget(text)
-    assert len(near_budget.encode("utf-8")) > 8000
+    assert truncated
+    assert near_budget not in text
+    assert "[rules truncated: K1 " in text
     assert "[rules_file_unreadable: OSError" in text
-    assert near_budget in text
 
 
 def test_live_12286_house_rules_k35_k36_k37_render_whole() -> None:
