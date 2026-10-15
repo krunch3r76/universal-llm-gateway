@@ -10,7 +10,6 @@ from typing import Any, Literal
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES
 from pydantic import BaseModel, Field, ValidationError
 
-_GC1 = "grok-bot-gc1"
 _ROUTE_CONTROL_TYPE = "TYPE: ROUTE/CONTROL"
 _LIFECYCLE_KINDS = frozenset({"COMMISSION", "DECOMMISSION", "WAKE"})
 _RULING_KINDS = frozenset({"ACK", "RULING", "AMEND", "PARK", "CANCEL"})

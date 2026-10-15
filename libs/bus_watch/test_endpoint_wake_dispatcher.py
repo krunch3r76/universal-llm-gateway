@@ -53,8 +53,41 @@ def test_cse_allowlist_not_display(db: None) -> None:
         {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "cursor-sdk generate admitted"},
         cse=False,
     )
-    assert CSE_WAKE_SUBJECT_HEADS <= {"CONSULT", "QUESTION", "DONE", "FAILED", "FACT", "REVIEW", "PLAN", "LANDED", "VERDICT"}
-    assert "REQUEST" in GROK_WAKE_SUBJECT_HEADS
+    assert CSE_WAKE_SUBJECT_HEADS == {
+        "CONSULT",
+        "QUESTION",
+        "DONE",
+        "FAILED",
+        "FACT",
+        "REVIEW",
+        "PLAN",
+        "LANDED",
+        "VERDICT",
+    }
+    assert GROK_WAKE_SUBJECT_HEADS == {
+        "REQUEST",
+        "RULING",
+        "ACK",
+        "AMEND",
+        "PARK",
+        "CANCEL",
+        "WITHDRAW",
+        "COMMISSION",
+        "DECOMMISSION",
+        "WAKE",
+        "CONSULT",
+        "QUESTION",
+        "DONE",
+        "FAILED",
+        "FACT",
+        "REVIEW",
+        "PLAN",
+        "PICKUP",
+        "LANDED",
+        "VERDICT",
+        "HOP",
+        "READY",
+    }
     assert not qualifies({"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
     assert not qualifies({"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
 
