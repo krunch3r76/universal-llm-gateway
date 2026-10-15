@@ -54,7 +54,7 @@ async def test_notify_pager_sent_truthy(monkeypatch: pytest.MonkeyPatch) -> None
         lambda *_a, **_k: _FakeClient(resp),
     )
 
-    result = await notify_pager("ULG test", "body", tag="t")
+    result = await notify_pager("ULG test", "body", tag="t", wait_for_peer=False)
 
     assert result.status == "sent"
     assert result.reason == ""
@@ -72,7 +72,7 @@ async def test_notify_pager_http_error_surfaces_reason(
         lambda *_a, **_k: _FakeClient(resp),
     )
 
-    result = await notify_pager("ULG test", "body", tag="t")
+    result = await notify_pager("ULG test", "body", tag="t", wait_for_peer=False)
 
     assert result.status == "failed"
     assert result.reason == "HTTP 503"
@@ -101,7 +101,7 @@ async def test_notify_pager_exception_surfaces_reason(
         lambda *_a, **_k: _RaisingClient(),
     )
 
-    result = await notify_pager("ULG test", "body", tag="t")
+    result = await notify_pager("ULG test", "body", tag="t", wait_for_peer=False)
 
     assert result.status == "failed"
     assert result.reason == "TimeoutError"
@@ -122,6 +122,7 @@ async def test_notify_pager_disabled_returns_reason(
 
 
 def test_notify_tool_failed_includes_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Life MCP notify tool maps NotifyResult.failed reason into response fields."""
     monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "1")
     sys.path.insert(
         0, str(Path(__file__).resolve().parents[2] / "services" / "mcp-server")
