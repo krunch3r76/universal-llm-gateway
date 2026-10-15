@@ -190,9 +190,9 @@ def _failed_verification_commands(closeout: dict[str, Any]) -> list[str]:
         if not isinstance(row, dict):
             continue
         exit_code = row.get("exit_code")
-        if exit_code is None:
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
             continue
-        if int(exit_code) != 0:
+        if exit_code != 0:
             failed.append(str(row.get("command") or "unknown"))
     return failed
 
@@ -220,13 +220,13 @@ def _arc_outcome_line(
     if summary:
         body_parts.append(summary[:500])
     work_key = str(closeout.get("work_key") or "").strip()
-    if not work_key:
-        work_key = str(closeout.get("source_ref") or "").strip()
     if work_key:
         body_parts.append(f"work_key: {work_key}")
     failed = _failed_verification_commands(closeout)
     if failed:
-        body_parts.append("checks_failed: " + "; ".join(failed))
+        shown = [" ".join(cmd.split())[:120] for cmd in failed[:3]]
+        more = f" (+{len(failed) - 3} more)" if len(failed) > 3 else ""
+        body_parts.append("checks_failed: " + "; ".join(shown) + more)
     if bus_thread:
         body_parts.append(f"thread: {bus_thread}")
     return subject, "\n\n".join(body_parts)
