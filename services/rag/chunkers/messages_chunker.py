@@ -1,4 +1,9 @@
-"""Chunk ``ulg.continuity.messages/1`` continuity seal files into RAG dialogue exchanges with lane/tag exclusion."""
+"""Chunk ``ulg.continuity.messages/1`` continuity seal files into RAG dialogue exchanges.
+
+``chunk_messages`` is called from ``chunk_file`` in ``services/rag/chunkers/office_dispatch.py``
+when the RAG watcher indexes ``*.messages.json`` paths; lane and tag exclusion apply during
+thread metadata resolution.
+"""
 
 from __future__ import annotations
 
