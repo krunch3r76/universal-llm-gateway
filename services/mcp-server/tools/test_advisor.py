@@ -50,7 +50,9 @@ def test_advisor_success_maps_pipeline_content_to_advice(advisor_fn: Any) -> Non
     assert args[3] == 120.0
     options = args[2]
     assert options["model"] == "anthropic/claude-opus-4-6"
-    assert options["max_tokens"] == 1024
+    # ce3913549: top-level max_tokens is the frontier admission failure the nest
+    # exists to avoid. Assert the nested key.
+    assert options["generation_parameters"]["max_tokens"] == 1024
     messages = args[1]
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"

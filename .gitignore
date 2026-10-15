@@ -143,6 +143,7 @@ README_REVISED.md
 
 # Documentation — root and selected scoped READMEs + architecture are public
 **/*.md
+!/libs/cortex_store/tests/fixtures/boot_skills_claude_web_legacy_card.md
 !/AGENTS.md
 !/services/AGENTS.md
 !/libs/AGENTS.md

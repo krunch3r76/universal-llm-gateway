@@ -137,8 +137,14 @@ def test_manifest_skills_hint_retains_fs_md_read_fallback() -> None:
     )
     skills_row = next(row for row in manifest if row.get("section") == "skills")
     hint = skills_row["hint"]
-    assert "<available_skills>" in hint
-    assert 'fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md")' in hint
+    # f7155b238: slug self-fetch replaced <available_skills> and fs md_read.
+    # A hint that again contains agent-skills/ fs reads regresses that contract.
+    assert "Index on briefing_card ## Agent Skills" in hint
+    assert "Use the `<slug>` skill" in hint
+    assert "seat self-fetches" in hint
+    assert "agent-skills/` retired" in hint
+    assert "GET /skills" in hint
+    assert "<available_skills>" not in hint
 
 
 def test_web_lead_boot_no_auto_inject_when_ui_attached(

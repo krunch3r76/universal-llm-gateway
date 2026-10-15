@@ -5,8 +5,11 @@ MCP surface names that were retired in phase-c of the document ingestion
 redesign (ingest_document → extract_document; document_ocr_directory →
 extract_directory; document_ocr → extract_document).
 
-``ingest_binary`` is a live private tool under ``tools/local/`` and is
-outside this scan. To inventory ``ingest_binary`` mentions, exclude ephemeral
+``ingest_binary`` is not a tracked private tool (path never in git;
+``promote_document_to_evidence`` is a fresh surface). The inventory records
+every live mention, including ``_coherence_allowlist.py`` (77fd360b0).
+A new stray mention under services/libs/config/.cursor still fails equality.
+To inventory ``ingest_binary`` mentions, exclude ephemeral
 ``./tmp`` (consult-run JSON dumps reference the name heavily)::
 
     rg '\\bingest_binary\\b' services libs config .cursor --glob '!tmp/**'
@@ -88,7 +91,7 @@ _INGEST_BINARY_SEARCH_ROOTS: list[Path] = [
 ]
 _EXPECTED_INGEST_BINARY_FILES: frozenset[Path] = frozenset(
     {
-        _REPO_ROOT / "services/mcp-server/tools/local/ingest_binary.py",
+        _REPO_ROOT / "services/mcp-server/_coherence_allowlist.py",
         _REPO_ROOT / "services/mcp-server/tools/promote_document_to_evidence.py",
         _REPO_ROOT / "services/mcp-server/tools/test_forbidden_surfaces.py",
     }
