@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -316,14 +316,16 @@ def container_exists(name: str = CONTAINER_NAME) -> bool:
     return any(line.strip() == name for line in (proc.stdout or "").splitlines())
 
 
-def backup_create_env_ready() -> bool:
-    """Return whether manage's environment can interpolate mcp-server.yml.
+def backup_create_env_ready(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether compose create can interpolate mcp-server.yml.
 
     Compose create requires ``MCP_PROJECT_DIR``, ``MCP_TASKS_DIR``, and
-    ``MCP_AUTH_TOKEN``. The script exports them from mcp.yaml; the manage
-    backup process does not. A missing value must refuse before ``docker rm``.
+    ``MCP_AUTH_TOKEN``. The manage backup passes ``build_mcp_env`` output
+    here so a missing key refuses before ``docker rm``. When *env* is
+    omitted, the process environment is the source (script CLI).
     """
-    return all(os.environ.get(name, "").strip() for name in COMPOSE_CREATE_ENV)
+    source = os.environ if env is None else env
+    return all(str(source.get(name, "")).strip() for name in COMPOSE_CREATE_ENV)
 
 
 def read_checked_image_id(mcp_data_dir: Path) -> str | None:
@@ -365,12 +367,49 @@ def image_exists(image_ref: str) -> bool:
 
 
 def _cold_import_script() -> str:
-    lines = [f"import {m}" for m in COLD_IMPORTS]
-    return "; ".join(lines)
+    """Return a ``python -c`` body that imports each cold module in a new interpreter.
+
+    A single ``import a; import b`` process keeps later modules warm in
+    ``sys.modules`` after ``server`` loads. The container probe must match
+    the land probe: four child interpreters, one module each, so a failure
+    that appears only in a fresh interpreter is not hidden.
+    """
+    modules = ", ".join(repr(name) for name in COLD_IMPORTS)
+    return (
+        "import subprocess, sys; "
+        f"mods = ({modules},); "
+        "rc = 0\n"
+        "for mod in mods:\n"
+        "    rc = subprocess.call([sys.executable, '-c', 'import ' + mod])\n"
+        "    if rc:\n"
+        "        break\n"
+        "raise SystemExit(rc)\n"
+    )
+
+
+def _probe_output_detail(proc: subprocess.CompletedProcess[bytes]) -> str:
+    raw = proc.stderr or proc.stdout or b""
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = str(raw)
+    return text.strip()[:500]
+
+
+def _emit_import_probe(signal: str, detail: str) -> None:
+    from deploy_identity.mcp_restart_events import emit_restart_event
+
+    emit_restart_event(signal, {"detail": detail})
 
 
 def run_import_probe(workspace_root: Path, *, image: str = LOCAL_IMAGE) -> int:
-    """Run throwaway import probe; return 0 on success, 1 on failure, 2 on timeout."""
+    """Run the throwaway import probe in *image*.
+
+    Returns 0 on success, 1 on a non-zero child, and 2 when the docker
+    client exceeds ``PROBE_WALL_S``. Failure emits ``mcp.restart.check.failed``
+    and a timeout emits ``mcp.restart.check.timeout``. The ``-c`` body is
+    ``_cold_import_script`` (one interpreter per module).
+    """
     incoming = workspace_root
     vols: list[str] = []
     mounts = [
@@ -413,8 +452,15 @@ def run_import_probe(workspace_root: Path, *, image: str = LOCAL_IMAGE) -> int:
             cmd, capture_output=True, timeout=PROBE_WALL_S, check=False
         )
     except subprocess.TimeoutExpired:
+        _emit_import_probe("mcp.restart.check.timeout", "import probe timed out")
         return 2
-    return 0 if proc.returncode == 0 else 1
+    if proc.returncode != 0:
+        _emit_import_probe(
+            "mcp.restart.check.failed",
+            _probe_output_detail(proc) or "import probe failed",
+        )
+        return 1
+    return 0
 
 
 def _copy_container_tree(container: str, src: str, dest: Path) -> int:
@@ -554,14 +600,18 @@ def execute_restore(
     firer: Literal["script", "backup"],
     restart_in_progress: Callable[[], bool] | None = None,
     emit: Callable[[str, dict], None] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> int:
     """Run one restore attempt under flock. Return 0 when the health wait succeeds.
 
     A failed ``docker ps`` or ``docker inspect``, a backup environment that
     cannot compose-create, a failed snapshot copy, or a failed ``docker start``
-    returns 1 before any later step. The backup firer checks compose env
-    before ``docker rm`` so a missing ``MCP_PROJECT_DIR`` does not delete the
-    container it cannot recreate.
+    returns 1 before any later step. The backup firer checks *env* (or the
+    process environment when *env* is omitted) before ``docker rm`` so a
+    missing ``MCP_PROJECT_DIR`` does not delete the container it cannot
+    recreate. Docker steps, including compose create, receive *env* so
+    mcp-server.yml interpolates the mcp.yaml export set rather than manage's
+    own process environment.
     """
     del workspace_root
     lock_path = last_healthy_lock(mcp_data_dir)
@@ -590,7 +640,7 @@ def execute_restore(
             return _fail_restore(emit, "snapshot_missing")
         if not image_exists(checked_image_id):
             return _fail_restore(emit, "image_missing")
-        if firer == "backup" and not backup_create_env_ready():
+        if firer == "backup" and not backup_create_env_ready(env):
             return _fail_restore(emit, "compose_env_missing")
         try:
             exists = container_exists()
@@ -602,7 +652,7 @@ def execute_restore(
             compose_args=tuple(compose_args),
         )
         for step in plan.steps:
-            proc = subprocess.run(step, capture_output=True, check=False)
+            proc = subprocess.run(step, capture_output=True, check=False, env=env)
             if proc.returncode != 0:
                 return _fail_restore(emit, "docker_step")
         if _copy_snapshot_into_container(last_healthy_dir(mcp_data_dir)) != 0:

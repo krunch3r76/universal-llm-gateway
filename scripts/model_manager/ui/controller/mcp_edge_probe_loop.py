@@ -11,7 +11,6 @@ exceptions that stop the loop. This loop does not restart mcp.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -97,35 +96,58 @@ class McpEdgeProbeLoop:
         await self._probe_listeners()
 
     async def _maybe_backup_restore(self) -> None:
-        """Local-docker backup restore when the script did not stick (not public probe)."""
+        """Recreate mcp-server from the snapshot when the script handler died.
+
+        Compose args come from ``mcp_compose_args`` (browser override included
+        when the mcp config enables it). The data directory is the config's
+        ``data_dir``, not ``MCP_DATA_DIR`` from manage's process environment.
+        Compose steps receive ``build_mcp_env`` so interpolation is the full
+        mcp.yaml export set. Restored and failed events use
+        ``reason=local_inspect``.
+        """
+        from deploy_identity.mcp_restart_events import emit_restart_event
         from deploy_identity.mcp_restart_gate import (
             execute_restore,
             resolve_backup_checked_image_id,
         )
 
-        mcp_data = Path(
-            os.environ.get("MCP_DATA_DIR", str(Path.home() / "mcp-data"))
-        ).expanduser()
+        from scripts.model_manager.ui.controller.service_config import (
+            build_mcp_env,
+            load_mcp_config,
+        )
+        from scripts.model_manager.ui.controller.service_ctl.mcp_service import (
+            mcp_compose_args,
+        )
+
+        def _emit(signal: str, payload: dict) -> None:
+            body = dict(payload)
+            body["reason"] = "local_inspect"
+            emit_restart_event(signal, body)
+
+        cfg = load_mcp_config()
+        if cfg is None:
+            _emit("mcp.restart.snapshot.failed", {"reason": "local_inspect"})
+            return
+        env = build_mcp_env(self._workspace_root)
+        mcp_data = Path(cfg.data_dir).expanduser()
         image_id = await asyncio.to_thread(resolve_backup_checked_image_id, mcp_data)
         if not image_id:
             return
-
-        compose_args = [
-            "docker",
-            "compose",
-            "-f",
-            str(self._workspace_root / "docker" / "compose" / "mcp-server.yml"),
-        ]
-
+        composed = mcp_compose_args(self._workspace_root)
+        if composed is None:
+            _emit("mcp.restart.snapshot.failed", {"reason": "local_inspect"})
+            return
+        compose_args, _compose_path = composed
         await asyncio.to_thread(
             execute_restore,
             workspace_root=self._workspace_root,
             mcp_data_dir=mcp_data,
             checked_image_id=image_id,
-            compose_args=compose_args,
+            compose_args=list(compose_args),
             firer="backup",
             restart_in_progress=self._restart_in_progress,
-            emit=None,
+            emit=_emit,
+            env=env,
         )
 
     async def _probe_edge(self) -> None:

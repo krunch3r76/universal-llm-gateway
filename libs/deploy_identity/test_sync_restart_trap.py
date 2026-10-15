@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import stat
 import subprocess
 import textwrap
@@ -23,10 +24,12 @@ def _stub_docker_dir(
     inspect_health: str = "healthy",
     container_exists: bool = True,
     kill_on_run: bool = False,
+    nonce_mode: str = "stored",
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "docker.log"
+    nonce_file = tmp_path / "nonce"
     script = textwrap.dedent(
         f"""\
         #!/usr/bin/env bash
@@ -71,7 +74,28 @@ def _stub_docker_dir(
             fi
             exit 0
             ;;
-          start|cp|exec|tag|rm|compose|image) exit 0 ;;
+          exec)
+            joined="$*"
+            nonce_file={str(nonce_file)!r}
+            if [[ "$joined" == *".source_sync_nonce"* ]]; then
+              if [[ "$joined" == *"cat /app/.source_sync_nonce"* ]]; then
+                if [[ "{nonce_mode}" == "wrong" ]]; then
+                  printf '%s\\n' "not-the-nonce"
+                elif [[ "{nonce_mode}" == "stored" && -f "$nonce_file" ]]; then
+                  cat "$nonce_file"
+                fi
+                exit 0
+              fi
+              needle="printf '%s\\\\n' '"
+              rest="${{joined#*"$needle"}}"
+              if [[ "$rest" != "$joined" ]]; then
+                nonce=${{rest%%\\'*}}
+                printf '%s\\n' "$nonce" > "$nonce_file"
+              fi
+            fi
+            exit 0
+            ;;
+          start|cp|tag|rm|compose|image) exit 0 ;;
           *) exit 0 ;;
         esac
         """
@@ -104,25 +128,97 @@ def _minimal_env(tmp_path: Path, stub_bin: Path) -> dict[str, str]:
     return env
 
 
-@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
-def test_healthy_finish_no_trap_restore(tmp_path: Path) -> None:
-    stub = _stub_docker_dir(tmp_path, inspect_health="healthy")
+def _python() -> str:
+    return os.environ.get("PYTHON", str(Path.home() / ".venvs/universal/bin/python"))
+
+
+def _run_sync_script(
+    tmp_path: Path,
+    stub: Path,
+    *args: str,
+    timeout: int = 180,
+) -> subprocess.CompletedProcess[str]:
     env = _minimal_env(tmp_path, stub)
-    # Fake workspace layout the script expects
-    ws = _REPO_ROOT
-    subprocess.run(
-        ["bash", str(_SCRIPT)],
-        cwd=str(ws),
+    env["PYTHON"] = _python()
+    env["ULG_REPO"] = str(_REPO_ROOT)
+    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    return subprocess.run(
+        ["bash", str(_SCRIPT), *args],
+        cwd=str(_REPO_ROOT),
         env=env,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=timeout,
         check=False,
     )
+
+
+def _docker_log(tmp_path: Path) -> str:
     log = tmp_path / "docker.log"
-    if log.is_file():
-        text = log.read_text()
-        assert "rm" not in text or "-f" not in text.split("rm", 1)[-1][:20]
+    if not log.is_file():
+        return ""
+    return log.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_healthy_finish_no_trap_restore(tmp_path: Path) -> None:
+    """Healthy restart exits 0 and does not rm the container.
+
+    The stub's ``exec cat`` echoes the nonce written by ``exec sh -c printf``,
+    so verify passes after health returns 0. A disarm that never ran would
+    take the EXIT handler and rm.
+    """
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", nonce_mode="stored")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "Verified sync nonce survived restart" in proc.stdout
+    assert "rm -f mcp-server" not in log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_verify_fail_after_healthy_does_not_restore(tmp_path: Path) -> None:
+    """Health 0 then a bad nonce exits 1 with no restore argv.
+
+    The EXIT trap is already disarmed, so a verify failure must not rm or
+    compose-create the container.
+    """
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", nonce_mode="wrong")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "rm -f mcp-server" not in log
+    assert "compose" not in log
+
+
+def test_restore_handler_second_entry_is_noop(tmp_path: Path) -> None:
+    """Script-level re-entry of the EXIT handler does not restore twice."""
+    function = _extract_bash_function("_restore_window_exit")
+    log = tmp_path / "restore.log"
+    body = "\n".join(
+        [
+            "set +e",
+            "shopt -s extdebug",
+            "trap 'if [[ \"$BASH_COMMAND\" == exit\\ * ]]; then builtin return 0; fi' DEBUG",
+            "CHECKED_IMAGE_ID=sha256:abc",
+            "CHECKED_IMAGE_FILE=",
+            "_RESTORE_HANDLER_RAN=0",
+            "gate() { printf '%s\\n' \"$*\" >> " + str(log) + "; }",
+            function,
+            "_restore_window_exit",
+            "_restore_window_exit",
+            "",
+        ]
+    )
+    proc = subprocess.run(
+        ["bash", "-c", body],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    recorded = log.read_text(encoding="utf-8") if log.is_file() else ""
+    assert proc.returncode == 0, proc.stderr
+    assert recorded.count("restore") == 1, recorded
 
 
 def _extract_bash_function(name: str) -> str:
@@ -209,12 +305,11 @@ def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
     )
     cp_idx = log.find("cp ")
     run_idx = log.find("run ")
-    compose_idx = log.find("compose")
     assert cp_idx >= 0, log
     assert run_idx >= 0, log
     assert run_idx > cp_idx, log
-    assert compose_idx == -1 or run_idx < compose_idx, log
-    assert proc.returncode != 0
+    assert proc.returncode == -signal.SIGTERM, (proc.returncode, proc.stderr[-400:])
+    assert "compose" not in log[run_idx:], log
 
 
 def test_nocache_unhealthy_does_not_start_build(tmp_path: Path) -> None:

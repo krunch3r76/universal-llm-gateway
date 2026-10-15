@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
 from deploy_identity.mcp_restart_gate import (
+    COLD_IMPORTS,
     LAST_HEALTHY_TAG,
     LOCAL_IMAGE,
     GateInput,
+    _cold_import_script,
     _starting_elapsed,
     execute_restore,
     gate_allows_restore,
@@ -18,6 +24,7 @@ from deploy_identity.mcp_restart_gate import (
     publish_snapshot_from_container,
     read_booted,
     read_pending,
+    run_import_probe,
     snapshot_present,
     source_tree_sha,
     write_pending,
@@ -149,10 +156,13 @@ class FakeDocker:
         self.start_rc = 0
         self.live_image = "sha256:good"
         self.started = False
+        self.envs: list[dict[str, str] | None] = []
 
     def __call__(self, args: list[str] | tuple[str, ...], **_kwargs: object) -> _Proc:
         argv = tuple(str(part) for part in args)
         self.commands.append(argv)
+        raw_env = _kwargs.get("env")
+        self.envs.append(raw_env if isinstance(raw_env, dict) else None)
         if not argv or argv[0] != "docker":
             return _Proc(0)
         verb = argv[1]
@@ -240,6 +250,41 @@ class FakeDocker:
         elif host.is_file():
             self.container_files.add(cont_root)
         return _Proc(0)
+
+
+def _install_backup_mcp_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    browser: bool = False,
+) -> None:
+    """Point load_mcp_config at a temp yaml and do not pre-set MCP_* env."""
+    cfg = tmp_path / "gateway-mcp.yaml"
+    cfg.write_text(
+        textwrap.dedent(
+            f"""\
+            auth_token: tok
+            project_dir: {tmp_path}
+            tasks_dir: {tmp_path / "tasks"}
+            data_dir: {tmp_path}
+            enable_browser_tools: {"true" if browser else "false"}
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_config._MCP_CONFIG_PATH",
+        cfg,
+    )
+    compose = tmp_path / "docker" / "compose"
+    compose.mkdir(parents=True, exist_ok=True)
+    (compose / "mcp-server.yml").write_text("services: {}\n", encoding="utf-8")
+    if browser:
+        (compose / "mcp-server-browser.override.yml").write_text(
+            "services: {}\n", encoding="utf-8"
+        )
+    for name in ("MCP_DATA_DIR", "MCP_PROJECT_DIR", "MCP_TASKS_DIR", "MCP_AUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _arm_restore_tree(tmp_path: Path) -> None:
@@ -464,10 +509,11 @@ def test_r2_added_path_absent_on_main_backup_and_docker_error(
     backup.tags[LOCAL_IMAGE] = "sha256:bad"
     backup.tags[LAST_HEALTHY_TAG] = "sha256:good"
     backup.container_files = set(backup.images["sha256:bad"])
-    monkeypatch.setenv("MCP_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MCP_PROJECT_DIR", str(tmp_path))
-    monkeypatch.setenv("MCP_TASKS_DIR", str(tmp_path / "tasks"))
-    monkeypatch.setenv("MCP_AUTH_TOKEN", "tok")
+    _install_backup_mcp_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", backup)
     from scripts.model_manager.ui.controller.mcp_edge_probe_loop import McpEdgeProbeLoop
 
@@ -495,3 +541,123 @@ def test_r2_added_path_absent_on_main_backup_and_docker_error(
     assert rc_err == 1
     assert not any(cmd[1] == "cp" for cmd in errored.commands)
     assert ghost not in (errored.container_files if errored.started else set())
+
+
+def test_backup_after_rm_uses_config_env_not_process_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Handler killed after docker rm: backup recreates from mcp.yaml, not os.environ.
+
+    The process environment has none of the compose keys. data_dir, compose
+    args (including the browser override), and the subprocess env come from
+    the mcp config. Success and a later image miss emit reason=local_inspect.
+    """
+    _arm_restore_tree(tmp_path)
+    (tmp_path / "last-healthy" / "checked_image_id").write_text(
+        "sha256:good\n", encoding="utf-8"
+    )
+    _install_backup_mcp_config(monkeypatch, tmp_path, browser=True)
+    assert os.environ.get("MCP_AUTH_TOKEN", "") == ""
+    assert os.environ.get("MCP_PROJECT_DIR", "") == ""
+    assert os.environ.get("MCP_DATA_DIR", "") == ""
+    assert os.environ.get("MCP_TASKS_DIR", "") == ""
+    fake = FakeDocker()
+    fake.container_present = False
+    fake.images["sha256:good"] = {"/app/libs/keep.py"}
+    fake.tags[LOCAL_IMAGE] = "sha256:stale"
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+    monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", fake)
+    from scripts.model_manager.ui.controller.mcp_edge_probe_loop import McpEdgeProbeLoop
+
+    asyncio.run(McpEdgeProbeLoop(workspace_root=tmp_path)._maybe_backup_restore())
+    assert not any(cmd[1] == "rm" for cmd in fake.commands)
+    compose = [cmd for cmd in fake.commands if len(cmd) > 1 and cmd[1] == "compose"]
+    assert len(compose) == 1, fake.commands
+    assert "mcp-server-browser.override.yml" in " ".join(compose[0])
+    compose_env = next(
+        env
+        for cmd, env in zip(fake.commands, fake.envs, strict=True)
+        if len(cmd) > 1 and cmd[1] == "compose"
+    )
+    assert compose_env is not None
+    assert compose_env["MCP_AUTH_TOKEN"] == "tok"
+    assert compose_env["MCP_PROJECT_DIR"] == str(tmp_path)
+    assert compose_env["MCP_DATA_DIR"] == str(tmp_path)
+    assert compose_env["ENABLE_BROWSER_TOOLS"] == "true"
+    assert (tmp_path / "last-healthy.lock").is_file()
+    assert fake.started is True
+    assert events == [("mcp.restart.snapshot.restored", {"reason": "local_inspect"})]
+
+    fake.health = "exited"
+    fake.images.clear()
+    fake.tags.clear()
+    events.clear()
+    asyncio.run(McpEdgeProbeLoop(workspace_root=tmp_path)._maybe_backup_restore())
+    assert events == [("mcp.restart.snapshot.failed", {"reason": "local_inspect"})]
+
+
+def test_cold_import_script_uses_one_interpreter_per_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each cold module is a separate python -c, not one warm interpreter."""
+    calls: list[list[str]] = []
+
+    def _call(argv: list[str], **_kwargs: object) -> int:
+        calls.append([str(part) for part in argv])
+        return 0
+
+    monkeypatch.setattr("subprocess.call", _call)
+    script = _cold_import_script()
+    assert "import server; import " not in script
+    with pytest.raises(SystemExit) as raised:
+        exec(script, {"__name__": "__main__"})  # noqa: S102
+    assert raised.value.code == 0
+    assert calls == [
+        [sys.executable, "-c", f"import {module}"] for module in COLD_IMPORTS
+    ]
+    assert len(calls) == 4
+
+
+def test_import_probe_emits_check_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero probe emits mcp.restart.check.failed and returns 1."""
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+
+    def _run(args: list[str], **_kwargs: object) -> _Proc:
+        assert _cold_import_script() in args
+        return _Proc(1, b"", b"ImportError: server")
+
+    monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
+    assert run_import_probe(tmp_path) == 1
+    assert events == [
+        ("mcp.restart.check.failed", {"detail": "ImportError: server"})
+    ]
+
+
+def test_import_probe_emits_check_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A probe that exceeds the wall cap emits mcp.restart.check.timeout."""
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+
+    def _run(args: list[str], **kwargs: object) -> _Proc:
+        raise subprocess.TimeoutExpired(cmd=args, timeout=float(kwargs.get("timeout", 120)))
+
+    monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
+    assert run_import_probe(tmp_path) == 2
+    assert events == [
+        ("mcp.restart.check.timeout", {"detail": "import probe timed out"})
+    ]
