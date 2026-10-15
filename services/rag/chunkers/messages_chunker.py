@@ -481,11 +481,8 @@ def _load_thread_tags(thread_id: str) -> list[str]:
 
 
 def _sqlite_exception(exc: BaseException) -> bool:
-    mod = type(exc).__module__
-    if not mod:
-        return False
-    # Detect stdlib sqlite errors without importing that module (ruling 15851#471 a).
-    return mod.split(".")[-1] == bytes((115, 113, 108, 105, 116, 101, 51)).decode()
+    # Type-name compare on the exception class module, not a database read.
+    return type(exc).__module__ == "sqlite3"
 
 
 def _expected_lane_resolver_failure(exc: BaseException) -> bool:

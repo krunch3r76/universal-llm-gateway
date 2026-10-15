@@ -407,6 +407,35 @@ def test_default_lane_resolver_excludes_case_tag_from_bus(
     assert chunk_messages(path, config=cfg) == []
 
 
+def test_lane_resolver_sqlite_error_warns_once_without_exc_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+    import sqlite3
+
+    def _op_error() -> object:
+        raise sqlite3.OperationalError("no such column: dominant_lane")
+
+    monkeypatch.setattr(
+        "cortex_store.schema_snapshot.open_live_db_readonly",
+        _op_error,
+    )
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {"role": "user", "content": "<user_query>x</user_query>", "turn_index": 1},
+            {"role": "assistant", "content": "y", "turn_index": 1},
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        assert len(chunk_messages(path, config=MessagesChunkerConfig())) == 1
+        assert len(chunk_messages(path, config=MessagesChunkerConfig())) == 1
+    warnings = [r for r in caplog.records if "lane resolver (cortex)" in r.message]
+    assert len(warnings) == 1
+    assert all(r.exc_info is None for r in warnings)
+
+
 def test_lane_resolver_programming_error_logs_exc_info(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
