@@ -200,10 +200,14 @@ async def _index_file_impl(
     if dup_or_skip is not None:
         return dup_or_skip
 
-    from services.rag.chroma_writer import run_chroma
+    from services.rag.chroma_writer import chroma_get_where, run_chroma
 
     def _get_existing(c: object, src: str) -> dict:
-        return c.get(where={"source": src}, include=["metadatas"])  # type: ignore[union-attr]
+        return chroma_get_where(
+            c,  # type: ignore[arg-type]
+            where={"source": src},
+            include=["metadatas"],
+        )
 
     existing = await run_chroma(_get_existing, collection, source)
     existing_ids: list[str] = existing.get("ids", [])

@@ -14,7 +14,7 @@ import logging
 
 import chromadb
 
-from services.rag.chroma_writer import chroma_update_metadatas
+from services.rag.chroma_writer import chroma_get_where, chroma_update_metadatas
 from services.rag.models import IndexResult
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,8 @@ def migrate_chroma_source(
     in a single collection.update() call.
     Returns the number of chunks updated; 0 when no matching chunks exist.
     """
-    existing = collection.get(
+    existing = chroma_get_where(
+        collection,
         where={"source": old_source},
         include=["metadatas"],
     )

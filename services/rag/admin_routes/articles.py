@@ -320,8 +320,10 @@ def register_article_routes(
                     chunk_ids
                 )
                 fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
-            await prop_idx.clear_failures_for(path)
-            await prop_idx.remove_indexed_source(path)
+            # Source-column delete heals a retry whose Chroma get is empty (N-b).
+            await prop_idx.remove_source_metadata(
+                path, chunk_ids or None, remove_article=False
+            )
 
         fallback_row = None
         if prop_idx is not None:

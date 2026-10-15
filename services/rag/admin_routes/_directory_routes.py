@@ -90,8 +90,9 @@ def register_directory_routes(
                 if chunk_ids_:
                     await prop_idx.remove_properties_for_chunks(chunk_ids_)
                     total_fts_removed += await prop_idx.fts.remove_batch(chunk_ids_)
-                await prop_idx.clear_failures_for(source)
-                await prop_idx.remove_indexed_source(source)
+                await prop_idx.remove_source_metadata(
+                    source, chunk_ids_ or None, remove_article=False
+                )
                 if await prop_idx.remove_article(source):
                     total_articles += 1
 

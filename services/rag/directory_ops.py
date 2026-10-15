@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -181,8 +182,14 @@ def _find_sources_under_prefixes_sync(
     sources: set[str] = set()
     offset = 0
     while True:
+        started = time.perf_counter()
         page = collection.get(
             include=["metadatas"], limit=page_size, offset=offset
+        )
+        logger.info(
+            "chroma_call_ms=%.3f fn=collection.get n=%d",
+            (time.perf_counter() - started) * 1000.0,
+            len(page.get("metadatas") or []),
         )
         rows: list[dict[str, object]] = page.get("metadatas") or []
         for row in rows:

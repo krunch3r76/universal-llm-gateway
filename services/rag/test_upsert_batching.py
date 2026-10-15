@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from services.rag.chroma_writer import (
     DELETE_IDS_CAP,
+    GET_PAGE_CAP,
+    UPDATE_IDS_CAP,
     UPSERT_BATCH_CAP,
     init_chroma_executor,
     run_chroma,
@@ -32,14 +36,14 @@ class _FakeChroma:
 
 
 @pytest.fixture(autouse=True)
-def _chroma_executor_lifecycle() -> None:
+def _chroma_executor_lifecycle() -> Iterator[None]:
     init_chroma_executor()
     yield
     shutdown_chroma_executor()
 
 
 @pytest.mark.asyncio
-async def test_upsert_splits_into_two_batches_when_over_max() -> None:
+async def test_upsert_splits_into_three_batches_when_over_cap() -> None:
     # total = max_bs + 100 ⇒ two batches iff max_bs >= 100 (ceil division).
     max_bs = 1000
     total = max_bs + 100
@@ -304,7 +308,7 @@ async def test_concurrent_run_chroma_max_inflight_is_one() -> None:
 
 
 @pytest.mark.asyncio
-async def test_purge_excluded_sources_submits_each_page_and_delete_slice() -> None:
+async def test_purge_excluded_sources_submits_one_run_chroma() -> None:
     from services.rag.directory_ops import find_sources_under_prefixes
     from services.rag.rag_service import startup_cleanup, state
 
@@ -374,38 +378,38 @@ async def test_slice_failure_does_not_call_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_source_retry_deletes_properties_by_source() -> None:
-    import sqlite3
+async def test_full_source_retry_deletes_properties_by_source(tmp_path) -> None:
+    """N3: source-column delete removes non-survivor rows even when ids are partial."""
+    from pathlib import Path
 
-    from services.rag.fts_index import FtsIndex
     from services.rag.property_index import PropertyIndex
 
-    fts = FtsIndex()
-    conn = sqlite3.connect(":memory:")
-    from universal_event_bus.actor.sequential import SequentialExecutor
-
-    seq = SequentialExecutor()
-    fts.attach(conn, seq)
-    conn.execute("CREATE TABLE properties (chunk_id TEXT, source TEXT)")
-    conn.execute(
-        "INSERT INTO properties VALUES ('c1', '/src/a.md'), ('c2', '/src/a.md')"
+    idx = PropertyIndex(db_path=Path(tmp_path) / "rag.db")
+    await idx.start()
+    await idx.add_batch_with_scope(
+        [
+            ("k", "c1", "all", "/src/a.md"),
+            ("k", "c2", "all", "/src/a.md"),
+            ("k", "c9", "all", "/src/b.md"),
+        ]
     )
-    conn.commit()
-    fts_calls: list[str] = []
-    original = fts.remove_for_source
-
-    async def _wrap(source: str) -> int:
-        fts_calls.append(source)
-        return await original(source)
-
-    fts.remove_for_source = _wrap  # type: ignore[method-assign]
-    await fts.remove_for_source("/src/a.md")
-    assert fts_calls == ["/src/a.md"]
-    remaining = conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
-    assert remaining == 2
-    conn.execute("DELETE FROM properties WHERE source = ?", ("/src/a.md",))
-    assert conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0
-    _ = PropertyIndex
+    await idx.fts.insert("c1", "/src/a.md", "one")
+    await idx.fts.insert("c2", "/src/a.md", "two")
+    await idx.fts.insert("c9", "/src/b.md", "nine")
+    await idx.remove_source_metadata("/src/a.md", ["c1"])
+    conn = idx._ensure_conn()
+    left = {
+        row[0]
+        for row in conn.execute("SELECT chunk_id FROM properties").fetchall()
+    }
+    fts_left = {
+        row[0]
+        for row in conn.execute("SELECT chunk_id FROM chunks_fts").fetchall()
+    }
+    assert "c2" not in left
+    assert "c2" not in fts_left
+    assert left == {"c9"}
+    assert fts_left == {"c9"}
 
 
 @pytest.mark.asyncio
@@ -510,33 +514,216 @@ async def test_update_over_500_is_sliced() -> None:
     from services.rag.chroma_writer import chroma_update_metadatas
 
     collection = MagicMock()
-    n = UPSERT_BATCH_CAP + 10
+    n = UPDATE_IDS_CAP + 10
     ids = [f"i{i}" for i in range(n)]
     metas = [{"i": i} for i in range(n)]
     await run_chroma(chroma_update_metadatas, collection, ids, metas)
     assert collection.update.call_count == 2
-    assert len(collection.update.call_args_list[0].kwargs["ids"]) == UPSERT_BATCH_CAP
+    assert len(collection.update.call_args_list[0].kwargs["ids"]) == UPDATE_IDS_CAP
 
 
 @pytest.mark.asyncio
 async def test_cancel_awaiting_task_does_not_drop_queued_chroma_job() -> None:
-    started = asyncio.Event()
-    allow_finish = asyncio.Event()
+    """Queued job B still runs after its awaiter is cancelled (N-a)."""
+    hold = threading.Event()
+    started = threading.Event()
+    ran_b = threading.Event()
 
-    def _blocking() -> None:
+    def _job_a() -> None:
         started.set()
-        while not allow_finish.is_set():
-            time.sleep(0.01)
+        hold.wait(5)
 
+    def _job_b() -> None:
+        ran_b.set()
+
+    task_a = asyncio.create_task(run_chroma(_job_a))
+    for _ in range(200):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set()
+    task_b = asyncio.create_task(run_chroma(_job_b))
+    await asyncio.sleep(0.05)
+    task_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task_b
+    hold.set()
+    await task_a
+    assert ran_b.wait(2)
+
+
+def test_shutdown_chroma_executor_bounds_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M2: a stuck writer job does not hold shutdown past the deadline."""
     import time
 
-    async def _waiter() -> None:
-        await run_chroma(_blocking)
+    from services.rag import chroma_writer
 
-    task = asyncio.create_task(_waiter())
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    allow_finish.set()
-    assert await run_chroma(lambda: 99) == 99
+    monkeypatch.setattr(chroma_writer, "_CHROMA_SHUTDOWN_WAIT_S", 0.3)
+    started = threading.Event()
+    release = threading.Event()
+
+    def _block() -> None:
+        started.set()
+        release.wait(30)
+
+    executor = chroma_writer.chroma_executor()
+    assert executor is not None
+    executor.submit(_block)
+    assert started.wait(2)
+    began = time.perf_counter()
+    chroma_writer.shutdown_chroma_executor()
+    assert time.perf_counter() - began < 1.5
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_get_by_source_pages_at_cap() -> None:
+    from services.rag.chroma_writer import chroma_get_by_source_ids
+
+    collection = MagicMock()
+    pages = [
+        {"ids": [f"i{n}" for n in range(GET_PAGE_CAP)]},
+        {"ids": ["tail"]},
+    ]
+    collection.get.side_effect = pages
+    ids = chroma_get_by_source_ids(collection, "/src/a.md")
+    assert collection.get.call_count == 2
+    assert collection.get.call_args_list[0].kwargs["limit"] == GET_PAGE_CAP
+    assert ids[-1] == "tail"
+
+
+@pytest.mark.asyncio
+async def test_metadata_before_chroma_on_stale_and_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-c: stale-id and empty-chunk paths stay metadata-first."""
+    from services.rag.rag_service import state
+    from services.rag.rag_service.indexing.commit import _run_commit_phase
+    from services.rag.rag_service.indexing.file_guards import _handle_empty_chunks
+
+    order: list[str] = []
+    prop = MagicMock()
+
+    async def _remove_chunk(_cid: str) -> None:
+        order.append("prop")
+
+    async def _remove_batch(_ids: list[str]) -> None:
+        order.append("fts")
+
+    prop.remove_chunk = _remove_chunk
+    prop.fts.remove_batch = _remove_batch
+    prop.upsert_indexed_source = AsyncMock()
+    prop.sync_article_structural_fields = AsyncMock(return_value=False)
+    collection = MagicMock()
+
+    def _delete(**_kwargs: object) -> None:
+        order.append("chroma")
+
+    collection.delete.side_effect = _delete
+    monkeypatch.setattr(state, "_event_bus", None)
+    monkeypatch.setattr(state, "_maybe_update_corpus_hints", AsyncMock())
+    stat = MagicMock(st_mtime_ns=1, st_size=1)
+    await _run_commit_phase(
+        source="/src/a.md",
+        file_path=MagicMock(name="a.md"),
+        prop_index=prop,
+        collection=collection,
+        correlation_id="c",
+        chunks=[MagicMock()],
+        stale_ids=["old"],
+        metadatas=[],
+        ids=["new"],
+        source_hash="h",
+        source_stat=stat,
+        schema_version="1",
+        extraction_model="m",
+        cache_rows_to_store=[],
+        subdirectory="",
+        scope="all",
+        operation="index",
+        operation_id="c",
+    )
+    assert order[:3] == ["prop", "fts", "chroma"]
+    order.clear()
+    await _handle_empty_chunks(
+        source="/src/a.md",
+        existing_ids=["old"],
+        prop_index=prop,
+        collection=collection,
+        source_stat=stat,
+        source_hash="h",
+        schema_version=1,
+        extraction_model="m",
+        correlation_id="c",
+        operation="index",
+    )
+    assert order[:3] == ["prop", "fts", "chroma"]
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_retries_metadata_when_chroma_get_is_empty() -> None:
+    """N-b: empty get still source-deletes properties."""
+    from fastapi import APIRouter
+
+    from services.rag.admin_routes._directory_routes import register_directory_routes
+    from services.rag.admin_routes.articles import register_article_routes
+
+    calls: list[tuple[str, str]] = []
+
+    class _Prop:
+        async def remove_source_metadata(self, source: str, chunk_ids, **kwargs):
+            calls.append((source, "meta"))
+
+        async def remove_properties_for_chunks(self, chunk_ids):
+            return 0
+
+        async def remove_article(self, source: str) -> bool:
+            return False
+
+        def find_latest_article_by_filename(self, *_a, **_k):
+            return None
+
+        fts = MagicMock()
+        fts.remove_batch = AsyncMock(return_value=0)
+
+    collection = MagicMock()
+    collection.get.return_value = {"ids": []}
+
+    router = APIRouter()
+    register_article_routes(
+        router,
+        get_collection_fn=lambda: collection,
+        get_property_index_fn=lambda: _Prop(),
+        get_event_bus_fn=lambda: None,
+    )
+    delete_source = next(
+        route.endpoint
+        for route in router.routes
+        if getattr(route, "path", "") == "/source"
+        and "DELETE" in getattr(route, "methods", set())
+    )
+    await delete_source("/src/a.md")
+    assert ("/src/a.md", "meta") in calls
+
+    calls.clear()
+    router2 = APIRouter()
+
+    class _PropDir(_Prop):
+        def list_known_sources(self, _prefixes):
+            return {"/dir/a.md"}
+
+    register_directory_routes(
+        router2,
+        get_collection_fn=lambda: collection,
+        get_property_index_fn=lambda: _PropDir(),
+        get_event_bus_fn=lambda: None,
+    )
+    delete_directory = next(
+        route.endpoint
+        for route in router2.routes
+        if getattr(route, "path", "") == "/directory"
+    )
+    # find_sources uses collection.get pages; force one known source via list.
+    collection.get.return_value = {"ids": [], "metadatas": []}
+    await delete_directory("/dir")
+    assert ("/dir/a.md", "meta") in calls
