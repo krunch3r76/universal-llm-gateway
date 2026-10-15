@@ -5,9 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
-import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +39,8 @@ LaneTags = tuple[str, ...]
 LaneResolver = Callable[[ContinuityMessagesEnvelope, Path], tuple[str | None, LaneTags]]
 
 _LANE_RESOLVER_LOGGED = False
+_THREAD_TAGS_CACHE: dict[str, list[str]] = {}
+_THREAD_TAGS_BUS_WARNED: set[str] = set()
 
 _HARNESS_BLOCK_RES = [
     re.compile(r"<timestamp>[\s\S]*?</timestamp>\s*", re.IGNORECASE),
@@ -427,36 +427,40 @@ def _surface_label(meta_surface: str | None, path: Path) -> str:
     return meta_surface or "mixed"
 
 
-def _agent_bus_db_path() -> Path:
-    env = os.environ.get("AGENT_BUS_DB_PATH")
-    if env:
-        return Path(env)
-    return Path.home() / ".agent-bus" / "agent_bus.db"
-
-
 def _load_thread_tags(thread_id: str) -> list[str]:
-    db_path = _agent_bus_db_path()
-    if not db_path.is_file():
-        return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    """Load bus thread tags via agent-bus HTTP (``GET /threads/{id}``), cached per run."""
+    cached = _THREAD_TAGS_CACHE.get(thread_id)
+    if cached is not None:
+        return cached
+    tags: list[str] = []
     try:
-        row = conn.execute(
-            "SELECT tags FROM threads WHERE id = ?",
-            (thread_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-    if not row or row[0] is None:
-        return []
-    raw = row[0]
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return [raw]
-        if isinstance(parsed, list):
-            return [str(t) for t in parsed]
-    return []
+        from cortex_store.transcript_projection_membership import fetch_thread_detail
+
+        detail = fetch_thread_detail(thread_id)
+    except Exception as exc:
+        if thread_id not in _THREAD_TAGS_BUS_WARNED:
+            logger.warning(
+                "messages_chunker thread tags (agent-bus) thread=%s: %s",
+                thread_id,
+                exc,
+            )
+            _THREAD_TAGS_BUS_WARNED.add(thread_id)
+        _THREAD_TAGS_CACHE[thread_id] = tags
+        return tags
+    if not detail:
+        if thread_id not in _THREAD_TAGS_BUS_WARNED:
+            logger.warning(
+                "messages_chunker thread tags (agent-bus) thread=%s: unavailable",
+                thread_id,
+            )
+            _THREAD_TAGS_BUS_WARNED.add(thread_id)
+        _THREAD_TAGS_CACHE[thread_id] = tags
+        return tags
+    raw = detail.get("tags")
+    if isinstance(raw, list):
+        tags = [str(t) for t in raw]
+    _THREAD_TAGS_CACHE[thread_id] = tags
+    return tags
 
 
 def default_lane_resolver(
@@ -479,17 +483,11 @@ def default_lane_resolver(
                 lane_id = str(row[0]).strip() or None
         finally:
             conn.close()
-    except (ImportError, OSError, sqlite3.Error) as exc:
+    except Exception as exc:
         if not _LANE_RESOLVER_LOGGED:
             logger.warning("messages_chunker lane resolver (cortex): %s", exc)
             _LANE_RESOLVER_LOGGED = True
-    tags: list[str] = []
-    try:
-        tags = _load_thread_tags(lane_id) if lane_id else []
-    except OSError as exc:
-        if not _LANE_RESOLVER_LOGGED:
-            logger.warning("messages_chunker lane resolver (agent-bus): %s", exc)
-            _LANE_RESOLVER_LOGGED = True
+    tags = _load_thread_tags(lane_id) if lane_id else []
     return lane_id, tuple(tags)
 
 

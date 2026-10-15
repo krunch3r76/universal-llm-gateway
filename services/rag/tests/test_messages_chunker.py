@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -276,22 +275,64 @@ def test_liaison_hop_synthetic_dropped(tmp_path: Path) -> None:
     assert "liaison for house" not in chunks[0].text
 
 
-def test_agent_bus_thread_tags_fixture(
+def test_agent_bus_thread_tags_via_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    import services.rag.chunkers.messages_chunker as mc
+
+    mc._THREAD_TAGS_CACHE.clear()
+    mc._THREAD_TAGS_BUS_WARNED.clear()
+    calls: list[str] = []
+
+    def _fake_detail(tid: str) -> dict[str, object]:
+        calls.append(tid)
+        return {"id": tid, "tags": ["case:aab"]}
+
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        _fake_detail,
+    )
+    assert mc._load_thread_tags("16934") == ["case:aab"]
+    assert mc._load_thread_tags("16934") == ["case:aab"]
+    assert calls == ["16934"]
+
+
+def test_chunk_yields_empty_tags_when_bus_endpoint_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from services.rag.chunkers.messages_chunker import _load_thread_tags
+    import services.rag.chunkers.messages_chunker as mc
 
-    bus_db = tmp_path / "agent_bus.db"
-    conn = sqlite3.connect(bus_db)
-    conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, tags TEXT)")
-    conn.execute(
-        "INSERT INTO threads (id, tags) VALUES (?, ?)",
-        ("16934", json.dumps(["case:aab"])),
+    mc._THREAD_TAGS_CACHE.clear()
+    mc._THREAD_TAGS_BUS_WARNED.clear()
+
+    class _FakeConn:
+        def execute(self, _q: str, _params: tuple[str, ...]) -> object:
+            class _Row:
+                def fetchone(self) -> tuple[str]:
+                    return ("10223",)
+
+            return _Row()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "cortex_store.schema_snapshot.open_live_db_readonly",
+        lambda: _FakeConn(),
     )
-    conn.commit()
-    conn.close()
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(bus_db))
-    assert _load_thread_tags("16934") == ["case:aab"]
+    monkeypatch.setattr(
+        "cortex_store.transcript_projection_membership.fetch_thread_detail",
+        lambda _tid: None,
+    )
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {"role": "user", "content": "<user_query>x</user_query>", "turn_index": 1},
+            {"role": "assistant", "content": "y", "turn_index": 1},
+        ],
+    )
+    cfg = MessagesChunkerConfig(lane_resolver=mc.default_lane_resolver)
+    chunks = chunk_messages(path, config=cfg)
+    assert len(chunks) == 1
 
 
 def test_dominant_lane_16934_excluded_via_resolver(tmp_path: Path) -> None:
