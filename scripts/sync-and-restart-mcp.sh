@@ -363,6 +363,15 @@ if [[ "$NO_CACHE" != "true" ]]; then
 fi
 
 if [[ "$NO_CACHE" == "true" ]]; then
+  nocache_status="$(
+    docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+      mcp-server 2>/dev/null || true
+  )"
+  if [[ "$nocache_status" != "healthy" ]]; then
+    echo "ERROR: --no-cache refused — mcp-server status is '${nocache_status:-missing}', not healthy. Not starting the build." >&2
+    exit 1
+  fi
   record_checked_image_if_healthy
   gate tag-last-healthy || true
   echo "Building MCP server (no cache, pulling fresh base images)..."

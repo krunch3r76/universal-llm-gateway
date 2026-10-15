@@ -99,18 +99,23 @@ class McpEdgeProbeLoop:
     async def _maybe_backup_restore(self) -> None:
         """Local-docker backup restore when the script did not stick (not public probe)."""
         from deploy_identity.mcp_restart_gate import (
-            docker_container_image_id,
             execute_restore,
+            resolve_backup_checked_image_id,
         )
 
-        image_id = await asyncio.to_thread(docker_container_image_id)
-        if not image_id:
-            return
         mcp_data = Path(
             os.environ.get("MCP_DATA_DIR", str(Path.home() / "mcp-data"))
         ).expanduser()
+        image_id = await asyncio.to_thread(resolve_backup_checked_image_id, mcp_data)
+        if not image_id:
+            return
 
-        compose_args = ["docker", "compose", "-f", str(self._workspace_root / "docker" / "compose" / "mcp-server.yml")]
+        compose_args = [
+            "docker",
+            "compose",
+            "-f",
+            str(self._workspace_root / "docker" / "compose" / "mcp-server.yml"),
+        ]
 
         await asyncio.to_thread(
             execute_restore,

@@ -22,6 +22,7 @@ def _stub_docker_dir(
     stop_fails: bool = False,
     inspect_health: str = "healthy",
     container_exists: bool = True,
+    kill_on_run: bool = False,
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -61,7 +62,16 @@ def _stub_docker_dir(
             fi
             exit 0
             ;;
-          start|cp|exec|run|tag|rm|compose|image) exit 0 ;;
+          run)
+            if [[ "{str(kill_on_run).lower()}" == "true" ]]; then
+              script_pid=$(ps -o ppid= -p "$PPID" | tr -d ' ')
+              if [[ -r "/proc/${{script_pid}}/cmdline" ]] && grep -a -q sync-and-restart "/proc/${{script_pid}}/cmdline"; then
+                kill -TERM "$script_pid" 2>/dev/null || true
+              fi
+            fi
+            exit 0
+            ;;
+          start|cp|exec|tag|rm|compose|image) exit 0 ;;
           *) exit 0 ;;
         esac
         """
@@ -115,40 +125,75 @@ def test_healthy_finish_no_trap_restore(tmp_path: Path) -> None:
         assert "rm" not in text or "-f" not in text.split("rm", 1)[-1][:20]
 
 
-def test_trap_handler_pipe_trap_allows_restore_after_failed_echo(
-    tmp_path: Path,
-) -> None:
-    """Binding (a): trap '' PIPE first; a failing command in the handler must not skip restore."""
-    handler = textwrap.dedent(
-        """\
-        _restore_window_exit() {
-          trap '' PIPE
-          trap - EXIT
-          set +e
-          echo nope >/dev/nonexistent   # must not abort restore
-          echo RESTORE_RAN
-          exit 1
-        }
-        arm_restore_window() { trap _restore_window_exit EXIT; }
-        arm_restore_window
-        false
-        """
+def _extract_bash_function(name: str) -> str:
+    text = _SCRIPT.read_text(encoding="utf-8")
+    marker = f"{name}() {{"
+    start = text.index(marker)
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise AssertionError(f"{name} not closed in {_SCRIPT}")
+
+
+def test_trap_handler_pipe_trap_allows_restore_after_failed_echo() -> None:
+    """Binding (a): the script EXIT handler ignores a real broken-pipe echo."""
+    function = _extract_bash_function("_restore_window_exit")
+    body = "\n".join(
+        [
+            "set -euo pipefail",
+            'exec 3>&"$PIPE_FD"',
+            "CHECKED_IMAGE_ID=sha256:abc",
+            "CHECKED_IMAGE_FILE=",
+            "_RESTORE_HANDLER_RAN=0",
+            "gate() {",
+            "  echo restore-byte >&3",
+            "  echo RESTORE_RAN",
+            "}",
+            function,
+            "trap _restore_window_exit EXIT",
+            "false",
+            "",
+        ]
     )
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    os.set_inheritable(write_fd, True)
+    env = os.environ.copy()
+    env["PIPE_FD"] = str(write_fd)
     proc = subprocess.run(
-        ["bash", "-c", handler],
+        ["bash", "-c", body],
+        pass_fds=(write_fd,),
+        env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+    os.close(write_fd)
+    assert "Broken pipe" in proc.stderr
     assert "RESTORE_RAN" in proc.stdout
     assert proc.returncode == 1
 
 
 def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
-    """Binding (b): stub logs import-probe before compose up on absent-container path."""
-    stub = _stub_docker_dir(tmp_path, container_exists=False, inspect_health="none")
+    """Binding (b): kill the script after the snapshot and before compose create."""
+    stub = _stub_docker_dir(
+        tmp_path,
+        container_exists=False,
+        inspect_health="healthy",
+        kill_on_run=True,
+    )
     env = _minimal_env(tmp_path, stub)
-    subprocess.run(
+    env["PYTHON"] = os.environ.get(
+        "PYTHON", str(Path.home() / ".venvs/universal/bin/python")
+    )
+    env["ULG_REPO"] = str(_REPO_ROOT)
+    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    proc = subprocess.run(
         ["bash", str(_SCRIPT)],
         cwd=str(_REPO_ROOT),
         env=env,
@@ -157,9 +202,49 @@ def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
         timeout=90,
         check=False,
     )
-    log = (tmp_path / "docker.log").read_text() if (tmp_path / "docker.log").is_file() else ""
-    # import-probe uses docker run; compose up uses docker compose — probe must appear first
-    run_idx = log.find("run")
+    log = (
+        (tmp_path / "docker.log").read_text(encoding="utf-8")
+        if (tmp_path / "docker.log").is_file()
+        else ""
+    )
+    cp_idx = log.find("cp ")
+    run_idx = log.find("run ")
     compose_idx = log.find("compose")
-    if run_idx >= 0 and compose_idx >= 0:
-        assert run_idx < compose_idx
+    assert cp_idx >= 0, log
+    assert run_idx >= 0, log
+    assert run_idx > cp_idx, log
+    assert compose_idx == -1 or run_idx < compose_idx, log
+    assert proc.returncode != 0
+
+
+def test_nocache_unhealthy_does_not_start_build(tmp_path: Path) -> None:
+    """S2(5): --no-cache does not start the build when mcp-server is unhealthy."""
+    stub = _stub_docker_dir(tmp_path, inspect_health="unhealthy", container_exists=True)
+    bash_log = tmp_path / "bash.log"
+    stub_bash = stub / "bash"
+    stub_bash.write_text(
+        "#!/bin/bash\n"
+        'if [[ "$1" == *build-mcp.sh* || "$2" == *build-mcp.sh* ]]; then\n'
+        f'  echo "BUILD $*" >> {bash_log}\n'
+        "  exit 0\n"
+        "fi\n"
+        'exec /bin/bash "$@"\n'
+    )
+    stub_bash.chmod(stub_bash.stat().st_mode | stat.S_IXUSR)
+    env = _minimal_env(tmp_path, stub)
+    env["PYTHON"] = str(Path.home() / ".venvs/universal/bin/python")
+    env["ULG_REPO"] = str(_REPO_ROOT)
+    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    env["PATH"] = f"{stub}:{env.get('PATH', '')}"
+    proc = subprocess.run(
+        ["bash", str(_SCRIPT), "--no-cache"],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    recorded = bash_log.read_text(encoding="utf-8") if bash_log.is_file() else ""
+    assert "build-mcp.sh" not in recorded
+    assert proc.returncode != 0

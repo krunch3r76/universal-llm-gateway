@@ -15,6 +15,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -32,9 +33,20 @@ COLD_IMPORTS = (
 )
 
 SNAPSHOT_ROOTS = ("libs", "services", "config", "pipelines")
+OPTIONAL_SNAPSHOT_ROOTS = ("pipelines.local",)
+SNAPSHOT_CONTROL_FILES = ("hold", "checked_image_id", "BOOTED")
+COMPOSE_CREATE_ENV = ("MCP_PROJECT_DIR", "MCP_TASKS_DIR", "MCP_AUTH_TOKEN")
 RESTORE_ELIGIBLE = frozenset(
     {"unhealthy", "exited", "dead", "created", "none", "starting_elapsed"}
 )
+
+
+class DockerQueryError(RuntimeError):
+    """docker ps or inspect failed other than a missing container.
+
+    Restore treats this as a hard stop. A dead daemon is not an absent
+    mcp-server, and proceeding would skip rm and copy onto the bad tree.
+    """
 
 
 def source_tree_sha(workspace_root: Path) -> str:
@@ -45,8 +57,10 @@ def source_tree_sha(workspace_root: Path) -> str:
         if not root.is_dir():
             continue
         for p in root.rglob("*"):
-            if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(
-                ".pyc"
+            if (
+                p.is_file()
+                and "__pycache__" not in p.parts
+                and not p.name.endswith(".pyc")
             ):
                 paths.append(p)
     paths.sort(key=lambda p: str(p))
@@ -103,10 +117,14 @@ def hold_present(mcp_data_dir: Path) -> bool:
 
 
 def snapshot_present(mcp_data_dir: Path) -> bool:
+    """True when last-healthy/ holds the required COPY roots.
+
+    A sibling ``last-healthy.tmp.*`` left by an interrupted publish does not
+    hide a complete snapshot. The tmp dir is not the snapshot; only a missing
+    or partial ``last-healthy/`` refuses restore.
+    """
     base = last_healthy_dir(mcp_data_dir)
     if not base.is_dir():
-        return False
-    if any(p.name.startswith("last-healthy.tmp.") for p in mcp_data_dir.iterdir()):
         return False
     for name in (*SNAPSHOT_ROOTS, "sitecustomize.py"):
         p = base / name
@@ -118,8 +136,21 @@ def snapshot_present(mcp_data_dir: Path) -> bool:
     return True
 
 
-def docker_inspect_health(container: str = CONTAINER_NAME) -> str:
-    """Return docker health/status token: healthy, unhealthy, starting, exited, dead, created, none."""
+def _missing_container(stderr: str, stdout: str) -> bool:
+    text = f"{stderr}\n{stdout}".lower()
+    return "no such object" in text or "no such container" in text
+
+
+def docker_inspect_health(
+    container: str = CONTAINER_NAME, *, strict: bool = False
+) -> str:
+    """Return docker health/status: healthy, unhealthy, starting, exited, dead, created, none.
+
+    A missing container is ``none``. Any other inspect failure raises
+    ``DockerQueryError`` when ``strict`` is set, so restore does not treat a
+    dead docker daemon as an absent container. Non-strict callers (snapshot,
+    tag) keep the historical ``none`` reading.
+    """
     proc = subprocess.run(
         [
             "docker",
@@ -133,6 +164,10 @@ def docker_inspect_health(container: str = CONTAINER_NAME) -> str:
         check=False,
     )
     if proc.returncode != 0:
+        if _missing_container(proc.stderr or "", proc.stdout or ""):
+            return "none"
+        if strict:
+            raise DockerQueryError((proc.stderr or "docker inspect failed").strip())
         return "none"
     status = (proc.stdout or "").strip()
     return status or "none"
@@ -151,6 +186,30 @@ def docker_container_image_id(container: str = CONTAINER_NAME) -> str | None:
     return value or None
 
 
+def _parse_started_at(value: str) -> float | None:
+    text = value.strip()
+    if not text or text.startswith("0001"):
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if "." in text:
+        head, rest = text.split(".", 1)
+        tz = ""
+        for index, char in enumerate(rest):
+            if char in "+-":
+                tz = rest[index:]
+                rest = rest[:index]
+                break
+        text = f"{head}.{(rest + '000000')[:6]}{tz}"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
+
+
 def _starting_elapsed(container: str, *, cap_s: float = HEALTH_WAIT_S) -> bool:
     if docker_inspect_health(container) != "starting":
         return False
@@ -162,11 +221,10 @@ def _starting_elapsed(container: str, *, cap_s: float = HEALTH_WAIT_S) -> bool:
     )
     if proc.returncode != 0:
         return True
-    started = (proc.stdout or "").strip()
-    if not started or started.startswith("0001"):
+    parsed = _parse_started_at(proc.stdout or "")
+    if parsed is None:
         return False
-    # Rough elapsed: rely on health wait elsewhere; treat unknown as not elapsed.
-    return False
+    return (time.time() - parsed) >= cap_s
 
 
 def normalize_restore_status(raw: str, *, starting_cap_elapsed: bool) -> str:
@@ -193,18 +251,23 @@ class GateInput:
 
 
 def gate_allows_restore(gate: GateInput) -> bool:
+    """Return whether this caller may replace the container from the snapshot.
+
+    A missing ``BOOTED`` file does not block the first restore: that host has
+    never promoted a healthy tree. ``PENDING`` must still be present, and
+    must differ from ``BOOTED`` when ``BOOTED`` exists. Raw ``starting`` is
+    not eligible; the caller passes ``starting_elapsed`` only after the 120s
+    cap. ``healthy`` and ``restarting`` never restore.
+    """
     if gate.hold:
         return False
     if gate.firer == "backup" and gate.restart_in_progress:
         return False
-    pending, booted = gate.pending, gate.booted
-    if pending is None or booted is None or pending == booted:
+    if gate.pending is None:
         return False
-    if gate.container_status == "healthy":
+    if gate.booted is not None and gate.pending == gate.booted:
         return False
-    if gate.container_status == "restarting":
-        return False
-    if gate.container_status == "starting":
+    if gate.container_status in ("healthy", "restarting", "starting"):
         return False
     return gate.container_status in RESTORE_ELIGIBLE
 
@@ -236,6 +299,12 @@ def plan_restore_commands(
 
 
 def container_exists(name: str = CONTAINER_NAME) -> bool:
+    """Return whether ``name`` is in ``docker ps -a``.
+
+    A non-zero ``docker ps`` raises ``DockerQueryError``. Treating that as
+    "absent" skips ``docker rm`` and lets compose create reuse the bad
+    writable layer.
+    """
     proc = subprocess.run(
         ["docker", "ps", "-a", "--format", "{{.Names}}"],
         capture_output=True,
@@ -243,8 +312,47 @@ def container_exists(name: str = CONTAINER_NAME) -> bool:
         check=False,
     )
     if proc.returncode != 0:
-        return False
+        raise DockerQueryError((proc.stderr or "docker ps failed").strip())
     return any(line.strip() == name for line in (proc.stdout or "").splitlines())
+
+
+def backup_create_env_ready() -> bool:
+    """Return whether manage's environment can interpolate mcp-server.yml.
+
+    Compose create requires ``MCP_PROJECT_DIR``, ``MCP_TASKS_DIR``, and
+    ``MCP_AUTH_TOKEN``. The script exports them from mcp.yaml; the manage
+    backup process does not. A missing value must refuse before ``docker rm``.
+    """
+    return all(os.environ.get(name, "").strip() for name in COMPOSE_CREATE_ENV)
+
+
+def read_checked_image_id(mcp_data_dir: Path) -> str | None:
+    """Return the image id recorded before the restart window, if the file exists."""
+    return _read_sha_file(last_healthy_dir(mcp_data_dir), "checked_image_id")
+
+
+def resolve_backup_checked_image_id(mcp_data_dir: Path) -> str | None:
+    """Return the image the manage backup should restore, never the live container.
+
+    The recorded ``checked_image_id`` file wins. When that file is absent, the
+    id behind ``universal-mcp-server:last-healthy`` is the --no-cache rollback
+    image. The running container's image is not a source: a failed rebuild
+    leaves the bad tree in that image, and copying the snapshot on top keeps
+    paths the bad tree added.
+    """
+    recorded = read_checked_image_id(mcp_data_dir)
+    if recorded:
+        return recorded
+    proc = subprocess.run(
+        ["docker", "image", "inspect", "-f", "{{.Id}}", LAST_HEALTHY_TAG],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    value = (proc.stdout or "").strip()
+    return value or None
 
 
 def image_exists(image_ref: str) -> bool:
@@ -301,22 +409,42 @@ def run_import_probe(workspace_root: Path, *, image: str = LOCAL_IMAGE) -> int:
         _cold_import_script(),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=PROBE_WALL_S, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=PROBE_WALL_S, check=False
+        )
     except subprocess.TimeoutExpired:
         return 2
     return 0 if proc.returncode == 0 else 1
 
 
+def _copy_container_tree(container: str, src: str, dest: Path) -> int:
+    dest.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        ["docker", "cp", f"{container}:{src}/.", str(dest)],
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode
+
+
 def publish_snapshot_from_container(
     workspace_root: Path, mcp_data_dir: Path, *, container: str = CONTAINER_NAME
 ) -> int:
-    """Copy live COPY set from a healthy container into last-healthy/. Return 0 on success."""
+    """Copy the live COPY set from a healthy container into last-healthy/.
+
+    Returns 0 on success or when the container is not healthy (nothing to
+    publish). Replacing the directory keeps ``hold``, ``checked_image_id``,
+    and ``BOOTED`` from the previous snapshot. ``pipelines.local`` is copied
+    when the container has it and omitted when that cp fails. Required roots
+    still fail the publish.
+    """
+    del workspace_root
     if docker_inspect_health(container) != "healthy":
         return 0
+    import shutil
+
     tmp = mcp_data_dir / f"last-healthy.tmp.{os.getpid()}"
     if tmp.exists():
-        import shutil
-
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     roots = [
@@ -326,18 +454,13 @@ def publish_snapshot_from_container(
         ("pipelines", "/app/pipelines"),
     ]
     for name, src in roots:
-        dest = tmp / name
-        dest.mkdir(parents=True, exist_ok=True)
-        proc = subprocess.run(
-            ["docker", "cp", f"{container}:{src}/.", str(dest)],
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            import shutil
-
+        if _copy_container_tree(container, src, tmp / name) != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             return 1
+    for name in OPTIONAL_SNAPSHOT_ROOTS:
+        dest = tmp / name
+        if _copy_container_tree(container, f"/app/{name}", dest) != 0:
+            shutil.rmtree(dest, ignore_errors=True)
     sc = tmp / "sitecustomize.py"
     proc = subprocess.run(
         ["docker", "cp", f"{container}:/app/sitecustomize.py", str(sc)],
@@ -345,22 +468,23 @@ def publish_snapshot_from_container(
         check=False,
     )
     if proc.returncode != 0:
-        import shutil
-
         shutil.rmtree(tmp, ignore_errors=True)
         return 1
     target = last_healthy_dir(mcp_data_dir)
+    saved: dict[str, bytes] = {}
+    if target.is_dir():
+        for name in SNAPSHOT_CONTROL_FILES:
+            path = target / name
+            if path.is_file():
+                saved[name] = path.read_bytes()
     backup = mcp_data_dir / "last-healthy.prev"
     if target.exists():
-        import shutil
-
         if backup.exists():
             shutil.rmtree(backup, ignore_errors=True)
         target.rename(backup)
     tmp.rename(target)
-    booted = read_booted(mcp_data_dir)
-    if booted:
-        (target / "BOOTED").write_text(f"{booted}\n", encoding="utf-8")
+    for name, data in saved.items():
+        (target / name).write_bytes(data)
     return 0
 
 
@@ -389,6 +513,38 @@ def retag_local_from_last_healthy() -> int:
     return proc.returncode
 
 
+def _fail_restore(emit: Callable[[str, dict], None] | None, reason: str) -> int:
+    if emit:
+        emit("mcp.restart.snapshot.failed", {"reason": reason})
+    return 1
+
+
+def _copy_snapshot_into_container(snap: Path) -> int:
+    names = [*SNAPSHOT_ROOTS, *OPTIONAL_SNAPSHOT_ROOTS]
+    for name in names:
+        src = snap / name
+        if not src.is_dir():
+            if name in OPTIONAL_SNAPSHOT_ROOTS:
+                continue
+            return 1
+        proc = subprocess.run(
+            ["docker", "cp", f"{src}/.", f"{CONTAINER_NAME}:/app/{name}/"],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return 1
+    sc = snap / "sitecustomize.py"
+    if not sc.is_file():
+        return 1
+    proc = subprocess.run(
+        ["docker", "cp", str(sc), f"{CONTAINER_NAME}:/app/sitecustomize.py"],
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode
+
+
 def execute_restore(
     *,
     workspace_root: Path,
@@ -399,13 +555,25 @@ def execute_restore(
     restart_in_progress: Callable[[], bool] | None = None,
     emit: Callable[[str, dict], None] | None = None,
 ) -> int:
-    """Run one restore attempt under flock. Return 0 when health wait succeeds."""
+    """Run one restore attempt under flock. Return 0 when the health wait succeeds.
+
+    A failed ``docker ps`` or ``docker inspect``, a backup environment that
+    cannot compose-create, a failed snapshot copy, or a failed ``docker start``
+    returns 1 before any later step. The backup firer checks compose env
+    before ``docker rm`` so a missing ``MCP_PROJECT_DIR`` does not delete the
+    container it cannot recreate.
+    """
+    del workspace_root
     lock_path = last_healthy_lock(mcp_data_dir)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w", encoding="utf-8") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            raw = docker_inspect_health(strict=True)
+        except DockerQueryError:
+            return _fail_restore(emit, "docker_inspect_failed")
         status = normalize_restore_status(
-            docker_inspect_health(), starting_cap_elapsed=_starting_elapsed(CONTAINER_NAME)
+            raw, starting_cap_elapsed=_starting_elapsed(CONTAINER_NAME)
         )
         gate = GateInput(
             mcp_data_dir=mcp_data_dir,
@@ -419,14 +587,15 @@ def execute_restore(
         if not gate_allows_restore(gate):
             return 1
         if not snapshot_present(mcp_data_dir):
-            if emit:
-                emit("mcp.restart.snapshot.failed", {"reason": "snapshot_missing"})
-            return 1
+            return _fail_restore(emit, "snapshot_missing")
         if not image_exists(checked_image_id):
-            if emit:
-                emit("mcp.restart.snapshot.failed", {"reason": "image_missing"})
-            return 1
-        exists = container_exists()
+            return _fail_restore(emit, "image_missing")
+        if firer == "backup" and not backup_create_env_ready():
+            return _fail_restore(emit, "compose_env_missing")
+        try:
+            exists = container_exists()
+        except DockerQueryError:
+            return _fail_restore(emit, "docker_ps_failed")
         plan = plan_restore_commands(
             checked_image_id=checked_image_id,
             container_exists=exists,
@@ -435,28 +604,18 @@ def execute_restore(
         for step in plan.steps:
             proc = subprocess.run(step, capture_output=True, check=False)
             if proc.returncode != 0:
-                if emit:
-                    emit("mcp.restart.snapshot.failed", {"reason": "docker_step"})
-                return 1
-        snap = last_healthy_dir(mcp_data_dir)
-        for name in SNAPSHOT_ROOTS:
-            src = snap / name
-            if src.is_dir():
-                subprocess.run(
-                    ["docker", "cp", f"{src}/.", f"{CONTAINER_NAME}:/app/{name}/"],
-                    check=False,
-                )
-        sc = snap / "sitecustomize.py"
-        if sc.is_file():
-            subprocess.run(
-                ["docker", "cp", str(sc), f"{CONTAINER_NAME}:/app/sitecustomize.py"],
-                check=False,
-            )
-        subprocess.run(["docker", "start", CONTAINER_NAME], check=False)
+                return _fail_restore(emit, "docker_step")
+        if _copy_snapshot_into_container(last_healthy_dir(mcp_data_dir)) != 0:
+            return _fail_restore(emit, "snapshot_copy")
+        start = subprocess.run(
+            ["docker", "start", CONTAINER_NAME],
+            capture_output=True,
+            check=False,
+        )
+        if start.returncode != 0:
+            return _fail_restore(emit, "docker_start")
         if wait_for_healthy(HEALTH_WAIT_S) != 0:
-            if emit:
-                emit("mcp.restart.snapshot.failed", {"reason": "health_wait"})
-            return 1
+            return _fail_restore(emit, "health_wait")
         if emit:
             emit("mcp.restart.snapshot.restored", {"reason": firer})
         return 0
@@ -477,7 +636,9 @@ def wait_for_healthy(timeout_s: int = HEALTH_WAIT_S) -> int:
         time.sleep(2)
 
 
-def mcp_server_entrypoint_probe(root: Path) -> Literal["verified", "contradicted", "indeterminate"]:
+def mcp_server_entrypoint_probe(
+    root: Path,
+) -> Literal["verified", "contradicted", "indeterminate"]:
     """Container-layout cold imports for land mint (cwd mcp-server, PYTHONPATH=libs only)."""
     mcp_dir = root / "services" / "mcp-server"
     libs = root / "libs"
@@ -544,9 +705,12 @@ def _cli() -> int:
 
     args = parser.parse_args()
     root: Path = args.workspace_root
-    mcp_data = args.mcp_data_dir or Path(
-        os.environ.get("MCP_DATA_DIR", str(Path.home() / "mcp-data"))
-    ).expanduser()
+    mcp_data = (
+        args.mcp_data_dir
+        or Path(
+            os.environ.get("MCP_DATA_DIR", str(Path.home() / "mcp-data"))
+        ).expanduser()
+    )
 
     if args.op == "source-tree-sha":
         print(source_tree_sha(root))
