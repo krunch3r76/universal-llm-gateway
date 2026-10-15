@@ -40,6 +40,11 @@ standing = false
 lapsed_url_prefixes = []
 extra_args = ["--ozone-platform=x11", "--disable-background-timer-throttling", "https://www.gopuff.com/"]
 
+# CLI names that start the same cdp-lane@ unit. doordash is the 9270 name;
+# gopuff stays so existing units and callers keep working. Not a second Chrome.
+[lane_aliases]
+doordash = "gopuff"
+
 [lanes.uber]
 port = 9280
 display = ":3"
