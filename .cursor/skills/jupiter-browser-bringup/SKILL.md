@@ -112,7 +112,7 @@ ssh <user>@jupiter 'cdp-lane-ensure fleet'
 **On-demand lanes** (messages, ess, gopuff, uber):
 
 ```bash
-ssh <user>@jupiter 'cdp-lane-ensure gopuff'   # :3, port 9270
+ssh <user>@jupiter 'cdp-lane-ensure doordash'  # :3, port 9270 (alias of gopuff unit)
 ssh <user>@jupiter 'cdp-lane-ensure messages'  # :3, port 9250
 ```
 
@@ -209,7 +209,7 @@ Expected: `{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_ro
 ```bash
 ssh <user>@jupiter 'systemctl --user start jupiter-cdp.target'
 # on-demand lane example:
-ssh <user>@jupiter 'cdp-lane-ensure gopuff'
+ssh <user>@jupiter 'cdp-lane-ensure doordash'  # 9270; gopuff remains an alias
 ```
 
 Verify standing stack:
