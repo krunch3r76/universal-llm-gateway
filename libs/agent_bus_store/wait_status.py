@@ -372,6 +372,22 @@ def _is_pinned_interim_producer_turn(turn: dict[str, Any]) -> bool:
     return False
 
 
+_MIN_EXECUTION_SUBJECT_PREFIX = 8
+
+
+def _subject_names_execution(turn: dict[str, Any], execution_id: str) -> bool:
+    """True when the turn subject carries the execution id's leading hex prefix.
+
+    CDP replies render as ``cdp reply — 0c13ed79`` (eight hex chars). That
+    prefix is the match used while a pinned producer is still ``in_flight``.
+    """
+    ident = str(execution_id or "").strip().lower()
+    if len(ident) < _MIN_EXECUTION_SUBJECT_PREFIX:
+        return False
+    subject = str(turn.get("subject") or "").lower()
+    return ident[:_MIN_EXECUTION_SUBJECT_PREFIX] in subject
+
+
 def qualifying_reply_for_wait(
     turns: list[dict[str, Any]],
     *,
@@ -386,7 +402,10 @@ def qualifying_reply_for_wait(
     producer_state = (producer or {}).get("state")
     pinned = bool(execution_id)
 
-    if pinned and producer_state == "in_flight":
+    # first_reply_from stays blocked for the whole admit-grace window (a:39199).
+    # proof_reply_from may complete on a substantive reply for this execution
+    # while the link is still in_flight (agent-bus:9758#341 / a:39323).
+    if pinned and producer_state == "in_flight" and mode != "proof_reply_from":
         return None
 
     # Pinned reply waits skip interim producer chrome for every liveness reading
@@ -394,13 +413,22 @@ def qualifying_reply_for_wait(
     # through to plain qualifying_reply and complete on cdp generate admit (S1).
     if pinned and mode in {"first_reply_from", "proof_reply_from"}:
         if mode == "proof_reply_from":
+            require_execution = producer_state == "in_flight"
+
+            def _accept_proof(turn: dict[str, Any]) -> bool:
+                if _is_pinned_interim_producer_turn(turn) or not _is_proof_turn(turn):
+                    return False
+                if require_execution and not _subject_names_execution(
+                    turn, execution_id or ""
+                ):
+                    return False
+                return True
+
             return qualifying_reply(
                 turns,
                 after_turn=after_turn,
                 from_agent=from_agent,
-                accept=lambda t: (
-                    not _is_pinned_interim_producer_turn(t) and _is_proof_turn(t)
-                ),
+                accept=_accept_proof,
             )
         return qualifying_reply(
             turns,
@@ -417,9 +445,7 @@ def qualifying_reply_for_wait(
         return qualifying_proof_reply(
             turns, after_turn=after_turn, from_agent=from_agent
         )
-    return qualifying_reply(
-        turns, after_turn=after_turn, from_agent=from_agent
-    )
+    return qualifying_reply(turns, after_turn=after_turn, from_agent=from_agent)
 
 
 def wait_predicate_satisfied(
@@ -437,15 +463,13 @@ def wait_predicate_satisfied(
         return thread_row["status"] == ThreadStatus.CLOSED
     if (
         execution_id
-        and mode in {"first_reply_from", "proof_reply_from"}
+        and mode == "first_reply_from"
         and (producer or {}).get("state") == "in_flight"
     ):
         return False
     if mode in STATUS_COMPLETION_MODES:
         return (
-            qualifying_status_turn(
-                turns, after_turn=after_turn, status_token=str(mode)
-            )
+            qualifying_status_turn(turns, after_turn=after_turn, status_token=str(mode))
             is not None
         )
     return (
@@ -551,8 +575,10 @@ def derive_status(
     ):
         return "complete"
     mode = completion.get("mode", "first_reply_from")
-    links = dispatch_links if dispatch_links is not None else thread_row.get(
-        "dispatch_links"
+    links = (
+        dispatch_links
+        if dispatch_links is not None
+        else thread_row.get("dispatch_links")
     )
     if mode == "proof_reply_from" and (
         _failed_cdp_generate_link(links, execution_id)

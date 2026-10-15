@@ -1028,6 +1028,126 @@ def test_a39199_unknown_producer_substantive_reply_still_completes() -> None:
     assert reply is not None and reply["turn_number"] == 2
 
 
+_EXEC_9758 = "0c13ed79-781f-47db-8835-7946b0575b79"
+
+
+def test_a39323_pinned_proof_completes_while_in_flight() -> None:
+    """9758#341 — substantive cdp reply completes proof_reply_from during admit_grace."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(340, "dispatch", subject="packet"),
+        _turn(
+            341,
+            "web-anthropic",
+            subject="cdp reply — 0c13ed79",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    producer = {
+        "state": "in_flight",
+        "execution_id": _EXEC_9758,
+        "liveness_reason": "admit_grace",
+        "delivery_at": None,
+    }
+    assert wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=340,
+        completion=comp,
+        execution_id=_EXEC_9758,
+        producer=producer,
+    )
+    reply = qualifying_reply_for_wait(
+        turns,
+        after_turn=340,
+        completion=comp,
+        execution_id=_EXEC_9758,
+        producer=producer,
+    )
+    assert reply is not None and reply["turn_number"] == 341
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=340,
+            completion=comp,
+            execution_id=_EXEC_9758,
+            producer=producer,
+        )
+        == "complete"
+    )
+
+
+def test_a39323_pinned_proof_chrome_only_stays_unmet_while_in_flight() -> None:
+    """10479 shape — chrome-only envelope must not satisfy pinned proof_reply_from."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp reply — 0c13ed79",
+            body=SPECIMEN_346_BODY,
+        ),
+    ]
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    producer = {"state": "in_flight", "execution_id": _EXEC_9758}
+    assert not wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=1,
+        completion=comp,
+        execution_id=_EXEC_9758,
+        producer=producer,
+    )
+    assert (
+        qualifying_reply_for_wait(
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id=_EXEC_9758,
+            producer=producer,
+        )
+        is None
+    )
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id=_EXEC_9758,
+            producer=producer,
+        )
+        == "predicate_unmet"
+    )
+
+
+def test_a39323_pinned_proof_other_execution_stays_unmet_while_in_flight() -> None:
+    """A substantive reply for a different execution does not release this pin."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "dispatch"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp reply — aaaaaaaa",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    producer = {"state": "in_flight", "execution_id": _EXEC_9758}
+    assert not wait_predicate_satisfied(
+        thread,
+        turns,
+        after_turn=1,
+        completion=comp,
+        execution_id=_EXEC_9758,
+        producer=producer,
+    )
+
+
 def test_unpinned_wait_unchanged_with_cdp_admit_turn() -> None:
     thread = {"status": ThreadStatus.ACTIVE}
     turns = [
