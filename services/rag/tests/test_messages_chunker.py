@@ -583,6 +583,23 @@ def test_watch_directories_match_messages_json(tmp_path: Path) -> None:
     assert path_matches_extensions(lock, exts)
 
 
+def test_collect_directory_candidates_messages_json_and_lock_skip(
+    tmp_path: Path,
+) -> None:
+    from services.rag.directory_ops import collect_directory_candidates
+
+    msg = tmp_path / "cursor-2026-09-22-082500-cdf.messages.json"
+    msg.write_text("{}", encoding="utf-8")
+    lock = tmp_path / ".lock.cursor-2026-09-22-082500-cdf.messages.json"
+    lock.write_bytes(b"")
+    exts = {"json", "messages.json"}
+    paths, walked = collect_directory_candidates(
+        dir_path=tmp_path, extensions=exts, collect_walked_sources=True
+    )
+    assert paths == [msg]
+    assert walked == {str(msg.resolve())}
+
+
 def test_transcript_lane_excluded_by_case_tag() -> None:
     assert transcript_lane_excluded("12286", ("case:aab",))
 

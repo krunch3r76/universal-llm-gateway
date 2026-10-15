@@ -17,6 +17,7 @@ from typing import Protocol
 import chromadb
 
 from services.rag.models import IndexResult
+from services.rag.watcher_manager.protocols import path_matches_extensions
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,10 @@ def collect_directory_candidates(
     walked_sources: set[str] = set()
     for root, _dirs, files in dir_path.walk():
         for name in files:
+            if name.startswith(".lock."):
+                continue
             file_path = root / name
-            if file_path.suffix.lower() not in extensions:
+            if not path_matches_extensions(file_path, tuple(extensions)):
                 continue
             if collect_walked_sources:
                 walked_sources.add(str(file_path.resolve()))
