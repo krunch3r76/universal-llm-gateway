@@ -136,7 +136,7 @@ async def _index_file_impl(
 
     raw: bytes | None = None
     if prop_index is not None:
-        cached_source = prop_index.get_indexed_source(source)
+        cached_source = await asyncio.to_thread(prop_index.get_indexed_source, source)
         current_hash_for_skip: str | None = None
         if (
             cached_source is not None

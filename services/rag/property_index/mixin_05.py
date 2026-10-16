@@ -295,7 +295,11 @@ class _PropertyIndexPart05:
         return {r[0]: r[1] for r in rows if r[1]}
 
     def list_known_sources(self, prefixes: list[str]) -> set[str]:
-        """Return source paths present in metadata-only tables under watched prefixes."""
+        """Return source paths present in metadata-only tables under watched prefixes.
+
+        Call from the event loop via ``asyncio.to_thread`` (shared connection uses
+        ``check_same_thread=False``).
+        """
         if not prefixes:
             return set()
 

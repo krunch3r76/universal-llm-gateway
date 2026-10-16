@@ -7,6 +7,8 @@ distance filter, and recency sort) from router wiring. API handlers call
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import HTTPException
 from universal_logging import get_logger
 
@@ -37,18 +39,23 @@ from . import state
 logger = get_logger(__name__)
 
 
-def _indexed_sources_for_scope(source_prefixes: list[str] | None) -> list[str] | None:
+async def _indexed_sources_for_scope(
+    source_prefixes: list[str] | None,
+) -> list[str] | None:
     """FTS paths for a scoped query, or None when the list cannot be loaded.
 
     None selects geometric over-fetch. An empty list means the scope has no
     indexed paths, so the vector window does not scan the global neighbor list.
     An empty FTS table returns None, not [].
+
+    ``sources_for_prefixes`` runs on a worker thread (shared SQLite connection
+    with ``check_same_thread=False`` — friction:39420).
     """
     if not source_prefixes or state._property_index is None:
         return None
     try:
         fts = state._property_index.fts
-        sources = fts.sources_for_prefixes(source_prefixes)
+        sources = await asyncio.to_thread(fts.sources_for_prefixes, source_prefixes)
         if not sources and fts.get_count() == 0:
             # FTS is empty (cleared or not yet built); the list says nothing
             # about Chroma, so use over-fetch instead of returning no hits.
@@ -133,7 +140,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
         # Scoped: source $in prefilter when FTS can list the paths (at most 10
         # Chroma queries, n_results <= 2000). Unscoped stays one top_k * 3 query.
         # See search_scope.vector_window for the bound.
-        indexed_sources = _indexed_sources_for_scope(request.source_prefixes)
+        indexed_sources = await _indexed_sources_for_scope(request.source_prefixes)
         window = query_vector_window(
             collection,
             query_embedding,
@@ -170,7 +177,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
     )
 
     if state._property_index is not None:
-        result_ids, chunks, metadatas, distances, _bm25_hits = apply_bm25_sidecar(
+        result_ids, chunks, metadatas, distances, _bm25_hits = await apply_bm25_sidecar(
             ids=result_ids,
             chunks=chunks,
             metadatas=metadatas,

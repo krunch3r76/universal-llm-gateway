@@ -177,7 +177,11 @@ class _PropertyIndexPart04:
         return [row[0] for row in rows]
 
     def get_indexed_source(self, source: str) -> IndexedSourceSnapshot | None:
-        """Return the cached source freshness row, if present."""
+        """Return the cached source freshness row, if present.
+
+        Call from the event loop via ``asyncio.to_thread`` (shared connection uses
+        ``check_same_thread=False``).
+        """
         conn = self._ensure_conn()
         row = conn.execute(
             "SELECT source, mtime_ns, size_bytes, extraction_schema_version,"

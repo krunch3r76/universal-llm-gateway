@@ -410,7 +410,8 @@ class _FakePropertyIndex:
         (_FakeFts([f"{_PREFIX}/a.md"], 5), None, None),
     ],
 )
-def test_indexed_sources_for_scope(
+@pytest.mark.asyncio
+async def test_indexed_sources_for_scope(
     monkeypatch: pytest.MonkeyPatch,
     fts: _FakeFts,
     prefixes: list[str] | None,
@@ -420,7 +421,7 @@ def test_indexed_sources_for_scope(
     from services.rag.rag_service import state
 
     monkeypatch.setattr(state, "_property_index", _FakePropertyIndex(fts))
-    assert search_mod._indexed_sources_for_scope(prefixes) == expected
+    assert await search_mod._indexed_sources_for_scope(prefixes) == expected
     if prefixes is None:
         assert fts.calls == 0
 

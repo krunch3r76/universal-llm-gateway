@@ -211,8 +211,8 @@ async def find_sources_under_prefixes(
     """Return source paths under the given prefixes from Chroma and metadata-only tables.
 
     The full paged scan runs as one ``run_chroma`` job so concurrent deletes cannot
-    interleave between pages (friction:39359 N1). ``list_known_sources_fn`` stays on
-    the loop (plan N4 deferral — property-index sqlite, not Chroma Rust).
+    interleave between pages (friction:39359 N1). ``list_known_sources_fn`` runs on
+    a worker thread (``check_same_thread=False`` on PropertyIndex — friction:39420).
     """
     if not prefixes:
         return set()
@@ -224,7 +224,8 @@ async def find_sources_under_prefixes(
         _CHROMA_PAGE_SIZE,
     )
     if list_known_sources_fn is not None:
-        sources.update(list_known_sources_fn(prefixes))
+        metadata_sources = await asyncio.to_thread(list_known_sources_fn, prefixes)
+        sources.update(metadata_sources)
     return sources
 
 

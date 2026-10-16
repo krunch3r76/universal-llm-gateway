@@ -1,4 +1,4 @@
-"""Loop stall regression tests for friction:39420 (startup repair, PDF dup, commit)."""
+"""Loop stall regression tests for friction:39420 (sync SQLite off the event loop)."""
 
 from __future__ import annotations
 
@@ -24,11 +24,14 @@ from services.rag.indexing_helpers import check_pdf_duplicate
 from services.rag.models import IndexResult
 from services.rag.property_index import PropertyIndex
 from services.rag.rag_service import scope_freshness, state
+from services.rag.directory_ops import find_sources_under_prefixes, purge_orphaned_sources
+from services.rag.rag_service import search as search_mod
 from services.rag.rag_service.indexing import index_file as index_file_mod
 from services.rag.rag_service.loop_instrumentation import (
     start_loop_instrumentation,
     stop_loop_instrumentation,
 )
+from services.rag.search_scope import apply_bm25_sidecar
 
 _DRIFT_FAIL_MS = 2000.0
 _LOOP_DRIFT_LOGGER = "services.rag.rag_service.loop_instrumentation"
@@ -491,3 +494,258 @@ async def test_get_existing_runs_off_loop(
     finally:
         monkeypatch.setattr(state, "_config", None)
         shutdown_chroma_executor()
+
+
+@pytest.mark.asyncio
+async def test_find_sources_list_known_sources_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``list_known_sources_fn`` on a worker thread must not log loop_drift_ms ≥ 2000."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    init_chroma_executor()
+    collection = MagicMock()
+
+    async def _empty_chroma(fn: object, *args: object, **kwargs: object) -> set[str]:
+        del fn, args, kwargs
+        return set()
+
+    monkeypatch.setattr(
+        "services.rag.directory_ops.run_chroma",
+        _empty_chroma,
+    )
+
+    def _slow_list(_prefixes: list[str]) -> set[str]:
+        time.sleep(1.0)
+        return {"/watch/stale.md"}
+
+    try:
+        sources = await find_sources_under_prefixes(
+            collection=collection,
+            prefixes=["/watch/"],
+            list_known_sources_fn=_slow_list,
+        )
+        assert sources == {"/watch/stale.md"}
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        shutdown_chroma_executor()
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_purge_orphaned_sources_list_known_sources_off_loop(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``purge_orphaned_sources`` reaches ``list_known_sources`` off the loop."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    init_chroma_executor()
+    collection = MagicMock()
+
+    async def _empty_chroma(fn: object, *args: object, **kwargs: object) -> set[str]:
+        del fn, args, kwargs
+        return set()
+
+    monkeypatch.setattr(
+        "services.rag.directory_ops.run_chroma",
+        _empty_chroma,
+    )
+
+    missing = "/watch/missing.md"
+
+    def _slow_list(_prefixes: list[str]) -> set[str]:
+        time.sleep(1.0)
+        return {missing}
+
+    try:
+        _files, _chunks, purged = await purge_orphaned_sources(
+            collection=collection,
+            watch_prefixes=["/watch/"],
+            list_known_sources_fn=_slow_list,
+        )
+        assert purged == {missing}
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        shutdown_chroma_executor()
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_indexed_sources_for_scope_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``sources_for_prefixes`` on a worker thread must not log loop_drift_ms ≥ 2000."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+
+    class _SlowFts:
+        def sources_for_prefixes(self, _prefixes: list[str]) -> list[str]:
+            time.sleep(1.0)
+            return ["/scope/a.md"]
+
+        def get_count(self) -> int:
+            return 1
+
+    class _Pi:
+        fts = _SlowFts()
+
+    monkeypatch.setattr(state, "_property_index", _Pi())
+    try:
+        result = await search_mod._indexed_sources_for_scope(["/scope/"])
+        assert result == ["/scope/a.md"]
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        monkeypatch.setattr(state, "_property_index", None)
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_index_file_get_indexed_source_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``get_indexed_source`` on a worker thread must not log loop_drift_ms ≥ 2000."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    path = tmp_path / "note.md"
+    path.write_text("body\n")
+
+    pi = MagicMock()
+
+    def _slow_get(_source: str) -> None:
+        time.sleep(1.0)
+        return None
+
+    pi.get_indexed_source.side_effect = _slow_get
+    config = MagicMock()
+    config.is_path_entity_gated.return_value = False
+    config.knowledge_extraction.schema_version = 1
+    config.knowledge_extraction.extraction_model = "m"
+    monkeypatch.setattr(state, "_config", config)
+    monkeypatch.setattr(state, "_property_index", pi)
+    monkeypatch.setattr(state, "_event_bus", None)
+    monkeypatch.setattr(state, "_entity_admission_gate", None)
+    monkeypatch.setattr(state, "_get_collection", lambda: MagicMock())
+    async def _healthy() -> None:
+        return None
+
+    async def _noop(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _empty_result(**kwargs: object) -> IndexResult:
+        del kwargs
+        return IndexResult(deleted=0, indexed=0, unchanged=False, file=str(path))
+
+    monkeypatch.setattr(index_file_mod, "require_healthy", _healthy)
+    monkeypatch.setattr(index_file_mod, "_run_article_sync_phase", _noop)
+    monkeypatch.setattr(index_file_mod, "_handle_pdf_duplicate_or_move", _noop)
+    monkeypatch.setattr(index_file_mod, "_handle_unchanged_prefix_skip", _noop)
+    monkeypatch.setattr(index_file_mod, "_handle_empty_chunks", _empty_result)
+    init_chroma_executor()
+
+    async def _chroma(fn: object, *args: object, **kwargs: object) -> dict[str, list]:
+        del fn, args, kwargs
+        return {"ids": [], "metadatas": []}
+
+    monkeypatch.setattr(
+        "services.rag.chroma_writer.run_chroma",
+        _chroma,
+    )
+    monkeypatch.setattr(index_file_mod, "chunk_file", lambda *a, **k: [])
+    try:
+        await index_file_mod._index_file_impl(path, None, None, str(path.resolve()))
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+        pi.get_indexed_source.assert_called()
+    finally:
+        monkeypatch.setattr(state, "_property_index", None)
+        monkeypatch.setattr(state, "_config", None)
+        shutdown_chroma_executor()
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_apply_bm25_sidecar_search_scoped_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Scoped ``search_scoped`` on a worker thread must not log loop_drift_ms ≥ 2000."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+
+    class _SlowFts:
+        def search_scoped(
+            self,
+            _query: str,
+            _prefixes: list[str],
+            *,
+            limit: int = 50,
+        ) -> list[tuple[str, float]]:
+            del limit
+            time.sleep(1.0)
+            return []
+
+        def search(self, _query: str, *, limit: int = 50) -> list[tuple[str, float]]:
+            del limit
+            return []
+
+    fts = _SlowFts()
+    collection = MagicMock()
+    try:
+        ids, _chunks, _metadatas, _distances, hits = await apply_bm25_sidecar(
+            ids=["d1"],
+            chunks=["c"],
+            metadatas=[{"source": "/p/a.md"}],
+            distances=[0.1],
+            query="needle",
+            fts=fts,  # type: ignore[arg-type]
+            collection=collection,
+            source_prefixes=["/p/"],
+        )
+        assert ids == ["d1"]
+        assert hits == 0
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_bm25_sidecar_code_token_dense_only_no_stall(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """FTS token ``code`` must not error the sidecar or stall the loop over 2 s."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    db_path = tmp_path / "fts.db"
+    pi = PropertyIndex(db_path)
+    await pi.start()
+    try:
+        await pi.fts.insert("c1", "/docs/a.md", "snippet about programming")
+        collection = MagicMock()
+        ids, _chunks, _metadatas, _distances, hits = await apply_bm25_sidecar(
+            ids=["d1"],
+            chunks=["dense"],
+            metadatas=[{"source": "/docs/a.md"}],
+            distances=[0.2],
+            query="code",
+            fts=pi.fts,
+            collection=collection,
+            source_prefixes=["/docs/"],
+        )
+        assert ids == ["d1"]
+        assert hits == 0
+        collection.get.assert_not_called()
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        await pi.stop()
+        await stop_loop_instrumentation()

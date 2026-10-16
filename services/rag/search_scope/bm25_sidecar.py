@@ -9,6 +9,7 @@ fail-open: any FTS or Chroma error is logged and dense-only results are returned
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import chromadb
@@ -24,7 +25,7 @@ __all__ = ["apply_bm25_sidecar"]
 _BM25_RRF_K = 20
 
 
-def apply_bm25_sidecar(
+async def apply_bm25_sidecar(
     ids: list[str],
     chunks: list[str],
     metadatas: list[dict[str, str | int | float | bool]],
@@ -43,12 +44,20 @@ def apply_bm25_sidecar(
     list[float],
     int,
 ]:
-    """Merge BM25 results into the dense candidate set via mini-RRF."""
+    """Merge BM25 results into the dense candidate set via mini-RRF.
+
+    FTS reads run on a worker thread (shared connection, ``check_same_thread=False``
+    on PropertyIndex — friction:39420).
+    """
     try:
         if source_prefixes:
-            bm25_hits = fts.search_scoped(query, source_prefixes, limit=bm25_limit)
+            bm25_hits = await asyncio.to_thread(
+                fts.search_scoped, query, source_prefixes, limit=bm25_limit
+            )
         else:
-            bm25_hits = fts.search(query, limit=bm25_limit)
+            bm25_hits = await asyncio.to_thread(
+                fts.search, query, limit=bm25_limit
+            )
     except Exception as exc:
         logger.warning(
             "BM25 sidecar search failed; returning dense-only results: %s",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from services.rag.fts_index import FtsIndex
 from services.rag.search_scope import apply_bm25_sidecar
 
@@ -72,7 +74,7 @@ def test_search_scoped_pushes_prefix_filter_into_sql() -> None:
     sql, params = conn.calls[0]
     assert "chunks_fts MATCH ?" in sql
     assert "source LIKE ?" in sql
-    assert params == ("needle", "/allowed%", "/also%", 7)
+    assert params == ('"needle"', "/allowed%", "/also%", 7)
 
 
 def test_sources_for_prefixes_uses_like_without_fts_match() -> None:
@@ -92,7 +94,8 @@ def test_sources_for_prefixes_uses_like_without_fts_match() -> None:
     assert params == ("/allowed%", "/also%")
 
 
-def test_apply_bm25_sidecar_does_not_widen_scoped_queries() -> None:
+@pytest.mark.asyncio
+async def test_apply_bm25_sidecar_does_not_widen_scoped_queries() -> None:
     fts = _FakeFts(
         scoped_hits=[("scoped", -1.0)],
         unscoped_hits=[("leak", -9.0)],
@@ -104,7 +107,7 @@ def test_apply_bm25_sidecar_does_not_widen_scoped_queries() -> None:
         }
     )
 
-    ids, chunks, metadatas, distances, bm25_hits = apply_bm25_sidecar(
+    ids, chunks, metadatas, distances, bm25_hits = await apply_bm25_sidecar(
         ids=[],
         chunks=[],
         metadatas=[],
@@ -124,7 +127,8 @@ def test_apply_bm25_sidecar_does_not_widen_scoped_queries() -> None:
     assert bm25_hits == 1
 
 
-def test_apply_bm25_sidecar_re_filters_fetched_bm25_rows_by_scope() -> None:
+@pytest.mark.asyncio
+async def test_apply_bm25_sidecar_re_filters_fetched_bm25_rows_by_scope() -> None:
     fts = _FakeFts(
         scoped_hits=[
             ("scoped", -1.0),
@@ -138,7 +142,7 @@ def test_apply_bm25_sidecar_re_filters_fetched_bm25_rows_by_scope() -> None:
         }
     )
 
-    ids, chunks, metadatas, distances, bm25_hits = apply_bm25_sidecar(
+    ids, chunks, metadatas, distances, bm25_hits = await apply_bm25_sidecar(
         ids=[],
         chunks=[],
         metadatas=[],

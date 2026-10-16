@@ -30,6 +30,23 @@ from universal_event_bus.actor.sequential import SequentialExecutor
 
 logger = logging.getLogger(__name__)
 
+
+def escape_fts_match_query(query: str) -> str:
+    """Format user text for FTS5 ``MATCH`` without bare-token column parse errors.
+
+    FTS5 treats unquoted tokens as column filters (``column:term``). Tokens such
+    as ``code`` or ``bus`` are not indexed columns on ``chunks_fts`` and raise
+    ``sqlite3.OperationalError: no such column``. Double-quoting each whitespace
+    token preserves default AND semantics over indexed ``content``.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return '""'
+    return " ".join(
+        f'"{token.replace(chr(34), chr(34) * 2)}"' for token in stripped.split()
+    )
+
+
 _FTS_SCHEMA_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     chunk_id UNINDEXED,
@@ -157,11 +174,12 @@ class FtsIndex:
         FTS5 bm25() returns negative floats (more negative = better match).
         """
         conn, _ = self._ensure()
+        match_query = escape_fts_match_query(query)
         rows = conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) AS score"
             " FROM chunks_fts WHERE chunks_fts MATCH ?"
             " ORDER BY score LIMIT ?",
-            (query, limit),
+            (match_query, limit),
         ).fetchall()
         return [(row[0], row[1]) for row in rows]
 
@@ -177,7 +195,8 @@ class FtsIndex:
         if not source_prefixes:
             return self.search(query, limit=limit)
         source_clause = " OR ".join("source LIKE ?" for _ in source_prefixes)
-        params = (query, *(f"{prefix}%" for prefix in source_prefixes), limit)
+        match_query = escape_fts_match_query(query)
+        params = (match_query, *(f"{prefix}%" for prefix in source_prefixes), limit)
         rows = conn.execute(
             "SELECT chunk_id, source, bm25(chunks_fts) AS score"
             f" FROM chunks_fts WHERE chunks_fts MATCH ? AND ({source_clause})"
