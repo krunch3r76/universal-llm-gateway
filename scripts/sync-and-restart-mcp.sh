@@ -41,6 +41,12 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OWNER_HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+if [[ -z "${OWNER_HOME}" || "${OWNER_HOME}" != /* ]]; then
+  echo "ERROR: passwd home for uid $(id -u) missing; refusing mcp compose." >&2
+  exit 1
+fi
+export HOME="${OWNER_HOME}"
 PYTHON="${PYTHON:-$HOME/.venvs/universal/bin/python}"
 GATE=("$PYTHON" -m deploy_identity.mcp_restart_gate --workspace-root "$WORKSPACE_ROOT")
 
