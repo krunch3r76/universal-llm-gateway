@@ -165,6 +165,10 @@ async def execute_embedding_request(
     Constructs a minimal `RequestContext` (bypass, no token counting), routes
     to the appropriate gateway, forwards the request, and emits lifecycle events.
 
+    Capacity release runs in ``finally`` even when cancellation during gateway
+    selection leaves ``federated_gateway`` unset. ``release_capacity_token_fn``
+    is idempotent when no admission token was acquired.
+
     Args:
         model_id: String model identifier (parsed at this boundary).
         request_body: Embedding request body dict.
@@ -260,8 +264,7 @@ async def execute_embedding_request(
         raise
     finally:
         release_routing_key_fn(resolved_request_id)
-        if fed_gateway is not None:
-            await release_capacity_token_fn(context)
+        await release_capacity_token_fn(context)
 
 
 async def forward_embedding_request(

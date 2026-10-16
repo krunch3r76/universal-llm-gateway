@@ -65,7 +65,9 @@ async def execute_rerank_request(
     Execute a rerank request via federation.
 
     Same lifecycle as embedding execution: RequestContext, gateway selection,
-    forward with retry, execution events, cleanup.
+    forward with retry, execution events, cleanup. Capacity release runs in
+    ``finally`` even when cancellation during selection leaves
+    ``federated_gateway`` unset; the release callable is idempotent.
     """
     from model_id import ModelId
 
@@ -144,8 +146,7 @@ async def execute_rerank_request(
         raise
     finally:
         release_routing_key_fn(resolved_request_id)
-        if fed_gateway is not None:
-            await release_capacity_token_fn(context)
+        await release_capacity_token_fn(context)
 
 
 async def forward_rerank_request(
