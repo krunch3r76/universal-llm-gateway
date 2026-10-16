@@ -968,13 +968,20 @@ def test_probe_failed_clears_window_and_emits_no_ok(
     assert all(p["health_http_status"] == 200 for p in payloads)
 
 
-def test_unpatched_restart_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unpatched_restart_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    grokbot_egress_emit_recorder: object,
+) -> None:
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
     snap = _base_snapshot()
     with pytest.raises(
         RuntimeError, match="unpatched grokbot egress watch reached _default_restart_desktop"
     ):
         _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=14_000_000.0))
+    assert any(
+        sig == "mcp.edge.grokbot_tunnel.stale"
+        for sig, _payload in grokbot_egress_emit_recorder.events
+    )
 
 
 def test_desktop_down_while_watch_connected_emits_no_ok(

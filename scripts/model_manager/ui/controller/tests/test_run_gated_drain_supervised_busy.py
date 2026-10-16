@@ -22,6 +22,7 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
     RestartIntentStore,
 )
+from scripts.model_manager.ui.controller.tests.conftest import stub_process_live_probe
 
 pytestmark = pytest.mark.offline
 
@@ -57,8 +58,10 @@ def _run(coro: Any) -> Any:
 class _StaticBusyProbe:
     def __init__(self, work: ActiveWork) -> None:
         self._work = work
+        self.snapshot_calls = 0
 
     async def snapshot(self) -> ActiveWork:
+        self.snapshot_calls += 1
         return self._work
 
 
@@ -88,24 +91,34 @@ def events_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any
 
 
 def test_busy_sync_restart_arms_durable_drain(
-    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Busy probe must not soft-defer without a restart_intent_id."""
-    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
-    gate = RestartDrainGate(
-        probes={
-            _SERVICE: _StaticBusyProbe(
-                ActiveWork(
-                    busy=True,
-                    detail={
-                        "busy": True,
-                        "active_count": 1,
-                        "cursor_sdk_gate": {"active": 1, "limit": 1},
-                    },
-                )
-            )
-        }
+    probe_live_calls = stub_process_live_probe(monkeypatch)
+    live_http: list[str] = []
+
+    def _forbid_async_client(*_a: object, **_k: object) -> None:
+        live_http.append("make_async_client")
+        raise AssertionError("live HttpActiveWorkProbe must not run under guard")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain.make_async_client",
+        _forbid_async_client,
     )
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    giw_probe = _StaticBusyProbe(
+        ActiveWork(
+            busy=True,
+            detail={
+                "busy": True,
+                "active_count": 1,
+                "cursor_sdk_gate": {"active": 1, "limit": 1},
+            },
+        )
+    )
+    gate = RestartDrainGate(probes={_SERVICE: giw_probe})
     supervisor = _RecordingSupervisor()
 
     async def _arm() -> dict[str, Any]:
@@ -134,20 +147,32 @@ def test_busy_sync_restart_arms_durable_drain(
     assert live.intent_id == intent_id
     assert live.status == STATUS_PENDING_DRAIN
     assert len(supervisor.intents) == 1
+    assert live_http == []
+    assert _SERVICE in probe_live_calls
 
 
 def test_self_holder_busy_mints_restart_intent(
-    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Sole self-holder busy must mint restart_intent_id (agent_bus path)."""
-    store = RestartIntentStore(db_path=tmp_path / "restart-intents-self.db")
-    gate = RestartDrainGate(
-        probes={
-            _AGENT_BUS: _StaticBusyProbe(
-                ActiveWork(busy=True, detail=_self_holder_active_work())
-            )
-        }
+    probe_live_calls = stub_process_live_probe(monkeypatch)
+    live_http: list[str] = []
+
+    def _forbid_async_client(*_a: object, **_k: object) -> None:
+        live_http.append("make_async_client")
+        raise AssertionError("live agent_bus probe must not run under guard")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain.make_async_client",
+        _forbid_async_client,
     )
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-self.db")
+    bus_probe = _StaticBusyProbe(
+        ActiveWork(busy=True, detail=_self_holder_active_work())
+    )
+    gate = RestartDrainGate(probes={_AGENT_BUS: bus_probe})
     supervisor = _RecordingSupervisor()
 
     async def _arm() -> dict[str, Any]:
@@ -175,6 +200,9 @@ def test_self_holder_busy_mints_restart_intent(
     assert live.intent_id == intent_id
     assert live.status == STATUS_PENDING_DRAIN
     assert len(supervisor.intents) == 1
+    assert bus_probe.snapshot_calls >= 1
+    assert live_http == []
+    assert _AGENT_BUS in probe_live_calls
 
 
 def test_foreign_holder_busy_still_soft_defer_without_intent(tmp_path: Any) -> None:

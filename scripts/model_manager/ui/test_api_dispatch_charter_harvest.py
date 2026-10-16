@@ -10,20 +10,47 @@ import pytest
 @pytest.mark.asyncio
 async def test_mcp_deferred_never_reports_ok_at_harvest_path() -> None:
     """AC-1: a deferred manage response must not present as success."""
-    from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
-
     ctl = MagicMock()
     deferred = {
         "status": "deferred",
         "state": "busy",
         "reason": "cdp_ask_live",
     }
-    with patch(
-        "scripts.model_manager.ui.api_dispatch._mcp_deferred_sync_restart",
-        new=AsyncMock(return_value=deferred),
+    mcp_stub = AsyncMock(return_value=deferred)
+    docker_check = MagicMock()
+    before_stub = AsyncMock(return_value={"old": 1, "identity_source": "test_stub"})
+    attach_stub = AsyncMock(
+        side_effect=lambda _ctl, _svc, result, _before, **_kw: {
+            **result,
+            "authority_identity": {"readiness_proven": False},
+        }
+    )
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.service_ctl.authority_identity.snapshot_before_restart",
+            new=before_stub,
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch._attach_harvest_authority_identity",
+            new=attach_stub,
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch._mcp_deferred_sync_restart",
+            new=mcp_stub,
+        ),
+        patch(
+            "scripts.model_manager.ui.model.service_state.ServiceState.check_mcp",
+            docker_check,
+        ),
     ):
+        from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
+
         result = await sync_restart_charter_harvest(ctl, "mcp")
 
+    assert before_stub.await_count == 1
+    assert attach_stub.await_count == 1
+    assert mcp_stub.await_count == 1
+    assert docker_check.call_count == 0
     assert result["status"] == "deferred"
     assert result["outcome"] == "declined"
     assert result.get("status") != "ok"
@@ -31,21 +58,49 @@ async def test_mcp_deferred_never_reports_ok_at_harvest_path() -> None:
 
 @pytest.mark.asyncio
 async def test_mcp_ok_after_restart_reports_proven() -> None:
-    from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
-
     ctl = MagicMock()
+    mcp_stub = AsyncMock(return_value={"status": "ok", "message": "scheduled"})
+    wait_stub = AsyncMock(return_value=1.5)
+    docker_inspect = AsyncMock(return_value="2024-01-01T00:00:00+00:00")
+    before_stub = AsyncMock(return_value={"old": 1, "identity_source": "test_stub"})
+    attach_stub = AsyncMock(
+        side_effect=lambda _ctl, _svc, result, _before, **_kw: {
+            **result,
+            "authority_identity": {"readiness_proven": True},
+        }
+    )
+
     with (
         patch(
+            "scripts.model_manager.ui.controller.service_ctl.authority_identity.snapshot_before_restart",
+            new=before_stub,
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch._attach_harvest_authority_identity",
+            new=attach_stub,
+        ),
+        patch(
             "scripts.model_manager.ui.api_dispatch._mcp_deferred_sync_restart",
-            new=AsyncMock(return_value={"status": "ok", "message": "scheduled"}),
+            new=mcp_stub,
         ),
         patch(
             "scripts.model_manager.ui.api_dispatch._wait_healthy",
-            new=AsyncMock(return_value=1.5),
+            new=wait_stub,
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.service_ctl.authority_identity._read_container_started_at",
+            new=docker_inspect,
         ),
     ):
+        from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
+
         result = await sync_restart_charter_harvest(ctl, "mcp")
 
+    assert before_stub.await_count == 1
+    assert attach_stub.await_count == 1
+    assert mcp_stub.await_count == 1
+    assert wait_stub.await_count == 1
+    assert docker_inspect.await_count == 0
     assert result["status"] == "ok"
     assert result["outcome"] == "proven"
     assert result["wait_healthy_s"] == 1.5
@@ -64,7 +119,7 @@ async def test_readiness_proven_false_when_wait_healthy_times_out() -> None:
         proof_observed,
     )
 
-    _SHA = "abc1230000000000000000000000000000000000"
+    row_sha = "abc1230000000000000000000000000000000000"
     ctl = MagicMock()
     before_snap = {"old": 100, "identity_source": "manage_host_pid"}
 
@@ -108,8 +163,8 @@ async def test_readiness_proven_false_when_wait_healthy_times_out() -> None:
     authority = outcome["authority_identity"]
     assert authority["readiness_proven"] is False
     assert attest_authority_identity(authority) == "fall_through"
-    before = {"code_version": _SHA}
-    after = {"code_version": _SHA}
+    before = {"code_version": row_sha}
+    after = {"code_version": row_sha}
     authority = {
         **authority,
         "old": 100,
@@ -118,7 +173,7 @@ async def test_readiness_proven_false_when_wait_healthy_times_out() -> None:
     }
     row = PropagationRow(
         service="stargate",
-        code_ref=_SHA,
+        code_ref=row_sha,
         safe_window="standalone_ok",
         proof="test probe",
         proof_class="process_live",

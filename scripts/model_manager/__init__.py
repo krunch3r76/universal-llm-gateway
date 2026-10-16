@@ -17,6 +17,12 @@ Commands:
     remeasure   Re-measure profiles for existing models
 """
 
-from .cli import main
+# Pytest can import this file as a top-level module when collection walks a
+# symlink to scripts/model_manager (no package parent). The relative import
+# is only valid inside the package.
+if __package__:
+    from .cli import main
+else:
+    main = None
 
 __all__ = ["main"]
