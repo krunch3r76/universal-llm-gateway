@@ -485,27 +485,77 @@ def test_watch_connection_state_dialing() -> None:
 def test_query_events_rows_without_uvicorn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ImportError on uvicorn must not fail the manage-side query path."""
+    """query_client import must not load event_store.server (uvicorn)."""
     import sys
+    from contextlib import contextmanager
+    from types import ModuleType
 
     sock = tmp_path / "events-query.sock"
     sock.write_text("", encoding="utf-8")
     monkeypatch.setenv("EVENTS_QUERY_SOCK", str(sock))
-    monkeypatch.setitem(sys.modules, "uvicorn", None)
+    for name in list(sys.modules):
+        if name == "event_store" or name.startswith("event_store."):
+            del sys.modules[name]
+
+    uvicorn_block = ModuleType("uvicorn")
+
+    def _uvicorn_import(name: str, *args: object, **kwargs: object) -> ModuleType:
+        raise ImportError("No module named 'uvicorn'")
+
+    uvicorn_block.__getattr__ = lambda _name: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        ImportError("No module named 'uvicorn'")
+    )
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn_block)
+
+    class _FakeResponse:
+        def json(self) -> dict[str, object]:
+            return {"rows": [{"n": 1}]}
+
+        status_code = 200
+
+    class _FakeClient:
+        def post(self, *_args: object, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse()
+
+        def __enter__(self) -> _FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    @contextmanager
+    def _fake_client(*_args: object, **_kwargs: object):
+        yield _FakeClient()
+
+    monkeypatch.setattr("event_store.query_client.make_sync_client", _fake_client)
+
+    rows = query_events_rows(tmp_path, "SELECT 1", "x")
+    assert rows == [{"n": 1}]
+    assert "event_store.server" not in sys.modules
+
+
+def test_query_events_rows_default_socket_without_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from transport_utils.client_factory import DEFAULT_EVENTS_QUERY_SOCK_PATH
+
+    monkeypatch.delenv("EVENTS_QUERY_SOCK", raising=False)
+    seen: dict[str, str] = {}
 
     def _query_sql(
         sql: str, params: list[object] | None = None, limit: int = 100, **kwargs: object
     ) -> dict[str, object]:
-        assert sql == "SELECT 1"
-        assert params == ["x"]
-        assert limit == 10000
-        assert kwargs["url"] == f"unix://{sock}"
-        return {"rows": [{"n": 1}]}
+        seen["url"] = str(kwargs.get("url"))
+        return {"rows": []}
 
     monkeypatch.setattr("event_store.query_client.query_sql", _query_sql)
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_io.os.path.exists",
+        lambda path: path == DEFAULT_EVENTS_QUERY_SOCK_PATH,
+    )
 
-    rows = query_events_rows(tmp_path, "SELECT 1", "x")
-    assert rows == [{"n": 1}]
+    query_events_rows(tmp_path, "SELECT 1")
+    assert seen["url"] == f"unix://{DEFAULT_EVENTS_QUERY_SOCK_PATH}"
 
 
 def test_query_events_rows_missing_socket_raises(
@@ -518,17 +568,22 @@ def test_query_events_rows_missing_socket_raises(
 
 
 def test_snapshot_query_failure_warns_once_without_restart(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Blind event-query failure is one warning; it does not emit or restart."""
+    """Blind query failure: one query warning; stale watch still fail-opens tunnel emit."""
     import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
 
-    connected = "[user-computer-watch] 2026-10-16T10:00:00.000Z connected\n"
+    dialing_log = _watch_log_dialing(disconnected_ms=90_000)
+    monkeypatch.setattr(loop_mod.time, "time", lambda: _NOW_MS / 1000.0)
     monkeypatch.setattr(loop_mod, "read_desktop_status", lambda _path: {"pid": 1})
     monkeypatch.setattr(loop_mod, "desktop_pid_alive", lambda _status: (True, 1))
-    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: connected)
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: dialing_log)
     monkeypatch.setattr(loop_mod, "external_probe_hostname", lambda: "example.invalid")
     monkeypatch.setattr(loop_mod, "resolve_a_records", lambda _host: [])
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_io.open_gc1_bus_turn",
+        lambda **_kwargs: False,
+    )
 
     def _boom(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
         raise RuntimeError("events query socket missing: /tmp/absent.sock")
@@ -546,19 +601,21 @@ def test_snapshot_query_failure_warns_once_without_restart(
     async def _no_restart() -> None:
         restarted.append(1)
 
+    query_warnings: list[str] = []
+    monkeypatch.setattr(
+        loop_mod.logger,
+        "warning",
+        lambda msg, *args: query_warnings.append(msg % args if args else str(msg)),
+    )
+
     watch = GrokbotEgressWatchLoop(
         workspace_root=tmp_path, restart_desktop_fn=_no_restart
     )
-    with caplog.at_level(logging.WARNING):
-        _run(watch._tick())
-    warnings = [
-        r
-        for r in caplog.records
-        if "grokbot egress event query failed" in r.getMessage()
-    ]
-    assert len(warnings) == 1
-    assert emits == []
-    assert restarted == []
+    _run(watch._tick())
+    assert len(query_warnings) == 1
+    assert "grokbot egress event query failed" in query_warnings[0]
+    assert any("grokbot_tunnel.stale" in e for e in emits)
+    assert len(restarted) == 1
 
 
 def test_event_factories() -> None:

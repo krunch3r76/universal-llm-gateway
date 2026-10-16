@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from transport_utils.client_factory import DEFAULT_EVENTS_QUERY_SOCK_PATH
+
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     _LOADER_STUCK_AFTER_TOOLS_LIST_S,
     GrokbotEgressSnapshot,
@@ -217,13 +219,11 @@ def open_gc1_bus_turn(
     )
 
 
-_DEFAULT_EVENTS_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
-
-
 def query_events_rows(
     workspace_root: Path,
     sql: str,
     *params: str | int,
+    limit: int = 1000,
 ) -> list[dict[str, object]]:
     """Read Event Service rows over the query socket.
 
@@ -234,13 +234,13 @@ def query_events_rows(
     del workspace_root
     from event_store.query_client import query_sql
 
-    socket_path = os.environ.get("EVENTS_QUERY_SOCK", _DEFAULT_EVENTS_QUERY_SOCK)
+    socket_path = os.environ.get("EVENTS_QUERY_SOCK", DEFAULT_EVENTS_QUERY_SOCK_PATH)
     if not os.path.exists(socket_path):
         raise RuntimeError(f"events query socket missing: {socket_path}")
     payload = query_sql(
         sql,
         params=list(params) if params else None,
-        limit=10000,
+        limit=limit,
         url=f"unix://{socket_path}",
         timeout=10.0,
     )

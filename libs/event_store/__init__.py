@@ -19,6 +19,12 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def __dir__() -> list[str]:
+    return sorted(
+        set(globals()) | set(_SERVER_EXPORTS) | set(__all__)  # type: ignore[arg-type]
+    )
+
+
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = ("cloud_proxy", "git_integration_worker", "stargate")
 

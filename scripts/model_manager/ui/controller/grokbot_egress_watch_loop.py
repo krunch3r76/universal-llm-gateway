@@ -54,7 +54,10 @@ WHERE ts_unix_ms >= ?
     'mcp.transport.request.completed',
     'mcp.transport.request.failed'
   )
+ORDER BY ts_unix_ms DESC
 """
+
+_EVENT_QUERY_ROW_LIMIT = 1000
 
 
 class GrokbotEgressWatchLoop:
@@ -122,10 +125,18 @@ class GrokbotEgressWatchLoop:
                 self._workspace_root,
                 _EVENT_SQL,
                 floor_ms,
+                limit=_EVENT_QUERY_ROW_LIMIT,
             )
         except Exception as exc:
             logger.warning("grokbot egress event query failed: %s", exc)
             rows = []
+        else:
+            if len(rows) >= _EVENT_QUERY_ROW_LIMIT:
+                logger.warning(
+                    "grokbot egress event query hit row limit (%s); "
+                    "newest rows retained (ORDER BY ts_unix_ms DESC)",
+                    _EVENT_QUERY_ROW_LIMIT,
+                )
         return build_snapshot_from_inputs(
             now_ms=now_ms,
             desktop_running=running,
@@ -161,9 +172,7 @@ class GrokbotEgressWatchLoop:
             else await self._default_snapshot()
         )
         now = time.time()
-        decision = decide_grokbot_tick(
-            now=now, state=self._state, snapshot=snapshot
-        )
+        decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
         if decision.emit_probe_failed:
             event = mcp_edge_grokbot_probe_failed(
