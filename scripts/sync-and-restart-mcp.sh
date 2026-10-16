@@ -5,6 +5,10 @@
 #   ~/.grok/bin (and often ~/.local/bin), which can overwrite the Cursor agent binary.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Routine path: docker cp into /app + docker stop/start (preserves writable layer).
+# --no-cache: compose up -d creates the container (its entrypoint can import before any
+# stamp exists). This script then writes /app/.source_sync_stamp and docker stop/start
+# so the process that stays up seals the new line 2. That extra stop/start is required
+# because code_version caches stamp line 2 at import; it adds a second restart on rebuild.
 # ¬ compose up -d after sync — recreate wipes docker cp (friction 6538).
 # Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
 
@@ -183,6 +187,12 @@ fi
 
 CHECKED_IMAGE_ID=""
 CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
+_SOURCE_SYNC_STAMP_SNAPSHOT=""
+_STAMP_WRITTEN=0
+_TREE_CHANGED=0
+_SYNCED_ROOT_LIST=""
+_STOP_SUCCEEDED=0
+_START_FAILED=0
 _RESTORE_HANDLER_RAN=0
 
 gate() {
@@ -190,7 +200,7 @@ gate() {
 }
 
 _restore_window_exit() {
-  trap '' PIPE
+  trap '' PIPE INT TERM HUP
   trap - EXIT
   set +e
   if [[ "$_RESTORE_HANDLER_RAN" == 1 ]]; then
@@ -201,9 +211,49 @@ _restore_window_exit() {
   if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
-  if [[ -n "$img" ]]; then
-    gate restore --firer script --checked-image-id "$img" || true
+  # Tree or stamp changed and the process is still up. gate restore refuses
+  # healthy, so roll the last-healthy copy set back when it is complete.
+  # Success marker only when both the tree rollback and the stamp restore landed.
+  if [[ "${_STOP_SUCCEEDED:-0}" != 1 && ( "${_TREE_CHANGED:-0}" == 1 || "${_STAMP_WRITTEN:-0}" == 1 ) ]]; then
+    if _container_still_serving; then
+      local rolled=0 stamp_ok=0
+      if _last_healthy_copy_set_present && _rollback_running_tree_from_last_healthy; then
+        rolled=1
+      fi
+      if [[ "${_STAMP_WRITTEN:-0}" == 1 ]]; then
+        if restore_source_sync_stamp_from_snapshot; then
+          stamp_ok=1
+        fi
+      else
+        stamp_ok=1
+      fi
+      if [[ "$rolled" == 1 && "$stamp_ok" == 1 ]] && _rollback_delete_synced_extras; then
+        echo "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" >&2
+      else
+        echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+      fi
+      _cleanup_stamp_snapshot
+      exit 1
+    fi
+    if [[ "${_STAMP_WRITTEN:-0}" == 1 ]]; then
+      restore_source_sync_stamp_from_snapshot || true
+    fi
   fi
+  # Start failed after stop. Skip gate restore: plan_restore_commands begins with
+  # docker rm -f, and the last-healthy snapshot copy does not include
+  # /app/.source_sync_stamp, so recreate would drop the synced tree and the stamp.
+  if [[ "${_START_FAILED:-0}" == 1 ]]; then
+    _cleanup_stamp_snapshot
+    exit 1
+  fi
+  if [[ -n "$img" ]]; then
+    if gate restore --firer script --checked-image-id "$img"; then
+      echo "MCP_SYNC_GATE_RESTORE" >&2
+    else
+      echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+    fi
+  fi
+  _cleanup_stamp_snapshot
   exit 1
 }
 
@@ -234,6 +284,240 @@ remove_mcp_container_for_image_recreate() {
 wait_for_mcp_healthy() {
   local timeout_s="${1:-120}"
   gate wait-healthy --timeout "$timeout_s"
+}
+
+_cleanup_stamp_snapshot() {
+  if [[ -n "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
+    rm -f "${_SOURCE_SYNC_STAMP_SNAPSHOT}"
+  fi
+}
+
+snapshot_source_sync_stamp() {
+  local c=mcp-server
+  if ! docker exec "$c" true; then
+    echo "ERROR: docker exec failed while snapshotting /app/.source_sync_stamp; not treating the stamp as absent." >&2
+    return 1
+  fi
+  if docker exec "$c" test -f /app/.source_sync_stamp; then
+    docker exec "$c" cat /app/.source_sync_stamp > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+  else
+    : > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+  fi
+}
+
+restore_source_sync_stamp_from_snapshot() {
+  local c=mcp-server
+  if [[ ! -f "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
+    return 1
+  fi
+  if [[ ! -s "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
+    docker exec -u 0 "$c" rm -f /app/.source_sync_stamp
+    return
+  fi
+  docker exec -i -u 0 "$c" sh -c 'cat > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp' \
+    < "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+}
+
+_container_still_serving() {
+  local status
+  status="$(
+    docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+      mcp-server 2>/dev/null || true
+  )"
+  case "$status" in
+    healthy|restarting|starting|running) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_last_healthy_copy_set_present() {
+  local base="${MCP_DATA_DIR}/last-healthy"
+  local name
+  for name in libs services config pipelines; do
+    [[ -d "${base}/${name}" ]] || return 1
+  done
+  [[ -f "${base}/sitecustomize.py" ]]
+}
+
+_rollback_running_tree_from_last_healthy() {
+  local base="${MCP_DATA_DIR}/last-healthy"
+  local c=mcp-server
+  local name
+  for name in libs services config pipelines; do
+    docker cp "${base}/${name}/." "${c}:/app/${name}/" || return 1
+  done
+  if [[ -d "${base}/pipelines.local" ]]; then
+    docker cp "${base}/pipelines.local/." "${c}:/app/pipelines.local/" || return 1
+  fi
+  docker cp "${base}/sitecustomize.py" "${c}:/app/sitecustomize.py"
+}
+
+_note_synced_root() {
+  _SYNCED_ROOT_LIST+="${1}"$'\n'
+}
+
+# Relative paths under one synced root, excluding __pycache__ and *.pyc.
+_list_root() {
+  local base="$1" root="$2" rel
+  local dir="${base}/${root}"
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+  find "$dir" \( -name '__pycache__' -o -name '*.pyc' \) -prune -o -printf '%P\n' \
+    | while IFS= read -r rel; do
+        if [[ -z "$rel" ]]; then
+          printf '%s\n' "$root"
+        else
+          printf '%s\n' "${root}/${rel}"
+        fi
+      done
+}
+
+_collect_candidates() {
+  local base="${MCP_DATA_DIR}/last-healthy" root src dst
+  while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    if [[ ! -e "${base}/${root}" ]]; then
+      printf '%s\n' "$root"
+      continue
+    fi
+    src="$(mktemp)"
+    dst="$(mktemp)"
+    _list_root "$WORKSPACE_ROOT" "$root" | sort -u > "$src"
+    _list_root "$base" "$root" | sort -u > "$dst"
+    comm -23 "$src" "$dst"
+    rm -f "$src" "$dst"
+  done <<< "${_SYNCED_ROOT_LIST}"
+}
+
+_candidates_hit_mount() {
+  local mounts="$1" cand="$2" rel dest cpath
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    cpath="/app/${rel}"
+    while IFS= read -r dest; do
+      [[ -z "$dest" ]] && continue
+      dest="${dest%/}"
+      # Equal, under the mount, or an ancestor of it. A slash boundary keeps
+      # /app/services/new from matching /app/services/newpkg/vol.
+      if [[ "$cpath" == "$dest" || "$cpath" == "$dest"/* || "$dest" == "$cpath"/* ]]; then
+        return 0
+      fi
+    done <<< "$mounts"
+  done < "$cand"
+  return 1
+}
+
+_write_delete_stream() {
+  local cand="$1" rel files dirs
+  files="$(mktemp)"
+  dirs="$(mktemp)"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    if [[ -d "${WORKSPACE_ROOT}/${rel}" ]]; then
+      printf '%s\n' "$rel" >> "$dirs"
+    else
+      printf '%s\n' "$rel" >> "$files"
+    fi
+  done < "$cand"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    printf 'F /app/%s\n' "$rel"
+  done < "$files"
+  if [[ -s "$dirs" ]]; then
+    awk -F/ '{print NF "\t" $0}' "$dirs" | sort -nr -k1,1 | cut -f2- \
+      | while IFS= read -r rel; do
+          [[ -z "$rel" ]] && continue
+          printf 'D /app/%s\n' "$rel"
+        done
+  fi
+  rm -f "$files" "$dirs"
+}
+
+_normalize_container_listing() {
+  sed -e 's|^/app/||' -e 's|/$||' -e '/^$/d' | sort -u
+}
+
+_listing_matches() {
+  local expected actual root absent saw_root=0
+  local -a find_args=()
+  local -a absent_roots=()
+  expected="$(mktemp)"
+  actual="$(mktemp)"
+  while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    saw_root=1
+    if [[ -d "${MCP_DATA_DIR}/last-healthy/${root}" ]]; then
+      _list_root "${MCP_DATA_DIR}/last-healthy" "$root" >> "$expected"
+      find_args+=("/app/${root}")
+    else
+      absent_roots+=("$root")
+    fi
+  done <<< "${_SYNCED_ROOT_LIST}"
+  if [[ ${#absent_roots[@]} -gt 0 ]]; then
+    for absent in "${absent_roots[@]}"; do
+      if docker exec mcp-server test -e "/app/${absent}"; then
+        rm -f "$expected" "$actual"
+        return 1
+      fi
+    done
+  fi
+  # No synced root, or nothing to list, is not a silent match of two empty files.
+  if [[ ${#find_args[@]} -eq 0 ]]; then
+    rm -f "$expected" "$actual"
+    if [[ "$saw_root" -eq 1 ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  sort -u "$expected" -o "$expected"
+  if ! docker exec mcp-server find "${find_args[@]}" \
+      \( -name '__pycache__' -o -name '*.pyc' \) -prune -o -print \
+      | _normalize_container_listing > "$actual"; then
+    rm -f "$expected" "$actual"
+    return 1
+  fi
+  local rc=0
+  cmp -s "$expected" "$actual" || rc=1
+  rm -f "$expected" "$actual"
+  return "$rc"
+}
+
+# Delete paths this sync copied that last-healthy lacks. Return 0 only when
+# the read-only container listing of the synced roots then matches last-healthy.
+_rollback_delete_synced_extras() {
+  local mounts cand stream flat
+  if ! mounts="$(
+    docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' mcp-server
+  )"; then
+    return 1
+  fi
+  cand="$(mktemp)"
+  stream="$(mktemp)"
+  _collect_candidates > "$cand"
+  flat="${mounts//[[:space:]]/}"
+  if [[ -n "$flat" ]] && _candidates_hit_mount "$mounts" "$cand"; then
+    rm -f "$cand" "$stream"
+    return 1
+  fi
+  if [[ -s "$cand" ]]; then
+    _write_delete_stream "$cand" > "$stream"
+    if ! docker exec -i -u 0 mcp-server sh -c 'while IFS= read -r line; do kind="${line%% *}"; path="${line#* }"; if [[ "$kind" == F ]]; then rm -f -- "$path" || exit 1; else rm -rf -- "$path" || exit 1; fi; done' < "$stream"; then
+      rm -f "$cand" "$stream"
+      return 1
+    fi
+  fi
+  rm -f "$cand" "$stream"
+  _listing_matches
+}
+
+write_source_sync_stamp_before_serving_restart() {
+  arm_restore_window
+  _SOURCE_SYNC_STAMP_SNAPSHOT="$(mktemp)"
+  snapshot_source_sync_stamp
+  _STAMP_WRITTEN=1
+  write_source_sync_stamp
 }
 
 write_source_sync_stamp() {
@@ -284,16 +568,24 @@ verify_sync_nonce_survived() {
 
 sync_source_into_container() {
   local c=mcp-server
+  arm_restore_window
+  _TREE_CHANGED=1
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
+  _note_synced_root libs
   docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
+  _note_synced_root services
   docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
+  _note_synced_root config
   docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
   docker cp "$WORKSPACE_ROOT/sitecustomize.py" "${c}:/app/sitecustomize.py"
+  _note_synced_root pipelines
   docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
   if [[ -d "$WORKSPACE_ROOT/pipelines.local" ]]; then
+    _note_synced_root pipelines.local
     docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
   fi
   if [[ -d "$WORKSPACE_ROOT/services/mcp-server/tools/local" ]]; then
+    _note_synced_root "services/mcp-server/tools/local"
     docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
       "${c}:/app/services/mcp-server/tools/local/"
   fi
@@ -323,8 +615,14 @@ restart_mcp_gracefully() {
   fi
   echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
   arm_restore_window
-  docker stop -t 30 "$c" >/dev/null
-  docker start "$c" >/dev/null
+  if ! docker stop -t 30 "$c" >/dev/null; then
+    return 1
+  fi
+  _STOP_SUCCEEDED=1
+  if ! docker start "$c" >/dev/null; then
+    _START_FAILED=1
+    return 1
+  fi
 }
 
 record_checked_image_if_healthy() {
@@ -361,7 +659,14 @@ run_import_probe_or_refuse() {
   fi
 }
 
-# Pin snapshot and import probe before ensure_mcp_container (:338) on the routine path.
+mkdir -p "$MCP_DATA_DIR"
+exec 9>"${MCP_DATA_DIR}/sync-and-restart-mcp.lock"
+if ! flock -n 9; then
+  echo "ERROR: another sync-and-restart-mcp.sh is already running." >&2
+  exit 1
+fi
+
+# Pin snapshot and import probe before ensure_mcp_container on the routine path.
 record_checked_image_if_healthy
 
 if [[ "$NO_CACHE" != "true" ]]; then
@@ -398,21 +703,21 @@ if [[ "$NO_CACHE" == "true" ]]; then
   echo "Starting MCP server..."
   arm_restore_window
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  write_source_sync_stamp_before_serving_restart
+  restart_mcp_gracefully
 else
   ensure_mcp_container
   sync_source_into_container
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"
+  write_source_sync_stamp_before_serving_restart
   restart_mcp_gracefully
 fi
 
-trap - EXIT
+trap _cleanup_stamp_snapshot EXIT
 
 if wait_for_mcp_healthy; then
   verify_sync_nonce_survived
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
-    write_source_sync_stamp || echo "WARNING: failed to write /app/.source_sync_stamp" >&2
-  fi
   gate promote-booted
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
     REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
@@ -432,7 +737,11 @@ else
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
   if [[ -n "$img" ]]; then
-    gate restore --firer script --checked-image-id "$img" || true
+    if gate restore --firer script --checked-image-id "$img"; then
+      echo "MCP_SYNC_GATE_RESTORE" >&2
+    else
+      echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+    fi
     wait_for_mcp_healthy || exit 1
   else
     exit 1
