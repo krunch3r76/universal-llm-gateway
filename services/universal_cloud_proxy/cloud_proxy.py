@@ -786,9 +786,7 @@ async def chat_completions(request: Request) -> Response:
             )
 
         try:
-            # Any loop entered under the open-webui hop header, including
-            # a -mcp model, stays on that client id. A suffix-only loop does not.
-            loop_client_id = "open-webui" if ulg_client == "open-webui" else None
+            loop_client_id = "open-webui" if open_webui_anthropic else None
             response_json = await mcp_executor.run_tool_loop(
                 _proxy_forward, body, client_id=loop_client_id
             )

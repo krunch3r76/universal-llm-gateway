@@ -207,22 +207,6 @@ class AuthMiddleware:
             and token == self._anthropic_callback_token
         )
 
-    def _restricted_oauth_bearer(self, auth_header: str) -> bool:
-        """True for a static token whose label is a restricted MCP client.
-
-        Those bearers are admitted only on the MCP path. ``static`` and
-        ``cursor`` stay eligible for clip, relay, cortex-api, and llm.
-        """
-        if not self._is_static_token_authorized(auth_header):
-            return False
-        if self._anthropic_callback_bearer(auth_header):
-            return False
-        identity = self._resolve_static_caller_identity(auth_header)
-        return identity in RESTRICTED_OAUTH_CLIENT_IDS and identity not in {
-            "static",
-            "cursor",
-        }
-
     async def _reject_anthropic_callback_non_mcp(
         self,
         scope: Scope,
@@ -282,9 +266,7 @@ class AuthMiddleware:
                 response = JSONResponse({"status": "ok"}, headers=CLIP_CORS_HEADERS)
                 await response(scope, receive, send)
                 return
-            if self._anthropic_callback_bearer(auth) or self._restricted_oauth_bearer(
-                auth
-            ):
+            if self._anthropic_callback_bearer(auth):
                 await self._reject_anthropic_callback_non_mcp(
                     scope, receive, send, headers=CLIP_CORS_HEADERS
                 )
@@ -315,9 +297,7 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
-            if self._anthropic_callback_bearer(auth) or self._restricted_oauth_bearer(
-                auth
-            ):
+            if self._anthropic_callback_bearer(auth):
                 await self._reject_anthropic_callback_non_mcp(
                     scope, receive, send, headers=RELAY_CORS_HEADERS
                 )
@@ -348,9 +328,7 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
-            if self._anthropic_callback_bearer(auth) or self._restricted_oauth_bearer(
-                auth
-            ):
+            if self._anthropic_callback_bearer(auth):
                 await self._reject_anthropic_callback_non_mcp(
                     scope, receive, send, headers=CORTEX_CORS_HEADERS
                 )
@@ -373,9 +351,7 @@ class AuthMiddleware:
                 await response(scope, receive, send)
                 return
             auth = request.headers.get("authorization", "")
-            if self._anthropic_callback_bearer(auth) or self._restricted_oauth_bearer(
-                auth
-            ):
+            if self._anthropic_callback_bearer(auth):
                 await self._reject_anthropic_callback_non_mcp(
                     scope, receive, send, headers=LLM_CORS_HEADERS
                 )
