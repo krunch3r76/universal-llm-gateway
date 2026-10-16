@@ -247,6 +247,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
         return await fire_park_harvest_continue(row)
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         return await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
+    if "ROW_HOP" not in closeout_tokens:
+        return False
     if _admit_error_permanent(row):
         # Already announced once, below, on the attempt that went permanent.
         # Re-emitting on every sweep produced ~12k events/day per stalled fleet.

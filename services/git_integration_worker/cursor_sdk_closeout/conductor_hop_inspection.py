@@ -82,9 +82,14 @@ def _eligible_priors(
     *,
     dispatch_id: str,
 ) -> list[dict[str, Any]]:
-    """Newest-first terminal rows that count toward loop evidence."""
+    """Newest-first terminal rows strictly prior to ``dispatch_id`` that count toward loop evidence."""
+    prior_slice = chain
+    for idx, item in enumerate(chain):
+        if item.get("dispatch_id") == dispatch_id:
+            prior_slice = chain[:idx]
+            break
     out: list[dict[str, Any]] = []
-    for prior in reversed(chain):
+    for prior in reversed(prior_slice):
         if prior.get("dispatch_id") == dispatch_id:
             continue
         if str(prior.get("park_kind") or "") == PARK_KIND_RESTART:
@@ -129,10 +134,7 @@ def _recurrence_loop(
         prior_sig = progress_signature_for_row(prior, live=False)
         if not prior_sig.lane_tip or not prior_sig.scoreboard_tip:
             continue
-        if (
-            current.lane_tip == prior_sig.lane_tip
-            and current.scoreboard_tip == prior_sig.scoreboard_tip
-        ):
+        if current == prior_sig:
             return True
     return False
 

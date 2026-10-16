@@ -499,6 +499,11 @@ def conductor_park_harvest_watchdog_candidates(
             dispatch_id = str(mapped.get("dispatch_id") or "")
             if not dispatch_id:
                 continue
+            record_json = str(mapped.get("record_json") or "")
+            if _successor_admitted(
+                conn, predecessor_id=dispatch_id, record_json=record_json
+            ):
+                continue
             terminal_ts = _terminal_epoch(mapped)
             if terminal_ts is None or (now_ts - terminal_ts) < grace:
                 continue

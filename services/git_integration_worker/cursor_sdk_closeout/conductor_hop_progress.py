@@ -51,6 +51,9 @@ _GIT_TIMEOUT_S = 15.0
 _NEXT_ADMIT_RE = re.compile(
     r"(?im)^[^\S\n]*NEXT_ADMIT[^\S\n]*:[^\S\n]*(\S.*?)[^\S\n]*$"
 )
+_INLINE_NEXT_ADMIT_RE = re.compile(
+    r"(?i)`NEXT_ADMIT[^\S\n]*:[^\S\n]*([^`\n]+)`"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +257,10 @@ def scoreboard_tip_for_row(row: dict[str, Any], *, live: bool = True) -> str | N
 
 def next_admit_in_closeout(body: str) -> str | None:
     """The ``NEXT_ADMIT:`` target a conductor named for its successor."""
-    match = _NEXT_ADMIT_RE.search(body or "")
+    text = body or ""
+    match = _NEXT_ADMIT_RE.search(text)
+    if match is None:
+        match = _INLINE_NEXT_ADMIT_RE.search(text)
     if match is None:
         return None
     return match.group(1).strip() or None
@@ -301,7 +307,11 @@ def signature_advanced(
         return True
     if newer.lane_tip and older.lane_tip and newer.lane_tip != older.lane_tip:
         return True
-    if newer.next_admit and older.next_admit and newer.next_admit != older.next_admit:
+    if newer.next_admit != older.next_admit and (
+        (newer.next_admit and older.next_admit)
+        or (newer.scoreboard_tip and older.scoreboard_tip)
+        or (newer.lane_tip and older.lane_tip)
+    ):
         return True
     if (
         newer.scoreboard_tip

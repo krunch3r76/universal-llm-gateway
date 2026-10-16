@@ -306,3 +306,73 @@ def test_suspicion_one_provable_prior_requests_inspection() -> None:
         row, chain, config=_CFG, closeout_tokens=frozenset({"ROW_HOP"})
     )
     assert result.outcome == "suspicion"
+
+
+def test_prior_evaluation_ignores_future_successors_in_chain() -> None:
+    """17217 Hop 10 shape: evaluating an older row after its successor finished must not compare against the successor."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        dispatch_id="hop-9",
+        hop_seq=9,
+        hop_from="spawn",
+        closeout_tokens=["CONSULT_PENDING"],
+        record_patch={
+            "hop_entry_gate": "G4",
+            "hop_witnessed_done": ["G1", "G2", "G3"],
+            "hop_lane_tip": "fe5abb39",
+            "hop_scoreboard_tip": "7d79d2d8",
+            "hop_next_admit": "harvest 64d255e7",
+        },
+    )
+    hop_10 = _terminal_row(
+        ledger,
+        dispatch_id="hop-10",
+        hop_seq=10,
+        hop_from="hop-9",
+        closeout_tokens=["PARKED_TRANSPORT"],
+        record_patch={
+            "hop_entry_gate": "G5",
+            "hop_witnessed_done": ["G1", "G2", "G3", "G4"],
+            "hop_lane_tip": "fe5abb39",
+            "hop_scoreboard_tip": "c3c8e566",
+            "hop_next_admit": "harvest 799d7237",
+        },
+    )
+    hop_11 = _terminal_row(
+        ledger,
+        dispatch_id="hop-11",
+        hop_seq=11,
+        hop_from="hop-10",
+        closeout_tokens=["PARKED_TRANSPORT"],
+        record_patch={
+            "hop_entry_gate": "G5",
+            "hop_witnessed_done": ["G1", "G2", "G3", "G4"],
+            "hop_lane_tip": "fe5abb39",
+            "hop_scoreboard_tip": "c3c8e566",
+            "hop_next_admit": "harvest a7b03009",
+        },
+    )
+    hop_12 = _terminal_row(
+        ledger,
+        dispatch_id="hop-12",
+        hop_seq=12,
+        hop_from="hop-11",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G5",
+            "hop_witnessed_done": ["G1", "G2", "G3", "G4"],
+            "hop_lane_tip": "fe5abb39",
+            "hop_scoreboard_tip": "c3c8e566",
+        },
+    )
+    chain = list_mission_terminal_chain(work_key=_WORK_KEY)
+    assert inspect_hop_loop(
+        hop_10, chain, config=_CFG, closeout_tokens=frozenset({"PARKED_TRANSPORT"})
+    ).outcome == "clear"
+    assert inspect_hop_loop(
+        hop_11, chain, config=_CFG, closeout_tokens=frozenset({"PARKED_TRANSPORT"})
+    ).outcome == "clear"
+    assert inspect_hop_loop(
+        hop_12, chain, config=_CFG, closeout_tokens=frozenset({"ROW_HOP"})
+    ).outcome == "clear"
