@@ -239,6 +239,9 @@ class GrokbotEgressWatchLoop:
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
+        if self._health_probe_failed:
+            self._last_watch_ok_emitted_at = None
+
         if decision.emit_probe_failed:
             self._last_watch_ok_emitted_at = None
             event = mcp_edge_grokbot_probe_failed(

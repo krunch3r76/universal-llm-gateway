@@ -33,3 +33,4 @@ def grokbot_egress_watch_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(loop_mod, "resolve_a_records", _refuse("resolve_a_records"))
     monkeypatch.setattr(loop_mod, "fetch_health", _refuse("fetch_health"))
     monkeypatch.setattr(loop_mod, "query_events_rows", _refuse("query_events_rows"))
+    monkeypatch.setattr(loop_mod, "desktop_pid_alive", _refuse("desktop_pid_alive"))

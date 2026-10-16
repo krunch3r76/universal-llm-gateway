@@ -994,3 +994,95 @@ def test_desktop_down_while_watch_connected_emits_no_ok(
     )
     _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=13_000_000.0))
     assert _ok_payloads(capture.events) == []
+
+
+def test_probe_failure_clears_window_when_same_tick_emit_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disconnected log makes the stale emit run; a raised emit must not keep the window."""
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    capture = _CaptureEmit()
+    phase = {"log": _CONNECTED_LOG, "fail_probe": False}
+
+    async def _emit(signal: str, payload: dict[str, object], **_: object) -> None:
+        if signal == "mcp.edge.grokbot_tunnel.stale":
+            raise RuntimeError("event service down")
+        capture.events.append((signal, payload))
+
+    def _fetch(_ip: str, _host: str) -> int:
+        if phase["fail_probe"]:
+            raise TimeoutError("timed out")
+        return 200
+
+    _patch_default_snapshot_io(
+        monkeypatch, fetch=_fetch, addresses=["73.189.160.136"]
+    )
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: phase["log"])
+    monkeypatch.setattr(loop_mod, "_emit", _emit)
+    clock = {"now": 15_000_000.0}
+    monkeypatch.setattr(loop_mod.time, "time", lambda: clock["now"])
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"), restart_desktop_fn=_noop_restart
+    )
+    _run(loop._tick())
+    clock["now"] += 30.0
+    phase["fail_probe"] = True
+    dial_ms = int(clock["now"] * 1000) - 90_000
+    from datetime import datetime
+
+    dial_at = (
+        datetime.fromtimestamp(dial_ms / 1000.0, tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%S.%f"
+        )[:-3]
+        + "Z"
+    )
+    phase["log"] = f"[user-computer-watch] {dial_at} dialing (attempt 1)\n"
+    with pytest.raises(RuntimeError, match="event service down"):
+        _run(loop._tick())
+    phase["log"] = _CONNECTED_LOG
+    phase["fail_probe"] = False
+    clock["now"] += 30.0
+    _run(loop._tick())
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 2
+    assert all(p["health_checked"] is True for p in payloads)
+
+
+def test_unstubbed_tick_refuses_desktop_pid_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    monkeypatch.setattr(
+        loop_mod, "read_desktop_status", lambda _path: {"pid": 2_147_483_646}
+    )
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: _CONNECTED_LOG)
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    with pytest.raises(
+        RuntimeError, match="unpatched grokbot egress watch reached desktop_pid_alive"
+    ):
+        _run(loop._tick())
+
+
+def test_watch_ok_catalog_keys_match_factory() -> None:
+    catalog = Path("docs/event-contracts.md").read_text(encoding="utf-8")
+    row = next(
+        line
+        for line in catalog.splitlines()
+        if line.startswith("| `mcp.edge.grokbot.watch.ok` |")
+    )
+    payload_cell = row.split("|")[2]
+    catalog_keys = [
+        part.strip().strip("`")
+        for part in payload_cell.split(",")
+        if part.strip()
+    ]
+    event = mcp_edge_grokbot_watch_ok(
+        watch_connected=True,
+        health_http_status=200,
+        hm1_tools_call_ok=True,
+        undici_idle_s=1.0,
+        health_checked=True,
+    )
+    assert list(event.payload) == catalog_keys
