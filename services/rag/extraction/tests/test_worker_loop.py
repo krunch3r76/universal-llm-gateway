@@ -53,10 +53,10 @@ async def _property_index(tmp_path: Path) -> PropertyIndex:
 
 
 @pytest.mark.asyncio
-async def test_map_timeout_failure_increments_attempt_until_exhausted(
+async def test_iteration_timeout_failures_exhaust_queue_attempt_budget(
     tmp_path: Path,
 ) -> None:
-    """Iteration-timeout failures burn attempts; dequeue stops at max_attempts (_MAX_QUEUE_ATTEMPTS)."""
+    """Repeated iteration_timeout failures hit attempts == _MAX_QUEUE_ATTEMPTS then exhausted."""
     idx = await _property_index(tmp_path)
     try:
         await idx.enqueue_extraction("/cursor-fc9.messages.json")
@@ -95,8 +95,8 @@ async def test_map_timeout_failure_increments_attempt_until_exhausted(
 
 
 @pytest.mark.asyncio
-async def test_worker_loop_map_timeout_records_increment_attempt_true() -> None:
-    """Worker loop classifies map stall RuntimeError with increment_attempt=True."""
+async def test_worker_loop_map_timeout_increments_attempt() -> None:
+    """Map iteration TIMEOUT RuntimeError burns an attempt (iteration_timeout)."""
     claim = ExtractionQueueClaim(
         source="/s.json",
         attempts=1,
@@ -270,10 +270,87 @@ async def test_sequential_reclaim_cancel_is_idempotent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_reclaim_cancels_before_extract_source(
+async def test_reclaim_cancel_retains_pointer_on_connection_error(
     tmp_path: Path,
 ) -> None:
-    """Claim lifecycle cancel runs before extract_source (including early-complete paths)."""
+    """ConnectionError on DELETE yields UNKNOWN; queue pointer stays for recovery."""
+    idx = await _property_index(tmp_path)
+    try:
+        await idx.enqueue_extraction("/s.json")
+        await idx.record_extraction_execution_id("/s.json", "stale-exec-id")
+        mock_client = MagicMock()
+        mock_client.delete = AsyncMock(side_effect=ConnectionError("stargate down"))
+        with patch("services.rag.knowledge_extractor._client", mock_client):
+            await chroma_source.reclaim_cancel_stored_execution(
+                source="/s.json",
+                prior_execution_id="stale-exec-id",
+                property_index=idx,
+            )
+        conn = idx._ensure_conn()
+        row = conn.execute(
+            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
+            ("/s.json",),
+        ).fetchone()
+        assert row[0] == "stale-exec-id"
+    finally:
+        await idx.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_reclaim_before_chroma_empty_ids_early_complete() -> None:
+    """Reclaim runs before extract_source even when Chroma has no chunks (row delete)."""
+    claim = ExtractionQueueClaim(
+        source="/removed.json",
+        attempts=0,
+        queued_at="t",
+        claimed_at="t",
+        active_execution_id="orphan-exec",
+    )
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+    property_index.complete_extraction = AsyncMock()
+    shutdown = asyncio.Event()
+    reclaim_calls: list[str] = []
+
+    async def _track_reclaim(**kwargs: object) -> None:
+        reclaim_calls.append(str(kwargs.get("prior_execution_id")))
+        shutdown.set()
+
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge", schema_version=1, extraction_model="m")
+    config.knowledge_extraction = ke
+
+    collection = MagicMock()
+    collection.get.return_value = {"ids": [], "documents": [], "metadatas": []}
+
+    with (
+        patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+        patch.object(worker_loop, "configure_timeouts"),
+        patch.object(
+            worker_loop, "reclaim_cancel_stored_execution", AsyncMock(side_effect=_track_reclaim)
+        ),
+        patch.object(
+            chroma_source,
+            "run_chroma",
+            AsyncMock(side_effect=lambda fn, *a, **k: fn(*a, **k)),
+        ),
+        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+    ):
+        await run_extraction_worker(
+            config=config,
+            collection_fn=lambda: collection,
+            property_index=property_index,
+            event_bus=None,
+            shutdown_event=shutdown,
+        )
+
+    assert reclaim_calls == ["orphan-exec"]
+    property_index.complete_extraction.assert_awaited_once_with("/removed.json")
+
+
+@pytest.mark.asyncio
+async def test_worker_reclaim_cancels_before_extract_source() -> None:
+    """Claim lifecycle invokes reclaim_cancel before extract_source on success path."""
     claim = ExtractionQueueClaim(
         source="/s.json",
         attempts=1,
