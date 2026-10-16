@@ -18,7 +18,6 @@ from services.rag.extraction.worker_loop import (
 from services.rag.property_index import PropertyIndex
 from services.rag.property_index._spec import ExtractionQueueClaim
 
-
 _MAP_TIMEOUT_ERR = RuntimeError(
     "Extraction pipeline failed: MapPartialFailureError — "
     "TIMEOUT after 900.0s (request pending)"
