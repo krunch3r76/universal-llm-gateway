@@ -7,6 +7,7 @@ Owns the slot maps and availability helpers used by acquisition and release.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from universal_logging import get_logger
 
@@ -16,6 +17,64 @@ logger = get_logger(__name__)
 
 
 class _BookkeepingMixin:
+    def reset_cold_slot(
+        self, gateway_id: str, model_id: str, placeholder_capacity: int
+    ) -> None:
+        """Clear a leaked cold slot and wake a queued waiter on that model.
+
+        Zeroes in_flight, writes the placeholder capacity, and stamps the
+        quiet clock. When a loop is running, schedules ``_dispatch`` so a
+        follower blocked in ``acquire_token`` can take the restored slot
+        without waiting for a later release. Outside a running loop the
+        dispatch is skipped and the ledger write still stands.
+
+        Args:
+            gateway_id: Gateway that owns the slot.
+            model_id: Routing key of the model slot.
+            placeholder_capacity: Capacity restored after the leak is cleared.
+        """
+        slot = _Slot(gateway_id=gateway_id, model_id=model_id)
+        self._in_flight[slot] = 0  # type: ignore[attr-defined]
+        self._capacity[slot] = placeholder_capacity  # type: ignore[attr-defined]
+        self._slot_last_change[slot] = time.monotonic()  # type: ignore[attr-defined]
+        logger.warning(
+            "Cold slot reset: %s/%s → capacity=%d, in_flight=0",
+            gateway_id,
+            model_id,
+            placeholder_capacity,
+        )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        asyncio.create_task(
+            self._dispatch(model_id),  # type: ignore[attr-defined]
+            name=f"cold-slot-reset-dispatch-{gateway_id}-{model_id}",
+        )
+
+    def slot_quiet_elapsed(
+        self, gateway_id: str, model_id: str, *, quiet_s: float | None = None
+    ) -> bool:
+        """Return whether a slot has been idle long enough for a cold reset.
+
+        An unstamped slot is not quiet. Live increment paths record
+        ``_slot_last_change``, and a missing stamp must not fail open into
+        a reset. When ``quiet_s`` is omitted, the threshold is the pool
+        attribute ``_cold_slot_reset_quiet_s``.
+
+        Returns:
+            False when the slot has no stamp or the elapsed time is below
+            the threshold. True when the stamp is at least that old.
+        """
+        slot = _Slot(gateway_id=gateway_id, model_id=model_id)
+        last = self._slot_last_change.get(slot)  # type: ignore[attr-defined]
+        if last is None:
+            return False
+        threshold = quiet_s
+        if threshold is None:
+            threshold = self._cold_slot_reset_quiet_s  # type: ignore[attr-defined]
+        return (time.monotonic() - last) >= threshold
+
     async def reconcile_gateway_state(
         self,
         gateway_id: str,

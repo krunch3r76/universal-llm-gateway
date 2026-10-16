@@ -7,6 +7,7 @@ On release, decrements the slot and wakes the next queued waiter if present.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
 
 from universal_logging import get_logger
@@ -39,6 +40,7 @@ class _ReleaseDispatchMixin:
             )
         else:
             self._in_flight[slot] = in_flight - 1  # type: ignore[attr-defined]
+            self._slot_last_change[slot] = time.monotonic()  # type: ignore[attr-defined]
             held = token.held_ms
             log = logger.info if held > 10_000 else logger.debug
             log(

@@ -155,6 +155,7 @@ class _AcquisitionMixin:
         gw_id = ranked[0][0]
         slot = _Slot(gateway_id=gw_id, model_id=model_id)
         self._in_flight[slot] = self._in_flight.get(slot, 0) + 1  # type: ignore[attr-defined]
+        self._slot_last_change[slot] = time.monotonic()  # type: ignore[attr-defined]
         logger.debug(f"Immediate admit: {request_id} → {gw_id}/{model_id}")
         return gw_id
 

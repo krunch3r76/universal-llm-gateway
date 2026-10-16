@@ -119,6 +119,9 @@ class FederatedGatewayManager(Sequential):
         # INV: cleared on gateway disconnect/reconnect only (session lifetime)
         self._inference_banned: dict[str, set[str]] = {}
 
+        # Consecutive GATEWAY_SNAPSHOT count where model is absent from loaded+loading
+        self._cold_absent_snapshot_streak: dict[tuple[str, str], int] = {}
+
         # Pre-selection wait queue: wake waiters on state mutations
         self._state_generation: int = 0
         self._state_condition: asyncio.Condition = asyncio.Condition()
@@ -395,16 +398,55 @@ class FederatedGatewayManager(Sequential):
                 exc,
             )
 
-    def _seed_capacity_pool_for_gateway(self, gateway: FederatedGateway) -> int:
+    def _seed_capacity_pool_for_gateway(
+        self, gateway: FederatedGateway, *, loaded_only: bool = False
+    ) -> int:
         """Seed capacity ledger from gateway model_resources; returns slot count."""
         if not self._capacity_pool or not gateway.model_resources:
             return 0
 
         seeded = 0
         for model_id in gateway.model_resources:
+            if loaded_only and model_id not in gateway.loaded_models:
+                continue
             if self.restore_model_capacity(gateway, model_id):
                 seeded += 1
         return seeded
+
+    def _maybe_reset_cold_slots(self, gw: FederatedGateway) -> None:
+        """Reset leaked cold slots after two consecutive absent snapshots.
+
+        Quiet time is the pool attribute ``_cold_slot_reset_quiet_s``, read
+        inside ``slot_quiet_elapsed``. This method does not keep a second
+        copy of that threshold.
+        """
+        pool = self._capacity_pool
+        if pool is None:
+            return
+        for model_id, res in gw.model_resources.items():
+            routing_key = model_id.routing_key
+            streak_key = (gw.gateway_id, routing_key)
+            absent = (
+                model_id not in gw.loaded_models and model_id not in gw.loading_models
+            )
+            if not absent:
+                self._cold_absent_snapshot_streak.pop(streak_key, None)
+                continue
+            streak = self._cold_absent_snapshot_streak.get(streak_key, 0) + 1
+            self._cold_absent_snapshot_streak[streak_key] = streak
+            if streak < 2:
+                continue
+            _available, in_flight, _capacity = pool.get_slot_info(
+                gw.gateway_id, routing_key
+            )
+            if in_flight <= 0:
+                continue
+            if not pool.slot_quiet_elapsed(gw.gateway_id, routing_key):
+                continue
+            catalog = int(res.get("max_concurrent_requests", 1))
+            placeholder = min(catalog, 1)
+            pool.reset_cold_slot(gw.gateway_id, routing_key, placeholder)
+            self._cold_absent_snapshot_streak.pop(streak_key, None)
 
     def _cache_catalog_for_gateway(self, gateway_id: str, gw: FederatedGateway) -> None:
         """Persist last-known catalog for reconnect flows that restore remote edges."""
@@ -1464,12 +1506,14 @@ class FederatedGatewayManager(Sequential):
         )
 
         # Seed capacity pool from model_resources (admission control)
-        seeded_slots = self._seed_capacity_pool_for_gateway(gw)
+        seeded_slots = self._seed_capacity_pool_for_gateway(gw, loaded_only=True)
         if seeded_slots:
             logger.debug(
                 f"📊 Capacity pool updated from GATEWAY_SNAPSHOT: "
                 f"{seeded_slots} models on {gw.gateway_id}"
             )
+
+        self._maybe_reset_cold_slots(gw)
 
         # Reconcile stale in_flight counts.  Models loaded-but-not-busy at the
         # gateway have no active requests; any non-zero in_flight in the pool

@@ -22,6 +22,26 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _non_sticky_cold_allow_set(
+    *,
+    selected_gateway: "Gateway",
+    gateways_for_routing: list["Gateway"],
+    model_id,
+    selection_trace,
+) -> frozenset[str]:
+    from systems.routing.selection.decision import FeasibilityTier
+
+    allowed: set[str] = {selected_gateway.name}
+    for gateway in gateways_for_routing:
+        if model_id in gateway.loaded_models:
+            allowed.add(gateway.name)
+    if selection_trace and selection_trace.candidates:
+        for candidate in selection_trace.candidates:
+            if candidate.tier == FeasibilityTier.T1_FEASIBLE_NOW:
+                allowed.add(candidate.gateway.name)
+    return frozenset(allowed)
+
+
 async def acquire_admission_token(
     *,
     context: "RequestContext",
@@ -34,6 +54,7 @@ async def acquire_admission_token(
     allowed_gateway_ids_override: frozenset[str] | None,
     overflow_origin_gateway: str | None,
     overflow_depth_before: int,
+    selection_trace=None,
 ) -> "Gateway | None":
     """
     Reserve request capacity and return the final assigned gateway.
@@ -139,8 +160,15 @@ async def acquire_admission_token(
 
     if allowed_gateway_ids_override is not None:
         allowed_gateway_ids = allowed_gateway_ids_override
-    elif context.model_sticky or is_cold_load:
+    elif context.model_sticky:
         allowed_gateway_ids = frozenset({selected_gateway.name})
+    elif is_cold_load:
+        allowed_gateway_ids = _non_sticky_cold_allow_set(
+            selected_gateway=selected_gateway,
+            gateways_for_routing=gateways_for_routing,
+            model_id=model_id,
+            selection_trace=selection_trace,
+        )
     else:
         allowed_gateway_ids = frozenset(
             g.name for g in gateways_for_routing if model_id in g.loaded_models

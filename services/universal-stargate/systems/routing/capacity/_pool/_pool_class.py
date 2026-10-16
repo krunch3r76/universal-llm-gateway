@@ -71,6 +71,8 @@ class CapacityPool(
         self._paused_until: dict[str, float] = {}
         self._paused_reason: dict[str, str] = {}
         self._resume_tasks: dict[str, asyncio.Task[None]] = {}
+        self._slot_last_change: dict[Any, float] = {}
+        self._cold_slot_reset_quiet_s = 120.0
 
     def _ensure_subscribed(self) -> None:
         """Subscribe to external capacity change events (lazy, once)."""

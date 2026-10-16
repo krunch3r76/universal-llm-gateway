@@ -109,6 +109,7 @@ async def _route_to_federated_gateway(
         allowed_gateway_ids_override=allowed_gateway_ids_override,
         overflow_origin_gateway=overflow_origin_gateway,
         overflow_depth_before=overflow_depth_before,
+        selection_trace=trace,
     )
 
     if selected_gateway is None:

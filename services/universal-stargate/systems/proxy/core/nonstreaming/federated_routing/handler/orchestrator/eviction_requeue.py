@@ -138,6 +138,7 @@ async def requeue_after_transient_eviction(
         allowed_gateway_ids_override=None,
         overflow_origin_gateway=None,
         overflow_depth_before=0,
+        selection_trace=trace,
     )
 
     return await finalize_selection_and_load(
