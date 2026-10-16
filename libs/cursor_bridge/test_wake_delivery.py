@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -22,6 +23,40 @@ from cursor_bridge.wake_delivery import (
 _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
 
 pytestmark = pytest.mark.offline
+
+
+def _query_selector_literal_args(js: str) -> list[str]:
+    """Parse document.querySelector(…) string-literal arguments (break: extra fallback selector)."""
+    pattern = re.compile(r'querySelector\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)')
+    return [json.loads(m.group(1)) for m in pattern.finditer(js)]
+
+
+def _match_count_guard_block(js: str) -> str:
+    """Body of ``if (match_count === 1) { … }`` (break: witness fields set outside guard)."""
+    marker = "if (match_count === 1)"
+    idx = js.find(marker)
+    if idx == -1:
+        raise AssertionError("witness expression missing match_count === 1 guard")
+    brace_start = js.find("{", idx)
+    if brace_start == -1:
+        raise AssertionError("witness guard missing opening brace")
+    depth = 0
+    for i in range(brace_start, len(js)):
+        if js[i] == "{":
+            depth += 1
+        elif js[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return js[brace_start + 1 : i]
+    raise AssertionError("witness guard has unbalanced braces")
+
+
+def _witness_preamble_before_guard(js: str) -> str:
+    marker = "if (match_count === 1)"
+    idx = js.find(marker)
+    if idx == -1:
+        raise AssertionError("witness expression missing match_count === 1 guard")
+    return js[:idx]
 
 
 @pytest.mark.parametrize(
@@ -161,7 +196,11 @@ def test_cursor_probe_fixture_records_witness() -> None:
     selector = payload["composer_selector"]
     cursor_js = wd._COMPOSER_JS["cursor"]
     assert "Prompt" in cursor_js and "contenteditable" in cursor_js
-    assert json.dumps(selector)[1:-1] in cursor_js or selector.replace('"', '\\"') in cursor_js
+    qs_args = _query_selector_literal_args(cursor_js)
+    assert qs_args == [selector], (
+        "cursor composer JS must use exactly one querySelector equal to fixture composer_selector; "
+        f"got {qs_args!r}"
+    )
     raw = _FIXTURE_PATH.read_text(encoding="utf-8")
     assert "webSocketDebuggerUrl" not in raw
     assert "ws://" not in raw
@@ -177,9 +216,19 @@ def test_composer_witness_match_count_and_same_node() -> None:
     expr = composer_witness_expression('[contenteditable="true"]')
     assert "querySelectorAll" in expr
     assert "Prompt" in expr and "contenteditable" in expr
-    assert "prompt_selector_matches_same_node" in expr
-    assert "===" in expr
     assert "Input." not in expr
+
+    preamble = _witness_preamble_before_guard(expr)
+    assert "attributes = {}" not in preamble
+    assert "outer_html = el" not in preamble
+    assert "resolved_selector = promptSel" not in preamble
+    assert "resolved_selector = built" not in preamble
+
+    guard_body = _match_count_guard_block(expr)
+    assert "prompt_selector_matches_same_node = el === promptNode" in guard_body
+    assert "attributes = {}" in guard_body
+    assert "outer_html = el.outerHTML" in guard_body
+    assert "resolved_selector = promptSel" in guard_body or "resolved_selector = built" in guard_body
 
 
 def test_cursor_composer_js_clears_stale_wake_draft() -> None:
