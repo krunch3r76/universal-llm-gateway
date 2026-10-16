@@ -374,3 +374,120 @@ async def test_chunk_file_inline_mutation_logs_high_drift(
         assert seen[0] != loop_ident
     finally:
         monkeypatch.setattr(state, "_config", None)
+
+
+@pytest.mark.asyncio
+async def test_check_pdf_duplicate_get_runs_off_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Production PDF duplicate check must call collection.get off the loop.
+
+    Inlining ``check_pdf_duplicate`` (dropping ``run_chroma``) records the
+    loop thread ident and fails this test.
+    """
+    from services.rag.rag_service.indexing.file_guards import (
+        _handle_pdf_duplicate_or_move,
+    )
+
+    init_chroma_executor()
+    loop_ident = threading.get_ident()
+    seen: list[int] = []
+    collection = MagicMock()
+
+    def _get(**kwargs: object) -> dict[str, list]:
+        del kwargs
+        seen.append(threading.get_ident())
+        return {"ids": ["a"], "metadatas": [{"source": "/other.pdf"}]}
+
+    collection.get.side_effect = _get
+    path = tmp_path / "doc.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(state, "_event_bus", None)
+    try:
+        await _handle_pdf_duplicate_or_move(
+            file_path=path,
+            source=str(path),
+            source_hash="abc",
+            collection=collection,
+            article_sync_old_path=None,
+            force=False,
+            correlation_id="c",
+            operation=None,
+        )
+        assert seen, "collection.get was not called"
+        assert seen[0] != loop_ident
+    finally:
+        shutdown_chroma_executor()
+
+
+@pytest.mark.asyncio
+async def test_get_existing_runs_off_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``_get_existing`` must run on the Chroma writer, not the loop thread.
+
+    Replacing ``await run_chroma(_get_existing, ...)`` with a direct call
+    records the loop ident and fails this test.
+    """
+    init_chroma_executor()
+    loop_ident = threading.get_ident()
+    seen: list[int] = []
+    collection = MagicMock()
+
+    def _get(**kwargs: object) -> dict[str, list]:
+        del kwargs
+        seen.append(threading.get_ident())
+        return {"ids": [], "metadatas": []}
+
+    collection.get.side_effect = _get
+    path = tmp_path / "note.md"
+    path.write_text("hello\n")
+    config = MagicMock()
+    config.is_path_entity_gated.return_value = False
+    config.knowledge_extraction.schema_version = 1
+    config.knowledge_extraction.extraction_model = "m"
+    monkeypatch.setattr(state, "_config", config)
+    monkeypatch.setattr(state, "_property_index", None)
+    monkeypatch.setattr(state, "_event_bus", None)
+    monkeypatch.setattr(state, "_entity_admission_gate", None)
+    monkeypatch.setattr(state, "_get_collection", lambda: collection)
+
+    async def _healthy() -> None:
+        return None
+
+    async def _article_sync(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _no_dup(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _no_prefix(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _empty(**kwargs: object) -> IndexResult:
+        del kwargs
+        return IndexResult(deleted=0, indexed=0, unchanged=False, file=str(path))
+
+    monkeypatch.setattr(index_file_mod, "require_healthy", _healthy)
+    monkeypatch.setattr(index_file_mod, "_run_article_sync_phase", _article_sync)
+    monkeypatch.setattr(index_file_mod, "_handle_pdf_duplicate_or_move", _no_dup)
+    monkeypatch.setattr(index_file_mod, "_handle_unchanged_prefix_skip", _no_prefix)
+    monkeypatch.setattr(index_file_mod, "_handle_empty_chunks", _empty)
+
+    def _chunk(file_path: Path, target_chars: int | None = None) -> list[object]:
+        del file_path, target_chars
+        return []
+
+    monkeypatch.setattr(index_file_mod, "chunk_file", _chunk)
+    try:
+        await index_file_mod._index_file_impl(path, None, None, str(path.resolve()))
+        assert seen, "_get_existing did not call collection.get"
+        assert seen[0] != loop_ident
+    finally:
+        monkeypatch.setattr(state, "_config", None)
+        shutdown_chroma_executor()
