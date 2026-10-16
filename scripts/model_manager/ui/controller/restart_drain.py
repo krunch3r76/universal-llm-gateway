@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
@@ -467,6 +468,7 @@ class RestartDrainGate:
         self._gates: dict[str, FifoCapacityGate] = {}
         self._witnesses: dict[str, list[InFlightWitness]] = witnesses or {}
         self._last_probe = LastProbeWitness()
+        self._restart_hold_context: dict[str, dict[str, Any]] = {}
 
     def _witnesses_for(self, service: str) -> list[InFlightWitness]:
         return [*self._witnesses.get(service, ()), self._last_probe]
@@ -507,10 +509,18 @@ class RestartDrainGate:
         """
         gate = self._gate(service)
         if not gate.try_acquire(str(uuid.uuid4())):
+            hold = self._restart_hold_context.get(service, {})
+            pid = hold.get("in_flight_pid")
+            reason = "a restart is already in progress for this service"
+            active_work: dict[str, Any] = {}
+            if pid is not None:
+                reason = f"{reason} (PID {pid})"
+                active_work = {"in_flight_pid": pid}
             return DrainOutcome(
                 state="in_progress",
                 service=service,
-                reason="a restart is already in progress for this service",
+                reason=reason,
+                active_work=active_work,
             )
 
         # Slot is now HELD. Every exit that is not an explicit proceed must release
@@ -584,7 +594,17 @@ class RestartDrainGate:
 
     async def release(self, service: str) -> None:
         """Release the restart-mutex slot held by a proceeding restart."""
+        self._restart_hold_context.pop(service, None)
         await self._gate(service).release()
+
+    def set_restart_hold_context(
+        self, service: str, context: dict[str, Any] | None
+    ) -> None:
+        """Publish in-flight restart detail for concurrent in_progress deferrals."""
+        if context is None:
+            self._restart_hold_context.pop(service, None)
+        else:
+            self._restart_hold_context[service] = context
 
     async def probe(self, service: str) -> ActiveWork:
         """Run a service's busy probe WITHOUT acquiring the restart slot.
@@ -664,6 +684,15 @@ class RestartDrainGate:
         return report
 
 
+BeforeReleaseHook = Callable[[str], Awaitable[None]]
+
+
+def starting_pid_from_lifecycle_message(message: str) -> int | None:
+    """Parse ``starting (PID N)`` from a lifecycle return message."""
+    match = re.search(r"starting \(PID (\d+)\)", message)
+    return int(match.group(1)) if match else None
+
+
 async def run_gated(
     gate: RestartDrainGate,
     action: str,
@@ -672,6 +701,7 @@ async def run_gated(
     force: bool,
     lifecycle: Callable[[], Awaitable[str]],
     exclude_job_id: str | None = None,
+    before_release: BeforeReleaseHook | None = None,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
 
@@ -695,6 +725,13 @@ async def run_gated(
         return outcome.to_result()
     try:
         message = await lifecycle()
+        if before_release is not None:
+            pid = starting_pid_from_lifecycle_message(message)
+            if pid is not None:
+                gate.set_restart_hold_context(
+                    service, {"in_flight_pid": pid}
+                )
+            await before_release(message)
     finally:
         await gate.release(service)
     return {"status": "ok", "message": message}

@@ -386,6 +386,11 @@ async def execute(
             )
             if preempted is not None:
                 return preempted
+            before_release = (
+                _rag_restart_settle_before_release
+                if service == "rag" and not force
+                else None
+            )
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -398,6 +403,7 @@ async def execute(
                     lambda: _sync_restart(ctl, service),
                 ),
                 exclude_job_id=caller_job_id if service == "agent_bus" else None,
+                before_release=before_release,
             )
 
         case "busy_status":
@@ -676,6 +682,46 @@ async def _stargate_idle_drain_supervised(
         row_id=row_id,
         caller_agent=caller_agent,
     )
+
+
+RAG_RESTART_SETTLE_BUDGET_S = 45.0
+
+
+def _parse_starting_pid(message: str) -> int | None:
+    from .controller.restart_drain import starting_pid_from_lifecycle_message
+
+    return starting_pid_from_lifecycle_message(message)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+async def _rag_restart_settle_before_release(message: str) -> None:
+    """Hold the rag restart slot until UDS readiness, pid exit, or settle budget."""
+    from .controller.service_config import read_rag_socket_path
+    from .controller.service_ctl.startup_probe import (
+        DEFAULT_STARTUP_INTERVAL_S,
+        uds_socket_live,
+    )
+
+    pid = _parse_starting_pid(message)
+    if pid is None:
+        return
+    socket_path = read_rag_socket_path()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + RAG_RESTART_SETTLE_BUDGET_S
+    while loop.time() < deadline:
+        if not _pid_alive(pid):
+            return
+        if await loop.run_in_executor(None, uds_socket_live, socket_path):
+            if _pid_alive(pid):
+                return
+        await asyncio.sleep(DEFAULT_STARTUP_INTERVAL_S)
 
 
 def refuse_giw_force_lifecycle() -> dict[str, str]:
