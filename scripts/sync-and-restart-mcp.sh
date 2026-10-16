@@ -5,6 +5,10 @@
 #   ~/.grok/bin (and often ~/.local/bin), which can overwrite the Cursor agent binary.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Routine path: docker cp into /app + docker stop/start (preserves writable layer).
+# --no-cache: compose up -d creates the container (its entrypoint can import before any
+# stamp exists). This script then writes /app/.source_sync_stamp and docker stop/start
+# so the process that stays up seals the new line 2. That extra stop/start is required
+# because code_version caches stamp line 2 at import; it adds a second restart on rebuild.
 # ¬ compose up -d after sync — recreate wipes docker cp (friction 6538).
 # Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
 
@@ -183,9 +187,9 @@ fi
 
 CHECKED_IMAGE_ID=""
 CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
-_SOURCE_SYNC_STAMP_SNAPSHOT="${MCP_DATA_DIR}/last-healthy/.source_sync_stamp.snapshot"
+_SOURCE_SYNC_STAMP_SNAPSHOT=""
+_STAMP_WRITTEN=0
 _STOP_SUCCEEDED=0
-_START_SUCCEEDED=0
 _START_FAILED=0
 _RESTORE_HANDLER_RAN=0
 
@@ -205,18 +209,23 @@ _restore_window_exit() {
   if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
-  if [[ "${_STOP_SUCCEEDED:-0}" != 1 && -f "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
+  # Stamp rollback only for a snapshot this run wrote. A leftover file from
+  # another run must not suppress gate restore.
+  if [[ "${_STAMP_WRITTEN:-0}" == 1 && "${_STOP_SUCCEEDED:-0}" != 1 ]]; then
     restore_source_sync_stamp_from_snapshot || true
-    exit 1
   fi
-  # docker start failure: writable layer already has the synced tree and pre-restart stamp;
-  # gate restore would roll the image back while the stamp still claims the incoming HEAD.
+  # Start failed after stop. Skip gate restore: plan_restore_commands begins with
+  # docker rm -f, and the last-healthy snapshot copy does not include
+  # /app/.source_sync_stamp, so recreate would drop the synced tree and the stamp.
   if [[ "${_START_FAILED:-0}" == 1 ]]; then
+    _cleanup_stamp_snapshot
     exit 1
   fi
   if [[ -n "$img" ]]; then
+    echo "MCP_SYNC_GATE_RESTORE" >&2
     gate restore --firer script --checked-image-id "$img" || true
   fi
+  _cleanup_stamp_snapshot
   exit 1
 }
 
@@ -249,10 +258,23 @@ wait_for_mcp_healthy() {
   gate wait-healthy --timeout "$timeout_s"
 }
 
+_cleanup_stamp_snapshot() {
+  if [[ -n "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
+    rm -f "${_SOURCE_SYNC_STAMP_SNAPSHOT}"
+  fi
+}
+
 snapshot_source_sync_stamp() {
   local c=mcp-server
-  mkdir -p "$(dirname "$_SOURCE_SYNC_STAMP_SNAPSHOT")"
-  docker exec "$c" cat /app/.source_sync_stamp 2>/dev/null > "$_SOURCE_SYNC_STAMP_SNAPSHOT" || : > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+  if ! docker exec "$c" true; then
+    echo "ERROR: docker exec failed while snapshotting /app/.source_sync_stamp; not treating the stamp as absent." >&2
+    return 1
+  fi
+  if docker exec "$c" test -f /app/.source_sync_stamp; then
+    docker exec "$c" cat /app/.source_sync_stamp > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+  else
+    : > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+  fi
 }
 
 restore_source_sync_stamp_from_snapshot() {
@@ -269,8 +291,10 @@ restore_source_sync_stamp_from_snapshot() {
 }
 
 write_source_sync_stamp_before_serving_restart() {
+  _SOURCE_SYNC_STAMP_SNAPSHOT="$(mktemp)"
   snapshot_source_sync_stamp
   write_source_sync_stamp
+  _STAMP_WRITTEN=1
 }
 
 write_source_sync_stamp() {
@@ -361,17 +385,13 @@ restart_mcp_gracefully() {
   echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
   arm_restore_window
   if ! docker stop -t 30 "$c" >/dev/null; then
-    restore_source_sync_stamp_from_snapshot || true
-    trap - EXIT
     return 1
   fi
   _STOP_SUCCEEDED=1
   if ! docker start "$c" >/dev/null; then
     _START_FAILED=1
-    trap - EXIT
     return 1
   fi
-  _START_SUCCEEDED=1
 }
 
 record_checked_image_if_healthy() {
@@ -408,7 +428,14 @@ run_import_probe_or_refuse() {
   fi
 }
 
-# Pin snapshot and import probe before ensure_mcp_container (:338) on the routine path.
+mkdir -p "$MCP_DATA_DIR"
+exec 9>"${MCP_DATA_DIR}/sync-and-restart-mcp.lock"
+if ! flock -n 9; then
+  echo "ERROR: another sync-and-restart-mcp.sh is already running." >&2
+  exit 1
+fi
+
+# Pin snapshot and import probe before ensure_mcp_container on the routine path.
 record_checked_image_if_healthy
 
 if [[ "$NO_CACHE" != "true" ]]; then
@@ -456,7 +483,7 @@ else
   restart_mcp_gracefully
 fi
 
-trap - EXIT
+trap _cleanup_stamp_snapshot EXIT
 
 if wait_for_mcp_healthy; then
   verify_sync_nonce_survived
