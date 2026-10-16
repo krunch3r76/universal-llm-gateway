@@ -438,21 +438,39 @@ _normalize_container_listing() {
 }
 
 _listing_matches() {
-  local expected actual root
+  local expected actual root absent saw_root=0
   local -a find_args=()
+  local -a absent_roots=()
   expected="$(mktemp)"
   actual="$(mktemp)"
   while IFS= read -r root; do
     [[ -z "$root" ]] && continue
+    saw_root=1
     if [[ -d "${MCP_DATA_DIR}/last-healthy/${root}" ]]; then
       _list_root "${MCP_DATA_DIR}/last-healthy" "$root" >> "$expected"
       find_args+=("/app/${root}")
+    else
+      absent_roots+=("$root")
     fi
   done <<< "${_SYNCED_ROOT_LIST}"
-  sort -u "$expected" -o "$expected"
+  if [[ ${#absent_roots[@]} -gt 0 ]]; then
+    for absent in "${absent_roots[@]}"; do
+      if docker exec mcp-server test -e "/app/${absent}"; then
+        rm -f "$expected" "$actual"
+        return 1
+      fi
+    done
+  fi
+  # No synced root, or nothing to list, is not a silent match of two empty files.
   if [[ ${#find_args[@]} -eq 0 ]]; then
-    : > "$actual"
-  elif ! docker exec mcp-server find "${find_args[@]}" \
+    rm -f "$expected" "$actual"
+    if [[ "$saw_root" -eq 1 ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  sort -u "$expected" -o "$expected"
+  if ! docker exec mcp-server find "${find_args[@]}" \
       \( -name '__pycache__' -o -name '*.pyc' \) -prune -o -print \
       | _normalize_container_listing > "$actual"; then
     rm -f "$expected" "$actual"
@@ -551,23 +569,23 @@ sync_source_into_container() {
   arm_restore_window
   _TREE_CHANGED=1
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
-  docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
   _note_synced_root libs
-  docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
+  docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
   _note_synced_root services
-  docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
+  docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
   _note_synced_root config
+  docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
   docker cp "$WORKSPACE_ROOT/sitecustomize.py" "${c}:/app/sitecustomize.py"
-  docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
   _note_synced_root pipelines
+  docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
   if [[ -d "$WORKSPACE_ROOT/pipelines.local" ]]; then
-    docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
     _note_synced_root pipelines.local
+    docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
   fi
   if [[ -d "$WORKSPACE_ROOT/services/mcp-server/tools/local" ]]; then
+    _note_synced_root "services/mcp-server/tools/local"
     docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
       "${c}:/app/services/mcp-server/tools/local/"
-    _note_synced_root "services/mcp-server/tools/local"
   fi
   docker exec -u 0 "$c" chown -R mcp:mcp \
     /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
@@ -717,8 +735,11 @@ else
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
   if [[ -n "$img" ]]; then
-    echo "MCP_SYNC_GATE_RESTORE" >&2
-    gate restore --firer script --checked-image-id "$img" || true
+    if gate restore --firer script --checked-image-id "$img"; then
+      echo "MCP_SYNC_GATE_RESTORE" >&2
+    else
+      echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+    fi
     wait_for_mcp_healthy || exit 1
   else
     exit 1

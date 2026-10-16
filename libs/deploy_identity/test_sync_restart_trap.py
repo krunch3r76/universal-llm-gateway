@@ -46,6 +46,8 @@ def _stub_docker_dir(
     mount_dest: str = "",
     listing_orphan: str = "",
     snapshot_pipelines_local_fails: bool = False,
+    sync_services_cp_fails: bool = False,
+    optional_root_remains: bool = False,
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -135,6 +137,17 @@ def _stub_docker_dir(
             nonce_file={str(nonce_file)!r}
             if [[ "$joined" == *" true" ]]; then
               if [[ "{str(exec_true_fails).lower()}" == "true" ]]; then
+                exit 1
+              fi
+              exit 0
+            fi
+            if [[ "$joined" == *"test -e /app/"* ]]; then
+              if [[ "{str(optional_root_remains).lower()}" == "true" ]]; then
+                exit 0
+              fi
+              target="${{joined##*test -e }}"
+              target="${{target%% *}}"
+              if [[ -f "{tmp_path / "tree_rm.log"}" ]] && grep -q -F "D ${{target}}" "{tmp_path / "tree_rm.log"}"; then
                 exit 1
               fi
               exit 0
@@ -241,6 +254,9 @@ def _stub_docker_dir(
               exit 1
             fi
             if [[ "{str(snapshot_pipelines_local_fails).lower()}" == "true" && "$*" == *mcp-server:/app/pipelines.local* && "$dest" != *:* ]]; then
+              exit 1
+            fi
+            if [[ "{str(sync_services_cp_fails).lower()}" == "true" && "$dest" == "mcp-server:/app/services/" && "$*" != *last-healthy* ]]; then
               exit 1
             fi
             if [[ "{str(sync_cp_fails).lower()}" == "true" && "$dest" == "mcp-server:/app/libs/" && "$*" != *last-healthy* ]]; then
@@ -406,7 +422,11 @@ def test_kill_during_stop_restores_snapshotted_stamp(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_never_healthy_single_pre_restart_stamp_write(tmp_path: Path) -> None:
-    """Never-healthy path: one pre-restart stamp write, then image restore (no post-healthy write)."""
+    """Never-healthy path: one pre-restart stamp write, then a restore that returns 1.
+
+    Post-restart inspect is unhealthy, so the gate's health wait fails and
+    the success marker is not printed.
+    """
     _seed_checked_image(tmp_path)
     stub = _stub_docker_dir(
         tmp_path,
@@ -420,7 +440,8 @@ def test_never_healthy_single_pre_restart_stamp_write(tmp_path: Path) -> None:
     assert log.count("STAMP_WRITE") == 1, log
     idx = _log_indices(log)
     assert idx["stamp_write"] < idx["stop"] < idx["start"], log
-    assert "MCP_SYNC_GATE_RESTORE" in proc.stderr
+    assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr, proc.stderr
+    assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
 
 
 def _seed_last_healthy_copy_set(tmp_path: Path, token: str = "oldsha") -> None:
@@ -636,6 +657,8 @@ def test_sigterm_during_sync_cp_marks_tree_outcome(tmp_path: Path) -> None:
     stub = _stub_docker_dir(tmp_path, kill_on_sync_cp=True, inspect_health="healthy")
     proc = _run_sync_script(tmp_path, stub, timeout=90)
     assert proc.returncode != 0, proc.stdout
+    log = _docker_log(tmp_path)
+    assert "exec mcp-server find" in log and "/app/libs" in log, log[-400:]
     assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
     assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr
 
@@ -1148,5 +1171,81 @@ def test_rollback_removes_pipelines_local_root(tmp_path: Path) -> None:
         assert "D /app/pipelines.local\n" in rm_text, rm_text[-400:]
         assert "pipelines.local/probe.txt" not in rm_text
         assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    finally:
+        shutil.rmtree(local, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_failed_services_cp_stays_in_rollback_candidate_set(tmp_path: Path) -> None:
+    """A services docker cp that returns 1 still puts that root in the delete set.
+
+    The container stays healthy and last-healthy is complete. The probe file
+    is in the workspace source list and absent from last-healthy, so a rollback
+    that never noted services cannot claim the tree matches.
+    """
+    probe = _REPO_ROOT / "services" / "_probe_svcfail.py"
+    probe.write_text("probe = 1\n", encoding="utf-8")
+    try:
+        _seed_last_healthy_copy_set(tmp_path)
+        stub = _stub_docker_dir(
+            tmp_path,
+            inspect_health="healthy",
+            sync_services_cp_fails=True,
+        )
+        proc = _run_sync_script(tmp_path, stub)
+        log = _docker_log(tmp_path)
+        rm_text = _tree_rm_text(tmp_path)
+        assert "F /app/services/_probe_svcfail.py" in rm_text, rm_text[-300:]
+        assert "find /app/libs /app/services" in log, log[-400:]
+        assert proc.returncode != 0, proc.stdout
+    finally:
+        probe.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_never_healthy_gate_marker_follows_restore_result(tmp_path: Path) -> None:
+    """An unhealthy restart prints the gate marker only when restore returns 0.
+
+    The checked image is set and the later inspect is unhealthy, so the gate
+    reaches docker rm and then fails the health wait. The marker must not
+    precede that failure.
+    """
+    _seed_checked_image(tmp_path)
+    stub = _stub_docker_dir(
+        tmp_path,
+        inspect_health="healthy",
+        post_restart_health="unhealthy",
+        nonce_mode="stored",
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr, proc.stderr
+    assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
+    assert "rm -f mcp-server" in log, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_optional_root_remaining_after_delete_disagrees(tmp_path: Path) -> None:
+    """A noted pipelines.local that is still in the container is not a match.
+
+    last-healthy has no pipelines.local directory, the delete command returns 0,
+    and the container path remains. An empty find argument list must not
+    report success.
+    """
+    local = _REPO_ROOT / "pipelines.local"
+    local.mkdir()
+    (local / "probe.txt").write_text("probe\n", encoding="utf-8")
+    try:
+        _seed_last_healthy_copy_set(tmp_path)
+        stub = _stub_docker_dir(
+            tmp_path,
+            stop_fails=True,
+            inspect_health="healthy",
+            snapshot_pipelines_local_fails=True,
+            optional_root_remains=True,
+        )
+        proc = _run_sync_script(tmp_path, stub)
+        assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr, proc.stderr[-500:]
+        assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr[-500:]
     finally:
         shutil.rmtree(local, ignore_errors=True)
