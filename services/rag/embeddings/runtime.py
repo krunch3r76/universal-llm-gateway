@@ -5,6 +5,8 @@ and probe payload, the injected event bus, and a write-once embedding
 dimension. ``rag_service/lifecycle.py`` calls ``configure`` and
 ``set_event_bus`` at startup and ``close`` on shutdown; sibling modules read
 state through the getters so all embedding calls share one client.
+Importing ``sniffio`` at module load preloads it before the event loop
+serves traffic, so a later import does not block on the global import lock.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import httpx
+import sniffio  # noqa: F401 — preload before the loop; cold import blocks on the import lock
 from universal_logging import get_logger
 
 if TYPE_CHECKING:

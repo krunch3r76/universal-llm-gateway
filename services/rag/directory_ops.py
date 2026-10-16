@@ -293,6 +293,9 @@ async def purge_orphaned_sources(
 ) -> tuple[int, int, set[str]]:
     """Delete missing watched sources from Chroma and metadata-bearing storage.
 
+    The exists scan runs in a worker thread so a slow filesystem stat does not
+    stall the event loop.
+
     Returns:
         (files_purged, chunks_purged, purged_sources)
     """
@@ -301,7 +304,11 @@ async def purge_orphaned_sources(
         prefixes=watch_prefixes,
         list_known_sources_fn=list_known_sources_fn,
     )
-    missing_sources = {source for source in known_sources if not Path(source).exists()}
+
+    def _missing_on_disk(sources: set[str]) -> set[str]:
+        return {source for source in sources if not Path(source).exists()}
+
+    missing_sources = await asyncio.to_thread(_missing_on_disk, known_sources)
     if not missing_sources:
         return 0, 0, set()
     files, chunks = await delete_sources(

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import chromadb
 import pytest
 
+from services.rag.chroma_writer import init_chroma_executor, shutdown_chroma_executor
 from services.rag.search_scope.prefix_filter import apply_source_prefix_filter_with_ids
 from services.rag.search_scope.vector_window import (
     SCOPED_FETCH_MULTIPLIER,
@@ -16,6 +18,14 @@ from services.rag.search_scope.vector_window import (
 )
 
 _PREFIX = "/scope/journals"
+
+
+@pytest.fixture(autouse=True)
+def _chroma_writer_executor() -> Iterator[None]:
+    """``query_vector_window`` submits query and count through ``run_chroma``."""
+    init_chroma_executor()
+    yield
+    shutdown_chroma_executor()
 
 
 def _row(
@@ -102,10 +112,11 @@ def _scoped_rows() -> list[tuple[str, str, dict[str, Any], float]]:
     return rows
 
 
-def test_scoped_window_returns_hits_beyond_old_top_k_times_five() -> None:
+@pytest.mark.asyncio
+async def test_scoped_window_returns_hits_beyond_old_top_k_times_five() -> None:
     collection = _RecordingCollection(_scoped_rows())
     top_k = 3
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=top_k,
@@ -138,13 +149,14 @@ def test_scoped_window_returns_hits_beyond_old_top_k_times_five() -> None:
     assert window.cap_hit is False
 
 
-def test_unscoped_query_keeps_fetch_multiplier_and_omits_where() -> None:
+@pytest.mark.asyncio
+async def test_unscoped_query_keeps_fetch_multiplier_and_omits_where() -> None:
     rows = [
         _row(f"id-{index}", f"/any/{index}.md", float(index)) for index in range(20)
     ]
     collection = _QueryOnlyCollection(rows)
     top_k = 4
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=top_k,
@@ -157,7 +169,7 @@ def test_unscoped_query_keeps_fetch_multiplier_and_omits_where() -> None:
     assert window.round_trips == 1
     assert window.cap_hit is False
 
-    empty_prefixes = query_vector_window(
+    empty_prefixes = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=top_k,
@@ -167,7 +179,8 @@ def test_unscoped_query_keeps_fetch_multiplier_and_omits_where() -> None:
     assert collection.queries == [12, 12]
 
 
-def test_cap_stops_with_fewer_than_top_k_and_is_deterministic() -> None:
+@pytest.mark.asyncio
+async def test_cap_stops_with_fewer_than_top_k_and_is_deterministic() -> None:
     rows = [
         _row(f"out-{index}", f"/other/{index}.md", float(index)) for index in range(80)
     ]
@@ -180,8 +193,8 @@ def test_cap_stops_with_fewer_than_top_k_and_is_deterministic() -> None:
         "n_results_ceiling": 32,
         "max_round_trips": 10,
     }
-    first_window = query_vector_window(first, [0.0], **kwargs)
-    second_window = query_vector_window(second, [0.0], **kwargs)
+    first_window = await query_vector_window(first, [0.0], **kwargs)
+    second_window = await query_vector_window(second, [0.0], **kwargs)
 
     assert first.queries == second.queries == [15, 30, 32]
     assert first_window.cap == 32
@@ -192,7 +205,8 @@ def test_cap_stops_with_fewer_than_top_k_and_is_deterministic() -> None:
     assert max(first.queries) <= 32
 
 
-def test_noise_in_scope_rows_do_not_satisfy_top_k() -> None:
+@pytest.mark.asyncio
+async def test_noise_in_scope_rows_do_not_satisfy_top_k() -> None:
     rows = [
         _row(f"noise-{index}", f"{_PREFIX}/noise-{index}.md", float(index), noise=True)
         for index in range(20)
@@ -202,7 +216,7 @@ def test_noise_in_scope_rows_do_not_satisfy_top_k() -> None:
         for index in range(2)
     )
     collection = _RecordingCollection(rows)
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0],
         top_k=2,
@@ -213,9 +227,10 @@ def test_noise_in_scope_rows_do_not_satisfy_top_k() -> None:
     assert window.cap_hit is False
 
 
-def test_empty_index_is_a_cap_hit_without_query() -> None:
+@pytest.mark.asyncio
+async def test_empty_index_is_a_cap_hit_without_query() -> None:
     collection = _RecordingCollection([])
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0],
         top_k=3,
@@ -227,7 +242,8 @@ def test_empty_index_is_a_cap_hit_without_query() -> None:
     assert window.ids == []
 
 
-def test_indexed_sources_push_down_source_in_where() -> None:
+@pytest.mark.asyncio
+async def test_indexed_sources_push_down_source_in_where() -> None:
     rows = [
         _row(f"in-{index}", f"{_PREFIX}/{index}.md", float(index)) for index in range(3)
     ]
@@ -235,7 +251,7 @@ def test_indexed_sources_push_down_source_in_where() -> None:
         _row(f"pad-{index}", f"/other/{index}.md", 10.0 + index) for index in range(20)
     )
     collection = _RecordingCollection(rows)
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=3,
@@ -261,12 +277,13 @@ def test_indexed_sources_push_down_source_in_where() -> None:
     assert window.ids[:3] == ["in-0", "in-1", "in-2"]
 
 
-def test_where_stops_when_filtered_page_is_short() -> None:
+@pytest.mark.asyncio
+async def test_where_stops_when_filtered_page_is_short() -> None:
     """A $in filter smaller than top_k does not walk the global cap."""
     rows = [_row("only", f"{_PREFIX}/only.md", 0.2)]
     collection = _RecordingCollection(rows)
     collection.count = lambda: 90000  # type: ignore[method-assign]
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=3,
@@ -281,9 +298,10 @@ def test_where_stops_when_filtered_page_is_short() -> None:
     assert window.round_trips == 1
 
 
-def test_empty_indexed_sources_skip_chroma() -> None:
+@pytest.mark.asyncio
+async def test_empty_indexed_sources_skip_chroma() -> None:
     collection = _RecordingCollection(_scoped_rows())
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=3,
@@ -315,9 +333,10 @@ class _RejectWhereCollection(_RecordingCollection):
         )
 
 
-def test_where_rejection_falls_back_to_over_fetch() -> None:
+@pytest.mark.asyncio
+async def test_where_rejection_falls_back_to_over_fetch() -> None:
     collection = _RejectWhereCollection(_scoped_rows())
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=3,
@@ -340,14 +359,15 @@ class _CountingRejectWhereCollection(_RejectWhereCollection):
         return super().query(**kwargs)
 
 
-def test_where_rejection_fallback_stays_within_trip_budget() -> None:
+@pytest.mark.asyncio
+async def test_where_rejection_fallback_stays_within_trip_budget() -> None:
     rows = [
         _row(f"out-{index}", f"/other/{index}.md", float(index))
         for index in range(3000)
     ]
     rows.append(_row("far", f"{_PREFIX}/far.md", 9999.0))
     collection = _CountingRejectWhereCollection(rows)
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=1,
@@ -361,10 +381,11 @@ def test_where_rejection_fallback_stays_within_trip_budget() -> None:
     assert window.cap_hit is True
 
 
-def test_oversized_indexed_sources_use_over_fetch() -> None:
+@pytest.mark.asyncio
+async def test_oversized_indexed_sources_use_over_fetch() -> None:
     collection = _RecordingCollection(_scoped_rows())
 
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=3,
@@ -457,7 +478,8 @@ def test_installed_chromadb_rejects_metadata_prefix_operators() -> None:
         )
 
 
-def test_real_chromadb_source_in_prefilters_before_n_results() -> None:
+@pytest.mark.asyncio
+async def test_real_chromadb_source_in_prefilters_before_n_results() -> None:
     """``source`` ``$in`` keeps a far in-scope row inside a tiny neighbor window."""
     client = chromadb.EphemeralClient()
     collection = client.create_collection(
@@ -483,7 +505,7 @@ def test_real_chromadb_source_in_prefilters_before_n_results() -> None:
         metadatas=metadatas,
         documents=documents,
     )
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=1,
@@ -505,7 +527,8 @@ def test_real_chromadb_source_in_prefilters_before_n_results() -> None:
     assert all(not str(row_id).startswith("out-") for row_id in window.ids)
 
 
-def test_real_chromadb_scoped_window_skips_nearer_out_of_scope() -> None:
+@pytest.mark.asyncio
+async def test_real_chromadb_scoped_window_skips_nearer_out_of_scope() -> None:
     client = chromadb.EphemeralClient()
     collection = client.create_collection(
         "scoped_window",
@@ -531,7 +554,7 @@ def test_real_chromadb_scoped_window_skips_nearer_out_of_scope() -> None:
         documents=documents,
     )
 
-    window = query_vector_window(
+    window = await query_vector_window(
         collection,
         [1.0, 0.0],
         top_k=1,

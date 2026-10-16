@@ -146,7 +146,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
         # Chroma queries, n_results <= 2000). Unscoped stays one top_k * 3 query.
         # See search_scope.vector_window for the bound.
         indexed_sources = await _indexed_sources_for_scope(request.source_prefixes)
-        window = query_vector_window(
+        window = await query_vector_window(
             collection,
             query_embedding,
             top_k=request.top_k,
