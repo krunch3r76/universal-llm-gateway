@@ -236,18 +236,26 @@ async def find_removed_directory_sources(
     walked_sources: set[str],
     list_known_sources_fn: ListKnownSourcesFn | None = None,
 ) -> set[str]:
-    """Return missing source paths under dir_path after a directory reindex walk."""
+    """Return missing source paths under dir_path after a directory reindex walk.
+
+    The exists scan runs in a worker thread so a slow filesystem stat does not
+    stall the event loop (friction:39420 review B2).
+    """
     dir_prefix = f"{dir_path.resolve()}/"
     known_sources = await find_sources_under_prefixes(
         collection=collection,
         prefixes=[dir_prefix],
         list_known_sources_fn=list_known_sources_fn,
     )
-    return {
-        source
-        for source in known_sources
-        if source not in walked_sources and not Path(source).exists()
-    }
+
+    def _missing_after_walk(sources: set[str], walked: set[str]) -> set[str]:
+        return {
+            source
+            for source in sources
+            if source not in walked and not Path(source).exists()
+        }
+
+    return await asyncio.to_thread(_missing_after_walk, known_sources, walked_sources)
 
 
 async def delete_sources(

@@ -21,6 +21,7 @@ from services.rag.chroma_writer import (
 from services.rag.config import RagConfig, ScopeDefinition, WatchDirectory
 from services.rag.corpus_hints import freshness
 from services.rag.directory_ops import (
+    find_removed_directory_sources,
     find_sources_under_prefixes,
     purge_orphaned_sources,
 )
@@ -875,6 +876,50 @@ async def test_purge_exists_scan_off_loop_under_drift_cap(
         assert files == 1
         assert chunks == 1
         assert missing == {"/missing/file.md"}
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_find_removed_directory_sources_exists_off_loop(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2.5 s exists check in directory removal must run off the loop.
+
+    Breaks when ``find_removed_directory_sources`` calls ``Path.exists`` on
+    the event loop (friction:39420 review B2 second site).
+    """
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    await asyncio.sleep(0.05)
+
+    async def _known(**kwargs: object) -> set[str]:
+        del kwargs
+        return {"/missing/file.md"}
+
+    class _SlowPath:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        def exists(self) -> bool:
+            time.sleep(2.5)
+            return False
+
+    monkeypatch.setattr(
+        "services.rag.directory_ops.find_sources_under_prefixes",
+        _known,
+    )
+    monkeypatch.setattr("services.rag.directory_ops.Path", _SlowPath)
+    try:
+        removed = await find_removed_directory_sources(
+            collection=MagicMock(),
+            dir_path=Path("/missing"),
+            walked_sources=set(),
+        )
+        assert removed == {"/missing/file.md"}
         await asyncio.sleep(0.05)
         assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
     finally:
