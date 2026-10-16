@@ -101,6 +101,36 @@ async def test_watchdog_flag_off_skips_dump(
 
 
 @pytest.mark.asyncio
+async def test_continuous_stall_dumps_again_at_long_threshold(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One long sync stall emits a threshold dump and a second at RAG_LOOP_STACK_LONG_S."""
+    _arm(
+        monkeypatch,
+        RAG_LOOP_STACK_LATE_S="0.4",
+        RAG_LOOP_STACK_LONG_S="0.8",
+        RAG_LOOP_STACK_MIN_INTERVAL_S="30",
+    )
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    start_loop_instrumentation()
+    try:
+        time.sleep(1.05)
+        await asyncio.sleep(0.15)
+        dumps = _dumps(caplog)
+        assert len(dumps) >= 2, "expected threshold and long-stall stack dumps"
+        late_vals = []
+        for msg in dumps:
+            match = re.search(r"late_ms=([\d.]+)", msg)
+            assert match is not None
+            late_vals.append(float(match.group(1)))
+        assert late_vals[0] < 600
+        assert late_vals[1] >= 750
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_one_dump_per_interval(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,

@@ -12,6 +12,8 @@ full new id set for the commit phase.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +58,8 @@ if TYPE_CHECKING:
     from services.rag.property_index import PropertyIndex
 
 logger = get_logger(__name__)
+
+_NOISE_REASON_SLOW_LOG_MS = 50.0
 
 
 @dataclass
@@ -112,7 +116,16 @@ async def _run_embed_phase(
         metadata["source"] = source
 
     for metadata, chunk in zip(metadatas, chunks, strict=True):
-        nr = noise_reason(chunk.text)
+        t0 = time.perf_counter()
+        nr = await asyncio.to_thread(noise_reason, chunk.text)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        if elapsed_ms > _NOISE_REASON_SLOW_LOG_MS:
+            logger.info(
+                "noise_reason_slow_ms=%.1f source=%s text_len=%d",
+                elapsed_ms,
+                source,
+                len(chunk.text),
+            )
         if nr is not None:
             metadata["is_noise"] = True
             metadata["noise_reason"] = nr

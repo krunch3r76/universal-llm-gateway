@@ -38,7 +38,13 @@ _watchdog_stop: threading.Event | None = None
 _heartbeat_mono: float = 0.0
 _loop_ident: int | None = None
 _loop_ref: asyncio.AbstractEventLoop | None = None
-_watchdog_cfg: tuple[float, float, int, float] = (2.0, 30.0, 12, 0.25)
+_watchdog_cfg: tuple[float, float, float, int, float] = (
+    2.0,
+    10.0,
+    30.0,
+    12,
+    0.25,
+)
 
 
 def _env_flag_on(name: str) -> bool:
@@ -132,9 +138,10 @@ def _stack_watchdog(stop: threading.Event) -> None:
     A task cannot run during the stall this thread exists to see, so task
     names come from ``asyncio.all_tasks`` on the watchdog thread.
     """
-    late_s, min_interval_s, frame_limit, poll_s = _watchdog_cfg
+    late_s, long_late_s, min_interval_s, frame_limit, poll_s = _watchdog_cfg
     last_dump = 0.0
     armed = True
+    long_sample_done = False
     while not stop.wait(poll_s):
         age_s = time.monotonic() - _heartbeat_mono
         now = time.monotonic()
@@ -143,8 +150,14 @@ def _stack_watchdog(stop: threading.Event) -> None:
                 _emit_stack_dump(min_interval_s, frame_limit)
                 last_dump = time.monotonic()
                 armed = False
-        elif (now - last_dump) >= min_interval_s:
-            armed = True
+            elif not long_sample_done and age_s > long_late_s:
+                _emit_stack_dump(min_interval_s, frame_limit)
+                last_dump = time.monotonic()
+                long_sample_done = True
+        else:
+            long_sample_done = False
+            if (now - last_dump) >= min_interval_s:
+                armed = True
 
 
 async def _loop_drift_monitor(stop: asyncio.Event) -> None:
@@ -178,7 +191,7 @@ def start_loop_instrumentation() -> None:
 
     Safe to call once per process; repeated calls are ignored until stop runs.
     ``RAG_LOOP_STACK_WATCHDOG=0|false|off`` skips the watchdog thread. Other
-    stack env (``RAG_LOOP_STACK_LATE_S``, ``RAG_LOOP_STACK_FRAMES``,
+    stack env (    ``RAG_LOOP_STACK_LATE_S``, ``RAG_LOOP_STACK_LONG_S``, ``RAG_LOOP_STACK_FRAMES``,
     ``RAG_LOOP_STACK_MIN_INTERVAL_S``, ``RAG_LOOP_STACK_POLL_S``) is read once
     here.
     """
@@ -192,6 +205,7 @@ def start_loop_instrumentation() -> None:
     _touch_heartbeat()
     _watchdog_cfg = (
         _env_float("RAG_LOOP_STACK_LATE_S", 2.0),
+        _env_float("RAG_LOOP_STACK_LONG_S", 10.0),
         _env_float("RAG_LOOP_STACK_MIN_INTERVAL_S", 30.0),
         _env_int("RAG_LOOP_STACK_FRAMES", 12),
         _env_float("RAG_LOOP_STACK_POLL_S", 0.25),
