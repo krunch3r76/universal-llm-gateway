@@ -259,13 +259,17 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
         # Get client IP
         client_ip = request.client.host if request.client else "unknown"
 
-        # Check if IP is whitelisted
+        # Check if IP is whitelisted. A presented key is not enforced:
+        # missing and unknown keys still admit. A dict-labelled key binds
+        # its client_id so cloud forward can emit X-ULG-Client.
         if api_key_manager.is_ip_whitelisted(client_ip):
-            # logger.info(f"Request from whitelisted IP: {client_ip}")
-            bind_admitted_client_id(None)
+            api_key = _extract_api_key_from_request(request)
+            client_id = api_key_manager.client_id_for_key(api_key)
+            bind_admitted_client_id(client_id)
             return {
                 "authenticated": True,
-                "api_key": None,
+                "api_key": api_key,
+                "client_id": client_id,
                 "auth_method": "ip_whitelist",
                 "client_ip": client_ip,
             }

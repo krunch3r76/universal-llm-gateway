@@ -11,7 +11,14 @@ from systems.cloud.forwarder import (
     CloudProxyClient,
     cloud_chat_forward_headers,
 )
-from systems.proxy.authorization import APIKeyManager, bind_admitted_client_id
+from fastapi import Request
+
+from systems.proxy.authorization import (
+    APIKeyManager,
+    bind_admitted_client_id,
+    create_auth_dependency,
+    current_admitted_client_id,
+)
 
 
 def test_dict_key_records_client_id_string_and_hash_do_not() -> None:
@@ -90,3 +97,59 @@ async def test_string_key_forward_omits_header() -> None:
     assert response.status_code == 200
     assert captured["client"] == ""
     await client.close()
+
+
+def _whitelist_request(host: str, bearer: str | None = None) -> Request:
+    headers: list[tuple[bytes, bytes]] = []
+    if bearer is not None:
+        headers.append((b"authorization", f"Bearer {bearer}".encode()))
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/chat/completions",
+            "raw_path": b"/v1/chat/completions",
+            "query_string": b"",
+            "headers": headers,
+            "client": (host, 12345),
+            "server": ("test", 80),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_whitelist_binds_labelled_key_and_allows_missing_or_unknown() -> None:
+    """Whitelist still admits without a key check; a dict key binds client_id."""
+    manager = APIKeyManager(
+        {
+            "enabled": True,
+            "ip_whitelist": {"enabled": True},
+            "api_keys": [{"key": "dict-key-fixture", "client_id": "open-webui"}],
+        }
+    )
+    get_current_user = create_auth_dependency(manager)
+
+    labelled = await get_current_user(
+        _whitelist_request("127.0.0.1", "dict-key-fixture")
+    )
+    assert labelled["authenticated"] is True
+    assert labelled["auth_method"] == "ip_whitelist"
+    assert labelled["client_id"] == "open-webui"
+    assert current_admitted_client_id() == "open-webui"
+
+    missing = await get_current_user(_whitelist_request("127.0.0.1"))
+    assert missing["authenticated"] is True
+    assert missing["auth_method"] == "ip_whitelist"
+    assert missing["client_id"] is None
+    assert current_admitted_client_id() is None
+
+    unknown = await get_current_user(
+        _whitelist_request("127.0.0.1", "unknown-key-fixture")
+    )
+    assert unknown["authenticated"] is True
+    assert unknown["auth_method"] == "ip_whitelist"
+    assert unknown["client_id"] is None
+    assert current_admitted_client_id() is None
