@@ -118,6 +118,7 @@ class ExtractionQueueClaim:
     attempts: int
     queued_at: str
     claimed_at: str
+    active_execution_id: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)

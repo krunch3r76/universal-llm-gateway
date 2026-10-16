@@ -46,6 +46,14 @@ _MAX_QUEUE_ATTEMPTS = 5
 _ADMISSION_WAIT_TIMEOUT_S: float = 60.0
 
 
+def is_map_iteration_timeout_error(exc: BaseException) -> bool:
+    """True when Stargate failed a map step with a pending-request timeout."""
+    if not isinstance(exc, RuntimeError):
+        return False
+    msg = str(exc)
+    return "MapPartialFailureError" in msg and "request pending" in msg
+
+
 async def _sleep_or_shutdown(
     event: asyncio.Event,
     seconds: float,
@@ -188,6 +196,7 @@ async def run_extraction_worker(
                 rag_config=config,
                 property_index=property_index,
                 on_execution_id=_store_execution_id,
+                prior_execution_id=claim.active_execution_id,
             )
             # On CancelledError the active_execution_id is left intact so that
             # recover_abandoned_extraction_claims() can cancel the orphan on
@@ -308,6 +317,40 @@ async def run_extraction_worker(
                 await _sleep_or_shutdown(
                     shutdown_event, _POLL_INTERVAL_S, wake=wake_event
                 )
+
+        except RuntimeError as exc:
+            if is_map_iteration_timeout_error(exc):
+                logger.warning(
+                    "Extraction worker: map iteration timeout for %s "
+                    "(burning attempt)",
+                    source,
+                )
+                await record_source_failure(
+                    property_index=property_index,
+                    event_bus=event_bus,
+                    source=source,
+                    increment_attempt=True,
+                    failure_category="iteration_timeout",
+                    error=str(exc) or type(exc).__qualname__,
+                    error_type=type(exc).__qualname__,
+                )
+            else:
+                logger.error(
+                    "Extraction worker: unexpected error for %s "
+                    "(treated as capacity-class; budget held)",
+                    source,
+                    exc_info=True,
+                )
+                await record_source_failure(
+                    property_index=property_index,
+                    event_bus=event_bus,
+                    source=source,
+                    increment_attempt=False,
+                    failure_category="unexpected",
+                    error=str(exc) or type(exc).__qualname__,
+                    error_type=type(exc).__qualname__,
+                )
+            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
 
         except Exception as exc:
             logger.error(

@@ -132,7 +132,8 @@ class _PropertyIndexPart07:
                 " UPDATE extraction_queue"
                 " SET last_attempt_at = datetime('now')"
                 " WHERE source IN (SELECT source FROM candidates)"
-                " RETURNING source, attempts, queued_at, last_attempt_at",
+                " RETURNING source, attempts, queued_at, last_attempt_at,"
+                " active_execution_id",
                 (max_attempts, limit),
             ).fetchall()
             conn.commit()
@@ -142,6 +143,7 @@ class _PropertyIndexPart07:
                     attempts=int(row[1]),
                     queued_at=row[2],
                     claimed_at=row[3],
+                    active_execution_id=row[4],
                 )
                 for row in rows
             ]
