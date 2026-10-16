@@ -6,8 +6,6 @@ from typing import Any
 
 import pytest
 
-pytest_plugins = ["scripts.model_manager.testing.conftest"]
-
 
 def stub_process_live_probe(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Replace ``probe_process_live`` with a recorder (no TCP/UDS health GET)."""

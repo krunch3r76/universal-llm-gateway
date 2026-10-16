@@ -1,5 +1,6 @@
-"""Pytest plugin: hermetic network guard (import via pytest_plugins in test trees)."""
+"""Not a pytest plugin.
 
-from __future__ import annotations
-
-pytest_plugins = ["scripts.model_manager.testing.hermetic_network_guard"]
+The hermetic guard is installed by ``scripts/model_manager/ui/conftest.py``
+for the controller tree and the charter-harvest module only. Loading this
+package as ``pytest_plugins`` would make any autouse fixture session-global.
+"""

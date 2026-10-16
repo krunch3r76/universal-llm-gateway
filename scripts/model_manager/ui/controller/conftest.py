@@ -6,8 +6,6 @@ from typing import Any
 
 import pytest
 
-pytest_plugins = ["scripts.model_manager.testing.conftest"]
-
 _REFUSAL = "unpatched grokbot egress watch reached {name}"
 
 

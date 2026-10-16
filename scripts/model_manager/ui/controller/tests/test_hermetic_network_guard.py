@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import socket
+import stat
 import subprocess
+import threading
 
 import pytest
 
@@ -13,6 +17,8 @@ from scripts.model_manager.testing.hermetic_network_guard import (
 
 pytestmark = pytest.mark.offline
 
+_EVENTS_SOCK = b"/tmp/universal-protocol/events.sock"
+
 
 def test_hermetic_guard_blocks_inet_socket_connect() -> None:
     with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
@@ -21,10 +27,16 @@ def test_hermetic_guard_blocks_inet_socket_connect() -> None:
 
 @pytest.mark.allow_live_network
 def test_hermetic_guard_allows_inet_socket_when_opted_out() -> None:
+    """Opt-out connects to a listener this test binds. It does not dial :8091."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    _host, port = listener.getsockname()
     try:
-        socket.create_connection(("127.0.0.1", 8091), timeout=0.05)
-    except OSError as exc:
-        assert "hermetic network guard" not in str(exc).lower()
+        client = socket.create_connection(("127.0.0.1", port), timeout=1.0)
+        client.close()
+    finally:
+        listener.close()
 
 
 def test_hermetic_guard_blocks_docker_subprocess() -> None:
@@ -37,14 +49,76 @@ def test_hermetic_guard_blocks_docker_subprocess() -> None:
 
 
 @pytest.mark.allow_live_network
-def test_hermetic_guard_allows_docker_subprocess_when_opted_out() -> None:
+def test_hermetic_guard_allows_docker_subprocess_when_opted_out(
+    tmp_path: object,
+) -> None:
+    """Opt-out executes a stub binary named docker, not the real docker CLI."""
+    from pathlib import Path
+
+    root = Path(str(tmp_path))
+    stub = root / "docker"
+    stub.write_text("#!/bin/sh\necho stub-docker\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    env = os.environ.copy()
+    env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(  # noqa: S603
+        ["docker", "inspect", "mcp-server"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert "stub-docker" in result.stdout
+
+
+def test_hermetic_guard_blocks_unix_bytes_address() -> None:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
+        with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+            sock.connect(_EVENTS_SOCK)
+    finally:
+        sock.close()
+
+
+def test_hermetic_guard_blocks_docker_compose_argv0() -> None:
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
         subprocess.run(  # noqa: S603
-            ["docker", "inspect", "mcp-server"],
+            ["docker-compose", "ps"],
             capture_output=True,
             check=False,
         )
-    except HermeticNetworkGuardError:
-        pytest.fail("guard tripped on opt-out test")
-    except (FileNotFoundError, OSError):
-        pass
+
+
+def test_hermetic_guard_blocks_docker_absolute_path_shell() -> None:
+    async def _launch() -> None:
+        await asyncio.create_subprocess_shell("/usr/bin/docker inspect mcp-server")
+
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+        asyncio.run(_launch())
+
+
+def test_worker_thread_guard_error_is_oserror() -> None:
+    """A worker-thread connect raises HermeticNetworkGuardError, an OSError.
+
+    The cortex events publisher is a process-lifetime daemon that catches
+    OSError and retries (event_publisher.py). Failing every later test because
+    that daemon tripped would pollute the session, so the guard error is an
+    OSError and this test records it inside the worker instead of leaving it
+    uncaught. Uncaught thread exceptions still surface as pytest warnings;
+    specimen: test_digest_tick_loop.py::test_healthy_env_calls_tick_jobs
+    before this subclass.
+    """
+    seen: list[BaseException] = []
+
+    def _connect() -> None:
+        try:
+            socket.create_connection(("127.0.0.1", 1), timeout=0.05)
+        except OSError as exc:
+            seen.append(exc)
+
+    worker = threading.Thread(target=_connect, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+    assert seen
+    assert isinstance(seen[0], HermeticNetworkGuardError)
