@@ -198,7 +198,7 @@ gate() {
 }
 
 _restore_window_exit() {
-  trap '' PIPE
+  trap '' PIPE INT TERM HUP
   trap - EXIT
   set +e
   if [[ "$_RESTORE_HANDLER_RAN" == 1 ]]; then
@@ -212,6 +212,19 @@ _restore_window_exit() {
   # Stamp rollback only for a snapshot this run wrote. A leftover file from
   # another run must not suppress gate restore.
   if [[ "${_STAMP_WRITTEN:-0}" == 1 && "${_STOP_SUCCEEDED:-0}" != 1 ]]; then
+    if _container_still_serving; then
+      # Stop failed or never ran, and the process is still up. gate restore
+      # refuses healthy/restarting/starting, so copy the last-healthy set back
+      # into the running container, then the old stamp.
+      if _last_healthy_copy_set_present && _rollback_running_tree_from_last_healthy; then
+        restore_source_sync_stamp_from_snapshot || true
+        echo "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" >&2
+      else
+        echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+      fi
+      _cleanup_stamp_snapshot
+      exit 1
+    fi
     restore_source_sync_stamp_from_snapshot || true
   fi
   # Start failed after stop. Skip gate restore: plan_restore_commands begins with
@@ -279,7 +292,7 @@ snapshot_source_sync_stamp() {
 
 restore_source_sync_stamp_from_snapshot() {
   local c=mcp-server
-  if [[ ! -f "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
+  if [[ ! -f "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
     return 0
   fi
   if [[ ! -s "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
@@ -290,11 +303,47 @@ restore_source_sync_stamp_from_snapshot() {
     < "$_SOURCE_SYNC_STAMP_SNAPSHOT"
 }
 
+_container_still_serving() {
+  local status
+  status="$(
+    docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+      mcp-server 2>/dev/null || true
+  )"
+  case "$status" in
+    healthy|restarting|starting|running) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_last_healthy_copy_set_present() {
+  local base="${MCP_DATA_DIR}/last-healthy"
+  local name
+  for name in libs services config pipelines; do
+    [[ -d "${base}/${name}" ]] || return 1
+  done
+  [[ -f "${base}/sitecustomize.py" ]]
+}
+
+_rollback_running_tree_from_last_healthy() {
+  local base="${MCP_DATA_DIR}/last-healthy"
+  local c=mcp-server
+  local name
+  for name in libs services config pipelines; do
+    docker cp "${base}/${name}/." "${c}:/app/${name}/" || return 1
+  done
+  if [[ -d "${base}/pipelines.local" ]]; then
+    docker cp "${base}/pipelines.local/." "${c}:/app/pipelines.local/" || return 1
+  fi
+  docker cp "${base}/sitecustomize.py" "${c}:/app/sitecustomize.py"
+}
+
 write_source_sync_stamp_before_serving_restart() {
+  arm_restore_window
   _SOURCE_SYNC_STAMP_SNAPSHOT="$(mktemp)"
   snapshot_source_sync_stamp
-  write_source_sync_stamp
   _STAMP_WRITTEN=1
+  write_source_sync_stamp
 }
 
 write_source_sync_stamp() {
@@ -506,6 +555,7 @@ else
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
   if [[ -n "$img" ]]; then
+    echo "MCP_SYNC_GATE_RESTORE" >&2
     gate restore --firer script --checked-image-id "$img" || true
     wait_for_mcp_healthy || exit 1
   else

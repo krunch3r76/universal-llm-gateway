@@ -29,6 +29,9 @@ def _stub_docker_dir(
     kill_on_stop: bool = False,
     import_probe_fails: bool = False,
     compose_fails: bool = False,
+    kill_before_stamp_write: bool = False,
+    stamp_exec_fails: bool = False,
+    materialize_host_cp: bool = True,
     nonce_mode: str = "stored",
     prior_stamp: str = "2020-01-01T00:00:00Z\noldsha\n",
 ) -> Path:
@@ -125,6 +128,13 @@ def _stub_docker_dir(
               exit 0
             fi
             if [[ "$joined" == *".source_sync_stamp"* && "$joined" == *"printf"* ]]; then
+              if [[ "{str(kill_before_stamp_write).lower()}" == "true" ]]; then
+                kill -PIPE "$PPID" 2>/dev/null || true
+                exit 1
+              fi
+              if [[ "{str(stamp_exec_fails).lower()}" == "true" ]]; then
+                exit 1
+              fi
               echo STAMP_WRITE >> {log}
               needle="> /app/.source_sync_stamp"
               if [[ "$joined" == *"$needle"* ]]; then
@@ -160,7 +170,20 @@ def _stub_docker_dir(
             fi
             exit 0
             ;;
-          cp|tag|rm|image) exit 0 ;;
+          cp)
+            dest="${{@: -1}}"
+            if [[ "{str(materialize_host_cp).lower()}" == "true" && "$dest" != *:* ]]; then
+              if [[ "$dest" == *.py ]]; then
+                mkdir -p "$(dirname "$dest")"
+                printf '%s\\n' oldsha > "$dest"
+              else
+                mkdir -p "$dest"
+                printf '%s\\n' oldsha > "$dest/marker"
+              fi
+            fi
+            exit 0
+            ;;
+          tag|rm|image) exit 0 ;;
           *) exit 0 ;;
         esac
         """
@@ -190,6 +213,9 @@ def _minimal_env(tmp_path: Path, stub_bin: Path) -> dict[str, str]:
     env["HOME"] = str(tmp_path)
     env["EMAIL_BRIDGE_SOCK"] = "/nonexistent"
     env["PYTHONPATH"] = str(_REPO_ROOT / "libs")
+    mktemp_dir = tmp_path / "mktemp"
+    mktemp_dir.mkdir(exist_ok=True)
+    env["TMPDIR"] = str(mktemp_dir)
     return env
 
 
@@ -257,6 +283,7 @@ def test_routine_path_writes_stamp_before_stop_start(tmp_path: Path) -> None:
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_stop_failure_restores_snapshotted_stamp(tmp_path: Path) -> None:
     """AC4: docker stop failure restores the pre-write stamp snapshot."""
+    _seed_last_healthy_copy_set(tmp_path)
     stub = _stub_docker_dir(
         tmp_path,
         stop_fails=True,
@@ -268,7 +295,7 @@ def test_stop_failure_restores_snapshotted_stamp(tmp_path: Path) -> None:
     assert "STAMP_RESTORE" in log, log
     assert log.count("STAMP_WRITE") == 1, log
     assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
-    assert "MCP_SYNC_GATE_RESTORE" in proc.stderr
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
@@ -284,8 +311,9 @@ def test_start_failure_keeps_new_stamp_without_gate_restore(tmp_path: Path) -> N
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
-def test_kill_before_stop_restores_snapshotted_stamp(tmp_path: Path) -> None:
-    """Kill after stamp write and before stop restores the snapshot (plan §2)."""
+def test_kill_during_stop_restores_snapshotted_stamp(tmp_path: Path) -> None:
+    """TERM during docker stop, before stop is recorded, restores the snapshot."""
+    _seed_last_healthy_copy_set(tmp_path)
     stub = _stub_docker_dir(
         tmp_path,
         kill_on_stop=True,
@@ -314,13 +342,16 @@ def test_never_healthy_single_pre_restart_stamp_write(tmp_path: Path) -> None:
     assert log.count("STAMP_WRITE") == 1, log
     idx = _log_indices(log)
     assert idx["stamp_write"] < idx["stop"] < idx["start"], log
+    assert "MCP_SYNC_GATE_RESTORE" in proc.stderr
 
 
-@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
-def _plant_stale_snapshot(tmp_path: Path) -> None:
-    stale = tmp_path / "mcp-data" / "last-healthy" / ".source_sync_stamp.snapshot"
-    stale.parent.mkdir(parents=True, exist_ok=True)
-    stale.write_text("stale-from-prior-run\n", encoding="utf-8")
+def _seed_last_healthy_copy_set(tmp_path: Path, token: str = "oldsha") -> None:
+    base = tmp_path / "mcp-data" / "last-healthy"
+    for name in ("libs", "services", "config", "pipelines"):
+        dest = base / name
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "marker").write_text(token + "\n", encoding="utf-8")
+    (base / "sitecustomize.py").write_text(token + "\n", encoding="utf-8")
 
 
 def _stub_build_bash(stub: Path) -> None:
@@ -337,9 +368,8 @@ def _stub_build_bash(stub: Path) -> None:
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_container_create_compose_failure_runs_gate_restore(tmp_path: Path) -> None:
-    """Trap armed before any stamp write must not honor a stale snapshot."""
+    """Compose create failure runs gate restore."""
     _seed_checked_image(tmp_path)
-    _plant_stale_snapshot(tmp_path)
     stub = _stub_docker_dir(
         tmp_path,
         container_exists=False,
@@ -351,16 +381,12 @@ def test_container_create_compose_failure_runs_gate_restore(tmp_path: Path) -> N
     assert proc.returncode != 0, proc.stdout
     assert "MCP_SYNC_GATE_RESTORE" in proc.stderr, proc.stderr
     assert "STAMP_RESTORE" not in log, log
-    assert "stale-from-prior-run" not in (tmp_path / "container_stamp").read_text(
-        encoding="utf-8"
-    ) if (tmp_path / "container_stamp").is_file() else True
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_nocache_compose_up_failure_runs_gate_restore(tmp_path: Path) -> None:
     """--no-cache compose up failure after rm still runs gate restore."""
     _seed_checked_image(tmp_path)
-    _plant_stale_snapshot(tmp_path)
     stub = _stub_docker_dir(
         tmp_path,
         container_exists=True,
@@ -395,10 +421,13 @@ def test_concurrent_sync_exits_while_lock_held(tmp_path: Path) -> None:
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.touch()
     holder = subprocess.Popen(
-        ["flock", str(lock), "sleep", "30"],
-        stdout=subprocess.DEVNULL,
+        ["flock", str(lock), "bash", "-c", "echo ready; sleep 30"],
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        text=True,
     )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "ready"
     try:
         stub = _stub_docker_dir(tmp_path, inspect_health="healthy")
         proc = _run_sync_script(tmp_path, stub, timeout=30)
@@ -407,6 +436,110 @@ def test_concurrent_sync_exits_while_lock_held(tmp_path: Path) -> None:
         holder.wait(timeout=5)
     assert proc.returncode != 0, proc.stdout
     assert "another sync-and-restart-mcp.sh is already running" in proc.stderr
+
+
+def _assert_mktemp_removed(tmp_path: Path) -> None:
+    leftover = list((tmp_path / "mktemp").iterdir())
+    assert leftover == [], leftover
+
+
+def _assert_tree_rolled_back(log: str, tmp_path: Path) -> None:
+    for name in ("libs", "services", "config", "pipelines"):
+        assert f"{tmp_path}/mcp-data/last-healthy/{name}/." in log, log
+        assert f"mcp-server:/app/{name}/" in log, log
+    assert f"{tmp_path}/mcp-data/last-healthy/sitecustomize.py" in log, log
+    assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stop_failure_while_healthy_rolls_back_tree_and_stamp(tmp_path: Path) -> None:
+    """Stop fails, container stays healthy: copy last-healthy back, then the old stamp."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path, stop_fails=True, inspect_health="healthy")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode != 0, proc.stdout
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr
+    _assert_tree_rolled_back(log, tmp_path)
+    _assert_mktemp_removed(tmp_path)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stop_failure_while_healthy_without_copy_set_marks_disagreement(
+    tmp_path: Path,
+) -> None:
+    """No last-healthy copy set: leave the tree and say stamp and tree disagree."""
+    stub = _stub_docker_dir(
+        tmp_path,
+        stop_fails=True,
+        inspect_health="healthy",
+        materialize_host_cp=False,
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode != 0, proc.stdout
+    assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr
+    assert "last-healthy/libs/." not in log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_sigpipe_between_snapshot_and_stamp_write_restores(tmp_path: Path) -> None:
+    """SIGPIPE after the snapshot and before the stamp write restores and drops mktemp."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path, kill_before_stamp_write=True)
+    proc = _run_sync_script(tmp_path, stub, timeout=90)
+    log = _docker_log(tmp_path)
+    assert "STAMP_WRITE" not in log, log
+    assert "STAMP_RESTORE" in log, log
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    _assert_mktemp_removed(tmp_path)
+
+
+def _install_failing_tool(stub: Path, name: str) -> None:
+    tool = stub / name
+    tool.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stamp_write_git_failure_restores(tmp_path: Path) -> None:
+    """git failure inside the stamp write restores the snapshot and removes mktemp."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path)
+    _install_failing_tool(stub, "git")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode != 0, proc.stdout
+    assert "STAMP_RESTORE" in log, log
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    _assert_mktemp_removed(tmp_path)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stamp_write_sha256sum_failure_restores(tmp_path: Path) -> None:
+    """sha256sum failure in the stamp write restores the snapshot and removes mktemp."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path)
+    _install_failing_tool(stub, "sha256sum")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode != 0, proc.stdout
+    assert "STAMP_RESTORE" in log, log
+    _assert_mktemp_removed(tmp_path)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stamp_write_chown_failure_restores(tmp_path: Path) -> None:
+    """docker exec chown failure inside the stamp write restores and removes mktemp."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path, stamp_exec_fails=True)
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode != 0, proc.stdout
+    assert "STAMP_WRITE" not in log, log
+    assert "STAMP_RESTORE" in log, log
+    _assert_mktemp_removed(tmp_path)
 
 
 def test_import_probe_refusal_skips_stamp_and_stop(tmp_path: Path) -> None:
