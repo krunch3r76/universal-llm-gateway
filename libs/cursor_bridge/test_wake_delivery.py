@@ -25,10 +25,36 @@ _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_93
 pytestmark = pytest.mark.offline
 
 
+_QS_CALL = re.compile(r"querySelector(?:All)?\s*\(")
+_QS_ARG = re.compile(
+    r"""\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`)"""
+)
+
+
+def _decode_js_string(body: str, *, quote: str) -> str:
+    if quote == '"':
+        return json.loads('"' + body + '"')
+    text = body.replace("\\'", "'").replace("\\`", "`").replace("\\\\", "\\")
+    return json.loads('"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"')
+
+
 def _query_selector_literal_args(js: str) -> list[str]:
-    """Parse document.querySelector(…) string-literal arguments (break: extra fallback selector)."""
-    pattern = re.compile(r'querySelector\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)')
-    return [json.loads(m.group(1)) for m in pattern.finditer(js)]
+    """Every querySelector/querySelectorAll argument, any quote style.
+
+    Break: a second call (single quotes, double quotes, backticks, or
+    querySelectorAll) must show up so the witness test's count stays 1.
+    A non-literal argument is recorded as a distinct sentinel.
+    """
+    quotes = ('"', "'", "`")
+    args: list[str] = []
+    for match in _QS_CALL.finditer(js):
+        arg = _QS_ARG.match(js, match.end())
+        if arg is None or arg.lastindex is None:
+            args.append("<non-literal>")
+            continue
+        body = arg.group(arg.lastindex)
+        args.append(_decode_js_string(body, quote=quotes[arg.lastindex - 1]))
+    return args
 
 
 def _match_count_guard_block(js: str) -> str:
@@ -197,6 +223,11 @@ def test_cursor_probe_fixture_records_witness() -> None:
     cursor_js = wd._COMPOSER_JS["cursor"]
     assert "Prompt" in cursor_js and "contenteditable" in cursor_js
     qs_args = _query_selector_literal_args(cursor_js)
+    assert len(qs_args) == 1, (
+        "cursor composer JS must contain exactly one querySelector/querySelectorAll call; "
+        f"got {qs_args!r}"
+    )
+    assert f"document.querySelector({json.dumps(selector)})" in cursor_js
     assert qs_args == [selector], (
         "cursor composer JS must use exactly one querySelector equal to fixture composer_selector; "
         f"got {qs_args!r}"
