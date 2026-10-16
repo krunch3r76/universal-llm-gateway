@@ -17,6 +17,7 @@ from llm_adapters._mcp_entry import (
     ANTHROPIC_AGENTIC_MCP_TOOLS,
     anthropic_mcp_server_entry,
     anthropic_mcp_toolset,
+    cache_control_breakpoint_count,
     resolve_anthropic_callback_token,
     resolve_mcp_env,
 )
@@ -150,7 +151,9 @@ class AnthropicAdapter:
             body["tools"] = [
                 *(body.get("tools") or []),
                 anthropic_mcp_toolset(
-                    server_entry["name"], ANTHROPIC_AGENTIC_MCP_TOOLS
+                    server_entry["name"],
+                    ANTHROPIC_AGENTIC_MCP_TOOLS,
+                    existing_breakpoints=cache_control_breakpoint_count(body),
                 ),
             ]
         else:

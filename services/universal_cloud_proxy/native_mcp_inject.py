@@ -9,6 +9,7 @@ from llm_adapters._mcp_entry import (
     AnthropicCallbackTokenError,
     anthropic_mcp_server_entry,
     anthropic_mcp_toolset,
+    cache_control_breakpoint_count,
     normalize_mcp_public_url,
     openai_xai_mcp_tool_entry,
     resolve_anthropic_callback_token,
@@ -36,7 +37,11 @@ def enabled_tools_for_native_mcp(headers) -> Collection[str] | None:
         client = str(headers.get("x-ulg-client") or "").strip()
         profile = str(headers.get("x-ulg-mcp-profile") or "").strip().lower()
     if raw:
-        return [part.strip() for part in raw.split(",") if part.strip()]
+        names = [part.strip() for part in raw.split(",") if part.strip()]
+        # "X-ULG-MCP-Tools: ," parses to no names. That is an absent header,
+        # not a request for zero tools.
+        if names:
+            return names
     if client == "anthropic-api" or profile == "probe":
         return None
     return ANTHROPIC_AGENTIC_MCP_TOOLS
@@ -83,7 +88,11 @@ def inject_native_mcp(
         body["mcp_servers"] = [*existing, server_entry]
         body["tools"] = [
             *(body.get("tools") or []),
-            anthropic_mcp_toolset(server_entry["name"], enabled_tools),
+            anthropic_mcp_toolset(
+                server_entry["name"],
+                enabled_tools,
+                existing_breakpoints=cache_control_breakpoint_count(body),
+            ),
         ]
         return
 

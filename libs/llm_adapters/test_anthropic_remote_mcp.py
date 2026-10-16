@@ -76,6 +76,7 @@ def test_remote_mcp_opus_toolset_configs_and_cache_control() -> None:
     }
     assert "team_dispatch" in toolset["configs"]
     assert "agent_bus" in toolset["configs"]
+    assert "retrieve" in toolset["configs"]
     assert toolset["cache_control"] == {"type": "ephemeral"}
 
 
@@ -93,6 +94,28 @@ def test_remote_mcp_rollback_restores_bare_toolset(
     req = _base_req(model="claude-opus-4-8", remote_mcp=True)
     _url, _headers, body = _adapter().build_frontier_request(req)
     assert body["tools"] == [{"type": "mcp_toolset", "mcp_server_name": "vortex"}]
+
+
+def test_remote_mcp_skips_toolset_breakpoint_at_four(
+) -> None:
+    """Four cache_control breakpoints already on the body: no fifth on the toolset.
+
+    Breaks when the adapter always stamps cache_control and Anthropic 400s
+    on a fifth breakpoint.
+    """
+    blocks = [
+        {"type": "text", "text": str(i), "cache_control": {"type": "ephemeral"}}
+        for i in range(4)
+    ]
+    req = _base_req(
+        model="claude-opus-4-8",
+        remote_mcp=True,
+        messages=[{"role": "user", "content": blocks}],
+    )
+    _url, _headers, body = _adapter().build_frontier_request(req)
+    toolset = body["tools"][0]
+    assert "retrieve" in toolset["configs"]
+    assert "cache_control" not in toolset
 
 
 def test_remote_mcp_rejects_mcp_tool_loop_true() -> None:

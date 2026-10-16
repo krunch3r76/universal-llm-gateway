@@ -178,6 +178,7 @@ def test_inject_native_mcp_allowlist_defaults_rag_fs_cortex(
         "cortex": {"enabled": True},
         "fs": {"enabled": True},
         "rag": {"enabled": True},
+        "retrieve": {"enabled": True},
     }
 
 
@@ -305,6 +306,7 @@ def test_forward_native_team_dispatch_mcp_keeps_agentic_tools(
     configs = upstream["tools"][-1]["configs"]
     assert "team_dispatch" in configs
     assert "agent_bus" in configs
+    assert "retrieve" in configs
     assert configs["team_dispatch"] == {"enabled": True}
     assert configs["agent_bus"] == {"enabled": True}
 
@@ -313,15 +315,62 @@ def test_forward_native_probe_mcp_is_rag_fs_cortex(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    """An anthropic-api probe -mcp request enables only rag, fs, and cortex.
+    """An anthropic-api probe -mcp request enables rag, fs, cortex, and retrieve.
 
-    Breaks when the agentic set is applied to a known read-only caller.
+    Breaks when the agentic set is applied to a known read-only caller, or
+    when overflow ``retrieve`` is left off the probe list.
     """
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
     monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
     upstream = _forward_anthropic_mcp([(b"x-ulg-client", b"anthropic-api")])
     configs = upstream["tools"][-1]["configs"]
-    assert set(configs) == {"rag", "fs", "cortex"}
+    assert set(configs) == {"rag", "fs", "cortex", "retrieve"}
     assert "team_dispatch" not in configs
     assert "agent_bus" not in configs
+
+
+def test_empty_mcp_tools_header_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """X-ULG-MCP-Tools with no names is an absent header, not zero tools.
+
+    Breaks when a comma-only header yields configs={} and disables the catalog.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-ulg-mcp-tools", b" , ")])
+    configs = upstream["tools"][-1]["configs"]
+    assert "retrieve" in configs
+    assert "team_dispatch" in configs
+
+
+def test_inject_skips_toolset_breakpoint_at_four(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Four cache_control breakpoints already on the body: inject adds none.
+
+    Breaks when inject always stamps cache_control past Anthropic's limit of 4.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    blocks = [
+        {"type": "text", "text": str(i), "cache_control": {"type": "ephemeral"}}
+        for i in range(4)
+    ]
+    body: dict = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": blocks}],
+    }
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body, enabled_tools=["retrieve"])
+    toolset = body["tools"][0]
+    assert "retrieve" in toolset["configs"]
+    assert "cache_control" not in toolset

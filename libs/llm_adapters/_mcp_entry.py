@@ -235,7 +235,9 @@ def openai_xai_mcp_tool_entry(
 
 # anthropic-api call allowlist names (ops stay enforced in tool_access.py).
 # This set is the read-only probe default, not the default for agentic -mcp.
-ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset({"rag", "fs", "cortex"})
+ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset(
+    {"rag", "fs", "cortex", "retrieve"}
+)
 
 # team_dispatch / frontier / CDP -mcp runs need these in addition to the probe set.
 ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | {
@@ -249,9 +251,21 @@ ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | 
 _APPLY_ANTHROPIC_TOOLSET_POLICY = True
 
 
+def cache_control_breakpoint_count(node: Any) -> int:
+    """Count ``cache_control`` keys already present in a request body."""
+    if isinstance(node, dict):
+        found = 1 if "cache_control" in node else 0
+        return found + sum(cache_control_breakpoint_count(v) for v in node.values())
+    if isinstance(node, list):
+        return sum(cache_control_breakpoint_count(v) for v in node)
+    return 0
+
+
 def anthropic_mcp_toolset(
     server_name: str,
     enabled_tools: Collection[str] | None,
+    *,
+    existing_breakpoints: int = 0,
 ) -> dict:
     """Build the Anthropic mcp_toolset entry shared by inject and frontier.
 
@@ -259,6 +273,7 @@ def anthropic_mcp_toolset(
     and an ephemeral cache breakpoint on the toolset (lever 3). With the
     policy off, the bare toolset Anthropic expands to every listed tool.
     ``enabled_tools is None`` selects the read-only probe set.
+    A body that already has four breakpoints does not get another one.
     """
     entry: dict = {"type": "mcp_toolset", "mcp_server_name": server_name}
     if not _APPLY_ANTHROPIC_TOOLSET_POLICY:
@@ -270,5 +285,6 @@ def anthropic_mcp_toolset(
     )
     entry["default_config"] = {"enabled": False}
     entry["configs"] = {name: {"enabled": True} for name in sorted(names)}
-    entry["cache_control"] = {"type": "ephemeral"}
+    if existing_breakpoints < 4:
+        entry["cache_control"] = {"type": "ephemeral"}
     return entry
