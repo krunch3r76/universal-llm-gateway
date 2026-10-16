@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fs_impl import fs_impl
+from implement_admission.scheme_resolve import sandbox_scheme_conflict_message
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
@@ -146,6 +147,66 @@ def test_copy_workspaces_to_cortex_uri_without_target_sandbox(
     assert any(str(entry).endswith("inventory.json") for entry in listed_fs["files"])
 
 
+def test_copy_one_slash_cortex_target_lands_in_cortex_files(
+    copy_roots: tuple[Path, Path],
+) -> None:
+    """One-slash cortex:/ form must land in cortex files like cortex://."""
+    cortex_root, workspaces_root = copy_roots
+    src_rel = "docs/a37974-one-slash-src.md"
+    src = workspaces_root / "universal-llm-gateway" / src_rel
+    src.parent.mkdir(parents=True)
+    payload = "one-slash-cortex-target\n"
+    src.write_text(payload, encoding="utf-8")
+    dest_rel = "notes/system/threads/a37974-copy/source/one-slash.json"
+    dest_uri = f"cortex:/{dest_rel}"
+
+    result = fs_impl(
+        **_fs_kwargs(
+            path=f"workspaces://universal-llm-gateway/{src_rel}",
+            target=dest_uri,
+            target_sandbox="",
+        )
+    )
+
+    assert "error" not in result, result
+    dest = cortex_root / dest_rel
+    assert dest.is_file()
+    assert dest.read_text(encoding="utf-8") == payload
+    collapsed = workspaces_root / "cortex:" / dest_rel
+    assert not collapsed.exists()
+    assert result["status"] == "copied"
+    assert result["to_uri"].startswith("cortex://")
+
+
+def test_copy_explicit_target_sandbox_conflicting_with_scheme_refuses(
+    copy_roots: tuple[Path, Path],
+) -> None:
+    """target_sandbox must not fight a schemed copy dest URI."""
+    cortex_root, workspaces_root = copy_roots
+    src_rel = "docs/a37974-conflict-src.md"
+    src = workspaces_root / "universal-llm-gateway" / src_rel
+    src.parent.mkdir(parents=True)
+    src.write_text("conflict-source\n", encoding="utf-8")
+    dest_rel = "notes/system/threads/a37974-copy/source/conflict.json"
+    dest_uri = f"cortex://{dest_rel}"
+    expected_error = sandbox_scheme_conflict_message(
+        "workspaces", "cortex", dest_uri
+    )
+
+    result = fs_impl(
+        **_fs_kwargs(
+            path=f"workspaces://universal-llm-gateway/{src_rel}",
+            target=dest_uri,
+            target_sandbox="workspaces",
+        )
+    )
+
+    assert "error" in result, result
+    assert expected_error in result["error"]
+    assert not (cortex_root / dest_rel).exists()
+    assert not (workspaces_root / dest_rel).exists()
+
+
 def test_copy_refuses_when_dest_vanishes_after_shutil(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -199,3 +260,6 @@ def test_fs_impl_copy_withholds_copied_when_verify_fails(
     )
     assert "error" in result, result
     assert "status" not in result
+    if mode == "mismatch":
+        dest_rel = "notes/system/threads/a37974-copy/source/verify.json"
+        assert not (_cortex_root / dest_rel).exists()
