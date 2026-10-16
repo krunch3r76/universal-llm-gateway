@@ -911,7 +911,6 @@ def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
 def test_nocache_path_writes_stamp_before_stop_start(tmp_path: Path) -> None:
     """AC6: --no-cache path writes stamp then docker stop/start before healthy."""
     stub = _stub_docker_dir(tmp_path, inspect_health="healthy", nonce_mode="stored")
-    bash_log = tmp_path / "bash.log"
     stub_bash = stub / "bash"
     stub_bash.write_text(
         "#!/bin/bash\n"
