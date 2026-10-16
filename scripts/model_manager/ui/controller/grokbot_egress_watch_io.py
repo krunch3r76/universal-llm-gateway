@@ -6,7 +6,6 @@ import json
 import os
 import re
 import sqlite3
-import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -48,7 +47,9 @@ _GC1_TIME_BOUNDED_TERMINAL_RES = (
 )
 
 
-def read_desktop_status(path: Path = DEFAULT_DESKTOP_STATUS) -> dict[str, object] | None:
+def read_desktop_status(
+    path: Path = DEFAULT_DESKTOP_STATUS,
+) -> dict[str, object] | None:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError:
@@ -158,9 +159,7 @@ def _undici_edge_timestamps_ms(
         if "undici" not in _payload_str(row, "user_agent").lower():
             continue
         path = _payload_str(row, "path")
-        if not (
-            path.startswith(MCP_CODE_PREFIX) or path.startswith(MCP_LIFE_PREFIX)
-        ):
+        if not (path.startswith(MCP_CODE_PREFIX) or path.startswith(MCP_LIFE_PREFIX)):
             continue
         method = _payload_str(row, "method").upper()
         if method and method != "POST":
@@ -218,33 +217,37 @@ def open_gc1_bus_turn(
     )
 
 
+_DEFAULT_EVENTS_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
+
+
 def query_events_rows(
     workspace_root: Path,
     sql: str,
     *params: str | int,
 ) -> list[dict[str, object]]:
-    script = workspace_root / "scripts" / "query-events"
-    if not script.is_file():
-        raise RuntimeError(f"query-events not found: {script}")
-    cmd = [
-        str(script),
-        "--sql",
-        sql,
-        *sum((["--sql-param", str(p)] for p in params), []),
-        "--limit",
-        "10000",
-        "--compact",
-    ]
-    socket_path = os.environ.get("EVENTS_QUERY_SOCK")
-    if socket_path:
-        cmd.extend(["--socket", socket_path])
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "query-events failed"
-        raise RuntimeError(err)
-    from deploy_identity.mcp_external_probe import json_object_from_mixed_stdout
+    """Read Event Service rows over the query socket.
 
-    payload = json_object_from_mixed_stdout(proc.stdout or "")
+    ``workspace_root`` is unused. The manage loop still passes it so the call
+    shape stays stable. A missing socket or an error envelope raises so the
+    loop logs one warning and continues with no rows.
+    """
+    del workspace_root
+    from event_store.query_client import query_sql
+
+    socket_path = os.environ.get("EVENTS_QUERY_SOCK", _DEFAULT_EVENTS_QUERY_SOCK)
+    if not os.path.exists(socket_path):
+        raise RuntimeError(f"events query socket missing: {socket_path}")
+    payload = query_sql(
+        sql,
+        params=list(params) if params else None,
+        limit=10000,
+        url=f"unix://{socket_path}",
+        timeout=10.0,
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("events query returned a non-object payload")
+    if payload.get("error"):
+        raise RuntimeError(str(payload.get("error")))
     rows = payload.get("rows")
     if isinstance(rows, list):
         return rows
@@ -322,7 +325,10 @@ def loader_stuck_from_rows(
     gc1 = _mcp_activity_since(rows, client_ip=GC1_CLIENT_IP, floor_ms=floor_ms)
     if gc1.tools_list_last_ms is None or gc1.init_last_ms is None:
         return False, None
-    if gc1.tools_call_last_ms is not None and gc1.tools_call_last_ms >= gc1.tools_list_last_ms:
+    if (
+        gc1.tools_call_last_ms is not None
+        and gc1.tools_call_last_ms >= gc1.tools_list_last_ms
+    ):
         return False, None
     since_s = (now_ms - gc1.tools_list_last_ms) / 1000.0
     if since_s < _LOADER_STUCK_AFTER_TOOLS_LIST_S:
@@ -418,7 +424,9 @@ def build_snapshot_from_inputs(
             event_rows, now_ms=now_ms, floor_ms=lookback_ms
         )
         hm1_ok = any(
-            _mcp_activity_since(event_rows, client_ip=ip, floor_ms=lookback_ms).tools_call_last_ms
+            _mcp_activity_since(
+                event_rows, client_ip=ip, floor_ms=lookback_ms
+            ).tools_call_last_ms
             is not None
             for ip in HM1_CLIENT_IPS
         )

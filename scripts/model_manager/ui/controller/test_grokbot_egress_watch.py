@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import UTC
 from pathlib import Path
@@ -24,6 +25,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     gc1_bus_turn_in_flight,
     in_flight_gc1_mcp_from_rows,
     loader_stuck_from_rows,
+    query_events_rows,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     GrokbotEgressLoopState,
@@ -43,9 +45,12 @@ _NOW_MS = 1_700_000_000_000
 def _watch_log_dialing(*, disconnected_ms: int = 90_000) -> str:
     from datetime import datetime
 
-    dial_at = datetime.fromtimestamp(
-        (_NOW_MS - disconnected_ms) / 1000.0, tz=UTC
-    ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    dial_at = (
+        datetime.fromtimestamp((_NOW_MS - disconnected_ms) / 1000.0, tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%S.%f"
+        )[:-3]
+        + "Z"
+    )
     return f"[user-computer-watch] {dial_at} dialing (attempt 1)\n"
 
 
@@ -152,7 +157,9 @@ def test_tunnel_stale_restarts_once(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_loader_stuck_event() -> None:
     t0 = _NOW_MS - 240_000
     rows = [
-        _event_row(ts_ms=t0, signal="mcp.transport.request.completed", mcp_method="initialize"),
+        _event_row(
+            ts_ms=t0, signal="mcp.transport.request.completed", mcp_method="initialize"
+        ),
         _event_row(
             ts_ms=t0 + 1000,
             signal="mcp.transport.request.completed",
@@ -165,7 +172,9 @@ def test_loader_stuck_event() -> None:
             mcp_method="tools/call",
         ),
     ]
-    stuck, since_s = loader_stuck_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+    stuck, since_s = loader_stuck_from_rows(
+        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
+    )
     assert stuck is True
     assert since_s is not None and since_s >= 180.0
 
@@ -223,9 +232,10 @@ def test_completed_request_does_not_defer() -> None:
             jsonrpc_id="7",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
-    ) is False
+    assert (
+        in_flight_gc1_mcp_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+        is False
+    )
     snap = build_snapshot_from_inputs(
         now_ms=_NOW_MS,
         desktop_running=True,
@@ -257,9 +267,10 @@ def test_get_without_jsonrpc_id_does_not_defer() -> None:
             mcp_method="",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
-    ) is False
+    assert (
+        in_flight_gc1_mcp_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+        is False
+    )
     snap = build_snapshot_from_inputs(
         now_ms=_NOW_MS,
         desktop_running=True,
@@ -289,9 +300,10 @@ def test_open_tools_call_defers_from_rows() -> None:
             jsonrpc_id="3",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
-    ) is True
+    assert (
+        in_flight_gc1_mcp_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+        is True
+    )
 
 
 def test_non_gc1_caller_on_shared_ip_does_not_defer() -> None:
@@ -305,16 +317,26 @@ def test_non_gc1_caller_on_shared_ip_does_not_defer() -> None:
             jsonrpc_id="8",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
-    ) is False
+    assert (
+        in_flight_gc1_mcp_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+        is False
+    )
 
 
 def test_gc1_space_subject_verbs_are_terminal() -> None:
     """Finding 2: live tips use space-separated verbs, not pipe-only prefixes."""
-    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="STATUS 39434 x") is False
-    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="PICKUP #1053 x") is False
-    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="LANDED commit ok") is False
+    assert (
+        gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="STATUS 39434 x")
+        is False
+    )
+    assert (
+        gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="PICKUP #1053 x")
+        is False
+    )
+    assert (
+        gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="LANDED commit ok")
+        is False
+    )
 
 
 def test_stale_dispatch_admit_tip_does_not_defer() -> None:
@@ -364,9 +386,10 @@ def test_jsonrpc_id_collision_keeps_later_open_call() -> None:
             jsonrpc_id="1",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
-    ) is True
+    assert (
+        in_flight_gc1_mcp_from_rows(rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000)
+        is True
+    )
 
 
 def test_stale_open_call_not_in_flight_past_ceiling() -> None:
@@ -379,15 +402,24 @@ def test_stale_open_call_not_in_flight_past_ceiling() -> None:
             jsonrpc_id="99",
         ),
     ]
-    assert in_flight_gc1_mcp_from_rows(
-        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - IN_FLIGHT_STALE_MS - 5_000
-    ) is False
+    assert (
+        in_flight_gc1_mcp_from_rows(
+            rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - IN_FLIGHT_STALE_MS - 5_000
+        )
+        is False
+    )
 
 
 def test_historical_gc1_bus_turn_does_not_defer() -> None:
-    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="VERDICT: CHANGES") is False
+    assert (
+        gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="VERDICT: CHANGES")
+        is False
+    )
     assert gc1_bus_turn_in_flight(from_agent="cursor", subject="REQUEST|x") is False
-    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="REQUEST|stage") is True
+    assert (
+        gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="REQUEST|stage")
+        is True
+    )
 
 
 def test_in_flight_defers() -> None:
@@ -444,12 +476,89 @@ def test_connected_gap_warn_only() -> None:
 
 
 def test_watch_connection_state_dialing() -> None:
-    log = (
-        "[user-computer-watch] 2026-01-01T00:00:00.000Z dialing (attempt 1)\n"
-    )
+    log = "[user-computer-watch] 2026-01-01T00:00:00.000Z dialing (attempt 1)\n"
     connected, gap = watch_connection_state(log, now_ms=_NOW_MS)
     assert connected is False
     assert gap is not None and gap >= 0
+
+
+def test_query_events_rows_without_uvicorn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ImportError on uvicorn must not fail the manage-side query path."""
+    import sys
+
+    sock = tmp_path / "events-query.sock"
+    sock.write_text("", encoding="utf-8")
+    monkeypatch.setenv("EVENTS_QUERY_SOCK", str(sock))
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+    def _query_sql(
+        sql: str, params: list[object] | None = None, limit: int = 100, **kwargs: object
+    ) -> dict[str, object]:
+        assert sql == "SELECT 1"
+        assert params == ["x"]
+        assert limit == 10000
+        assert kwargs["url"] == f"unix://{sock}"
+        return {"rows": [{"n": 1}]}
+
+    monkeypatch.setattr("event_store.query_client.query_sql", _query_sql)
+
+    rows = query_events_rows(tmp_path, "SELECT 1", "x")
+    assert rows == [{"n": 1}]
+
+
+def test_query_events_rows_missing_socket_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("EVENTS_QUERY_SOCK", str(tmp_path / "absent.sock"))
+
+    with pytest.raises(RuntimeError, match="events query socket missing"):
+        query_events_rows(tmp_path, "SELECT 1")
+
+
+def test_snapshot_query_failure_warns_once_without_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Blind event-query failure is one warning; it does not emit or restart."""
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    connected = "[user-computer-watch] 2026-10-16T10:00:00.000Z connected\n"
+    monkeypatch.setattr(loop_mod, "read_desktop_status", lambda _path: {"pid": 1})
+    monkeypatch.setattr(loop_mod, "desktop_pid_alive", lambda _status: (True, 1))
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: connected)
+    monkeypatch.setattr(loop_mod, "external_probe_hostname", lambda: "example.invalid")
+    monkeypatch.setattr(loop_mod, "resolve_a_records", lambda _host: [])
+
+    def _boom(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise RuntimeError("events query socket missing: /tmp/absent.sock")
+
+    monkeypatch.setattr(loop_mod, "query_events_rows", _boom)
+
+    emits: list[str] = []
+
+    async def _no_emit(*args: object, **_kwargs: object) -> None:
+        emits.append(str(args[0]) if args else "")
+
+    monkeypatch.setattr(loop_mod, "_emit", _no_emit)
+    restarted: list[int] = []
+
+    async def _no_restart() -> None:
+        restarted.append(1)
+
+    watch = GrokbotEgressWatchLoop(
+        workspace_root=tmp_path, restart_desktop_fn=_no_restart
+    )
+    with caplog.at_level(logging.WARNING):
+        _run(watch._tick())
+    warnings = [
+        r
+        for r in caplog.records
+        if "grokbot egress event query failed" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert emits == []
+    assert restarted == []
 
 
 def test_event_factories() -> None:
