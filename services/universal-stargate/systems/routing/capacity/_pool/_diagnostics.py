@@ -46,6 +46,30 @@ class _DiagnosticsMixin:
             "queue_depth": len(queue) if queue else 0,
         }
 
+    def get_model_slots(self, model_id: str) -> list[dict[str, object]]:
+        """Return per-gateway capacity breakdown for one model_id.
+
+        Each entry includes gateway_id, capacity, in_flight, and available
+        (capacity minus in_flight).  Only gateways with a registered capacity
+        slot for the model are included.  Used by GET /api/v1/admission/state.
+        """
+        entries: list[dict[str, object]] = []
+        for slot in self._capacity:  # type: ignore[attr-defined]
+            if slot.model_id != model_id:
+                continue
+            available, in_flight, capacity = self.get_slot_info(  # type: ignore[attr-defined]
+                slot.gateway_id, model_id
+            )
+            entries.append(
+                {
+                    "gateway_id": slot.gateway_id,
+                    "capacity": capacity,
+                    "in_flight": in_flight,
+                    "available": available,
+                }
+            )
+        return entries
+
     def get_snapshot(self) -> dict[str, Any]:
         """Return a diagnostic snapshot of all capacity state as a plain dict.
 

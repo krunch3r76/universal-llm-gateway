@@ -53,6 +53,7 @@ async def get_admission_state(
         loading: True iff any gateway reports this model currently cold-loading
         loaded: True iff any gateway reports this model loaded or busy
         queue_depth: number of requests currently queued in CapacityPool
+        slots: per-gateway capacity breakdown from CapacityPool.get_model_slots
 
     Note on model_id normalization: callers should pass the routing_key
     (the form used at the admission layer), not a catalog alias or display name,
@@ -78,6 +79,7 @@ async def get_admission_state(
 
     loaded = bool(model_status["loaded_on"] or model_status["busy_on"])
     loading = bool(model_status["loading_on"])
+    slots = capacity_pool.get_model_slots(model_id)
 
     return {
         "model_id": model_id,
@@ -87,4 +89,5 @@ async def get_admission_state(
         "loading": loading,
         "loaded": loaded,
         "queue_depth": admission["queue_depth"],
+        "slots": slots,
     }
