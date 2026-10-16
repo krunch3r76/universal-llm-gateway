@@ -20,11 +20,14 @@ from services.rag.chroma_writer import (
 )
 from services.rag.config import RagConfig, ScopeDefinition, WatchDirectory
 from services.rag.corpus_hints import freshness
+from services.rag.directory_ops import (
+    find_sources_under_prefixes,
+    purge_orphaned_sources,
+)
 from services.rag.indexing_helpers import check_pdf_duplicate
 from services.rag.models import IndexResult
 from services.rag.property_index import PropertyIndex
 from services.rag.rag_service import scope_freshness, state
-from services.rag.directory_ops import find_sources_under_prefixes, purge_orphaned_sources
 from services.rag.rag_service import search as search_mod
 from services.rag.rag_service.indexing import index_file as index_file_mod
 from services.rag.rag_service.loop_instrumentation import (
@@ -32,6 +35,7 @@ from services.rag.rag_service.loop_instrumentation import (
     stop_loop_instrumentation,
 )
 from services.rag.search_scope import apply_bm25_sidecar
+from services.rag.search_scope.vector_window import query_vector_window
 
 _DRIFT_FAIL_MS = 2000.0
 _LOOP_DRIFT_LOGGER = "services.rag.rag_service.loop_instrumentation"
@@ -781,4 +785,134 @@ async def test_bm25_sidecar_code_token_dense_only_no_stall(
         assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
     finally:
         await pi.stop()
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_sniffio_preload_survives_import_lock(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Preloaded sniffio must import on the loop while another thread holds the import lock.
+
+    Breaks when ``embeddings/runtime.py`` does not import sniffio at module
+    load: the loop's cold import waits on the lock and drift exceeds 2000 ms.
+    """
+    import importlib
+    import sys
+
+    import services.rag.embeddings.runtime as runtime
+
+    for key in list(sys.modules):
+        if key == "sniffio" or key.startswith("sniffio."):
+            del sys.modules[key]
+    importlib.reload(runtime)
+    assert "sniffio" in sys.modules
+
+    def _hold_import_lock() -> None:
+        import importlib._bootstrap as bootstrap
+
+        bootstrap._imp.acquire_lock()
+        try:
+            time.sleep(2.5)
+        finally:
+            bootstrap._imp.release_lock()
+
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    holder = threading.Thread(target=_hold_import_lock)
+    holder.start()
+    try:
+        await asyncio.sleep(0.05)
+        import sniffio
+
+        assert sniffio is sys.modules["sniffio"]
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        holder.join(timeout=5)
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_purge_exists_scan_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2.5 s exists scan in purge must run off the loop (drift < 2000).
+
+    Breaks when the comprehension calls ``Path.exists`` on the event loop.
+    """
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+
+    async def _known(**kwargs: object) -> set[str]:
+        del kwargs
+        return {"/missing/file.md"}
+
+    class _SlowPath:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        def exists(self) -> bool:
+            time.sleep(2.5)
+            return False
+
+    async def _delete(**kwargs: object) -> tuple[int, int]:
+        del kwargs
+        return 1, 1
+
+    monkeypatch.setattr(
+        "services.rag.directory_ops.find_sources_under_prefixes",
+        _known,
+    )
+    monkeypatch.setattr("services.rag.directory_ops.Path", _SlowPath)
+    monkeypatch.setattr("services.rag.directory_ops.delete_sources", _delete)
+    try:
+        files, chunks, missing = await purge_orphaned_sources(
+            collection=MagicMock(),
+            watch_prefixes=["/missing"],
+        )
+        assert files == 1
+        assert chunks == 1
+        assert missing == {"/missing/file.md"}
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_query_vector_window_off_loop_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Slow ``count`` and ``query`` inside the window must not stall the loop.
+
+    Breaks when either call runs on the event loop instead of ``run_chroma``.
+    """
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    init_chroma_executor()
+
+    class _SlowCollection:
+        def count(self) -> int:
+            time.sleep(2.5)
+            return 10
+
+        def query(self, **kwargs: object) -> dict[str, list[list[object]]]:
+            del kwargs
+            time.sleep(2.5)
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    try:
+        window = await query_vector_window(
+            _SlowCollection(),  # type: ignore[arg-type]
+            [0.0],
+            top_k=1,
+            source_prefixes=["/docs/"],
+        )
+        assert window.round_trips == 2
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        shutdown_chroma_executor()
         await stop_loop_instrumentation()

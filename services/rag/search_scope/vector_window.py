@@ -1,6 +1,6 @@
 """Bounded Chroma vector window for scoped and unscoped search.
 
-``execute_search`` calls ``query_vector_window`` before the noise strip and
+``execute_search`` awaits ``query_vector_window`` before the noise strip and
 ``apply_source_prefix_filter_with_ids``. Unscoped requests keep the historical
 single query at ``top_k * UNSCOPED_FETCH_MULTIPLIER`` with no metadata ``where``.
 
@@ -34,6 +34,7 @@ from typing import Any, Protocol
 
 from universal_logging import get_logger
 
+from services.rag.chroma_writer import run_chroma
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.search_scope.prefix_filter import matches_source_prefix
 
@@ -94,7 +95,7 @@ class VectorWindowResult:
     cap_hit: bool
 
 
-def query_vector_window(
+async def query_vector_window(
     collection: VectorCollection,
     query_embedding: list[float],
     *,
@@ -107,6 +108,9 @@ def query_vector_window(
 ) -> VectorWindowResult:
     """Return the Chroma neighbor window for one query embedding.
 
+    ``collection.query`` and ``collection.count`` run through ``run_chroma``
+    so a slow Chroma call does not block the event loop.
+
     Unscoped (empty prefixes): one query, ``n_results=top_k * 3``, no ``where``.
     Scoped with ``indexed_sources``: one or more queries whose ``where`` is
     ``{"source": {"$in": indexed_sources}}``, so ANN runs inside those paths.
@@ -115,8 +119,8 @@ def query_vector_window(
     """
     if not source_prefixes:
         n_results = top_k * UNSCOPED_FETCH_MULTIPLIER
-        ids, documents, metadatas, distances = _query_once(
-            collection, query_embedding, n_results
+        ids, documents, metadatas, distances = await run_chroma(
+            _query_once, collection, query_embedding, n_results
         )
         return VectorWindowResult(
             ids=ids,
@@ -142,7 +146,7 @@ def query_vector_window(
             return _empty_window(cap=0, cap_hit=False)
         where: dict[str, Any] | None = {"source": {"$in": list(indexed_sources)}}
         try:
-            return _scoped_grow(
+            return await _scoped_grow(
                 collection,
                 query_embedding,
                 top_k=top_k,
@@ -160,7 +164,7 @@ def query_vector_window(
             )
             max_round_trips = max(max_round_trips - 1, 1)
 
-    return _scoped_grow(
+    return await _scoped_grow(
         collection,
         query_embedding,
         top_k=top_k,
@@ -171,7 +175,7 @@ def query_vector_window(
     )
 
 
-def _scoped_grow(
+async def _scoped_grow(
     collection: VectorCollection,
     query_embedding: list[float],
     *,
@@ -190,7 +194,7 @@ def _scoped_grow(
     # count on every scoped search (measured at several seconds on the live
     # store when the client cache is cold).
     if where is None:
-        indexed = collection.count()
+        indexed = await run_chroma(collection.count)
         cap = min(max(indexed, 0), n_results_ceiling)
     else:
         cap = n_results_ceiling
@@ -201,8 +205,8 @@ def _scoped_grow(
     trips = 0
     while True:
         trips += 1
-        ids, documents, metadatas, distances = _query_once(
-            collection, query_embedding, n_results, where=where
+        ids, documents, metadatas, distances = await run_chroma(
+            _query_once, collection, query_embedding, n_results, where=where
         )
         exhausted = where is not None and len(ids) < n_results
         kept = _non_noise_in_scope(metadatas, source_prefixes, top_k)
