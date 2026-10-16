@@ -5,6 +5,7 @@ from __future__ import annotations
 from llm_adapters._mcp_entry import (
     AnthropicCallbackTokenError,
     anthropic_mcp_server_entry,
+    normalize_mcp_public_url,
     openai_xai_mcp_tool_entry,
     resolve_anthropic_callback_token,
 )
@@ -39,7 +40,9 @@ def inject_native_mcp(provider_key: str, body: dict) -> None:
         if config_token and config_token == token:
             return
         existing = body.get("mcp_servers") or []
-        server_entry = anthropic_mcp_server_entry(url, token, name=_MCP_SERVER_NAME)
+        server_entry = anthropic_mcp_server_entry(
+            normalize_mcp_public_url(url), token, name=_MCP_SERVER_NAME
+        )
         body["mcp_servers"] = [*existing, server_entry]
         body["tools"] = [
             *(body.get("tools") or []),

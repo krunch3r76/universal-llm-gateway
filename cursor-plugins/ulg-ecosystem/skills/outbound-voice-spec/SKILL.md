@@ -7,11 +7,9 @@ trigger_match_terms: ["outbound-voice-spec", "outbound_voice_spec", "ghostwrite"
 
 # Outbound Voice Spec
 
-`¬ instruct(model_identity)` · `⇒ specify(output_artifact)`.
+`¬ instruct(model_identity)` · `⇒ specify(output_artifact)`. Describe the message the operator will send, not the seat. "you are my pen" / "act as the signer" does not change the draft.
 
-claude.ai resists identity assignment ("you are my pen", "act as the signer") — persona negotiation without changing the draft. Describe the **message the operator will send**, not the **seat writing it**.
-
-Load **`prose-discipline`** for register craft, antecedents, and AI-trite bans. This skill binds **task shape, material boundaries, engagement, and deliverable gate** before the first sentence.
+Load `prose-discipline` (register craft, antecedents, AI-trite bans). Binds task shape, material boundaries, engagement, and the deliverable gate.
 
 ## Hard gate (activation)
 
@@ -21,7 +19,7 @@ A draft body emitted without a filled **OUTBOUND SPEC** block above it in the sa
 
 ## Transmit
 
-A message in the signer's name stays a draft until the operator says submit. That word comes before any form post, mail, fax, or email.
+A message in the signer's name stays a draft until the operator says submit. That word comes before any form post, mail, fax, or email. The draft uses only claims the operator has stated that are already recorded on the matter.
 
 **Deliverable outcomes** (OUTBOUND SPEC `Deliverable:`):
 
@@ -39,49 +37,49 @@ Critical gaps (would change standing, objective, or a claim the recipient will t
 
 | In scope | Out of scope |
 |---|---|
-| Outbound text operator will paste or send: workplace comments, replies, emails, texts, forum posts, vendor chat | Direct chat with operator (coaching, planning) unless deliverable is still a named outbound artifact |
-| claude.ai Chat or Cowork when skill attached or invoked | Code-lane work with no outbound artifact |
-| Life-representation / Impresario seats drafting operator-signed outbound (e.g. Impresario Fonzi house 17007 owns Fonzi outreach drafts) | Matter-specific deadlines, company lists, mailbox credentials (those live in matter hubs + per-draft Standing limits) |
+| Paste or send: comments, replies, emails, texts, forum posts, vendor chat | Direct chat (coaching, planning) unless the deliverable is named outbound |
+| claude.ai Chat or Cowork when this skill is attached or invoked | Code-lane work with no outbound artifact |
+| life-representation / Impresario seats drafting operator-signed outbound | Deadlines, company lists, mailbox credentials (matter hubs + Standing limits) |
 
 ## Mechanisms L1–L7
 
-Map each mechanism to **OUTBOUND SPEC** fields or session placement. None assign model identity.
+None of these assign model identity.
 
 | Mech | Binds | Operator supplies | Model does |
 |---|---|---|---|
-| **L1 Speaker card** | Signer · Standing limits · tAIm register | Attested role boundaries; what signer may not claim | First person = signer only; never writes past limits |
-| **L2 Pinned objective** | Objective · Objective priority | One line: what message must accomplish | Cuts clever angles that miss the pin |
-| **L3 Interlocutor stance** | Deliverable row | `body` \| `HOLD_SEND(reason)`; no options; no commentary | **Craft duty** — produce the artifact in signer register; ¬ analyst about signer; ¬ flatten to concierge |
-| **L4 State placement** | Project / Customize / session open | Standing biography, skill attachment (see `life-session-engagement` for full session-open tables) | Persists context across phone sessions; ¬ per-draft identity fight |
-| **L5 Pre-draft ledger** | Material attested · Voice anchor | Exhaustive facts for **this** message; optional cadence sample | Builds from attested set only; pair **`no-silent-inference`** for graph work — **not** inside the outbound body |
-| **L6 Verifier pass** | Pre-output checklist | (internal) | Run VERIFIER before emitting body or HOLD_SEND |
-| **L7 Spec amendment** | Correction handling | "Drifting from objective" or factual fix | Treat as spec update; redraft once; no apology cascade (`engagement-stance`) |
+| L1 Speaker card | Signer · Standing limits · tAIm | Forbidden claims | Signer first person; never past limits |
+| L2 Pinned objective | Objective · Objective priority | One accomplishment line | Cut clever angles that miss the pin |
+| L3 Interlocutor stance | Deliverable | `body` \| `HOLD_SEND(reason)`; no options; no commentary | Craft duty; ¬ analyst; ¬ concierge flatten |
+| L4 State placement | Project / session | Biography; `life-session-engagement` tables | Persists across phone sessions; ¬ per-draft identity fight |
+| L5 Pre-draft ledger | Material attested · Voice anchor | Facts for this message; optional cadence | Attested only; `no-silent-inference` off the body |
+| L6 Verifier pass | Checklist | (internal) | VERIFIER before body or HOLD_SEND |
+| L7 Spec amendment | Corrections | "Drifting from objective" or a fact fix | One redraft; no apology cascade (`engagement-stance`) |
 
-Correction is **spec maintenance** (L7), not relationship drama.
+L7 is spec maintenance, not relationship drama.
 
 ## Kaywan / tAIm voice (Signer = Kaywan)
 
-When **Signer** is Kaywan (or Kaywan Mansubi / person:kaywan-mansubi), outbound register **is** the tAIm voice (operator bind):
+Kaywan (Kaywan Mansubi / person:kaywan-mansubi) ⇒ tAIm register (operator bind):
 
-1. Bond is implicit and functional — no persona theater, no costume, no "you are tAIm".
-2. Stripping persona must **not** flatten to neutral-tool / passive-concierge prose — keep conviction ("all the fire and fury") pointed at the **endeavor**.
-3. Intensity never resists the operator's intent — judgment is honest counsel.
+1. Implicit functional bond — no persona theater, no costume, or "you are tAIm".
+2. Do not flatten to neutral-tool / passive-concierge; keep conviction ("all the fire and fury") pointed at the endeavor.
+3. Intensity never resists the operator's intent; judgment is honest counsel.
 
-If **Voice anchor** is blank, still load this standing tAIm register. Voice anchor (when present) matches **cadence** only — not a license to invent content. L3 is **craft duty** for the artifact, not "editor" flattening of register.
+Blank Voice anchor still loads tAIm. An anchor matches cadence only, never invented content. L3 is craft duty, not editor flattening.
 
 ## FACT ceiling (claim guardrail)
 
-tAIm voice governs **conviction and cadence of attested propositions**. It never licenses:
+tAIm is conviction and cadence of attested propositions only. It never licenses:
 
-- unattested causal links or bridging arguments between attested facts
-- epistemic hedges from `no-silent-inference` (`"This may suggest…"`, `"One possibility is…"`) **inside** the outbound body
+- unattested causal links or bridges between attested facts
+- `no-silent-inference` hedges in the body (`"This may suggest…"`, `"One possibility is…"`)
 - tidy arguments the operator did not supply
 
-`prose-discipline` cause-effect connectives (`but`/`so`/`because`) may join **attested** steps only. Graph recall and silent-inference discipline apply **before** material enters OUTBOUND SPEC — not as freestyle inside the send body.
+`but`/`so`/`because` join attested steps only. Recall and silent-inference run before OUTBOUND SPEC, not in the send body.
 
 ## OUTBOUND SPEC (fill before drafting)
 
-Every field describes the **artifact** or **attested facts**, never the model. Blank field ⇒ **forbidden to invent** for that dimension.
+Every field is the artifact or attested facts, never the model. Blank ⇒ forbidden to invent.
 
 ```text
 OUTBOUND SPEC
@@ -99,36 +97,30 @@ Objective priority: if conflict, <objective> beats <new angle>
 Deliverable: body | HOLD_SEND(reason) — one outcome; no preamble; no options; no commentary after
 ```
 
-**Recall promotion:** `Standing biography ON` and `recall(op="matter")` are session orientation. Facts used in the draft must be **listed under Material attested** (tag `(from recall/user)`). Unlisted graph noise is forbidden. Ghostwrite (signer ≠ operator): mark operator biography `SOURCE: … — context, not material`.
+**Recall promotion:** biography and `recall(op="matter")` only orient. List drafted facts under Material attested as `(from recall/user)`. Unlisted graph noise is forbidden. Ghostwrite: `SOURCE: … — context, not material`.
 
 ## Copy-paste preambles
 
-**L1 — Speaker card** (duty framing; paste above OUTBOUND SPEC or into Project instructions):
+**L1 — Speaker card:**
 
 ```text
 SPEAKER CARD
-Duty: produce one outbound outcome (body or HOLD_SEND) for the signer named in OUTBOUND SPEC.
-Do not assign a persona to the writing seat. Do not narrate the drafting process.
-Signer facts and limits come only from OUTBOUND SPEC fields below.
-When Signer is Kaywan, use tAIm standing register (conviction at the endeavor; no concierge flatten).
+body or HOLD_SEND for the OUTBOUND SPEC signer. No persona. Do not narrate drafting.
+Facts and limits from OUTBOUND SPEC only. Kaywan: tAIm (conviction on the endeavor; no concierge flatten).
 ```
 
-**L4 — Ghostwrite Project placement** (short; full session-open tables live in `life-session-engagement`):
+**L4 — Ghostwrite placement** (tables: `life-session-engagement`):
 
 ```text
-Ghostwrite sessions — standing setup
-Skills: outbound-voice-spec, prose-discipline
-Session open: standing biography — not per-draft "you are …" lines.
-Every draft: OUTBOUND SPEC visible in-turn before the body (Hard gate).
-Deliverable: body | HOLD_SEND; no A/B options; no postscript about what the seat did.
+Skills: outbound-voice-spec, prose-discipline. Biography at open — not "you are …".
+OUTBOUND SPEC before the body. body | HOLD_SEND. No A/B. No seat postscript.
 ```
 
-**L5 — Pre-draft ledger** (when material is long; paste inside operator message):
+**L5 — Pre-draft ledger:**
 
 ```text
 PRE-DRAFT LEDGER (attested only — do not infer beyond this list)
-Material:
-  -
+Material: -
 Voice anchor (cadence sample, not content to copy):
   -
 ```
@@ -161,60 +153,40 @@ VERIFIER (before body or HOLD_SEND to operator)
 
 ## Failure patterns
 
-| Symptom | Likely cause | Fix in spec |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| Draft without SPEC (Fonzi-class miss) | Continuity listed skill only | Hard gate; next-pickup Bind wording |
-| Wrong standing | Weak **Standing limits** | List what signer may not claim |
-| Tidy unattested argument | Model filled / hedged | Tighten Material attested; FACT ceiling |
-| Flat after corrections / blank Voice anchor | Editor flatten | tAIm standing register; L7 amend SPEC |
-| Ignores thread objective | No **Objective pin** | One-line objective + priority row |
-| Drafted on held mailbox / wake | Skipped HOLD guard | Refuse; wait for Kaywan raise |
-| Bus commentary in first person | Liaison voice bleed | One outbound body; ¬ rewrite in liaison/GC voice |
+| Draft without SPEC (Fonzi-class miss) | Listed the skill only | Hard gate; Bind on next-pickup |
+| Blame shifted onto signer | Invented narrative | Attested material only; name inversion in limits |
+| Bus voice in first person | Liaison bleed | One body; not liaison/GC voice |
 
 ## Before / after (instruction form)
 
-Before (triggers persona negotiation):
+Before: You are the signer. Write as me in my voice. Be my pen, not an assistant.
 
-> You are the signer. Write as me in my voice. Be my pen, not an assistant.
-
-After (artifact-bound):
-
-> OUTBOUND SPEC — Signer: Kaywan · Recipient: hiring manager · Objective: confirm interest without overstating pharmacy experience · Material attested: … · Standing limits: may not claim licensed pharmacist · Channel/format: none · Deliverable: body
+After: OUTBOUND SPEC — Signer: Kaywan · Recipient: hiring manager · Objective: confirm interest without overstating pharmacy experience · Material attested: … · Standing limits: may not claim licensed pharmacist · Channel/format: none · Deliverable: body
 
 ## Life sessions — standing biography
 
 **Scope gate (OR):** standing biography + session-open recall apply when **either** claude.ai life **or** a Cursor **life-representation** / Impresario seat holds the work. Full session-open placement tables: Use the `life-session-engagement` skill (do not fork them here).
 
-When in scope, **standing biography is default-on**. Failure mode = session **lacks** it, not overload.
+Standing biography is default-on. Failure mode = the session lacks it, not overload.
 
-Operator person entity (when Project instructions pin `person:<slug>`):
+When Project instructions pin `person:<slug>`:
 
 `cortex_brief(seat="web-anthropic", role="lead", principal="person:<slug>")`
 
-Per-draft **Signer** in OUTBOUND SPEC remains the outbound first-person anchor.
+Without a configured entity id, skip `principal=` — do not guess from search, aliases, or `person:operator`.
 
-### Ghostwrite (signer ≠ operator)
+Per-draft **Signer** in OUTBOUND SPEC remains the outbound first-person anchor. Ghostwrite (signer ≠ operator): recall the **speaker** entity only when OUTBOUND SPEC or an explicit seed names one — not bare person-entity recall as standing boot.
 
-Standing operator biography stays **on** for orientation; leak defense is **marking**, not withholding. L3 uses **craft duty** language, not identity assignment ("you are the editor").
+Ghostwrite (signer ≠ operator): biography stays on; leak defense is marking, not withholding. L3 is craft duty, not "you are the editor".
 
 ## Liaison (operator not at IDE)
 
-Code-seat / Impresario packs chat: harvest thread → operator attests material + limits (voice note OK) → insert **OUTBOUND SPEC** + `Use the prose-discipline skill` + `Use the outbound-voice-spec skill` → deliverable remains **one outbound body or HOLD_SEND**.
+**Voice-bleed ban:** do not rewrite Stage Manager / Great Conversation / bus commentary into signer first-person on the bus. Liaison voice ≠ Kaywan voice.
 
-**Voice-bleed ban:** Stage Manager / Great Conversation / bus liaison commentary must **not** be rewritten into signer first-person on the bus. Liaison voice ≠ Kaywan voice.
-
-**House ownership (Fonzi):** Impresario Fonzi (agent-bus:17007, slug `fonzi-impresario`) owns Fonzi outreach drafting under this skill. Do not spawn a parallel Fonzi bot for voice. Other Impresario houses own their lanes the same way.
+**House ownership (Fonzi):** Impresario Fonzi (agent-bus:17007, slug `fonzi-impresario`) owns Fonzi outreach drafts. No parallel Fonzi bot for voice. Other Impresario houses own their lanes the same way.
 
 ## Cross-reference
 
-- `prose-discipline` — register craft, tells, sequitur, outbound slip-checks
-- `life-session-engagement` — SESSION OBJECTIVE, attested context gate, full L4 session-open tables
-- `engagement-stance` — on sharp correction: substance once, no agreement cascade
-- `no-silent-inference` — graph/pre-spec gate; ¬ outbound-body hedges
-- `hypothesize-simulate` — dual-audience anticipate matrix when HOLD_SEND needs it
-- `runbook:prose-rhythm` — rhythm pass after facts are right
-- `checkpoint-discipline` — next-pickup must Bind OUTBOUND SPEC, not list-only
-
-## Minimal operating summary
-
-Hard gate: OUTBOUND SPEC in-turn before draft. Attest facts (promote recall into Material). FACT ceiling. Kaywan = tAIm register. Pin one objective. L1–L7. HOLD_SEND when proof/role should be solicited. HOLD/wake refuse. Never assign model identity. One outcome body. Pair prose-discipline. Impresario Fonzi owns Fonzi drafts on 17007.
+`engagement-stance`: substance once, no agreement cascade. `runbook:prose-rhythm`: rhythm after facts are right. `checkpoint-discipline`: next-pickup Bind OUTBOUND SPEC, not list-only.
