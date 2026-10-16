@@ -20,8 +20,10 @@ from services.rag.chroma_writer import (
 from services.rag.config import RagConfig, ScopeDefinition, WatchDirectory
 from services.rag.corpus_hints import freshness
 from services.rag.indexing_helpers import check_pdf_duplicate
+from services.rag.models import IndexResult
 from services.rag.property_index import PropertyIndex
 from services.rag.rag_service import scope_freshness, state
+from services.rag.rag_service.indexing import index_file as index_file_mod
 from services.rag.rag_service.loop_instrumentation import (
     start_loop_instrumentation,
     stop_loop_instrumentation,
@@ -258,3 +260,116 @@ async def test_remove_chunk_sqlite_on_loop_mutation_logs_high_drift(
         finally:
             await pi.stop()
     await stop_loop_instrumentation()
+
+
+async def _drive_chunk_file(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reach the production ``chunk_file`` call with the pipeline around it stubbed."""
+    config = MagicMock()
+    config.is_path_entity_gated.return_value = False
+    config.knowledge_extraction.schema_version = 1
+    config.knowledge_extraction.extraction_model = "m"
+    monkeypatch.setattr(state, "_config", config)
+    monkeypatch.setattr(state, "_property_index", None)
+    monkeypatch.setattr(state, "_event_bus", None)
+    monkeypatch.setattr(state, "_entity_admission_gate", None)
+    monkeypatch.setattr(state, "_get_collection", lambda: MagicMock())
+
+    async def _healthy() -> None:
+        return None
+
+    async def _article_sync(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _no_dup(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _no_prefix(**kwargs: object) -> None:
+        del kwargs
+        return None
+
+    async def _empty(**kwargs: object) -> IndexResult:
+        del kwargs
+        return IndexResult(deleted=0, indexed=0, unchanged=False, file=str(path))
+
+    async def _chroma(fn: object, *args: object, **kwargs: object) -> dict:
+        del fn, args, kwargs
+        return {"ids": [], "metadatas": []}
+
+    monkeypatch.setattr(index_file_mod, "require_healthy", _healthy)
+    monkeypatch.setattr(index_file_mod, "_run_article_sync_phase", _article_sync)
+    monkeypatch.setattr(index_file_mod, "_handle_pdf_duplicate_or_move", _no_dup)
+    monkeypatch.setattr(index_file_mod, "_handle_unchanged_prefix_skip", _no_prefix)
+    monkeypatch.setattr(index_file_mod, "_handle_empty_chunks", _empty)
+    monkeypatch.setattr(
+        "services.rag.chroma_writer.run_chroma",
+        _chroma,
+    )
+    await index_file_mod._index_file_impl(path, None, None, str(path.resolve()))
+
+
+@pytest.mark.asyncio
+async def test_chunk_file_off_loop_one_second_sleep_under_drift_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """chunk_file on a worker: 1 s sleep must not log loop_drift_ms ≥ 2000."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    path = tmp_path / "2026-10.md"
+    path.write_text("hello\n")
+
+    def _slow_chunk(file_path: Path, target_chars: int | None = None) -> list[object]:
+        del file_path, target_chars
+        time.sleep(1.0)
+        return []
+
+    monkeypatch.setattr(index_file_mod, "chunk_file", _slow_chunk)
+    try:
+        await _drive_chunk_file(path, monkeypatch)
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+        assert any(
+            "chunk_file duration_ms=" in record.message and "path=" in record.message
+            for record in caplog.records
+        )
+    finally:
+        monkeypatch.setattr(state, "_config", None)
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_chunk_file_inline_mutation_logs_high_drift(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Mutation: chunk_file inline on the loop (to_thread bypassed) drifts ≥ 2000 ms.
+
+    Restoring the worker-thread call is the sibling pass test.
+    """
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    path = tmp_path / "2026-10.md"
+    path.write_text("hello\n")
+
+    def _slow_chunk(file_path: Path, target_chars: int | None = None) -> list[object]:
+        del file_path, target_chars
+        _hold_gil(2.5)
+        return []
+
+    async def _inline_to_thread(fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(index_file_mod, "chunk_file", _slow_chunk)
+    monkeypatch.setattr(asyncio, "to_thread", _inline_to_thread)
+    await asyncio.sleep(0.02)
+    try:
+        await _drive_chunk_file(path, monkeypatch)
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) >= _DRIFT_FAIL_MS
+    finally:
+        monkeypatch.setattr(state, "_config", None)
+        await stop_loop_instrumentation()
