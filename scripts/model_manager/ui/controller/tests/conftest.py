@@ -1,3 +1,30 @@
 """Shared fixtures for controller offline tests."""
 
 from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+pytest_plugins = ["scripts.model_manager.testing.conftest"]
+
+
+def stub_process_live_probe(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace ``probe_process_live`` with a recorder (no TCP/UDS health GET)."""
+    calls: list[str] = []
+
+    def _probe(service: str) -> dict[str, Any]:
+        calls.append(service)
+        return {"probe_reachable": False, "service": service}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        _probe,
+    )
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def _stub_process_live_probe_autouse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default-off live health GET for any test that mints activation validation."""
+    stub_process_live_probe(monkeypatch)

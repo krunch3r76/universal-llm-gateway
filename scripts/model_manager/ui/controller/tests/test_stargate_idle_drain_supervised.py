@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from scripts.model_manager.ui import api_dispatch
+from scripts.model_manager.ui.controller import stargate_inflight_witness as sg_witness
 from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
     preempt_stargate_idle_drain_if_needed,
     register_supervise_task,
@@ -30,10 +31,10 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
     RestartIntentStore,
 )
-from scripts.model_manager.ui.controller import stargate_inflight_witness as sg_witness
 from scripts.model_manager.ui.controller.stargate_inflight_witness import (
     StargateDownWitness,
 )
+from scripts.model_manager.ui.controller.tests.conftest import stub_process_live_probe
 
 pytestmark = pytest.mark.offline
 
@@ -42,12 +43,30 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def _record_stargate_health_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[int]:
+    """Stub Stargate /health port probe; return the call log."""
+    ports: list[int] = []
+
+    def _port_open(port: int, host: str = "127.0.0.1") -> bool:
+        ports.append(port)
+        return False
+
+    from scripts.model_manager.ui.model.service_state import ServiceState
+
+    monkeypatch.setattr(ServiceState, "_port_open", staticmethod(_port_open))
+    return ports
+
+
 class _StargateBusyProbe:
     def __init__(self, *, busy: bool, requests_in_flight: int = 5) -> None:
         self._busy = busy
         self._requests_in_flight = requests_in_flight
+        self.snapshot_calls = 0
 
     async def snapshot(self) -> ActiveWork:
+        self.snapshot_calls += 1
         return ActiveWork(
             busy=self._busy,
             detail={
@@ -82,11 +101,14 @@ def test_stargate_idle_from_active_work_uses_requests_in_flight() -> None:
     )
 
 
-def test_busy_stargate_sync_restart_mints_restart_intent(tmp_path: Any) -> None:
+def test_busy_stargate_sync_restart_mints_restart_intent(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe_live_calls = stub_process_live_probe(monkeypatch)
+    health_ports = _record_stargate_health_get(monkeypatch)
     store = RestartIntentStore(db_path=tmp_path / "stargate-intents.db")
-    gate = RestartDrainGate(
-        probes={"stargate": _StargateBusyProbe(busy=True, requests_in_flight=5)}
-    )
+    stargate_probe = _StargateBusyProbe(busy=True, requests_in_flight=5)
+    gate = RestartDrainGate(probes={"stargate": stargate_probe})
     supervisor = _RecordingSupervisor()
 
     async def _arm() -> dict[str, Any]:
@@ -110,6 +132,9 @@ def test_busy_stargate_sync_restart_mints_restart_intent(tmp_path: Any) -> None:
     assert live is not None
     assert live.status == STATUS_PENDING_DRAIN
     assert len(supervisor.intents) == 1
+    assert stargate_probe.snapshot_calls >= 1
+    assert health_ports == []
+    assert "stargate" in probe_live_calls
 
 
 def test_stargate_supervisor_ceiling_escalates_then_lifecycle(tmp_path: Any) -> None:
@@ -167,8 +192,10 @@ def _connect_refused_error() -> httpx.ConnectError:
 class _RaisingProbe:
     def __init__(self, exc: BaseException) -> None:
         self._exc = exc
+        self.snapshot_calls = 0
 
     async def snapshot(self) -> ActiveWork:
+        self.snapshot_calls += 1
         raise self._exc
 
 
@@ -210,6 +237,8 @@ def test_stargate_econnrefused_and_down_witness_starts(
 def test_stargate_connect_error_with_live_pid_stays_on_ceiling(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    probe_live_calls = stub_process_live_probe(monkeypatch)
+    health_ports = _record_stargate_health_get(monkeypatch)
     store = RestartIntentStore(db_path=tmp_path / "stargate-live-pid.db")
     lifecycle_calls = 0
 
@@ -218,9 +247,8 @@ def test_stargate_connect_error_with_live_pid_stays_on_ceiling(
         lifecycle_calls += 1
         return "nope"
 
-    gate = RestartDrainGate(
-        probes={"stargate": _RaisingProbe(_connect_refused_error())}
-    )
+    raising = _RaisingProbe(_connect_refused_error())
+    gate = RestartDrainGate(probes={"stargate": raising})
     supervisor = StargateIdleDrainSupervisor(
         gate=gate,
         store=store,
@@ -247,9 +275,16 @@ def test_stargate_connect_error_with_live_pid_stays_on_ceiling(
     assert live is not None
     assert live.status == STATUS_PENDING_DRAIN
     assert lifecycle_calls == 0
+    assert raising.snapshot_calls >= 1
+    assert health_ports == []
+    assert "stargate" in probe_live_calls
 
 
-def test_stargate_read_timeout_stays_on_ceiling(tmp_path: Any) -> None:
+def test_stargate_read_timeout_stays_on_ceiling(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe_live_calls = stub_process_live_probe(monkeypatch)
+    health_ports = _record_stargate_health_get(monkeypatch)
     store = RestartIntentStore(db_path=tmp_path / "stargate-timeout.db")
     lifecycle_calls = 0
 
@@ -259,9 +294,8 @@ def test_stargate_read_timeout_stays_on_ceiling(tmp_path: Any) -> None:
         return "nope"
 
     request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
-    gate = RestartDrainGate(
-        probes={"stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))}
-    )
+    raising = _RaisingProbe(httpx.ReadTimeout("slow", request=request))
+    gate = RestartDrainGate(probes={"stargate": raising})
     supervisor = StargateIdleDrainSupervisor(
         gate=gate,
         store=store,
@@ -285,6 +319,9 @@ def test_stargate_read_timeout_stays_on_ceiling(tmp_path: Any) -> None:
     assert live is not None
     assert live.status == STATUS_PENDING_DRAIN
     assert lifecycle_calls == 0
+    assert raising.snapshot_calls >= 1
+    assert health_ports == []
+    assert "stargate" in probe_live_calls
 
 
 def test_stargate_force_preempts_idle_drain_slot(
