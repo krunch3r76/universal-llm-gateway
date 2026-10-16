@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -53,7 +55,7 @@ def test_run_gated_release_after_settle_ready() -> None:
     async def before_release(message: str) -> None:
         await api_dispatch._rag_restart_settle_before_release(message)
 
-    with patch.object(api_dispatch, "_pid_alive", return_value=True):
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
         with patch(
             "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
             return_value=True,
@@ -75,7 +77,7 @@ def test_run_gated_release_after_settle_budget_expiry(monkeypatch: pytest.Monkey
     async def before_release(message: str) -> None:
         await api_dispatch._rag_restart_settle_before_release(message)
 
-    with patch.object(api_dispatch, "_pid_alive", return_value=True):
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
         with patch(
             "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
             return_value=False,
@@ -90,7 +92,7 @@ def test_run_gated_release_after_new_pid_dead(monkeypatch: pytest.MonkeyPatch) -
     async def before_release(message: str) -> None:
         await api_dispatch._rag_restart_settle_before_release(message)
 
-    with patch.object(api_dispatch, "_pid_alive", return_value=False):
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=False):
         _run(_run_gated_with_hook(gate, before_release))
     assert not gate.restart_in_progress("rag")
 
@@ -317,7 +319,7 @@ def test_rag_non_force_passes_settle_before_release(
         "preempt_stargate_idle_drain_if_needed",
         AsyncMock(return_value=None),
     )
-    with patch.object(api_dispatch, "_pid_alive", return_value=True):
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
         with patch(
             "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
             return_value=True,
@@ -330,3 +332,159 @@ def test_rag_non_force_passes_settle_before_release(
 def test_parse_starting_pid_from_lifecycle_message() -> None:
     assert api_dispatch._parse_starting_pid("RAG service starting (PID 99).") == 99
     assert api_dispatch._parse_starting_pid("no pid here") is None
+
+
+def _ctl_with_gate() -> MagicMock:
+    gate = RestartDrainGate(probes={})
+    ctl = MagicMock()
+    ctl.restart_gate = gate
+    return ctl
+
+
+def test_rag_sync_restart_e2e_second_execute_in_progress_during_settle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1: execute → real run_gated → real settle; second call during hold."""
+    lifecycle_calls = 0
+    lifecycle_returned = asyncio.Event()
+    allow_ready = asyncio.Event()
+
+    async def _sync_restart(_ctl, _service: str) -> str:
+        nonlocal lifecycle_calls
+        lifecycle_calls += 1
+        lifecycle_returned.set()
+        return RAG_MSG
+
+    async def _passthrough_lifecycle(_ctl, _service, _action, inner):
+        return await inner()
+
+    def _uds_live(_path: object) -> bool:
+        return allow_ready.is_set()
+
+    monkeypatch.setattr(api_dispatch, "_sync_restart", _sync_restart)
+    monkeypatch.setattr(
+        api_dispatch, "_lifecycle_with_restart_window", _passthrough_lifecycle
+    )
+    monkeypatch.setattr(
+        api_dispatch,
+        "preempt_giw_keep_await_if_needed",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        api_dispatch,
+        "preempt_stargate_idle_drain_if_needed",
+        AsyncMock(return_value=None),
+    )
+
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
+        with patch(
+            "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
+            _uds_live,
+        ):
+            with patch(
+                "scripts.model_manager.ui.controller.service_config.read_rag_tcp_config",
+                return_value=None,
+            ):
+                ctl = _ctl_with_gate()
+
+                async def _exercise() -> tuple[dict[str, Any], dict[str, Any]]:
+                    first = asyncio.create_task(
+                        api_dispatch.execute(ctl, "sync_restart", "rag", {})
+                    )
+                    await lifecycle_returned.wait()
+                    second = await api_dispatch.execute(
+                        ctl, "sync_restart", "rag", {}
+                    )
+                    allow_ready.set()
+                    first_result = await first
+                    return first_result, second
+
+                first_result, second = _run(_exercise())
+
+    assert lifecycle_calls == 1
+    assert first_result["status"] == "ok"
+    assert second["status"] == "deferred"
+    assert second["state"] == "in_progress"
+    assert "4242" in second["reason"]
+
+
+def test_rag_settle_strict_budget_with_slow_transport_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2: executor probe must not extend past the 45s (here 0.15s) budget."""
+    monkeypatch.setattr(api_dispatch, "RAG_RESTART_SETTLE_BUDGET_S", 0.15)
+
+    async def _slow_probe() -> bool:
+        await asyncio.sleep(1.0)
+        return False
+
+    monkeypatch.setattr(api_dispatch, "_probe_rag_transport_ready", _slow_probe)
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
+        t0 = time.monotonic()
+        _run(api_dispatch._rag_restart_settle_before_release(RAG_MSG))
+        elapsed = time.monotonic() - t0
+    assert elapsed < 0.45
+
+
+def test_rag_zombie_pid_releases_settle_hold_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: zombie child must not keep the hold until the full budget."""
+    monkeypatch.setattr(api_dispatch, "RAG_RESTART_SETTLE_BUDGET_S", 45.0)
+
+    with patch.object(os, "kill", return_value=None):
+        with patch.object(os, "waitpid", return_value=(4242, 0)):
+            with patch(
+                "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
+                return_value=False,
+            ):
+                t0 = time.monotonic()
+                _run(api_dispatch._rag_restart_settle_before_release(RAG_MSG))
+                elapsed = time.monotonic() - t0
+    assert elapsed < 0.5
+
+
+def test_rag_settle_probes_tcp_when_tcp_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4: TCP rag config uses a TCP connect probe, not the UDS path."""
+    tcp_calls: list[tuple[str, int]] = []
+
+    def _tcp_live(host: str, port: int) -> bool:
+        tcp_calls.append((host, port))
+        return True
+
+    monkeypatch.setattr(api_dispatch, "_tcp_socket_live", _tcp_live)
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
+        with patch(
+            "scripts.model_manager.ui.controller.service_config.read_rag_tcp_config",
+            return_value=("127.0.0.1", 8765),
+        ):
+            with patch(
+                "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
+                side_effect=AssertionError("UDS probe must not run in TCP mode"),
+            ):
+                _run(api_dispatch._rag_restart_settle_before_release(RAG_MSG))
+    assert tcp_calls == [("127.0.0.1", 8765)]
+
+
+def test_rag_settle_probes_uds_when_not_tcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uds_calls: list[object] = []
+
+    def _uds_live(path: object) -> bool:
+        uds_calls.append(path)
+        return True
+
+    with patch.object(api_dispatch, "_rag_pid_considered_alive", return_value=True):
+        with patch(
+            "scripts.model_manager.ui.controller.service_config.read_rag_tcp_config",
+            return_value=None,
+        ):
+            with patch(
+                "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
+                _uds_live,
+            ):
+                _run(api_dispatch._rag_restart_settle_before_release(RAG_MSG))
+    assert len(uds_calls) == 1

@@ -701,27 +701,72 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _rag_pid_considered_alive(pid: int) -> bool:
+    """True when the rag child is running; zombies count as dead (reaped when direct child)."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        # Not a direct child of this process — kill(0) is the only signal.
+        return True
+    except OSError:
+        return _pid_alive(pid)
+    if reaped_pid == pid:
+        return False
+    return True
+
+
+def _tcp_socket_live(host: str, port: int) -> bool:
+    import socket as socket_mod
+
+    try:
+        with socket_mod.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+async def _probe_rag_transport_ready() -> bool:
+    from .controller.service_config import read_rag_socket_path, read_rag_tcp_config
+    from .controller.service_ctl.startup_probe import uds_socket_live
+
+    loop = asyncio.get_running_loop()
+    tcp_config = read_rag_tcp_config()
+    if tcp_config is not None:
+        host, port = tcp_config
+        return await loop.run_in_executor(None, _tcp_socket_live, host, port)
+    socket_path = read_rag_socket_path()
+    return await loop.run_in_executor(None, uds_socket_live, socket_path)
+
+
 async def _rag_restart_settle_before_release(message: str) -> None:
-    """Hold the rag restart slot until UDS readiness, pid exit, or settle budget."""
-    from .controller.service_config import read_rag_socket_path
-    from .controller.service_ctl.startup_probe import (
-        DEFAULT_STARTUP_INTERVAL_S,
-        uds_socket_live,
-    )
+    """Hold the rag restart slot until transport readiness, pid exit, or settle budget."""
+    from .controller.service_ctl.startup_probe import DEFAULT_STARTUP_INTERVAL_S
 
     pid = _parse_starting_pid(message)
     if pid is None:
         return
-    socket_path = read_rag_socket_path()
     loop = asyncio.get_running_loop()
     deadline = loop.time() + RAG_RESTART_SETTLE_BUDGET_S
     while loop.time() < deadline:
-        if not _pid_alive(pid):
+        if not _rag_pid_considered_alive(pid):
             return
-        if await loop.run_in_executor(None, uds_socket_live, socket_path):
-            if _pid_alive(pid):
-                return
-        await asyncio.sleep(DEFAULT_STARTUP_INTERVAL_S)
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return
+        try:
+            ready = await asyncio.wait_for(
+                _probe_rag_transport_ready(),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            return
+        if ready and _rag_pid_considered_alive(pid):
+            return
+        await asyncio.sleep(min(DEFAULT_STARTUP_INTERVAL_S, remaining))
 
 
 def refuse_giw_force_lifecycle() -> dict[str, str]:
