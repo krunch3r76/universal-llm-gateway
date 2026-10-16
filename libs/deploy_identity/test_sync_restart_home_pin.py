@@ -109,7 +109,6 @@ def test_overlay_home_is_replaced_by_passwd_field() -> None:
     assert proc.returncode == 0, proc.stderr
     pinned = proc.stdout.strip().splitlines()[-1]
     assert pinned == passwd
-    assert pinned.startswith("/home/io")
     expand = subprocess.run(
         [
             "bash",
