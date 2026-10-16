@@ -18,8 +18,16 @@ logger = get_logger(__name__)
 _MCP_SERVER_NAME = "vortex"
 
 # anthropic-api call allowlist names (ops stay enforced in tool_access.py).
-# Absence of an explicit list uses this set, not the full primary catalog.
+# This set is the read-only probe default, not the default for agentic -mcp.
 ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset({"rag", "fs", "cortex"})
+
+# team_dispatch / frontier / CDP -mcp runs need these in addition to the probe set.
+# Rule: enable team_dispatch and agent_bus unless the caller is an anthropic-api
+# probe or opts into the rag/fs/cortex list.
+ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | {
+    "team_dispatch",
+    "agent_bus",
+}
 
 # False restores the pre-39434 toolset: every tool enabled, no cache breakpoint.
 _APPLY_ANTHROPIC_TOOLSET_POLICY = True
@@ -49,6 +57,28 @@ def _anthropic_mcp_toolset(
     return entry
 
 
+def enabled_tools_for_native_mcp(headers) -> Collection[str] | None:
+    """Resolve the Anthropic tool list for one native ``-mcp`` request.
+
+    An explicit ``X-ULG-MCP-Tools`` list wins. ``X-ULG-Client: anthropic-api``
+    or ``X-ULG-MCP-Profile: probe`` returns None so inject uses the read-only
+    rag/fs/cortex set. Every other caller, including pipeline ``team_dispatch``
+    with no list, gets ``ANTHROPIC_AGENTIC_MCP_TOOLS``.
+    """
+    raw = ""
+    client = ""
+    profile = ""
+    if headers is not None:
+        raw = str(headers.get("x-ulg-mcp-tools") or "").strip()
+        client = str(headers.get("x-ulg-client") or "").strip()
+        profile = str(headers.get("x-ulg-mcp-profile") or "").strip().lower()
+    if raw:
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if client == "anthropic-api" or profile == "probe":
+        return None
+    return ANTHROPIC_AGENTIC_MCP_TOOLS
+
+
 def inject_native_mcp(
     provider_key: str,
     body: dict,
@@ -58,8 +88,9 @@ def inject_native_mcp(
     """Inject provider-appropriate MCP entry into a native request body.
 
     ``enabled_tools`` is the per-dispatch allowlist for Anthropic. ``None``
-    uses ``ANTHROPIC_API_DEFAULT_MCP_TOOLS``. An explicit collection replaces
-    that default (including names outside it). OpenAI and xAI ignore it.
+    is the read-only probe set (``ANTHROPIC_API_DEFAULT_MCP_TOOLS``). Callers
+    that need agentic tools pass ``ANTHROPIC_AGENTIC_MCP_TOOLS`` or their own
+    list. OpenAI and xAI ignore it.
     """
     from .cloud_proxy import _get_mcp_executor
 

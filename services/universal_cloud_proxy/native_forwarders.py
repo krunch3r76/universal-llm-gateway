@@ -17,7 +17,11 @@ from .native_boundary import (
     workspace_catalog_id_from_native,
 )
 from .native_forward_errors import publish_and_raise, publish_failed
-from .native_mcp_inject import get_mcp_config_for_provider, inject_native_mcp
+from .native_mcp_inject import (
+    enabled_tools_for_native_mcp,
+    get_mcp_config_for_provider,
+    inject_native_mcp,
+)
 from .native_streaming import preflight_native_byte_stream
 
 logger = get_logger(__name__)
@@ -77,7 +81,11 @@ async def forward_native(
     if mcp_requested:
         raw_model = raw_model[:-4]
         body = {**body, "model": raw_model}
-        inject_native_mcp(provider_key, body)
+        inject_native_mcp(
+            provider_key,
+            body,
+            enabled_tools=enabled_tools_for_native_mcp(request.headers),
+        )
 
     _xai_injected_effort: str | None = None
     if provider_key == "xai" and _EFFORT_SUFFIX in raw_model:

@@ -7,10 +7,14 @@ receives the tool entry.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from services.universal_cloud_proxy import native_mcp_inject
 from services.universal_cloud_proxy.native_mcp_inject import inject_native_mcp
@@ -211,3 +215,111 @@ def test_inject_native_mcp_reverts_to_all_tools_no_cache_control(
     assert "configs" not in toolset
     assert "cache_control" not in toolset
     assert toolset == {"type": "mcp_toolset", "mcp_server_name": "vortex"}
+
+
+def _anthropic_mcp_request(headers: list[tuple[bytes, bytes]]) -> Request:
+    scope = {
+        "type": "http",
+        "asgi": {"spec_version": "2.3", "version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/api/v1/providers/anthropic/messages",
+        "raw_path": b"/api/v1/providers/anthropic/messages",
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 80),
+    }
+    return Request(scope)
+
+
+class _RecordingForwarder:
+    def __init__(self) -> None:
+        self.recorded: list[dict] = []
+
+    def adapter_type(self, provider: str) -> str:
+        _ = provider
+        return "anthropic"
+
+    async def forward_native(self, *, provider: str, request_body: dict) -> dict:
+        _ = provider
+        self.recorded.append(dict(request_body))
+        return {"id": "msg_test", "content": [{"type": "text", "text": "ok"}]}
+
+
+def _forward_anthropic_mcp(headers: list[tuple[bytes, bytes]]) -> dict:
+    """Run forward_native for one Anthropic -mcp body; return the upstream body."""
+    from services.universal_cloud_proxy.native_forwarders import forward_native
+
+    request = _anthropic_mcp_request(headers)
+    forwarder = _RecordingForwarder()
+    body = {
+        "model": "claude-haiku-4-5-20251001-mcp",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 16,
+    }
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+        patch(
+            "services.universal_cloud_proxy.cloud_proxy._read_json_object_body",
+            new_callable=AsyncMock,
+            return_value=body,
+        ),
+        patch(
+            "services.universal_cloud_proxy.cloud_proxy._get_catalog",
+            return_value=None,
+        ),
+    ):
+        resp = asyncio.run(
+            forward_native(
+                request,
+                provider_key="anthropic",
+                surface="test",
+                forwarder=forwarder,
+                event_bus=None,
+            )
+        )
+    assert isinstance(resp, JSONResponse)
+    assert json.loads(resp.body)["id"] == "msg_test"
+    assert forwarder.recorded
+    return forwarder.recorded[0]
+
+
+def test_forward_native_team_dispatch_mcp_keeps_agentic_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A pipeline -mcp request with no tool list still enables team_dispatch and agent_bus.
+
+    Breaks when forward_native omits enabled_tools and the probe set is applied.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-pipeline-internal", b"true")])
+    configs = upstream["tools"][-1]["configs"]
+    assert "team_dispatch" in configs
+    assert "agent_bus" in configs
+    assert configs["team_dispatch"] == {"enabled": True}
+    assert configs["agent_bus"] == {"enabled": True}
+
+
+def test_forward_native_probe_mcp_is_rag_fs_cortex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """An anthropic-api probe -mcp request enables only rag, fs, and cortex.
+
+    Breaks when the agentic set is applied to a known read-only caller.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-ulg-client", b"anthropic-api")])
+    configs = upstream["tools"][-1]["configs"]
+    assert set(configs) == {"rag", "fs", "cortex"}
+    assert "team_dispatch" not in configs
+    assert "agent_bus" not in configs
