@@ -44,6 +44,7 @@ services:
       - ~/.gateway:/home/mcp/.gateway:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
+      - VORTEX_BEARER_TOKENS=${VORTEX_BEARER_TOKENS:-}
       - PROJECT_ROOT=/data/project
       - TASKS_ROOT=/data/tasks
       # Must match the /data/files volume mount above. Without this,
