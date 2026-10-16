@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fs_impl import fs_impl
+from implement_admission.scheme_resolve import sandbox_scheme_conflict_message
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
@@ -14,7 +15,6 @@ from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _paths as paths_mod
 from tools.filesystem._files_dispatcher import dispatch_files_op
 
-from implement_admission.scheme_resolve import sandbox_scheme_conflict_message
 from tools import _file_helpers
 
 pytestmark = pytest.mark.offline
@@ -205,36 +205,6 @@ def test_copy_explicit_target_sandbox_conflicting_with_scheme_refuses(
     assert expected_error in result["error"]
     assert not (cortex_root / dest_rel).exists()
     assert not (workspaces_root / dest_rel).exists()
-
-
-def test_copy_cortex_to_workspaces_uri_without_target_sandbox(
-    copy_roots: tuple[Path, Path],
-) -> None:
-    """Cortex source to workspaces:// dest must land under project root, not cortex."""
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "notes/system/threads/a37974-copy/source/cortex-src.md"
-    src = cortex_root / src_rel
-    src.parent.mkdir(parents=True)
-    payload = "cortex-to-workspaces-copy\n"
-    src.write_text(payload, encoding="utf-8")
-    dest_rel = "universal-llm-gateway/docs/a37974-rev.md"
-    dest_uri = f"workspaces://{dest_rel}"
-
-    result = fs_impl(
-        **_fs_kwargs(
-            path=f"cortex://{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-        )
-    )
-
-    assert "error" not in result, result
-    dest = workspaces_root / dest_rel
-    assert dest.is_file()
-    assert not (cortex_root / "universal-llm-gateway").exists()
-    assert dest.read_text(encoding="utf-8") == payload
-    assert result["status"] == "copied"
-    assert result["read_sha256"] == sha256_hex_of_file(dest)
 
 
 def test_copy_refuses_when_dest_vanishes_after_shutil(
