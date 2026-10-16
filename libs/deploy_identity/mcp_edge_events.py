@@ -140,10 +140,36 @@ def mcp_edge_grokbot_probe_failed(*, error_class: str, detail: str) -> Event:
     )
 
 
+@event_factory
+def mcp_edge_grokbot_watch_ok(
+    *,
+    watch_connected: bool,
+    health_http_status: int | None,
+    hm1_tools_call_ok: bool,
+    undici_idle_s: float | None,
+) -> Event:
+    """Grok Bot egress watch completed a healthy tick (rate-limited success observable)."""
+    payload: dict[str, object] = {
+        "watch_connected": watch_connected,
+        "health_http_status": health_http_status,
+        "hm1_tools_call_ok": hm1_tools_call_ok,
+        "undici_idle_s": (
+            round(undici_idle_s, 1) if undici_idle_s is not None else None
+        ),
+    }
+    return Event(
+        signal="mcp.edge.grokbot.watch.ok",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
 __all__ = [
     "mcp_edge_grokbot_loader_stuck",
     "mcp_edge_grokbot_probe_failed",
     "mcp_edge_grokbot_tunnel_stale",
+    "mcp_edge_grokbot_watch_ok",
     "mcp_edge_probe_failed",
     "mcp_edge_probe_succeeded",
     "mcp_listener_liveness_failed",
