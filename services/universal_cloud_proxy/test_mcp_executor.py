@@ -1005,3 +1005,144 @@ async def test_google_without_header_or_suffix_skips_loop(
     resp = await cp.chat_completions(Request(_chat_scope(payload), receive))
     assert resp.status_code == 200
     assert loop["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_open_webui_plain_chat_forwards_when_executor_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executor down + open-webui, MCP not requested: forward, not 503."""
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+    forwarded = {"called": False}
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        async def forward_chat_request(self, **_kwargs: object) -> dict[str, object]:
+            forwarded["called"] = True
+            return {"choices": [{"message": {"content": "direct"}}]}
+
+    class _Exec:
+        available = False
+
+        async def run_tool_loop(self, *_a: object, **_k: object) -> dict[str, object]:
+            raise AssertionError("tool loop must not run")
+
+    monkeypatch.setattr(cp, "_open_webui_plain_chat_fallback_logged", False)
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("anthropic", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+    payload = json.dumps(
+        {"model": mid, "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    scope = _chat_scope(payload, [(b"x-ulg-client", b"open-webui")])
+    resp = await cp.chat_completions(Request(scope, receive))
+    assert resp.status_code == 200
+    assert forwarded["called"] is True
+
+
+@pytest.mark.asyncio
+async def test_lifespan_normalizes_bare_mcp_url_for_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup passes …/mcp through normalize_mcp_public_url → …/mcp/code/."""
+    from types import SimpleNamespace
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+    from services.universal_cloud_proxy.config import CloudProxyConfig
+
+    captured: dict[str, object] = {}
+
+    class _Exec:
+        def __init__(self, *, mcp_url: str, auth_token: str | None = None) -> None:
+            captured["mcp_url"] = mcp_url
+            captured["auth_token"] = auth_token
+
+        async def startup(self) -> None:
+            return None
+
+        async def shutdown(self) -> None:
+            return None
+
+    class _Bus:
+        def set_debug_broadcaster(self, _broadcaster: object) -> None:
+            return None
+
+        async def publish(self, _event: object) -> None:
+            return None
+
+    class _Broadcaster:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        async def start_debug_server(self) -> None:
+            return None
+
+        async def stop_debug_server(self) -> None:
+            return None
+
+    class _Catalog:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        async def startup(self) -> None:
+            return None
+
+        async def shutdown(self) -> None:
+            return None
+
+        def get_all_models(self) -> list[object]:
+            return []
+
+    class _Browser:
+        model_count = 0
+
+        async def refresh(self) -> int:
+            return 0
+
+    class _Local:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        async def refresh(self) -> int:
+            return 0
+
+    class _Client:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(cp, "EventBus", _Bus)
+    monkeypatch.setattr(cp, "MinimalEventDebugBroadcaster", _Broadcaster)
+    monkeypatch.setattr(
+        cp,
+        "load_config",
+        lambda: CloudProxyConfig(
+            providers=[],
+            mcp_server_url="https://mcp.example/mcp",
+            mcp_auth_token="tok",
+        ),
+    )
+    monkeypatch.setattr(cp, "CatalogManager", _Catalog)
+    monkeypatch.setattr(cp, "BrowserCatalogCache", _Browser)
+    monkeypatch.setattr(cp, "LocalCatalogCache", _Local)
+    monkeypatch.setattr(cp, "McpToolExecutor", _Exec)
+    monkeypatch.setattr(cp.httpx, "AsyncClient", _Client)
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    async with cp._lifespan(app):
+        pass
+    assert captured["mcp_url"] == "https://mcp.example/mcp/code/"
+    assert captured["auth_token"] == "tok"

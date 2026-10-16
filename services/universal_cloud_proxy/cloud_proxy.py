@@ -36,6 +36,7 @@ import httpx
 from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from llm_adapters._mcp_entry import normalize_mcp_public_url
 from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
@@ -79,6 +80,7 @@ _atexit_event_bus: EventBus | None = None
 # atexit fires on clean Python exit (crash, sys.exit) but NOT on SIGKILL.
 # Absence of shutdown log + _shutdown_clean=False → crash or unhandled exception.
 _shutdown_clean: bool = False
+_open_webui_plain_chat_fallback_logged: bool = False
 
 
 def _atexit_handler() -> None:
@@ -209,7 +211,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     mcp_executor: McpToolExecutor | None = None
     if config.mcp_server_url:
         mcp_executor = McpToolExecutor(
-            mcp_url=config.mcp_server_url,
+            mcp_url=normalize_mcp_public_url(config.mcp_server_url),
             auth_token=config.mcp_auth_token,
         )
         await mcp_executor.startup()
@@ -773,8 +775,17 @@ async def chat_completions(request: Request) -> Response:
         )
     )
     mcp_executor = _get_mcp_executor()
-    if _use_proxy_loop:
-        if not mcp_executor or not mcp_executor.available:
+    executor_down = not mcp_executor or not mcp_executor.available
+    if _use_proxy_loop and executor_down and open_webui_anthropic:
+        global _open_webui_plain_chat_fallback_logged
+        if not _open_webui_plain_chat_fallback_logged:
+            _open_webui_plain_chat_fallback_logged = True
+            logger.warning(
+                "MCP tool executor unavailable; forwarding open-webui "
+                "plain chat without the proxy tool loop"
+            )
+    elif _use_proxy_loop:
+        if executor_down:
             raise HTTPException(
                 status_code=503,
                 detail="MCP tool executor not available — proxy tool loop unavailable",
