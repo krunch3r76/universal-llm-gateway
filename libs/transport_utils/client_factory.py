@@ -37,9 +37,8 @@ elif os.environ.get("STARGATE_URL"):
 else:
     DEFAULT_STARGATE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
 
-EVENTS_QUERY_SOCK = os.environ.get(
-    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
-)
+DEFAULT_EVENTS_QUERY_SOCK_PATH = "/tmp/universal-protocol/events-query.sock"
+EVENTS_QUERY_SOCK = os.environ.get("EVENTS_QUERY_SOCK", DEFAULT_EVENTS_QUERY_SOCK_PATH)
 EVENTS_SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS
 
 MANAGE_SOCKET = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
