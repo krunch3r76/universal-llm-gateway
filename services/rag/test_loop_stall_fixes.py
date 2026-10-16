@@ -718,6 +718,39 @@ async def test_apply_bm25_sidecar_search_scoped_off_loop_under_drift_cap(
 
 
 @pytest.mark.asyncio
+async def test_bm25_sidecar_colspec_query_no_stall(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Colspec-shaped FTS query must not error the sidecar or stall the loop."""
+    _capture_loop_drift(caplog)
+    start_loop_instrumentation()
+    db_path = tmp_path / "fts.db"
+    pi = PropertyIndex(db_path)
+    await pi.start()
+    try:
+        await pi.fts.insert("c1", "/docs/a.md", "residual friction:39420 stall")
+        collection = MagicMock()
+        ids, _chunks, _metadatas, _distances, hits = await apply_bm25_sidecar(
+            ids=["d1"],
+            chunks=["dense"],
+            metadatas=[{"source": "/docs/a.md"}],
+            distances=[0.2],
+            query="friction:39420",
+            fts=pi.fts,
+            collection=collection,
+            source_prefixes=["/docs/"],
+        )
+        assert ids == ["d1"]
+        assert hits == 0
+        await asyncio.sleep(0.05)
+        assert _max_loop_drift_ms(caplog) < _DRIFT_FAIL_MS
+    finally:
+        await pi.stop()
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
 async def test_bm25_sidecar_code_token_dense_only_no_stall(
     caplog: pytest.LogCaptureFixture,
     tmp_path: Path,

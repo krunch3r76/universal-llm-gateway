@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 
 
 def escape_fts_match_query(query: str) -> str:
-    """Format user text for FTS5 ``MATCH`` without bare-token column parse errors.
+    """Escape a user query for FTS5 ``MATCH`` after a colspec parse failure.
 
-    FTS5 treats unquoted tokens as column filters (``column:term``). Tokens such
-    as ``code`` or ``bus`` are not indexed columns on ``chunks_fts`` and raise
-    ``sqlite3.OperationalError: no such column``. Double-quoting each whitespace
-    token preserves default AND semantics over indexed ``content``.
+    FTS5 treats ``token:term`` as a column filter. Expressions such as
+    ``friction:39420`` or ``code: review`` raise ``OperationalError: no such
+    column`` when ``token`` is not an indexed column. Double-quoting each
+    whitespace-separated token preserves default AND semantics for that fallback.
     """
     stripped = query.strip()
     if not stripped:
@@ -45,6 +45,22 @@ def escape_fts_match_query(query: str) -> str:
     return " ".join(
         f'"{token.replace(chr(34), chr(34) * 2)}"' for token in stripped.split()
     )
+
+
+def _fetchall_fts_match(
+    conn: sqlite3.Connection,
+    sql: str,
+    query: str,
+    extra_params: tuple[object, ...],
+) -> list[tuple[object, ...]]:
+    """Run an FTS ``MATCH`` query, retrying with ``escape_fts_match_query`` on colspec errors."""
+    try:
+        return conn.execute(sql, (query, *extra_params)).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such column" not in str(exc).casefold():
+            raise
+        escaped = escape_fts_match_query(query)
+        return conn.execute(sql, (escaped, *extra_params)).fetchall()
 
 
 _FTS_SCHEMA_SQL = """
@@ -174,13 +190,14 @@ class FtsIndex:
         FTS5 bm25() returns negative floats (more negative = better match).
         """
         conn, _ = self._ensure()
-        match_query = escape_fts_match_query(query)
-        rows = conn.execute(
+        rows = _fetchall_fts_match(
+            conn,
             "SELECT chunk_id, bm25(chunks_fts) AS score"
             " FROM chunks_fts WHERE chunks_fts MATCH ?"
             " ORDER BY score LIMIT ?",
-            (match_query, limit),
-        ).fetchall()
+            query,
+            (limit,),
+        )
         return [(row[0], row[1]) for row in rows]
 
     def search_scoped(
@@ -195,14 +212,15 @@ class FtsIndex:
         if not source_prefixes:
             return self.search(query, limit=limit)
         source_clause = " OR ".join("source LIKE ?" for _ in source_prefixes)
-        match_query = escape_fts_match_query(query)
-        params = (match_query, *(f"{prefix}%" for prefix in source_prefixes), limit)
-        rows = conn.execute(
+        prefix_params = tuple(f"{prefix}%" for prefix in source_prefixes)
+        rows = _fetchall_fts_match(
+            conn,
             "SELECT chunk_id, source, bm25(chunks_fts) AS score"
             f" FROM chunks_fts WHERE chunks_fts MATCH ? AND ({source_clause})"
             " ORDER BY score LIMIT ?",
-            params,
-        ).fetchall()
+            query,
+            (*prefix_params, limit),
+        )
         return [(row[0], row[2]) for row in rows]
 
     def sources_for_prefixes(self, source_prefixes: list[str]) -> list[str]:

@@ -15,6 +15,7 @@ from typing import Any
 import chromadb
 from universal_logging import get_logger
 
+from services.rag.chroma_writer import run_chroma
 from services.rag.fts_index import FtsIndex
 from services.rag.search_scope.prefix_filter import apply_source_prefix_filter_with_ids
 
@@ -100,7 +101,11 @@ async def apply_bm25_sidecar(
         )
 
     try:
-        fetched = collection.get(ids=bm25_only_ids, include=["documents", "metadatas"])
+        fetched = await run_chroma(
+            collection.get,
+            ids=bm25_only_ids,
+            include=["documents", "metadatas"],
+        )
     except Exception as exc:
         logger.warning(
             "BM25 sidecar Chroma fetch failed; returning partial merge: %s",

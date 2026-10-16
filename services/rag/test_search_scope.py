@@ -74,7 +74,56 @@ def test_search_scoped_pushes_prefix_filter_into_sql() -> None:
     sql, params = conn.calls[0]
     assert "chunks_fts MATCH ?" in sql
     assert "source LIKE ?" in sql
-    assert params == ('"needle"', "/allowed%", "/also%", 7)
+    assert params == ("needle", "/allowed%", "/also%", 7)
+
+
+def test_fts_search_preserves_or_expression() -> None:
+    """Pool B facet queries use OR-joined MATCH strings; escape must not rewrite them."""
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+
+    from services.rag.fts_index import FtsIndex
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "fts.db"
+        conn = sqlite3.connect(str(db))
+        index = FtsIndex()
+        index.attach(conn, seq=object())  # type: ignore[arg-type]
+        conn.execute(
+            "INSERT INTO chunks_fts (chunk_id, source, content) VALUES (?, ?, ?)",
+            ("c1", "/s/a.md", "alpha text here"),
+        )
+        conn.execute(
+            "INSERT INTO chunks_fts (chunk_id, source, content) VALUES (?, ?, ?)",
+            ("c2", "/s/b.md", "beta text here"),
+        )
+        conn.commit()
+        hits = index.search("alpha OR beta", limit=10)
+        assert {h[0] for h in hits} == {"c1", "c2"}
+
+
+def test_fts_search_colspec_token_fallback() -> None:
+    """Colspec-shaped tokens retry with escaped MATCH after OperationalError."""
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+
+    from services.rag.fts_index import FtsIndex
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "fts.db"
+        conn = sqlite3.connect(str(db))
+        index = FtsIndex()
+        index.attach(conn, seq=object())  # type: ignore[arg-type]
+        conn.execute(
+            "INSERT INTO chunks_fts (chunk_id, source, content) VALUES (?, ?, ?)",
+            ("c1", "/s/a.md", "residual friction:39420 on the loop"),
+        )
+        conn.commit()
+        hits = index.search("friction:39420", limit=5)
+        assert len(hits) == 1
+        assert hits[0][0] == "c1"
 
 
 def test_sources_for_prefixes_uses_like_without_fts_match() -> None:

@@ -55,8 +55,13 @@ async def _indexed_sources_for_scope(
         return None
     try:
         fts = state._property_index.fts
-        sources = await asyncio.to_thread(fts.sources_for_prefixes, source_prefixes)
-        if not sources and fts.get_count() == 0:
+
+        def _scoped_sources_and_count() -> tuple[list[str], int]:
+            paths = fts.sources_for_prefixes(source_prefixes)
+            return paths, fts.get_count()
+
+        sources, fts_count = await asyncio.to_thread(_scoped_sources_and_count)
+        if not sources and fts_count == 0:
             # FTS is empty (cleared or not yet built); the list says nothing
             # about Chroma, so use over-fetch instead of returning no hits.
             return None
