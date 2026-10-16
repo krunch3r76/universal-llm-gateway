@@ -25,6 +25,7 @@ from services.rag.chroma_writer import (
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.extraction.property_entries import build_property_entries
 from services.rag.knowledge_extractor import (
+    CancelExtractionOutcome,
     ExtractedKnowledge,
     cancel_extraction_execution,
     poll_extraction_result,
@@ -40,22 +41,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _cancel_stored_execution_before_submit(
+async def reclaim_cancel_stored_execution(
     *,
     source: str,
     prior_execution_id: str | None,
     property_index: PropertyIndex,
 ) -> None:
-    """Cancel any stale Stargate run and drop the queue pointer before a new submit.
+    """Cancel a stale Stargate run at claim time; clear the pointer only if confirmed.
 
-    After force-cut or map stall, reclaim must not poll a dead execution forever
-    nor stack duplicate pipelines. Cancel is best-effort (404 / down Stargate is
-    OK); submit always proceeds on the next line in ``extract_source``.
+    After force-cut or map stall, reclaim must not stack duplicate pipelines.
+    When Stargate is down, leave ``active_execution_id`` so startup recovery can
+    retry the cancel. Submit (in ``extract_source``) proceeds regardless.
     """
     if not prior_execution_id:
         return
-    await cancel_extraction_execution(prior_execution_id)
-    await property_index.clear_extraction_execution_id(source)
+    outcome = await cancel_extraction_execution(prior_execution_id)
+    if outcome in (
+        CancelExtractionOutcome.CANCELLED,
+        CancelExtractionOutcome.ALREADY_GONE,
+    ):
+        await property_index.clear_extraction_execution_id(source)
 
 
 async def extract_source(
@@ -66,7 +71,6 @@ async def extract_source(
     rag_config: RagConfig,
     property_index: PropertyIndex,
     on_execution_id: Callable[[str], Awaitable[None]] | None = None,
-    prior_execution_id: str | None = None,
 ) -> tuple[bool, bool, str, str, str]:
     """Extract one source.
 
@@ -110,12 +114,6 @@ async def extract_source(
     ext_ids = [raw_ids[i] for i in need_idx]
     ext_texts = [raw_docs[i] for i in need_idx]
     ext_metas = [raw_metas[i] for i in need_idx]
-
-    await _cancel_stored_execution_before_submit(
-        source=source,
-        prior_execution_id=prior_execution_id,
-        property_index=property_index,
-    )
 
     start = time.monotonic()
     execution_id = await submit_extraction_pipeline(ext_ids, ext_texts, config)

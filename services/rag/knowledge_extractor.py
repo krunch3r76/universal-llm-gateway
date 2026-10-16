@@ -369,21 +369,49 @@ async def poll_extraction_result(
         return parsed, timing
 
 
-async def cancel_extraction_execution(execution_id: str) -> None:
+class CancelExtractionOutcome:
+    """Result of a best-effort Stargate execution DELETE."""
+
+    CANCELLED = "cancelled"
+    ALREADY_GONE = "already_gone"
+    UNKNOWN = "unknown"
+
+
+async def cancel_extraction_execution(execution_id: str) -> str:
     """Best-effort DELETE of an in-flight Stargate pipeline execution by id.
 
     Used to kill orphaned runs: by ``extraction.chroma_source`` when storing the
     execution id fails, and by ``rag_service.extraction_runtime`` for abandoned
     claims at startup. Never raises; failures are logged as warnings.
+
+    Returns ``CancelExtractionOutcome`` — callers may clear queue pointers only
+    on ``CANCELLED`` or ``ALREADY_GONE``.
     """
     try:
         response = await _client.delete(
             f"{STARGATE_URL}/api/v1/executions/{execution_id}",
             timeout=10.0,
         )
+        if response.status_code == 404:
+            logger.info(
+                "Extraction execution %s already gone on cancel", execution_id
+            )
+            return CancelExtractionOutcome.ALREADY_GONE
         response.raise_for_status()
         logger.info("Cancelled orphaned extraction execution %s", execution_id)
+        return CancelExtractionOutcome.CANCELLED
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            logger.info(
+                "Extraction execution %s already gone on cancel", execution_id
+            )
+            return CancelExtractionOutcome.ALREADY_GONE
+        logger.warning(
+            "Could not cancel extraction execution %s: %s", execution_id, exc
+        )
+        return CancelExtractionOutcome.UNKNOWN
     except Exception as exc:
         logger.warning(
             "Could not cancel extraction execution %s: %s", execution_id, exc
         )
+        return CancelExtractionOutcome.UNKNOWN

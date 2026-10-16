@@ -13,14 +13,19 @@ from services.rag.extraction import chroma_source, worker_loop
 from services.rag.extraction.worker_loop import (
     _MAX_QUEUE_ATTEMPTS,
     is_map_iteration_timeout_error,
+    is_map_terminal_pipeline_error,
     run_extraction_worker,
 )
+from services.rag.knowledge_extractor import CancelExtractionOutcome
 from services.rag.property_index import PropertyIndex
 from services.rag.property_index._spec import ExtractionQueueClaim
 
 _MAP_TIMEOUT_ERR = RuntimeError(
     "Extraction pipeline failed: MapPartialFailureError — "
     "TIMEOUT after 900.0s (request pending)"
+)
+_MAP_FAILED_ERR = RuntimeError(
+    "Extraction pipeline failed: MapPartialFailureError — FAILED - worker died"
 )
 
 
@@ -34,6 +39,11 @@ def test_is_map_iteration_timeout_error_other_runtime() -> None:
 
 def test_is_map_iteration_timeout_error_non_runtime() -> None:
     assert not is_map_iteration_timeout_error(ValueError("MapPartialFailureError"))
+
+
+def test_is_map_terminal_pipeline_error_failed_iteration() -> None:
+    assert is_map_terminal_pipeline_error(_MAP_FAILED_ERR)
+    assert not is_map_iteration_timeout_error(_MAP_FAILED_ERR)
 
 
 async def _property_index(tmp_path: Path) -> PropertyIndex:
@@ -173,57 +183,50 @@ async def test_worker_loop_httpx_timeout_still_capacity_class() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_stale_execution_swallows_404_still_submits(
+async def test_reclaim_cancel_retains_pointer_when_stargate_down(
     tmp_path: Path,
 ) -> None:
-    """Stargate down / unknown id on cancel must not block submit; pointer cleared."""
+    """Unknown cancel outcome leaves active_execution_id for startup recovery."""
     idx = await _property_index(tmp_path)
     try:
         await idx.enqueue_extraction("/s.json")
         await idx.record_extraction_execution_id("/s.json", "stale-exec-id")
-
-        collection = MagicMock()
-        collection.get.return_value = {
-            "ids": ["c1"],
-            "documents": ["doc"],
-            "metadatas": [{"source": "/s.json"}],
-        }
-        config = MagicMock(schema_version=1, extraction_model="m", pipeline="p")
-
-        mock_client = MagicMock()
-        mock_client.delete = AsyncMock(side_effect=ConnectionError("stargate down"))
-
-        with (
-            patch(
-                "services.rag.knowledge_extractor._client",
-                mock_client,
-            ),
-            patch.object(
-                chroma_source,
-                "submit_extraction_pipeline",
-                AsyncMock(return_value="new-exec"),
-            ) as submit_mock,
-            patch.object(
-                chroma_source,
-                "poll_extraction_result",
-                AsyncMock(return_value=([], {})),
-            ),
-            patch.object(
-                chroma_source,
-                "run_chroma",
-                AsyncMock(side_effect=lambda fn, *a, **k: fn(*a, **k)),
-            ),
+        with patch.object(
+            chroma_source,
+            "cancel_extraction_execution",
+            AsyncMock(return_value=CancelExtractionOutcome.UNKNOWN),
         ):
-            await chroma_source.extract_source(
-                "/s.json",
-                collection=collection,
-                config=config,
-                rag_config=MagicMock(get_scope_for_path=lambda _s: "all"),
-                property_index=idx,
+            await chroma_source.reclaim_cancel_stored_execution(
+                source="/s.json",
                 prior_execution_id="stale-exec-id",
+                property_index=idx,
             )
+        conn = idx._ensure_conn()
+        row = conn.execute(
+            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
+            ("/s.json",),
+        ).fetchone()
+        assert row[0] == "stale-exec-id"
+    finally:
+        await idx.stop()
 
-        submit_mock.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_reclaim_cancel_clears_pointer_on_404(tmp_path: Path) -> None:
+    idx = await _property_index(tmp_path)
+    try:
+        await idx.enqueue_extraction("/s.json")
+        await idx.record_extraction_execution_id("/s.json", "gone-exec-id")
+        with patch.object(
+            chroma_source,
+            "cancel_extraction_execution",
+            AsyncMock(return_value=CancelExtractionOutcome.ALREADY_GONE),
+        ):
+            await chroma_source.reclaim_cancel_stored_execution(
+                source="/s.json",
+                prior_execution_id="gone-exec-id",
+                property_index=idx,
+            )
         conn = idx._ensure_conn()
         row = conn.execute(
             "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
@@ -235,111 +238,126 @@ async def test_cancel_stale_execution_swallows_404_still_submits(
 
 
 @pytest.mark.asyncio
-async def test_second_claim_cancel_then_submit_is_safe(tmp_path: Path) -> None:
-    """Overlapping reclaim paths cancel-then-submit without skipping submit."""
+async def test_sequential_reclaim_cancel_is_idempotent(tmp_path: Path) -> None:
+    """Two reclaim cancels on the same source both attempt cancel; pointer clears when confirmed."""
     idx = await _property_index(tmp_path)
     try:
-        stale_id = "exec-a"
-        collection = MagicMock()
-        collection.get.return_value = {
-            "ids": ["c1"],
-            "documents": ["d"],
-            "metadatas": [{}],
-        }
-        config = MagicMock(schema_version=1, extraction_model="m", pipeline="p")
-        cancel_mock = AsyncMock()
-        submit_mock = AsyncMock(side_effect=["exec-b", "exec-c"])
-
-        async def _run_extract(prior: str | None) -> None:
-            with (
-                patch.object(chroma_source, "cancel_extraction_execution", cancel_mock),
-                patch.object(
-                    chroma_source, "submit_extraction_pipeline", submit_mock
-                ),
-                patch.object(
-                    chroma_source,
-                    "poll_extraction_result",
-                    AsyncMock(return_value=([], {})),
-                ),
-                patch.object(
-                    chroma_source,
-                    "run_chroma",
-                    AsyncMock(side_effect=lambda fn, *a, **k: fn(*a, **k)),
-                ),
-            ):
-                await chroma_source.extract_source(
-                    "/s.json",
-                    collection=collection,
-                    config=config,
-                    rag_config=MagicMock(get_scope_for_path=lambda _s: "all"),
-                    property_index=idx,
-                    prior_execution_id=prior,
-                )
-
+        cancel_mock = AsyncMock(
+            side_effect=[
+                CancelExtractionOutcome.CANCELLED,
+                CancelExtractionOutcome.ALREADY_GONE,
+            ]
+        )
         await idx.enqueue_extraction("/s.json")
-        await _run_extract(stale_id)
-        await idx.record_extraction_execution_id("/s.json", "exec-b")
-        await _run_extract("exec-b")
-
+        await idx.record_extraction_execution_id("/s.json", "exec-a")
+        with patch.object(
+            chroma_source, "cancel_extraction_execution", cancel_mock
+        ):
+            await chroma_source.reclaim_cancel_stored_execution(
+                source="/s.json",
+                prior_execution_id="exec-a",
+                property_index=idx,
+            )
+            await idx.record_extraction_execution_id("/s.json", "exec-b")
+            await chroma_source.reclaim_cancel_stored_execution(
+                source="/s.json",
+                prior_execution_id="exec-b",
+                property_index=idx,
+            )
         assert cancel_mock.await_count == 2
-        assert submit_mock.await_count == 2
     finally:
         await idx.stop()
 
 
 @pytest.mark.asyncio
-async def test_mid_job_poll_failure_then_reclaim_cancels_before_submit(
+async def test_worker_reclaim_cancels_before_extract_source(
     tmp_path: Path,
 ) -> None:
-    """After poll failure, the next claim cancels stored execution before a new submit."""
-    idx = await _property_index(tmp_path)
-    try:
-        await idx.enqueue_extraction("/s.json")
-        await idx.record_extraction_execution_id("/s.json", "failed-mid-job")
+    """Claim lifecycle cancel runs before extract_source (including early-complete paths)."""
+    claim = ExtractionQueueClaim(
+        source="/s.json",
+        attempts=1,
+        queued_at="t",
+        claimed_at="t",
+        active_execution_id="failed-mid-job",
+    )
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+    shutdown = asyncio.Event()
 
-        collection = MagicMock()
-        collection.get.return_value = {
-            "ids": ["c1"],
-            "documents": ["d"],
-            "metadatas": [{}],
-        }
-        config = MagicMock(schema_version=1, extraction_model="m", pipeline="p")
-        cancel_mock = AsyncMock()
-        submit_mock = AsyncMock(return_value="replacement-exec")
+    async def _complete(_source: str) -> None:
+        shutdown.set()
 
-        with (
-            patch.object(chroma_source, "cancel_extraction_execution", cancel_mock),
-            patch.object(chroma_source, "submit_extraction_pipeline", submit_mock),
-            patch.object(
-                chroma_source,
-                "poll_extraction_result",
-                AsyncMock(return_value=([], {})),
-            ),
-            patch.object(
-                chroma_source,
-                "run_chroma",
-                AsyncMock(side_effect=lambda fn, *a, **k: fn(*a, **k)),
-            ),
-        ):
-            await chroma_source.extract_source(
-                "/s.json",
-                collection=collection,
-                config=config,
-                rag_config=MagicMock(get_scope_for_path=lambda _s: "all"),
-                property_index=idx,
-                prior_execution_id="failed-mid-job",
-            )
+    property_index.complete_extraction = AsyncMock(side_effect=_complete)
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge")
+    config.knowledge_extraction = ke
 
-        cancel_mock.assert_awaited_once_with("failed-mid-job")
-        submit_mock.assert_awaited_once()
-        conn = idx._ensure_conn()
-        cleared = conn.execute(
-            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
-            ("/s.json",),
-        ).fetchone()[0]
-        assert cleared is None
-    finally:
-        await idx.stop()
+    reclaim_mock = AsyncMock()
+    extract_mock = AsyncMock(return_value=(True, True, "", "", ""))
+
+    with (
+        patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+        patch.object(worker_loop, "configure_timeouts"),
+        patch.object(worker_loop, "reclaim_cancel_stored_execution", reclaim_mock),
+        patch.object(worker_loop, "extract_source", extract_mock),
+        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+    ):
+        await run_extraction_worker(
+            config=config,
+            collection_fn=lambda: MagicMock(),
+            property_index=property_index,
+            event_bus=None,
+            shutdown_event=shutdown,
+        )
+
+    reclaim_mock.assert_awaited_once_with(
+        source="/s.json",
+        prior_execution_id="failed-mid-job",
+        property_index=property_index,
+    )
+    extract_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_map_failed_still_increments_attempt() -> None:
+    claim = ExtractionQueueClaim(
+        source="/s.json",
+        attempts=1,
+        queued_at="t",
+        claimed_at="t",
+    )
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+    property_index.fail_extraction = AsyncMock()
+    shutdown = asyncio.Event()
+
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge")
+    config.knowledge_extraction = ke
+
+    async def _raise_failed(*_a: object, **_k: object) -> None:
+        shutdown.set()
+        raise _MAP_FAILED_ERR
+
+    with (
+        patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+        patch.object(worker_loop, "configure_timeouts"),
+        patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
+        patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_failed)),
+        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+    ):
+        await run_extraction_worker(
+            config=config,
+            collection_fn=lambda: MagicMock(),
+            property_index=property_index,
+            event_bus=None,
+            shutdown_event=shutdown,
+        )
+
+    _args, kwargs = property_index.fail_extraction.await_args
+    assert kwargs["increment_attempt"] is True
+    assert kwargs["failure_category"] == "iteration_timeout"
 
 
 @pytest.mark.asyncio

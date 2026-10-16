@@ -23,7 +23,10 @@ from services.rag.events.extraction_queue import (
     rag_extraction_source_completed,
 )
 from services.rag.extraction.capacity_envelope import is_capacity_class_envelope
-from services.rag.extraction.chroma_source import extract_source
+from services.rag.extraction.chroma_source import (
+    extract_source,
+    reclaim_cancel_stored_execution,
+)
 from services.rag.extraction.record_failure import record_source_failure
 from services.rag.extraction_admission import ExtractionAdmissionGate
 from services.rag.knowledge_extractor import (
@@ -46,12 +49,16 @@ _MAX_QUEUE_ATTEMPTS = 5
 _ADMISSION_WAIT_TIMEOUT_S: float = 60.0
 
 
-def is_map_iteration_timeout_error(exc: BaseException) -> bool:
-    """True when Stargate failed a map step with a pending-request timeout."""
+def is_map_terminal_pipeline_error(exc: BaseException) -> bool:
+    """True when Stargate terminalized a map extraction with partial failure."""
     if not isinstance(exc, RuntimeError):
         return False
-    msg = str(exc)
-    return "MapPartialFailureError" in msg and "request pending" in msg
+    return "MapPartialFailureError" in str(exc)
+
+
+def is_map_iteration_timeout_error(exc: BaseException) -> bool:
+    """Alias for tests and call sites focused on the 900s timeout sub-case."""
+    return is_map_terminal_pipeline_error(exc) and "request pending" in str(exc)
 
 
 async def _sleep_or_shutdown(
@@ -176,6 +183,11 @@ async def run_extraction_worker(
             )
         source_started = time.monotonic()
         try:
+            await reclaim_cancel_stored_execution(
+                source=source,
+                prior_execution_id=claim.active_execution_id,
+                property_index=property_index,
+            )
             collection = collection_fn()
 
             async def _store_execution_id(execution_id: str) -> None:
@@ -196,7 +208,6 @@ async def run_extraction_worker(
                 rag_config=config,
                 property_index=property_index,
                 on_execution_id=_store_execution_id,
-                prior_execution_id=claim.active_execution_id,
             )
             # On CancelledError the active_execution_id is left intact so that
             # recover_abandoned_extraction_claims() can cancel the orphan on
@@ -319,9 +330,9 @@ async def run_extraction_worker(
                 )
 
         except RuntimeError as exc:
-            if is_map_iteration_timeout_error(exc):
+            if is_map_terminal_pipeline_error(exc):
                 logger.warning(
-                    "Extraction worker: map iteration timeout for %s "
+                    "Extraction worker: map pipeline terminal failure for %s "
                     "(burning attempt)",
                     source,
                 )
