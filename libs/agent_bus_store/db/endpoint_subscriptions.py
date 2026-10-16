@@ -105,8 +105,6 @@ def subscribe_endpoint(
     ) or (surface_raw == "cse" and canon == "maestro")
     if scope == "*" and not wildcard_ok:
         raise SubscribeError("endpoint_wildcard_refused")
-    if surface_raw == "cursor":
-        raise SubscribeError("endpoint_surface_unconfirmed")
     if not (title or agent_id):
         raise SubscribeError("endpoint_title_or_agent_required")
     if surface_raw == "cse":

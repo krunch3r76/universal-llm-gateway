@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
@@ -33,9 +34,14 @@ _TARGETS: dict[tuple[str, str], str] = {
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
 _DISPLAY_LOCKS: dict[str, asyncio.Lock] = {}
-_COMPOSER_JS = {
-    "grok": (
-        "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
+_GROK_COMPOSER_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
+
+
+def _composer_focus_js(selector: str) -> str:
+    """Grok-style focus/clear script for one witnessed composer selector."""
+    sel = json.dumps(selector)
+    return (
+        f"(()=>{{const el=document.querySelector({sel});"
         "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(draft);"
         "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
@@ -44,7 +50,18 @@ _COMPOSER_JS = {
         "sel.removeAllRanges();sel.addRange(range);}"
         "if(stale){document.execCommand('delete',false,null);el.innerText='';}"
         "return{ok:true};})()"
-    ),
+    )
+
+
+def _cursor_composer_selector() -> str:
+    path = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return str(payload["composer_selector"])
+
+
+_COMPOSER_JS = {
+    "grok": _composer_focus_js(_GROK_COMPOSER_SELECTOR),
+    "cursor": _composer_focus_js(_cursor_composer_selector()),
 }
 
 
