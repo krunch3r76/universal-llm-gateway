@@ -48,6 +48,7 @@ def _stub_docker_dir(
     snapshot_pipelines_local_fails: bool = False,
     sync_services_cp_fails: bool = False,
     optional_root_remains: bool = False,
+    mount_secret_container: str = "",
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -215,6 +216,15 @@ def _stub_docker_dir(
             if [[ "$joined" == *"while IFS= read"* ]]; then
               echo TREE_RM >> {log}
               cat >> "{tmp_path / "tree_rm.log"}"
+              if [[ -n "{mount_secret_container}" && -f "{tmp_path / "mount_secret"}" ]]; then
+                secret="{mount_secret_container}"
+                while IFS= read -r line; do
+                  path="${{line#* }}"
+                  if [[ "$secret" == "$path" || "$secret" == "$path"/* ]]; then
+                    rm -f "{tmp_path / "mount_secret"}"
+                  fi
+                done < "{tmp_path / "tree_rm.log"}"
+              fi
               if [[ "{str(tree_rm_fails).lower()}" == "true" ]]; then
                 exit 1
               fi
@@ -1249,3 +1259,63 @@ def test_optional_root_remaining_after_delete_disagrees(tmp_path: Path) -> None:
         assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr[-500:]
     finally:
         shutil.rmtree(local, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_candidate_ancestor_of_mount_disagrees_without_deleting(
+    tmp_path: Path,
+) -> None:
+    """A candidate directory above a mount is not deleted.
+
+    Services is noted, the services copy does not run, and last-healthy has
+    no ``services/newpkg``. The mount is ``/app/services/newpkg/vol`` with a
+    file at ``vol/secret``. ``rm -rf`` of the ancestor would remove that file.
+    """
+    package = _REPO_ROOT / "services" / "newpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    secret = tmp_path / "mount_secret"
+    secret.write_text("secret\n", encoding="utf-8")
+    try:
+        _seed_last_healthy_copy_set(tmp_path)
+        stub = _stub_docker_dir(
+            tmp_path,
+            inspect_health="healthy",
+            sync_services_cp_fails=True,
+            mount_dest="/app/services/newpkg/vol",
+            mount_secret_container="/app/services/newpkg/vol/secret",
+        )
+        proc = _run_sync_script(tmp_path, stub)
+        assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr[-500:]
+        assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr
+        assert _tree_rm_text(tmp_path) == ""
+        assert secret.read_text(encoding="utf-8") == "secret\n"
+        assert "TREE_RM" not in _docker_log(tmp_path)
+    finally:
+        shutil.rmtree(package, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_mount_name_prefix_sibling_is_not_an_ancestor(tmp_path: Path) -> None:
+    """``/app/services/new`` is not an ancestor of ``/app/services/newpkg/vol``.
+
+    A shared name prefix without a slash boundary must not abort the delete
+    of the sibling. The mount file under newpkg is not a candidate here.
+    """
+    sibling = _REPO_ROOT / "services" / "new"
+    sibling.mkdir()
+    (sibling / "keep.py").write_text("keep = 1\n", encoding="utf-8")
+    try:
+        _seed_last_healthy_copy_set(tmp_path)
+        stub = _stub_docker_dir(
+            tmp_path,
+            stop_fails=True,
+            inspect_health="healthy",
+            mount_dest="/app/services/newpkg/vol",
+        )
+        proc = _run_sync_script(tmp_path, stub)
+        rm_text = _tree_rm_text(tmp_path)
+        assert "F /app/services/new/keep.py" in rm_text, rm_text[-200:]
+        assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-400:]
+    finally:
+        shutil.rmtree(sibling, ignore_errors=True)

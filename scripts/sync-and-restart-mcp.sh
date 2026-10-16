@@ -399,7 +399,9 @@ _candidates_hit_mount() {
     while IFS= read -r dest; do
       [[ -z "$dest" ]] && continue
       dest="${dest%/}"
-      if [[ "$cpath" == "$dest" || "$cpath" == "$dest"/* ]]; then
+      # Equal, under the mount, or an ancestor of it. A slash boundary keeps
+      # /app/services/new from matching /app/services/newpkg/vol.
+      if [[ "$cpath" == "$dest" || "$cpath" == "$dest"/* || "$dest" == "$cpath"/* ]]; then
         return 0
       fi
     done <<< "$mounts"
