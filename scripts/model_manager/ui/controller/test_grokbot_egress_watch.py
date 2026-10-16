@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from deploy_identity.mcp_edge_events import (
 )
 
 from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
+    GC1_BUS_TIP_STALE_MS,
     GC1_CLIENT_IP,
     HM1_CLIENT_IPS,
     IN_FLIGHT_STALE_MS,
@@ -39,10 +41,10 @@ _NOW_MS = 1_700_000_000_000
 
 
 def _watch_log_dialing(*, disconnected_ms: int = 90_000) -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     dial_at = datetime.fromtimestamp(
-        (_NOW_MS - disconnected_ms) / 1000.0, tz=timezone.utc
+        (_NOW_MS - disconnected_ms) / 1000.0, tz=UTC
     ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     return f"[user-computer-watch] {dial_at} dialing (attempt 1)\n"
 
@@ -80,6 +82,7 @@ def _event_row(
     user_agent: str = "",
     jsonrpc_id: str = "",
     method: str = "",
+    path: str = "",
 ) -> dict[str, object]:
     payload: dict[str, object] = {"client_ip": client_ip}
     if mcp_method:
@@ -90,7 +93,19 @@ def _event_row(
         payload["jsonrpc_id"] = jsonrpc_id
     if method:
         payload["method"] = method
+    if path:
+        payload["path"] = path
     return {"ts_unix_ms": ts_ms, "signal": signal, "payload": payload}
+
+
+def _undici_edge_post(*, ts_ms: int, path: str = "/mcp/code/") -> dict[str, object]:
+    return _event_row(
+        ts_ms=ts_ms,
+        signal="mcp.edge.request.observed",
+        method="POST",
+        path=path,
+        user_agent="undici/6.0.0",
+    )
 
 
 class _CaptureEmit:
@@ -266,6 +281,7 @@ def test_get_without_jsonrpc_id_does_not_defer() -> None:
 def test_open_tools_call_defers_from_rows() -> None:
     t0 = _NOW_MS - 1_000
     rows = [
+        _undici_edge_post(ts_ms=t0),
         _event_row(
             ts_ms=t0,
             signal="mcp.transport.request.started",
@@ -278,15 +294,63 @@ def test_open_tools_call_defers_from_rows() -> None:
     ) is True
 
 
+def test_non_gc1_caller_on_shared_ip_does_not_defer() -> None:
+    """Finding 1: io-host IP without undici edge correlation is not gc1 in-flight."""
+    t0 = _NOW_MS - 1_000
+    rows = [
+        _event_row(
+            ts_ms=t0,
+            signal="mcp.transport.request.started",
+            mcp_method="tools/call",
+            jsonrpc_id="8",
+        ),
+    ]
+    assert in_flight_gc1_mcp_from_rows(
+        rows, now_ms=_NOW_MS, floor_ms=_NOW_MS - 600_000
+    ) is False
+
+
+def test_gc1_space_subject_verbs_are_terminal() -> None:
+    """Finding 2: live tips use space-separated verbs, not pipe-only prefixes."""
+    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="STATUS 39434 x") is False
+    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="PICKUP #1053 x") is False
+    assert gc1_bus_turn_in_flight(from_agent="grok-bot-gc1", subject="LANDED commit ok") is False
+
+
+def test_stale_dispatch_admit_tip_does_not_defer() -> None:
+    """Finding 3: old cursor-sdk generate admitted tip is not in-flight."""
+    tip_ms = _NOW_MS - GC1_BUS_TIP_STALE_MS - 5_000
+    assert (
+        gc1_bus_turn_in_flight(
+            from_agent="grok-bot-gc1",
+            subject="cursor-sdk generate admitted",
+            tip_created_ms=tip_ms,
+            now_ms=_NOW_MS,
+        )
+        is False
+    )
+    assert (
+        gc1_bus_turn_in_flight(
+            from_agent="grok-bot-gc1",
+            subject="cursor-sdk generate admitted",
+            tip_created_ms=_NOW_MS - 1_000,
+            now_ms=_NOW_MS,
+        )
+        is True
+    )
+
+
 def test_jsonrpc_id_collision_keeps_later_open_call() -> None:
     t0 = _NOW_MS - 3_000
     rows = [
+        _undici_edge_post(ts_ms=t0),
         _event_row(
             ts_ms=t0,
             signal="mcp.transport.request.started",
             mcp_method="tools/call",
             jsonrpc_id="1",
         ),
+        _undici_edge_post(ts_ms=t0 + 100),
         _event_row(
             ts_ms=t0 + 100,
             signal="mcp.transport.request.started",
