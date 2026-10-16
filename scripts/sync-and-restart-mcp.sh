@@ -189,6 +189,7 @@ CHECKED_IMAGE_ID=""
 CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
 _SOURCE_SYNC_STAMP_SNAPSHOT=""
 _STAMP_WRITTEN=0
+_TREE_CHANGED=0
 _STOP_SUCCEEDED=0
 _START_FAILED=0
 _RESTORE_HANDLER_RAN=0
@@ -209,15 +210,23 @@ _restore_window_exit() {
   if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
   fi
-  # Stamp rollback only for a snapshot this run wrote. A leftover file from
-  # another run must not suppress gate restore.
-  if [[ "${_STAMP_WRITTEN:-0}" == 1 && "${_STOP_SUCCEEDED:-0}" != 1 ]]; then
+  # Tree or stamp changed and the process is still up. gate restore refuses
+  # healthy, so roll the last-healthy copy set back when it is complete.
+  # Success marker only when both the tree rollback and the stamp restore landed.
+  if [[ "${_STOP_SUCCEEDED:-0}" != 1 && ( "${_TREE_CHANGED:-0}" == 1 || "${_STAMP_WRITTEN:-0}" == 1 ) ]]; then
     if _container_still_serving; then
-      # Stop failed or never ran, and the process is still up. gate restore
-      # refuses healthy/restarting/starting, so copy the last-healthy set back
-      # into the running container, then the old stamp.
+      local rolled=0 stamp_ok=0
       if _last_healthy_copy_set_present && _rollback_running_tree_from_last_healthy; then
-        restore_source_sync_stamp_from_snapshot || true
+        rolled=1
+      fi
+      if [[ "${_STAMP_WRITTEN:-0}" == 1 ]]; then
+        if restore_source_sync_stamp_from_snapshot; then
+          stamp_ok=1
+        fi
+      else
+        stamp_ok=1
+      fi
+      if [[ "$rolled" == 1 && "$stamp_ok" == 1 ]]; then
         echo "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" >&2
       else
         echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
@@ -225,7 +234,9 @@ _restore_window_exit() {
       _cleanup_stamp_snapshot
       exit 1
     fi
-    restore_source_sync_stamp_from_snapshot || true
+    if [[ "${_STAMP_WRITTEN:-0}" == 1 ]]; then
+      restore_source_sync_stamp_from_snapshot || true
+    fi
   fi
   # Start failed after stop. Skip gate restore: plan_restore_commands begins with
   # docker rm -f, and the last-healthy snapshot copy does not include
@@ -394,6 +405,8 @@ verify_sync_nonce_survived() {
 
 sync_source_into_container() {
   local c=mcp-server
+  arm_restore_window
+  _TREE_CHANGED=1
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
   docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
   docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"

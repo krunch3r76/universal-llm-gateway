@@ -31,6 +31,10 @@ def _stub_docker_dir(
     compose_fails: bool = False,
     kill_before_stamp_write: bool = False,
     stamp_exec_fails: bool = False,
+    stamp_restore_fails: bool = False,
+    exec_true_fails: bool = False,
+    rollback_services_cp_fails: bool = False,
+    kill_on_sync_cp: bool = False,
     materialize_host_cp: bool = True,
     nonce_mode: str = "stored",
     prior_stamp: str = "2020-01-01T00:00:00Z\noldsha\n",
@@ -111,6 +115,9 @@ def _stub_docker_dir(
             joined="$*"
             nonce_file={str(nonce_file)!r}
             if [[ "$joined" == *" true" ]]; then
+              if [[ "{str(exec_true_fails).lower()}" == "true" ]]; then
+                exit 1
+              fi
               exit 0
             fi
             if [[ "$joined" == *"test -f /app/.source_sync_stamp"* ]]; then
@@ -143,6 +150,9 @@ def _stub_docker_dir(
               fi
             fi
             if [[ "$joined" == *".source_sync_stamp"* && "$joined" == *"cat > /app/.source_sync_stamp"* ]]; then
+              if [[ "{str(stamp_restore_fails).lower()}" == "true" ]]; then
+                exit 1
+              fi
               echo STAMP_RESTORE >> {log}
               cat > "$stamp_file"
             fi
@@ -172,6 +182,13 @@ def _stub_docker_dir(
             ;;
           cp)
             dest="${{@: -1}}"
+            if [[ "{str(kill_on_sync_cp).lower()}" == "true" && "$dest" == "mcp-server:/app/libs/" && "$*" != *last-healthy* ]]; then
+              kill -TERM "$PPID" 2>/dev/null || true
+              exit 1
+            fi
+            if [[ "{str(rollback_services_cp_fails).lower()}" == "true" && "$dest" == "mcp-server:/app/services/" && "$*" == *last-healthy* ]]; then
+              exit 1
+            fi
             if [[ "{str(materialize_host_cp).lower()}" == "true" && "$dest" != *:* ]]; then
               if [[ "$dest" == *.py ]]; then
                 mkdir -p "$(dirname "$dest")"
@@ -233,6 +250,9 @@ def _run_sync_script(
     env["PYTHON"] = _python()
     env["ULG_REPO"] = str(_REPO_ROOT)
     env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    first = env["PATH"].split(":")[0]
+    if not os.access(Path(first) / "docker", os.X_OK):
+        raise AssertionError(f"docker stub is not first on PATH: {first}")
     return subprocess.run(
         ["bash", str(_SCRIPT), *args],
         cwd=str(_REPO_ROOT),
@@ -478,9 +498,77 @@ def test_stop_failure_while_healthy_without_copy_set_marks_disagreement(
     proc = _run_sync_script(tmp_path, stub)
     log = _docker_log(tmp_path)
     assert proc.returncode != 0, proc.stdout
+    assert "STAMP_RESTORE" in log, log
+    assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
     assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
     assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr
     assert "last-healthy/libs/." not in log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_rollback_services_cp_failure_restores_stamp_and_disagrees(
+    tmp_path: Path,
+) -> None:
+    """A later last-healthy cp fails after libs succeeded: mixed tree, old stamp, disagree."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(
+        tmp_path,
+        stop_fails=True,
+        inspect_health="healthy",
+        rollback_services_cp_fails=True,
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert "STAMP_RESTORE" in log, log
+    assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
+    assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr
+    assert "last-healthy/libs/." in log, log
+    assert "last-healthy/services/." in log, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stamp_restore_failure_after_tree_rollback_does_not_claim_success(
+    tmp_path: Path,
+) -> None:
+    """Tree rollback succeeded but the stamp write failed: no success marker."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(
+        tmp_path,
+        stop_fails=True,
+        inspect_health="healthy",
+        stamp_restore_fails=True,
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr, proc.stderr
+    assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_snapshot_exec_failure_after_sync_does_not_claim_gate_restore(
+    tmp_path: Path,
+) -> None:
+    """Snapshot exec fails after the tree sync: no gate-restore marker on a healthy container."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path, exec_true_fails=True, inspect_health="healthy")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr, proc.stderr
+    assert "STAMP_WRITE" not in log, log
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    _assert_mktemp_removed(tmp_path)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_sigterm_during_sync_cp_marks_tree_outcome(tmp_path: Path) -> None:
+    """SIGTERM during source cp, before the stamp window, still settles the tree."""
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(tmp_path, kill_on_sync_cp=True, inspect_health="healthy")
+    proc = _run_sync_script(tmp_path, stub, timeout=90)
+    assert proc.returncode != 0, proc.stdout
+    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
