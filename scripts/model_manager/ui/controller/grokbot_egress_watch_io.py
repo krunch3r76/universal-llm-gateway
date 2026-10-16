@@ -6,12 +6,13 @@ import json
 import os
 import sqlite3
 import subprocess
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
-    GrokbotEgressSnapshot,
     _LOADER_STUCK_AFTER_TOOLS_LIST_S,
+    GrokbotEgressSnapshot,
     watch_connection_state,
 )
 
@@ -24,6 +25,18 @@ STAGE_MANAGER_THREAD = "15851"
 GC1_BUS_AGENT = "grok-bot-gc1"
 MCP_CODE_PREFIX = "/mcp/code"
 MCP_LIFE_PREFIX = "/mcp/life"
+IN_FLIGHT_STALE_MS = 600_000
+
+_GC1_TERMINAL_SUBJECT_PREFIXES = (
+    "DONE|",
+    "VERDICT:",
+    "VERDICT|",
+    "STATUS|",
+    "ACK|",
+    "CHECKPOINT|",
+    "PICKUP|",
+    "NUDGE|",
+)
 
 
 def read_desktop_status(path: Path = DEFAULT_DESKTOP_STATUS) -> dict[str, object] | None:
@@ -67,8 +80,20 @@ def _agent_bus_db_path() -> Path | None:
     return host if host.is_file() else None
 
 
+def gc1_bus_turn_in_flight(*, from_agent: str, subject: str) -> bool:
+    """True when the thread tip is a non-terminal grok-bot-gc1 turn still in play."""
+    if from_agent != GC1_BUS_AGENT:
+        return False
+    subject_norm = subject.strip()
+    upper = subject_norm.upper()
+    for prefix in _GC1_TERMINAL_SUBJECT_PREFIXES:
+        if upper.startswith(prefix.upper()):
+            return False
+    return True
+
+
 def open_gc1_bus_turn(*, thread: str = STAGE_MANAGER_THREAD) -> bool:
-    """True when thread ``thread`` has an unfinished turn from grok-bot-gc1."""
+    """True when the latest bus turn on ``thread`` is in-flight work from gc1."""
     path = _agent_bus_db_path()
     if path is None:
         return False
@@ -79,19 +104,22 @@ def open_gc1_bus_turn(*, thread: str = STAGE_MANAGER_THREAD) -> bool:
     try:
         row = conn.execute(
             """
-            SELECT 1 FROM turns
+            SELECT from_agent, subject FROM turns
             WHERE thread = ?
-              AND from_agent = ?
-              AND status = 'open'
+            ORDER BY turn_number DESC
             LIMIT 1
             """,
-            (thread, GC1_BUS_AGENT),
+            (thread,),
         ).fetchone()
     except sqlite3.Error:
         return False
     finally:
         conn.close()
-    return row is not None
+    if row is None:
+        return False
+    from_agent = str(row[0] or "")
+    subject = str(row[1] or "")
+    return gc1_bus_turn_in_flight(from_agent=from_agent, subject=subject)
 
 
 def query_events_rows(
@@ -216,9 +244,19 @@ def loader_stuck_from_rows(
 def in_flight_gc1_mcp_from_rows(
     rows: list[dict[str, object]], *, now_ms: int, floor_ms: int
 ) -> bool:
-    """Open gc1 undici MCP on code/life surfaces (started without completed)."""
-    open_started: dict[str, int] = {}
-    for row in rows:
+    """Open gc1 MCP calls: transport started paired to end by ``jsonrpc_id``.
+
+    Rows without ``jsonrpc_id`` (GET class-B 405, notifications) are ignored —
+    they must not defer recovery. Orphan started rows age out after
+    ``IN_FLIGHT_STALE_MS`` so missing terminal events cannot defer past the
+    deferral ceiling.
+    """
+    open_by_id: dict[str, deque[int]] = {}
+    ordered = sorted(
+        (r for r in rows if isinstance(r.get("ts_unix_ms"), int)),
+        key=lambda r: int(r["ts_unix_ms"]),  # type: ignore[arg-type]
+    )
+    for row in ordered:
         ts = row.get("ts_unix_ms")
         if not isinstance(ts, int) or ts < floor_ms:
             continue
@@ -231,22 +269,20 @@ def in_flight_gc1_mcp_from_rows(
             continue
         if _payload_str(row, "client_ip") != GC1_CLIENT_IP:
             continue
-        path = _payload_str(row, "path")
-        if path and not (
-            path.startswith(MCP_CODE_PREFIX) or path.startswith(MCP_LIFE_PREFIX)
-        ):
-            if signal == "mcp.transport.request.started":
-                path = _payload_str(row, "method")
-        req_id = _payload_str(row, "jsonrpc_id") or f"{ts}"
+        req_id = _payload_str(row, "jsonrpc_id")
         if signal == "mcp.transport.request.started":
-            open_started[req_id] = ts
-        elif req_id in open_started:
-            del open_started[req_id]
-    if not open_started:
-        return False
-    # Treat long-running calls as still open; stale ids fall out after 10 min.
-    stale_cutoff = now_ms - 600_000
-    return any(started >= stale_cutoff for started in open_started.values())
+            if not req_id:
+                continue
+            open_by_id.setdefault(req_id, deque()).append(ts)
+        elif req_id and req_id in open_by_id and open_by_id[req_id]:
+            open_by_id[req_id].popleft()
+            if not open_by_id[req_id]:
+                del open_by_id[req_id]
+    stale_cutoff = now_ms - IN_FLIGHT_STALE_MS
+    for started_ts in (ts for dq in open_by_id.values() for ts in dq):
+        if started_ts >= stale_cutoff:
+            return True
+    return False
 
 
 def build_snapshot_from_inputs(
@@ -320,8 +356,10 @@ __all__ = [
     "DEFAULT_DESKTOP_BINARY",
     "DEFAULT_DESKTOP_STATUS",
     "GC1_CLIENT_IP",
+    "IN_FLIGHT_STALE_MS",
     "build_snapshot_from_inputs",
     "desktop_pid_alive",
+    "gc1_bus_turn_in_flight",
     "in_flight_gc1_mcp_from_rows",
     "loader_stuck_from_rows",
     "open_gc1_bus_turn",
