@@ -59,6 +59,7 @@ class LandProbe:
     differing_paths: list[str] = field(default_factory=list)
     missing_paths: list[str] = field(default_factory=list)
     divergence: BranchDivergence | None = None
+    patch_id_note: str | None = None
 
     def describe(self) -> str:
         """One-line reason naming the paths that block a landed claim."""
@@ -124,6 +125,252 @@ def _content_lines(repo: Path, ref: str, path: str) -> set[str] | None:
     if proc.returncode != 0:
         return None
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def _run_patch_id(diff_text: str) -> str | None:
+    if not diff_text.strip():
+        return None
+    proc = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        input=diff_text,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    line = proc.stdout.strip().splitlines()
+    if not line:
+        return None
+    return line[0].split()[0]
+
+
+def _commit_patch_id(repo: Path, commit: str) -> str | None:
+    show = _git(repo, "show", commit, "--format=", "--no-renames")
+    if show.returncode != 0:
+        return None
+    return _run_patch_id(show.stdout)
+
+
+def _negated_commit_patch_id(repo: Path, commit: str) -> str | None:
+    parent = _git(repo, "rev-parse", f"{commit}^")
+    if parent.returncode != 0:
+        return None
+    diff = _git(repo, "diff", "--no-renames", parent.stdout.strip(), commit)
+    if diff.returncode != 0:
+        return None
+    negated: list[str] = []
+    for line in diff.stdout.splitlines(keepends=True):
+        if line.startswith("+++") or line.startswith("---"):
+            negated.append(line)
+        elif line.startswith("+"):
+            negated.append("-" + line[1:])
+        elif line.startswith("-"):
+            negated.append("+" + line[1:])
+        else:
+            negated.append(line)
+    return _run_patch_id("".join(negated))
+
+
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    proc = _git(repo, "merge-base", "--is-ancestor", ancestor, descendant)
+    return proc.returncode == 0
+
+
+def _commit_is_empty(repo: Path, commit: str) -> bool:
+    parent = _git(repo, "rev-parse", f"{commit}^")
+    if parent.returncode != 0:
+        tree = _git(repo, "diff-tree", "--no-commit-id", "-r", commit)
+        if tree.returncode != 0:
+            return True
+        paths = [
+            ln.strip()
+            for ln in tree.stdout.splitlines()
+            if ln.strip() and not ln.startswith(":")
+        ]
+        return not paths
+    diff = _git(
+        repo,
+        "diff-tree",
+        "-p",
+        "--ignore-all-space",
+        parent.stdout.strip(),
+        commit,
+    )
+    if diff.returncode != 0:
+        return True
+    body = diff.stdout
+    return not any(
+        ln.startswith("+") or ln.startswith("-")
+        for ln in body.splitlines()
+        if not ln.startswith("+++") and not ln.startswith("---")
+    )
+
+
+def _commit_parent_count(repo: Path, commit: str) -> int:
+    proc = _git(repo, "rev-list", "--parents", "-1", commit)
+    if proc.returncode != 0:
+        return 0
+    parts = proc.stdout.strip().split()
+    return max(0, len(parts) - 1)
+
+
+def _paths_touched_by_commit(repo: Path, commit: str) -> set[str]:
+    proc = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", commit)
+    if proc.returncode != 0:
+        return set()
+    return {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+
+
+def _parse_cherry_markers(repo: Path, branch_name: str) -> tuple[dict[str, str], bool]:
+    proc = _git(repo, "cherry", "master", branch_name)
+    if proc.returncode != 0:
+        return {}, False
+    markers: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        marker = stripped[0]
+        if marker not in {"+", "-"}:
+            continue
+        abbrev = stripped[1:].strip()
+        full = _git(repo, "rev-parse", "--verify", abbrev)
+        if full.returncode != 0:
+            continue
+        markers[full.stdout.strip()] = marker
+    return markers, bool(markers)
+
+
+def _cherry_marker(
+    commit: str, markers: dict[str, str], *, markers_nonempty: bool
+) -> str:
+    if commit in markers:
+        return markers[commit]
+    # Empty ``git cherry`` output means every branch commit is patch-equivalent.
+    if not markers_nonempty:
+        return "-"
+    return "+"
+
+
+def _master_commit_shas(repo: Path) -> list[str]:
+    proc = _git(repo, "rev-list", "master")
+    if proc.returncode != 0:
+        return []
+    return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _master_reverts_commit(repo: Path, equivalent_sha: str) -> bool:
+    needle = f"This reverts commit {equivalent_sha}"
+    proc = _git(
+        repo,
+        "log",
+        "master",
+        f"--grep={needle}",
+        "--format=%H",
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return True
+    inverse_id = _negated_commit_patch_id(repo, equivalent_sha)
+    if not inverse_id:
+        return False
+    for master_sha in _master_commit_shas(repo):
+        if master_sha == equivalent_sha:
+            continue
+        if _commit_patch_id(repo, master_sha) == inverse_id:
+            return True
+    return False
+
+
+def _surviving_master_for_branch_commit(repo: Path, branch_commit: str) -> str | None:
+    patch_id = _commit_patch_id(repo, branch_commit)
+    if not patch_id:
+        return None
+    matches = [
+        sha
+        for sha in _master_commit_shas(repo)
+        if _commit_patch_id(repo, sha) == patch_id
+        and _is_ancestor(repo, sha, "master")
+    ]
+    if not matches:
+        return None
+    if any(_master_reverts_commit(repo, sha) for sha in matches):
+        return None
+    return matches[0]
+
+
+@dataclass(frozen=True, slots=True)
+class _PatchIdWalk:
+    all_substantive_survived: bool
+    note_pairs: tuple[tuple[str, str], ...]
+    paths_patch_only: frozenset[str]
+    paths_voided_no_superset: frozenset[str]
+    patch_id_note: str | None = None
+
+
+def _walk_patch_id_evidence(
+    repo: Path, *, branch_name: str, merge_base: str
+) -> _PatchIdWalk:
+    cherry, cherry_nonempty = _parse_cherry_markers(repo, branch_name)
+    rev = _git(repo, "rev-list", f"{merge_base}..{branch_name}")
+    if rev.returncode != 0:
+        return _PatchIdWalk(False, (), frozenset(), frozenset())
+
+    note_pairs: list[tuple[str, str]] = []
+    path_surviving: dict[str, int] = {}
+    paths_voided_no_superset: set[str] = set()
+    substantive_count = 0
+    surviving_count = 0
+
+    for commit in (ln.strip() for ln in rev.stdout.splitlines() if ln.strip()):
+        paths = _paths_touched_by_commit(repo, commit)
+        parents = _commit_parent_count(repo, commit)
+        if parents > 1:
+            if _is_ancestor(repo, commit, "master"):
+                continue
+            quiet = _git(repo, "diff", "--quiet", f"{commit}^1", commit)
+            if quiet.returncode == 0:
+                continue
+            substantive_count += 1
+            continue
+
+        if _commit_is_empty(repo, commit):
+            continue
+
+        substantive_count += 1
+        marker = _cherry_marker(commit, cherry, markers_nonempty=cherry_nonempty)
+        if marker == "+":
+            continue
+
+        master_eq = _surviving_master_for_branch_commit(repo, commit)
+        if master_eq is None:
+            for path in paths:
+                paths_voided_no_superset.add(path)
+            continue
+
+        surviving_count += 1
+        note_pairs.append((commit, master_eq))
+        for path in paths:
+            path_surviving[path] = path_surviving.get(path, 0) + 1
+
+    paths_patch_only: set[str] = set()
+    for path in path_surviving:
+        if path not in paths_voided_no_superset:
+            paths_patch_only.add(path)
+
+    all_survived = substantive_count > 0 and surviving_count == substantive_count
+    note = None
+    if all_survived and note_pairs:
+        note = "patch-id:" + ",".join(f"{c}={e}" for c, e in note_pairs)
+
+    return _PatchIdWalk(
+        all_substantive_survived=all_survived,
+        note_pairs=tuple(note_pairs),
+        paths_patch_only=frozenset(paths_patch_only),
+        paths_voided_no_superset=frozenset(paths_voided_no_superset),
+        patch_id_note=note,
+    )
 
 
 def _branch_ref_exists(repo: Path, branch_name: str) -> bool:
@@ -193,9 +440,24 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     if not paths:
         return LandProbe(landed=True, divergence=divergence)
 
+    patch_walk = _walk_patch_id_evidence(
+        root, branch_name=branch_name, merge_base=merge_base
+    )
+    if patch_walk.all_substantive_survived:
+        return LandProbe(
+            landed=True,
+            divergence=divergence,
+            patch_id_note=patch_walk.patch_id_note,
+        )
+
     differing: list[str] = []
     missing: list[str] = []
     for path in paths:
+        if path in patch_walk.paths_patch_only:
+            continue
+        if path in patch_walk.paths_voided_no_superset:
+            differing.append(path)
+            continue
         branch_blob = _blob_sha(root, branch_name, path)
         master_blob = _blob_sha(root, "master", path)
         if branch_blob is None:
@@ -220,6 +482,7 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
         differing_paths=differing,
         missing_paths=missing,
         divergence=divergence,
+        patch_id_note=patch_walk.patch_id_note,
     )
 
 
@@ -432,11 +695,12 @@ def discharge_landed(
             refused_reason=f"not landed — {probe.describe()}",
             probe=probe,
         )
+    patch_note = probe.patch_id_note
     result = _finish(
         repo=repo,
         branch_name=branch_name,
         verb=DISCHARGE_LANDED,
-        note=None,
+        note=patch_note,
         completing_dispatch_id=completing_dispatch_id,
     )
     return DischargeResult(
