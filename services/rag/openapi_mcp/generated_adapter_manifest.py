@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "199c204496b45203805ab75609087da3671f180955632e5ad7c45f4db7488d6b"
+OPENAPI_SHA256 = "ac7e33a317c1b49c18970077f0e906bb763c9c60678bbd8d5dfce55865e9df30"
 FACADE_TOOL = "rag"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "coverage": {
@@ -47,7 +47,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "163f78706eae190bf176712fe23b9e3736e4edaff52239d6676bbdee5d0a1fbf",
+    "@components": "deb8b0387e65286945db2a21ea119b6892ec648f865fefa59d568efe417498db",
     "@info": "77e496792f0915708096b3bac40c1ab86b45641b4ff6231aa452bf8f653d6852",
     "DELETE /indexing_failures/{source}": "e30c51d4c872392e7142ecc9a1286956eaefc0cabfa7302cea0078cc488c2be7",
     "GET /articles": "07c287482f97680d989f70f87c9a6bbfe69e29a845742091e1ec29d82a5e410d",
@@ -65,6 +65,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "POST /chunks_by_index": "73c7547631f912aeaa9645116b6b90a6ba5e9a0610eebb0403b170d2e5429261",
     "POST /clear_directory": "2ea5ef0c442855eced7e7b925ee7cac8005c178497ca5385c88cdcec2a04c115",
     "POST /embed_batch": "a006a4f7ee08f105e0035537fa7df4f511247f63cab17760d95ac58d58ec63d0",
+    "POST /extraction/queue/reset": "4bff8178d0301e20130f40efbbe9162c103a35dbf6ac3534f7b569c73834093c",
     "POST /index": "13a4dfd0e6fea6dda9b54cd4ac633cd83b433c8448de82d6348ec903f335addb",
     "POST /index_directory": "f74820c852e0cab38c80b7dc198f21b0abac51454cb7bdd595e1de78ecd64e1d",
     "POST /indexing_failures/{source}/retry": "8c678cf32d8174b6b4f7a313227cbd5dcb91649e0b8d816dfdb3cd185cce5f9c",

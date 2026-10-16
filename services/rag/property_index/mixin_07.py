@@ -16,6 +16,7 @@ from ._spec import (
     ContextualizationException,
     ExtractionQueueBreakdown,
     ExtractionQueueClaim,
+    ExtractionQueueResetRow,
     ExtractionQueueRow,
     RecoveredExtractionClaim,
     json,
@@ -89,6 +90,75 @@ class _PropertyIndexPart07:
             )
             conn.commit()
             return cursor.rowcount
+
+        return await self._seq.run(_write())
+
+    async def reset_extraction_queue_sources(
+        self, sources: list[str]
+    ) -> tuple[list[ExtractionQueueResetRow], int]:
+        """Reset exhausted queue rows for named sources (no insert on missing)."""
+
+        async def _write() -> tuple[list[ExtractionQueueResetRow], int]:
+            conn = self._ensure_conn()
+            results: list[ExtractionQueueResetRow] = []
+            reset_count = 0
+            for source in sources:
+                row = conn.execute(
+                    "SELECT attempts FROM extraction_queue WHERE source = ?",
+                    (source,),
+                ).fetchone()
+                if row is None:
+                    results.append(
+                        ExtractionQueueResetRow(
+                            source=source,
+                            outcome="not_found",
+                            attempts=None,
+                        )
+                    )
+                    continue
+                previous_attempts = int(row[0])
+                if previous_attempts < 5:
+                    results.append(
+                        ExtractionQueueResetRow(
+                            source=source,
+                            outcome="not_exhausted",
+                            attempts=previous_attempts,
+                        )
+                    )
+                    continue
+                cursor = conn.execute(
+                    "UPDATE extraction_queue"
+                    " SET attempts = 0,"
+                    " last_attempt_at = NULL,"
+                    " last_failure_at = NULL,"
+                    " active_execution_id = NULL,"
+                    " last_error = NULL,"
+                    " last_error_type = NULL,"
+                    " last_failure_category = NULL,"
+                    " queued_at = datetime('now')"
+                    " WHERE source = ? AND attempts >= 5",
+                    (source,),
+                )
+                if cursor.rowcount > 0:
+                    reset_count += 1
+                    results.append(
+                        ExtractionQueueResetRow(
+                            source=source,
+                            outcome="reset",
+                            attempts=0,
+                            previous_attempts=previous_attempts,
+                        )
+                    )
+                else:
+                    results.append(
+                        ExtractionQueueResetRow(
+                            source=source,
+                            outcome="not_exhausted",
+                            attempts=previous_attempts,
+                        )
+                    )
+            conn.commit()
+            return results, reset_count
 
         return await self._seq.run(_write())
 

@@ -161,6 +161,16 @@ class ExtractionQueueRow:
 
 
 @dataclass(slots=True, kw_only=True)
+class ExtractionQueueResetRow:
+    """Per-source outcome from ``reset_extraction_queue_sources``."""
+
+    source: str
+    outcome: str
+    attempts: int | None
+    previous_attempts: int | None = None
+
+
+@dataclass(slots=True, kw_only=True)
 class IndexedSourceSnapshot:
     """Cached source freshness row used for stat-first unchanged checks.
 
@@ -188,6 +198,7 @@ __all__ = [  # noqa: F405
     "ContextualizationException",
     "ExtractionQueueBreakdown",
     "ExtractionQueueClaim",
+    "ExtractionQueueResetRow",
     "ExtractionQueueRow",
     "FailedChunk",
     "FailureSnapshot",

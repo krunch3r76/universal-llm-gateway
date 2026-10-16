@@ -2,7 +2,8 @@
 
 Signals: ``rag.extraction.source.claimed`` and ``.source.completed`` (emitted by
 ``extraction.worker_loop``), ``.source.failed`` (``extraction.record_failure``),
-and ``rag.extraction.claim.recovered`` plus ``rag.extraction.queue.woken``
+``.source.reset`` (admin ``POST /extraction/queue/reset``),
+``rag.extraction.claim.recovered`` plus ``rag.extraction.queue.woken``
 (``rag_service.extraction_runtime`` at startup recovery and on model-available
 wake-ups). Payloads are keyed by source path so one queue row can be traced
 from claim to completion or failure.
@@ -83,6 +84,25 @@ def rag_extraction_claim_recovered(
             "source": source,
             "claimed_at": claimed_at,
             "claimed_age_seconds": claimed_age_seconds,
+        },
+    )
+
+
+@event_factory
+def rag_extraction_source_reset(
+    *,
+    source: str,
+    previous_attempts: int,
+    reason: str,
+) -> Event:
+    """Emit when an operator reset clears an exhausted extraction queue row."""
+    return Event(
+        signal="rag.extraction.source.reset",
+        role="coordination",
+        payload={
+            "source": source,
+            "previous_attempts": previous_attempts,
+            "reason": reason,
         },
     )
 

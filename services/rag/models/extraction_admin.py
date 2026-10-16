@@ -213,3 +213,24 @@ class ExtractionQueueResponse(BaseModel):
 
     breakdown: ExtractionQueueBreakdownModel
     rows: list[ExtractionQueueRowModel]
+
+
+class ExtractionQueueResetRequest(BaseModel):
+    """Body of ``POST /extraction/queue/reset``: absolute paths to recover."""
+
+    sources: list[str]
+
+
+class ExtractionQueueResetResultItem(BaseModel):
+    """Per-source outcome from ``POST /extraction/queue/reset``."""
+
+    source: str
+    outcome: str
+    attempts: int | None
+
+
+class ExtractionQueueResetResponse(BaseModel):
+    """Response of ``POST /extraction/queue/reset``."""
+
+    results: list[ExtractionQueueResetResultItem]
+    reset_count: int

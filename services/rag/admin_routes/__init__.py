@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from services.rag.admin_routes._helpers import ArticleRow
 from services.rag.admin_routes.articles import register_article_routes
+from services.rag.admin_routes.extraction_queue import register_extraction_queue_routes
 from services.rag.admin_routes.failures import register_failure_routes
 from services.rag.admin_routes.indexing import register_indexing_routes
 from services.rag.admin_routes.status import register_status_routes
@@ -65,4 +66,5 @@ def register_admin_routes(
     register_status_routes(router, **deps)
     register_article_routes(router, **deps)
     register_failure_routes(router, **deps)
+    register_extraction_queue_routes(router, **deps)
     return router

@@ -209,6 +209,27 @@ async def get_rag_extraction_queue(
     )
 
 
+@router.post("/rag/extraction/queue/reset")
+async def reset_rag_extraction_queue(
+    body: dict[str, Any],
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy extraction queue reset to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="POST",
+        endpoint="/extraction/queue/reset",
+        timeout=30.0,
+        action_name="extraction queue reset",
+        unavailable_detail=(
+            "RAG extraction queue reset unavailable via Stargate passthrough."
+        ),
+        invalid_payload_detail="Invalid RAG extraction queue reset response payload.",
+        json_body=body,
+    )
+
+
 @router.get("/rag/indexing/status")
 async def get_rag_indexing_status(
     _current_user: dict[str, object] = Depends(get_auth_dependency),
