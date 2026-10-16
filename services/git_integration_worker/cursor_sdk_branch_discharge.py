@@ -141,7 +141,7 @@ def _patch_id_lines(diff_text: str) -> list[tuple[str, str]]:
     if not diff_text.strip():
         return []
     proc = subprocess.run(
-        ["git", "patch-id", "--stable"],
+        ["git", "patch-id", "--verbatim"],
         input=diff_text,
         capture_output=True,
         text=True,
@@ -274,18 +274,27 @@ def _match_is_void(
     return any(sha != equivalent_sha for sha in index.get(inverse_id, []))
 
 
-def _surviving_master_for_branch_commit(
+def _verbatim_master_matches(
     repo: Path, branch_commit: str, index: dict[str, list[str]]
-) -> str | None:
+) -> list[str]:
     patch_id = _commit_patch_id(repo, branch_commit)
     if not patch_id:
-        return None
-    matches = index.get(patch_id, [])
-    if not matches:
-        return None
-    if any(_match_is_void(repo, sha, index) for sha in matches):
-        return None
-    return matches[0]
+        return []
+    return index.get(patch_id, [])
+
+
+def _git_step(cmd: object) -> str:
+    """The git subcommand inside a ``TimeoutExpired`` command."""
+    if isinstance(cmd, (list, tuple)):
+        args = [str(part) for part in cmd]
+    else:
+        args = str(cmd).split()
+    index = 1 if args and Path(args[0]).name == "git" else 0
+    if index < len(args) and args[index] == "-C":
+        index += 2
+    if index < len(args):
+        return args[index]
+    return "git"
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,7 +320,10 @@ def _walk_patch_id_evidence(
     rev = _git(repo, "rev-list", f"{merge_base}..{branch_name}")
     if rev.returncode != 0:
         return _PatchIdWalk(False, (), frozenset(), frozenset())
-    index = _master_patch_index(repo, merge_base)
+    has_cherry_minus = any(marker == "-" for marker in cherry.values())
+    index = (
+        _master_patch_index(repo, merge_base) if has_cherry_minus else {}
+    )
 
     note_pairs: list[tuple[str, str]] = []
     path_surviving: set[str] = set()
@@ -342,13 +354,18 @@ def _walk_patch_id_evidence(
             needs_content.update(paths)
             continue
 
-        master_eq = _surviving_master_for_branch_commit(repo, commit, index)
-        if master_eq is None:
+        matches = _verbatim_master_matches(repo, commit, index)
+        if not matches:
+            # Cherry ``-`` without a verbatim patch-id is whitespace-only
+            # equivalence. The line probe decides; it is not a void.
+            needs_content.update(paths)
+            continue
+        if any(_match_is_void(repo, sha, index) for sha in matches):
             paths_voided_no_superset.update(paths)
             continue
 
         surviving_count += 1
-        note_pairs.append((commit, master_eq))
+        note_pairs.append((commit, matches[0]))
         path_surviving.update(paths)
 
     paths_patch_only = path_surviving - paths_voided_no_superset - needs_content
@@ -430,17 +447,27 @@ def _blob_identity_or_absent(
 def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     """Check every path the branch touched against master.
 
-    A path passes when master's blob is identical, or when master's content is a
-    superset of the branch's — the shape left after the lead lands lane work from
-    the shared checkout and master then evolves past it. Anything else is named,
-    because an unverifiable land claim is exactly what this gate exists to catch.
+    Walk ``merge-base..branch``. A non-merge commit that ``git cherry`` marks
+    ``-`` and whose ``git patch-id --verbatim`` equals an unvoided commit in
+    ``merge-base..master`` skips the line-superset probe; the path must still
+    exist on master when the branch has it, and be absent when the branch
+    deleted it. A cherry ``-`` with no verbatim match, a ``+``, or a substantive
+    merge stays on the line-superset probe. A revert trailer or an inverse
+    patch-id is a void: identical blobs may pass, and the line-superset
+    fallback does not.
+
+    A path on that line probe passes when master's blob is identical, or when
+    master's stripped lines are a superset of the branch's. Anything else is
+    named, because an unverifiable land claim is exactly what this gate exists
+    to catch.
     """
     try:
         return _probe_landed(repo=repo, branch_name=branch_name)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        step = _git_step(exc.cmd)
         return LandProbe(
             landed=False,
-            differing_paths=[f"{branch_name} (patch-id timeout)"],
+            differing_paths=[f"{branch_name} ({step} timeout)"],
         )
 
 

@@ -368,8 +368,10 @@ def test_patch_id_note_is_capped() -> None:
 
 
 def test_patch_id_timeout_fails_closed(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def _boom(*_args: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(cmd="git", timeout=60)
+    def _boom(repo_arg: Path, *args: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(
+            cmd=["git", "-C", str(repo_arg), *args], timeout=60
+        )
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_branch_discharge._git",
@@ -377,7 +379,30 @@ def test_patch_id_timeout_fails_closed(repo: Path, monkeypatch: pytest.MonkeyPat
     )
     probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-timeout")
     assert probe.landed is False
-    assert "patch-id timeout" in probe.describe()
+    assert "rev-parse timeout" in probe.describe()
+
+
+def test_verbatim_token_whitespace_mismatch_refuses(repo: Path) -> None:
+    """W1: cherry ``-`` from in-token whitespace is not a verbatim land."""
+    branch = "cursor-sdk/lane-w1"
+    _branch_commit(repo, branch=branch, path="w.py", content='l = "a b"\n')
+    _land_on_master(repo, path="w.py", content='l = "ab"\n', message="token space")
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert "w.py" in probe.differing_paths
+    assert probe.patch_id_note is None
+
+
+def test_indentation_only_difference_stays_on_line_probe(repo: Path) -> None:
+    """W2: indent-only cherry ``-`` uses the line probe and still lands."""
+    branch = "cursor-sdk/lane-w2"
+    _branch_commit(repo, branch=branch, path="w.py", content='    l = "ab"\n')
+    _land_on_master(repo, path="w.py", content='l = "ab"\n', message="dedent")
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is True
+    assert probe.patch_id_note is None
 
 
 def test_branch_discharge_probe_block_includes_patch_id_note(
