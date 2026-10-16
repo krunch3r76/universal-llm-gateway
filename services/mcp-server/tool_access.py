@@ -47,13 +47,8 @@ ANTHROPIC_API_RAG_OPS: Final[frozenset[str]] = frozenset(
         "orphaned_articles",
     }
 )
-
 RESTRICTED_OAUTH_CLIENT_IDS: Final[frozenset[str]] = frozenset(
-    {GROK_CONNECTOR_CLIENT_ID, ANTHROPIC_API_CLIENT_ID, OPEN_WEBUI_CLIENT_ID}
-)
-
-_ANTHROPIC_SURFACE_CLIENT_IDS: Final[frozenset[str]] = frozenset(
-    {ANTHROPIC_API_CLIENT_ID, OPEN_WEBUI_CLIENT_ID}
+    {GROK_CONNECTOR_CLIENT_ID, OPEN_WEBUI_CLIENT_ID}
 )
 
 _LifeSpecCache: Any | None = None
@@ -148,7 +143,8 @@ def dispatch_denial_reason(tool_name: str) -> str:
     )
 
 
-def _anthropic_api_tool_allowed(tool_name: str, tool_args: dict[str, Any] | None) -> bool:
+def _open_webui_tool_allowed(tool_name: str, tool_args: dict[str, Any] | None) -> bool:
+    """Read-only surface for ``open-webui``. Not shared with ``anthropic-api``."""
     args = tool_args or {}
     if tool_name == "rag":
         op = str(args.get("op") or "").strip()
@@ -172,9 +168,8 @@ def oauth_client_tool_allowed(
 ) -> bool:
     """Return True iff ``client_id`` may invoke ``tool_name`` (with args).
 
-    Falsy ``client_id`` is fail-open. ``grok-connector`` is its own gate.
-    ``anthropic-api`` and ``open-webui`` share ``_anthropic_api_tool_allowed``.
-    Every other id is unrestricted here.
+    Falsy ``client_id`` is fail-open. ``grok-connector`` and ``open-webui``
+    are restricted. ``anthropic-api`` is unrestricted here.
     """
     if not client_id:
         return True
@@ -185,8 +180,8 @@ def oauth_client_tool_allowed(
             op = str((tool_args or {}).get("tool") or "").strip()
             return op in GROK_CONNECTOR_CORTEX_OPS
         return True
-    if client_id in _ANTHROPIC_SURFACE_CLIENT_IDS:
-        return _anthropic_api_tool_allowed(tool_name, tool_args)
+    if client_id == OPEN_WEBUI_CLIENT_ID:
+        return _open_webui_tool_allowed(tool_name, tool_args)
     return True
 
 

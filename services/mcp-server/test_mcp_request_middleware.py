@@ -124,14 +124,13 @@ async def _drive_middleware(
 
 
 @pytest.mark.asyncio
-async def test_two_message_write_denied_for_anthropic_api() -> None:
+async def test_two_message_write_allowed_for_anthropic_api() -> None:
     body = _tools_call_payload(op="write")
-    app_calls, sent, _post = await _drive_middleware(
+    app_calls, _sent, _post = await _drive_middleware(
         oauth_client_id=ANTHROPIC_API_CLIENT_ID,
         http_messages=_split_http_messages(body),
     )
-    assert app_calls == 0
-    assert any(m.get("type") == "http.response.start" for m in sent)
+    assert app_calls == 1
 
 
 @pytest.mark.asyncio
@@ -190,9 +189,9 @@ async def test_two_message_read_allowed_for_claude_ai() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_json_denied_for_anthropic_api() -> None:
+async def test_non_json_denied_for_grok_connector() -> None:
     app_calls, sent, _post = await _drive_middleware(
-        oauth_client_id=ANTHROPIC_API_CLIENT_ID,
+        oauth_client_id=GROK_CONNECTOR_CLIENT_ID,
         http_messages=[
             {"type": "http.request", "body": b"not-json", "more_body": False}
         ],

@@ -5,6 +5,7 @@ from __future__ import annotations
 from tool_access import (
     ANTHROPIC_API_CLIENT_ID,
     GROK_CONNECTOR_CLIENT_ID,
+    OPEN_WEBUI_CLIENT_ID,
     oauth_client_denial_reason,
     oauth_client_tool_allowed,
 )
@@ -60,14 +61,26 @@ def test_anthropic_api_allows_read_surface() -> None:
     )
 
 
-def test_anthropic_api_denies_writes() -> None:
-    assert not oauth_client_tool_allowed(
-        ANTHROPIC_API_CLIENT_ID, "fs", {"op": "write", "path": "cortex://x"}
+def test_anthropic_api_allows_writes() -> None:
+    """Break: stale read-only gate still denies after the client leaves the set."""
+    assert oauth_client_tool_allowed(
+        ANTHROPIC_API_CLIENT_ID,
+        "fs",
+        {"op": "write", "path": "cortex://notes/system/research/probe-20261016.md"},
     )
-    assert not oauth_client_tool_allowed(
+    assert oauth_client_tool_allowed(
         ANTHROPIC_API_CLIENT_ID, "cortex", {"tool": "assert", "arguments": "{}"}
     )
-    assert not oauth_client_tool_allowed(
+    assert oauth_client_tool_allowed(
         ANTHROPIC_API_CLIENT_ID, "rag", {"op": "upsert_article"}
     )
-    assert not oauth_client_tool_allowed(ANTHROPIC_API_CLIENT_ID, "manage", {})
+    assert oauth_client_tool_allowed(ANTHROPIC_API_CLIENT_ID, "manage", {})
+
+
+def test_open_webui_denies_fs_write() -> None:
+    """Break: dropping anthropic-api from the shared helper widens open-webui."""
+    assert not oauth_client_tool_allowed(
+        OPEN_WEBUI_CLIENT_ID,
+        "fs",
+        {"op": "write", "path": "cortex://notes/system/research/probe-20261016.md"},
+    )
