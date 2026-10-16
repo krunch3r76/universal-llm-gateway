@@ -82,6 +82,30 @@ def test_seed_yaml_non_empty() -> None:
     assert "cursor/composer-2.5" in rows
 
 
+@pytest.mark.parametrize(
+    ("model_id", "input_rate", "output_rate", "cache_write", "cache_read"),
+    [
+        ("anthropic/claude-opus-5-5", 4.0, 20.0, 5.0, 0.2),
+        ("anthropic/claude-fable-5-1", 10.0, 50.0, 12.50, 0.25),
+    ],
+)
+def test_anthropic_api_pinned_seed_rates(
+    model_id: str,
+    input_rate: float,
+    output_rate: float,
+    cache_write: float,
+    cache_read: float,
+) -> None:
+    row = resolve_rate(model_id)
+    assert row is not None
+    assert row.input_rate_per_m == input_rate
+    assert row.output_rate_per_m == output_rate
+    assert row.cache_write_rate_per_m == cache_write
+    assert row.cache_read_rate_per_m == cache_read
+    assert row.source == "manual_seed"
+    assert row.pinned is True
+
+
 def test_rate_cache_invalidates_when_yaml_changes(tmp_path: Path) -> None:
     """A changed rates file is observed without restarting the process."""
     rates_path = tmp_path / "rates.yaml"

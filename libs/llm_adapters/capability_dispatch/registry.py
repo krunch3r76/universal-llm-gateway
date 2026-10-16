@@ -148,6 +148,7 @@ _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
         "claude-mythos-5",
         "claude-mythos-preview",
         "claude-opus-5",
+        "claude-opus-5-5",
         "claude-sonnet-5",
         "claude-opus-4-8",
         "claude-opus-4-7",
