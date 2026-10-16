@@ -386,6 +386,11 @@ async def execute(
             )
             if preempted is not None:
                 return preempted
+            before_release = (
+                _rag_restart_settle_before_release
+                if service == "rag" and not force
+                else None
+            )
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -398,6 +403,7 @@ async def execute(
                     lambda: _sync_restart(ctl, service),
                 ),
                 exclude_job_id=caller_job_id if service == "agent_bus" else None,
+                before_release=before_release,
             )
 
         case "busy_status":
@@ -676,6 +682,91 @@ async def _stargate_idle_drain_supervised(
         row_id=row_id,
         caller_agent=caller_agent,
     )
+
+
+RAG_RESTART_SETTLE_BUDGET_S = 45.0
+
+
+def _parse_starting_pid(message: str) -> int | None:
+    from .controller.restart_drain import starting_pid_from_lifecycle_message
+
+    return starting_pid_from_lifecycle_message(message)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _rag_pid_considered_alive(pid: int) -> bool:
+    """True when the rag child is running; zombies count as dead (reaped when direct child)."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        # Not a direct child of this process — kill(0) is the only signal.
+        return True
+    except OSError:
+        return _pid_alive(pid)
+    if reaped_pid == pid:
+        return False
+    return True
+
+
+def _tcp_socket_live(host: str, port: int) -> bool:
+    import socket as socket_mod
+
+    try:
+        with socket_mod.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+async def _probe_rag_transport_ready() -> bool:
+    from .controller.service_config import read_rag_socket_path, read_rag_tcp_config
+    from .controller.service_ctl.startup_probe import uds_socket_live
+
+    loop = asyncio.get_running_loop()
+    tcp_config = read_rag_tcp_config()
+    if tcp_config is not None:
+        host, port = tcp_config
+        return await loop.run_in_executor(None, _tcp_socket_live, host, port)
+    socket_path = read_rag_socket_path()
+    return await loop.run_in_executor(None, uds_socket_live, socket_path)
+
+
+async def _rag_restart_settle_before_release(message: str) -> None:
+    """Hold the rag restart slot until transport readiness, pid exit, or settle budget."""
+    from .controller.service_ctl.startup_probe import DEFAULT_STARTUP_INTERVAL_S
+
+    pid = _parse_starting_pid(message)
+    if pid is None:
+        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + RAG_RESTART_SETTLE_BUDGET_S
+    while loop.time() < deadline:
+        if not _rag_pid_considered_alive(pid):
+            return
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return
+        try:
+            ready = await asyncio.wait_for(
+                _probe_rag_transport_ready(),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            return
+        if ready and _rag_pid_considered_alive(pid):
+            return
+        await asyncio.sleep(min(DEFAULT_STARTUP_INTERVAL_S, remaining))
 
 
 def refuse_giw_force_lifecycle() -> dict[str, str]:
