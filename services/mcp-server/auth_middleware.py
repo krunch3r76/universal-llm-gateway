@@ -39,7 +39,7 @@ from llm_proxy import (
 from mcp_events import record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from tool_access import ANTHROPIC_API_CLIENT_ID
+from tool_access import ANTHROPIC_API_CLIENT_ID, RESTRICTED_OAUTH_CLIENT_IDS
 from universal_logging import get_logger
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
@@ -410,16 +410,24 @@ class AuthMiddleware:
             scope["auth_mode"] = "static"
             scope["mcp_profile"] = self._resolve_profile(auth_header)
             scope["mcp_caller_identity"] = caller_identity
-            record(
-                "mcp.auth.admitted",
-                role="coordination",
-                client_ip=client_ip,
-                client_port=client_port,
-                auth_mode="static",
-                caller_identity=caller_identity,
-                path=path,
-                user_agent=user_agent,
-            )
+            admitted: dict[str, object] = {
+                "role": "coordination",
+                "client_ip": client_ip,
+                "client_port": client_port,
+                "auth_mode": "static",
+                "caller_identity": caller_identity,
+                "path": path,
+                "user_agent": user_agent,
+            }
+            # Restricted labels project onto oauth_client_id. Missing, static,
+            # and cursor labels stay unset so other callers keep fail-open.
+            if (
+                caller_identity in RESTRICTED_OAUTH_CLIENT_IDS
+                and caller_identity not in {"static", "cursor"}
+            ):
+                scope["oauth_client_id"] = caller_identity
+                admitted["oauth_client_id"] = caller_identity
+            record("mcp.auth.admitted", **admitted)
             record(
                 "mcp.profile.bound",
                 profile=scope["mcp_profile"],

@@ -24,6 +24,31 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
+OPEN_WEBUI_CLIENT_ID = "open-webui"
+ULG_CLIENT_HEADER = "X-ULG-Client"
+
+
+def cloud_chat_forward_headers(client_id: str | None) -> dict[str, str]:
+    """Headers for a cloud chat forward.
+
+    ``X-ULG-Client: open-webui`` is sent only for that client id. The value
+    is a header, never a JSON body field. Any other id, including a missing
+    one, sends Content-Type alone.
+    """
+    headers = {"Content-Type": "application/json"}
+    if client_id == OPEN_WEBUI_CLIENT_ID:
+        headers[ULG_CLIENT_HEADER] = OPEN_WEBUI_CLIENT_ID
+    return headers
+
+
+def _chat_forward_headers(client_id: str | None) -> dict[str, str]:
+    if client_id is None:
+        from systems.proxy.authorization import current_admitted_client_id
+
+        client_id = current_admitted_client_id()
+    return cloud_chat_forward_headers(client_id)
+
+
 type HealthObserver = Callable[..., None]
 
 
@@ -152,6 +177,7 @@ class CloudProxyClient:
         self,
         request_body: dict[str, Any],
         request_id: str,
+        client_id: str | None = None,
     ) -> httpx.Response:
         """Forward a non-streaming request via the cloud proxy.
 
@@ -172,7 +198,7 @@ class CloudProxyClient:
             response = await self._client.post(
                 path,
                 json=request_body,
-                headers={"Content-Type": "application/json"},
+                headers=_chat_forward_headers(client_id),
             )
         except httpx.TimeoutException:
             self._observe_health(
@@ -254,6 +280,7 @@ class CloudProxyClient:
         self,
         request_body: dict[str, Any],
         request_id: str,
+        client_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Forward a streaming request via the cloud proxy.
 
@@ -280,7 +307,7 @@ class CloudProxyClient:
                 "POST",
                 path,
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers=_chat_forward_headers(client_id),
             ) as response:
                 if response.status_code >= 400:
                     observed_error = True

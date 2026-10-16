@@ -681,6 +681,12 @@ async def chat_completions(request: Request) -> Response:
         model_id = model_id[:-4]
         body["model"] = model_id
 
+    ulg_client = request.headers.get("x-ulg-client", "").strip()
+    # The client id is a hop header. It must not ride the provider JSON.
+    body.pop("X-ULG-Client", None)
+    body.pop("oauth_client_id", None)
+    body.pop("client_id", None)
+
     # Decode __effort_<level> suffix so resolve_provider sees a bare base ID.
     # Caller-supplied reasoning.effort in the body takes precedence (caller wins).
     _injected_effort: str | None = None
@@ -754,9 +760,17 @@ async def chat_completions(request: Request) -> Response:
     # model that supports function calling.  Avoids requiring the provider to
     # connect back to our MCP server (firewall, connectivity issues).
     _proxy_loop_providers = {"anthropic", "google", "openrouter", "openai"}
-    _use_proxy_loop = mcp_requested and (
-        provider_catalog.provider in _proxy_loop_providers
-        or (provider_catalog.provider == "xai" and not _xai_responses_api)
+    open_webui_anthropic = (
+        ulg_client == "open-webui"
+        and provider_catalog.provider == "anthropic"
+        and not mcp_requested
+    )
+    _use_proxy_loop = open_webui_anthropic or (
+        mcp_requested
+        and (
+            provider_catalog.provider in _proxy_loop_providers
+            or (provider_catalog.provider == "xai" and not _xai_responses_api)
+        )
     )
     mcp_executor = _get_mcp_executor()
     if _use_proxy_loop:
@@ -772,7 +786,10 @@ async def chat_completions(request: Request) -> Response:
             )
 
         try:
-            response_json = await mcp_executor.run_tool_loop(_proxy_forward, body)
+            loop_client_id = "open-webui" if open_webui_anthropic else None
+            response_json = await mcp_executor.run_tool_loop(
+                _proxy_forward, body, client_id=loop_client_id
+            )
         except CatalogMissError as exc:
             await raise_catalog_miss_http(
                 exc=exc,

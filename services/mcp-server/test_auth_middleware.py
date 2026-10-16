@@ -292,3 +292,56 @@ async def test_resolver_yaml_admin_collision_inactive_callback(
         primary_token="different-env-admin",
     )
     assert status == 401
+
+
+@pytest.mark.asyncio
+async def test_open_webui_bearer_label_sets_oauth_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "open-webui labeled-bearer-fixture")
+    captured, status = await _invoke_auth(
+        path="/mcp/code",
+        bearer="labeled-bearer-fixture",
+        primary_token="admin-primary",
+    )
+    assert status == 200
+    assert captured["scope"]["oauth_client_id"] == "open-webui"
+    assert captured["scope"]["mcp_caller_identity"] == "open-webui"
+
+
+@pytest.mark.asyncio
+async def test_primary_static_token_has_no_oauth_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VORTEX_BEARER_TOKENS", raising=False)
+    monkeypatch.delenv("MCP_CURSOR_AUTH_TOKEN", raising=False)
+    captured, status = await _invoke_auth(
+        path="/mcp/code",
+        bearer="admin-primary",
+        primary_token="admin-primary",
+    )
+    assert status == 200
+    assert "oauth_client_id" not in captured["scope"]
+
+
+@pytest.mark.asyncio
+async def test_unrestricted_and_cursor_labels_do_not_set_oauth_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "life life-bearer-fixture")
+    monkeypatch.setenv("MCP_CURSOR_AUTH_TOKEN", "cursor-bearer-fixture")
+    life, life_status = await _invoke_auth(
+        path="/mcp/code",
+        bearer="life-bearer-fixture",
+        primary_token="admin-primary",
+    )
+    assert life_status == 200
+    assert "oauth_client_id" not in life["scope"]
+    cursor, cursor_status = await _invoke_auth(
+        path="/mcp/code",
+        bearer="cursor-bearer-fixture",
+        primary_token="admin-primary",
+    )
+    assert cursor_status == 200
+    assert "oauth_client_id" not in cursor["scope"]
+    assert cursor["scope"]["mcp_caller_identity"] == "cursor"

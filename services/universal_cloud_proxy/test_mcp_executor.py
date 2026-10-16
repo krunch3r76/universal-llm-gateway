@@ -593,3 +593,296 @@ def test_headers_include_structured_capable() -> None:
     executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
     headers = executor._headers()
     assert headers["X-MCP-Structured-Capable"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_open_webui_missing_bearer_does_not_execute_fs_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Key label open-webui with no bearer must not POST fs op write."""
+    monkeypatch.delenv("ULG_OPEN_WEBUI_MCP_BEARER", raising=False)
+    posts: list[dict[str, object]] = []
+
+    class _FakeClient:
+        async def post(self, *_args: object, **_kwargs: object) -> httpx.Response:
+            posts.append({"called": True})
+            raise AssertionError("fs write must not be sent")
+
+    executor = McpToolExecutor(
+        mcp_url="https://mcp.example.com/mcp", auth_token="shared-token"
+    )
+    executor._client = _FakeClient()  # type: ignore[assignment]
+    result = await executor.execute_tool(
+        "fs", {"op": "write", "path": "cortex://x"}, client_id="open-webui"
+    )
+    assert posts == []
+    assert "not configured" in result
+
+
+@pytest.mark.asyncio
+async def test_open_webui_loop_uses_dedicated_bearer_not_shared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_OPEN_WEBUI_MCP_BEARER", "dedicated-bearer-fixture")
+    seen: list[str] = []
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            del json, timeout
+            seen.append(headers.get("Authorization", ""))
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://mcp.example.com/mcp"),
+                text='{"jsonrpc":"2.0","id":1,"result":{"content":[]}}',
+            )
+
+    executor = McpToolExecutor(
+        mcp_url="https://mcp.example.com/mcp", auth_token="shared-token"
+    )
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    calls = {"n": 0}
+
+    async def _forward(body: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "function": {
+                                        "name": "fs",
+                                        "arguments": '{"op":"read"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    await executor.run_tool_loop(_forward, {"messages": []}, client_id="open-webui")
+    assert seen == ["Bearer dedicated-bearer-fixture"]
+
+
+def _catalog(provider: str, model_id: str) -> object:
+    from services.universal_cloud_proxy.catalog import (
+        CatalogManager,
+        CatalogModel,
+        ProviderCatalog,
+    )
+
+    mgr = CatalogManager([], {})
+    mgr._catalogs[provider] = ProviderCatalog(
+        provider=provider,
+        models=[CatalogModel(id=model_id, provider=provider, max_concurrent=1)],
+    )
+    return mgr
+
+
+def _chat_scope(body: bytes, headers: list[tuple[bytes, bytes]] | None = None) -> dict:
+    raw = list(headers or [])
+    raw.append((b"content-type", b"application/json"))
+    return {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": raw,
+        "query_string": b"",
+    }
+
+
+@pytest.mark.asyncio
+async def test_open_webui_header_admits_bare_anthropic_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+    seen: list[dict[str, object]] = []
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        async def forward_chat_request(self, **kwargs: object) -> dict[str, object]:
+            body = kwargs["request_body"]
+            assert isinstance(body, dict)
+            seen.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _Exec:
+        available = True
+
+        async def run_tool_loop(
+            self, forward_fn: object, body: dict[str, object], **kw: object
+        ) -> dict[str, object]:
+            assert kw.get("client_id") == "open-webui"
+            assert "X-ULG-Client" not in body
+            assert "oauth_client_id" not in body
+            assert not str(body.get("model", "")).endswith("-mcp")
+            result = await forward_fn(body)  # type: ignore[operator]
+            return result
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("anthropic", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+
+    payload = json.dumps(
+        {
+            "model": mid,
+            "messages": [{"role": "user", "content": "hi"}],
+            "X-ULG-Client": "open-webui",
+            "oauth_client_id": "open-webui",
+        }
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    scope = _chat_scope(payload, [(b"x-ulg-client", b"open-webui")])
+    resp = await cp.chat_completions(Request(scope, receive))
+    assert resp.status_code == 200
+    assert seen and "X-ULG-Client" not in seen[0]
+    assert "oauth_client_id" not in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_bare_anthropic_without_header_skips_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+    loop = {"called": False}
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        async def forward_chat_request(self, **_kwargs: object) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "direct"}}]}
+
+    class _Exec:
+        available = True
+
+        async def run_tool_loop(self, *_a: object, **_k: object) -> dict[str, object]:
+            loop["called"] = True
+            return {}
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("anthropic", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+    payload = json.dumps(
+        {"model": mid, "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    resp = await cp.chat_completions(Request(_chat_scope(payload), receive))
+    assert resp.status_code == 200
+    assert loop["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_suffix_still_loops_without_open_webui_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+    seen: dict[str, object] = {}
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        async def forward_chat_request(self, **_kwargs: object) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _Exec:
+        available = True
+
+        async def run_tool_loop(
+            self, forward_fn: object, body: dict[str, object], **kw: object
+        ) -> dict[str, object]:
+            seen["client_id"] = kw.get("client_id")
+            seen["model"] = body.get("model")
+            return await forward_fn(body)  # type: ignore[operator]
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("anthropic", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+    payload = json.dumps(
+        {"model": mid + "-mcp", "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    resp = await cp.chat_completions(Request(_chat_scope(payload), receive))
+    assert resp.status_code == 200
+    assert seen["client_id"] is None
+    assert seen["model"] == mid
+
+
+@pytest.mark.asyncio
+async def test_google_without_header_or_suffix_skips_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "google/gemini-fictional"
+    loop = {"called": False}
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "google"
+
+        async def forward_chat_request(self, **_kwargs: object) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "direct"}}]}
+
+    class _Exec:
+        available = True
+
+        async def run_tool_loop(self, *_a: object, **_k: object) -> dict[str, object]:
+            loop["called"] = True
+            return {}
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("google", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+    payload = json.dumps(
+        {"model": mid, "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    resp = await cp.chat_completions(Request(_chat_scope(payload), receive))
+    assert resp.status_code == 200
+    assert loop["called"] is False

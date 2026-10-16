@@ -32,6 +32,7 @@ _CURSOR_DISPATCH_DENY: Final[frozenset[str]] = frozenset()
 # See todo:xai-remote-mcp-inbound-setup / decision:xai-remote-mcp-inbound-access.
 GROK_CONNECTOR_CLIENT_ID: Final[str] = "grok-connector"
 ANTHROPIC_API_CLIENT_ID: Final[str] = "anthropic-api"
+OPEN_WEBUI_CLIENT_ID: Final[str] = "open-webui"
 GROK_CONNECTOR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"cortex", "agent_bus_read"}
 )
@@ -48,7 +49,11 @@ ANTHROPIC_API_RAG_OPS: Final[frozenset[str]] = frozenset(
 )
 
 RESTRICTED_OAUTH_CLIENT_IDS: Final[frozenset[str]] = frozenset(
-    {GROK_CONNECTOR_CLIENT_ID, ANTHROPIC_API_CLIENT_ID}
+    {GROK_CONNECTOR_CLIENT_ID, ANTHROPIC_API_CLIENT_ID, OPEN_WEBUI_CLIENT_ID}
+)
+
+_ANTHROPIC_SURFACE_CLIENT_IDS: Final[frozenset[str]] = frozenset(
+    {ANTHROPIC_API_CLIENT_ID, OPEN_WEBUI_CLIENT_ID}
 )
 
 _LifeSpecCache: Any | None = None
@@ -167,8 +172,9 @@ def oauth_client_tool_allowed(
 ) -> bool:
     """Return True iff ``client_id`` may invoke ``tool_name`` (with args).
 
-    Falsy ``client_id`` is fail-open. ``grok-connector`` and ``anthropic-api``
-    are read-only gated; every other id is unrestricted here.
+    Falsy ``client_id`` is fail-open. ``grok-connector`` is its own gate.
+    ``anthropic-api`` and ``open-webui`` share ``_anthropic_api_tool_allowed``.
+    Every other id is unrestricted here.
     """
     if not client_id:
         return True
@@ -179,7 +185,7 @@ def oauth_client_tool_allowed(
             op = str((tool_args or {}).get("tool") or "").strip()
             return op in GROK_CONNECTOR_CORTEX_OPS
         return True
-    if client_id == ANTHROPIC_API_CLIENT_ID:
+    if client_id in _ANTHROPIC_SURFACE_CLIENT_IDS:
         return _anthropic_api_tool_allowed(tool_name, tool_args)
     return True
 

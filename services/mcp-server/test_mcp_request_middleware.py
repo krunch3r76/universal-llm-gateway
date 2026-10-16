@@ -47,7 +47,7 @@ import json
 from typing import Any
 import pytest
 
-from tool_access import ANTHROPIC_API_CLIENT_ID, GROK_CONNECTOR_CLIENT_ID
+from tool_access import ANTHROPIC_API_CLIENT_ID, GROK_CONNECTOR_CLIENT_ID, OPEN_WEBUI_CLIENT_ID, _surface_spec
 
 
 def _tools_call_payload(*, op: str, tool: str = "fs") -> bytes:
@@ -270,3 +270,117 @@ async def test_oversize_chunk_not_retained_in_buffer(
     assert app_calls == 0
     start = next(m for m in sent if m.get("type") == "http.response.start")
     assert int(start.get("status") or 0) == 413
+
+
+def _denied_signal(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import mcp_request_middleware as mrm
+
+    signals: list[str] = []
+
+    def _record(signal: str, **_payload: object) -> None:
+        signals.append(signal)
+
+    monkeypatch.setattr(mrm, "record", _record)
+    return signals
+
+
+@pytest.mark.asyncio
+async def test_open_webui_denies_write_and_unlisted_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals = _denied_signal(monkeypatch)
+    write = _tools_call_payload(op="write")
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[{"type": "http.request", "body": write, "more_body": False}],
+    )
+    assert app_calls == 0
+    assert "mcp.oauth.client.tool.denied" in signals
+
+    bus = _tools_call_payload(op="post", tool="agent_bus")
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[{"type": "http.request", "body": bus, "more_body": False}],
+    )
+    assert app_calls == 0
+
+    rag = _tools_call_payload(op="upsert_article", tool="rag")
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[{"type": "http.request", "body": rag, "more_body": False}],
+    )
+    assert app_calls == 0
+
+    families = _surface_spec("code").families
+    write_op = next(op for op, fam in families.items() if fam != "read")
+    body = json.loads(_tools_call_payload(op="unused", tool="cortex"))
+    body["params"]["arguments"] = {"tool": write_op}
+    assert families.get(write_op) != "read"
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[
+            {
+                "type": "http.request",
+                "body": json.dumps(body).encode(),
+                "more_body": False,
+            }
+        ],
+    )
+    assert app_calls == 0
+
+    empty = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "", "arguments": {}},
+    }
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[
+            {
+                "type": "http.request",
+                "body": json.dumps(empty).encode(),
+                "more_body": False,
+            }
+        ],
+    )
+    assert app_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_open_webui_allows_read_surface() -> None:
+    rag = _tools_call_payload(op="search", tool="rag")
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[{"type": "http.request", "body": rag, "more_body": False}],
+    )
+    assert app_calls == 1
+
+    read = _tools_call_payload(op="read")
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[{"type": "http.request", "body": read, "more_body": False}],
+    )
+    assert app_calls == 1
+
+    read_op = next(
+        op for op, fam in _surface_spec("code").families.items() if fam == "read"
+    )
+    assert _surface_spec("code").families.get(read_op) == "read"
+    cortex = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "cortex", "arguments": {"tool": read_op}},
+    }
+    app_calls, _sent, _post = await _drive_middleware(
+        oauth_client_id=OPEN_WEBUI_CLIENT_ID,
+        http_messages=[
+            {
+                "type": "http.request",
+                "body": json.dumps(cortex).encode(),
+                "more_body": False,
+            }
+        ],
+    )
+    assert app_calls == 1

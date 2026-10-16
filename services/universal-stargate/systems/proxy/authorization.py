@@ -8,6 +8,7 @@ Supports multiple authorization methods:
 3. API key as query parameter (for compatibility)
 """
 
+import contextvars
 import hashlib
 import ipaddress
 import os
@@ -21,6 +22,22 @@ from .core.errors import AuthErrorBuilder
 
 logger = get_logger(__name__)
 
+# Request-task projection of the admitted key's non-secret client_id.
+# Cloud chat forward reads it; a missing value omits X-ULG-Client.
+_admitted_client_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "ulg_admitted_client_id", default=None
+)
+
+
+def bind_admitted_client_id(client_id: str | None) -> None:
+    """Record the admitted key's client_id for this request task."""
+    _admitted_client_id.set(client_id)
+
+
+def current_admitted_client_id() -> str | None:
+    """Return the client_id bound for this request, if any."""
+    return _admitted_client_id.get()
+
 
 class APIKeyManager:
     """Manages API keys and validation"""
@@ -29,6 +46,7 @@ class APIKeyManager:
         self.enabled = config.get("enabled", True)
         self.valid_keys: set[str] = set()
         self.key_hashes: set[str] = set()
+        self._key_client_ids: dict[str, str] = {}
         self.exempt_endpoints = set(
             config.get(
                 "exempt_endpoints", ["/", "/health", "/docs", "/redoc", "/openapi.json"]
@@ -109,10 +127,13 @@ class APIKeyManager:
         config_keys = config.get("api_keys", [])
         for key in config_keys:
             if isinstance(key, dict):
-                # Support for key metadata
+                # Support for key metadata. client_id is non-secret.
                 key_value = key.get("key", "")
                 if key_value:
                     self.valid_keys.add(key_value)
+                    client_id = key.get("client_id")
+                    if isinstance(client_id, str) and client_id.strip():
+                        self._key_client_ids[key_value] = client_id.strip()
                     logger.info(f"Loaded API key from config: {key_value[:8]}...")
             elif isinstance(key, str):
                 self.valid_keys.add(key)
@@ -149,6 +170,16 @@ class APIKeyManager:
             return True
 
         return False
+
+    def client_id_for_key(self, api_key: str | None) -> str | None:
+        """Return the non-secret client_id stored for a dict-form key.
+
+        Plain string keys and hashed-only keys have no metadata, so they
+        return None and cloud chat forward omits X-ULG-Client.
+        """
+        if not api_key:
+            return None
+        return self._key_client_ids.get(api_key)
 
     def is_endpoint_exempt(self, path: str) -> bool:
         """Check if endpoint is exempt from authorization"""
@@ -209,6 +240,7 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
         """FastAPI dependency for authorization"""
         # If authorization is disabled, allow all requests
         if not api_key_manager.enabled:
+            bind_admitted_client_id(None)
             return {
                 "authenticated": True,
                 "api_key": None,
@@ -217,6 +249,7 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
 
         # Check if endpoint is exempt
         if api_key_manager.is_endpoint_exempt(request.url.path):
+            bind_admitted_client_id(None)
             return {
                 "authenticated": True,
                 "api_key": None,
@@ -229,6 +262,7 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
         # Check if IP is whitelisted
         if api_key_manager.is_ip_whitelisted(client_ip):
             # logger.info(f"Request from whitelisted IP: {client_ip}")
+            bind_admitted_client_id(None)
             return {
                 "authenticated": True,
                 "api_key": None,
@@ -240,16 +274,21 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
         api_key = _extract_api_key_from_request(request)
 
         if not api_key:
+            bind_admitted_client_id(None)
             raise AuthErrorBuilder.api_key_required()
 
         # Validate the API key
         if not api_key_manager.validate_key(api_key):
+            bind_admitted_client_id(None)
             raise AuthErrorBuilder.invalid_api_key()
 
+        client_id = api_key_manager.client_id_for_key(api_key)
+        bind_admitted_client_id(client_id)
         return {
             "authenticated": True,
             "api_key": api_key,
             "key_prefix": api_key[:8] + "..." if api_key else None,
+            "client_id": client_id,
             "auth_method": "api_key",
             "client_ip": client_ip,
         }

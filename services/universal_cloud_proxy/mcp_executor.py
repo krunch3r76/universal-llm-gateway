@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from copy import deepcopy
 from typing import Any
@@ -46,6 +47,10 @@ _RESTART_ERROR_CODE = -32099
 _RESTART_ERROR_REASON = "server_restarting"
 _RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
 _RESTART_RETRY_DELAYS_S = (5.0, 15.0)
+
+OPEN_WEBUI_CLIENT_ID = "open-webui"
+# Env *name* for the open-webui MCP bearer. The value is never logged.
+ULG_OPEN_WEBUI_MCP_BEARER_ENV = "ULG_OPEN_WEBUI_MCP_BEARER"
 
 _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
     "web_fetch": {
@@ -224,6 +229,7 @@ class McpToolExecutor:
         self._openai_defs: list[dict[str, Any]] = []
         self._dispatch_compat_names: set[str] = set()
         self._client: httpx.AsyncClient | None = None
+        self._loop_client_id: str | None = None
 
     async def startup(self) -> None:
         """Fetch tool schemas from the MCP server via JSON-RPC ``tools/list``."""
@@ -278,8 +284,23 @@ class McpToolExecutor:
     def get_openai_tool_defs(self) -> list[dict[str, Any]]:
         return list(self._openai_defs)
 
-    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Execute a single tool call via JSON-RPC ``tools/call``."""
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        client_id: str | None = None,
+    ) -> str:
+        """Execute a single tool call via JSON-RPC ``tools/call``.
+
+        An open-webui loop uses ``ULG_OPEN_WEBUI_MCP_BEARER_ENV`` only. When
+        that bearer is missing the call is not sent: an unlabeled shared
+        token would fail-open on the MCP server.
+        """
+        if client_id is None:
+            client_id = getattr(self, "_loop_client_id", None)
+        if client_id == OPEN_WEBUI_CLIENT_ID and not _open_webui_bearer():
+            return json.dumps({"error": "open-webui MCP bearer is not configured"})
         if not self._client:
             return json.dumps({"error": "MCP executor not initialized"})
         target_name = name
@@ -296,7 +317,7 @@ class McpToolExecutor:
                 resp = await self._client.post(
                     self._mcp_url,
                     json=request_body,
-                    headers=self._headers(),
+                    headers=self._headers(client_id),
                     timeout=_MAX_TOOL_CALL_TIMEOUT,
                 )
                 if _response_is_restart_error(resp):
@@ -374,6 +395,7 @@ class McpToolExecutor:
         body: dict[str, Any],
         *,
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
+        client_id: str | None = None,
     ) -> dict[str, Any]:
         """Run the proxy-side agentic tool loop.
 
@@ -384,16 +406,36 @@ class McpToolExecutor:
         ``forward_fn`` is an async callable: (body) -> dict (non-streaming
         chat completion JSON).
         """
+        self._loop_client_id = client_id
         existing_tools = body.get("tools") or []
         body["tools"] = existing_tools + self.get_openai_tool_defs()
         original_stream = body.get("stream", False)
         body["stream"] = False
 
-        await self._resolve_boot_directive(body.get("messages", []))
-
         loop_start = time.monotonic()
-        response: dict[str, Any] = {}
 
+        try:
+            await self._resolve_boot_directive(body.get("messages", []))
+            return await self._finish_tool_loop(
+                forward_fn,
+                body,
+                max_iterations=max_iterations,
+                loop_start=loop_start,
+                original_stream=original_stream,
+            )
+        finally:
+            self._loop_client_id = None
+
+    async def _finish_tool_loop(
+        self,
+        forward_fn: Any,
+        body: dict[str, Any],
+        *,
+        max_iterations: int,
+        loop_start: float,
+        original_stream: bool,
+    ) -> dict[str, Any]:
+        response: dict[str, Any] = {}
         for iteration in range(max_iterations):
             if time.monotonic() - loop_start > _MAX_LOOP_TIMEOUT:
                 logger.warning(
@@ -440,12 +482,22 @@ class McpToolExecutor:
 
         return response
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, client_id: str | None = None) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "X-MCP-Structured-Capable": "1",
         }
+        if client_id == OPEN_WEBUI_CLIENT_ID:
+            bearer = _open_webui_bearer()
+            if bearer:
+                headers["Authorization"] = f"Bearer {bearer}"
+            return headers
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         return headers
+
+
+def _open_webui_bearer() -> str:
+    """Return the open-webui MCP bearer, or empty when the env is unset."""
+    return os.environ.get(ULG_OPEN_WEBUI_MCP_BEARER_ENV, "").strip()
