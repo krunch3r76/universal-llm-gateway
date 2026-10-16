@@ -147,3 +147,29 @@ async def test_rate_limit_one_dump_per_interval(
         assert len(_dumps(caplog)) == 1
     finally:
         await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_continuous_stall_samples_until_cap(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One stall longer than the sample interval dumps again until the cap."""
+    _arm(
+        monkeypatch,
+        RAG_LOOP_STACK_LATE_S="0.15",
+        RAG_LOOP_STACK_LONG_S="100",
+        RAG_LOOP_STACK_SAMPLE_S="0.12",
+        RAG_LOOP_STACK_DUMP_CAP="4",
+        RAG_LOOP_STACK_MIN_INTERVAL_S="30",
+        RAG_LOOP_STACK_POLL_S="0.02",
+    )
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    start_loop_instrumentation()
+    try:
+        time.sleep(1.0)
+        await asyncio.sleep(0.05)
+        dumps = _dumps(caplog)
+        assert len(dumps) == 4, dumps
+    finally:
+        await stop_loop_instrumentation()

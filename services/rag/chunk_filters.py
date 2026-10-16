@@ -19,6 +19,7 @@ Shared by RAG service (indexing) and pipeline retrieve handlers so rules stay al
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -40,8 +41,10 @@ _JUNK_LINE_RE: re.Pattern[str] = re.compile(
 _ORDERED_LIST_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\d+\.\s+")
 _MIN_ORDERED_LIST_PROSE_WORDS: int = 4
 
+# ``search`` is boolean. Leading and trailing ``.*`` are redundant and make
+# each line quadratic (friction:39420). Same matches without them.
 _CITATION_LINE_RE: re.Pattern[str] = re.compile(
-    r".*,\s*(?:19|20)\d{2}\b.*|.*\bet\s+al\.?\s*[,\.].*",
+    r",\s*(?:19|20)\d{2}\b|\bet\s+al\.?\s*[,\.]",
     re.IGNORECASE,
 )
 
@@ -128,8 +131,27 @@ def _looks_like_dense_table(content: str) -> bool:
     return False
 
 
+def noise_reason_timed(
+    content: str, threshold: float = 0.35
+) -> tuple[str | None, float]:
+    """Return ``(noise_reason, cpu_ms)``.
+
+    ``cpu_ms`` is process time inside this function, not queue wait around
+    ``asyncio.to_thread``.
+    """
+    started = time.process_time()
+    reason = _noise_reason(content, threshold)
+    cpu_ms = (time.process_time() - started) * 1000.0
+    return reason, cpu_ms
+
+
 def noise_reason(content: str, threshold: float = 0.35) -> str | None:
     """Return a noise category string, or None if the chunk is not treated as noise."""
+    reason, _cpu_ms = noise_reason_timed(content, threshold)
+    return reason
+
+
+def _noise_reason(content: str, threshold: float) -> str | None:
     lines = [line for line in content.splitlines() if line.strip()]
     if not lines:
         return "garbled_extraction"
@@ -192,5 +214,6 @@ __all__ = [
     "chunk_metadata_is_noise",
     "is_citation_heavy",
     "noise_reason",
+    "noise_reason_timed",
     "normalize_noise_metadata",
 ]
