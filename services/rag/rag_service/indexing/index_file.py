@@ -248,14 +248,23 @@ async def _index_file_impl(
             await state._event_bus.publish_nowait(
                 rag_html_normalization_started(file=source)
             )
+        chunk_started = time.perf_counter()
         try:
-            chunks = chunk_file(file_path, target_chars=target_chars)
+            chunks = await asyncio.to_thread(
+                chunk_file, file_path, target_chars=target_chars
+            )
         except Exception as exc:
             if is_html_file and state._event_bus is not None:
                 await state._event_bus.publish_nowait(
                     rag_html_normalization_failed(file=source, error=str(exc))
                 )
             raise
+        finally:
+            logger.info(
+                "chunk_file duration_ms=%d path=%s",
+                int((time.perf_counter() - chunk_started) * 1000),
+                source,
+            )
         if is_html_file and state._event_bus is not None:
             total_chars = sum(len(c.text) for c in chunks)
             await state._event_bus.publish_nowait(

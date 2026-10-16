@@ -178,6 +178,21 @@ def fs_impl(
         copy_dest_sandbox = dest_ingress.sandbox
         target = dest_ingress.rel_path
 
+    # thread= roots workspaces ops in the lane worktree; cross-sandbox copy/move
+    # still reads the source from the shared checkout — refuse before any I/O.
+    if (
+        lane_thread
+        and op in {"copy", "move"}
+        and copy_dest_sandbox
+        and copy_dest_sandbox != effective_sandbox
+    ):
+        return {
+            "error": (
+                "thread= is not supported for cross-sandbox copy/move; "
+                "source would be read from the shared checkout"
+            )
+        }
+
     refusal = permission_refusal(
         surface,
         effective_sandbox,
