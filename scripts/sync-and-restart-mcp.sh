@@ -190,6 +190,7 @@ CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
 _SOURCE_SYNC_STAMP_SNAPSHOT=""
 _STAMP_WRITTEN=0
 _TREE_CHANGED=0
+_SYNCED_ROOT_LIST=""
 _STOP_SUCCEEDED=0
 _START_FAILED=0
 _RESTORE_HANDLER_RAN=0
@@ -226,7 +227,7 @@ _restore_window_exit() {
       else
         stamp_ok=1
       fi
-      if [[ "$rolled" == 1 && "$stamp_ok" == 1 ]]; then
+      if [[ "$rolled" == 1 && "$stamp_ok" == 1 ]] && _rollback_delete_synced_extras; then
         echo "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" >&2
       else
         echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
@@ -246,8 +247,11 @@ _restore_window_exit() {
     exit 1
   fi
   if [[ -n "$img" ]]; then
-    echo "MCP_SYNC_GATE_RESTORE" >&2
-    gate restore --firer script --checked-image-id "$img" || true
+    if gate restore --firer script --checked-image-id "$img"; then
+      echo "MCP_SYNC_GATE_RESTORE" >&2
+    else
+      echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+    fi
   fi
   _cleanup_stamp_snapshot
   exit 1
@@ -304,11 +308,11 @@ snapshot_source_sync_stamp() {
 restore_source_sync_stamp_from_snapshot() {
   local c=mcp-server
   if [[ ! -f "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
-    return 0
+    return 1
   fi
   if [[ ! -s "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
-    docker exec -u 0 "$c" rm -f /app/.source_sync_stamp 2>/dev/null || true
-    return 0
+    docker exec -u 0 "$c" rm -f /app/.source_sync_stamp
+    return
   fi
   docker exec -i -u 0 "$c" sh -c 'cat > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp' \
     < "$_SOURCE_SYNC_STAMP_SNAPSHOT"
@@ -347,6 +351,145 @@ _rollback_running_tree_from_last_healthy() {
     docker cp "${base}/pipelines.local/." "${c}:/app/pipelines.local/" || return 1
   fi
   docker cp "${base}/sitecustomize.py" "${c}:/app/sitecustomize.py"
+}
+
+_note_synced_root() {
+  _SYNCED_ROOT_LIST+="${1}"$'\n'
+}
+
+# Relative paths under one synced root, excluding __pycache__ and *.pyc.
+_list_root() {
+  local base="$1" root="$2" rel
+  local dir="${base}/${root}"
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+  find "$dir" \( -name '__pycache__' -o -name '*.pyc' \) -prune -o -printf '%P\n' \
+    | while IFS= read -r rel; do
+        if [[ -z "$rel" ]]; then
+          printf '%s\n' "$root"
+        else
+          printf '%s\n' "${root}/${rel}"
+        fi
+      done
+}
+
+_collect_candidates() {
+  local base="${MCP_DATA_DIR}/last-healthy" root src dst
+  while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    if [[ ! -e "${base}/${root}" ]]; then
+      printf '%s\n' "$root"
+      continue
+    fi
+    src="$(mktemp)"
+    dst="$(mktemp)"
+    _list_root "$WORKSPACE_ROOT" "$root" | sort -u > "$src"
+    _list_root "$base" "$root" | sort -u > "$dst"
+    comm -23 "$src" "$dst"
+    rm -f "$src" "$dst"
+  done <<< "${_SYNCED_ROOT_LIST}"
+}
+
+_candidates_hit_mount() {
+  local mounts="$1" cand="$2" rel dest cpath
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    cpath="/app/${rel}"
+    while IFS= read -r dest; do
+      [[ -z "$dest" ]] && continue
+      dest="${dest%/}"
+      if [[ "$cpath" == "$dest" || "$cpath" == "$dest"/* ]]; then
+        return 0
+      fi
+    done <<< "$mounts"
+  done < "$cand"
+  return 1
+}
+
+_write_delete_stream() {
+  local cand="$1" rel files dirs
+  files="$(mktemp)"
+  dirs="$(mktemp)"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    if [[ -d "${WORKSPACE_ROOT}/${rel}" ]]; then
+      printf '%s\n' "$rel" >> "$dirs"
+    else
+      printf '%s\n' "$rel" >> "$files"
+    fi
+  done < "$cand"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    printf 'F /app/%s\n' "$rel"
+  done < "$files"
+  if [[ -s "$dirs" ]]; then
+    awk -F/ '{print NF "\t" $0}' "$dirs" | sort -nr -k1,1 | cut -f2- \
+      | while IFS= read -r rel; do
+          [[ -z "$rel" ]] && continue
+          printf 'D /app/%s\n' "$rel"
+        done
+  fi
+  rm -f "$files" "$dirs"
+}
+
+_normalize_container_listing() {
+  sed -e 's|^/app/||' -e 's|/$||' -e '/^$/d' | sort -u
+}
+
+_listing_matches() {
+  local expected actual root
+  local -a find_args=()
+  expected="$(mktemp)"
+  actual="$(mktemp)"
+  while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    if [[ -d "${MCP_DATA_DIR}/last-healthy/${root}" ]]; then
+      _list_root "${MCP_DATA_DIR}/last-healthy" "$root" >> "$expected"
+      find_args+=("/app/${root}")
+    fi
+  done <<< "${_SYNCED_ROOT_LIST}"
+  sort -u "$expected" -o "$expected"
+  if [[ ${#find_args[@]} -eq 0 ]]; then
+    : > "$actual"
+  elif ! docker exec mcp-server find "${find_args[@]}" \
+      \( -name '__pycache__' -o -name '*.pyc' \) -prune -o -print \
+      | _normalize_container_listing > "$actual"; then
+    rm -f "$expected" "$actual"
+    return 1
+  fi
+  local rc=0
+  cmp -s "$expected" "$actual" || rc=1
+  rm -f "$expected" "$actual"
+  return "$rc"
+}
+
+# Delete paths this sync copied that last-healthy lacks. Return 0 only when
+# the read-only container listing of the synced roots then matches last-healthy.
+_rollback_delete_synced_extras() {
+  local mounts cand stream flat
+  if ! mounts="$(
+    docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' mcp-server
+  )"; then
+    return 1
+  fi
+  cand="$(mktemp)"
+  stream="$(mktemp)"
+  _collect_candidates > "$cand"
+  flat="${mounts//[[:space:]]/}"
+  if [[ -n "$flat" ]] && _candidates_hit_mount "$mounts" "$cand"; then
+    rm -f "$cand" "$stream"
+    return 1
+  fi
+  if [[ -s "$cand" ]]; then
+    _write_delete_stream "$cand" > "$stream"
+    if ! docker exec -i -u 0 mcp-server sh -c 'while IFS= read -r line; do kind="${line%% *}"; path="${line#* }"; if [[ "$kind" == F ]]; then rm -f -- "$path" || exit 1; else rm -rf -- "$path" || exit 1; fi; done' < "$stream"; then
+      rm -f "$cand" "$stream"
+      return 1
+    fi
+  fi
+  rm -f "$cand" "$stream"
+  _listing_matches
 }
 
 write_source_sync_stamp_before_serving_restart() {
@@ -409,16 +552,22 @@ sync_source_into_container() {
   _TREE_CHANGED=1
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
   docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
+  _note_synced_root libs
   docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
+  _note_synced_root services
   docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
+  _note_synced_root config
   docker cp "$WORKSPACE_ROOT/sitecustomize.py" "${c}:/app/sitecustomize.py"
   docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
+  _note_synced_root pipelines
   if [[ -d "$WORKSPACE_ROOT/pipelines.local" ]]; then
     docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
+    _note_synced_root pipelines.local
   fi
   if [[ -d "$WORKSPACE_ROOT/services/mcp-server/tools/local" ]]; then
     docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
       "${c}:/app/services/mcp-server/tools/local/"
+    _note_synced_root "services/mcp-server/tools/local"
   fi
   docker exec -u 0 "$c" chown -R mcp:mcp \
     /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
