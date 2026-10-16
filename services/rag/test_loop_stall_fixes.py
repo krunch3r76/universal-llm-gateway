@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -315,7 +316,12 @@ async def test_chunk_file_off_loop_one_second_sleep_under_drift_cap(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """chunk_file on a worker: 1 s sleep must not log loop_drift_ms ≥ 2000."""
+    """chunk_file on a worker: 3 s sleep must not log loop_drift_ms ≥ 2000.
+
+    An inline call on the loop thread blocks the drift probe for the full
+    sleep, which is past the 2000 ms cap. ``time.sleep`` on a worker thread
+    does not.
+    """
     _capture_loop_drift(caplog)
     start_loop_instrumentation()
     path = tmp_path / "2026-10.md"
@@ -323,7 +329,7 @@ async def test_chunk_file_off_loop_one_second_sleep_under_drift_cap(
 
     def _slow_chunk(file_path: Path, target_chars: int | None = None) -> list[object]:
         del file_path, target_chars
-        time.sleep(1.0)
+        time.sleep(3.0)
         return []
 
     monkeypatch.setattr(index_file_mod, "chunk_file", _slow_chunk)
@@ -342,34 +348,29 @@ async def test_chunk_file_off_loop_one_second_sleep_under_drift_cap(
 
 @pytest.mark.asyncio
 async def test_chunk_file_inline_mutation_logs_high_drift(
-    caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Mutation: chunk_file inline on the loop (to_thread bypassed) drifts ≥ 2000 ms.
+    """chunk_file must run on a non-loop thread via the production to_thread call.
 
-    Restoring the worker-thread call is the sibling pass test.
+    Patching ``asyncio.to_thread`` to inline hid a deleted ``to_thread``: the
+    assertion never read the call in ``_index_file_impl``. Recording
+    ``threading.get_ident`` inside the chunker fails when that call is inline.
     """
-    _capture_loop_drift(caplog)
-    start_loop_instrumentation()
     path = tmp_path / "2026-10.md"
     path.write_text("hello\n")
+    loop_ident = threading.get_ident()
+    seen: list[int] = []
 
     def _slow_chunk(file_path: Path, target_chars: int | None = None) -> list[object]:
         del file_path, target_chars
-        _hold_gil(2.5)
+        seen.append(threading.get_ident())
         return []
 
-    async def _inline_to_thread(fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return fn(*args, **kwargs)
-
     monkeypatch.setattr(index_file_mod, "chunk_file", _slow_chunk)
-    monkeypatch.setattr(asyncio, "to_thread", _inline_to_thread)
-    await asyncio.sleep(0.02)
     try:
         await _drive_chunk_file(path, monkeypatch)
-        await asyncio.sleep(0.05)
-        assert _max_loop_drift_ms(caplog) >= _DRIFT_FAIL_MS
+        assert seen, "chunk_file was not called"
+        assert seen[0] != loop_ident
     finally:
         monkeypatch.setattr(state, "_config", None)
-        await stop_loop_instrumentation()

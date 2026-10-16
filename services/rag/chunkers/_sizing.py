@@ -4,10 +4,12 @@ Imported by every sibling chunker (``markdown_pdf``, ``code_chunking``,
 ``epub_html``, ``office_dispatch``). Budgets are defined in tokens and converted
 to characters at a fixed 4 chars/token estimate (prose target 4096 + 1024 pad,
 code 1024). Also holds the code/HTML extension sets, HTML boilerplate CSS
-selectors, and the module-level tree-sitter Python parser.
+selectors, and the thread-local tree-sitter Python parser.
 """
 
 from __future__ import annotations
+
+import threading
 
 import tree_sitter as _ts
 import tree_sitter_python as _tspython
@@ -43,6 +45,24 @@ _GUARDED_BOILERPLATE_SELECTORS = (
 )
 
 _PY_LANG = _ts.Language(_tspython.language())
-_PY_PARSER = _ts.Parser(_PY_LANG)
+# tree-sitter Parser is not thread-safe. Index workers (DEFAULT_INDEX_WORKERS)
+# call chunk_code_ast concurrently, so each thread owns its own Parser.
+_PY_PARSER_LOCAL = threading.local()
 _AST_CHUNK_NWS_CHARS = _CHUNK_CHARS_CODE
+
+
+def py_parser() -> _ts.Parser:
+    """Return the tree-sitter Python parser for the calling thread.
+
+    A shared Parser corrupts or races when ``chunk_code_ast`` runs from the
+    index worker pool. The first call on a thread builds the parser; later
+    calls on that thread reuse it.
+    """
+    parser = getattr(_PY_PARSER_LOCAL, "parser", None)
+    if parser is None:
+        parser = _ts.Parser(_PY_LANG)
+        _PY_PARSER_LOCAL.parser = parser
+    return parser
+
+
 _LOG = get_logger(__name__)

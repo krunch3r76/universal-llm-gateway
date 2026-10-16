@@ -18,7 +18,7 @@ from services.rag.chunker_ast_metadata import build_python_chunk_metadata
 from services.rag.chunkers._sizing import (
     _AST_CHUNK_NWS_CHARS,
     _CHUNK_CHARS_CODE,
-    _PY_PARSER,
+    py_parser,
 )
 from services.rag.chunkers.paragraph_utils import Chunk, _annotate_chunk_indices
 
@@ -135,7 +135,7 @@ def chunk_code_ast(
     character count per the cAST paper (optimal range: 2000–2500).
     """
     source = content.encode()
-    tree = _PY_PARSER.parse(source)
+    tree = py_parser().parse(source)
     root = tree.root_node
 
     if _node_nws(source, root) <= max_chunk_chars:
