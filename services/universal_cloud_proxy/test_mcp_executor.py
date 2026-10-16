@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from unittest.mock import patch
@@ -99,7 +100,7 @@ def test_parse_boot_directive_seat_slug() -> None:
 async def test_resolve_boot_directive_seat_claude_cursor() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "BRIEFING"})
 
@@ -122,7 +123,7 @@ async def test_resolve_boot_directive_seat_claude_cursor() -> None:
 async def test_resolve_boot_directive_agent_claude_cursor() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "BRIEFING"})
 
@@ -146,7 +147,7 @@ async def test_resolve_boot_directive_agent_claude_cursor() -> None:
 async def test_resolve_boot_directive_family_platform() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "API MULTI"})
 
@@ -172,7 +173,7 @@ async def test_resolve_boot_directive_family_platform() -> None:
 async def test_resolve_boot_directive_passes_all_primary_params() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "CARD"})
 
@@ -206,7 +207,7 @@ async def test_resolve_boot_directive_passes_all_primary_params() -> None:
 async def test_t14_web_boot_appends_invariant_bodies_digest_stamped() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "BRIEFING CARD"})
 
@@ -254,7 +255,7 @@ async def test_t14_web_boot_appends_invariant_bodies_digest_stamped() -> None:
 async def test_resolve_boot_directive_leaves_unmatched_prompt() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+    async def _fake_execute(name: str, arguments: dict[str, object], **_kwargs: object) -> str:
         calls.append((name, arguments))
         return json.dumps({"briefing_card": "CARD"})
 
@@ -676,6 +677,124 @@ async def test_open_webui_loop_uses_dedicated_bearer_not_shared(
     assert seen == ["Bearer dedicated-bearer-fixture"]
 
 
+@pytest.mark.asyncio
+async def test_overlapping_loops_keep_open_webui_bearer_on_the_waiting_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1 waits inside forward_fn while a -mcp loop L2 finishes on the same executor.
+
+    L1's later fs write must still carry the dedicated bearer (the server denies
+    that write). L2 must never present the open-webui bearer.
+    """
+    monkeypatch.setenv("ULG_OPEN_WEBUI_MCP_BEARER", "dedicated-bearer-fixture")
+    l1_inside_forward = asyncio.Event()
+    release_l1 = asyncio.Event()
+    posts: list[dict[str, str]] = []
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            del timeout
+            auth = headers.get("Authorization", "")
+            params = json.get("params") if isinstance(json.get("params"), dict) else {}
+            arguments = params.get("arguments") if isinstance(params, dict) else {}
+            op = arguments.get("op") if isinstance(arguments, dict) else ""
+            denied = auth == "Bearer dedicated-bearer-fixture" and op == "write"
+            text = "write denied" if denied else "ok-shared"
+            posts.append({"auth": auth, "op": str(op), "text": text})
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://mcp.example.com/mcp"),
+                text=(
+                    '{"jsonrpc":"2.0","id":1,"result":{"content":'
+                    '[{"type":"text","text":"' + text + '"}]}}'
+                ),
+            )
+
+    executor = McpToolExecutor(
+        mcp_url="https://mcp.example.com/mcp", auth_token="shared-token"
+    )
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    async def _forward_l1(body: dict[str, object]) -> dict[str, object]:
+        del body
+        if not l1_inside_forward.is_set():
+            l1_inside_forward.set()
+            await release_l1.wait()
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "l1",
+                                    "function": {
+                                        "name": "fs",
+                                        "arguments": '{"op":"write","path":"cortex://x"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {"choices": [{"message": {"content": "l1-done"}}]}
+
+    l2_calls = {"n": 0}
+
+    async def _forward_l2(body: dict[str, object]) -> dict[str, object]:
+        del body
+        l2_calls["n"] += 1
+        if l2_calls["n"] == 1:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "l2",
+                                    "function": {
+                                        "name": "fs",
+                                        "arguments": '{"op":"read"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {"choices": [{"message": {"content": "l2-done"}}]}
+
+    l1 = asyncio.create_task(
+        executor.run_tool_loop(
+            _forward_l1, {"messages": []}, client_id="open-webui"
+        )
+    )
+    await l1_inside_forward.wait()
+    posts_before_l2 = len(posts)
+    await executor.run_tool_loop(_forward_l2, {"messages": []}, client_id=None)
+    l2_posts = posts[posts_before_l2:]
+    release_l1.set()
+    l1_result = await l1
+
+    assert l2_posts == [
+        {"auth": "Bearer shared-token", "op": "read", "text": "ok-shared"}
+    ]
+    assert posts[-1] == {
+        "auth": "Bearer dedicated-bearer-fixture",
+        "op": "write",
+        "text": "write denied",
+    }
+    assert all(p["auth"] != "Bearer dedicated-bearer-fixture" for p in l2_posts)
+    assert l1_result["choices"][0]["message"]["content"] == "l1-done"
+
+
 def _catalog(provider: str, model_id: str) -> object:
     from services.universal_cloud_proxy.catalog import (
         CatalogManager,
@@ -844,6 +963,52 @@ async def test_mcp_suffix_still_loops_without_open_webui_header(
     resp = await cp.chat_completions(Request(_chat_scope(payload), receive))
     assert resp.status_code == 200
     assert seen["client_id"] is None
+    assert seen["model"] == mid
+
+
+@pytest.mark.asyncio
+async def test_open_webui_header_with_mcp_suffix_uses_open_webui_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+    seen: dict[str, object] = {}
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        async def forward_chat_request(self, **_kwargs: object) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _Exec:
+        available = True
+
+        async def run_tool_loop(
+            self, forward_fn: object, body: dict[str, object], **kw: object
+        ) -> dict[str, object]:
+            seen["client_id"] = kw.get("client_id")
+            seen["model"] = body.get("model")
+            return await forward_fn(body)  # type: ignore[operator]
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog("anthropic", mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: _Exec())
+    payload = json.dumps(
+        {"model": mid + "-mcp", "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    scope = _chat_scope(payload, [(b"x-ulg-client", b"open-webui")])
+    resp = await cp.chat_completions(Request(scope, receive))
+    assert resp.status_code == 200
+    assert seen["client_id"] == "open-webui"
     assert seen["model"] == mid
 
 

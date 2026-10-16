@@ -229,7 +229,6 @@ class McpToolExecutor:
         self._openai_defs: list[dict[str, Any]] = []
         self._dispatch_compat_names: set[str] = set()
         self._client: httpx.AsyncClient | None = None
-        self._loop_client_id: str | None = None
 
     async def startup(self) -> None:
         """Fetch tool schemas from the MCP server via JSON-RPC ``tools/list``."""
@@ -297,8 +296,6 @@ class McpToolExecutor:
         that bearer is missing the call is not sent: an unlabeled shared
         token would fail-open on the MCP server.
         """
-        if client_id is None:
-            client_id = getattr(self, "_loop_client_id", None)
         if client_id == OPEN_WEBUI_CLIENT_ID and not _open_webui_bearer():
             return json.dumps({"error": "open-webui MCP bearer is not configured"})
         if not self._client:
@@ -357,7 +354,12 @@ class McpToolExecutor:
                 return json.dumps(_restart_error_payload())
         return json.dumps(_restart_error_payload())
 
-    async def _resolve_boot_directive(self, messages: list[dict[str, Any]]) -> None:
+    async def _resolve_boot_directive(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        client_id: str | None = None,
+    ) -> None:
         """Pre-execute ``cortex_brief(...)`` when primary params appear in system prompt.
 
         Supported directive shapes mirror the MCP tool's primary params:
@@ -377,7 +379,9 @@ class McpToolExecutor:
         matched_span, directive_kwargs = parsed
         boot_args = boot_tool_arguments(directive_kwargs)
         logger.info("McpToolExecutor: resolving boot directive %s", boot_args)
-        result = await self.execute_tool("cortex_brief", boot_args)
+        result = await self.execute_tool(
+            "cortex_brief", boot_args, client_id=client_id
+        )
         try:
             boot_data = json.loads(result)
             briefing = boot_data.get("briefing_card", result)
@@ -406,25 +410,23 @@ class McpToolExecutor:
         ``forward_fn`` is an async callable: (body) -> dict (non-streaming
         chat completion JSON).
         """
-        self._loop_client_id = client_id
         existing_tools = body.get("tools") or []
         body["tools"] = existing_tools + self.get_openai_tool_defs()
         original_stream = body.get("stream", False)
         body["stream"] = False
 
         loop_start = time.monotonic()
-
-        try:
-            await self._resolve_boot_directive(body.get("messages", []))
-            return await self._finish_tool_loop(
-                forward_fn,
-                body,
-                max_iterations=max_iterations,
-                loop_start=loop_start,
-                original_stream=original_stream,
-            )
-        finally:
-            self._loop_client_id = None
+        await self._resolve_boot_directive(
+            body.get("messages", []), client_id=client_id
+        )
+        return await self._finish_tool_loop(
+            forward_fn,
+            body,
+            max_iterations=max_iterations,
+            loop_start=loop_start,
+            original_stream=original_stream,
+            client_id=client_id,
+        )
 
     async def _finish_tool_loop(
         self,
@@ -434,6 +436,7 @@ class McpToolExecutor:
         max_iterations: int,
         loop_start: float,
         original_stream: bool,
+        client_id: str | None = None,
     ) -> dict[str, Any]:
         response: dict[str, Any] = {}
         for iteration in range(max_iterations):
@@ -462,7 +465,7 @@ class McpToolExecutor:
                     args = json.loads(fn.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
-                result = await self.execute_tool(name, args)
+                result = await self.execute_tool(name, args, client_id=client_id)
                 body["messages"].append(
                     {
                         "role": "tool",

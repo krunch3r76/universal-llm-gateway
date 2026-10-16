@@ -310,6 +310,23 @@ async def test_open_webui_bearer_label_sets_oauth_client_id(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    ["/clip", "/workbench/relay", "/cortex-api/entities", "/llm/v1/messages"],
+)
+async def test_open_webui_bearer_rejected_on_non_mcp_paths(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "open-webui labeled-bearer-fixture")
+    _, status = await _invoke_auth(
+        path=path,
+        bearer="labeled-bearer-fixture",
+        primary_token="admin-primary",
+    )
+    assert status == 401
+
+
+@pytest.mark.asyncio
 async def test_primary_static_token_has_no_oauth_client_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
