@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING, Any
 from universal_logging import get_logger
 
 from llm_adapters._mcp_entry import (
+    ANTHROPIC_AGENTIC_MCP_TOOLS,
     anthropic_mcp_server_entry,
+    anthropic_mcp_toolset,
+    cache_control_breakpoint_count,
     resolve_anthropic_callback_token,
     resolve_mcp_env,
 )
@@ -141,9 +144,17 @@ class AnthropicAdapter:
             # "MCP server '<name>' is defined but not referenced". The adapter
             # synthesizes this entry — caller-supplied req.tools is still
             # rejected above (strict contract intact).
+            # Frontier dispatch (team_dispatch to remote-connector cards) has
+            # no header profile and no contract-named tool list on
+            # FrontierRequest, so it uses the agentic set. The shared helper
+            # is the same JSON the cloud-proxy inject path builds.
             body["tools"] = [
                 *(body.get("tools") or []),
-                {"type": "mcp_toolset", "mcp_server_name": server_entry["name"]},
+                anthropic_mcp_toolset(
+                    server_entry["name"],
+                    ANTHROPIC_AGENTIC_MCP_TOOLS,
+                    existing_breakpoints=cache_control_breakpoint_count(body),
+                ),
             ]
         else:
             tools_list: list[dict[str, Any]] = []

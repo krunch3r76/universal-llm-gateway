@@ -7,10 +7,14 @@ receives the tool entry.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from services.universal_cloud_proxy import native_mcp_inject
 from services.universal_cloud_proxy.native_mcp_inject import inject_native_mcp
@@ -63,7 +67,8 @@ def test_openai_mcp_injection_succeeds() -> None:
 
 
 def test_anthropic_inject_normalizes_bare_mcp_url_to_code_mount(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
@@ -79,7 +84,8 @@ def test_anthropic_inject_normalizes_bare_mcp_url_to_code_mount(
 
 
 def test_anthropic_inject_bare_mcp_url_requires_normalize_mcp_public_url(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     """Mutation pair: without normalize the bare /mcp url is forwarded (404 mount)."""
     cfg = tmp_path / "mcp.yaml"
@@ -111,7 +117,8 @@ def test_anthropic_inject_bare_mcp_url_requires_normalize_mcp_public_url(
 
 
 def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
@@ -124,11 +131,14 @@ def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
     ):
         inject_native_mcp("anthropic", body)
     assert body["mcp_servers"][0]["authorization_token"] == "callback-tok"
-    assert {"type": "mcp_toolset", "mcp_server_name": "vortex"} in body["tools"]
+    toolset = body["tools"][0]
+    assert toolset["type"] == "mcp_toolset"
+    assert toolset["mcp_server_name"] == "vortex"
 
 
 def test_anthropic_inject_skipped_when_config_token_equals_callback_body(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: same-tok\n")
@@ -142,3 +152,225 @@ def test_anthropic_inject_skipped_when_config_token_equals_callback_body(
 def test_openai_still_skips_when_config_token_empty() -> None:
     body = _call_inject_with_config("openai", {"url": _FAKE_CONFIG["url"], "token": ""})
     assert "tools" not in body
+
+
+def _anthropic_toolset(monkeypatch: pytest.MonkeyPatch, tmp_path, **kwargs) -> dict:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    body: dict = {"model": "claude-haiku-4-5-20251001"}
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body, **kwargs)
+    return body["tools"][0]
+
+
+def test_inject_native_mcp_allowlist_defaults_rag_fs_cortex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Default anthropic-api inject disables the catalog and enables rag, fs, cortex."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert toolset["default_config"] == {"enabled": False}
+    assert toolset["configs"] == {
+        "cortex": {"enabled": True},
+        "fs": {"enabled": True},
+        "rag": {"enabled": True},
+        "retrieve": {"enabled": True},
+    }
+
+
+def test_inject_native_mcp_explicit_tool_list_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A caller-supplied name outside the default appears in configs."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path, enabled_tools=["team_dispatch"])
+    assert "team_dispatch" in toolset["configs"]
+    assert toolset["configs"]["team_dispatch"] == {"enabled": True}
+    assert "rag" not in toolset["configs"]
+    assert toolset["default_config"] == {"enabled": False}
+
+
+def test_inject_native_mcp_cache_control_ephemeral_on_toolset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """cache_control ephemeral sits on the Anthropic toolset and not on OpenAI."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert toolset["cache_control"] == {"type": "ephemeral"}
+    openai_body = _call_inject("openai")
+    assert "cache_control" not in openai_body["tools"][0]
+
+
+def test_inject_native_mcp_reverts_to_all_tools_no_cache_control(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Policy off restores no tool config and no cache_control (full catalog)."""
+    monkeypatch.setattr(
+        "llm_adapters._mcp_entry._APPLY_ANTHROPIC_TOOLSET_POLICY", False
+    )
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert "default_config" not in toolset
+    assert "configs" not in toolset
+    assert "cache_control" not in toolset
+    assert toolset == {"type": "mcp_toolset", "mcp_server_name": "vortex"}
+
+
+def _anthropic_mcp_request(headers: list[tuple[bytes, bytes]]) -> Request:
+    scope = {
+        "type": "http",
+        "asgi": {"spec_version": "2.3", "version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/api/v1/providers/anthropic/messages",
+        "raw_path": b"/api/v1/providers/anthropic/messages",
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 80),
+    }
+    return Request(scope)
+
+
+class _RecordingForwarder:
+    def __init__(self) -> None:
+        self.recorded: list[dict] = []
+
+    def adapter_type(self, provider: str) -> str:
+        _ = provider
+        return "anthropic"
+
+    async def forward_native(self, *, provider: str, request_body: dict) -> dict:
+        _ = provider
+        self.recorded.append(dict(request_body))
+        return {"id": "msg_test", "content": [{"type": "text", "text": "ok"}]}
+
+
+def _forward_anthropic_mcp(headers: list[tuple[bytes, bytes]]) -> dict:
+    """Run forward_native for one Anthropic -mcp body; return the upstream body."""
+    from services.universal_cloud_proxy.native_forwarders import forward_native
+
+    request = _anthropic_mcp_request(headers)
+    forwarder = _RecordingForwarder()
+    body = {
+        "model": "claude-haiku-4-5-20251001-mcp",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 16,
+    }
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+        patch(
+            "services.universal_cloud_proxy.cloud_proxy._read_json_object_body",
+            new_callable=AsyncMock,
+            return_value=body,
+        ),
+        patch(
+            "services.universal_cloud_proxy.cloud_proxy._get_catalog",
+            return_value=None,
+        ),
+    ):
+        resp = asyncio.run(
+            forward_native(
+                request,
+                provider_key="anthropic",
+                surface="test",
+                forwarder=forwarder,
+                event_bus=None,
+            )
+        )
+    assert isinstance(resp, JSONResponse)
+    assert json.loads(resp.body)["id"] == "msg_test"
+    assert forwarder.recorded
+    return forwarder.recorded[0]
+
+
+def test_forward_native_team_dispatch_mcp_keeps_agentic_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A pipeline -mcp request with no tool list still enables team_dispatch and agent_bus.
+
+    Breaks when forward_native omits enabled_tools and the probe set is applied.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-pipeline-internal", b"true")])
+    configs = upstream["tools"][-1]["configs"]
+    assert "team_dispatch" in configs
+    assert "agent_bus" in configs
+    assert "retrieve" in configs
+    assert configs["team_dispatch"] == {"enabled": True}
+    assert configs["agent_bus"] == {"enabled": True}
+
+
+def test_forward_native_probe_mcp_is_rag_fs_cortex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """An anthropic-api probe -mcp request enables rag, fs, cortex, and retrieve.
+
+    Breaks when the agentic set is applied to a known read-only caller, or
+    when overflow ``retrieve`` is left off the probe list.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-ulg-client", b"anthropic-api")])
+    configs = upstream["tools"][-1]["configs"]
+    assert set(configs) == {"rag", "fs", "cortex", "retrieve"}
+    assert "team_dispatch" not in configs
+    assert "agent_bus" not in configs
+
+
+def test_empty_mcp_tools_header_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """X-ULG-MCP-Tools with no names is an absent header, not zero tools.
+
+    Breaks when a comma-only header yields configs={} and disables the catalog.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    upstream = _forward_anthropic_mcp([(b"x-ulg-mcp-tools", b" , ")])
+    configs = upstream["tools"][-1]["configs"]
+    assert "retrieve" in configs
+    assert "team_dispatch" in configs
+
+
+def test_inject_skips_toolset_breakpoint_at_four(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Four cache_control breakpoints already on the body: inject adds none.
+
+    Breaks when inject always stamps cache_control past Anthropic's limit of 4.
+    """
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    blocks = [
+        {"type": "text", "text": str(i), "cache_control": {"type": "ephemeral"}}
+        for i in range(4)
+    ]
+    body: dict = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": blocks}],
+    }
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body, enabled_tools=["retrieve"])
+    toolset = body["tools"][0]
+    assert "retrieve" in toolset["configs"]
+    assert "cache_control" not in toolset

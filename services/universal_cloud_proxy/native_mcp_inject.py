@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from llm_adapters._mcp_entry import (
+    ANTHROPIC_AGENTIC_MCP_TOOLS,
     AnthropicCallbackTokenError,
     anthropic_mcp_server_entry,
+    anthropic_mcp_toolset,
+    cache_control_breakpoint_count,
     normalize_mcp_public_url,
     openai_xai_mcp_tool_entry,
     resolve_anthropic_callback_token,
@@ -16,8 +21,45 @@ logger = get_logger(__name__)
 _MCP_SERVER_NAME = "vortex"
 
 
-def inject_native_mcp(provider_key: str, body: dict) -> None:
-    """Inject provider-appropriate MCP entry into a native request body."""
+def enabled_tools_for_native_mcp(headers) -> Collection[str] | None:
+    """Resolve the Anthropic tool list for one native ``-mcp`` request.
+
+    An explicit ``X-ULG-MCP-Tools`` list wins. ``X-ULG-Client: anthropic-api``
+    or ``X-ULG-MCP-Profile: probe`` returns None so inject uses the read-only
+    rag/fs/cortex set. Every other caller, including pipeline ``team_dispatch``
+    with no list, gets ``ANTHROPIC_AGENTIC_MCP_TOOLS``.
+    """
+    raw = ""
+    client = ""
+    profile = ""
+    if headers is not None:
+        raw = str(headers.get("x-ulg-mcp-tools") or "").strip()
+        client = str(headers.get("x-ulg-client") or "").strip()
+        profile = str(headers.get("x-ulg-mcp-profile") or "").strip().lower()
+    if raw:
+        names = [part.strip() for part in raw.split(",") if part.strip()]
+        # "X-ULG-MCP-Tools: ," parses to no names. That is an absent header,
+        # not a request for zero tools.
+        if names:
+            return names
+    if client == "anthropic-api" or profile == "probe":
+        return None
+    return ANTHROPIC_AGENTIC_MCP_TOOLS
+
+
+def inject_native_mcp(
+    provider_key: str,
+    body: dict,
+    *,
+    enabled_tools: Collection[str] | None = None,
+) -> None:
+    """Inject provider-appropriate MCP entry into a native request body.
+
+    ``enabled_tools`` is the per-dispatch allowlist for Anthropic. ``None``
+    is the read-only probe set (``ANTHROPIC_API_DEFAULT_MCP_TOOLS``). Callers
+    that need agentic tools pass ``ANTHROPIC_AGENTIC_MCP_TOOLS`` or their own
+    list. OpenAI and xAI ignore it.
+    """
     from .cloud_proxy import _get_mcp_executor
 
     executor = _get_mcp_executor()
@@ -46,7 +88,11 @@ def inject_native_mcp(provider_key: str, body: dict) -> None:
         body["mcp_servers"] = [*existing, server_entry]
         body["tools"] = [
             *(body.get("tools") or []),
-            {"type": "mcp_toolset", "mcp_server_name": server_entry["name"]},
+            anthropic_mcp_toolset(
+                server_entry["name"],
+                enabled_tools,
+                existing_breakpoints=cache_control_breakpoint_count(body),
+            ),
         ]
         return
 
