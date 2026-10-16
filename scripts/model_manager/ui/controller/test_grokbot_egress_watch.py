@@ -658,8 +658,6 @@ async def _tick_with_snapshot(
         return snap
 
     loop._snapshot_fn = snap_fn  # type: ignore[method-assign]
-    if loop._restart_desktop_fn is None:
-        loop._restart_desktop_fn = _noop_restart
     if now_s is not None:
         import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
 
@@ -752,7 +750,9 @@ def test_consecutive_tunnel_stale_ticks_emit_no_watch_ok(
         "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
         capture,
     )
-    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"), restart_desktop_fn=_noop_restart
+    )
     snap = _base_snapshot()
     t0 = 5_000_000.0
     _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0))
@@ -869,3 +869,128 @@ def test_event_factories() -> None:
     assert ok.signal == _WATCH_OK_SIGNAL
     assert ok.payload["undici_idle_s"] == 12.3
     assert ok.payload["health_checked"] is True
+    assert set(ok.payload) == {
+        "watch_connected",
+        "health_http_status",
+        "hm1_tools_call_ok",
+        "undici_idle_s",
+        "health_checked",
+    }
+
+
+_CONNECTED_LOG = (
+    "[user-computer-watch] 2026-01-01T00:00:00.000Z connected after 1 ms "
+    "out (attempts 1)\n"
+)
+
+
+def _patch_default_snapshot_io(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetch: Any,
+    addresses: list[str] | None = None,
+    host: str = "mcp.example",
+) -> None:
+    """Replace live desktop, DNS, TLS, events, and bus reads for one test."""
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    monkeypatch.setattr(loop_mod, "read_desktop_status", lambda _path: {"pid": 99})
+    monkeypatch.setattr(loop_mod, "desktop_pid_alive", lambda _status: (True, 99))
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: _CONNECTED_LOG)
+    monkeypatch.setattr(loop_mod, "external_probe_hostname", lambda: host)
+    monkeypatch.setattr(
+        loop_mod,
+        "resolve_a_records",
+        lambda _host: [] if addresses is None else addresses,
+    )
+    monkeypatch.setattr(loop_mod, "fetch_health", fetch)
+    monkeypatch.setattr(loop_mod, "query_events_rows", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_io.open_gc1_bus_turn",
+        lambda **_kwargs: False,
+    )
+
+
+def test_probe_skipped_no_public_ipv4_emits_ok_unchecked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    capture = _CaptureEmit()
+    monkeypatch.setattr(loop_mod, "_emit", capture)
+
+    def _fetch(_ip: str, _host: str) -> int:
+        raise AssertionError("fetch_health must not run when no public IPv4")
+
+    _patch_default_snapshot_io(monkeypatch, fetch=_fetch, addresses=["127.0.0.1"])
+    monkeypatch.setattr(loop_mod.time, "time", lambda: 11_000_000.0)
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"), restart_desktop_fn=_noop_restart
+    )
+    _run(loop._tick())
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 1
+    assert payloads[0]["health_checked"] is False
+    assert payloads[0]["health_http_status"] is None
+
+
+def test_probe_failed_clears_window_and_emits_no_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    capture = _CaptureEmit()
+    monkeypatch.setattr(loop_mod, "_emit", capture)
+    outcomes: list[object] = [200, TimeoutError("timed out"), 200]
+
+    def _fetch(_ip: str, _host: str) -> int:
+        item = outcomes.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return int(item)
+
+    _patch_default_snapshot_io(
+        monkeypatch, fetch=_fetch, addresses=["73.189.160.136"]
+    )
+    clock = {"now": 12_000_000.0}
+    monkeypatch.setattr(loop_mod.time, "time", lambda: clock["now"])
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"), restart_desktop_fn=_noop_restart
+    )
+    _run(loop._tick())
+    clock["now"] += 30.0
+    _run(loop._tick())
+    clock["now"] += 30.0
+    _run(loop._tick())
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 2
+    assert all(p["health_checked"] is True for p in payloads)
+    assert all(p["health_http_status"] == 200 for p in payloads)
+
+
+def test_unpatched_restart_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _base_snapshot()
+    with pytest.raises(
+        RuntimeError, match="unpatched grokbot egress watch reached _default_restart_desktop"
+    ):
+        _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=14_000_000.0))
+
+
+def test_desktop_down_while_watch_connected_emits_no_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _healthy_snapshot(
+        desktop_running=False,
+        desktop_pid=None,
+        watch_connected=True,
+        tunnel_stale=False,
+    )
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=13_000_000.0))
+    assert _ok_payloads(capture.events) == []

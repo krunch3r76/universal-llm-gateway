@@ -151,10 +151,12 @@ def mcp_edge_grokbot_watch_ok(
 ) -> Event:
     """Grok Bot egress watch completed a healthy tick.
 
-    ``health_checked`` is false when the external health probe did not run
-    (``health_http_status`` is null). The loop emits one ok per 120 s under
-    steady health, and at worst one per 60 s when ticks alternate healthy
-    and failing.
+    ``health_checked`` is false when the probe was skipped (no hostname or
+    no public IPv4); that tick still emits watch.ok. A probe that failed
+    because resolution or ``fetch_health`` raised (refused, TLS reset,
+    timeout) is a failure tick: no ok, and the rate window is cleared.
+    The loop emits one ok per 120 s under steady health, and at worst one
+    per 60 s when ticks alternate healthy and failing.
     """
     payload: dict[str, object] = {
         "watch_connected": watch_connected,

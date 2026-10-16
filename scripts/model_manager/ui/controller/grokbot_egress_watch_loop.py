@@ -80,6 +80,7 @@ class GrokbotEgressWatchLoop:
         self._restart_desktop_fn = restart_desktop_fn
         self._state = GrokbotEgressLoopState()
         self._last_watch_ok_emitted_at: float | None = None
+        self._health_probe_failed = False
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -114,14 +115,17 @@ class GrokbotEgressWatchLoop:
         running, pid = desktop_pid_alive(status)
         daemon_log = await asyncio.to_thread(read_daemon_log, DEFAULT_DAEMON_LOG)
         health_status: int | None = None
+        self._health_probe_failed = False
         try:
             host = external_probe_hostname()
-            addresses = await asyncio.to_thread(resolve_a_records, host)
-            ip = choose_public_ipv4(addresses)
-            if ip is not None:
-                health_status = await asyncio.to_thread(fetch_health, ip, host)
+            if host:
+                addresses = await asyncio.to_thread(resolve_a_records, host)
+                ip = choose_public_ipv4(addresses)
+                if ip is not None:
+                    health_status = await asyncio.to_thread(fetch_health, ip, host)
         except Exception as exc:
-            logger.debug("grokbot egress health probe skipped: %s", exc)
+            self._health_probe_failed = True
+            logger.debug("grokbot egress health probe failed: %s", exc)
         floor_ms = now_ms - 900_000
         try:
             rows = await asyncio.to_thread(
@@ -199,7 +203,9 @@ class GrokbotEgressWatchLoop:
         decision: GrokbotTickDecision,
         snapshot: GrokbotEgressSnapshot,
     ) -> None:
-        if self._tick_had_failure_signal(decision, snapshot):
+        if self._health_probe_failed or self._tick_had_failure_signal(
+            decision, snapshot
+        ):
             self._last_watch_ok_emitted_at = None
             return
         if not self._tick_healthy_for_watch_ok(snapshot):
@@ -224,6 +230,7 @@ class GrokbotEgressWatchLoop:
         self._last_watch_ok_emitted_at = now
 
     async def _tick(self) -> None:
+        self._health_probe_failed = False
         snapshot = (
             await self._snapshot_fn()
             if self._snapshot_fn is not None
