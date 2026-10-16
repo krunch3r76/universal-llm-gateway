@@ -98,27 +98,63 @@ def test_hermetic_guard_blocks_docker_absolute_path_shell() -> None:
         asyncio.run(_launch())
 
 
-def test_worker_thread_guard_error_is_oserror() -> None:
-    """A worker-thread connect raises HermeticNetworkGuardError, an OSError.
-
-    The cortex events publisher is a process-lifetime daemon that catches
-    OSError and retries (event_publisher.py). Failing every later test because
-    that daemon tripped would pollute the session, so the guard error is an
-    OSError and this test records it inside the worker instead of leaving it
-    uncaught. Uncaught thread exceptions still surface as pytest warnings;
-    specimen: test_digest_tick_loop.py::test_healthy_env_calls_tick_jobs
-    before this subclass.
-    """
-    seen: list[BaseException] = []
+def test_guard_trip_is_not_an_oserror() -> None:
+    """``except OSError`` must not see a guard trip (publisher retry)."""
+    seen: list[tuple[str, type[BaseException]]] = []
 
     def _connect() -> None:
         try:
             socket.create_connection(("127.0.0.1", 1), timeout=0.05)
         except OSError as exc:
-            seen.append(exc)
+            seen.append(("oserror", type(exc)))
+        except Exception as exc:
+            seen.append(("other", type(exc)))
 
     worker = threading.Thread(target=_connect, daemon=True)
     worker.start()
     worker.join(timeout=2)
-    assert seen
-    assert isinstance(seen[0], HermeticNetworkGuardError)
+    assert seen == [("other", HermeticNetworkGuardError)]
+    assert not issubclass(HermeticNetworkGuardError, OSError)
+
+
+def _assert_shell_blocked(cmd: str) -> None:
+    async def _launch() -> None:
+        await asyncio.create_subprocess_shell(cmd)
+
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+        asyncio.run(_launch())
+
+
+def test_shell_sudo_docker_blocked() -> None:
+    _assert_shell_blocked("sudo docker ps")
+
+
+def test_shell_env_docker_blocked() -> None:
+    _assert_shell_blocked("env docker ps")
+
+
+def test_shell_semicolon_docker_blocked() -> None:
+    _assert_shell_blocked("echo x; docker ps")
+
+
+def test_shell_exec_docker_blocked() -> None:
+    _assert_shell_blocked("exec docker ps")
+
+
+def test_shell_command_docker_blocked() -> None:
+    _assert_shell_blocked("command docker ps")
+
+
+def test_path_is_guarded_resolves_model_manager_symlink(tmp_path: object) -> None:
+    from pathlib import Path
+
+    from scripts.model_manager.testing.hermetic_network_guard import path_is_guarded
+
+    root = Path(str(tmp_path))
+    link = root / "model_manager"
+    link.symlink_to(Path("scripts/model_manager").resolve())
+    node = link / "ui" / "controller" / "tests" / "test_hermetic_network_guard.py"
+    raw = str(node)
+    marker = f"{os.sep}scripts{os.sep}model_manager{os.sep}ui{os.sep}controller{os.sep}"
+    assert marker not in raw
+    assert path_is_guarded(raw) is True

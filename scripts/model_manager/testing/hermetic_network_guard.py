@@ -32,23 +32,49 @@ _GUARDED_PATH_MARKERS = (
 )
 
 
-class HermeticNetworkGuardError(OSError):
+class HermeticNetworkGuardError(Exception):
     """Raised when a guarded test reaches for a live socket or docker.
 
-    Subclasses ``OSError`` so fail-closed ``except OSError`` paths treat the
-    block like a refused connect. The cortex events publisher is a
-    process-lifetime daemon (``event_publisher.py``); an uncaught
-    ``RuntimeError`` there becomes a session-wide pytest thread warning.
+    Not an ``OSError``. ``except OSError`` paths (the cortex events publisher
+    retry in ``event_publisher.py``) must not treat a trip as a down socket
+    and connect again after the fixture undoes the patch.
     """
 
 
 def path_is_guarded(node_path: str) -> bool:
-    """True for the controller tree and the charter-harvest module only."""
-    return any(marker in node_path for marker in _GUARDED_PATH_MARKERS)
+    """True for the controller tree and the charter-harvest module only.
+
+    Resolves symlinks so a checkout reached through a linked
+    ``scripts/model_manager`` still matches the markers.
+    """
+    try:
+        resolved = os.path.realpath(node_path)
+    except OSError:
+        resolved = node_path
+    return any(marker in resolved for marker in _GUARDED_PATH_MARKERS)
 
 
 def _token_is_docker(token: str) -> bool:
     return os.path.basename(token) in _DOCKER_ARGV0
+
+
+def _shell_invokes_docker(cmd: str) -> bool:
+    """True when any shell token is docker or docker-compose.
+
+    Covers wrappers and separators (``sudo docker``, ``env docker``,
+    ``echo x; docker``, ``exec docker``, ``command docker``), not only argv0.
+    An unmatched quote raises ``ValueError``; the shell would not run that
+    command either, so the split fallback is not a docker launch.
+    """
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        parts = cmd.split()
+    for part in parts:
+        token = part.strip(";&|")
+        if token and _token_is_docker(token):
+            return True
+    return False
 
 
 def _command_is_docker(args: Any) -> bool:
@@ -57,13 +83,7 @@ def _command_is_docker(args: Any) -> bool:
             return False
         return _token_is_docker(args[0])
     if isinstance(args, str):
-        try:
-            parts = shlex.split(args)
-        except ValueError:
-            parts = args.split()
-        if not parts or not isinstance(parts[0], str):
-            return False
-        return _token_is_docker(parts[0])
+        return _shell_invokes_docker(args)
     return False
 
 

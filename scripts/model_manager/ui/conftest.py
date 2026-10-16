@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
+# Before any test import starts the process-lifetime events publisher.
+# A later fixture undo must not be followed by a real connect (a:39456).
+os.environ["CORTEX_EVENTS_ENABLED"] = "false"
+
 import pytest
 
 from scripts.model_manager.testing.hermetic_network_guard import (
