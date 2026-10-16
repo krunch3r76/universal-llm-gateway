@@ -13,7 +13,6 @@ full new id set for the commit phase.
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +22,7 @@ from universal_logging import get_logger
 
 from services.rag.chunk_filters import (
     chunk_metadata_is_noise,
-    noise_reason,
+    noise_reason_timed,
     normalize_noise_metadata,
 )
 from services.rag.chunkers import Chunk
@@ -58,8 +57,6 @@ if TYPE_CHECKING:
     from services.rag.property_index import PropertyIndex
 
 logger = get_logger(__name__)
-
-_NOISE_REASON_SLOW_LOG_MS = 50.0
 
 
 @dataclass
@@ -115,23 +112,23 @@ async def _run_embed_phase(
         metadata["source_hash"] = source_hash
         metadata["source"] = source
 
+    max_noise_cpu_ms = 0.0
     for metadata, chunk in zip(metadatas, chunks, strict=True):
-        t0 = time.perf_counter()
-        nr = await asyncio.to_thread(noise_reason, chunk.text)
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        if elapsed_ms > _NOISE_REASON_SLOW_LOG_MS:
-            logger.info(
-                "noise_reason_slow_ms=%.1f source=%s text_len=%d",
-                elapsed_ms,
-                source,
-                len(chunk.text),
-            )
+        nr, cpu_ms = await asyncio.to_thread(noise_reason_timed, chunk.text)
+        if cpu_ms > max_noise_cpu_ms:
+            max_noise_cpu_ms = cpu_ms
         if nr is not None:
             metadata["is_noise"] = True
             metadata["noise_reason"] = nr
         else:
             metadata["is_noise"] = False
         normalize_noise_metadata(metadata)
+    logger.info(
+        "noise_reason_batch_max_ms=%.3f source=%s chunks=%d",
+        max_noise_cpu_ms,
+        source,
+        len(chunks),
+    )
 
     if event_bus is not None:
         for cid, meta in zip(ids, metadatas, strict=True):
@@ -148,19 +145,21 @@ async def _run_embed_phase(
     cache_rows_to_store: list = []
     cache_hit_flags = [False] * len(chunks)
     if config.contextualize_model:
-        embed_texts, cache_rows_to_store, cache_hit_flags = (
-            await _run_contextualization_phase(
-                source=source,
-                source_hash=source_hash,
-                chunks=chunks,
-                metadatas=metadatas,
-                texts=texts,
-                prop_index=prop_index,
-                context_model=config.contextualize_model,
-                context_client_timeout_s=config.contextualize_client_timeout_s,
-                correlation_id=correlation_id,
-                operation=operation,
-            )
+        (
+            embed_texts,
+            cache_rows_to_store,
+            cache_hit_flags,
+        ) = await _run_contextualization_phase(
+            source=source,
+            source_hash=source_hash,
+            chunks=chunks,
+            metadatas=metadatas,
+            texts=texts,
+            prop_index=prop_index,
+            context_model=config.contextualize_model,
+            context_client_timeout_s=config.contextualize_client_timeout_s,
+            correlation_id=correlation_id,
+            operation=operation,
         )
 
     diff = partition_embed_work(

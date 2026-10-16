@@ -38,12 +38,15 @@ _watchdog_stop: threading.Event | None = None
 _heartbeat_mono: float = 0.0
 _loop_ident: int | None = None
 _loop_ref: asyncio.AbstractEventLoop | None = None
-_watchdog_cfg: tuple[float, float, float, int, float] = (
+# late_s, long_late_s, min_interval_s, frame_limit, poll_s, sample_s, dump_cap
+_watchdog_cfg: tuple[float, float, float, int, float, float, int] = (
     2.0,
     10.0,
     30.0,
     12,
     0.25,
+    5.0,
+    6,
 )
 
 
@@ -135,29 +138,45 @@ def _emit_stack_dump(min_interval_s: float, frame_limit: int) -> None:
 def _stack_watchdog(stop: threading.Event) -> None:
     """Dump the loop thread when its heartbeat is older than ``late_s``.
 
+    One continuous stall keeps sampling: the first dump of an incident waits
+    until ``min_interval_s`` since the previous dump, including when that wait
+    elapses during a later stall. Further dumps follow ``sample_s`` (and the
+    long-stall threshold) until ``dump_cap``. A non-positive cap emits nothing.
     A task cannot run during the stall this thread exists to see, so task
     names come from ``asyncio.all_tasks`` on the watchdog thread.
     """
-    late_s, long_late_s, min_interval_s, frame_limit, poll_s = _watchdog_cfg
+    (
+        late_s,
+        long_late_s,
+        min_interval_s,
+        frame_limit,
+        poll_s,
+        sample_s,
+        dump_cap,
+    ) = _watchdog_cfg
     last_dump = 0.0
-    armed = True
-    long_sample_done = False
+    stall_dumps = 0
     while not stop.wait(poll_s):
         age_s = time.monotonic() - _heartbeat_mono
         now = time.monotonic()
-        if age_s > late_s:
-            if armed and (now - last_dump) >= min_interval_s:
-                _emit_stack_dump(min_interval_s, frame_limit)
-                last_dump = time.monotonic()
-                armed = False
-            elif not long_sample_done and age_s > long_late_s:
-                _emit_stack_dump(min_interval_s, frame_limit)
-                last_dump = time.monotonic()
-                long_sample_done = True
-        else:
-            long_sample_done = False
-            if (now - last_dump) >= min_interval_s:
-                armed = True
+        if dump_cap <= 0 or age_s <= late_s:
+            if age_s <= late_s:
+                stall_dumps = 0
+            continue
+        interval_elapsed = (now - last_dump) >= min_interval_s
+        first = stall_dumps == 0 and interval_elapsed
+        follow = (
+            stall_dumps > 0
+            and stall_dumps < dump_cap
+            and (
+                (now - last_dump) >= sample_s
+                or (stall_dumps == 1 and age_s > long_late_s)
+            )
+        )
+        if first or follow:
+            _emit_stack_dump(min_interval_s, frame_limit)
+            last_dump = time.monotonic()
+            stall_dumps += 1
 
 
 async def _loop_drift_monitor(stop: asyncio.Event) -> None:
@@ -192,8 +211,8 @@ def start_loop_instrumentation() -> None:
     Safe to call once per process; repeated calls are ignored until stop runs.
     ``RAG_LOOP_STACK_WATCHDOG=0|false|off`` skips the watchdog thread. Other
     stack env (    ``RAG_LOOP_STACK_LATE_S``, ``RAG_LOOP_STACK_LONG_S``, ``RAG_LOOP_STACK_FRAMES``,
-    ``RAG_LOOP_STACK_MIN_INTERVAL_S``, ``RAG_LOOP_STACK_POLL_S``) is read once
-    here.
+    ``RAG_LOOP_STACK_MIN_INTERVAL_S``, ``RAG_LOOP_STACK_POLL_S``,
+    ``RAG_LOOP_STACK_SAMPLE_S``, ``RAG_LOOP_STACK_DUMP_CAP``) is read once here.
     """
     global _loop_drift_task, _loop_drift_stop, _gil_thread, _gil_stop
     global _watchdog_thread, _watchdog_stop, _loop_ident, _loop_ref, _watchdog_cfg
@@ -209,6 +228,8 @@ def start_loop_instrumentation() -> None:
         _env_float("RAG_LOOP_STACK_MIN_INTERVAL_S", 30.0),
         _env_int("RAG_LOOP_STACK_FRAMES", 12),
         _env_float("RAG_LOOP_STACK_POLL_S", 0.25),
+        _env_float("RAG_LOOP_STACK_SAMPLE_S", 5.0),
+        _env_int("RAG_LOOP_STACK_DUMP_CAP", 6),
     )
     _loop_drift_stop = asyncio.Event()
     _loop_drift_task = asyncio.create_task(
