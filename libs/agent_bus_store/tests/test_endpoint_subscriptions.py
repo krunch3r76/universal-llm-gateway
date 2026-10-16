@@ -75,22 +75,23 @@ def test_maestro_cse_wildcard_subscription(client: TestClient) -> None:
     assert row["agent_id"] == "12286"
 
 
-def test_cursor_surface_unconfirmed_writes_no_row(client: TestClient) -> None:
-    thread = _thread("cursor-refuse")
-    with patch("agent_bus_store.db.endpoint_subscriptions.normalize_target") as norm:
-        resp = _sub(
-            client,
-            agent="cursor",
-            thread_scope=thread,
-            surface="cursor",
-            display="8",
-            title="c",
-        )
-    assert resp.status_code == 422
-    assert resp.json()["detail"]["code"] == "endpoint_surface_unconfirmed"
-    assert norm.call_count == 0
+def test_cursor_display_8_subscribes(client: TestClient) -> None:
+    thread = _thread("cursor-subscribe")
+    resp = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title="c",
+    )
+    assert resp.status_code == 200
+    row = resp.json()["row"]
+    assert row["surface"] == "cursor"
+    assert row["display"] == "8"
     listed = client.get("/endpoint-subscriptions", params={"agent": "cursor"})
-    assert listed.json()["subscriptions"] == []
+    subs = listed.json()["subscriptions"]
+    assert any(s["thread_scope"] == thread and s["surface"] == "cursor" for s in subs)
 
 
 def test_exact_beats_wildcard_and_tombstone_falls_through(client: TestClient) -> None:

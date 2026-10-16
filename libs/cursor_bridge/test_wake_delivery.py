@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -10,12 +11,15 @@ import pytest
 
 from cursor_bridge import wake_delivery as wd
 from cursor_bridge.chat_surface import classify_surface
+from cursor_bridge.composer_witness import composer_witness_expression
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
     _is_stale_wake_draft,
     _paste,
     deliver_wake,
 )
+
+_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
 
 pytestmark = pytest.mark.offline
 
@@ -135,3 +139,134 @@ async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(monkeypatch: pyt
     assert out.get("pasted") is True
     assert out.get("send_fallback_clicked") is True
     wd._paste.assert_awaited_once()
+
+
+def test_cursor_probe_fixture_records_witness() -> None:
+    payload = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+    for key in (
+        "pages",
+        "owner",
+        "probe_js_result",
+        "composer_selector",
+        "match_count",
+        "prompt_selector_matches_same_node",
+        "composer_attributes",
+        "outer_html",
+        "empty_inner_text",
+    ):
+        assert key in payload
+    assert payload["match_count"] == 1
+    assert isinstance(payload["prompt_selector_matches_same_node"], bool)
+    assert payload["owner"]["process_name"] == "cursor"
+    selector = payload["composer_selector"]
+    cursor_js = wd._COMPOSER_JS["cursor"]
+    assert "Prompt" in cursor_js and "contenteditable" in cursor_js
+    assert json.dumps(selector)[1:-1] in cursor_js or selector.replace('"', '\\"') in cursor_js
+    raw = _FIXTURE_PATH.read_text(encoding="utf-8")
+    assert "webSocketDebuggerUrl" not in raw
+    assert "ws://" not in raw
+    probe = payload["probe_js_result"]
+    assert "recent_messages" not in probe
+    assert "labels" not in probe
+    assert "items" not in probe
+    for page in payload["pages"]:
+        assert set(page.keys()) == {"id", "title"}
+
+
+def test_composer_witness_match_count_and_same_node() -> None:
+    expr = composer_witness_expression('[contenteditable="true"]')
+    assert "querySelectorAll" in expr
+    assert "Prompt" in expr and "contenteditable" in expr
+    assert "prompt_selector_matches_same_node" in expr
+    assert "===" in expr
+    assert "Input." not in expr
+
+
+def test_cursor_composer_js_clears_stale_wake_draft() -> None:
+    js = wd._COMPOSER_JS["cursor"]
+    assert "execCommand('delete',false,null)" in js
+    assert "el.innerText=''" in js
+    assert "composer_not_empty" in js
+    assert "BRIDGE_WAKE" in js
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_cursor_pastes_on_agents_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    stale = "BRIDGE_WAKE thread=15851 turn=289"
+    expected_title = "15851 slug"
+    surface_match = classify_surface(
+        [],
+        [{"text": expected_title, "selected": True, "agent_id": ""}],
+        composer_draft=stale,
+    )
+    surface_post = {**surface_match, "composer_draft": ""}
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        return surface_match if _probe.n == 1 else surface_post
+
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(
+        wd,
+        "_paste",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": False}),
+    )
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out.get("reason") != "composer_not_empty"
+    assert out.get("pasted") is True
+    wd._paste.assert_awaited_once()
+    assert wd._paste.await_args.args[1] == wd._COMPOSER_JS["cursor"]
+
+
+def test_cursor_stale_draft_same_treatment_as_grok() -> None:
+    stale = "BRIDGE_WAKE thread=15851 turn=289"
+    assert _busy_or_draft_reason({"composer_draft": stale}) is None
+    assert _busy_or_draft_reason({"composer_draft": "please hold"}) == "composer_not_empty"
+
+
+@pytest.mark.asyncio
+async def test_cursor_human_draft_blocks_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    human = "operator draft text"
+    surface = classify_surface(
+        [],
+        [
+            {"text": "other chat", "selected": True, "agent_id": ""},
+            {"text": "15851 slug", "selected": False, "agent_id": ""},
+        ],
+        composer_draft=human,
+    )
+    select_mock = AsyncMock(return_value={"clicked": True})
+
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(wd, "probe_surface", AsyncMock(return_value=surface))
+    monkeypatch.setattr(wd, "select_sidebar_target", select_mock)
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out.get("reason") == "composer_not_empty"
+    select_mock.assert_not_awaited()

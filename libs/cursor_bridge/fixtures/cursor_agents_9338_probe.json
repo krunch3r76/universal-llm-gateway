@@ -1,0 +1,34 @@
+{
+  "pages": [
+    {
+      "id": "4E8CAE53471D14A4EE981D68E4B9FAFD",
+      "title": "Cursor Agents"
+    }
+  ],
+  "owner": {
+    "process_name": "cursor",
+    "port": 9338
+  },
+  "probe_js_result": {
+    "composer_draft": "",
+    "generating": false
+  },
+  "composer_selector": "[aria-label=\"Prompt\"][contenteditable=\"true\"]",
+  "match_count": 1,
+  "prompt_selector_matches_same_node": true,
+  "composer_attributes": {
+    "contenteditable": "true",
+    "role": "textbox",
+    "translate": "no",
+    "class": "tiptap ProseMirror ui-prompt-input-editor__input ui-1n2onr6 ui-13ly8rp ui-1jkygx ui-1xlntvz ui-1o7kk3e ui-8jbk1e ui-193iq5w ui-1k57tk5 ui-1t137rt ui-1uczgqu ui-fc7y3v ui-1yxxptd ui-1wd3ewq ui-1hx0egp ui-17etxam ui-1i64en ui-em7eiu ui-13faqbe ui-1mzt3pk",
+    "tabindex": "0",
+    "data-editor-owns-history": "true",
+    "data-editor-releases-escape": "true",
+    "aria-label": "Prompt",
+    "aria-placeholder": "Plan, Build, / for skills, @ for context",
+    "aria-multiline": "true",
+    "data-sidebar-file-drop-editor-agent-id": "empty-state-draft"
+  },
+  "outer_html": "<div contenteditable=\"true\" role=\"textbox\" translate=\"no\" class=\"tiptap ProseMirror ui-prompt-input-editor__input ui-1n2onr6 ui-13ly8rp ui-1jkygx ui-1xlntvz ui-1o7kk3e ui-8jbk1e ui-193iq5w ui-1k57tk5 ui-1t137rt ui-1uczgqu ui-fc7y3v ui-1yxxptd ui-1wd3ewq ui-1hx0egp ui-17etxam ui-1i64en ui-em7eiu ui-13faqbe ui-1mzt3pk\" tabindex=\"0\" data-editor-owns-history=\"true\" data-editor-releases-escape=\"true\" aria-label=\"Prompt\" aria-placeholder=\"Plan, Build, / for skills, @ for context\" aria-multiline=\"true\" data-sidebar-file-drop-editor-agent-id=\"empty-state-draft\"><p class=\"ui-dj266r ui-1yf7rl7 ui-at24cr ui-j3b58b is-empty is-editor-empty\" data-placeholder=\"Plan, Build, / for skills, @ for context\"><br class=\"ProseMirror-trailingBreak\"></p></div>",
+  "empty_inner_text": ""
+}
