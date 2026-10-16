@@ -145,6 +145,86 @@ def test_shell_command_docker_blocked() -> None:
     _assert_shell_blocked("command docker ps")
 
 
+def _stub_docker(tmp_path: object) -> tuple[object, dict[str, str]]:
+    from pathlib import Path
+
+    root = Path(str(tmp_path))
+    marker = root / "ran"
+    stub = root / "docker"
+    stub.write_text(f"#!/bin/sh\necho STUB_DOCKER_RAN > {marker}\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    env = os.environ.copy()
+    env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
+    return marker, env
+
+
+def test_malformed_quote_does_not_invoke_docker(tmp_path: object) -> None:
+    """Unmatched quote is not a docker launch and must stay unblocked."""
+    marker, env = _stub_docker(tmp_path)
+
+    async def _launch() -> int:
+        proc = await asyncio.create_subprocess_shell(
+            "'\"docker ps",
+            env=env,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        return await proc.wait()
+
+    code = asyncio.run(_launch())
+    assert code != 0
+    assert not marker.exists()
+
+
+def _assert_shell_blocked_with_stub(cmd: str, env: dict[str, str], marker: object) -> None:
+    async def _launch() -> None:
+        await asyncio.create_subprocess_shell(cmd, env=env)
+
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+        asyncio.run(_launch())
+    assert not marker.exists()
+
+
+def test_shell_unspaced_semicolon_docker_blocked(tmp_path: object) -> None:
+    marker, env = _stub_docker(tmp_path)
+    _assert_shell_blocked_with_stub("echo x;docker ps", env, marker)
+
+
+def test_shell_bash_c_docker_blocked(tmp_path: object) -> None:
+    marker, env = _stub_docker(tmp_path)
+    _assert_shell_blocked_with_stub("bash -c 'docker ps'", env, marker)
+
+
+def test_shell_command_substitution_docker_blocked(tmp_path: object) -> None:
+    marker, env = _stub_docker(tmp_path)
+    _assert_shell_blocked_with_stub("echo $(docker ps)", env, marker)
+    _assert_shell_blocked_with_stub("echo `docker ps`", env, marker)
+
+
+def test_argv_sudo_docker_blocked(tmp_path: object) -> None:
+    marker, env = _stub_docker(tmp_path)
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+        subprocess.run(  # noqa: S603
+            ["sudo", "docker", "ps"],
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+    assert not marker.exists()
+
+
+def test_argv_bash_c_docker_blocked(tmp_path: object) -> None:
+    marker, env = _stub_docker(tmp_path)
+    with pytest.raises(HermeticNetworkGuardError, match="hermetic network guard"):
+        subprocess.run(  # noqa: S603
+            ["bash", "-c", "docker ps"],
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+    assert not marker.exists()
+
+
 def test_path_is_guarded_resolves_model_manager_symlink(tmp_path: object) -> None:
     from pathlib import Path
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -58,30 +59,52 @@ def _token_is_docker(token: str) -> bool:
     return os.path.basename(token) in _DOCKER_ARGV0
 
 
-def _shell_invokes_docker(cmd: str) -> bool:
-    """True when any shell token is docker or docker-compose.
+_SUBSTITUTION = re.compile(
+    r"(?:\$\(|`)[ \t]*docker(?:-compose)?\b"
+)
 
-    Covers wrappers and separators (``sudo docker``, ``env docker``,
-    ``echo x; docker``, ``exec docker``, ``command docker``), not only argv0.
-    An unmatched quote raises ``ValueError``; the shell would not run that
-    command either, so the split fallback is not a docker launch.
+
+def _piece_invokes_docker(piece: str) -> bool:
+    """True for a docker argv0, including one glued to ``;`` or ``|``."""
+    for chunk in re.split(r"[;&|]+", piece):
+        token = chunk.strip()
+        if token and _token_is_docker(token):
+            return True
+    return False
+
+
+def _shell_invokes_docker(cmd: str) -> bool:
+    """True when a shell string would run docker or docker-compose.
+
+    Scans every shlex token, not only argv0, and splits tokens glued to
+    ``;`` (``echo x;docker ps``). A token that is itself a shell snippet
+    (``bash -c`` argument ``docker ps``, ``$(docker ps)``, backticks) is
+    scanned the same way. An unmatched quote raises ``ValueError``; that
+    string is not a docker launch, and the whitespace split does not broaden
+    it into one.
     """
     try:
         parts = shlex.split(cmd)
     except ValueError:
         parts = cmd.split()
+        return any(_piece_invokes_docker(part) for part in parts)
     for part in parts:
-        token = part.strip(";&|")
-        if token and _token_is_docker(token):
+        if _SUBSTITUTION.search(part):
+            return True
+        if _piece_invokes_docker(part):
+            return True
+        if any(ch.isspace() for ch in part) and _shell_invokes_docker(part):
             return True
     return False
 
 
 def _command_is_docker(args: Any) -> bool:
     if isinstance(args, (list, tuple)):
-        if not args or not isinstance(args[0], str):
-            return False
-        return _token_is_docker(args[0])
+        return any(
+            isinstance(item, str)
+            and (_token_is_docker(item) or _shell_invokes_docker(item))
+            for item in args
+        )
     if isinstance(args, str):
         return _shell_invokes_docker(args)
     return False
