@@ -412,7 +412,7 @@ async def finalize_selection_and_load(
                 )
             )
         return selected_gateway.name, None
-    except Exception:
+    except BaseException:
         if (
             optimistic_mark_gateway_id
             and optimistic_mark_model_id
@@ -422,8 +422,9 @@ async def finalize_selection_and_load(
                 optimistic_mark_gateway_id, optimistic_mark_model_id
             )
         if context.capacity_token:
-            await context.capacity_token.release()
+            token = context.capacity_token
             context.capacity_token = None
+            await token.release()
         raise
 
 

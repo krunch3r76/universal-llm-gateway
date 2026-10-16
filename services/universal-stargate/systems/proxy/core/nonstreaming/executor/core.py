@@ -259,8 +259,9 @@ class RequestExecutor:
     async def _release_capacity_token(self, context: RequestContext) -> None:
         """Release the capacity token held for this request. Idempotent."""
         if context.capacity_token:
-            await context.capacity_token.release()
+            token = context.capacity_token
             context.capacity_token = None
+            await token.release()
 
     # ------------------------------------------------------------------
     # Internal: execution modes
@@ -268,7 +269,11 @@ class RequestExecutor:
 
     async def _execute_bypass_mode(self, context: RequestContext) -> Response:
         """Execute in bypass mode (no transformation or token management)."""
-        await self._select_gateway_and_load_model(context)
+        try:
+            await self._select_gateway_and_load_model(context)
+        except BaseException:
+            await self._release_capacity_token(context)
+            raise
 
         try:
             model_metadata = await self._get_model_configuration_for_monitoring(
@@ -300,20 +305,24 @@ class RequestExecutor:
         """
         logger.debug(f"Forwarding request for model {context.selected_model}")
 
-        await self._select_gateway_and_load_model(context)
+        try:
+            await self._select_gateway_and_load_model(context)
 
-        fed_gateway = context.federated_gateway
-        if fed_gateway is None:
-            raise HTTPException(
-                status_code=500,
-                detail=error_envelope(
-                    code=ErrorCode.UNEXPECTED_ERROR,
-                    message="Federated gateway not set in context after selection",
-                    source="master",
-                    retryable=False,
-                    data={},
-                ),
-            )
+            fed_gateway = context.federated_gateway
+            if fed_gateway is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=error_envelope(
+                        code=ErrorCode.UNEXPECTED_ERROR,
+                        message="Federated gateway not set in context after selection",
+                        source="master",
+                        retryable=False,
+                        data={},
+                    ),
+                )
+        except BaseException:
+            await self._release_capacity_token(context)
+            raise
 
         try:
             from ..token_management import apply_federated_token_management
