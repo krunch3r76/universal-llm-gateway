@@ -21,19 +21,31 @@ def _stub_docker_dir(
     tmp_path: Path,
     *,
     stop_fails: bool = False,
+    start_fails: bool = False,
     inspect_health: str = "healthy",
+    post_restart_health: str | None = None,
     container_exists: bool = True,
     kill_on_run: bool = False,
+    kill_on_stop: bool = False,
+    import_probe_fails: bool = False,
     nonce_mode: str = "stored",
+    prior_stamp: str = "2020-01-01T00:00:00Z\noldsha\n",
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "docker.log"
     nonce_file = tmp_path / "nonce"
+    stamp_file = tmp_path / "container_stamp"
+    health_phase = tmp_path / "post_restart"
+    prior_stamp_file = tmp_path / "prior_stamp"
+    prior_stamp_file.write_text(prior_stamp, encoding="utf-8")
     script = textwrap.dedent(
         f"""\
         #!/usr/bin/env bash
         echo "$@" >> {log}
+        health_phase="{health_phase}"
+        stamp_file="{stamp_file}"
+        prior_stamp_file="{prior_stamp_file}"
         case "$1" in
           ps)
             if [[ "$2" == "-a" ]]; then
@@ -49,7 +61,11 @@ def _stub_docker_dir(
             ;;
           inspect)
             if [[ "$*" == *"Health.Status"* ]] || [[ "$*" == *"State.Health"* ]]; then
-              echo "{inspect_health}"
+              if [[ -f "$health_phase" && "{post_restart_health or ''}" != "" ]]; then
+                echo "{post_restart_health or inspect_health}"
+              else
+                echo "{inspect_health}"
+              fi
               exit 0
             fi
             if [[ "$*" == *".Image"* ]]; then
@@ -60,12 +76,25 @@ def _stub_docker_dir(
             exit 0
             ;;
           stop)
+            if [[ "{str(kill_on_stop).lower()}" == "true" ]]; then
+              kill -TERM "$PPID" 2>/dev/null || true
+            fi
             if [[ "{str(stop_fails).lower()}" == "true" ]]; then
               exit 1
             fi
             exit 0
             ;;
+          start)
+            if [[ "{str(start_fails).lower()}" == "true" ]]; then
+              exit 1
+            fi
+            printf '%s' post_restart > "$health_phase"
+            exit 0
+            ;;
           run)
+            if [[ "{str(import_probe_fails).lower()}" == "true" && "$*" == *"--network"*"none"* ]]; then
+              exit 1
+            fi
             if [[ "{str(kill_on_run).lower()}" == "true" ]]; then
               script_pid=$(ps -o ppid= -p "$PPID" | tr -d ' ')
               if [[ -r "/proc/${{script_pid}}/cmdline" ]] && grep -a -q sync-and-restart "/proc/${{script_pid}}/cmdline"; then
@@ -77,6 +106,26 @@ def _stub_docker_dir(
           exec)
             joined="$*"
             nonce_file={str(nonce_file)!r}
+            if [[ "$joined" == *"cat /app/.source_sync_stamp"* ]]; then
+              if [[ -f "$stamp_file" ]]; then
+                cat "$stamp_file"
+              elif [[ -f "$prior_stamp_file" ]]; then
+                cat "$prior_stamp_file"
+              fi
+              exit 0
+            fi
+            if [[ "$joined" == *".source_sync_stamp"* && "$joined" == *"printf"* ]]; then
+              echo STAMP_WRITE >> {log}
+              needle="> /app/.source_sync_stamp"
+              if [[ "$joined" == *"$needle"* ]]; then
+                rest="${{joined#*printf}}"
+                printf '%s' "$rest" > "$stamp_file"
+              fi
+            fi
+            if [[ "$joined" == *".source_sync_stamp"* && "$joined" == *"cat > /app/.source_sync_stamp"* ]]; then
+              echo STAMP_RESTORE >> {log}
+              cat > "$stamp_file"
+            fi
             if [[ "$joined" == *".source_sync_nonce"* ]]; then
               if [[ "$joined" == *"cat /app/.source_sync_nonce"* ]]; then
                 if [[ "{nonce_mode}" == "wrong" ]]; then
@@ -95,7 +144,7 @@ def _stub_docker_dir(
             fi
             exit 0
             ;;
-          start|cp|tag|rm|compose|image) exit 0 ;;
+          cp|tag|rm|compose|image) exit 0 ;;
           *) exit 0 ;;
         esac
         """
@@ -160,6 +209,107 @@ def _docker_log(tmp_path: Path) -> str:
     return log.read_text(encoding="utf-8")
 
 
+def _log_indices(log: str) -> dict[str, int]:
+    return {
+        "stamp_write": log.find("STAMP_WRITE"),
+        "stamp_restore": log.find("STAMP_RESTORE"),
+        "stop": log.find("stop "),
+        "start": log.find("start "),
+    }
+
+
+def _seed_checked_image(tmp_path: Path) -> None:
+    data = tmp_path / "mcp-data" / "last-healthy"
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "checked_image_id").write_text("sha256:deadbeef\n", encoding="utf-8")
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_routine_path_writes_stamp_before_stop_start(tmp_path: Path) -> None:
+    """AC1: stamp write precedes docker stop/start and is not repeated after healthy."""
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", nonce_mode="stored")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    idx = _log_indices(log)
+    assert proc.returncode == 0, proc.stderr
+    assert idx["stamp_write"] >= 0, log
+    assert log.count("STAMP_WRITE") == 1, log
+    assert idx["stop"] >= 0 and idx["start"] >= 0, log
+    assert idx["stamp_write"] < idx["stop"] < idx["start"], log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_stop_failure_restores_snapshotted_stamp(tmp_path: Path) -> None:
+    """AC4: docker stop failure restores the pre-write stamp snapshot."""
+    stub = _stub_docker_dir(
+        tmp_path,
+        stop_fails=True,
+        prior_stamp="2020-01-01T00:00:00Z\noldsha\n",
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "STAMP_RESTORE" in log, log
+    assert log.count("STAMP_WRITE") == 1, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_start_failure_keeps_new_stamp_without_gate_restore(tmp_path: Path) -> None:
+    """Start failure disarms EXIT trap; gate restore must not run (review condition 1)."""
+    stub = _stub_docker_dir(tmp_path, start_fails=True, inspect_health="healthy")
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert log.count("STAMP_WRITE") == 1, log
+    assert "STAMP_RESTORE" not in log, log
+    assert "restore --firer script" not in proc.stderr + proc.stdout, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_kill_before_stop_restores_snapshotted_stamp(tmp_path: Path) -> None:
+    """Kill after stamp write and before stop restores the snapshot (plan §2)."""
+    stub = _stub_docker_dir(
+        tmp_path,
+        kill_on_stop=True,
+        prior_stamp="2020-01-01T00:00:00Z\noldsha\n",
+    )
+    proc = _run_sync_script(tmp_path, stub, timeout=90)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == -signal.SIGTERM, (proc.returncode, proc.stderr[-400:])
+    assert "STAMP_RESTORE" in log, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_never_healthy_single_pre_restart_stamp_write(tmp_path: Path) -> None:
+    """Never-healthy path: one pre-restart stamp write, then image restore (no post-healthy write)."""
+    _seed_checked_image(tmp_path)
+    stub = _stub_docker_dir(
+        tmp_path,
+        inspect_health="healthy",
+        post_restart_health="unhealthy",
+        nonce_mode="stored",
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert log.count("STAMP_WRITE") == 1, log
+    idx = _log_indices(log)
+    assert idx["stamp_write"] < idx["stop"] < idx["start"], log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_import_probe_refusal_skips_stamp_and_stop(tmp_path: Path) -> None:
+    """AC5: import probe failure exits before cp/stop/stamp writes."""
+    stub = _stub_docker_dir(
+        tmp_path, inspect_health="healthy", import_probe_fails=True
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 1, proc.stdout
+    assert "STAMP_WRITE" not in log, log
+    assert "stop " not in log, log
+
+
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_healthy_finish_no_trap_restore(tmp_path: Path) -> None:
     """Healthy restart exits 0 and does not rm the container.
@@ -203,7 +353,11 @@ def test_restore_handler_second_entry_is_noop(tmp_path: Path) -> None:
             "CHECKED_IMAGE_ID=sha256:abc",
             "CHECKED_IMAGE_FILE=",
             "_RESTORE_HANDLER_RAN=0",
+            "_STOP_SUCCEEDED=0",
+            "_START_FAILED=0",
+            "_SOURCE_SYNC_STAMP_SNAPSHOT=/nonexistent",
             "gate() { printf '%s\\n' \"$*\" >> " + str(log) + "; }",
+            "restore_source_sync_stamp_from_snapshot() { :; }",
             function,
             "_restore_window_exit",
             "_restore_window_exit",
@@ -246,6 +400,10 @@ def test_trap_handler_pipe_trap_allows_restore_after_failed_echo() -> None:
             "CHECKED_IMAGE_ID=sha256:abc",
             "CHECKED_IMAGE_FILE=",
             "_RESTORE_HANDLER_RAN=0",
+            "_STOP_SUCCEEDED=0",
+            "_START_FAILED=0",
+            "_SOURCE_SYNC_STAMP_SNAPSHOT=/nonexistent",
+            "restore_source_sync_stamp_from_snapshot() { :; }",
             "gate() {",
             "  echo restore-byte >&3",
             "  echo RESTORE_RAN",
@@ -310,6 +468,40 @@ def test_probe_pinned_before_container_create_path(tmp_path: Path) -> None:
     assert run_idx > cp_idx, log
     assert proc.returncode == -signal.SIGTERM, (proc.returncode, proc.stderr[-400:])
     assert "compose" not in log, log
+
+
+def test_nocache_path_writes_stamp_before_stop_start(tmp_path: Path) -> None:
+    """AC6: --no-cache path writes stamp then docker stop/start before healthy."""
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", nonce_mode="stored")
+    bash_log = tmp_path / "bash.log"
+    stub_bash = stub / "bash"
+    stub_bash.write_text(
+        "#!/bin/bash\n"
+        'if [[ "$1" == *build-mcp.sh* || "$2" == *build-mcp.sh* ]]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        'exec /bin/bash "$@"\n'
+    )
+    stub_bash.chmod(stub_bash.stat().st_mode | stat.S_IXUSR)
+    env = _minimal_env(tmp_path, stub)
+    env["PYTHON"] = _python()
+    env["ULG_REPO"] = str(_REPO_ROOT)
+    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    env["PATH"] = f"{stub}:{env.get('PATH', '')}"
+    proc = subprocess.run(
+        ["bash", str(_SCRIPT), "--no-cache"],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    log = _docker_log(tmp_path)
+    idx = _log_indices(log)
+    assert proc.returncode == 0, proc.stderr + proc.stdout[-500:]
+    assert log.count("STAMP_WRITE") == 1, log
+    assert idx["stamp_write"] < idx["stop"] < idx["start"], log
 
 
 def test_nocache_unhealthy_does_not_start_build(tmp_path: Path) -> None:

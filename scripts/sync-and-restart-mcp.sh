@@ -183,6 +183,10 @@ fi
 
 CHECKED_IMAGE_ID=""
 CHECKED_IMAGE_FILE="${MCP_DATA_DIR}/last-healthy/checked_image_id"
+_SOURCE_SYNC_STAMP_SNAPSHOT="${MCP_DATA_DIR}/last-healthy/.source_sync_stamp.snapshot"
+_STOP_SUCCEEDED=0
+_START_SUCCEEDED=0
+_START_FAILED=0
 _RESTORE_HANDLER_RAN=0
 
 gate() {
@@ -200,6 +204,15 @@ _restore_window_exit() {
   local img="${CHECKED_IMAGE_ID:-}"
   if [[ -z "$img" && -f "$CHECKED_IMAGE_FILE" ]]; then
     img="$(tr -d '\n' < "$CHECKED_IMAGE_FILE")"
+  fi
+  if [[ "${_STOP_SUCCEEDED:-0}" != 1 && -f "${_SOURCE_SYNC_STAMP_SNAPSHOT:-}" ]]; then
+    restore_source_sync_stamp_from_snapshot || true
+    exit 1
+  fi
+  # docker start failure: writable layer already has the synced tree and pre-restart stamp;
+  # gate restore would roll the image back while the stamp still claims the incoming HEAD.
+  if [[ "${_START_FAILED:-0}" == 1 ]]; then
+    exit 1
   fi
   if [[ -n "$img" ]]; then
     gate restore --firer script --checked-image-id "$img" || true
@@ -234,6 +247,30 @@ remove_mcp_container_for_image_recreate() {
 wait_for_mcp_healthy() {
   local timeout_s="${1:-120}"
   gate wait-healthy --timeout "$timeout_s"
+}
+
+snapshot_source_sync_stamp() {
+  local c=mcp-server
+  mkdir -p "$(dirname "$_SOURCE_SYNC_STAMP_SNAPSHOT")"
+  docker exec "$c" cat /app/.source_sync_stamp 2>/dev/null > "$_SOURCE_SYNC_STAMP_SNAPSHOT" || : > "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+}
+
+restore_source_sync_stamp_from_snapshot() {
+  local c=mcp-server
+  if [[ ! -f "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
+    return 0
+  fi
+  if [[ ! -s "$_SOURCE_SYNC_STAMP_SNAPSHOT" ]]; then
+    docker exec -u 0 "$c" rm -f /app/.source_sync_stamp 2>/dev/null || true
+    return 0
+  fi
+  docker exec -i -u 0 "$c" sh -c 'cat > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp' \
+    < "$_SOURCE_SYNC_STAMP_SNAPSHOT"
+}
+
+write_source_sync_stamp_before_serving_restart() {
+  snapshot_source_sync_stamp
+  write_source_sync_stamp
 }
 
 write_source_sync_stamp() {
@@ -323,8 +360,18 @@ restart_mcp_gracefully() {
   fi
   echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
   arm_restore_window
-  docker stop -t 30 "$c" >/dev/null
-  docker start "$c" >/dev/null
+  if ! docker stop -t 30 "$c" >/dev/null; then
+    restore_source_sync_stamp_from_snapshot || true
+    trap - EXIT
+    return 1
+  fi
+  _STOP_SUCCEEDED=1
+  if ! docker start "$c" >/dev/null; then
+    _START_FAILED=1
+    trap - EXIT
+    return 1
+  fi
+  _START_SUCCEEDED=1
 }
 
 record_checked_image_if_healthy() {
@@ -398,11 +445,14 @@ if [[ "$NO_CACHE" == "true" ]]; then
   echo "Starting MCP server..."
   arm_restore_window
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  write_source_sync_stamp_before_serving_restart
+  restart_mcp_gracefully
 else
   ensure_mcp_container
   sync_source_into_container
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"
+  write_source_sync_stamp_before_serving_restart
   restart_mcp_gracefully
 fi
 
@@ -410,9 +460,6 @@ trap - EXIT
 
 if wait_for_mcp_healthy; then
   verify_sync_nonce_survived
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
-    write_source_sync_stamp || echo "WARNING: failed to write /app/.source_sync_stamp" >&2
-  fi
   gate promote-booted
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
     REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
