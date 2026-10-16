@@ -18,7 +18,7 @@ _stargate_root = str(Path(__file__).resolve().parents[3])
 if _stargate_root not in sys.path:
     sys.path.insert(0, _stargate_root)
 
-from systems.routing.capacity import pool as pool_module  # noqa: E402
+from systems.routing.capacity._pool import _acquisition as acquisition_module  # noqa: E402
 from systems.routing.capacity.pool import CapacityPool, CapacityToken  # noqa: E402
 
 
@@ -290,7 +290,7 @@ async def test_waiting_event_emitted_while_request_stays_queued(
     event_bus = _FakeEventBus()
     pool = CapacityPool(event_bus=event_bus)
     pool.set_capacity("edge-jupiter-gateway", "hermes3", 1)
-    monkeypatch.setattr(pool_module, "_WAITING_EVENT_INTERVAL_S", 0.01)
+    monkeypatch.setattr(acquisition_module, "_WAITING_EVENT_INTERVAL_S", 0.01)
 
     token_a = await pool.acquire_token(
         request_id="req-a",
