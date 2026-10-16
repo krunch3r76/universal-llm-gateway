@@ -147,8 +147,15 @@ def mcp_edge_grokbot_watch_ok(
     health_http_status: int | None,
     hm1_tools_call_ok: bool,
     undici_idle_s: float | None,
+    health_checked: bool,
 ) -> Event:
-    """Grok Bot egress watch completed a healthy tick (rate-limited success observable)."""
+    """Grok Bot egress watch completed a healthy tick.
+
+    ``health_checked`` is false when the external health probe did not run
+    (``health_http_status`` is null). The loop emits one ok per 120 s under
+    steady health, and at worst one per 60 s when ticks alternate healthy
+    and failing.
+    """
     payload: dict[str, object] = {
         "watch_connected": watch_connected,
         "health_http_status": health_http_status,
@@ -156,6 +163,7 @@ def mcp_edge_grokbot_watch_ok(
         "undici_idle_s": (
             round(undici_idle_s, 1) if undici_idle_s is not None else None
         ),
+        "health_checked": health_checked,
     }
     return Event(
         signal="mcp.edge.grokbot.watch.ok",

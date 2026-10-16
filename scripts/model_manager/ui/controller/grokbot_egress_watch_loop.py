@@ -183,12 +183,14 @@ class GrokbotEgressWatchLoop:
         return decision.emit_tunnel_stale or decision.emit_loader_stuck
 
     @staticmethod
-    def _tick_healthy_for_watch_ok(
-        decision: GrokbotTickDecision, snapshot: GrokbotEgressSnapshot
-    ) -> bool:
-        if GrokbotEgressWatchLoop._tick_had_failure_signal(decision, snapshot):
-            return False
-        return snapshot.daemon_log_readable
+    def _tick_healthy_for_watch_ok(snapshot: GrokbotEgressSnapshot) -> bool:
+        return (
+            snapshot.daemon_log_readable
+            and snapshot.desktop_running
+            and snapshot.watch_connected
+            and not snapshot.tunnel_stale
+            and not snapshot.loader_stuck
+        )
 
     async def _maybe_emit_watch_ok(
         self,
@@ -200,7 +202,7 @@ class GrokbotEgressWatchLoop:
         if self._tick_had_failure_signal(decision, snapshot):
             self._last_watch_ok_emitted_at = None
             return
-        if not self._tick_healthy_for_watch_ok(decision, snapshot):
+        if not self._tick_healthy_for_watch_ok(snapshot):
             return
         last = self._last_watch_ok_emitted_at
         if last is not None and (now - last) < _WATCH_OK_INTERVAL_S:
@@ -210,6 +212,7 @@ class GrokbotEgressWatchLoop:
             health_http_status=snapshot.health_http_status,
             hm1_tools_call_ok=snapshot.hm1_tools_call_ok,
             undici_idle_s=snapshot.undici_idle_s,
+            health_checked=snapshot.health_http_status is not None,
         )
         await _emit(
             event.signal,

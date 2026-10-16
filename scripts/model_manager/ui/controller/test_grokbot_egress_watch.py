@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from datetime import UTC
 from pathlib import Path
@@ -644,9 +643,14 @@ def _healthy_snapshot(**overrides: object) -> GrokbotEgressSnapshot:
     return _base_snapshot(**base)
 
 
+async def _noop_restart() -> None:
+    return None
+
+
 async def _tick_with_snapshot(
     loop: GrokbotEgressWatchLoop,
     snap: GrokbotEgressSnapshot,
+    monkeypatch: pytest.MonkeyPatch,
     *,
     now_s: float | None = None,
 ) -> None:
@@ -654,10 +658,12 @@ async def _tick_with_snapshot(
         return snap
 
     loop._snapshot_fn = snap_fn  # type: ignore[method-assign]
+    if loop._restart_desktop_fn is None:
+        loop._restart_desktop_fn = _noop_restart
     if now_s is not None:
         import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
 
-        loop_mod.time.time = lambda: now_s  # type: ignore[method-assign]
+        monkeypatch.setattr(loop_mod.time, "time", lambda: now_s)
     await loop._tick()
 
 
@@ -671,7 +677,7 @@ def test_healthy_tick_emits_watch_ok_once(
     )
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
     snap = _healthy_snapshot()
-    _run(_tick_with_snapshot(loop, snap, now_s=1_000_000.0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=1_000_000.0))
     ok = [sig for sig, _ in capture.events if sig == _WATCH_OK_SIGNAL]
     assert len(ok) == 1
     assert not any(sig in _FAILURE_SIGNALS for sig, _ in capture.events)
@@ -693,8 +699,8 @@ def test_healthy_tick_rate_limited_within_120s(
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
     snap = _healthy_snapshot()
     t0 = 2_000_000.0
-    _run(_tick_with_snapshot(loop, snap, now_s=t0))
-    _run(_tick_with_snapshot(loop, snap, now_s=t0 + 30.0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0 + 30.0))
     ok = [sig for sig, _ in capture.events if sig == _WATCH_OK_SIGNAL]
     assert len(ok) == 1
 
@@ -709,7 +715,7 @@ def test_failing_tick_emits_no_watch_ok(
     )
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
     snap = _base_snapshot(daemon_log_readable=False)
-    _run(_tick_with_snapshot(loop, snap, now_s=3_000_000.0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=3_000_000.0))
     assert not any(sig == _WATCH_OK_SIGNAL for sig, _ in capture.events)
 
 
@@ -725,11 +731,121 @@ def test_watch_ok_after_failure_resets_rate_limit(
     healthy = _healthy_snapshot()
     failing = _base_snapshot(daemon_log_readable=False)
     t0 = 4_000_000.0
-    _run(_tick_with_snapshot(loop, healthy, now_s=t0))
-    _run(_tick_with_snapshot(loop, failing, now_s=t0 + 15.0))
-    _run(_tick_with_snapshot(loop, healthy, now_s=t0 + 45.0))
+    _run(_tick_with_snapshot(loop, healthy, monkeypatch, now_s=t0))
+    _run(_tick_with_snapshot(loop, failing, monkeypatch, now_s=t0 + 15.0))
+    _run(_tick_with_snapshot(loop, healthy, monkeypatch, now_s=t0 + 45.0))
     ok = [sig for sig, _ in capture.events if sig == _WATCH_OK_SIGNAL]
     assert len(ok) == 2
+
+
+def _ok_payloads(
+    events: list[tuple[str, dict[str, object]]],
+) -> list[dict[str, object]]:
+    return [payload for sig, payload in events if sig == _WATCH_OK_SIGNAL]
+
+
+def test_consecutive_tunnel_stale_ticks_emit_no_watch_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _base_snapshot()
+    t0 = 5_000_000.0
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0 + 30.0))
+    assert _ok_payloads(capture.events) == []
+
+
+def test_consecutive_loader_stuck_ticks_emit_no_watch_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _healthy_snapshot(loader_stuck=True, loader_stuck_s=200.0)
+    t0 = 6_000_000.0
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0))
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0 + 30.0))
+    assert _ok_payloads(capture.events) == []
+
+
+def test_desktop_down_emits_no_watch_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _healthy_snapshot(
+        desktop_running=False,
+        desktop_pid=None,
+        watch_connected=False,
+        tunnel_stale=False,
+    )
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=7_000_000.0))
+    assert _ok_payloads(capture.events) == []
+
+
+def test_health_500_emits_no_watch_ok_and_clears_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    healthy = _healthy_snapshot()
+    bad = _healthy_snapshot(health_http_status=500)
+    t0 = 8_000_000.0
+    _run(_tick_with_snapshot(loop, healthy, monkeypatch, now_s=t0))
+    _run(_tick_with_snapshot(loop, bad, monkeypatch, now_s=t0 + 30.0))
+    _run(_tick_with_snapshot(loop, healthy, monkeypatch, now_s=t0 + 60.0))
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 2
+    assert all(p["health_http_status"] == 200 for p in payloads)
+
+
+def test_unchecked_health_emits_watch_ok_with_health_checked_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _healthy_snapshot(health_http_status=None)
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=9_000_000.0))
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 1
+    assert payloads[0]["health_checked"] is False
+    assert payloads[0]["health_http_status"] is None
+
+
+def test_checked_health_200_sets_health_checked_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = _CaptureEmit()
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.grokbot_egress_watch_loop._emit",
+        capture,
+    )
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    _run(_tick_with_snapshot(loop, _healthy_snapshot(), monkeypatch, now_s=10_000_000.0))
+    payloads = _ok_payloads(capture.events)
+    assert len(payloads) == 1
+    assert payloads[0]["health_checked"] is True
+    assert payloads[0]["health_http_status"] == 200
 
 
 def test_event_factories() -> None:
@@ -748,6 +864,8 @@ def test_event_factories() -> None:
         health_http_status=200,
         hm1_tools_call_ok=True,
         undici_idle_s=12.34,
+        health_checked=True,
     )
     assert ok.signal == _WATCH_OK_SIGNAL
     assert ok.payload["undici_idle_s"] == 12.3
+    assert ok.payload["health_checked"] is True
