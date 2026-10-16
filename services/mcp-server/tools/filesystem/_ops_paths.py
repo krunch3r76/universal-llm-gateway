@@ -28,24 +28,23 @@ def copy_file_verified(src: Path, dst: Path) -> tuple[Path, str]:
 
     ``status=copied`` is not returned by callers until this function returns.
     If *dst* already exists as a directory, the file lands at ``dst / src.name``.
+    On refusal the destination file is removed (fail-safe). If *dest* pre-existed,
+    ``copy2`` already overwrote its old bytes; they are not restored on refusal.
     """
     if not src.is_file():
         raise ValueError(f"Source is not a file: {src}")
     dest = dst / src.name if dst.exists() and dst.is_dir() else dst
     dest.parent.mkdir(parents=True, exist_ok=True)
+    src_digest = sha256_hex_of_file(src)
     shutil.copy2(str(src), str(dest))
     if not dest.is_file():
         raise FileNotFoundError(f"Copy dest is not a file after copy: {dest}")
-    digest = sha256_hex_of_file(dest)
-    verify_persisted(dest, digest)
-    src_digest = sha256_hex_of_file(src)
-    if digest != src_digest:
-        raise WriteVerifyError(
-            dest,
-            expected_sha256=src_digest,
-            actual_sha256=digest,
-        )
-    return dest, digest
+    try:
+        verify_persisted(dest, src_digest)
+    except WriteVerifyError:
+        dest.unlink(missing_ok=True)
+        raise
+    return dest, src_digest
 
 
 def move_file_impl(source: str, destination: str) -> dict[str, str]:
