@@ -986,6 +986,7 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     env = build_service_env(workspace_root)
     cfg = load_mcp_config()
     if cfg is None:
+        _apply_vortex_bearer_tokens(env)
         return env
     env["MCP_AUTH_TOKEN"] = cfg.auth_token
     env["MCP_DATA_DIR"] = str(Path(cfg.data_dir).expanduser())
@@ -1056,7 +1057,23 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         ]
         if hosts:
             env["MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS"] = ",".join(hosts)
+    _apply_vortex_bearer_tokens(env)
     return env
+
+
+def _apply_vortex_bearer_tokens(env: dict[str, str]) -> None:
+    """Pin ``VORTEX_BEARER_TOKENS`` for ``docker/compose/mcp-server.yml`` interpolation.
+
+    Manage loads ``~/.gateway/secrets.env`` in ``build_service_env``; MCP compose
+    recreate must receive a non-empty value in the subprocess env or Docker omits
+    the container key entirely.
+    """
+    from_secrets = load_env_file(GATEWAY_DIR / "secrets.env").get(
+        "VORTEX_BEARER_TOKENS", ""
+    )
+    value = str(from_secrets or env.get("VORTEX_BEARER_TOKENS") or "").strip()
+    if value:
+        env["VORTEX_BEARER_TOKENS"] = value
 
 
 def mcp_browser_override_path(workspace_root: Path) -> Path | None:
