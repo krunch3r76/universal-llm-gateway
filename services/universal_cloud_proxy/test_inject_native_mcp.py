@@ -63,7 +63,8 @@ def test_openai_mcp_injection_succeeds() -> None:
 
 
 def test_anthropic_inject_normalizes_bare_mcp_url_to_code_mount(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
@@ -79,7 +80,8 @@ def test_anthropic_inject_normalizes_bare_mcp_url_to_code_mount(
 
 
 def test_anthropic_inject_bare_mcp_url_requires_normalize_mcp_public_url(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     """Mutation pair: without normalize the bare /mcp url is forwarded (404 mount)."""
     cfg = tmp_path / "mcp.yaml"
@@ -111,7 +113,8 @@ def test_anthropic_inject_bare_mcp_url_requires_normalize_mcp_public_url(
 
 
 def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
@@ -124,11 +127,14 @@ def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
     ):
         inject_native_mcp("anthropic", body)
     assert body["mcp_servers"][0]["authorization_token"] == "callback-tok"
-    assert {"type": "mcp_toolset", "mcp_server_name": "vortex"} in body["tools"]
+    toolset = body["tools"][0]
+    assert toolset["type"] == "mcp_toolset"
+    assert toolset["mcp_server_name"] == "vortex"
 
 
 def test_anthropic_inject_skipped_when_config_token_equals_callback_body(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     cfg = tmp_path / "mcp.yaml"
     cfg.write_text("auth_token: admin\nanthropic_callback_token: same-tok\n")
@@ -142,3 +148,66 @@ def test_anthropic_inject_skipped_when_config_token_equals_callback_body(
 def test_openai_still_skips_when_config_token_empty() -> None:
     body = _call_inject_with_config("openai", {"url": _FAKE_CONFIG["url"], "token": ""})
     assert "tools" not in body
+
+
+def _anthropic_toolset(monkeypatch: pytest.MonkeyPatch, tmp_path, **kwargs) -> dict:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    body: dict = {"model": "claude-haiku-4-5-20251001"}
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": _FAKE_CONFIG["url"], "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body, **kwargs)
+    return body["tools"][0]
+
+
+def test_inject_native_mcp_allowlist_defaults_rag_fs_cortex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Default anthropic-api inject disables the catalog and enables rag, fs, cortex."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert toolset["default_config"] == {"enabled": False}
+    assert toolset["configs"] == {
+        "cortex": {"enabled": True},
+        "fs": {"enabled": True},
+        "rag": {"enabled": True},
+    }
+
+
+def test_inject_native_mcp_explicit_tool_list_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A caller-supplied name outside the default appears in configs."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path, enabled_tools=["team_dispatch"])
+    assert "team_dispatch" in toolset["configs"]
+    assert toolset["configs"]["team_dispatch"] == {"enabled": True}
+    assert "rag" not in toolset["configs"]
+    assert toolset["default_config"] == {"enabled": False}
+
+
+def test_inject_native_mcp_cache_control_ephemeral_on_toolset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """cache_control ephemeral sits on the Anthropic toolset and not on OpenAI."""
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert toolset["cache_control"] == {"type": "ephemeral"}
+    openai_body = _call_inject("openai")
+    assert "cache_control" not in openai_body["tools"][0]
+
+
+def test_inject_native_mcp_reverts_to_all_tools_no_cache_control(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Policy off restores no tool config and no cache_control (full catalog)."""
+    monkeypatch.setattr(native_mcp_inject, "_APPLY_ANTHROPIC_TOOLSET_POLICY", False)
+    toolset = _anthropic_toolset(monkeypatch, tmp_path)
+    assert "default_config" not in toolset
+    assert "configs" not in toolset
+    assert "cache_control" not in toolset
+    assert toolset == {"type": "mcp_toolset", "mcp_server_name": "vortex"}
