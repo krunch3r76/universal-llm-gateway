@@ -46,6 +46,7 @@ from services.git_integration_worker.cursor_sdk_events import (
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+_PATCH_ID_NOTE_MAX = 512
 DISCHARGE_LANDED = "landed"
 DISCHARGE_DISCARD = "discard"
 DISCHARGE_UNLANDED = "unlanded"
@@ -127,9 +128,18 @@ def _content_lines(repo: Path, ref: str, path: str) -> set[str] | None:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
-def _run_patch_id(diff_text: str) -> str | None:
-    if not diff_text.strip():
+def _format_patch_id_note(pairs: list[tuple[str, str]]) -> str | None:
+    if not pairs:
         return None
+    body = "patch-id:" + ",".join(f"{branch}={master}" for branch, master in pairs)
+    if len(body) <= _PATCH_ID_NOTE_MAX:
+        return body
+    return body[: _PATCH_ID_NOTE_MAX - 1] + "…"
+
+
+def _patch_id_lines(diff_text: str) -> list[tuple[str, str]]:
+    if not diff_text.strip():
+        return []
     proc = subprocess.run(
         ["git", "patch-id", "--stable"],
         input=diff_text,
@@ -139,38 +149,52 @@ def _run_patch_id(diff_text: str) -> str | None:
         check=False,
     )
     if proc.returncode != 0:
-        return None
-    line = proc.stdout.strip().splitlines()
-    if not line:
-        return None
-    return line[0].split()[0]
+        return []
+    rows: list[tuple[str, str]] = []
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            rows.append((parts[0], parts[1]))
+        elif len(parts) == 1:
+            rows.append((parts[0], ""))
+    return rows
 
 
 def _commit_patch_id(repo: Path, commit: str) -> str | None:
-    show = _git(repo, "show", commit, "--format=", "--no-renames")
-    if show.returncode != 0:
+    log = _git(repo, "log", "-1", "-p", "--no-renames", "--format=%H", commit)
+    if log.returncode != 0:
         return None
-    return _run_patch_id(show.stdout)
+    rows = _patch_id_lines(log.stdout)
+    return rows[0][0] if rows else None
 
 
-def _negated_commit_patch_id(repo: Path, commit: str) -> str | None:
-    parent = _git(repo, "rev-parse", f"{commit}^")
-    if parent.returncode != 0:
-        return None
-    diff = _git(repo, "diff", "--no-renames", parent.stdout.strip(), commit)
+def _inverse_patch_id(repo: Path, commit: str) -> str | None:
+    """Patch-id of ``git diff --no-renames E E^`` — the inverse of E."""
+    diff = _git(repo, "diff", "--no-renames", commit, f"{commit}^")
     if diff.returncode != 0:
         return None
-    negated: list[str] = []
-    for line in diff.stdout.splitlines(keepends=True):
-        if line.startswith("+++") or line.startswith("---"):
-            negated.append(line)
-        elif line.startswith("+"):
-            negated.append("-" + line[1:])
-        elif line.startswith("-"):
-            negated.append("+" + line[1:])
-        else:
-            negated.append(line)
-    return _run_patch_id("".join(negated))
+    rows = _patch_id_lines(diff.stdout)
+    return rows[0][0] if rows else None
+
+
+def _master_patch_index(repo: Path, merge_base: str) -> dict[str, list[str]]:
+    """One pass: patch-id → master shas in ``merge_base..master``."""
+    log = _git(
+        repo,
+        "log",
+        "-p",
+        "--no-renames",
+        "--format=%H",
+        f"{merge_base}..master",
+    )
+    if log.returncode != 0:
+        return {}
+    index: dict[str, list[str]] = {}
+    for patch_id, sha in _patch_id_lines(log.stdout):
+        if not sha:
+            continue
+        index.setdefault(patch_id, []).append(sha)
+    return index
 
 
 def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
@@ -179,33 +203,15 @@ def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
 
 
 def _commit_is_empty(repo: Path, commit: str) -> bool:
-    parent = _git(repo, "rev-parse", f"{commit}^")
+    """Empty only when ``git diff --quiet C^ C`` succeeds.
+
+    ``--ignore-all-space`` hid real edits inside tokens (review S7).
+    """
+    parent = _git(repo, "rev-parse", "--verify", f"{commit}^")
     if parent.returncode != 0:
-        tree = _git(repo, "diff-tree", "--no-commit-id", "-r", commit)
-        if tree.returncode != 0:
-            return True
-        paths = [
-            ln.strip()
-            for ln in tree.stdout.splitlines()
-            if ln.strip() and not ln.startswith(":")
-        ]
-        return not paths
-    diff = _git(
-        repo,
-        "diff-tree",
-        "-p",
-        "--ignore-all-space",
-        parent.stdout.strip(),
-        commit,
-    )
-    if diff.returncode != 0:
-        return True
-    body = diff.stdout
-    return not any(
-        ln.startswith("+") or ln.startswith("-")
-        for ln in body.splitlines()
-        if not ln.startswith("+++") and not ln.startswith("---")
-    )
+        return False
+    quiet = _git(repo, "diff", "--quiet", parent.stdout.strip(), commit)
+    return quiet.returncode == 0
 
 
 def _commit_parent_count(repo: Path, commit: str) -> int:
@@ -254,48 +260,30 @@ def _cherry_marker(
     return "+"
 
 
-def _master_commit_shas(repo: Path) -> list[str]:
-    proc = _git(repo, "rev-list", "master")
-    if proc.returncode != 0:
-        return []
-    return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-
-
-def _master_reverts_commit(repo: Path, equivalent_sha: str) -> bool:
+def _match_is_void(
+    repo: Path, equivalent_sha: str, index: dict[str, list[str]]
+) -> bool:
+    """Revert trailer or a later master commit whose patch-id is the inverse."""
     needle = f"This reverts commit {equivalent_sha}"
-    proc = _git(
-        repo,
-        "log",
-        "master",
-        f"--grep={needle}",
-        "--format=%H",
-    )
+    proc = _git(repo, "log", "master", f"--grep={needle}", "--format=%H")
     if proc.returncode == 0 and proc.stdout.strip():
         return True
-    inverse_id = _negated_commit_patch_id(repo, equivalent_sha)
+    inverse_id = _inverse_patch_id(repo, equivalent_sha)
     if not inverse_id:
         return False
-    for master_sha in _master_commit_shas(repo):
-        if master_sha == equivalent_sha:
-            continue
-        if _commit_patch_id(repo, master_sha) == inverse_id:
-            return True
-    return False
+    return any(sha != equivalent_sha for sha in index.get(inverse_id, []))
 
 
-def _surviving_master_for_branch_commit(repo: Path, branch_commit: str) -> str | None:
+def _surviving_master_for_branch_commit(
+    repo: Path, branch_commit: str, index: dict[str, list[str]]
+) -> str | None:
     patch_id = _commit_patch_id(repo, branch_commit)
     if not patch_id:
         return None
-    matches = [
-        sha
-        for sha in _master_commit_shas(repo)
-        if _commit_patch_id(repo, sha) == patch_id
-        and _is_ancestor(repo, sha, "master")
-    ]
+    matches = index.get(patch_id, [])
     if not matches:
         return None
-    if any(_master_reverts_commit(repo, sha) for sha in matches):
+    if any(_match_is_void(repo, sha, index) for sha in matches):
         return None
     return matches[0]
 
@@ -309,6 +297,13 @@ class _PatchIdWalk:
     patch_id_note: str | None = None
 
 
+def _merge_first_parent_paths(repo: Path, commit: str) -> set[str]:
+    proc = _git(repo, "diff", "--name-only", f"{commit}^1", commit)
+    if proc.returncode != 0:
+        return set()
+    return {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+
+
 def _walk_patch_id_evidence(
     repo: Path, *, branch_name: str, merge_base: str
 ) -> _PatchIdWalk:
@@ -316,10 +311,12 @@ def _walk_patch_id_evidence(
     rev = _git(repo, "rev-list", f"{merge_base}..{branch_name}")
     if rev.returncode != 0:
         return _PatchIdWalk(False, (), frozenset(), frozenset())
+    index = _master_patch_index(repo, merge_base)
 
     note_pairs: list[tuple[str, str]] = []
-    path_surviving: dict[str, int] = {}
+    path_surviving: set[str] = set()
     paths_voided_no_superset: set[str] = set()
+    needs_content: set[str] = set()
     substantive_count = 0
     surviving_count = 0
 
@@ -333,6 +330,7 @@ def _walk_patch_id_evidence(
             if quiet.returncode == 0:
                 continue
             substantive_count += 1
+            needs_content.update(_merge_first_parent_paths(repo, commit))
             continue
 
         if _commit_is_empty(repo, commit):
@@ -341,28 +339,21 @@ def _walk_patch_id_evidence(
         substantive_count += 1
         marker = _cherry_marker(commit, cherry, markers_nonempty=cherry_nonempty)
         if marker == "+":
+            needs_content.update(paths)
             continue
 
-        master_eq = _surviving_master_for_branch_commit(repo, commit)
+        master_eq = _surviving_master_for_branch_commit(repo, commit, index)
         if master_eq is None:
-            for path in paths:
-                paths_voided_no_superset.add(path)
+            paths_voided_no_superset.update(paths)
             continue
 
         surviving_count += 1
         note_pairs.append((commit, master_eq))
-        for path in paths:
-            path_surviving[path] = path_surviving.get(path, 0) + 1
+        path_surviving.update(paths)
 
-    paths_patch_only: set[str] = set()
-    for path in path_surviving:
-        if path not in paths_voided_no_superset:
-            paths_patch_only.add(path)
-
+    paths_patch_only = path_surviving - paths_voided_no_superset - needs_content
     all_survived = substantive_count > 0 and surviving_count == substantive_count
-    note = None
-    if all_survived and note_pairs:
-        note = "patch-id:" + ",".join(f"{c}={e}" for c, e in note_pairs)
+    note = _format_patch_id_note(note_pairs) if paths_patch_only else None
 
     return _PatchIdWalk(
         all_substantive_survived=all_survived,
@@ -402,6 +393,40 @@ def _already_retired(*, repo: Path, branch_name: str) -> DischargeResult | None:
     )
 
 
+def _presence_against_master(
+    repo: Path, branch_name: str, path: str
+) -> str | None:
+    """``missing`` or ``differing`` when presence disagrees; None when it holds.
+
+    A path the branch still has must exist on master. A path the branch deleted
+    must be absent on master. Blob bytes are not compared here.
+    """
+    branch_blob = _blob_sha(repo, branch_name, path)
+    master_blob = _blob_sha(repo, "master", path)
+    if branch_blob is None:
+        if master_blob is not None:
+            return "differing"
+        return None
+    if master_blob is None:
+        return "missing"
+    return None
+
+
+def _blob_identity_or_absent(
+    repo: Path, branch_name: str, path: str
+) -> str | None:
+    """Pass on identical blobs or both absent. No line-superset fallback."""
+    branch_blob = _blob_sha(repo, branch_name, path)
+    master_blob = _blob_sha(repo, "master", path)
+    if branch_blob is None and master_blob is None:
+        return None
+    if branch_blob is not None and branch_blob == master_blob:
+        return None
+    if master_blob is None:
+        return "missing"
+    return "differing"
+
+
 def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     """Check every path the branch touched against master.
 
@@ -410,6 +435,16 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     the shared checkout and master then evolves past it. Anything else is named,
     because an unverifiable land claim is exactly what this gate exists to catch.
     """
+    try:
+        return _probe_landed(repo=repo, branch_name=branch_name)
+    except subprocess.TimeoutExpired:
+        return LandProbe(
+            landed=False,
+            differing_paths=[f"{branch_name} (patch-id timeout)"],
+        )
+
+
+def _probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     root = repo.resolve()
     divergence = cursor_sdk_branch_divergence.measure_divergence(
         repo=root, branch_name=branch_name
@@ -443,20 +478,22 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     patch_walk = _walk_patch_id_evidence(
         root, branch_name=branch_name, merge_base=merge_base
     )
-    if patch_walk.all_substantive_survived:
-        return LandProbe(
-            landed=True,
-            divergence=divergence,
-            patch_id_note=patch_walk.patch_id_note,
-        )
-
     differing: list[str] = []
     missing: list[str] = []
     for path in paths:
-        if path in patch_walk.paths_patch_only:
+        if path in patch_walk.paths_patch_only or patch_walk.all_substantive_survived:
+            presence = _presence_against_master(root, branch_name, path)
+            if presence == "missing":
+                missing.append(path)
+            elif presence == "differing":
+                differing.append(path)
             continue
         if path in patch_walk.paths_voided_no_superset:
-            differing.append(path)
+            identity = _blob_identity_or_absent(root, branch_name, path)
+            if identity == "missing":
+                missing.append(path)
+            elif identity == "differing":
+                differing.append(path)
             continue
         branch_blob = _blob_sha(root, branch_name, path)
         master_blob = _blob_sha(root, "master", path)

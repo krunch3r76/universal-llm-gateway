@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from starlette.requests import Request
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_branch_debt import (
@@ -13,9 +16,13 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
     open_branch_debt,
 )
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
+    DischargeResult,
+    LandProbe,
     discharge_landed,
     probe_landed,
 )
+from services.git_integration_worker.models.cursor_api import BranchDischargeRequest
+from services.git_integration_worker.routes.cursor_sdk import cursor_branch_discharge
 
 
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -96,7 +103,7 @@ def test_specimen_shape_forward_edit_after_patch_id_lands(repo: Path) -> None:
     _land_on_master(
         repo,
         path="pkg/feature.py",
-        content="alpha = 1\nbeta = 2\ngamma = 99\n",
+        content="alpha = 9\nbeta = 2\n",
         message="forward edit on master",
     )
     probe = probe_landed(repo=repo, branch_name=branch)
@@ -180,15 +187,30 @@ def test_patch_id_match_inverse_patch_on_master_refuses(repo: Path) -> None:
 
 
 def test_patch_id_match_any_reverted_twin_refuses(repo: Path) -> None:
-    """Several master commits share patch-id — any reverted twin voids the match."""
+    """Any reverted twin voids the match — line-superset cannot revive it."""
     branch = "cursor-sdk/lane-twin"
+    tip = _branch_commit(repo, branch=branch, path="twin.py", content="t = 1\n")
+    first = _equivalent_commit_on_master(repo, tip, message="first twin")
+    _git("revert", "--no-edit", first, cwd=repo)
+    _equivalent_commit_on_master(repo, tip, message="second twin")
+    _land_on_master(repo, path="twin.py", content="t = 1\nextra = 2\n")
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert probe.patch_id_note is None
+
+
+def test_voided_match_identical_blob_lands(repo: Path) -> None:
+    """S4: a voided match still passes when master is byte-identical."""
+    branch = "cursor-sdk/lane-twin-blob"
     tip = _branch_commit(repo, branch=branch, path="twin.py", content="t = 1\n")
     first = _equivalent_commit_on_master(repo, tip, message="first twin")
     _git("revert", "--no-edit", first, cwd=repo)
     _equivalent_commit_on_master(repo, tip, message="second twin")
 
     probe = probe_landed(repo=repo, branch_name=branch)
-    assert probe.landed is False
+    assert probe.landed is True
+    assert probe.patch_id_note is None
 
 
 def test_patch_id_match_not_ancestor_of_master_refuses(repo: Path) -> None:
@@ -197,39 +219,45 @@ def test_patch_id_match_not_ancestor_of_master_refuses(repo: Path) -> None:
     _git("checkout", "-b", "side-ref", cwd=repo)
     _equivalent_commit_on_master(repo, tip)
     _git("checkout", "master", cwd=repo)
+    _land_on_master(repo, path="side.py", content="other = 1\n")
 
     probe = probe_landed(repo=repo, branch_name=branch)
     assert probe.landed is False
+    assert probe.patch_id_note is None
 
 
 def test_unmatched_commit_after_patch_id_match_refuses(repo: Path) -> None:
+    """S1: a later unmatched edit of a matched file still needs the content probe."""
     branch = "cursor-sdk/lane-after-plus"
-    tip = _branch_commit(repo, branch=branch, path="first.py", content="a = 1\n")
+    tip = _branch_commit(repo, branch=branch, path="x.py", content="a = 1\n")
     _equivalent_commit_on_master(repo, tip)
     _git("checkout", branch, cwd=repo)
-    (repo / "second.py").write_text("b = 2\n", encoding="utf-8")
-    _git("add", "second.py", cwd=repo)
+    (repo / "x.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    _git("add", "x.py", cwd=repo)
     _git("commit", "-m", "extra unique", cwd=repo)
     _git("checkout", "master", cwd=repo)
 
     probe = probe_landed(repo=repo, branch_name=branch)
     assert probe.landed is False
+    assert "x.py" in probe.differing_paths
 
 
 def test_merge_commit_not_ancestor_refuses_patch_id_landed(repo: Path) -> None:
+    """S6: a substantive merge's paths stay on the content probe."""
     branch = "cursor-sdk/lane-merge"
-    _branch_commit(repo, branch=branch, path="m.py", content="m = 1\n")
-    _git("checkout", "master", cwd=repo)
-    _git("checkout", "-b", "other", cwd=repo)
-    (repo / "other.py").write_text("o = 1\n", encoding="utf-8")
-    _git("add", "other.py", cwd=repo)
+    tip = _branch_commit(repo, branch=branch, path="x.py", content="a = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _git("checkout", "-b", "other", branch, cwd=repo)
+    (repo / "x.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    _git("add", "x.py", cwd=repo)
     _git("commit", "-m", "other leg", cwd=repo)
     _git("checkout", branch, cwd=repo)
-    _git("merge", "--no-edit", "other", cwd=repo)
+    _git("merge", "--no-ff", "--no-edit", "other", cwd=repo)
     _git("checkout", "master", cwd=repo)
 
     probe = probe_landed(repo=repo, branch_name=branch)
     assert probe.landed is False
+    assert "x.py" in probe.differing_paths
 
 
 def test_empty_and_whitespace_commits_are_not_patch_id_evidence(repo: Path) -> None:
@@ -251,3 +279,149 @@ def test_empty_and_whitespace_commits_are_not_patch_id_evidence(repo: Path) -> N
     _git("checkout", "master", cwd=repo)
     probe_empty = probe_landed(repo=repo, branch_name=branch_only_empty)
     assert probe_empty.landed is True
+
+
+def test_whitespace_inside_token_is_not_an_empty_commit(repo: Path) -> None:
+    """S7: a token edit is not skipped as whitespace-only."""
+    branch = "cursor-sdk/lane-token"
+    tip = _branch_commit(repo, branch=branch, path="s.py", content='label = "a b"\n')
+    _equivalent_commit_on_master(repo, tip)
+    _git("checkout", branch, cwd=repo)
+    (repo / "s.py").write_text('label = "ab"\n', encoding="utf-8")
+    _git("add", "s.py", cwd=repo)
+    _git("commit", "-m", "token edit", cwd=repo)
+    _git("checkout", "master", cwd=repo)
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert "s.py" in probe.differing_paths
+
+
+def test_whole_file_deletion_inverse_refuses(repo: Path) -> None:
+    """Inverse of a whole-file add is the later ``git rm``, with no revert trailer."""
+    branch = "cursor-sdk/lane-rm"
+    tip = _branch_commit(repo, branch=branch, path="f.py", content="z = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _git("rm", "f.py", cwd=repo)
+    _git("commit", "-m", "drop f without trailer", cwd=repo)
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert "f.py" in probe.missing_paths
+
+
+def test_merge_empty_against_first_parent_does_not_refuse(repo: Path) -> None:
+    """AC5: an ours-merge does not by itself refuse a patch-id land."""
+    branch = "cursor-sdk/lane-ours"
+    tip = _branch_commit(repo, branch=branch, path="k.py", content="k = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _land_on_master(repo, path="k.py", content="k = 9\n")
+    head = _git("rev-parse", branch, cwd=repo).stdout.strip()
+    tree = _git("rev-parse", f"{branch}^{{tree}}", cwd=repo).stdout.strip()
+    parent = _git("rev-parse", f"{branch}^", cwd=repo).stdout.strip()
+    merged = subprocess.run(
+        ["git", "commit-tree", tree, "-p", head, "-p", parent, "-m", "empty merge"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git("update-ref", f"refs/heads/{branch}", merged, cwd=repo)
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is True
+    assert probe.patch_id_note is not None
+    assert probe.patch_id_note.startswith("patch-id:")
+
+
+def test_patch_id_note_when_any_path_skipped(repo: Path) -> None:
+    branch = "cursor-sdk/lane-mixed"
+    tip = _branch_commit(repo, branch=branch, path="kept.py", content="alpha = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _land_on_master(repo, path="kept.py", content="alpha = 9\n")
+    _git("checkout", branch, cwd=repo)
+    (repo / "other.py").write_text("o = 1\n", encoding="utf-8")
+    _git("add", "other.py", cwd=repo)
+    _git("commit", "-m", "second file", cwd=repo)
+    _git("checkout", "master", cwd=repo)
+    _land_on_master(repo, path="other.py", content="o = 1\nz = 2\n")
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is True
+    assert probe.patch_id_note is not None
+    assert probe.patch_id_note.startswith("patch-id:")
+    assert tip in probe.patch_id_note
+
+
+def test_patch_id_note_is_capped() -> None:
+    from services.git_integration_worker.cursor_sdk_branch_discharge import (
+        _PATCH_ID_NOTE_MAX,
+        _format_patch_id_note,
+    )
+
+    pairs = [(f"{index:040x}", f"{index + 1:040x}") for index in range(40)]
+    note = _format_patch_id_note(pairs)
+    assert note is not None
+    assert note.startswith("patch-id:")
+    assert len(note) <= _PATCH_ID_NOTE_MAX
+    assert note.endswith("…")
+
+
+def test_patch_id_timeout_fails_closed(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*_args: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd="git", timeout=60)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge._git",
+        _boom,
+    )
+    probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-timeout")
+    assert probe.landed is False
+    assert "patch-id timeout" in probe.describe()
+
+
+def test_branch_discharge_probe_block_includes_patch_id_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note = "patch-id:abc=def"
+    result = DischargeResult(
+        discharged=True,
+        branch="cursor-sdk/lane-note",
+        verb="landed",
+        probe=LandProbe(landed=True, patch_id_note=note),
+    )
+
+    def _discharge(**_kwargs: object) -> DischargeResult:
+        return result
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_debt.get_branch_debt",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_debt.resolve_debt_source_repo",
+        lambda *_args, **_kwargs: Path("/tmp"),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.discharge",
+        _discharge,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.resolve_completing_dispatch_id",
+        lambda *_args, **_kwargs: None,
+    )
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            worker_config=SimpleNamespace(
+                source_repo=Path("/tmp"), dispatch_workspace=Path("/tmp")
+            )
+        )
+    )
+    request = Request({"type": "http", "app": app, "headers": []})
+    payload = asyncio.run(
+        cursor_branch_discharge(
+            BranchDischargeRequest(branch="cursor-sdk/lane-note", verb="landed"),
+            request,
+        )
+    )
+    assert payload["probe"]["patch_id_note"] == note

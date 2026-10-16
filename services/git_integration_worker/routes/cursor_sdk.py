@@ -4865,6 +4865,7 @@ async def cursor_branch_discharge(
             "differing_paths": result.probe.differing_paths,
             "missing_paths": result.probe.missing_paths,
             "divergence": divergence,
+            "patch_id_note": result.probe.patch_id_note,
         }
     if not result.discharged:
         return JSONResponse(status_code=409, content=payload)  # type: ignore[return-value]
