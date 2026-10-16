@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from services.universal_cloud_proxy import native_mcp_inject
 from services.universal_cloud_proxy.native_mcp_inject import inject_native_mcp
 
 _PATCH_EXECUTOR = "services.universal_cloud_proxy.cloud_proxy._get_mcp_executor"
@@ -59,6 +60,54 @@ def test_openai_mcp_injection_succeeds() -> None:
     assert entry["type"] == "mcp"
     assert entry["server_label"] == "vortex"
     assert "Bearer" in entry["authorization"]
+
+
+def test_anthropic_inject_normalizes_bare_mcp_url_to_code_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    body: dict = {"model": "claude-sonnet-4-6"}
+    provider_url = "https://mcp.k-1.me/mcp"
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": provider_url, "token": ""}),
+    ):
+        inject_native_mcp("anthropic", body)
+    assert body["mcp_servers"][0]["url"] == "https://mcp.k-1.me/mcp/code/"
+
+
+def test_anthropic_inject_bare_mcp_url_requires_normalize_mcp_public_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """Mutation pair: without normalize the bare /mcp url is forwarded (404 mount)."""
+    cfg = tmp_path / "mcp.yaml"
+    cfg.write_text("auth_token: admin\nanthropic_callback_token: callback-tok\n")
+    monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
+    provider_url = "https://mcp.k-1.me/mcp"
+    body: dict = {"model": "claude-sonnet-4-6"}
+    real_normalize = native_mcp_inject.normalize_mcp_public_url
+
+    def passthrough(url: str) -> str:
+        return url
+
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": provider_url, "token": ""}),
+        patch.object(native_mcp_inject, "normalize_mcp_public_url", passthrough),
+    ):
+        inject_native_mcp("anthropic", body)
+    assert body["mcp_servers"][0]["url"] == provider_url
+
+    body = {"model": "claude-sonnet-4-6"}
+    with (
+        patch(_PATCH_EXECUTOR, return_value=MagicMock()),
+        patch(_PATCH_CONFIG, return_value={"url": provider_url, "token": ""}),
+        patch.object(native_mcp_inject, "normalize_mcp_public_url", real_normalize),
+    ):
+        inject_native_mcp("anthropic", body)
+    assert body["mcp_servers"][0]["url"] == "https://mcp.k-1.me/mcp/code/"
 
 
 def test_anthropic_inject_pairs_toolset_and_uses_callback_token(
