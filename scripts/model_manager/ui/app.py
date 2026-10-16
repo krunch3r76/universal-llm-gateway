@@ -141,6 +141,7 @@ class ModelManagerApp(App):
         self._digest_tick_loop: DigestTickLoop | None = None
         self._stargate_health_restart = None
         self._mcp_edge_probe = None
+        self._grokbot_egress_watch = None
         self._armed_record_path = record_path_from_env()
         self._manage_lock_fd: int | None = None
         self._bound_loops_started = False
@@ -276,6 +277,19 @@ class ModelManagerApp(App):
             logger.exception("Failed to start mcp edge probe: %s", e)
             self._mcp_edge_probe = None
 
+        try:
+            from scripts.model_manager.ui.controller.grokbot_egress_watch_loop import (
+                GrokbotEgressWatchLoop,
+            )
+
+            self._grokbot_egress_watch = GrokbotEgressWatchLoop(
+                workspace_root=self._workspace_root,
+            )
+            self._grokbot_egress_watch.start()
+        except Exception as e:
+            logger.exception("Failed to start grokbot egress watch: %s", e)
+            self._grokbot_egress_watch = None
+
     async def _park_for_handover(self) -> None:
         """Armed successor: acquire flock, then bind manage.sock when incumbent exits."""
         from scripts.model_manager.ui.single_instance import (
@@ -379,6 +393,12 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping mcp edge probe: %s", e)
             self._mcp_edge_probe = None
+        if self._grokbot_egress_watch is not None:
+            try:
+                await self._grokbot_egress_watch.stop()
+            except Exception as e:
+                logger.exception("Error stopping grokbot egress watch: %s", e)
+            self._grokbot_egress_watch = None
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

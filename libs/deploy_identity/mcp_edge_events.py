@@ -93,7 +93,57 @@ def mcp_listener_liveness_failed(*, error_class: str, detail: str) -> Event:
     )
 
 
+@event_factory
+def mcp_edge_grokbot_tunnel_stale(
+    *,
+    disconnected_s: float,
+    desktop_pid: int | None,
+) -> Event:
+    """Grok Bot desktop is up but the sand user-computer watch is not connected."""
+    return Event(
+        signal="mcp.edge.grokbot_tunnel.stale",
+        role="observation",
+        scope="node",
+        payload={
+            "disconnected_s": round(disconnected_s, 1),
+            "desktop_pid": desktop_pid,
+        },
+    )
+
+
+@event_factory
+def mcp_edge_grokbot_loader_stuck(
+    *,
+    since_tools_list_s: float,
+    gc1_client_ip: str,
+) -> Event:
+    """Box MCP completed handshake without a following tools/call while edge is healthy."""
+    return Event(
+        signal="mcp.edge.grokbot_loader.stuck",
+        role="observation",
+        scope="node",
+        payload={
+            "since_tools_list_s": round(since_tools_list_s, 1),
+            "gc1_client_ip": gc1_client_ip,
+        },
+    )
+
+
+@event_factory
+def mcp_edge_grokbot_probe_failed(*, error_class: str, detail: str) -> Event:
+    """Grok Bot egress watch inputs could not be read; no recovery action is taken."""
+    return Event(
+        signal="mcp.edge.grokbot.probe.failed",
+        role="observation",
+        scope="node",
+        payload={"error_class": error_class, "detail": detail},
+    )
+
+
 __all__ = [
+    "mcp_edge_grokbot_loader_stuck",
+    "mcp_edge_grokbot_probe_failed",
+    "mcp_edge_grokbot_tunnel_stale",
     "mcp_edge_probe_failed",
     "mcp_edge_probe_succeeded",
     "mcp_listener_liveness_failed",
