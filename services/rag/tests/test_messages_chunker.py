@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from services.rag.chunkers import chunk_file
+from services.rag.chunkers._sizing import _CHUNK_CHARS_PAD, _CHUNK_CHARS_TARGET
 from services.rag.chunkers.messages_chunker import (
     CASE_CONTENT_MARKERS,
     MessagesChunkerConfig,
@@ -19,6 +20,11 @@ from services.rag.chunkers.messages_chunker import (
     scrub_chunk_text,
     transcript_lane_excluded,
 )
+
+_PROSE_HARD_MAX = _CHUNK_CHARS_TARGET + _CHUNK_CHARS_PAD
+_MAP_SLOT_TOKENS = 4096
+_PREFLIGHT_OVERHEAD = 287
+_EFFECTIVE_CTX_PER_SLOT = 8192
 from services.rag.config._parsing import _parse_scopes, _parse_watch_directories
 from services.rag.watcher_manager.protocols import path_matches_extensions
 
@@ -67,6 +73,133 @@ def _write_envelope(path: Path, messages: list[dict[str, object]]) -> None:
         },
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _chunk_fits_map_slot(text: str) -> bool:
+    est = len(text) // 4 + _PREFLIGHT_OVERHEAD + _MAP_SLOT_TOKENS
+    return len(text) <= _PROSE_HARD_MAX and est <= _EFFECTIVE_CTX_PER_SLOT
+
+
+def _exact_paragraph(n: int, *, word: str = "word") -> str:
+    """Build a paragraph of exactly ``n`` characters, spaced unless ``word`` has no break."""
+    unit = word + " "
+    text = (unit * ((n // len(unit)) + 2))[:n]
+    if len(text) < n:
+        text += "x" * (n - len(text))
+    return text[:n]
+
+
+def _assert_chunks_fit(chunks: list, *, label: str) -> None:
+    assert chunks, label
+    for chunk in chunks:
+        assert _chunk_fits_map_slot(chunk.text), (
+            f"{label} len={len(chunk.text)} "
+            f"est={len(chunk.text) // 4 + _PREFLIGHT_OVERHEAD + _MAP_SLOT_TOKENS}"
+        )
+
+
+def test_oversized_exchange_splits_under_prose_budget(tmp_path: Path) -> None:
+    """b13/d9e shape plus review probes that overlap and spaceless splits used to exceed."""
+    path = tmp_path / "cursor-2026-10-14-034000-b13.messages.json"
+    assistant_body = ("paragraph content. " * 400 + "\n\n") * 30
+    assistant_body = assistant_body[:85000]
+    _write_envelope(
+        path,
+        [
+            {
+                "role": "user",
+                "content": "<user_query>summarize the thread</user_query>",
+                "turn_index": 1,
+            },
+            {"role": "assistant", "content": assistant_body, "turn_index": 1},
+        ],
+    )
+    chunks = chunk_messages(path)
+    assert len(chunks) > 1
+    _assert_chunks_fit(chunks, label="b13")
+    assert all(c.metadata["turn_index"] == 1 for c in chunks)
+
+    probes: list[tuple[str, str]] = [
+        ("four-5100", "\n\n".join(_exact_paragraph(5100) for _ in range(4))),
+        ("spaceless-20000", "A" * 20000),
+        ("four-3000", "\n\n".join(_exact_paragraph(3000) for _ in range(4))),
+    ]
+    for label, assistant in probes:
+        probe_path = tmp_path / f"{label}.messages.json"
+        _write_envelope(
+            probe_path,
+            [
+                {
+                    "role": "user",
+                    "content": "<user_query>summarize the thread</user_query>",
+                    "turn_index": 1,
+                },
+                {"role": "assistant", "content": assistant, "turn_index": 1},
+            ],
+        )
+        probe_chunks = chunk_messages(probe_path)
+        assert len(probe_chunks) > 1, label
+        _assert_chunks_fit(probe_chunks, label=label)
+        assert assistant[:24] in "".join(c.text for c in probe_chunks)
+        assert assistant[-24:] in "".join(c.text for c in probe_chunks)
+
+
+def test_short_exchange_stays_one_chunk(tmp_path: Path) -> None:
+    path = tmp_path / "s.messages.json"
+    _write_envelope(
+        path,
+        [
+            {
+                "role": "user",
+                "content": "<user_query>short question</user_query>",
+                "turn_index": 1,
+            },
+            {"role": "assistant", "content": "brief answer", "turn_index": 1},
+        ],
+    )
+    chunks = chunk_messages(path)
+    assert len(chunks) == 1
+    assert "short question" in chunks[0].text
+    assert chunks[0].metadata.get("chunk_index") == 0
+
+    fitting = tmp_path / "fit-2000-2500.messages.json"
+    assistant = _exact_paragraph(2000) + "\n\n" + _exact_paragraph(2500)
+    _write_envelope(
+        fitting,
+        [
+            {
+                "role": "user",
+                "content": "<user_query>short question</user_query>",
+                "turn_index": 1,
+            },
+            {"role": "assistant", "content": assistant, "turn_index": 1},
+        ],
+    )
+    fitting_chunks = chunk_messages(fitting)
+    assert len(fitting_chunks) == 1
+    assert _chunk_fits_map_slot(fitting_chunks[0].text)
+    assert assistant[:24] in fitting_chunks[0].text
+    assert assistant[-24:] in fitting_chunks[0].text
+
+
+def test_markdown_chunk_does_not_use_messages_chunker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.rag.chunkers.office_dispatch as od
+
+    calls: list[Path] = []
+
+    def _boom(path: str | Path, **kwargs: object) -> list:
+        calls.append(Path(path))
+        raise AssertionError("chunk_messages must not run for markdown")
+
+    monkeypatch.setattr(od, "chunk_messages", _boom)
+    md = tmp_path / "note.md"
+    md.write_text("# Title\n\nSome prose for indexing.\n", encoding="utf-8")
+    chunks = chunk_file(md)
+    assert not calls
+    assert chunks
+    assert "Title" in chunks[0].text
 
 
 def test_chunk_file_routes_messages_json_before_suffix(tmp_path: Path) -> None:

@@ -23,11 +23,17 @@ from continuity_tape.messages import (
 )
 from continuity_tape.notice import is_notice_row
 
-from services.rag.chunkers.paragraph_utils import Chunk
+from services.rag.chunkers._sizing import _CHUNK_CHARS_PAD, _CHUNK_CHARS_TARGET
+from services.rag.chunkers.paragraph_utils import Chunk, _annotate_chunk_indices
 
 logger = logging.getLogger(__name__)
 
-CHUNKER_VERSION = "conversation-messages/2"
+CHUNKER_VERSION = "conversation-messages/3"
+
+# Map-slot postcondition from Slice B acceptance: len//4 + 287 + 4096 <= 8192.
+_MAP_PREFLIGHT_OVERHEAD = 287
+_MAP_SLOT_RESERVE = 4096
+_MAP_SLOT_LIMIT = 8192
 
 DEFAULT_EXCLUDE_LANES: frozenset[str] = frozenset({"16934"})
 
@@ -180,12 +186,22 @@ def transcript_lane_excluded(
     exclude_lanes: frozenset[str] = DEFAULT_EXCLUDE_LANES,
     exclude_lane_tag_prefixes: tuple[str, ...] = ("case:",),
 ) -> bool:
+    """Return whether this seal's lane id or tags are on the chunker exclusion list.
+
+    ``chunk_messages`` drops the file when this is true so case lanes never
+    become dialogue chunks. Tag match is a case-insensitive prefix check.
+    """
     if lane_id and lane_id in exclude_lanes:
         return True
     return _lane_tag_excluded(lane_tags, exclude_lane_tag_prefixes)
 
 
 def exchange_matches_case_markers(text: str) -> bool:
+    """Return whether exchange text contains a case-matter marker and must be skipped.
+
+    Markers are matter identifiers (appeal numbers, street names). Matching
+    exchanges are omitted before scrub and split so they are not embedded.
+    """
     lowered = text.casefold()
     return any(marker in lowered for marker in CASE_CONTENT_MARKERS)
 
@@ -322,7 +338,11 @@ def _normalize_assistant(content: str) -> str:
 
 
 def scrub_chunk_text(text: str) -> str:
-    """Secret/PII scrub on indexed chunk text only."""
+    """Replace secrets and contact PII in text that will be stored as a chunk.
+
+    Runs after exchange assembly and before the prose-budget split. Returns
+    the redacted string; it does not write files or emit events.
+    """
     out = text
     out = _API_KEY_RE.sub("[REDACTED_SECRET]", out)
     out = _JWT_RE.sub("[REDACTED_JWT]", out)
@@ -527,12 +547,95 @@ def default_lane_resolver(
     return lane_id, tuple(tags)
 
 
+def _max_piece_chars() -> int:
+    """Largest piece length that meets both the prose hard max and the map-slot estimate."""
+    hard = _CHUNK_CHARS_TARGET + _CHUNK_CHARS_PAD
+    room = _MAP_SLOT_LIMIT - _MAP_PREFLIGHT_OVERHEAD - _MAP_SLOT_RESERVE
+    by_estimate = room * 4 + 3
+    return max(1, min(hard, by_estimate))
+
+
+def _pieces_of_long_text(text: str, limit: int) -> list[str]:
+    """Split one over-long paragraph on words, then on characters when a word exceeds ``limit``."""
+    words = text.split()
+    if not words:
+        return []
+    pieces: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+    for word in words:
+        if len(word) > limit:
+            if buf:
+                pieces.append(" ".join(buf))
+                buf = []
+                buf_len = 0
+            pieces.extend(word[i : i + limit] for i in range(0, len(word), limit))
+            continue
+        extra = len(word) if not buf else 1 + len(word)
+        if buf and buf_len + extra > limit:
+            pieces.append(" ".join(buf))
+            buf = [word]
+            buf_len = len(word)
+        else:
+            buf.append(word)
+            buf_len += extra
+    if buf:
+        pieces.append(" ".join(buf))
+    return pieces
+
+
+def _split_exchange_body(body: str) -> list[str]:
+    """Cut one scrubbed exchange so every piece stays inside the prose budget.
+
+    A body already under the char cap and the map-slot estimate stays one piece,
+    including a multi-paragraph body. Longer text packs on paragraph boundaries
+    until the next join would exceed the cap, then on words and raw characters.
+    Overlap carry and pad-zone flush are omitted: those paths emit a second copy
+    of a fitting body and can grow a later window past the hard max.
+    """
+    text = body.strip()
+    if not text:
+        return []
+    limit = _max_piece_chars()
+    if len(text) <= limit:
+        return [text]
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    pieces: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        if len(para) > limit:
+            if current:
+                pieces.append("\n\n".join(current))
+                current = []
+                current_len = 0
+            pieces.extend(_pieces_of_long_text(para, limit))
+            continue
+        extra = len(para) if not current else 2 + len(para)
+        if current and current_len + extra > limit:
+            pieces.append("\n\n".join(current))
+            current = [para]
+            current_len = len(para)
+        else:
+            current.append(para)
+            current_len += extra
+    if current:
+        pieces.append("\n\n".join(current))
+    return [part for part in pieces if part.strip()]
+
+
 def chunk_messages(
     path: str | Path,
     *,
     config: MessagesChunkerConfig | None = None,
 ) -> list[Chunk]:
-    """Chunk one ``*.messages.json`` continuity envelope into user+assistant exchanges."""
+    """Split one continuity ``*.messages.json`` envelope into dialogue-exchange chunks.
+
+    Called from ``chunk_file`` when the path name ends with ``.messages.json``.
+    Each scrubbed user+assistant turn is one chunk when it fits the prose hard
+    max and the map-slot estimate; longer turns are cut without overlap carry.
+    Returns an empty list when the lane is excluded or the body scrubs away.
+    """
     cfg = config or MessagesChunkerConfig()
     file_path = Path(path)
     raw = json.loads(file_path.read_text(encoding="utf-8"))
@@ -584,8 +687,9 @@ def chunk_messages(
         }
         if pair.user_ts:
             meta["ts"] = pair.user_ts
-        chunks.append(Chunk(text=body, metadata=meta))
-    return chunks
+        for part_text in _split_exchange_body(body):
+            chunks.append(Chunk(text=part_text, metadata=dict(meta)))
+    return _annotate_chunk_indices(chunks)
 
 
 __all__ = [

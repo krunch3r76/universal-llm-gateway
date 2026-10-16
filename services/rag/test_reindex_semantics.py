@@ -57,7 +57,7 @@ def test_messages_json_stat_match_old_chunker_version_does_not_skip() -> None:
     raw = b'{"schema":"ulg.continuity.messages/1","messages":[]}'
     path = Path("/data/seals/cursor-test.messages.json")
     current_hash = indexing_source_hash(raw, path)
-    stale_hash = hashlib.sha256(raw + b"\nconversation-messages/1").hexdigest()
+    stale_hash = hashlib.sha256(raw + b"\nconversation-messages/2").hexdigest()
     assert stale_hash != current_hash
     cached = IndexedSourceSnapshot(
         source=str(path),
