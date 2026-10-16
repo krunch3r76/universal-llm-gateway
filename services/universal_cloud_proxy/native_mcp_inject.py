@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Collection
 
 from llm_adapters._mcp_entry import (
+    ANTHROPIC_AGENTIC_MCP_TOOLS,
     AnthropicCallbackTokenError,
     anthropic_mcp_server_entry,
+    anthropic_mcp_toolset,
     normalize_mcp_public_url,
     openai_xai_mcp_tool_entry,
     resolve_anthropic_callback_token,
@@ -16,45 +18,6 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _MCP_SERVER_NAME = "vortex"
-
-# anthropic-api call allowlist names (ops stay enforced in tool_access.py).
-# This set is the read-only probe default, not the default for agentic -mcp.
-ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset({"rag", "fs", "cortex"})
-
-# team_dispatch / frontier / CDP -mcp runs need these in addition to the probe set.
-# Rule: enable team_dispatch and agent_bus unless the caller is an anthropic-api
-# probe or opts into the rag/fs/cortex list.
-ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | {
-    "team_dispatch",
-    "agent_bus",
-}
-
-# False restores the pre-39434 toolset: every tool enabled, no cache breakpoint.
-_APPLY_ANTHROPIC_TOOLSET_POLICY = True
-
-
-def _anthropic_mcp_toolset(
-    server_name: str,
-    enabled_tools: Collection[str] | None,
-) -> dict:
-    """Build the Anthropic mcp_toolset entry.
-
-    With the policy on, disabled-by-default plus per-tool configs (lever 1)
-    and an ephemeral cache breakpoint on the toolset (lever 3). With the
-    policy off, the bare toolset Anthropic expands to every listed tool.
-    """
-    entry: dict = {"type": "mcp_toolset", "mcp_server_name": server_name}
-    if not _APPLY_ANTHROPIC_TOOLSET_POLICY:
-        return entry
-    names = (
-        ANTHROPIC_API_DEFAULT_MCP_TOOLS
-        if enabled_tools is None
-        else frozenset(enabled_tools)
-    )
-    entry["default_config"] = {"enabled": False}
-    entry["configs"] = {name: {"enabled": True} for name in sorted(names)}
-    entry["cache_control"] = {"type": "ephemeral"}
-    return entry
 
 
 def enabled_tools_for_native_mcp(headers) -> Collection[str] | None:
@@ -120,7 +83,7 @@ def inject_native_mcp(
         body["mcp_servers"] = [*existing, server_entry]
         body["tools"] = [
             *(body.get("tools") or []),
-            _anthropic_mcp_toolset(server_entry["name"], enabled_tools),
+            anthropic_mcp_toolset(server_entry["name"], enabled_tools),
         ]
         return
 

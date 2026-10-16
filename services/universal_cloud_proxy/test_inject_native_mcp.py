@@ -209,7 +209,9 @@ def test_inject_native_mcp_reverts_to_all_tools_no_cache_control(
     tmp_path,
 ) -> None:
     """Policy off restores no tool config and no cache_control (full catalog)."""
-    monkeypatch.setattr(native_mcp_inject, "_APPLY_ANTHROPIC_TOOLSET_POLICY", False)
+    monkeypatch.setattr(
+        "llm_adapters._mcp_entry._APPLY_ANTHROPIC_TOOLSET_POLICY", False
+    )
     toolset = _anthropic_toolset(monkeypatch, tmp_path)
     assert "default_config" not in toolset
     assert "configs" not in toolset

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -230,3 +231,44 @@ def openai_xai_mcp_tool_entry(
         "authorization": f"Bearer {token}",
         "require_approval": require_approval,
     }
+
+
+# anthropic-api call allowlist names (ops stay enforced in tool_access.py).
+# This set is the read-only probe default, not the default for agentic -mcp.
+ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset({"rag", "fs", "cortex"})
+
+# team_dispatch / frontier / CDP -mcp runs need these in addition to the probe set.
+ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | {
+    "team_dispatch",
+    "agent_bus",
+}
+
+# False restores the pre-39434 toolset on every caller of anthropic_mcp_toolset:
+# every tool enabled, no cache breakpoint. Covers cloud-proxy inject and the
+# frontier adapter.
+_APPLY_ANTHROPIC_TOOLSET_POLICY = True
+
+
+def anthropic_mcp_toolset(
+    server_name: str,
+    enabled_tools: Collection[str] | None,
+) -> dict:
+    """Build the Anthropic mcp_toolset entry shared by inject and frontier.
+
+    With the policy on, disabled-by-default plus per-tool configs (lever 1)
+    and an ephemeral cache breakpoint on the toolset (lever 3). With the
+    policy off, the bare toolset Anthropic expands to every listed tool.
+    ``enabled_tools is None`` selects the read-only probe set.
+    """
+    entry: dict = {"type": "mcp_toolset", "mcp_server_name": server_name}
+    if not _APPLY_ANTHROPIC_TOOLSET_POLICY:
+        return entry
+    names = (
+        ANTHROPIC_API_DEFAULT_MCP_TOOLS
+        if enabled_tools is None
+        else frozenset(enabled_tools)
+    )
+    entry["default_config"] = {"enabled": False}
+    entry["configs"] = {name: {"enabled": True} for name in sorted(names)}
+    entry["cache_control"] = {"type": "ephemeral"}
+    return entry
