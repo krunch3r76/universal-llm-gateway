@@ -11,6 +11,7 @@ from deploy_identity.mcp_edge_events import (
     mcp_edge_grokbot_loader_stuck,
     mcp_edge_grokbot_probe_failed,
     mcp_edge_grokbot_tunnel_stale,
+    mcp_edge_grokbot_watch_ok,
 )
 from deploy_identity.mcp_external_probe import (
     choose_public_ipv4,
@@ -32,6 +33,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     GrokbotEgressLoopState,
     GrokbotEgressSnapshot,
+    GrokbotTickDecision,
     decide_grokbot_tick,
 )
 from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
@@ -42,6 +44,7 @@ from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
 logger = get_logger(__name__)
 
 _INTERVAL_S = 30.0
+_WATCH_OK_INTERVAL_S = 120.0
 
 _EVENT_SQL = """
 SELECT ts_unix_ms, signal, payload
@@ -76,6 +79,8 @@ class GrokbotEgressWatchLoop:
         self._snapshot_fn = snapshot_fn
         self._restart_desktop_fn = restart_desktop_fn
         self._state = GrokbotEgressLoopState()
+        self._last_watch_ok_emitted_at: float | None = None
+        self._health_probe_failed = False
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -110,14 +115,17 @@ class GrokbotEgressWatchLoop:
         running, pid = desktop_pid_alive(status)
         daemon_log = await asyncio.to_thread(read_daemon_log, DEFAULT_DAEMON_LOG)
         health_status: int | None = None
+        self._health_probe_failed = False
         try:
             host = external_probe_hostname()
-            addresses = await asyncio.to_thread(resolve_a_records, host)
-            ip = choose_public_ipv4(addresses)
-            if ip is not None:
-                health_status = await asyncio.to_thread(fetch_health, ip, host)
+            if host:
+                addresses = await asyncio.to_thread(resolve_a_records, host)
+                ip = choose_public_ipv4(addresses)
+                if ip is not None:
+                    health_status = await asyncio.to_thread(fetch_health, ip, host)
         except Exception as exc:
-            logger.debug("grokbot egress health probe skipped: %s", exc)
+            self._health_probe_failed = True
+            logger.debug("grokbot egress health probe failed: %s", exc)
         floor_ms = now_ms - 900_000
         try:
             rows = await asyncio.to_thread(
@@ -165,7 +173,64 @@ class GrokbotEgressWatchLoop:
         proc = await asyncio.create_subprocess_exec(str(binary))
         logger.info("grokbot desktop restart launched pid=%s", proc.pid)
 
+    @staticmethod
+    def _tick_had_failure_signal(
+        decision: GrokbotTickDecision, snapshot: GrokbotEgressSnapshot
+    ) -> bool:
+        if decision.emit_probe_failed:
+            return True
+        if (
+            snapshot.health_http_status is not None
+            and snapshot.health_http_status != 200
+        ):
+            return True
+        return decision.emit_tunnel_stale or decision.emit_loader_stuck
+
+    @staticmethod
+    def _tick_healthy_for_watch_ok(snapshot: GrokbotEgressSnapshot) -> bool:
+        return (
+            snapshot.daemon_log_readable
+            and snapshot.desktop_running
+            and snapshot.watch_connected
+            and not snapshot.tunnel_stale
+            and not snapshot.loader_stuck
+        )
+
+    async def _maybe_emit_watch_ok(
+        self,
+        *,
+        now: float,
+        decision: GrokbotTickDecision,
+        snapshot: GrokbotEgressSnapshot,
+    ) -> None:
+        if self._health_probe_failed or self._tick_had_failure_signal(
+            decision, snapshot
+        ):
+            self._last_watch_ok_emitted_at = None
+            return
+        if not self._tick_healthy_for_watch_ok(snapshot):
+            return
+        last = self._last_watch_ok_emitted_at
+        if last is not None and (now - last) < _WATCH_OK_INTERVAL_S:
+            return
+        event = mcp_edge_grokbot_watch_ok(
+            watch_connected=snapshot.watch_connected,
+            health_http_status=snapshot.health_http_status,
+            hm1_tools_call_ok=snapshot.hm1_tools_call_ok,
+            undici_idle_s=snapshot.undici_idle_s,
+            health_checked=snapshot.health_http_status is not None,
+        )
+        await _emit(
+            event.signal,
+            dict(event.payload),
+            source="manage",
+            role=event.role,
+            scope=event.scope,
+        )
+        self._last_watch_ok_emitted_at = now
+
     async def _tick(self) -> None:
+        self._health_probe_failed = False
         snapshot = (
             await self._snapshot_fn()
             if self._snapshot_fn is not None
@@ -174,7 +239,11 @@ class GrokbotEgressWatchLoop:
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
+        if self._health_probe_failed:
+            self._last_watch_ok_emitted_at = None
+
         if decision.emit_probe_failed:
+            self._last_watch_ok_emitted_at = None
             event = mcp_edge_grokbot_probe_failed(
                 error_class=decision.probe_error_class,
                 detail=decision.probe_detail,
@@ -223,6 +292,10 @@ class GrokbotEgressWatchLoop:
         if decision.restart_desktop:
             restart = self._restart_desktop_fn or self._default_restart_desktop
             await restart()
+
+        await self._maybe_emit_watch_ok(
+            now=now, decision=decision, snapshot=snapshot
+        )
 
 
 __all__ = ["GrokbotEgressWatchLoop"]
