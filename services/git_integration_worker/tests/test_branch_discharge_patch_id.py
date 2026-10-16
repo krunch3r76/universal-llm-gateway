@@ -450,3 +450,157 @@ def test_branch_discharge_probe_block_includes_patch_id_note(
         )
     )
     assert payload["probe"]["patch_id_note"] == note
+
+
+def test_s1_diff_tree_failure_on_tip_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1 with the tip diff-tree failing once must refuse, not land."""
+    import services.git_integration_worker.cursor_sdk_branch_discharge as discharge
+
+    branch = "cursor-sdk/lane-s1-err"
+    tip = _branch_commit(repo, branch=branch, path="x.py", content="a = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _git("checkout", branch, cwd=repo)
+    (repo / "x.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    _git("add", "x.py", cwd=repo)
+    _git("commit", "-m", "extra", cwd=repo)
+    second = _git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    _git("checkout", "master", cwd=repo)
+    real = discharge._git
+
+    def wrapped(repo_arg: Path, *args: str):
+        if args and args[0] == "diff-tree" and second in args:
+            return subprocess.CompletedProcess(args, 1, "", "diff-tree failed")
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(discharge, "_git", wrapped)
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+
+
+def test_merge_name_only_failure_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.git_integration_worker.cursor_sdk_branch_discharge as discharge
+
+    branch = "cursor-sdk/lane-merge-err"
+    tip = _branch_commit(repo, branch=branch, path="x.py", content="a = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    _git("checkout", branch, cwd=repo)
+    (repo / "x.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    _git("add", "x.py", cwd=repo)
+    tree = _git("write-tree", cwd=repo).stdout.strip()
+    head = _git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    parent = _git("rev-parse", "HEAD^", cwd=repo).stdout.strip()
+    merged = subprocess.run(
+        ["git", "commit-tree", tree, "-p", head, "-p", parent, "-m", "substantive merge"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git("update-ref", f"refs/heads/{branch}", merged, cwd=repo)
+    _git("checkout", "-f", "master", cwd=repo)
+    real = discharge._git
+
+    def wrapped(repo_arg: Path, *args: str):
+        if (
+            len(args) >= 3
+            and args[0] == "diff"
+            and args[1] == "--name-only"
+            and "^1" in args[2]
+        ):
+            return subprocess.CompletedProcess(args, 1, "", "diff failed")
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(discharge, "_git", wrapped)
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+
+
+def test_inverse_diff_failure_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.git_integration_worker.cursor_sdk_branch_discharge as discharge
+
+    (repo / "inv.py").write_text("a\n", encoding="utf-8")
+    _git("add", "inv.py", cwd=repo)
+    _git("commit", "-m", "base inv", cwd=repo)
+    branch = "cursor-sdk/lane-inv-err"
+    tip = _branch_commit(repo, branch=branch, path="inv.py", content="a\nb\n")
+    _equivalent_commit_on_master(repo, tip)
+    (repo / "inv.py").write_text("a\n", encoding="utf-8")
+    _git("add", "inv.py", cwd=repo)
+    _git("commit", "-m", "manual inverse without trailer", cwd=repo)
+    (repo / "inv.py").write_text("a\nb\nc\n", encoding="utf-8")
+    _git("add", "inv.py", cwd=repo)
+    _git("commit", "-m", "forward superset on master", cwd=repo)
+    real = discharge._git
+
+    def wrapped(repo_arg: Path, *args: str):
+        if args[:2] == ("diff", "--no-renames") and args[-1].endswith("^"):
+            return subprocess.CompletedProcess(args, 1, "", "diff failed")
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(discharge, "_git", wrapped)
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+
+
+def test_patch_id_nonzero_refuses_with_note(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = "cursor-sdk/lane-patch-id-err"
+    tip = _branch_commit(repo, branch=branch, path="p.py", content="p = 1\n")
+    _equivalent_commit_on_master(repo, tip)
+    real_run = subprocess.run
+
+    def wrapped(cmd, **kwargs):
+        if isinstance(cmd, list) and "patch-id" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "error: unknown option `verbatim'"
+            )
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.subprocess.run",
+        wrapped,
+    )
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert probe.patch_id_note is not None
+    assert "unsupported" in probe.patch_id_note
+
+
+def test_revert_grep_limited_to_merge_base_range(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.git_integration_worker.cursor_sdk_branch_discharge as discharge
+
+    branch = "cursor-sdk/lane-grep-range"
+    tip = _branch_commit(repo, branch=branch, path="a.py", content="x = 1\n")
+    equiv = _equivalent_commit_on_master(repo, tip)
+    _git("revert", "--no-edit", "HEAD", cwd=repo)
+    real = discharge._git
+    grep_calls: list[tuple[str, ...]] = []
+
+    def wrapped(repo_arg: Path, *args: str):
+        if args and args[0] == "log" and any(arg.startswith("--grep=") for arg in args):
+            grep_calls.append(args)
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(discharge, "_git", wrapped)
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is False
+    assert grep_calls
+    for args in grep_calls:
+        assert ".." in args[1] and args[1].endswith("master")
+    base = _git("merge-base", "master", branch, cwd=repo).stdout.strip()
+    needle = f"This reverts commit {equiv}"
+    full = _git("log", "master", f"--grep={needle}", "--format=%H", cwd=repo)
+    limited = _git(
+        "log", f"{base}..master", f"--grep={needle}", "--format=%H", cwd=repo
+    )
+    assert full.stdout.strip()
+    assert full.stdout.strip() == limited.stdout.strip()

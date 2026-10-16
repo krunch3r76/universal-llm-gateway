@@ -137,6 +137,22 @@ def _format_patch_id_note(pairs: list[tuple[str, str]]) -> str | None:
     return body[: _PATCH_ID_NOTE_MAX - 1] + "…"
 
 
+class _ProbeGitError(Exception):
+    """A git read failed. The probe must refuse rather than treat it as empty."""
+
+    def __init__(self, step: str) -> None:
+        self.step = step
+        super().__init__(step)
+
+
+class _PatchIdError(Exception):
+    """``git patch-id --verbatim`` failed. ``note`` names the cause."""
+
+    def __init__(self, note: str) -> None:
+        self.note = note
+        super().__init__(note)
+
+
 def _patch_id_lines(diff_text: str) -> list[tuple[str, str]]:
     if not diff_text.strip():
         return []
@@ -149,7 +165,16 @@ def _patch_id_lines(diff_text: str) -> list[tuple[str, str]]:
         check=False,
     )
     if proc.returncode != 0:
-        return []
+        err = proc.stderr or ""
+        low = err.lower()
+        if (
+            "unknown option" in low
+            or "unrecognized" in low
+            or "unknown argument" in low
+        ):
+            raise _PatchIdError("patch-id --verbatim unsupported")
+        detail = err.strip().splitlines()[-1] if err.strip() else "patch-id failed"
+        raise _PatchIdError(f"patch-id error: {detail[:200]}")
     rows: list[tuple[str, str]] = []
     for line in proc.stdout.splitlines():
         parts = line.split()
@@ -172,7 +197,7 @@ def _inverse_patch_id(repo: Path, commit: str) -> str | None:
     """Patch-id of ``git diff --no-renames E E^`` — the inverse of E."""
     diff = _git(repo, "diff", "--no-renames", commit, f"{commit}^")
     if diff.returncode != 0:
-        return None
+        raise _ProbeGitError("diff")
     rows = _patch_id_lines(diff.stdout)
     return rows[0][0] if rows else None
 
@@ -225,7 +250,7 @@ def _commit_parent_count(repo: Path, commit: str) -> int:
 def _paths_touched_by_commit(repo: Path, commit: str) -> set[str]:
     proc = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", commit)
     if proc.returncode != 0:
-        return set()
+        raise _ProbeGitError("diff-tree")
     return {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
 
 
@@ -261,12 +286,23 @@ def _cherry_marker(
 
 
 def _match_is_void(
-    repo: Path, equivalent_sha: str, index: dict[str, list[str]]
+    repo: Path,
+    equivalent_sha: str,
+    index: dict[str, list[str]],
+    merge_base: str,
 ) -> bool:
-    """Revert trailer or a later master commit whose patch-id is the inverse."""
+    """Revert trailer or a later master commit whose patch-id is the inverse.
+
+    The search is ``merge_base..master``. A revert of E is after E, and E is
+    after the merge-base, so commits before the merge-base cannot be that revert.
+    """
     needle = f"This reverts commit {equivalent_sha}"
-    proc = _git(repo, "log", "master", f"--grep={needle}", "--format=%H")
-    if proc.returncode == 0 and proc.stdout.strip():
+    proc = _git(
+        repo, "log", f"{merge_base}..master", f"--grep={needle}", "--format=%H"
+    )
+    if proc.returncode != 0:
+        raise _ProbeGitError("log")
+    if proc.stdout.strip():
         return True
     inverse_id = _inverse_patch_id(repo, equivalent_sha)
     if not inverse_id:
@@ -309,7 +345,7 @@ class _PatchIdWalk:
 def _merge_first_parent_paths(repo: Path, commit: str) -> set[str]:
     proc = _git(repo, "diff", "--name-only", f"{commit}^1", commit)
     if proc.returncode != 0:
-        return set()
+        raise _ProbeGitError("diff")
     return {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
 
 
@@ -360,7 +396,7 @@ def _walk_patch_id_evidence(
             # equivalence. The line probe decides; it is not a void.
             needs_content.update(paths)
             continue
-        if any(_match_is_void(repo, sha, index) for sha in matches):
+        if any(_match_is_void(repo, sha, index, merge_base) for sha in matches):
             paths_voided_no_superset.update(paths)
             continue
 
@@ -468,6 +504,17 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
         return LandProbe(
             landed=False,
             differing_paths=[f"{branch_name} ({step} timeout)"],
+        )
+    except _ProbeGitError as exc:
+        return LandProbe(
+            landed=False,
+            differing_paths=[f"{branch_name} ({exc.step} failed)"],
+        )
+    except _PatchIdError as exc:
+        return LandProbe(
+            landed=False,
+            differing_paths=[exc.note],
+            patch_id_note=exc.note,
         )
 
 
