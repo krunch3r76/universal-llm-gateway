@@ -68,6 +68,27 @@ def test_next_admit_move_is_advance() -> None:
     assert signature_advanced(newer, older) is True
 
 
+def test_next_admit_transition_to_or_from_none_with_bound_tip_is_advance() -> None:
+    """17217 shape: discharging a harvest or parking on a new child within an open G-row moves the state."""
+    parked = _sig(
+        entry_gate="G5",
+        witnessed_done=("G1", "G2", "G3", "G4"),
+        lane_tip="fe5abb39",
+        scoreboard_tip="c3c8e566",
+        next_admit="harvest a7b03009",
+    )
+    row_hop = _sig(
+        entry_gate="G5",
+        witnessed_done=("G1", "G2", "G3", "G4"),
+        lane_tip="fe5abb39",
+        scoreboard_tip="c3c8e566",
+        next_admit=None,
+    )
+    assert signature_advanced(row_hop, parked) is True
+    assert signature_advanced(parked, row_hop) is True
+    assert signature_advanced( _sig(next_admit="harvest a7b03009"), _sig()) is False
+
+
 def test_identical_signatures_are_not_advance() -> None:
     stuck = _sig(entry_gate="G1", lane_tip="cd5cf10a")
     assert signature_advanced(stuck, stuck) is False
@@ -141,6 +162,10 @@ def test_signatures_share_crash_row_requires_matching_bound_signals() -> None:
         ("stop: ROW_HOP\nNEXT_ADMIT: harvest G1\n", "harvest G1"),
         ("NEXT_ADMIT: none", "none"),
         ("  NEXT_ADMIT : harvest G4  ", "harvest G4"),
+        (
+            "CHECKPOINT is thread 17217 turn 50. `NEXT_ADMIT: harvest 799d7237-3fc0-421f-bba1-66fa97afa678`.\n\nstop: PARKED_TRANSPORT",
+            "harvest 799d7237-3fc0-421f-bba1-66fa97afa678",
+        ),
         ("NEXT_ADMIT", None),
         ("", None),
         ("no admit named here", None),
