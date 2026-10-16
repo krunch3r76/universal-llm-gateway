@@ -1046,6 +1046,16 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         except Exception:
             logger.warning("Failed to parse %s for x_account env", _MCP_CONFIG_PATH)
     apply_x_account_env(env, raw=raw)
+    oauth_block = raw.get("oauth") if isinstance(raw.get("oauth"), dict) else {}
+    redirect_hosts = oauth_block.get("dynamic_client_redirect_hosts")
+    if isinstance(redirect_hosts, list):
+        hosts = [
+            str(h).strip()
+            for h in redirect_hosts
+            if isinstance(h, str) and str(h).strip()
+        ]
+        if hosts:
+            env["MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS"] = ",".join(hosts)
     return env
 
 
