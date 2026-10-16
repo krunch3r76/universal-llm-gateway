@@ -32,7 +32,12 @@ from ._shared import (
     _VALID_CONFIDENCE,
     record,
 )
-from ._write_validation import collect_missing_required, validation_error_response
+from ._write_validation import (
+    collect_missing_required,
+    field_error,
+    is_missing,
+    validation_error_response,
+)
 from .ops_assertions_friction import _op_friction
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
@@ -64,6 +69,18 @@ def _op_friction_close(
     kind_err = validate_resolution_kind(resolution_kind)
     if kind_err:
         return {"error": kind_err}
+
+    if not is_missing(resolution_note):
+        note = str(resolution_note)
+        if "Verified:" not in note and "unverified:" not in note:
+            return validation_error_response(
+                [
+                    field_error(
+                        "resolution_note",
+                        "resolution_note must include Verified: or unverified: (K42 change record)",
+                    )
+                ]
+            )
 
     return close_friction_assertion(
         assertion_id,

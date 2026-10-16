@@ -38,3 +38,13 @@ shell-timeout-cap (ref friction a:26348 · agent-bus:5352).
 **P5 — Finishing order (last).** Default: land → path-explicit commit of session paths → recycle serving
 processes. Recycle-from-dirty-tree is exceptional, not the ordinary-live default. "Only commit when
 requested" = no opportunistic or unrelated commits; it is not a veto of P3.2.
+
+## Change record (K42)
+
+Commit subject states the outcome. Commit body is three parts in this order:
+
+Problem: what was wrong and how it showed (symptom, root cause, specimen).
+Change: what changed and why that fixes it (commit, paths).
+Verified: the observable that shows it works (test line, live probe, liveness answer), or "unverified:" naming what was not checked.
+
+Same three parts in a friction_close resolution_note (the open filing is the Problem), in journal entries, and in outside PRs. No new friction_close field.

@@ -58,6 +58,51 @@ def test_friction_close_missing_both_required_fields() -> None:
     assert "commit:{sha}" in by_field["resolution_kind"]["accepted"]
 
 
+def test_friction_close_resolution_note_lacks_k42_verified_tokens() -> None:
+    result = _op_friction_close(
+        assertion_id=1,
+        resolution_kind="wontfix",
+        resolution_note="Change: only the change line, no verification token.",
+    )
+    assert result["status_code"] == 422
+    err = result["error"]
+    assert isinstance(err, dict)
+    assert err["field"] == "resolution_note"
+    assert "Verified:" in err["message"] or "unverified:" in err["message"]
+
+
+def test_friction_close_resolution_note_unverified_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_write.close_friction_assertion",
+        lambda *_a, **_k: {"status": "closed"},
+    )
+    result = _op_friction_close(
+        assertion_id=1,
+        resolution_kind="wontfix",
+        resolution_note="Change: applied fix. unverified: pytest not re-run here.",
+    )
+    assert result.get("status_code") != 422
+    assert result.get("status") == "closed"
+
+
+def test_friction_close_resolution_note_verified_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_write.close_friction_assertion",
+        lambda *_a, **_k: {"status": "closed"},
+    )
+    result = _op_friction_close(
+        assertion_id=1,
+        resolution_kind="wontfix",
+        resolution_note="Change: landed fix. Verified: pytest libs/cortex_store/test_x.py -q — 1 passed.",
+    )
+    assert result.get("status_code") != 422
+    assert result.get("status") == "closed"
+
+
 def test_assert_missing_multiple_required_fields() -> None:
     result = _op_assert(entity_id="todo:x")
     assert result["status_code"] == 422
