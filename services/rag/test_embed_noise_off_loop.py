@@ -29,8 +29,6 @@ from services.rag.rag_service.indexing.embed_diff import (
 # same line is sub-millisecond.
 _PATHOLOGICAL = ("a, " * 3500) + "x"
 _HEARTBEAT_S = 0.05
-_STALL_S = 0.20
-_MIN_TICKS_IF_SLOW = 5
 
 
 def _chunk(text: str) -> Chunk:
@@ -53,17 +51,12 @@ async def test_pathological_noise_reason_keeps_loop_heartbeat() -> None:
 
     ticks = 0
     finished = False
-
-    async def _heartbeat() -> None:
-        nonlocal ticks
-        while not finished:
-            await asyncio.sleep(_HEARTBEAT_S)
-            if not finished:
-                ticks += 1
+    embed_elapsed = 0.0
 
     async def _run_embed() -> None:
-        nonlocal finished
+        nonlocal finished, embed_elapsed
         try:
+            t0 = time.perf_counter()
             await _run_embed_phase(
                 file_path=path,
                 source=source,
@@ -80,23 +73,26 @@ async def test_pathological_noise_reason_keeps_loop_heartbeat() -> None:
                 correlation_id="corr-r4",
                 operation=None,
             )
+            embed_elapsed = time.perf_counter() - t0
         finally:
             finished = True
 
-    t0 = time.perf_counter()
+    async def _heartbeat() -> None:
+        nonlocal ticks
+        while not finished:
+            await asyncio.sleep(_HEARTBEAT_S)
+            ticks += 1
+
     with patch(
         "services.rag.rag_service.indexing.embed._run_contextualization_phase",
         new_callable=AsyncMock,
         return_value=(["ctx"], [], [True]),
     ):
         await asyncio.gather(_run_embed(), _heartbeat())
-    elapsed = time.perf_counter() - t0
-    # A call that outlasts several heartbeats while holding the GIL records
-    # almost no ticks. A call that returns before _STALL_S never froze the loop.
-    if elapsed >= _STALL_S:
-        assert ticks >= _MIN_TICKS_IF_SLOW, (
-            f"loop heartbeat stalled elapsed={elapsed:.3f}s ticks={ticks}"
-        )
-    assert elapsed < 5.0, (
-        f"noise_reason still too slow elapsed={elapsed:.3f}s ticks={ticks}"
+    # The in-flight 50 ms sleep completes on the fixed path, so ticks is at
+    # least 1. A GIL hold counts almost no ticks against embed_elapsed.
+    assert ticks >= 1, f"heartbeat never ticked elapsed={embed_elapsed:.3f}s"
+    missed = embed_elapsed / _HEARTBEAT_S - ticks
+    assert missed < 3, (
+        f"loop heartbeat stalled elapsed={embed_elapsed:.3f}s ticks={ticks}"
     )

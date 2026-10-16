@@ -136,12 +136,12 @@ def noise_reason_timed(
 ) -> tuple[str | None, float]:
     """Return ``(noise_reason, cpu_ms)``.
 
-    ``cpu_ms`` is process time inside this function, not queue wait around
-    ``asyncio.to_thread``.
+    ``cpu_ms`` is this thread's CPU (``time.thread_time``), not process CPU
+    and not queue wait around ``asyncio.to_thread``.
     """
-    started = time.process_time()
+    started = time.thread_time()
     reason = _noise_reason(content, threshold)
-    cpu_ms = (time.process_time() - started) * 1000.0
+    cpu_ms = (time.thread_time() - started) * 1000.0
     return reason, cpu_ms
 
 

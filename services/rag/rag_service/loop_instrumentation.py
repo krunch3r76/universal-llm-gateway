@@ -138,11 +138,12 @@ def _emit_stack_dump(min_interval_s: float, frame_limit: int) -> None:
 def _stack_watchdog(stop: threading.Event) -> None:
     """Dump the loop thread when its heartbeat is older than ``late_s``.
 
-    One continuous stall keeps sampling: the first dump is rate-limited by
-    ``min_interval_s`` across incidents, then further dumps follow
-    ``sample_s`` (and the long-stall threshold) until ``dump_cap``. A task
-    cannot run during the stall this thread exists to see, so task names come
-    from ``asyncio.all_tasks`` on the watchdog thread.
+    One continuous stall keeps sampling: the first dump of an incident waits
+    until ``min_interval_s`` since the previous dump, including when that wait
+    elapses during a later stall. Further dumps follow ``sample_s`` (and the
+    long-stall threshold) until ``dump_cap``. A non-positive cap emits nothing.
+    A task cannot run during the stall this thread exists to see, so task
+    names come from ``asyncio.all_tasks`` on the watchdog thread.
     """
     (
         late_s,
@@ -154,30 +155,28 @@ def _stack_watchdog(stop: threading.Event) -> None:
         dump_cap,
     ) = _watchdog_cfg
     last_dump = 0.0
-    armed = True
     stall_dumps = 0
     while not stop.wait(poll_s):
         age_s = time.monotonic() - _heartbeat_mono
         now = time.monotonic()
-        if age_s > late_s:
-            first = stall_dumps == 0 and armed and (now - last_dump) >= min_interval_s
-            follow = (
-                stall_dumps > 0
-                and stall_dumps < dump_cap
-                and (
-                    (now - last_dump) >= sample_s
-                    or (stall_dumps == 1 and age_s > long_late_s)
-                )
+        if dump_cap <= 0 or age_s <= late_s:
+            if age_s <= late_s:
+                stall_dumps = 0
+            continue
+        interval_elapsed = (now - last_dump) >= min_interval_s
+        first = stall_dumps == 0 and interval_elapsed
+        follow = (
+            stall_dumps > 0
+            and stall_dumps < dump_cap
+            and (
+                (now - last_dump) >= sample_s
+                or (stall_dumps == 1 and age_s > long_late_s)
             )
-            if first or follow:
-                _emit_stack_dump(min_interval_s, frame_limit)
-                last_dump = time.monotonic()
-                stall_dumps += 1
-                armed = False
-        else:
-            stall_dumps = 0
-            if (now - last_dump) >= min_interval_s:
-                armed = True
+        )
+        if first or follow:
+            _emit_stack_dump(min_interval_s, frame_limit)
+            last_dump = time.monotonic()
+            stall_dumps += 1
 
 
 async def _loop_drift_monitor(stop: asyncio.Event) -> None:

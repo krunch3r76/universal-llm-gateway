@@ -150,6 +150,84 @@ async def test_rate_limit_one_dump_per_interval(
 
 
 @pytest.mark.asyncio
+async def test_long_second_stall_dumps_after_interval(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second stall that begins inside min_interval and runs past it dumps."""
+    _arm(
+        monkeypatch,
+        RAG_LOOP_STACK_LATE_S="0.05",
+        RAG_LOOP_STACK_LONG_S="0.12",
+        RAG_LOOP_STACK_MIN_INTERVAL_S="0.30",
+        RAG_LOOP_STACK_POLL_S="0.02",
+        RAG_LOOP_STACK_SAMPLE_S="5",
+    )
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    start_loop_instrumentation()
+    try:
+        time.sleep(0.18)
+        await asyncio.sleep(0.05)
+        after_first = len(_dumps(caplog))
+        assert after_first >= 1
+        time.sleep(0.90)
+        await asyncio.sleep(0.05)
+        assert len(_dumps(caplog)) > after_first
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+async def test_unset_dump_cap_uses_default(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset RAG_LOOP_STACK_DUMP_CAP keeps the default and still dumps."""
+    monkeypatch.delenv("RAG_LOOP_STACK_DUMP_CAP", raising=False)
+    _arm(
+        monkeypatch,
+        RAG_LOOP_STACK_LATE_S="0.05",
+        RAG_LOOP_STACK_POLL_S="0.02",
+        RAG_LOOP_STACK_SAMPLE_S="5",
+        RAG_LOOP_STACK_LONG_S="10",
+    )
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    start_loop_instrumentation()
+    try:
+        time.sleep(0.30)
+        await asyncio.sleep(0.05)
+        assert len(_dumps(caplog)) == 1
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", ["0", "-3"])
+async def test_nonpositive_dump_cap_emits_nothing(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    cap: str,
+) -> None:
+    """Zero or negative RAG_LOOP_STACK_DUMP_CAP emits no stack dump."""
+    _arm(
+        monkeypatch,
+        RAG_LOOP_STACK_LATE_S="0.05",
+        RAG_LOOP_STACK_POLL_S="0.02",
+        RAG_LOOP_STACK_DUMP_CAP=cap,
+        RAG_LOOP_STACK_SAMPLE_S="0.05",
+        RAG_LOOP_STACK_LONG_S="0.08",
+    )
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    start_loop_instrumentation()
+    try:
+        time.sleep(0.30)
+        await asyncio.sleep(0.05)
+        assert _dumps(caplog) == []
+    finally:
+        await stop_loop_instrumentation()
+
+
+@pytest.mark.asyncio
 async def test_continuous_stall_samples_until_cap(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
