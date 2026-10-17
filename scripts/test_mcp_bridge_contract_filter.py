@@ -337,8 +337,11 @@ def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:
     assert refused is None
 
 
-def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread() -> None:
+def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Bridge stamp wins on resume_of generate; to_thread and empty stamp do not."""
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
     omitted = {
         "op": "generate",
         "seat": "cursor-sdk",
@@ -392,3 +395,46 @@ def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread() -> Non
         dispatch_id="holder-live",
     )
     assert "caller_dispatch_id" not in bare["params"]["arguments"]
+
+
+def test_stamp_off_hides_caller_dispatch_id_from_old_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset stamp flag: resume_of generate never carries caller_dispatch_id.
+
+    An MCP still on the old team_dispatch signature rejects that keyword
+    (unexpected_keyword_argument / extra=forbid). The default-off bridge
+    must forward resume_of without the field, including when the model
+    supplied one, so the old receiver still accepts the call.
+    """
+    from pydantic import BaseModel, ConfigDict, ValidationError
+
+    class _OldTeamDispatch(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        op: str
+        seat: str | None = None
+        resume_of: str | None = None
+        model: str | None = None
+
+    monkeypatch.delenv("ULG_STAMP_CALLER_DISPATCH_ID", raising=False)
+    supplied = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "model": "cursor/composer-2.5",
+        "caller_dispatch_id": "model-supplied",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(supplied),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    got = forwarded["params"]["arguments"]
+    assert got["op"] == "generate"
+    assert got["resume_of"] == "terminal-parent"
+    assert "caller_dispatch_id" not in got
+    _OldTeamDispatch.model_validate(got)
+    with pytest.raises(ValidationError):
+        _OldTeamDispatch.model_validate({**got, "caller_dispatch_id": "holder-live"})
