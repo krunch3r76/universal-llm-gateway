@@ -295,10 +295,18 @@ def test_unreadable_registry_is_probe_error(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_unknown_registry_page_off_holder_outranks_holder() -> None:
+    """A still-open seat whose probe failed blocks the holder.
+
+    ``seat_lane`` is set so the row stays a live registry claim. An unstamped
+    historical row beside an open seat is superseded and must not block.
+    """
+
     class _Live:
         parent_thread = LANE
         registration_id = "fc69582c"
         purpose = "operator-proxy"
+        seat_lane = LANE
+        seat_closed_at = None
 
     def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
         if port == 9223:
@@ -1292,3 +1300,239 @@ def test_attended_route_blank_parent_thread_uses_existing(
     assert absent.status_code == 200
     assert absent.json()["registration_id"] == "reg-a"
     assert "code" not in absent.json() or absent.json().get("state") != "none"
+
+
+# Plan r4 truncates live ids. These fixtures keep the cited prefixes and
+# complete them to 32-hex registration ids / a full cowork URL.
+_OPEN_0611 = "42e8a8e3000000000000000000000001"
+_OPEN_0650 = "0ee03e6d000000000000000000000002"
+_URL_0650 = "https://claude.ai/cowork/cse_019S45specimen0650holder"
+_SEAT_SPECIMENS = (
+    {
+        "label": "0547",
+        "open_rid": "4f7b570f66b24c71959222d0a93d9286",
+        "open_url": "https://claude.ai/cowork/cse_successor_0547",
+        "closed_rid": "c4c8f4f1a5ba4ea99684182e34fb052f",
+        "closed_url": "https://claude.ai/cowork/cse_predecessor_0547",
+    },
+    {
+        "label": "0611",
+        "open_rid": _OPEN_0611,
+        "open_url": "https://claude.ai/cowork/cse_01LcNK85yiXs9f3b9m1NxCjo",
+        "closed_rid": "c016a6ts000000000000000000000011",
+        "closed_url": "https://claude.ai/cowork/cse_016a6TsJzteXZJeTENuTsgxx",
+    },
+    {
+        "label": "0650",
+        "open_rid": _OPEN_0650,
+        "open_url": _URL_0650,
+        "closed_rid": _OPEN_0611,
+        "closed_url": "https://claude.ai/cowork/cse_01LcNK85yiXs9f3b9m1NxCjo",
+    },
+)
+
+
+class _SeatReg:
+    def __init__(self, **fields: Any) -> None:
+        self.__dict__.update(fields)
+
+
+def _streaming() -> tuple[dict[str, Any], bool]:
+    return {"streaming": True, "stop": False, "tool_pause": False}, True
+
+
+def _idle() -> tuple[dict[str, Any], bool]:
+    return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+
+def _specimen_registry(spec: dict[str, str]) -> tuple[list[_SeatReg], dict[str, str]]:
+    """Open seat, closed predecessor, and 68 closed or unstamped lane rows."""
+    rows: list[_SeatReg] = [
+        _SeatReg(
+            parent_thread=LANE,
+            registration_id=spec["open_rid"],
+            purpose="operator-proxy",
+            seat_lane=LANE,
+            seat_closed_at=None,
+            seat_bound_at=300.0,
+            started_at=300.0,
+        ),
+        _SeatReg(
+            parent_thread=LANE,
+            registration_id=spec["closed_rid"],
+            purpose="operator-proxy",
+            seat_lane=LANE,
+            seat_closed_at=200.0,
+            seat_bound_at=200.0,
+            started_at=200.0,
+        ),
+    ]
+    urls = {
+        spec["open_rid"]: spec["open_url"],
+        spec["closed_rid"]: spec["closed_url"],
+    }
+    for index in range(68):
+        rid = f"filler{index:04d}0000000000000000000000"
+        url = f"https://claude.ai/cowork/cse_filler_{index:02d}"
+        if index < 34:
+            rows.append(
+                _SeatReg(
+                    parent_thread=LANE,
+                    registration_id=rid,
+                    purpose="operator-proxy",
+                    seat_lane=LANE,
+                    seat_closed_at=100.0,
+                    seat_bound_at=float(index),
+                    started_at=float(index),
+                )
+            )
+        else:
+            rows.append(
+                _SeatReg(
+                    parent_thread=LANE,
+                    registration_id=rid,
+                    purpose="operator-proxy",
+                    seat_lane=None,
+                    seat_closed_at=None,
+                    seat_bound_at=None,
+                    started_at=float(index),
+                )
+            )
+        urls[rid] = url
+    return rows, urls
+
+
+def _resolve_specimen(spec: dict[str, str]) -> dict[str, Any]:
+    rows, urls = _specimen_registry(spec)
+    open_port = 9400
+    closed_port = 9401
+    unknown_ports = set(range(9402, 9419))
+
+    def pages():
+        yield open_port, spec["open_url"], "ws://open"
+        yield closed_port, spec["closed_url"], "ws://closed"
+        for index in range(68):
+            port = 9402 + index
+            url = f"https://claude.ai/cowork/cse_filler_{index:02d}"
+            ws = None if port in unknown_ports else f"ws://{port}"
+            yield port, url, ws
+
+    def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        if port in {open_port, closed_port}:
+            return _streaming()
+        if port in unknown_ports:
+            return None, False
+        return _idle()
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": spec["open_rid"],
+                "parent_thread": LANE,
+                "seat_lane": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 300.0,
+                "chat_url": spec["open_url"],
+            }
+        ]
+    }
+    return resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=lambda _url: None,
+        list_active=lambda: rows,
+        chat_url_for_registration=lambda rid: urls.get(rid),
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+
+
+def _assert_open_seat_current(body: dict[str, Any], spec: dict[str, str]) -> None:
+    assert body["state"] == "current"
+    assert body["basis"] == "in_flight"
+    assert body["reason"] is None
+    assert body["candidates"] == []
+    assert body["current"]["chat_url"] == spec["open_url"]
+    assert body["current"]["registration_ids"] == [spec["open_rid"]]
+    assert body["current"]["evidence_class"] == "live_binding"
+    stale_urls = {page["chat_url"] for page in body["stale"]}
+    assert spec["closed_url"] in stale_urls
+    assert spec["open_url"] not in stale_urls
+    assert len(body["stale"]) == 69
+    for page in body["stale"]:
+        assert page["evidence_class"] == "stored_association"
+        assert "superseded_registry_row" in page["claims"]
+        assert "registry_row" not in page["claims"]
+        assert page["stale_reason"] == "superseded_seat"
+
+
+@pytest.mark.parametrize("spec", _SEAT_SPECIMENS, ids=lambda spec: spec["label"])
+def test_two_in_flight_prefers_open_seat_over_superseded(spec: dict[str, str]) -> None:
+    """Closed predecessor stays in_flight; the open seat is still current."""
+    _assert_open_seat_current(_resolve_specimen(spec), spec)
+
+
+@pytest.mark.parametrize("spec", _SEAT_SPECIMENS, ids=lambda spec: spec["label"])
+def test_superseded_and_unstamped_rows_do_not_collide_with_open_seat(
+    spec: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """~70 registry rows, including unstamped legacy rows, leave one current seat."""
+    _assert_open_seat_current(_resolve_specimen(spec), spec)
+    if spec["label"] != "0547":
+        return
+    from claude_bundles.cdp_registry.models import _row_to_registration
+    from claude_bundles.cdp_registry.session_address import current_seat_for_lane
+
+    projected = _row_to_registration(
+        {
+            "registration_id": "4f7b570f66b24c71959222d0a93d9286",
+            "port": 9223,
+            "profile_suffix": "seat-axis",
+            "holder": "holder",
+            "seat_lane": "12286",
+            "seat_bound_at": 11.0,
+            "seat_closed_at": 1700000000.0,
+            "seat_close_reason": "superseded",
+            "superseded_by": "4f7b570f66b24c71959222d0a93d9286",
+            "started_at": 10.0,
+            "execution_id": "exec-seat",
+        }
+    )
+    assert projected.seat_closed_at == 1700000000.0
+    assert projected.seat_lane == "12286"
+    assert projected.superseded_by == "4f7b570f66b24c71959222d0a93d9286"
+    assert projected.started_at == 10.0
+    assert projected.execution_id == "exec-seat"
+    assert projected.seat_bound_at == 11.0
+    assert projected.seat_close_reason == "superseded"
+
+    def _row(rid: str, *, bound: float, closed: float | None, started: float) -> dict:
+        return {
+            "registration_id": rid,
+            "port": 9300,
+            "profile_suffix": rid,
+            "holder": "holder",
+            "status": "active",
+            "parent_thread": "12286",
+            "purpose": "operator-proxy",
+            "seat_lane": "12286",
+            "seat_bound_at": bound,
+            "seat_closed_at": closed,
+            "started_at": started,
+        }
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address._store.load_active",
+        lambda: {
+            "older": _row("older", bound=1.0, closed=None, started=1.0),
+            "newer": _row("newer", bound=5.0, closed=None, started=2.0),
+            "shut": _row("shut", bound=9.0, closed=9.0, started=3.0),
+        },
+    )
+    winner = current_seat_for_lane("12286")
+    assert winner is not None
+    assert winner.registration_id == "newer"
+    assert current_seat_for_lane("other") is None

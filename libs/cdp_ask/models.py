@@ -404,6 +404,10 @@ class FollowupProjectAskRequest(BaseModel):
             "Carried on the reattach path, which may mint a lane."
         ),
     )
+    envelope: Literal["free", "stand_down", "page"] = "free"
+    predecessor_registration_id: str | None = None
+    successor_registration_id: str | None = None
+    successor_birth_id: str | None = None
     min_receipt: FollowupMinReceipt = Field(
         default="dom_paste",
         description=(

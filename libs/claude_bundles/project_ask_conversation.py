@@ -122,8 +122,9 @@ _MARKER_IN_COMMITTED_JS = """
   for (const sel of selectors) {
     for (const el of document.querySelectorAll(sel)) {
       if (excluded(el)) continue;
-      const t = (el.innerText || '').trim();
-      if (t && t.includes(marker)) return true;
+      const normMarker = (marker || '').replace(/\\s+/g, ' ').trim();
+      const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (normMarker && t.includes(normMarker)) return true;
     }
   }
   return false;
@@ -133,6 +134,10 @@ _MARKER_IN_COMMITTED_JS = """
 
 def _transcript_grew(before: dict, after: dict) -> bool:
     return after.get("count", 0) > before.get("count", 0)
+
+
+_DOM_COMMIT_POLL_TIMEOUT_S = 3.0
+_DOM_COMMIT_POLL_INTERVAL_S = 0.15
 
 
 async def send_followup_paste_half(
@@ -212,9 +217,39 @@ async def send_followup_paste_half(
     marker_in_committed = False
     if marker:
         marker_in_committed = bool(await page.evaluate(_MARKER_IN_COMMITTED_JS, marker))
-    in_snippet = bool(marker) and marker in (after.get("last_snippet") or "")
-    count_grew = _transcript_grew(before, after)
-    dom_paste = bool(marker) and (marker_in_committed or (count_grew and in_snippet))
+
+    def _dom_paste(sample: dict, committed: bool) -> bool:
+        in_snippet = bool(marker) and normalize_committed_turn(
+            marker
+        ) in normalize_committed_turn(sample.get("last_snippet") or "")
+        count_grew = _transcript_grew(before, sample)
+        return bool(marker) and (committed or (count_grew and in_snippet))
+
+    dom_paste = _dom_paste(
+        after if isinstance(after, dict) else {}, marker_in_committed
+    )
+    poll_detail: str | None = None
+    if not dom_paste and marker and _DOM_COMMIT_POLL_TIMEOUT_S > 0:
+        import asyncio
+
+        deadline = asyncio.get_running_loop().time() + _DOM_COMMIT_POLL_TIMEOUT_S
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(_DOM_COMMIT_POLL_INTERVAL_S)
+            try:
+                sample = await page.evaluate(_TRANSCRIPT_MARKER_JS)
+                committed = bool(await page.evaluate(_MARKER_IN_COMMITTED_JS, marker))
+            except (StopIteration, StopAsyncIteration):
+                break
+            except RuntimeError as exc:
+                poll_detail = str(exc)
+                break
+            if not isinstance(sample, dict):
+                break
+            after = sample
+            marker_in_committed = committed
+            if _dom_paste(after, marker_in_committed):
+                dom_paste = True
+                break
     receipt: str | None = "dom_paste" if dom_paste else None
     if receipt and marker and marker_in_committed:
         if await marker_survives_settle(page, marker):
@@ -242,7 +277,7 @@ async def send_followup_paste_half(
     state = await harvest_assistant(page)
     pasted_at = time.time()
     send_verified = receipt is not None
-    return {
+    result = {
         "send_verified": send_verified,
         "receipt": receipt,
         "streaming_at_paste": bool(state.get("streaming")),
@@ -252,6 +287,9 @@ async def send_followup_paste_half(
         "error": None if send_verified else "send_unverified",
         "target_binding": target_binding,
     }
+    if poll_detail is not None:
+        result["detail"] = poll_detail
+    return result
 
 
 async def project_followup_on_page(
@@ -280,7 +318,9 @@ async def project_followup_on_page(
     anchor: ReplyAnchor | None = None
     try:
         probe = ReplyAnchor(anchor_marker(prompt))
-        anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
+        anchor = probe.after(
+            await harvest_assistant(page, min_msg_chars=10, anchor=probe)
+        )
         await send_prompt(
             page,
             prompt,
@@ -466,7 +506,9 @@ async def run_project_conversation(
                     )
                 ]
             probe = ReplyAnchor(anchor_marker(prompts[0]))
-            anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
+            anchor = probe.after(
+                await harvest_assistant(page, min_msg_chars=10, anchor=probe)
+            )
             await send_prompt(
                 page,
                 prompts[0],

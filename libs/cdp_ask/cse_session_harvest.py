@@ -30,10 +30,57 @@ from cdp_ask.cse_session_models import (
     HarvestRequest,
     HarvestResponse,
 )
+from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_resolve import discover_candidates
 
 HARVEST_HARD_CAP = 50
+
+_DETACH_SWALLOW = frozenset(
+    {"attachment.not_attached", "seat.open_on_detach", "standdown.missing"}
+)
+
+
+async def _retire_closed_seat_after_typed_ack(
+    registration_id: str | None,
+    response: HarvestResponse,
+) -> None:
+    """Stamp, seal, then detach a closed seat after a typed stand-down ACK."""
+    if response.outcome != "harvested" or response.ack_class != "typed_ack":
+        return
+    rid = (registration_id or "").strip()
+    if not rid:
+        return
+    from claude_bundles import cdp_registry_store as registry_store
+    from claude_bundles.cdp_registry.models import seat_open
+    from universal_protocol.errors import ProtocolError
+
+    from cdp_ask.cse_session_paste import _append_standdown_token
+
+    row = registry_store.load_active().get(rid)
+    if not isinstance(row, dict) or seat_open(row):
+        return
+    _append_standdown_token(
+        registration_id=rid,
+        chat_url=str(row.get("chat_url") or response.chat_url or ""),
+        envelope="stand_down",
+        pasted=True,
+        receipt={"ack_class": "typed_ack"},
+        error=None,
+        detail=None,
+    )
+    try:
+        await seal_predecessor_cse_to_tape(rid)
+    except ProtocolError as exc:
+        if exc.code == "standdown.tape_seal_failed":
+            return
+        raise
+    try:
+        cdp_registry.detach(rid, reason="standdown_ack_harvested")
+    except ProtocolError as exc:
+        if exc.code in _DETACH_SWALLOW:
+            return
+        raise
 
 
 async def _resolve_target(
@@ -160,7 +207,9 @@ async def harvest_page(
     requested_chat_url: str | None = None,
 ) -> HarvestResponse:
     """Scrape an already-open CSE page (attached lane or just-opened URL)."""
-    current_reg = _registration_id_from_provenance(provenance, requested_registration_id)
+    current_reg = _registration_id_from_provenance(
+        provenance, requested_registration_id
+    )
     if req.metadata_only:
         response = HarvestResponse(
             outcome="harvested",
@@ -331,4 +380,6 @@ async def execute_harvest(
             HarvestResponse(outcome="unreachable", reason=str(exc)),
             url,
         )
-    return _bind_chat_url(_emit(registration_id, response), url)
+    bound = _bind_chat_url(_emit(registration_id, response), url)
+    await _retire_closed_seat_after_typed_ack(registration_id, bound)
+    return bound

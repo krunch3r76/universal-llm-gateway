@@ -16,7 +16,6 @@ from claude_bundles.nested_cdp_prompt_gate import NestedCdpPromptGateError
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 
 from cdp_ask.execution_store import ExecutionStore
-from cdp_ask.followup_envelope import identity_supplied
 from cdp_ask.followup_dormant import (
     park_relaunched_host,
     reattach_chat_url,
@@ -24,6 +23,7 @@ from cdp_ask.followup_dormant import (
     restrict_registration_id,
     skipped_reason_for_miss,
 )
+from cdp_ask.followup_envelope import identity_supplied
 from cdp_ask.followup_events import (
     cdp_ask_followup_paste_attempt,
     cdp_ask_followup_paste_verified,
@@ -68,7 +68,9 @@ _REATTACH_ELIGIBLE_ERRORS = frozenset(
 )
 
 
-async def _acquire_lane(registration_id: str, *, target_chat_url: str | None = None) -> bool:
+async def _acquire_lane(
+    registration_id: str, *, target_chat_url: str | None = None
+) -> bool:
     async with _inflight_guard:
         lock = _lane_locks.setdefault(registration_id, asyncio.Lock())
         if lock.locked():
@@ -87,6 +89,43 @@ def lane_in_flight(registration_id: str) -> bool:
     """
     lock = _lane_locks.get(registration_id)
     return bool(lock and lock.locked())
+
+
+def _stamp_followup_standdown(
+    req: FollowupProjectAskRequest,
+    *,
+    registration_id: str,
+    chat_url: str | None,
+    prompt: str,
+    receipt: str | None,
+) -> None:
+    """Write ``standdown_pasted`` when a verified followup is a seat stand-down.
+
+    ``fold_attachment_journal`` runs inside ``_append_standdown_token`` and
+    takes ``ports_lock`` itself, so this helper must not already hold that lock.
+    A distinct ``predecessor_registration_id`` is stamped as well.
+    """
+    from cdp_ask.cse_session_ack import STAND_DOWN_TYPE_RE
+    from cdp_ask.cse_session_paste import _append_standdown_token
+
+    envelope = (req.envelope or "").strip().lower()
+    if envelope != "stand_down" and not STAND_DOWN_TYPE_RE.search(prompt or ""):
+        return
+    payload = {"receipt": receipt} if receipt is not None else None
+    targets = [registration_id]
+    predecessor = (req.predecessor_registration_id or "").strip()
+    if predecessor and predecessor not in targets:
+        targets.append(predecessor)
+    for rid in targets:
+        _append_standdown_token(
+            registration_id=rid,
+            chat_url=chat_url,
+            envelope="stand_down",
+            pasted=True,
+            receipt=payload,
+            error=None,
+            detail=None,
+        )
 
 
 def _stamp_followup_in_flight(registration_id: str, resolution_path: str) -> None:
@@ -225,8 +264,7 @@ async def _reattach_teardown(
     if outcome is None or not outcome.ok:
         return
     if restore_borrowed_chat_url and not (
-        skip_inflight_restore
-        and _skip_borrow_restore_for_inflight_paste(outcome)
+        skip_inflight_restore and _skip_borrow_restore_for_inflight_paste(outcome)
     ):
         restore_borrowed_chat_url_on_refusal(outcome)
     if retain_lane:
@@ -295,9 +333,12 @@ async def execute_followup(
         lane_pin["reattach_used"] = True
         lane_pin["outcome_reg"] = outcome_reg
         try:
-            target, err, resolution_path, target_binding = (
-                await resolve_followup_target(req, store, lane_pin=lane_pin)
-            )
+            (
+                target,
+                err,
+                resolution_path,
+                target_binding,
+            ) = await resolve_followup_target(req, store, lane_pin=lane_pin)
         except BaseException:
             await _reattach_teardown(
                 reattach_outcome,
@@ -350,9 +391,7 @@ async def execute_followup(
             **extra,
         )
 
-    if not await _acquire_lane(
-        target.registration_id, target_chat_url=target.chat_url
-    ):
+    if not await _acquire_lane(target.registration_id, target_chat_url=target.chat_url):
         await _reattach_teardown(
             reattach_outcome,
             retain_lane=req.retain_lane,
@@ -492,6 +531,13 @@ async def execute_followup(
                     declared=declared_target,
                     purpose=req.purpose,
                 )
+            )
+            _stamp_followup_standdown(
+                req,
+                registration_id=target.registration_id,
+                chat_url=url or target.chat_url,
+                prompt=prompt,
+                receipt=capped,
             )
 
         resp = paste_response(

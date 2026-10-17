@@ -3,6 +3,7 @@
 A registry host is a Chrome CDP port+profile row, not a bus thread or CSE
 session. Persistence is cdp_registry_store; Event Service is observational.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -105,6 +106,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
         "backfill_attachment_from_chat_url",
     ),
     "chat_url_for_registration": (".session_address", "chat_url_for_registration"),
+    "current_seat_for_lane": (".session_address", "current_seat_for_lane"),
     "detach": (".lifecycle", "detach"),
     "count_capacity_lanes": (".session_address", "count_capacity_lanes"),
     "list_active": (".session_address", "list_active"),

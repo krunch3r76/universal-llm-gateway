@@ -286,9 +286,7 @@ def restore_session_address(
         target_restore = (restore_to or "").strip() or None
         if target_restore:
             try:
-                assert_attachment_unique(
-                    active, target_restore, registration_id=rid
-                )
+                assert_attachment_unique(active, target_restore, registration_id=rid)
             except ProtocolError:
                 target_restore = None
         if target_restore:
@@ -620,6 +618,38 @@ def chat_url_for_registration(registration_id: str | None) -> str | None:
         return None
     url = str(row.get("chat_url") or "").strip()
     return url or None
+
+
+def current_seat_for_lane(parent_thread: str) -> Registration | None:
+    """Return the open seat registration on ``parent_thread``, or None.
+
+    ``seat_open(row, parent_thread)`` is the predicate. Several rows can still
+    be open before retirement; the winner is the greatest
+    ``(seat_bound_at, started_at, registration_id)``. Reads ``active.json``
+    and does not mutate it.
+    """
+    lane = (parent_thread or "").strip()
+    if not lane:
+        return None
+    active = _store.load_active()
+    open_rows = [
+        row
+        for row in active.values()
+        if isinstance(row, dict)
+        and row.get("status") in _HOST_LISTABLE_STATUSES
+        and seat_open(row, lane)
+    ]
+    if not open_rows:
+        return None
+    open_rows.sort(
+        key=lambda row: (
+            float(row.get("seat_bound_at") or 0.0),
+            float(row.get("started_at") or 0.0),
+            str(row.get("registration_id") or ""),
+        ),
+        reverse=True,
+    )
+    return _row_to_registration(open_rows[0])
 
 
 def list_active() -> list[Registration]:
