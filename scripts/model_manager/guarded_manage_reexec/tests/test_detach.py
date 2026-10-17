@@ -19,6 +19,7 @@ from scripts.model_manager.guarded_manage_reexec.detach import (
     LOG_PATH,
     build_child_env,
     build_systemd_run_cmd,
+    child_execute_argv,
     launch_detach,
     parse_active_reexec_units,
     read_env_local_subset,
@@ -42,7 +43,9 @@ def _ok_tmux(pane_pid: int = 9):
     return run_cmd
 
 
-def test_detach_launch_builds_transient_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detach_launch_builds_transient_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test 1 / AC1-2: systemd-run service shape, child env, XDG when unset."""
     hub = tmp_path / "hub"
     hub.mkdir()
@@ -54,7 +57,9 @@ def test_detach_launch_builds_transient_service(tmp_path: Path, monkeypatch: pyt
     calls: list[tuple[list[str], dict[str, str] | None]] = []
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
 
-    def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cmd(
+        cmd: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         calls.append((cmd, env))
         if cmd[:3] == ["systemctl", "--user", "list-units"]:
             assert env is not None
@@ -115,7 +120,9 @@ def test_detach_refuses_active_unit(tmp_path: Path) -> None:
     """Test 2 / AC3: active list-units row blocks second launch."""
     calls: list[list[str]] = []
 
-    def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cmd(
+        cmd: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         del env
         calls.append(cmd)
         if cmd[:3] == ["systemctl", "--user", "list-units"]:
@@ -253,6 +260,7 @@ def test_recover_waits_busy_occupant_then_reaches_paired_stop(
             cleared=True, waited_s=0.0, giw_paired_required=True
         ),
     )
+
     def _paired_stop(*_a, **_k):
         paired_stop_called.append(True)
         return {"status": "ok"}
@@ -364,7 +372,9 @@ def test_occupant_poll_timeout_refuses_without_quit(
     assert sends == []
 
 
-def test_stage_a_restarts_giw_when_spawn_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_a_restarts_giw_when_spawn_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test 4 / AC5: paired stop ok, spawn fails => GIW start, no q."""
     record_path = tmp_path / "armed.json"
     sock = str(tmp_path / "manage.sock")
@@ -400,7 +410,10 @@ def test_stage_a_restarts_giw_when_spawn_fails(tmp_path: Path, monkeypatch: pyte
             }
         if method == "busy_status":
             return {"process": {"manage_inflight": 1, "activities": []}}
-        if method == "stop" and params == {"service": "git_integration_worker", "park_live": True}:
+        if method == "stop" and params == {
+            "service": "git_integration_worker",
+            "park_live": True,
+        }:
             return {"status": "ok"}
         if method == "start" and params == {"service": "git_integration_worker"}:
             return {"status": "ok"}
@@ -686,6 +699,7 @@ def test_recover_pre_q_recheck_triggers_stage_a(
         "scripts.model_manager.guarded_manage_reexec.runner._publish_reexec",
         lambda _e: None,
     )
+
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del kwargs
         if method == "whoami":
@@ -885,7 +899,9 @@ def test_read_env_local_subset_filters_keys(tmp_path: Path) -> None:
 def test_build_child_env_uses_hub_layout(tmp_path: Path) -> None:
     env = build_child_env(tmp_path)
     assert env["PROJECT_ROOT"] == str(tmp_path)
-    assert env["PYTHONPATH"] == f"{tmp_path}/libs:{tmp_path}/services/universal-stargate"
+    assert (
+        env["PYTHONPATH"] == f"{tmp_path}/libs:{tmp_path}/services/universal-stargate"
+    )
 
 
 def test_build_systemd_run_cmd_absolute_python(tmp_path: Path) -> None:
@@ -897,3 +913,65 @@ def test_build_systemd_run_cmd_absolute_python(tmp_path: Path) -> None:
     )
     assert cmd[0] == "systemd-run"
     assert "/abs/py" in cmd
+
+
+def test_child_execute_argv_includes_deferred_report_flags(tmp_path: Path) -> None:
+    argv = child_execute_argv(
+        target_ref="deadbeef",
+        tmux_target="0:0",
+        result_path=tmp_path / "r.json",
+        python_bin="/abs/python",
+        parent_dispatch_id="parent-d-1",
+        report_thread="15851",
+        report_after_turn=1293,
+        wait_parent_timeout_s=900,
+    )
+    blob = " ".join(argv)
+    assert "CURSOR_SDK_DISPATCH_ID" not in blob
+    assert "--parent-dispatch-id" in argv
+    assert "parent-d-1" in argv
+    assert "--report-thread" in argv
+    assert "15851" in argv
+    assert "--report-after-turn" in argv
+    assert "1293" in argv
+    assert "--wait-parent-timeout-s" in argv
+    assert "900" in argv
+
+
+def test_detach_passes_deferred_flags_to_systemd_child(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    result_path = hub / "tmp" / "result.json"
+    captured_argv: list[list[str]] = []
+
+    def run_cmd(
+        cmd: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        del env
+        if cmd[:3] == ["systemctl", "--user", "list-units"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[0] == "systemd-run":
+            captured_argv.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    code, payload = launch_detach(
+        target_ref="abc123",
+        tmux_target=DEFAULT_TMUX_TARGET,
+        hub=hub,
+        result_path=result_path,
+        run_cmd=run_cmd,
+        python_bin="/abs/python",
+        parent_dispatch_id="disp-99",
+        report_thread="15851",
+        report_after_turn=1300,
+        wait_parent_timeout_s=900,
+    )
+    assert code == 0
+    assert payload["status"] == "launched"
+    assert len(captured_argv) == 1
+    cmd_blob = " ".join(captured_argv[0])
+    assert "disp-99" in cmd_blob
+    assert "15851" in cmd_blob
+    assert "1300" in cmd_blob
+    assert "CURSOR_SDK_DISPATCH_ID" not in cmd_blob

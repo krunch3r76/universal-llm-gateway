@@ -26,6 +26,11 @@ import subprocess
 import traceback
 from pathlib import Path
 
+from .deferred_execute import (
+    DEFAULT_WAIT_PARENT_TIMEOUT_S,
+    DeferredRecycleContext,
+    run_deferred_recycle,
+)
 from .detach import RESULT_PATH, launch_detach
 from .result import GuardedReexecResult
 from .runner import _write_result_file, run_guarded_reexec
@@ -122,6 +127,28 @@ def main(argv: list[str] | None = None) -> int:
         default=3,
         help="Bounded start-leg retries after quit (default: 3)",
     )
+    parser.add_argument(
+        "--parent-dispatch-id",
+        default=None,
+        help="Detached child: wait until this dispatch is terminal before execute",
+    )
+    parser.add_argument(
+        "--report-thread",
+        default=None,
+        help="Detached child: agent-bus thread for exactly one maestro reply",
+    )
+    parser.add_argument(
+        "--report-after-turn",
+        type=int,
+        default=None,
+        help="Detached child: --after-turn for the maestro reply",
+    )
+    parser.add_argument(
+        "--wait-parent-timeout-s",
+        type=int,
+        default=int(DEFAULT_WAIT_PARENT_TIMEOUT_S),
+        help="Detached child: max seconds waiting for parent terminal + GIW idle",
+    )
     args = parser.parse_args(argv)
 
     if args.detach and args.execute:
@@ -144,9 +171,26 @@ def main(argv: list[str] | None = None) -> int:
         code, payload = launch_detach(
             target_ref=target_ref,
             tmux_target=args.tmux_target,
+            parent_dispatch_id=args.parent_dispatch_id,
+            report_thread=args.report_thread,
+            report_after_turn=args.report_after_turn,
+            wait_parent_timeout_s=args.wait_parent_timeout_s,
         )
         _emit_json(json.dumps(payload, indent=2, sort_keys=True))
         return code
+
+    if args.parent_dispatch_id and not args.execute:
+        _emit_json(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": "parent_dispatch_requires_execute",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2
 
     dry_run = not args.execute
     result_path = Path(args.result_path) if args.result_path else None
@@ -161,6 +205,34 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     effective_result_path = result_path or (RESULT_PATH if args.recover else None)
+
+    if args.execute and args.parent_dispatch_id:
+        if not args.report_thread or args.report_after_turn is None:
+            _emit_json(
+                json.dumps(
+                    {
+                        "status": "refused",
+                        "reason": "deferred_recycle_missing_report_target",
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        ctx = DeferredRecycleContext(
+            parent_dispatch_id=args.parent_dispatch_id,
+            report_thread=str(args.report_thread),
+            report_after_turn=int(args.report_after_turn),
+            target_ref=target_ref,
+            tmux_target=args.tmux_target,
+            result_path=effective_result_path or RESULT_PATH,
+            wait_timeout_s=float(args.wait_parent_timeout_s),
+            repo_root=repo_root,
+        )
+        exit_code, result = run_deferred_recycle(ctx)
+        _emit_json(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+        return exit_code
+
     result: GuardedReexecResult | None = None
     exit_code = 1
     try:
