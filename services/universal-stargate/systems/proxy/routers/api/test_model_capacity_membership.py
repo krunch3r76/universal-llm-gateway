@@ -181,3 +181,57 @@ async def test_get_model_capacity_same_relay_sibling_not_double_counted(
     assert payload["nodes"] == [
         {"node_id": "jupiter-a", "parallel_slots": 2, "status": "loaded"}
     ]
+
+
+@pytest.mark.asyncio
+@patch.object(model_capacity_routes, "get_model_source_map", return_value={})
+@patch.object(
+    model_capacity_routes,
+    "get_all_available_models",
+    return_value={_MODEL: {}},
+)
+@patch.object(model_capacity_routes, "get_model_status_map")
+@patch.object(model_capacity_routes, "get_federation_integration")
+async def test_loaded_sibling_not_busy_when_peer_is_busy(
+    mock_federation: MagicMock,
+    mock_status_map: MagicMock,
+    _all_models: MagicMock,
+    _source_map: MagicMock,
+) -> None:
+    """Shared relay busy_on does not mark a loaded sibling busy.
+
+    Slot total still includes both gateways that report the model.
+    """
+    mock_federation.return_value = SimpleNamespace(
+        config=SimpleNamespace(stargate_id="master-local")
+    )
+    mock_status_map.return_value = {
+        _MODEL: {"loaded_on": ["relay-jupiter"], "busy_on": ["relay-jupiter"]},
+    }
+    busy = FederatedGateway(
+        gateway_id="edge-jupiter-a",
+        node_id="jupiter-a",
+        remote_stargate_id="relay-jupiter",
+        remote_stargate_url="http://relay-jupiter:9999",
+        model_resources={_MODEL: {"parallel_slots": 2}},
+        loaded_models=frozenset({_MODEL}),
+        busy_models=frozenset({_MODEL}),
+    )
+    loaded = FederatedGateway(
+        gateway_id="edge-jupiter-b",
+        node_id="jupiter-b",
+        remote_stargate_id="relay-jupiter",
+        remote_stargate_url="http://relay-jupiter:9999",
+        model_resources={_MODEL: {"parallel_slots": 5}},
+        loaded_models=frozenset({_MODEL}),
+    )
+    proxy = _proxy_with_gateways([busy, loaded])
+
+    payload = await model_capacity_routes.get_model_capacity(
+        _MODEL, proxy=proxy, _current_user={}
+    )
+
+    by_node = {node["node_id"]: node for node in payload["nodes"]}
+    assert by_node["jupiter-a"]["status"] == "busy"
+    assert by_node["jupiter-b"]["status"] == "loaded"
+    assert payload["total_parallel_slots"] == 7
