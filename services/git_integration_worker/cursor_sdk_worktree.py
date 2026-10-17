@@ -175,8 +175,21 @@ def _branch_name(thread_id: str) -> str:
     return lane_branch_name(thread_id)
 
 
+# Lane mint cuts from this ref. The main-checkout refusal uses the same
+# name; origin/HEAD must not override it (cryptax: origin/HEAD → main).
+_MINT_BRANCH_POINT_REF = "refs/heads/master"
+
+
+def _branch_name_from_heads_ref(ref: str) -> str:
+    """``refs/heads/master`` → ``master``."""
+    prefix = "refs/heads/"
+    if not ref.startswith(prefix) or len(ref) == len(prefix):
+        raise WorktreeMintError(f"mint branch point {ref!r} is not refs/heads/<name>")
+    return ref[len(prefix) :]
+
+
 def resolve_master_branch_point(
-    source_repo: Path, *, ref: str = "refs/heads/master"
+    source_repo: Path, *, ref: str = _MINT_BRANCH_POINT_REF
 ) -> str:
     """Resolve an explicit commit for the worktree branch point (not tip sampling)."""
     proc = subprocess.run(
@@ -223,6 +236,53 @@ def _branch_exists(source_repo: Path, branch_name: str) -> bool:
         check=False,
     )
     return proc.returncode == 0
+
+
+def _abbrev_head(source_repo: Path) -> str:
+    """Current branch of the main checkout, or ``HEAD`` when detached."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_repo.resolve()),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    head = proc.stdout.strip()
+    if proc.returncode != 0 or not head:
+        raise WorktreeMintError(
+            f"rev-parse HEAD failed for {source_repo}: {proc.stderr.strip()}"
+        )
+    return head
+
+
+def _refuse_main_checkout_off_default(
+    source_repo: Path, *, branch_point_ref: str = _MINT_BRANCH_POINT_REF
+) -> None:
+    """Refuse mint when the main checkout is not the branch mint cuts from.
+
+    The cut is ``resolve_master_branch_point`` (``refs/heads/master``).
+    ``origin/HEAD`` is not consulted: a remote HEAD of ``main`` must not
+    refuse a checkout already on local ``master``. Does not move HEAD. A
+    lane branch checked out in the satellite main checkout makes a later
+    ``git worktree add`` of that branch fail with ``already used by
+    worktree``.
+    """
+    head = _abbrev_head(source_repo)
+    expected = _branch_name_from_heads_ref(branch_point_ref)
+    if head == expected:
+        return
+    raise WorktreeMintError(
+        f"main checkout {source_repo.resolve()} is on {head!r}, not on default "
+        f"branch {expected!r} ({branch_point_ref}); refusing worktree mint "
+        f"without moving HEAD"
+    )
 
 
 def _rev_parse(source_repo: Path, ref: str) -> str:
@@ -304,7 +364,12 @@ def mint_dispatch_worktree(
     thread_id: str | None = None,
     branch_point: str | None = None,
 ) -> Path:
-    """Mint a lane-owned worktree once under master-keyed serialization."""
+    """Mint a lane-owned worktree once under master-keyed serialization.
+
+    Refuses when the main checkout is not on the mint branch point
+    (``refs/heads/master``). ``origin/HEAD`` does not override that branch.
+    Never checks a lane branch out in that checkout.
+    """
     lane_id = thread_id or dispatch_id
     subroot = repo_worktree_subroot(worktree_root, source_repo)
     subroot.mkdir(parents=True, exist_ok=True)
@@ -323,6 +388,9 @@ def mint_dispatch_worktree(
         source_repo=source_repo, holder_id=dispatch_id
     )
     try:
+        _refuse_main_checkout_off_default(
+            source_repo, branch_point_ref=_MINT_BRANCH_POINT_REF
+        )
         if _branch_exists(source_repo, branch):
             _git_worktree_add(
                 source_repo=source_repo,
