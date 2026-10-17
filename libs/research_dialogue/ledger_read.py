@@ -25,7 +25,23 @@ def _parse_decimal(val: Any) -> Decimal | None:
         return None
 
 
+def _unhealthy_snapshot(payload: dict[str, Any], *, as_of: datetime | None = None) -> Snapshot:
+    return Snapshot(
+        as_of_utc=as_of or datetime.now(tz=UTC),
+        healthy=False,
+        committed_usd=Decimal("0"),
+        open_reservations_usd=Decimal("0"),
+        window_start="",
+        ledger_instance_id="",
+        latch_active=False,
+        last_entries=[],
+        raw=payload,
+    )
+
+
 def snapshot_from_payload(payload: dict[str, Any], *, as_of: datetime | None = None) -> Snapshot:
+    if payload.get("healthy") is not True:
+        return _unhealthy_snapshot(payload, as_of=as_of)
     committed = _parse_decimal(payload.get("committed_usd"))
     open_res = _parse_decimal(payload.get("open_reservations_usd"))
     if committed is None or open_res is None:
@@ -38,13 +54,12 @@ def snapshot_from_payload(payload: dict[str, Any], *, as_of: datetime | None = N
         raise ValueError("missing ledger_instance_id")
     latch = payload.get("latch")
     latch_active = bool(isinstance(latch, dict) and latch.get("active"))
-    healthy = payload.get("healthy") is True
     entries = payload.get("last_entries")
     if not isinstance(entries, list):
         entries = []
     return Snapshot(
         as_of_utc=as_of or datetime.now(tz=UTC),
-        healthy=healthy,
+        healthy=True,
         committed_usd=committed,
         open_reservations_usd=open_res,
         window_start=window,
@@ -83,7 +98,10 @@ def check_ok(
     snap: Snapshot,
     s0: Snapshot,
     *,
-    previous_response_at: datetime | None = None,
+    last_post_committed: Decimal | None = None,
+    last_post_ledger_instance_id: str | None = None,
+    last_post_ledger_max_id: int | None = None,
+    pre_ledger_max_id: int | None = None,
 ) -> str | None:
     if not snap.healthy:
         return "ledger_unhealthy"
@@ -91,8 +109,16 @@ def check_ok(
         return "ledger_read_failed"
     if snap.latch_active:
         return "ledger_latched"
+    if last_post_ledger_instance_id and snap.ledger_instance_id != last_post_ledger_instance_id:
+        return "stale_read"
     if snap.window_start != s0.window_start or snap.ledger_instance_id != s0.ledger_instance_id:
         return "frame_changed"
-    if previous_response_at is not None and snap.as_of_utc <= previous_response_at:
+    if last_post_committed is not None and snap.committed_usd < last_post_committed:
+        return "stale_read"
+    if (
+        last_post_ledger_max_id is not None
+        and pre_ledger_max_id is not None
+        and pre_ledger_max_id < last_post_ledger_max_id
+    ):
         return "stale_read"
     return None

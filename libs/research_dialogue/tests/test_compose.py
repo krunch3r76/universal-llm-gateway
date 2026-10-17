@@ -18,6 +18,46 @@ def test_forbidden_keys_absent() -> None:
     assert_no_forbidden_keys(body)
     for key in ("metadata", "tools", "mcp_servers"):
         assert key not in body
+    assert "stream" not in body
+
+
+def test_default_body_non_stream() -> None:
+    body = build_messages_body(
+        turn_index=2,
+        history=[{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
+        ledger_verbatim="L",
+        challenge="c",
+        retrieval_results=[],
+        dropped_queries=[],
+    )
+    assert "stream" not in body
+
+
+def test_retrieval_xml_escapes_attributes() -> None:
+    from research_dialogue.retrieval import SearchResult
+
+    body = build_messages_body(
+        turn_index=2,
+        history=[{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
+        ledger_verbatim="L",
+        challenge="c",
+        retrieval_results=[
+            SearchResult(
+                search_id='id"1',
+                scope="<s>",
+                query="a&b",
+                weak_match=False,
+                rerank_status=None,
+                top_ce=None,
+                passages=[],
+            )
+        ],
+        dropped_queries=[],
+    )
+    user_text = body["messages"][-1]["content"][0]["text"]
+    assert "&lt;s&gt;" in user_text
+    assert "&quot;" in user_text or "&#x27;" not in user_text
+    assert "a&amp;b" in user_text
 
 
 def test_smoke_style_user_has_no_cache_control() -> None:

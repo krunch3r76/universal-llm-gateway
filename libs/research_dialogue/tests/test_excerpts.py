@@ -21,3 +21,14 @@ def test_selected_ranges_present() -> None:
     assert "L11" in out
     assert "L98" in out
     assert "L203" in out
+    assert "L166" not in out.splitlines()
+    assert "L197" not in out.splitlines()
+
+
+def test_read_excerpts_sha_mismatch(tmp_path) -> None:
+    from research_dialogue.excerpts import read_excerpts
+
+    bad = tmp_path / "bad.md"
+    bad.write_text("# not the deliverable\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        read_excerpts(bad)

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
-import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -13,9 +11,11 @@ from typing import Any, Callable
 
 from research_dialogue._types import Snapshot
 from research_dialogue.ledger_read import read_status
+from research_dialogue.ledger_sqlite import ledger_entries_after, ledger_max_id
+from research_dialogue.models import normalize_ledger_model
 from research_dialogue.session import run_close, run_turn
 
-OUR_MODEL = "anthropic/claude-opus-5-5"
+OUR_MODEL = normalize_ledger_model("claude-opus-5-5")
 _OPEN_WAIT_POLL_S = 30
 _OPEN_WAIT_MAX_S = 600
 _CLOUD_PROXY_PIDFILE = Path.home() / ".gateway" / "cloud-proxy.pid"
@@ -32,6 +32,8 @@ def probe_pids(
     ss_output: str | None = None,
     pidfile_text: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
+    import subprocess
+
     if ss_output is None:
         ss_output = subprocess.run(
             ["ss", "-ltnpH", "sport = :9999"],
@@ -60,28 +62,6 @@ def ledger_path_from_snapshot(snap: Snapshot) -> Path:
     return Path(raw)
 
 
-def ledger_max_id(ledger_path: Path) -> int:
-    conn = sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)
-    try:
-        row = conn.execute("select coalesce(max(id),0) from entries").fetchone()
-        return int(row[0]) if row else 0
-    finally:
-        conn.close()
-
-
-def ledger_entries_after(ledger_path: Path, max_id: int) -> list[dict[str, Any]]:
-    conn = sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            "select * from entries where id > ? order by id",
-            (max_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
 def wait_open_clear(
     snap: Snapshot,
     *,
@@ -103,6 +83,38 @@ def wait_open_clear(
         waited += poll_s
         st = read_fn()
     return st, waits
+
+
+def preflight_guard(
+    *,
+    expect_stargate_pid: str,
+    expect_cloud_proxy_pid: str,
+    read_fn: Callable[[], Snapshot],
+    ss_output: str | None = None,
+    pidfile_text: str | None = None,
+    open_wait_max_s: int = _OPEN_WAIT_MAX_S,
+) -> tuple[int, dict[str, Any]]:
+    rec: dict[str, Any] = {"t_start": _now_iso()}
+    ok, pids = probe_pids(
+        expect_stargate_pid=expect_stargate_pid,
+        expect_cloud_proxy_pid=expect_cloud_proxy_pid,
+        ss_output=ss_output,
+        pidfile_text=pidfile_text,
+    )
+    rec["pids"] = pids
+    if not ok:
+        rec["abort"] = "pid_changed_or_restart"
+        return 5, rec
+    st = read_fn()
+    st, open_waits = wait_open_clear(st, read_fn=read_fn, max_wait_s=open_wait_max_s)
+    if open_waits:
+        rec["open_waits"] = open_waits
+    if st.open_reservations_usd > 0:
+        rec["abort"] = "foreign_open_reservation"
+        rec["pre_status"] = _status_subset(st)
+        return 6, rec
+    rec["pre_status"] = _status_subset(st)
+    return 0, rec
 
 
 def attribute_ledger_window(
@@ -178,34 +190,35 @@ def run_driver(
     pidfile_text: str | None = None,
     sleep_after: Callable[[float], None] = time.sleep,
     open_wait_max_s: int = _OPEN_WAIT_MAX_S,
+    stream: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     read_fn = read_fn or read_status
     rec: dict[str, Any] = {"mode": mode, "t_start": _now_iso()}
-    ok, pids = probe_pids(
+    code, guard = preflight_guard(
         expect_stargate_pid=expect_stargate_pid,
         expect_cloud_proxy_pid=expect_cloud_proxy_pid,
+        read_fn=read_fn,
         ss_output=ss_output,
         pidfile_text=pidfile_text,
+        open_wait_max_s=open_wait_max_s,
     )
-    rec["pids"] = pids
-    if not ok:
-        rec["abort"] = "pid_changed_or_restart"
-        return 5, rec
+    rec.update(guard)
+    if code != 0:
+        return code, rec
 
     st = read_fn()
-    st, open_waits = wait_open_clear(st, read_fn=read_fn, max_wait_s=open_wait_max_s)
-    if open_waits:
-        rec["open_waits"] = open_waits
-    if st.open_reservations_usd > 0:
-        rec["abort"] = "foreign_open_reservation"
-        rec["pre_status"] = _status_subset(st)
-        return 6, rec
-
-    rec["pre_status"] = _status_subset(st)
     ledger_path = ledger_path_from_snapshot(st)
-    m0 = ledger_max_id(ledger_path)
-    rec["ledger_max_id_pre"] = m0
     rec["ledger_path"] = str(ledger_path)
+    import sqlite3
+
+    try:
+        m0 = ledger_max_id(ledger_path)
+    except (OSError, sqlite3.Error):
+        m0 = 0
+    rec["ledger_max_id_pre"] = m0
+
+    state_before = json.loads((session_dir / "state.json").read_text(encoding="utf-8"))
+    turn_before = int(state_before.get("turn_count", 0))
 
     cli_exit = 0
     session_line: dict[str, Any] = {}
@@ -214,6 +227,7 @@ def run_driver(
             session_dir,
             challenge_file=challenge_file,
             read_fn=read_fn,
+            stream=stream,
         )
     elif mode == "close":
         if not stop_reason:
@@ -222,12 +236,25 @@ def run_driver(
             session_dir,
             stop_reason=stop_reason,
             read_fn=read_fn,
+            stream=stream,
         )
     else:
         raise ValueError(f"unknown mode {mode!r}")
 
     rec["cli_exit"] = cli_exit
     rec["session_line"] = session_line
+
+    send_skipped = bool(session_line.get("send_skipped")) or cli_exit == 3
+    if send_skipped:
+        next_turn = turn_before + 1 if mode == "turn" else turn_before
+        stamp = _now_iso().replace(":", "").replace("+", "")
+        abort_path = session_dir / f"turn-{next_turn:02d}-abort-{stamp}-ledger.json"
+        rec["abort_ledger_path"] = str(abort_path)
+        rec["t_end"] = _now_iso()
+        abort_path.write_text(json.dumps(rec, indent=2, default=str) + "\n", encoding="utf-8")
+        summary = {"cli_exit": cli_exit, "cli": json.dumps(session_line, default=str)[-600:]}
+        return cli_exit, summary
+
     sleep_after(1)
     new_entries = ledger_entries_after(ledger_path, m0)
     rec["new_entries"] = new_entries
@@ -237,15 +264,21 @@ def run_driver(
     rec["turn"] = n
     tf = session_dir / f"turn-{n:02d}.json"
     billed: Decimal | None = None
+    send_ok = False
     if tf.exists():
         td = json.loads(tf.read_text(encoding="utf-8"))
         billed = Decimal(str(td.get("billed_usd", "0")))
+        send_ok = bool(td.get("send_ok"))
         rec["harness_billed"] = str(billed)
         rec["usage"] = td.get("usage")
         rec["stop_reason_api"] = td.get("stop_reason")
 
     attr, driver_stop = attribute_ledger_window(new_entries, harness_billed=billed)
     rec.update(attr)
+    if send_ok and billed is not None and billed > 0 and not rec.get("our_request_ids"):
+        driver_stop = "ledger_attribution_missing"
+        rec["driver_stop"] = driver_stop
+
     rec["t_end"] = _now_iso()
     post = read_fn()
     rec["post_status"] = _status_subset(post)
@@ -277,6 +310,8 @@ def run_driver(
 
     if driver_stop == "ledger_undercount":
         return 4, summary
+    if driver_stop == "ledger_attribution_missing":
+        return 8, summary
     if driver_stop:
         return 7, summary
     return cli_exit if cli_exit != 0 else 0, summary
@@ -286,6 +321,11 @@ def _add_session_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--session", type=Path, required=True)
     sp.add_argument("--expect-stargate-pid", required=True)
     sp.add_argument("--expect-cloud-proxy-pid", required=True)
+    sp.add_argument(
+        "--stream",
+        action="store_true",
+        help="Use SSE streaming (S1 deviation; floors at gate until FLOOR-FIX F1).",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -309,6 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         expect_cloud_proxy_pid=args.expect_cloud_proxy_pid,
         stop_reason=stop_reason,
         challenge_file=getattr(args, "challenge_file", None),
+        stream=bool(getattr(args, "stream", False)),
     )
     print(json.dumps(summary, default=str))
     return code

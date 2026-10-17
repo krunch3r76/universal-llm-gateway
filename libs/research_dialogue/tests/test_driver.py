@@ -9,13 +9,8 @@ from pathlib import Path
 import pytest
 
 from research_dialogue._types import Snapshot
-from research_dialogue.driver import (
-    attribute_ledger_window,
-    ledger_entries_after,
-    ledger_max_id,
-    probe_pids,
-    run_driver,
-)
+from research_dialogue.driver import attribute_ledger_window, probe_pids, run_driver
+from research_dialogue.ledger_sqlite import ledger_max_id
 
 pytestmark = pytest.mark.offline
 
@@ -137,7 +132,14 @@ def test_run_driver_writes_ledger_json(tmp_path: Path, monkeypatch: pytest.Monke
     session = tmp_path / "session"
     _seed_session(session, turn_count=1)
     (session / "turn-01.json").write_text(
-        json.dumps({"billed_usd": "0.20", "usage": {}, "stop_reason": "end_turn"}),
+        json.dumps(
+            {
+                "billed_usd": "0.20",
+                "usage": {},
+                "stop_reason": "end_turn",
+                "send_ok": True,
+            }
+        ),
         encoding="utf-8",
     )
     snap = _snap(ledger_path=str(ledger))
@@ -183,13 +185,76 @@ def test_run_driver_writes_ledger_json(tmp_path: Path, monkeypatch: pytest.Monke
     assert ledger_max_id(ledger) == 2
 
 
+def test_run_driver_abort_on_pre_send_exit_3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = tmp_path / "session"
+    _seed_session(session, turn_count=0)
+    snap = _snap()
+
+    def fake_turn(session_dir: Path, **kwargs: object) -> tuple[int, dict]:
+        return 3, {"stop_reason": "ledger_latched", "send_skipped": True}
+
+    monkeypatch.setattr("research_dialogue.driver.run_turn", fake_turn)
+    code, summary = run_driver(
+        "turn",
+        session,
+        expect_stargate_pid="1",
+        expect_cloud_proxy_pid="2",
+        ss_output="pid=1",
+        pidfile_text="2",
+        read_fn=lambda: snap,
+        sleep_after=lambda _s: None,
+        open_wait_max_s=0,
+    )
+    assert code == 3
+    abort_files = list(session.glob("turn-*-abort-*-ledger.json"))
+    assert len(abort_files) == 1
+    assert not (session / "turn-01-ledger.json").exists()
+
+
+def test_run_driver_attribution_missing_exit_8(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "ledger.sqlite"
+    _init_ledger(ledger)
+    session = tmp_path / "session"
+    _seed_session(session, turn_count=1)
+    (session / "turn-01.json").write_text(
+        json.dumps({"billed_usd": "0.20", "usage": {}, "stop_reason": "end_turn", "send_ok": True}),
+        encoding="utf-8",
+    )
+    snap = _snap(ledger_path=str(ledger))
+
+    def fake_turn(session_dir: Path, **kwargs: object) -> tuple[int, dict]:
+        return 0, {"turn": 1}
+
+    monkeypatch.setattr("research_dialogue.driver.run_turn", fake_turn)
+    code, summary = run_driver(
+        "turn",
+        session,
+        expect_stargate_pid="1",
+        expect_cloud_proxy_pid="2",
+        ss_output="pid=1",
+        pidfile_text="2",
+        read_fn=lambda: snap,
+        sleep_after=lambda _s: None,
+        open_wait_max_s=0,
+    )
+    assert code == 8
+    assert summary.get("driver_stop") == "ledger_attribution_missing"
+
+
 def test_run_driver_undercount_exit_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ledger = tmp_path / "ledger.sqlite"
     _init_ledger(ledger)
     session = tmp_path / "session"
     _seed_session(session, turn_count=1)
     (session / "turn-01.json").write_text(
-        json.dumps({"billed_usd": "0.20", "usage": {}, "stop_reason": "end_turn"}),
+        json.dumps(
+            {
+                "billed_usd": "0.20",
+                "usage": {},
+                "stop_reason": "end_turn",
+                "send_ok": True,
+            }
+        ),
         encoding="utf-8",
     )
     snap = _snap(ledger_path=str(ledger))

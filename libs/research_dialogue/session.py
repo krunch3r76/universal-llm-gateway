@@ -19,6 +19,8 @@ from research_dialogue.excerpts import read_excerpts
 from research_dialogue.contract import parse_contract
 from research_dialogue.cost import billed_usd
 from research_dialogue.ledger_read import check_ok, read_status
+from research_dialogue.ledger_sqlite import ledger_max_id
+from research_dialogue.models import normalize_ledger_model
 from research_dialogue.retrieval import search as rag_search
 from research_dialogue.transport import send_messages
 
@@ -44,30 +46,102 @@ def _ledger_delta(committed_s0: Decimal, snap: Snapshot) -> Decimal:
     return (snap.committed_usd + snap.open_reservations_usd) - committed_s0
 
 
-def _match_commit(
+def _ledger_model(model: str) -> str:
+    return normalize_ledger_model(model)
+
+
+def _entries_for_model(entries: list[dict[str, Any]], model: str) -> list[dict[str, Any]]:
+    want = _ledger_model(model)
+    return [e for e in entries if e.get("model") == want or e.get("model") == model]
+
+
+def _pair_by_request_id(entries: list[dict[str, Any]], model: str) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in _entries_for_model(entries, model):
+        rid = row.get("request_id")
+        if not isinstance(rid, str):
+            continue
+        grouped.setdefault(rid, []).append(row)
+    out: dict[str, dict[str, Any]] = {}
+    for rid, rows in grouped.items():
+        reserve = [r for r in rows if r.get("kind") == "reserve"]
+        commit = [r for r in rows if r.get("kind") == "commit"]
+        if reserve:
+            out[rid] = {
+                "reserve_usd": sum(_dec(r.get("usd")) for r in reserve),
+                "commit_usd": sum(_dec(r.get("usd")) for r in commit) if commit else None,
+                "commit_row": commit[0] if commit else None,
+            }
+    return out
+
+
+def _classify_smoke(
     entries: list[dict[str, Any]],
     *,
     model: str,
     billed: Decimal,
-    t0: datetime,
-    t1: datetime,
-) -> dict[str, Any] | None:
-    for row in entries:
-        if row.get("kind") != "commit":
+    committed_rise: Decimal,
+) -> str:
+    """Return smoke_result: exact | floor | fail."""
+    if billed <= 0 or committed_rise <= 0:
+        return "fail"
+    pairs = _pair_by_request_id(entries, model)
+    for info in pairs.values():
+        commit_usd = info.get("commit_usd")
+        reserve_usd = info["reserve_usd"]
+        if commit_usd is None:
             continue
-        if row.get("model") != model and row.get("model") != f"anthropic/{model}":
+        if abs(commit_usd - billed) <= Decimal("0.000001"):
+            return "exact"
+        if committed_rise >= billed and committed_rise == reserve_usd:
+            return "floor"
+    return "fail"
+
+
+def _post_baseline(state: dict[str, Any]) -> tuple[Decimal | None, str | None, int | None]:
+    lc = state.get("last_post_committed_usd")
+    li = state.get("last_post_ledger_instance_id")
+    lm = state.get("last_post_ledger_max_id")
+    return (
+        _dec(lc) if lc is not None else None,
+        li if isinstance(li, str) and li else None,
+        int(lm) if lm is not None else None,
+    )
+
+
+def _pre_ledger_max_id(snap: Snapshot) -> int | None:
+    import sqlite3
+
+    raw = snap.raw.get("ledger_path")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return ledger_max_id(Path(raw))
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def _store_post_baseline(state: dict[str, Any], post: Snapshot) -> None:
+    state["last_post_committed_usd"] = str(post.committed_usd)
+    state["last_post_ledger_instance_id"] = post.ledger_instance_id
+    mid = _pre_ledger_max_id(post)
+    if mid is not None:
+        state["last_post_ledger_max_id"] = mid
+
+
+def _closing_already_recorded(session_dir: Path, state: dict[str, Any]) -> bool:
+    if state.get("closing_recorded"):
+        return True
+    for path in session_dir.glob("turn-*.json"):
+        if path.name.endswith("-reply.txt"):
             continue
-        usd = _dec(row.get("usd"))
-        if abs(usd - billed) <= Decimal("0.000001"):
-            created = row.get("created_at")
-            if isinstance(created, str):
-                try:
-                    ts = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    if t0 <= ts <= t1:
-                        return row
-                except ValueError:
-                    continue
-    return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if doc.get("closing"):
+            return True
+    return False
 
 
 class SessionStore:
@@ -86,10 +160,14 @@ class SessionStore:
 
 
 def _invoke_send(
-    send_fn: Callable[[dict[str, Any]], SendResult],
+    send_fn: Callable[..., SendResult],
     body: dict[str, Any],
+    *,
+    stream: bool = False,
 ) -> SendResult:
     try:
+        if send_fn is send_messages:
+            return send_messages(body, stream=stream)
         return send_fn(body)
     except httpx.HTTPError as exc:
         resp = getattr(exc, "response", None)
@@ -125,76 +203,114 @@ def run_smoke(
     session_dir: Path,
     *,
     read_fn: Callable[[], Snapshot] = read_status,
-    send_fn: Callable[[dict[str, Any]], SendResult] = send_messages,
+    send_fn: Callable[..., SendResult] = send_messages,
+    stream: bool = False,
 ) -> int:
-    store = SessionStore(session_dir)
     sb = read_fn()
     if check_ok(sb, sb) is not None:
-        _write_smoke(session_dir, {"pass": False, "reason": "pre_read_failed"})
-        return 2
-    body = {
-        "model": "claude-sonnet-5",
-        "messages": [{"role": "user", "content": "Reply with the single word OK."}],
-        "max_tokens": 64,
-        "stream": True,
-    }
-    sent = _invoke_send(send_fn, body)
-    sa = read_fn()
-    reason = check_ok(sa, sb)
-    if reason:
         _write_smoke(
             session_dir,
-            {
-                "pass": False,
-                "reason": reason,
-                "send_ok": sent.ok,
-                "status_code": sent.status_code,
-                "error_body": sent.error_body,
-                "usage": sent.usage,
-            },
+            {"pass": False, "smoke_result": "fail", "reason": "pre_read_failed"},
         )
         return 2
-    billed = billed_usd(sent.usage, model="claude-sonnet-5") if sent.ok else Decimal("0")
+    body = build_messages_body(
+        turn_index=1,
+        history=[],
+        excerpt_text="smoke",
+        minor_notes="smoke",
+        smoke=True,
+        model="claude-sonnet-5",
+        max_tokens=64,
+        stream=stream,
+    )
+    assert_no_forbidden_keys(body)
+    sent = _invoke_send(send_fn, body, stream=stream)
+    _write_smoke_partial(
+        session_dir,
+        send=sent,
+        body=body,
+    )
+    sa = None
+    post_reason: str | None = None
+    billed = Decimal("0")
+    missing: list[str] = []
+    unknown: list[str] = []
+    try:
+        sa = read_fn()
+        post_reason = check_ok(sa, sb)
+        if sent.ok:
+            billed, missing, unknown = billed_usd(sent.usage, model="claude-sonnet-5")
+    except Exception as exc:  # noqa: BLE001 — merge failure into smoke.json
+        post_reason = post_reason or f"post_read_failed:{type(exc).__name__}"
+    payload: dict[str, Any] = {
+        "send_ok": sent.ok,
+        "status_code": sent.status_code,
+        "error_body": sent.error_body,
+        "usage": sent.usage,
+        "usage_incomplete": sent.usage_incomplete,
+        "billed_missing_fields": missing,
+        "billed_unknown_fields": unknown,
+        "post_read_failed": post_reason,
+    }
+    if sa is None:
+        payload.update({"pass": False, "smoke_result": "fail", "reason": post_reason})
+        _write_smoke(session_dir, payload)
+        return 2
+    if post_reason:
+        payload.update({"pass": False, "smoke_result": "fail", "reason": post_reason})
+        _write_smoke(session_dir, payload)
+        return 2
     committed_b = sb.committed_usd
     committed_a = sa.committed_usd
     open_b = sb.open_reservations_usd
     open_a = sa.open_reservations_usd
     committed_rise = committed_a - committed_b
-    ok = (
-        sent.ok
-        and billed > 0
-        and committed_rise > 0
-        and committed_rise >= billed
-        and open_a <= open_b
-    )
-    matched = _match_commit(
+    smoke_result = _classify_smoke(
         sa.last_entries,
         model="claude-sonnet-5",
         billed=billed,
-        t0=sb.as_of_utc,
-        t1=sa.as_of_utc,
+        committed_rise=committed_rise,
     )
-    if ok and matched is None:
-        ok = abs(committed_rise - billed) <= Decimal("0.000001")
-    payload = {
-        "pass": ok,
-        "committed_b": str(committed_b),
-        "committed_a": str(committed_a),
-        "open_b": str(open_b),
-        "open_a": str(open_a),
-        "billed": str(billed),
-        "matched_commit": matched,
-        "send_ok": sent.ok,
-        "status_code": sent.status_code,
-        "error_body": sent.error_body,
-        "usage": sent.usage,
-    }
+    if not (sent.ok and open_a <= open_b):
+        smoke_result = "fail"
+    gap = str(committed_rise - billed) if committed_rise >= billed else None
+    payload.update(
+        {
+            "pass": smoke_result == "exact",
+            "smoke_result": smoke_result,
+            "committed_b": str(committed_b),
+            "committed_a": str(committed_a),
+            "open_b": str(open_b),
+            "open_a": str(open_a),
+            "billed": str(billed),
+            "committed_rise": str(committed_rise),
+            "floor_gap": gap if smoke_result == "floor" else None,
+        }
+    )
     _write_smoke(session_dir, payload)
-    return 0 if ok else 2
+    return 0 if smoke_result == "exact" else 2
 
 
 def _write_smoke(session_dir: Path, payload: dict[str, Any]) -> None:
-    (session_dir / "smoke.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path = session_dir / "smoke.json"
+    if path.is_file():
+        prior = json.loads(path.read_text(encoding="utf-8"))
+        prior.update(payload)
+        payload = prior
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_smoke_partial(session_dir: Path, *, send: SendResult, body: dict[str, Any]) -> None:
+    _write_smoke(
+        session_dir,
+        {
+            "request": body,
+            "response_text": send.text,
+            "usage": send.usage,
+            "stop_reason": send.stop_reason,
+            "usage_skipped_dict_keys": send.usage_skipped_dict_keys,
+        },
+    )
 
 
 def run_start(
@@ -276,13 +392,27 @@ def run_turn(
     *,
     challenge_file: Path | None = None,
     read_fn: Callable[[], Snapshot] = read_status,
-    send_fn: Callable[[dict[str, Any]], SendResult] = send_messages,
+    send_fn: Callable[..., SendResult] = send_messages,
     search_fn: Callable[..., Any] = rag_search,
+    stream: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     store = SessionStore(session_dir)
     state = store.load()
     if not state:
         raise RuntimeError("session not started")
+    if state.get("stop_reason"):
+        out = {
+            "stop_reason": state["stop_reason"],
+            "turn": state.get("turn_count", 0),
+            "send_skipped": True,
+        }
+        print(json.dumps(out))
+        return 3, out
+    if int(state.get("turn_count", 0)) >= TURN_LIMIT:
+        out = {"stop_reason": "turn_limit", "turn": state.get("turn_count", 0), "send_skipped": True}
+        print(json.dumps(out))
+        return 3, out
+
     s0 = Snapshot(
         as_of_utc=datetime.now(tz=UTC),
         healthy=True,
@@ -293,14 +423,19 @@ def run_turn(
         latch_active=False,
     )
     pre = read_fn()
-    prev_at = None
-    if state.get("last_response_at"):
-        prev_at = datetime.fromisoformat(state["last_response_at"])
-    pre_reason = check_ok(pre, s0, previous_response_at=prev_at)
+    last_committed, last_inst, last_max_id = _post_baseline(state)
+    pre_reason = check_ok(
+        pre,
+        s0,
+        last_post_committed=last_committed,
+        last_post_ledger_instance_id=last_inst,
+        last_post_ledger_max_id=last_max_id,
+        pre_ledger_max_id=_pre_ledger_max_id(pre),
+    )
     if pre_reason:
         state["stop_reason"] = pre_reason
         store.save(state)
-        out = {"stop_reason": pre_reason, "turn": state.get("turn_count", 0)}
+        out = {"stop_reason": pre_reason, "turn": state.get("turn_count", 0), "send_skipped": True}
         print(json.dumps(out))
         return 3, out
 
@@ -337,16 +472,58 @@ def run_turn(
         dropped_queries=dropped,
         ledger_verbatim=ledger_verbatim,
         challenge=challenge,
+        stream=stream,
     )
     assert_no_forbidden_keys(body)
-    send_result = _invoke_send(send_fn, body)
-    post = read_fn()
-    post_reason = check_ok(post, s0)
-    model = body["model"]
-    billed = billed_usd(send_result.usage, model=model) if send_result.ok else Decimal("0")
-    running = _dec(state.get("running_billed", "0")) + billed
-    committed_s0 = _dec(state["committed_S0"])
-    ledger_delta = _ledger_delta(committed_s0, post)
+    send_result = _invoke_send(send_fn, body, stream=stream)
+    _write_turn_json(
+        session_dir,
+        turn_index=turn_index,
+        body=body,
+        send_result=send_result,
+        billed=Decimal("0"),
+        running=_dec(state.get("running_billed", "0")),
+        ledger_delta=Decimal("0"),
+        pre=pre,
+        post=pre,
+        post_reason=None,
+        matched=None,
+        retrieval=(*retrieval_results, *dropped),
+        closing=False,
+        partial=True,
+    )
+
+    post = pre
+    post_reason: str | None = None
+    billed = Decimal("0")
+    missing: list[str] = []
+    unknown: list[str] = []
+    running = _dec(state.get("running_billed", "0"))
+    ledger_delta = Decimal("0")
+    matched = None
+    try:
+        post = read_fn()
+        post_reason = check_ok(
+            post,
+            s0,
+            last_post_committed=last_committed,
+            last_post_ledger_instance_id=last_inst,
+            last_post_ledger_max_id=last_max_id,
+            pre_ledger_max_id=_pre_ledger_max_id(post),
+        )
+        if send_result.ok:
+            billed, missing, unknown = billed_usd(send_result.usage, model=body["model"])
+        running = _dec(state.get("running_billed", "0")) + billed
+        committed_s0 = _dec(state["committed_S0"])
+        ledger_delta = _ledger_delta(committed_s0, post)
+        if send_result.ok:
+            pairs = _pair_by_request_id(post.last_entries, body["model"])
+            for info in pairs.values():
+                if info.get("commit_row"):
+                    matched = info["commit_row"]
+                    break
+    except Exception as exc:  # noqa: BLE001
+        post_reason = post_reason or f"post_read_failed:{type(exc).__name__}"
 
     reply_path = session_dir / f"turn-{turn_index:02d}-reply.txt"
     reply_path.write_text(send_result.text, encoding="utf-8")
@@ -363,16 +540,6 @@ def run_turn(
     else:
         state["parse_fail_streak"] = int(state.get("parse_fail_streak", 0)) + 1
 
-    matched = None
-    if send_result.ok:
-        matched = _match_commit(
-            post.last_entries,
-            model=model,
-            billed=billed,
-            t0=pre.as_of_utc,
-            t1=post.as_of_utc,
-        )
-
     _write_turn_json(
         session_dir,
         turn_index=turn_index,
@@ -387,6 +554,9 @@ def run_turn(
         matched=matched,
         retrieval=(*retrieval_results, *dropped),
         closing=False,
+        partial=False,
+        billed_missing=missing,
+        billed_unknown=unknown,
     )
 
     if send_result.ok:
@@ -403,6 +573,7 @@ def run_turn(
     state["last_reply_path"] = str(reply_path)
     state["last_response_at"] = datetime.now(tz=UTC).isoformat()
     state["final_post_snapshot"] = _snap_dict(post)
+    _store_post_baseline(state, post)
 
     converged = parsed.ok and parsed.status.lower().startswith("converged")
     stop = evaluate_stop_rules(
@@ -445,6 +616,9 @@ def _write_turn_json(
     matched: dict[str, Any] | None,
     retrieval: tuple[Any, ...] = (),
     closing: bool,
+    partial: bool = False,
+    billed_missing: list[str] | None = None,
+    billed_unknown: list[str] | None = None,
 ) -> None:
     turn_doc: dict[str, Any] = {
         "turn": turn_index,
@@ -456,15 +630,31 @@ def _write_turn_json(
         "send_ok": send_result.ok,
         "status_code": send_result.status_code,
         "error_body": send_result.error_body,
-        "billed_usd": str(billed),
-        "running_sum": str(running),
-        "ledger_delta": str(ledger_delta),
-        "post_open_usd": str(post.open_reservations_usd),
-        "pre_snapshot": _snap_dict(pre),
-        "post_snapshot": _snap_dict(post),
-        "post_read_failed": post_reason,
-        "matched_commit": matched,
+        "usage_incomplete": send_result.usage_incomplete,
+        "delta_usage_seen": send_result.delta_usage_seen,
+        "parse_error": send_result.parse_error,
+        "usage_skipped_dict_keys": send_result.usage_skipped_dict_keys,
     }
+    if partial:
+        (session_dir / f"turn-{turn_index:02d}.json").write_text(
+            json.dumps(turn_doc, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return
+    turn_doc.update(
+        {
+            "billed_usd": str(billed),
+            "billed_missing_fields": billed_missing or [],
+            "billed_unknown_fields": billed_unknown or [],
+            "running_sum": str(running),
+            "ledger_delta": str(ledger_delta),
+            "post_open_usd": str(post.open_reservations_usd),
+            "pre_snapshot": _snap_dict(pre),
+            "post_snapshot": _snap_dict(post),
+            "post_read_failed": post_reason,
+            "matched_commit": matched,
+        }
+    )
     if retrieval:
         turn_doc["retrieval"] = [
             {
@@ -488,10 +678,15 @@ def run_close(
     stop_reason: str,
     no_p4: bool = False,
     read_fn: Callable[[], Snapshot] = read_status,
-    send_fn: Callable[[dict[str, Any]], SendResult] = send_messages,
+    send_fn: Callable[..., SendResult] = send_messages,
+    stream: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     store = SessionStore(session_dir)
     state = store.load()
+    if _closing_already_recorded(session_dir, state):
+        out = {"stop_reason": "closing_already_recorded", "send_skipped": True}
+        print(json.dumps(out))
+        return 3, out
     p4_text = ""
     session_line: dict[str, Any] = {"mode": "close", "stop_reason": stop_reason}
     s0 = Snapshot(
@@ -503,9 +698,17 @@ def run_close(
         ledger_instance_id=state["ledger_instance_id"],
         latch_active=False,
     )
+    last_committed, last_inst, last_max_id = _post_baseline(state)
     if not no_p4:
         pre = read_fn()
-        if check_ok(pre, s0) is None:
+        if check_ok(
+            pre,
+            s0,
+            last_post_committed=last_committed,
+            last_post_ledger_instance_id=last_inst,
+            last_post_ledger_max_id=last_max_id,
+            pre_ledger_max_id=_pre_ledger_max_id(pre),
+        ) is None:
             turn_index = int(state.get("turn_count", 0)) + 1
             history = list(state.get("history") or [])
             body = build_messages_body(
@@ -513,24 +716,55 @@ def run_close(
                 history=history,
                 closing=True,
                 stop_reason=stop_reason,
+                stream=stream,
             )
             assert_no_forbidden_keys(body)
-            send_result = _invoke_send(send_fn, body)
-            post = read_fn()
-            post_reason = check_ok(post, s0)
-            model = body["model"]
-            billed = billed_usd(send_result.usage, model=model) if send_result.ok else Decimal("0")
-            running = _dec(state.get("running_billed", "0")) + billed
-            ledger_delta = _ledger_delta(_dec(state["committed_S0"]), post)
+            send_result = _invoke_send(send_fn, body, stream=stream)
+            _write_turn_json(
+                session_dir,
+                turn_index=turn_index,
+                body=body,
+                send_result=send_result,
+                billed=Decimal("0"),
+                running=_dec(state.get("running_billed", "0")),
+                ledger_delta=Decimal("0"),
+                pre=pre,
+                post=pre,
+                post_reason=None,
+                matched=None,
+                closing=True,
+                partial=True,
+            )
+            post = pre
+            post_reason = None
+            billed = Decimal("0")
+            missing: list[str] = []
+            unknown: list[str] = []
+            running = _dec(state.get("running_billed", "0"))
+            ledger_delta = Decimal("0")
             matched = None
-            if send_result.ok:
-                matched = _match_commit(
-                    post.last_entries,
-                    model=model,
-                    billed=billed,
-                    t0=pre.as_of_utc,
-                    t1=post.as_of_utc,
+            try:
+                post = read_fn()
+                post_reason = check_ok(
+                    post,
+                    s0,
+                    last_post_committed=last_committed,
+                    last_post_ledger_instance_id=last_inst,
+                    last_post_ledger_max_id=last_max_id,
+                    pre_ledger_max_id=_pre_ledger_max_id(post),
                 )
+                if send_result.ok:
+                    billed, missing, unknown = billed_usd(send_result.usage, model=body["model"])
+                running = _dec(state.get("running_billed", "0")) + billed
+                ledger_delta = _ledger_delta(_dec(state["committed_S0"]), post)
+                if send_result.ok:
+                    pairs = _pair_by_request_id(post.last_entries, body["model"])
+                    for info in pairs.values():
+                        if info.get("commit_row"):
+                            matched = info["commit_row"]
+                            break
+            except Exception as exc:  # noqa: BLE001
+                post_reason = post_reason or f"post_read_failed:{type(exc).__name__}"
             _write_turn_json(
                 session_dir,
                 turn_index=turn_index,
@@ -544,6 +778,9 @@ def run_close(
                 post_reason=post_reason,
                 matched=matched,
                 closing=True,
+                partial=False,
+                billed_missing=missing,
+                billed_unknown=unknown,
             )
             p4_text = send_result.text
             reply_path = session_dir / f"turn-{turn_index:02d}-reply.txt"
@@ -552,6 +789,8 @@ def run_close(
             state["running_billed"] = str(running)
             state["final_post_snapshot"] = _snap_dict(post)
             state["stop_reason"] = stop_reason
+            state["closing_recorded"] = True
+            _store_post_baseline(state, post)
             store.save(state)
             session_line = {
                 "mode": "close",
@@ -562,6 +801,7 @@ def run_close(
                 "researcher_status": "closing",
                 "stop_reason": stop_reason,
                 "reply_path": str(reply_path),
+                "send_ok": send_result.ok,
             }
     state = store.load()
     _write_design_note(session_dir, state, stop_reason, p4_text)

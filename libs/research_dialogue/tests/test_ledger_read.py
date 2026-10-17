@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from research_dialogue._types import Snapshot
-from research_dialogue.ledger_read import check_ok
+from research_dialogue.ledger_read import check_ok, snapshot_from_payload
 
 pytestmark = pytest.mark.offline
 
@@ -31,6 +31,12 @@ def test_check_ok_unhealthy() -> None:
     assert check_ok(bad, s0) == "ledger_unhealthy"
 
 
+def test_unhealthy_payload_before_field_validation() -> None:
+    snap = snapshot_from_payload({"healthy": False, "note": "down"})
+    assert snap.healthy is False
+    assert snap.committed_usd == Decimal("0")
+
+
 def test_check_ok_latched() -> None:
     s0 = _snap()
     latched = _snap(latch_active=True)
@@ -45,12 +51,34 @@ def test_check_ok_frame_changed() -> None:
     assert check_ok(inst, s0) == "frame_changed"
 
 
-def test_check_ok_stale_read() -> None:
+def test_check_ok_stale_committed_regression() -> None:
     s0 = _snap()
-    t0 = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
-    stale = _snap(as_of_utc=t0)
-    prev = t0 + timedelta(seconds=1)
-    assert check_ok(stale, s0, previous_response_at=prev) == "stale_read"
+    pre = _snap(committed_usd=Decimal("0.5"))
+    assert (
+        check_ok(pre, s0, last_post_committed=Decimal("1.0")) == "stale_read"
+    )
+
+
+def test_check_ok_stale_instance() -> None:
+    s0 = _snap(ledger_instance_id="inst-b")
+    pre = _snap(ledger_instance_id="inst-c")
+    assert (
+        check_ok(pre, s0, last_post_ledger_instance_id="inst-b") == "stale_read"
+    )
+
+
+def test_check_ok_stale_ledger_max_id() -> None:
+    s0 = _snap()
+    pre = _snap()
+    assert (
+        check_ok(
+            pre,
+            s0,
+            last_post_ledger_max_id=10,
+            pre_ledger_max_id=5,
+        )
+        == "stale_read"
+    )
 
 
 def test_check_ok_ok() -> None:

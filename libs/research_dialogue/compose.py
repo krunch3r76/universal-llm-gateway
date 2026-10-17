@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,10 @@ def _fill_p2(excerpt_block: str, minor_notes: str) -> str:
     return out.replace("{the seven MINOR notes, verbatim from #1402}", minor_notes.strip())
 
 
+def _xml_attr(val: str) -> str:
+    return html.escape(val, quote=True)
+
+
 def _format_retrieved(results: list[SearchResult], dropped: list[SearchResult]) -> str:
     parts: list[str] = ["<retrieved>"]
     for res in results:
@@ -46,15 +51,20 @@ def _format_retrieved(results: list[SearchResult], dropped: list[SearchResult]) 
             signal_bits.append(f"ce {res.top_ce:.2f}")
         signal = " / ".join(signal_bits) if signal_bits else "n/a"
         parts.append(
-            f'<search id="{res.search_id}" scope="{res.scope}" query="{res.query}" signal="{signal}">'
+            f'<search id="{_xml_attr(res.search_id)}" scope="{_xml_attr(res.scope)}" '
+            f'query="{_xml_attr(res.query)}" signal="{_xml_attr(signal)}">'
         )
         for p in res.passages:
-            parts.append(f'<passage source="{p.source}" rank="{p.rank}">')
+            parts.append(
+                f'<passage source="{_xml_attr(p.source)}" rank="{_xml_attr(str(p.rank))}">'
+            )
             parts.append(p.text)
             parts.append("</passage>")
         parts.append("</search>")
     for d in dropped:
-        parts.append(f'<dropped scope="{d.scope}" reason="{d.drop_reason or "dropped"}"/>')
+        parts.append(
+            f'<dropped scope="{_xml_attr(d.scope)}" reason="{_xml_attr(d.drop_reason or "dropped")}"/>'
+        )
     parts.append("</retrieved>")
     return "\n".join(parts)
 
@@ -137,6 +147,7 @@ def build_messages_body(
     model: str = "claude-opus-5-5",
     max_tokens: int = 16_000,
     smoke: bool = False,
+    stream: bool = False,
 ) -> dict[str, Any]:
     system_text = _load("p1_system.txt")
     system_block: dict[str, Any] = {
@@ -186,8 +197,9 @@ def build_messages_body(
         "system": [system_block],
         "messages": messages,
         "max_tokens": max_tokens,
-        "stream": True,
     }
+    if stream:
+        body["stream"] = True
     return body
 
 

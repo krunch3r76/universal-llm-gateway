@@ -60,3 +60,7 @@ class SendResult:
     message_id: str | None
     error_body: str | None = None
     gate_refusal: bool = False
+    usage_incomplete: bool = False
+    delta_usage_seen: bool = False
+    parse_error: bool = False
+    usage_skipped_dict_keys: list[str] | None = None
