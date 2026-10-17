@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -48,6 +49,7 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
     sidecar_workspaces_ref,
+    write_repo_sidecar,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_source_ref_from_packet,
@@ -1142,6 +1144,59 @@ def test_prepare_closeout_delivery_with_baseline_computes_files(
     assert payload["verification"] != []
 
 
+def _closeout_first_section(text: str) -> str:
+    """Preamble before the first ATX heading — maestro md_list's first section."""
+    match = re.search(r"(?m)^#{1,6} ", text)
+    return text if match is None else text[: match.start()]
+
+
+def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_section(
+    tmp_path: Path,
+) -> None:
+    """A >4500-char preamble must not hide line-start harvest fields.
+
+    Breaks when the sidecar stores the model body verbatim: the first section
+    is the whole preamble, so a 4500-char read and a line-start scan of that
+    window miss status / VERDICT / residue. Covers write_repo_sidecar (model
+    emitted the fields late) and prepare_closeout_delivery (model emitted none;
+    the structured receipt still has to surface status).
+    """
+    preamble = "p" * 4501
+    emitted = (
+        f"{preamble}\nstatus: complete\nVERDICT: approve-harvest\nresidue: lane-b\n"
+    )
+    written = write_repo_sidecar(tmp_path, "disp-preamble", emitted)
+    text = written.read_text(encoding="utf-8")
+    first = _closeout_first_section(text)
+    assert len(first) <= 4500
+    assert "status: complete" in first.splitlines()
+    assert "VERDICT: approve-harvest" in first.splitlines()
+    assert "residue: lane-b" in first.splitlines()
+    assert preamble in text
+
+    silent = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-preamble-silent",
+        outcome=SdkRunOutcome(
+            body=preamble,
+            status="finished",
+            duration_ms=50,
+            tool_call_count=2,
+        ),
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+    )
+    silent_text = silent.sidecar_path.read_text(encoding="utf-8")
+    silent_first = _closeout_first_section(silent_text)
+    assert len(silent_first) <= 4500
+    payload = json.loads(silent.body)
+    assert f"status: {payload['status']}" in silent_first.splitlines()
+    assert any(line.startswith("residue:") for line in silent_first.splitlines())
+    assert not any(line.startswith("VERDICT:") for line in silent_first.splitlines())
+    assert preamble in silent_text
+
+
 def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     tmp_path: Path,
 ) -> None:
@@ -1162,7 +1217,8 @@ def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     assert len(delivery.body) <= MAX_TURN_BODY_CHARS
     assert delivery.sidecar_ref == sidecar_workspaces_ref("disp-big")
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
-    assert sidecar_text.startswith(outcome.body)
+    assert outcome.body in sidecar_text
+    assert len(_closeout_first_section(sidecar_text)) <= 4500
     assert "## structured_closeout_full" in sidecar_text
     assert delivery.sidecar_ref in delivery.body
 
@@ -4162,8 +4218,7 @@ def test_build_implement_closeout_body_is_sealed() -> None:
 
 
 _CONFORMING_ROLE_BODY = (
-    "Findings ok.\n\nFILE_EVIDENCE_PATHS:\n"
-    "- workspaces://universal-llm-gateway/foo.py"
+    "Findings ok.\n\nFILE_EVIDENCE_PATHS:\n- workspaces://universal-llm-gateway/foo.py"
 )
 
 
@@ -4227,7 +4282,9 @@ async def test_closeout_role_turn_follows_cursor_sdk_reply(
     )
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", MagicMock())
     monkeypatch.setattr(route_mod, "emit_implement_closeout_trigger", AsyncMock())
-    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", MagicMock())
+    monkeypatch.setattr(
+        route_mod, "merge_conductor_closeout_hop_authority", MagicMock()
+    )
     monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
     monkeypatch.setattr(route_mod, "_load_dispatch_record_json_sync", lambda **_k: None)
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
