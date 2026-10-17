@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from event_store.dispatch_economics_core import (
@@ -328,3 +330,35 @@ def test_anthropic_exception_inventory_procedure() -> None:
     assert row["substrate"] == "stargate-snapshot"
     assert row["model_id"].startswith("anthropic/")
     assert row["prompt_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_window_anthropic_cycle_matches_meter_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break covered: rollup uses session/24h window instead of billing-cycle meter."""
+    from anthropic_credit.config import load_credit_config
+    from anthropic_credit.cycle_window import meter_window
+
+    from event_store.dispatch_economics_rollup import _resolve_window
+
+    fixed = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001
+            return fixed if tz is None else fixed.astimezone(tz)
+
+    monkeypatch.setattr(
+        "event_store.dispatch_economics_rollup.datetime",
+        _FixedDatetime,
+    )
+    store = EventStore(":memory:")
+    since_ts, until_ts, minutes = await _resolve_window(
+        {"window": "anthropic_cycle"}, store
+    )
+    cfg = load_credit_config()
+    start, reset_at = meter_window(fixed, cfg)
+    assert since_ts == int(start.timestamp() * 1000)
+    assert until_ts == int(reset_at.timestamp() * 1000)
+    assert minutes is None

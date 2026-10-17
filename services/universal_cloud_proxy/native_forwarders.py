@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+from anthropic_credit.policy import AnthropicCreditRefused
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from universal_event_bus import EventBus
@@ -136,7 +137,12 @@ async def forward_native(
         )
         try:
             primed = await preflight_native_byte_stream(chunks)
-        except (httpx.HTTPStatusError, httpx.HTTPError, ValueError) as exc:
+        except (
+            AnthropicCreditRefused,
+            httpx.HTTPStatusError,
+            httpx.HTTPError,
+            ValueError,
+        ) as exc:
             await publish_and_raise(
                 event_bus,
                 exc=exc,
@@ -172,7 +178,12 @@ async def forward_native(
                 )
             )
         return JSONResponse(content=result)
-    except (httpx.HTTPStatusError, httpx.HTTPError, ValueError) as exc:
+    except (
+        AnthropicCreditRefused,
+        httpx.HTTPStatusError,
+        httpx.HTTPError,
+        ValueError,
+    ) as exc:
         await publish_and_raise(
             event_bus,
             exc=exc,
@@ -231,7 +242,12 @@ async def forward_images(
                 )
             )
         return JSONResponse(content=result)
-    except (httpx.HTTPStatusError, httpx.HTTPError, ValueError) as exc:
+    except (
+        AnthropicCreditRefused,
+        httpx.HTTPStatusError,
+        httpx.HTTPError,
+        ValueError,
+    ) as exc:
         await publish_and_raise(
             event_bus,
             exc=exc,
@@ -283,7 +299,12 @@ async def forward_video_generation(
                 )
             )
         return JSONResponse(content=result)
-    except (httpx.HTTPStatusError, httpx.HTTPError, ValueError) as exc:
+    except (
+        AnthropicCreditRefused,
+        httpx.HTTPStatusError,
+        httpx.HTTPError,
+        ValueError,
+    ) as exc:
         await publish_and_raise(
             event_bus,
             exc=exc,

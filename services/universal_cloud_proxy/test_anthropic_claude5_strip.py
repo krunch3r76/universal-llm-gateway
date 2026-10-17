@@ -125,7 +125,7 @@ def _make_adapter(
     recorder: list[dict[str, object]] | None = None,
 ) -> AnthropicAdapter:
     async def handler(request: httpx.Request) -> httpx.Response:
-        if recorder is not None:
+        if recorder is not None and str(request.url.path).endswith("/messages"):
             recorder.append(
                 {"url": str(request.url), "body": json.loads(request.content.decode())}
             )

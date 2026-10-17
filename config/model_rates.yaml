@@ -183,6 +183,13 @@ models:
     source: manual_seed
     pinned: true
   # Anthropic API — platform.claude.com/docs/en/about-claude/pricing (2026-10-16).
+  - model_id: anthropic/claude-sonnet-5
+    input_rate_per_m: 2.0
+    cache_write_rate_per_m: 2.5
+    cache_read_rate_per_m: 0.2
+    output_rate_per_m: 10.0
+    source: manual_seed
+    pinned: true
   - model_id: anthropic/claude-opus-5-5
     input_rate_per_m: 4.0
     cache_write_rate_per_m: 5.0

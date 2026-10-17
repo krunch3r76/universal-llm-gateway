@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Initialize the Anthropic credit SQLite ledger (operator staging entry point)."""
+
+from __future__ import annotations
+
+import sys
+
+from anthropic_credit.ledger_init import (
+    init_ledger,
+    ledger_instance_id,
+    load_credit_config,
+)
+
+
+def main() -> int:
+    cfg = load_credit_config()
+    if cfg.available_balance.as_of is None:
+        print(
+            "warning: available_balance.as_of is null — set Console snapshot before relying on balance cap",
+            file=sys.stderr,
+        )
+    path = init_ledger(cfg)
+    instance_id = ledger_instance_id(path) or ""
+    print(f"ledger_path={path}")
+    print(f"instance_id={instance_id}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc

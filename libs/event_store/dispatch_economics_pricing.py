@@ -172,6 +172,52 @@ def _prompt_includes_cache(row: dict[str, Any]) -> bool:
     return cache_read <= prompt
 
 
+def _total_input_tokens_for_long_tier(row: dict[str, Any]) -> int:
+    """Sum input + cache_creation + cache_read for long-prompt tier selection."""
+    prompt = row.get("prompt_tokens")
+    cache_write = row.get("cache_write_tokens")
+    cache_read = row.get("cache_read_tokens")
+    if _prompt_includes_cache(row) and prompt is not None:
+        return int(prompt)
+    total = 0
+    for value in (prompt, cache_write, cache_read):
+        if value is not None:
+            total += int(value)
+    return total
+
+
+def _effective_rates(
+    rate: ModelRateRow, row: dict[str, Any]
+) -> tuple[float, float | None, float | None, float]:
+    """Return input, cache_write, cache_read, output $/M rates (long tier when over threshold)."""
+    threshold = rate.long_prompt_threshold_tokens
+    use_long = (
+        threshold is not None
+        and rate.long_input_rate_per_m is not None
+        and rate.long_output_rate_per_m is not None
+        and _total_input_tokens_for_long_tier(row) > threshold
+    )
+    if use_long:
+        input_rate = rate.long_input_rate_per_m
+        output_rate = rate.long_output_rate_per_m
+        cache_write_rate = rate.long_cache_write_rate_per_m
+        cache_read_rate = rate.long_cache_read_rate_per_m
+    else:
+        input_rate = rate.input_rate_per_m
+        output_rate = rate.output_rate_per_m
+        cache_write_rate = rate.cache_write_rate_per_m
+        cache_read_rate = rate.cache_read_rate_per_m
+    if use_long:
+        base_cw = rate.cache_write_rate_per_m
+        base_cr = rate.cache_read_rate_per_m
+        if cache_write_rate is None:
+            cache_write_rate = base_cw
+        if cache_read_rate is None:
+            cache_read_rate = base_cr
+    assert input_rate is not None and output_rate is not None
+    return input_rate, cache_write_rate, cache_read_rate, output_rate
+
+
 def _uncached_prompt_tokens(row: dict[str, Any]) -> int | None:
     """Billable uncached input when prompt is cache-inclusive; else prompt as-is."""
     prompt = row.get("prompt_tokens")
@@ -206,20 +252,23 @@ def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
         and cache_read is None
     ):
         return None
+    input_rate, cache_write_rate, cache_read_rate, output_rate = _effective_rates(
+        rate, row
+    )
     total = 0.0
     has_component = False
     billable_prompt = _uncached_prompt_tokens(row)
     if billable_prompt is not None:
-        total += (billable_prompt / 1_000_000) * rate.input_rate_per_m
+        total += (billable_prompt / 1_000_000) * input_rate
         has_component = True
-    if cache_write is not None and rate.cache_write_rate_per_m is not None:
-        total += (cache_write / 1_000_000) * rate.cache_write_rate_per_m
+    if cache_write is not None and cache_write_rate is not None:
+        total += (cache_write / 1_000_000) * cache_write_rate
         has_component = True
-    if cache_read is not None and rate.cache_read_rate_per_m is not None:
-        total += (cache_read / 1_000_000) * rate.cache_read_rate_per_m
+    if cache_read is not None and cache_read_rate is not None:
+        total += (cache_read / 1_000_000) * cache_read_rate
         has_component = True
     if completion is not None:
-        total += (completion / 1_000_000) * rate.output_rate_per_m
+        total += (completion / 1_000_000) * output_rate
         has_component = True
     return round(total, 8) if has_component else None
 

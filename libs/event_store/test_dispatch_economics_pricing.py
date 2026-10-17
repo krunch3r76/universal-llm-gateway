@@ -13,10 +13,12 @@ from event_store.dispatch_economics_pricing import (
     _build_pricing_audit,
     _index_wire_members,
     _price_row,
+    _rate_x_tokens,
     wire_usd_present,
 )
 from event_store.dispatch_economics_rollup import build_dispatch_economics_rollup
 from event_store.model_rate_table import (
+    ModelRateRow,
     catalog_yaml_path,
     clear_catalog_rows_for_tests,
     load_catalog_rows_from_disk,
@@ -612,3 +614,25 @@ def test_catalog_includes_dollar_equivalents() -> None:
     from event_store.operation_catalog import get_operation
 
     assert get_operation("dispatch-economics-dollar-equivalents") is not None
+
+
+def test_catalog_only_row_null_cache_rates_price_uncached_prompt_only() -> None:
+    """Regression (fe761fcfc): null cache rates skip tiers; bill 10k input not 100k."""
+    rate = ModelRateRow(
+        model_id="cursor/claude-sonnet-5",
+        input_rate_per_m=2.0,
+        output_rate_per_m=10.0,
+        cache_write_rate_per_m=None,
+        cache_read_rate_per_m=None,
+        source="catalog",
+        updated_at="2026-10-17T00:00:00+00:00",
+        pinned=True,
+    )
+    row = {
+        "prompt_tokens": 100_000,
+        "cache_read_tokens": 90_000,
+        "completion_tokens": 0,
+        "total_tokens_basis": "inclusive",
+    }
+    cost = _rate_x_tokens(row, rate)
+    assert cost == pytest.approx(10_000 / 1_000_000 * 2.0)
