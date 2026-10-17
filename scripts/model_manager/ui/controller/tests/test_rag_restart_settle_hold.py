@@ -674,3 +674,59 @@ def test_rag_settle_probes_uds_when_not_tcp(
             ):
                 _run(api_dispatch._rag_restart_settle_before_release(RAG_MSG))
     assert len(uds_calls) == 1
+
+
+def test_fleet_rag_start_respects_settle_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fleet sync/rebuild must not start rag while the settle slot is held."""
+    from pathlib import Path
+
+    from scripts.model_manager.ui.controller import fleet_local
+
+    monkeypatch.setattr(fleet_local, "is_rag_configured", lambda: True)
+    for name in (
+        "is_agent_bus_configured",
+        "is_cloud_proxy_configured",
+        "is_cortex_configured",
+        "is_email_bridge_configured",
+        "is_cdp_ask_manage_enabled",
+    ):
+        monkeypatch.setattr(fleet_local, name, lambda: False)
+    monkeypatch.setattr(fleet_local, "is_mcp_configured", lambda _root: False)
+    monkeypatch.setattr(fleet_local, "FLEET_SKIP_GIT_WORKER", True)
+
+    ctl = _ctl_with_gate()
+    calls = {"start": 0}
+
+    async def _start_rag() -> str:
+        calls["start"] += 1
+        return RAG_MSG
+
+    ctl.start_rag = _start_rag
+    rag_op = next(
+        op
+        for name, op in fleet_local._build_start_ops(
+            ctl, Path("."), rebuild_supporting_services=False
+        )
+        if name == "rag"
+    )
+    hold_entered = asyncio.Event()
+    release_hold = asyncio.Event()
+
+    async def before_release(_message: str) -> None:
+        hold_entered.set()
+        await release_hold.wait()
+
+    async def _exercise() -> str:
+        first = asyncio.create_task(
+            _run_gated_with_hook(ctl.restart_gate, before_release)
+        )
+        await hold_entered.wait()
+        try:
+            return await rag_op()
+        finally:
+            release_hold.set()
+            await first
+
+    message = _run(_exercise())
+    assert calls["start"] == 0
+    assert "in progress" in message

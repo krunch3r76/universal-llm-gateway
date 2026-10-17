@@ -323,7 +323,24 @@ def _build_start_ops(
         )
         start_ops.append(("email_bridge", email_bridge_op))
     if is_rag_configured():
-        start_ops.append(("rag", ctl.start_rag))
+
+        async def _start_rag_with_settle() -> str:
+            from ..api_dispatch import rag_start_settle_hook
+            from .restart_drain import run_gated
+
+            result = await run_gated(
+                ctl.restart_gate,
+                "start",
+                "rag",
+                force=False,
+                lifecycle=ctl.start_rag,
+                before_release=rag_start_settle_hook("rag"),
+            )
+            if result.get("status") == "deferred":
+                return str(result.get("reason") or "rag start deferred")
+            return str(result.get("message", ""))
+
+        start_ops.append(("rag", _start_rag_with_settle))
     if is_cdp_ask_manage_enabled():
         start_ops.append(("cdp_ask", ctl.start_cdp_ask))
     return start_ops

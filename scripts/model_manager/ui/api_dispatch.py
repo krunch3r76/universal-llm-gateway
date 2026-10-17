@@ -758,7 +758,9 @@ async def _probe_rag_transport_ready() -> bool:
     return await loop.run_in_executor(None, uds_socket_live, socket_path)
 
 
-def rag_start_settle_hook(service: str):
+def rag_start_settle_hook(
+    service: str,
+) -> Callable[[str], Awaitable[None]] | None:
     """Return the rag settle hold for a lifecycle that starts rag.
 
     Stop does not start rag, so it does not open the hold. Start, restart,
