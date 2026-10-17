@@ -13,12 +13,15 @@ from scripts.model_manager.guarded_manage_reexec import __main__ as cli
 from scripts.model_manager.guarded_manage_reexec.deferred_execute import (
     DeferredRecycleContext,
     dispatch_status_terminal,
+    giw_idle_probe,
     report_deferred_crash,
     run_deferred_recycle,
     wait_for_parent_and_giw_idle,
 )
 from scripts.model_manager.guarded_manage_reexec.deferred_gate import (
     RECYCLE_FLEET_SERVICES,
+    evaluate_r3_pass_verdict,
+    fleet_liveness_snapshot,
     mcp_row_matches_exception_b,
     run_recycle_step1_per_service_gate,
     stargate_row_matches_exception_c,
@@ -28,7 +31,12 @@ from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexe
 
 
 def _idle_row(service: str, **extra: Any) -> dict[str, Any]:
-    row: dict[str, Any] = {"busy": False, "holder": None, "fleet_pid": 100}
+    row: dict[str, Any] = {
+        "busy": False,
+        "holder": None,
+        "fleet_pid": 100,
+        "determination": "idle",
+    }
     row.update(extra)
     row.setdefault("service", service)
     return row
@@ -49,7 +57,7 @@ def _manage_from_rows(rows: dict[str, dict[str, Any]]):
                     "service": name,
                     "pid": r.get("fleet_pid", 100),
                 }
-                if ve := r.get("version_evidence"):
+                if (ve := r.get("version_evidence")) and p.get("code_ref"):
                     entry["version_evidence"] = ve
                 services_out.append(entry)
             checkout = rows.get("_checkout", {"head_sha": "abc"})
@@ -92,6 +100,136 @@ def test_mcp_and_stargate_exception_identity() -> None:
         {**st_ok, "active_work_summary": "active_count=2 extra"},
         mcp_b=True,
     )
+
+
+def test_giw_idle_probe_probe_error_refuses() -> None:
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {
+        "busy": False,
+        "holder": None,
+        "probe_error": "ConnectTimeout",
+        "determination": "undetermined",
+    }
+    idle, reason = giw_idle_probe(
+        _manage_from_rows(rows),
+        lambda: type(
+            "L",
+            (),
+            {
+                "lease_snapshot": staticmethod(
+                    lambda: {"holder_dispatch_id": None, "queue_depth": 0}
+                )
+            },
+        )(),
+        sock_path=None,
+    )
+    assert not idle
+    assert reason == "giw_idle_busy_status_undetermined"
+
+
+def test_step1_giw_probe_error_refuses_at_gate() -> None:
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {
+        "busy": False,
+        "holder": None,
+        "probe_error": "ConnectTimeout",
+        "determination": "undetermined",
+    }
+    finding = run_recycle_step1_per_service_gate(
+        _manage_from_rows(rows),
+        parent_dispatch_id="parent-x",
+    )
+    assert finding is not None
+    assert finding.reason == "step1_giw_busy_status_undetermined"
+
+
+def test_giw_holder_on_wait_path_never_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result_path = tmp_path / "out.json"
+    executed: list[bool] = []
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: (
+            executed.append(True)
+            or GuardedReexecResult(
+                status="proof-satisfied",
+                reason="x",
+                dry_run=False,
+                target_ref="abc",
+                executed=True,
+            )
+        ),
+    )
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {
+        "busy": False,
+        "holder": {"dispatch_id": "foreign-holder"},
+        "determination": "idle",
+    }
+    ctx = DeferredRecycleContext(
+        parent_dispatch_id="d-holder",
+        report_thread="15851",
+        report_after_turn=1293,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=result_path,
+        wait_timeout_s=4.0,
+        poll_s=2.0,
+        repo_root=tmp_path,
+    )
+    t = {"now": 0.0}
+    code, result = run_deferred_recycle(
+        ctx,
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        ledger_factory=lambda: type(
+            "L",
+            (),
+            {
+                "lease_snapshot": staticmethod(
+                    lambda: {"holder_dispatch_id": None, "queue_depth": 0}
+                )
+            },
+        )(),
+        reply_fn=lambda **_k: None,
+        clock=lambda: t.__setitem__("now", t["now"]) or t["now"],
+        sleep_fn=lambda s: t.__setitem__("now", t["now"] + s),
+    )
+    assert code == 2
+    assert result.reason == "parent_wait_timeout"
+    assert executed == []
+
+
+def test_mcp_version_evidence_requires_code_ref_on_fleet_liveness() -> None:
+    rows = {name: _idle_row(name, fleet_pid=100) for name in RECYCLE_FLEET_SERVICES}
+    rows["mcp"] = {
+        **_idle_row("mcp"),
+        "version_evidence": {
+            "authoritative_for_liveness": "process_start_code_version",
+        },
+    }
+    manage = _manage_from_rows(rows)
+    without_ref = fleet_liveness_snapshot(manage, None)
+    mcp_row = next(r for r in without_ref["services"] if r["service"] == "mcp")
+    assert "version_evidence" not in mcp_row
+    with_ref = fleet_liveness_snapshot(manage, None, code_ref="abc")
+    mcp_ref = next(r for r in with_ref["services"] if r["service"] == "mcp")
+    assert mcp_ref.get("version_evidence", {}).get("authoritative_for_liveness") == (
+        "process_start_code_version"
+    )
+    child = {name: 100 for name in RECYCLE_FLEET_SERVICES}
+    verdict, extra = evaluate_r3_pass_verdict(
+        target_ref="abc",
+        result_status="proof-satisfied",
+        child_before=child,
+        child_after=child,
+        manage_call=manage,
+        sock_path=None,
+    )
+    assert verdict == "PASS"
+    assert "process_start_code_version" in extra["probe_39439"]
 
 
 def test_step1_giw_holder_non_busy_refuses() -> None:

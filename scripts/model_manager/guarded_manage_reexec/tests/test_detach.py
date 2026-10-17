@@ -784,13 +784,30 @@ def test_recover_pre_q_recheck_triggers_stage_a(
     assert not any(len(c) > 4 and c[4] == "q" for c in sends)
 
 
-def test_detach_refuses_incomplete_deferred_flags() -> None:
+def test_detach_refuses_incomplete_deferred_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[list[str]] = []
 
-    def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cmd(
+        cmd: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         del env
         calls.append(cmd)
         raise AssertionError("systemd-run must not run")
+
+    import scripts.model_manager.guarded_manage_reexec.detach as detach_mod
+
+    real_launch = detach_mod.launch_detach
+
+    def launch_with_run_cmd(**kwargs: object) -> tuple[int, dict[str, object]]:
+        kwargs["run_cmd"] = run_cmd
+        return real_launch(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.__main__.launch_detach",
+        launch_with_run_cmd,
+    )
 
     code = cli.main(
         [

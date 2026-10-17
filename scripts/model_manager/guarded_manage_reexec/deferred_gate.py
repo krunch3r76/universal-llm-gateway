@@ -139,7 +139,24 @@ def run_recycle_step1_per_service_gate(
                     offenders=[{"service": "stargate", "row": row}],
                 )
             continue
-        if name in ("git_integration_worker", "agent_bus"):
+        if name == "git_integration_worker":
+            det = row.get("determination")
+            if (
+                row.get("probe_error") is not None
+                or det == "undetermined"
+                or (det is not None and det != "idle")
+            ):
+                return RefuseFinding(
+                    reason="step1_giw_busy_status_undetermined",
+                    offenders=[{"service": name, "row": row}],
+                )
+            if row.get("busy") or holder is not None:
+                return RefuseFinding(
+                    reason="step1_giw_agent_bus_busy",
+                    offenders=[{"service": name, "row": row}],
+                )
+            continue
+        if name == "agent_bus":
             if row.get("busy") or holder is not None:
                 return RefuseFinding(
                     reason="step1_giw_agent_bus_busy",
@@ -155,23 +172,25 @@ def run_recycle_step1_per_service_gate(
 
 
 def fleet_liveness_snapshot(
-    manage_call: ManageCall, sock_path: str | None
+    manage_call: ManageCall,
+    sock_path: str | None,
+    *,
+    code_ref: str | None = None,
 ) -> dict[str, Any]:
-    return _manage(
-        manage_call,
-        "fleet_liveness",
-        {"services": list(RECYCLE_FLEET_SERVICES), "projection": "compact"},
-        sock_path,
-    )
+    params: dict[str, Any] = {
+        "services": list(RECYCLE_FLEET_SERVICES),
+        "projection": "compact",
+    }
+    if code_ref:
+        params["code_ref"] = code_ref
+    return _manage(manage_call, "fleet_liveness", params, sock_path)
 
 
 def fleet_child_pids(manage_call: ManageCall, sock_path: str | None) -> dict[str, Any]:
     snap = fleet_liveness_snapshot(manage_call, sock_path)
     rows = snap.get("services") if isinstance(snap.get("services"), list) else []
     by_service = {
-        str(row.get("service")): row.get("pid")
-        for row in rows
-        if isinstance(row, dict)
+        str(row.get("service")): row.get("pid") for row in rows if isinstance(row, dict)
     }
     return {name: by_service.get(name) for name in RECYCLE_FLEET_SERVICES}
 
@@ -185,7 +204,7 @@ def evaluate_r3_pass_verdict(
     manage_call: ManageCall,
     sock_path: str | None,
 ) -> tuple[str, dict[str, Any]]:
-    snap = fleet_liveness_snapshot(manage_call, sock_path)
+    snap = fleet_liveness_snapshot(manage_call, sock_path, code_ref=target_ref)
     checkout = snap.get("checkout") if isinstance(snap.get("checkout"), dict) else {}
     head_sha = checkout.get("head_sha")
     mcp_auth: str | None = None
@@ -196,8 +215,7 @@ def evaluate_r3_pass_verdict(
             if isinstance(ve, dict):
                 mcp_auth = ve.get("authoritative_for_liveness")
     probe_line = (
-        "services[mcp].version_evidence.authoritative_for_liveness="
-        f"{mcp_auth!r}"
+        f"services[mcp].version_evidence.authoritative_for_liveness={mcp_auth!r}"
     )
     extra = {
         "probe_39439": probe_line,

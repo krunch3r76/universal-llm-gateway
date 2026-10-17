@@ -72,7 +72,11 @@ def giw_idle_probe(
     )
     if row.get("status") == "error":
         return False, "giw_idle_busy_status_unobservable"
+    if row.get("probe_error") is not None or row.get("determination") == "undetermined":
+        return False, "giw_idle_busy_status_undetermined"
     if row.get("busy") or row.get("holder") is not None:
+        return False, None
+    if row.get("determination") != "idle":
         return False, None
     return True, None
 
