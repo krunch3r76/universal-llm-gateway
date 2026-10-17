@@ -7,6 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
+
 from research_dialogue._types import SendResult, Snapshot
 from research_dialogue.compose import (
     assert_no_forbidden_keys,
@@ -83,6 +85,26 @@ class SessionStore:
         self.state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
+def _invoke_send(
+    send_fn: Callable[[dict[str, Any]], SendResult],
+    body: dict[str, Any],
+) -> SendResult:
+    try:
+        return send_fn(body)
+    except httpx.HTTPError as exc:
+        resp = getattr(exc, "response", None)
+        status_code = resp.status_code if resp is not None else None
+        return SendResult(
+            ok=False,
+            status_code=status_code,
+            text="",
+            usage={},
+            stop_reason=None,
+            message_id=None,
+            error_body=repr(exc),
+        )
+
+
 def wait_for_open_zero(
     s0: Snapshot,
     *,
@@ -116,19 +138,33 @@ def run_smoke(
         "max_tokens": 64,
         "stream": True,
     }
-    sent = send_fn(body)
+    sent = _invoke_send(send_fn, body)
     sa = read_fn()
     reason = check_ok(sa, sb)
     if reason:
-        _write_smoke(session_dir, {"pass": False, "reason": reason})
+        _write_smoke(
+            session_dir,
+            {
+                "pass": False,
+                "reason": reason,
+                "send_ok": sent.ok,
+                "status_code": sent.status_code,
+                "error_body": sent.error_body,
+                "usage": sent.usage,
+            },
+        )
         return 2
-    billed = billed_usd(sent.usage, model="claude-sonnet-5")
+    billed = billed_usd(sent.usage, model="claude-sonnet-5") if sent.ok else Decimal("0")
     committed_b = sb.committed_usd
     committed_a = sa.committed_usd
     open_b = sb.open_reservations_usd
     open_a = sa.open_reservations_usd
+    committed_rise = committed_a - committed_b
     ok = (
-        committed_a - committed_b >= billed
+        sent.ok
+        and billed > 0
+        and committed_rise > 0
+        and committed_rise >= billed
         and open_a <= open_b
     )
     matched = _match_commit(
@@ -138,8 +174,8 @@ def run_smoke(
         t0=sb.as_of_utc,
         t1=sa.as_of_utc,
     )
-    if ok and matched is None and (committed_a - committed_b) > Decimal("0"):
-        ok = abs((committed_a - committed_b) - billed) <= Decimal("0.000001")
+    if ok and matched is None:
+        ok = abs(committed_rise - billed) <= Decimal("0.000001")
     payload = {
         "pass": ok,
         "committed_b": str(committed_b),
@@ -148,6 +184,10 @@ def run_smoke(
         "open_a": str(open_a),
         "billed": str(billed),
         "matched_commit": matched,
+        "send_ok": sent.ok,
+        "status_code": sent.status_code,
+        "error_body": sent.error_body,
+        "usage": sent.usage,
     }
     _write_smoke(session_dir, payload)
     return 0 if ok else 2
@@ -208,11 +248,12 @@ def evaluate_stop_rules(
 ) -> str | None:
     if pre_reason:
         return pre_reason
-    if send_result and send_result.gate_refusal:
-        return "gate_refusal"
-    if send_result and not send_result.ok and send_result.status_code:
-        if 400 <= send_result.status_code < 600:
+    if send_result and not send_result.ok:
+        if send_result.gate_refusal:
             return "gate_refusal"
+        if send_result.status_code and 400 <= send_result.status_code < 600:
+            return "gate_refusal"
+        return "transport_error"
     if state.get("turn_count", 0) >= TURN_LIMIT:
         return "turn_limit"
     if context_token_count(usage) > CONTEXT_CAP:
@@ -270,7 +311,13 @@ def run_turn(
     ledger_verbatim = state.get("last_ledger_text") or ""
     if turn_index >= 2 and ledger_verbatim:
         queries = state.get("pending_queries") or []
-        for scope, query in queries:
+        for item in queries:
+            if not isinstance(item, dict):
+                continue
+            scope = str(item.get("scope", ""))
+            query = str(item.get("query", ""))
+            if not scope or not query:
+                continue
             res = search_fn(scope, query)
             if res.dropped:
                 dropped.append(res)
@@ -292,7 +339,7 @@ def run_turn(
         challenge=challenge,
     )
     assert_no_forbidden_keys(body)
-    send_result = send_fn(body)
+    send_result = _invoke_send(send_fn, body)
     post = read_fn()
     post_reason = check_ok(post, s0)
     model = body["model"]
@@ -326,45 +373,36 @@ def run_turn(
             t1=post.as_of_utc,
         )
 
-    turn_doc = {
-        "turn": turn_index,
-        "request": body,
-        "response_text": send_result.text,
-        "usage": send_result.usage,
-        "stop_reason": send_result.stop_reason,
-        "billed_usd": str(billed),
-        "pre_snapshot": _snap_dict(pre),
-        "post_snapshot": _snap_dict(post),
-        "post_read_failed": post_reason,
-        "matched_commit": matched,
-        "retrieval": [
-            {
-                "search_id": r.search_id,
-                "scope": r.scope,
-                "weak_match": r.weak_match,
-                "rerank_status": r.rerank_status,
-                "top_ce": r.top_ce,
-                "dropped": r.dropped,
-            }
-            for r in (*retrieval_results, *dropped)
-        ],
-    }
-    (session_dir / f"turn-{turn_index:02d}.json").write_text(
-        json.dumps(turn_doc, indent=2) + "\n", encoding="utf-8"
+    _write_turn_json(
+        session_dir,
+        turn_index=turn_index,
+        body=body,
+        send_result=send_result,
+        billed=billed,
+        running=running,
+        ledger_delta=ledger_delta,
+        pre=pre,
+        post=post,
+        post_reason=post_reason,
+        matched=matched,
+        retrieval=(*retrieval_results, *dropped),
+        closing=False,
     )
 
-    last_user = body["messages"][-1]["content"]
-    if isinstance(last_user, list) and last_user:
-        user_text = str(last_user[0].get("text", ""))
-    else:
-        user_text = str(last_user)
-    history.append({"role": "user", "content": user_text})
-    history.append({"role": "assistant", "content": send_result.text})
-    state["history"] = history
+    if send_result.ok:
+        last_user = body["messages"][-1]["content"]
+        if isinstance(last_user, list) and last_user:
+            user_text = str(last_user[0].get("text", ""))
+        else:
+            user_text = str(last_user)
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": send_result.text})
+        state["history"] = history
     state["turn_count"] = turn_index
     state["running_billed"] = str(running)
     state["last_reply_path"] = str(reply_path)
     state["last_response_at"] = datetime.now(tz=UTC).isoformat()
+    state["final_post_snapshot"] = _snap_dict(post)
 
     converged = parsed.ok and parsed.status.lower().startswith("converged")
     stop = evaluate_stop_rules(
@@ -392,6 +430,58 @@ def run_turn(
     return 0, line
 
 
+def _write_turn_json(
+    session_dir: Path,
+    *,
+    turn_index: int,
+    body: dict[str, Any],
+    send_result: SendResult,
+    billed: Decimal,
+    running: Decimal,
+    ledger_delta: Decimal,
+    pre: Snapshot,
+    post: Snapshot,
+    post_reason: str | None,
+    matched: dict[str, Any] | None,
+    retrieval: tuple[Any, ...] = (),
+    closing: bool,
+) -> None:
+    turn_doc: dict[str, Any] = {
+        "turn": turn_index,
+        "closing": closing,
+        "request": body,
+        "response_text": send_result.text,
+        "usage": send_result.usage,
+        "stop_reason": send_result.stop_reason,
+        "send_ok": send_result.ok,
+        "status_code": send_result.status_code,
+        "error_body": send_result.error_body,
+        "billed_usd": str(billed),
+        "running_sum": str(running),
+        "ledger_delta": str(ledger_delta),
+        "post_open_usd": str(post.open_reservations_usd),
+        "pre_snapshot": _snap_dict(pre),
+        "post_snapshot": _snap_dict(post),
+        "post_read_failed": post_reason,
+        "matched_commit": matched,
+    }
+    if retrieval:
+        turn_doc["retrieval"] = [
+            {
+                "search_id": r.search_id,
+                "scope": r.scope,
+                "weak_match": r.weak_match,
+                "rerank_status": r.rerank_status,
+                "top_ce": r.top_ce,
+                "dropped": r.dropped,
+            }
+            for r in retrieval
+        ]
+    (session_dir / f"turn-{turn_index:02d}.json").write_text(
+        json.dumps(turn_doc, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def run_close(
     session_dir: Path,
     *,
@@ -403,28 +493,66 @@ def run_close(
     store = SessionStore(session_dir)
     state = store.load()
     p4_text = ""
+    s0 = Snapshot(
+        as_of_utc=datetime.now(tz=UTC),
+        healthy=True,
+        committed_usd=_dec(state["committed_S0"]),
+        open_reservations_usd=Decimal("0"),
+        window_start=state["window_start"],
+        ledger_instance_id=state["ledger_instance_id"],
+        latch_active=False,
+    )
     if not no_p4:
-        s0 = Snapshot(
-            as_of_utc=datetime.now(tz=UTC),
-            healthy=True,
-            committed_usd=_dec(state["committed_S0"]),
-            open_reservations_usd=Decimal("0"),
-            window_start=state["window_start"],
-            ledger_instance_id=state["ledger_instance_id"],
-            latch_active=False,
-        )
         pre = read_fn()
         if check_ok(pre, s0) is None:
+            turn_index = int(state.get("turn_count", 0)) + 1
             history = list(state.get("history") or [])
             body = build_messages_body(
-                turn_index=int(state.get("turn_count", 0)) + 1,
+                turn_index=turn_index,
                 history=history,
                 closing=True,
                 stop_reason=stop_reason,
             )
             assert_no_forbidden_keys(body)
-            result = send_fn(body)
-            p4_text = result.text
+            send_result = _invoke_send(send_fn, body)
+            post = read_fn()
+            post_reason = check_ok(post, s0)
+            model = body["model"]
+            billed = billed_usd(send_result.usage, model=model) if send_result.ok else Decimal("0")
+            running = _dec(state.get("running_billed", "0")) + billed
+            ledger_delta = _ledger_delta(_dec(state["committed_S0"]), post)
+            matched = None
+            if send_result.ok:
+                matched = _match_commit(
+                    post.last_entries,
+                    model=model,
+                    billed=billed,
+                    t0=pre.as_of_utc,
+                    t1=post.as_of_utc,
+                )
+            _write_turn_json(
+                session_dir,
+                turn_index=turn_index,
+                body=body,
+                send_result=send_result,
+                billed=billed,
+                running=running,
+                ledger_delta=ledger_delta,
+                pre=pre,
+                post=post,
+                post_reason=post_reason,
+                matched=matched,
+                closing=True,
+            )
+            p4_text = send_result.text
+            reply_path = session_dir / f"turn-{turn_index:02d}-reply.txt"
+            reply_path.write_text(send_result.text, encoding="utf-8")
+            state["turn_count"] = turn_index
+            state["running_billed"] = str(running)
+            state["final_post_snapshot"] = _snap_dict(post)
+            state["stop_reason"] = stop_reason
+            store.save(state)
+    state = store.load()
     _write_design_note(session_dir, state, stop_reason, p4_text)
     _write_session_md(session_dir, state, stop_reason)
     _write_transcript(session_dir, state)
@@ -447,7 +575,7 @@ def _write_design_note(
         doc = json.loads(path.read_text(encoding="utf-8"))
         u = doc.get("usage") or {}
         lines.append(
-            "| {turn} | {model} | {inp} | {cw} | {cr} | {out} | {bill} | | |".format(
+            "| {turn} | {model} | {inp} | {cw} | {cr} | {out} | {bill} | {run} | {ld} |".format(
                 turn=doc.get("turn"),
                 model=(doc.get("request") or {}).get("model"),
                 inp=u.get("input_tokens", 0),
@@ -455,14 +583,29 @@ def _write_design_note(
                 cr=u.get("cache_read_input_tokens", 0),
                 out=u.get("output_tokens", 0),
                 bill=doc.get("billed_usd"),
+                run=doc.get("running_sum", ""),
+                ld=doc.get("ledger_delta", ""),
             )
         )
+    final_post = state.get("final_post_snapshot") or {}
+    final_committed = _dec(final_post.get("committed_usd", state.get("committed_S0", "0")))
+    final_open = _dec(final_post.get("open_reservations_usd", "0"))
+    committed_s0 = _dec(state.get("committed_S0", "0"))
+    final_ledger_delta = (final_committed + final_open) - committed_s0
+    harness_sum = _dec(state.get("running_billed", "0"))
+    diff = harness_sum - final_ledger_delta
     lines.extend(
         [
             "",
-            f"committed_S0: {state.get('committed_S0')}",
+            "## Totals",
+            f"committed_S0: {committed_s0}",
+            f"final_committed_usd: {final_committed}",
+            f"final_open_reservations_usd: {final_open}",
+            f"final_ledger_delta: {final_ledger_delta}",
+            f"harness_running_sum: {harness_sum}",
+            f"harness_minus_ledger_delta: {diff}",
             f"stop_reason: {stop_reason}",
-            f"running_billed: {state.get('running_billed')}",
+            f"turns: {state.get('turn_count')}",
         ]
     )
     (session_dir / "design-note.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

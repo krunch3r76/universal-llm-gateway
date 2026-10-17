@@ -126,3 +126,50 @@ def test_smoke_fail_underbilled(tmp_path) -> None:
         return SendResult(True, 200, "OK", usage, "end_turn", "m")
 
     assert run_smoke(tmp_path, read_fn=read_fn, send_fn=send_fn) == 2
+
+
+def test_smoke_fail_when_send_not_ok(tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    from research_dialogue._types import Snapshot
+    from research_dialogue.session import run_smoke
+
+    sb = Snapshot(
+        as_of_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        healthy=True,
+        committed_usd=Decimal("0"),
+        open_reservations_usd=Decimal("0"),
+        window_start="w",
+        ledger_instance_id="i",
+        latch_active=False,
+    )
+    sa = Snapshot(
+        as_of_utc=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        healthy=True,
+        committed_usd=Decimal("0"),
+        open_reservations_usd=Decimal("0"),
+        window_start="w",
+        ledger_instance_id="i",
+        latch_active=False,
+    )
+    seq = [sb, sa]
+
+    def read_fn() -> Snapshot:
+        return seq.pop(0)
+
+    def send_fn(body: dict) -> SendResult:
+        return SendResult(
+            ok=False,
+            status_code=503,
+            text="",
+            usage={},
+            stop_reason=None,
+            message_id=None,
+            error_body="upstream down",
+        )
+
+    assert run_smoke(tmp_path, read_fn=read_fn, send_fn=send_fn) == 2
+    smoke = __import__("json").loads((tmp_path / "smoke.json").read_text())
+    assert smoke["pass"] is False
+    assert smoke["send_ok"] is False
+    assert smoke["error_body"] == "upstream down"

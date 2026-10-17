@@ -23,21 +23,32 @@ class _HttpClient(Protocol):
     ) -> httpx.Response: ...
 
 
-def _merge_usage(start: dict[str, Any] | None, delta: dict[str, Any] | None) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for src in (start or {}, delta or {}):
-        for k, v in src.items():
-            if isinstance(v, int):
-                out[k] = out.get(k, 0) + v
-            elif k not in out:
-                out[k] = v
-    return out
+def merge_usage_into(target: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Mirror anthropic_credit_gate._StreamUsageTap._merge_usage (last-value-wins ints)."""
+    for key, val in usage.items():
+        if key == "cache_creation" and isinstance(val, dict):
+            existing = target.get("cache_creation")
+            if not isinstance(existing, dict):
+                existing = {}
+            existing.update(val)
+            target["cache_creation"] = existing
+        elif key == "server_tool_use" and isinstance(val, dict):
+            existing = target.get("server_tool_use")
+            if not isinstance(existing, dict):
+                existing = {}
+            for sub_key, sub_val in val.items():
+                if isinstance(sub_val, int) and sub_val >= 0:
+                    existing[sub_key] = sub_val
+            target["server_tool_use"] = existing
+        elif isinstance(val, dict):
+            continue
+        elif isinstance(val, int) and val >= 0:
+            target[key] = val
 
 
 def _parse_sse_stream(resp: httpx.Response) -> SendResult:
     text_parts: list[str] = []
-    usage_start: dict[str, Any] | None = None
-    usage_delta: dict[str, Any] | None = None
+    usage: dict[str, Any] = {}
     stop_reason: str | None = None
     message_id: str | None = None
 
@@ -63,7 +74,7 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
                 message_id = msg.get("id") if isinstance(msg.get("id"), str) else message_id
                 u = msg.get("usage")
                 if isinstance(u, dict):
-                    usage_start = u
+                    merge_usage_into(usage, u)
         elif etype == "content_block_delta":
             delta = event.get("delta")
             if isinstance(delta, dict) and delta.get("type") == "text_delta":
@@ -78,9 +89,8 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
                     stop_reason = sr
             u = event.get("usage")
             if isinstance(u, dict):
-                usage_delta = u
+                merge_usage_into(usage, u)
 
-    usage = _merge_usage(usage_start, usage_delta)
     return SendResult(
         ok=True,
         status_code=resp.status_code,
@@ -109,27 +119,40 @@ def send_messages(
         "content-type": "application/json",
     }
     factory = client_factory or _default
-    with factory() as client:
-        resp = client.post(path, headers=headers, json=body)
-        if resp.status_code >= 400:
-            err_text = resp.text
-            gate = False
-            try:
-                parsed = resp.json()
-                if isinstance(parsed, dict):
-                    et = parsed.get("type") or parsed.get("error", {}).get("type")
-                    if isinstance(et, str) and et.startswith("anthropic_"):
-                        gate = True
-            except json.JSONDecodeError:
-                pass
-            return SendResult(
-                ok=False,
-                status_code=resp.status_code,
-                text="",
-                usage={},
-                stop_reason=None,
-                message_id=None,
-                error_body=err_text,
-                gate_refusal=gate,
-            )
-        return _parse_sse_stream(resp)
+    try:
+        with factory() as client:
+            resp = client.post(path, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        resp = getattr(exc, "response", None)
+        status_code = resp.status_code if resp is not None else None
+        return SendResult(
+            ok=False,
+            status_code=status_code,
+            text="",
+            usage={},
+            stop_reason=None,
+            message_id=None,
+            error_body=repr(exc),
+        )
+    if resp.status_code >= 400:
+        err_text = resp.text
+        gate = False
+        try:
+            parsed = resp.json()
+            if isinstance(parsed, dict):
+                et = parsed.get("type") or parsed.get("error", {}).get("type")
+                if isinstance(et, str) and et.startswith("anthropic_"):
+                    gate = True
+        except json.JSONDecodeError:
+            pass
+        return SendResult(
+            ok=False,
+            status_code=resp.status_code,
+            text="",
+            usage={},
+            stop_reason=None,
+            message_id=None,
+            error_body=err_text,
+            gate_refusal=gate,
+        )
+    return _parse_sse_stream(resp)
