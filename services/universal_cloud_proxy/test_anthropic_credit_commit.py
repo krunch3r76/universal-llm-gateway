@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from decimal import Decimal
@@ -130,7 +131,7 @@ async def test_stream_delta_overrides_start_usage_no_double_count() -> None:
 @pytest.mark.asyncio
 async def test_stream_truncated_before_delta_commits_full_reservation() -> None:
     """Break covered: stream ends without message_delta usage → commit_full reservation."""
-    from anthropic_credit.policy import Admit, admit
+    from anthropic_credit.policy import admit
 
     from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
         StreamUsageTap,
@@ -229,6 +230,83 @@ models:
         }
     )
     assert _committed_for_last_request() == Decimal("0.0115")
+
+
+def _partial_stream_sse() -> str:
+    return (
+        'event: message_start\ndata: {"type":"message_start","message":{"usage":{'
+        '"input_tokens":1000,"cache_creation_input_tokens":0,'
+        '"cache_read_input_tokens":0,"output_tokens":0}}}\n\n'
+        'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["forward_chat_stream", "forward_native_stream"],
+)
+@pytest.mark.asyncio
+async def test_stream_aclose_mid_stream_one_floor_commit(method_name: str) -> None:
+    adapter, _ = _make_adapter(_partial_stream_sse(), stream=True)
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    gen = getattr(adapter, method_name)(body)
+    async for _chunk in gen:
+        await gen.aclose()
+        break
+    st = get_policy().status()
+    entries = st.get("entries") or []
+    commits = [e for e in entries if e.get("kind") == "commit"]
+    reserve = next(e for e in entries if e.get("kind") == "reserve")
+    assert len(commits) == 1
+    assert Decimal(str(commits[0]["usd"])) == Decimal(str(reserve["usd"]))
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["forward_chat_stream", "forward_native_stream"],
+)
+@pytest.mark.asyncio
+async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) -> None:
+    adapter, _ = _make_adapter(_partial_stream_sse(), stream=True)
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    async def _consume() -> None:
+        async for _chunk in getattr(adapter, method_name)(body):
+            pass
+
+    task = asyncio.create_task(_consume())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    st = get_policy().status()
+    entries = st.get("entries") or []
+    commits = [e for e in entries if e.get("kind") == "commit"]
+    reserve = next(e for e in entries if e.get("kind") == "reserve")
+    assert len(commits) == 1
+    assert Decimal(str(commits[0]["usd"])) == Decimal(str(reserve["usd"]))
+
+
+@pytest.mark.asyncio
+async def test_forward_chat_stream_normal_end_commits_tapped_usage() -> None:
+    sse = _load_sse("stream_full_usage.sse")
+    adapter, _ = _make_adapter(sse, stream=True)
+    async for _chunk in adapter.forward_chat_stream(
+        {
+            "model": "claude-sonnet-5",
+            "max_tokens": 400,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    ):
+        pass
+    assert _committed_for_last_request() == Decimal("0.00717")
 
 
 @pytest.mark.asyncio

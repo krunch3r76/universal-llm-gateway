@@ -121,7 +121,7 @@ def _non_base64_media_in_body(upstream_body: dict[str, Any]) -> bool:
                 source = node.get("source")
                 if isinstance(source, dict):
                     src_type = str(source.get("type") or "").strip().lower()
-                    if src_type and src_type != "base64":
+                    if src_type and src_type not in ("base64", "text", "content"):
                         return True
             return any(_walk(v) for v in node.values())
         if isinstance(node, list):
@@ -222,9 +222,12 @@ def worst_case_usd(
         base_in = rate_row.input_rate_per_m
         base_out = rate_row.output_rate_per_m
 
-    input_multiplier = (
-        Decimal("2.0") if _has_cache_control(upstream_body) else Decimal("1.0")
-    )
+    if _is_mcp_connector_class(upstream_body):
+        input_multiplier = Decimal("2.0")
+    elif _has_cache_control(upstream_body):
+        input_multiplier = Decimal("2.0")
+    else:
+        input_multiplier = Decimal("1.0")
     in_rate = Decimal(str(base_in)) * input_multiplier
     out_rate = Decimal(str(base_out))
 

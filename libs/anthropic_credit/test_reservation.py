@@ -272,3 +272,29 @@ def test_byte_fallback_exceeds_plausible_token_count() -> None:
     body_url_media = representative_bodies[1][0]
     with pytest.raises(ReservationRefused, match="non-inline"):
         worst_case_usd(body_url_media, row, token_count=None, cfg=cfg)
+
+
+def test_base64_inline_document_allowed() -> None:
+    cfg = load_credit_config()
+    row = _sonnet_row()
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 512,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": "JVBERi0x",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    res = worst_case_usd(body, row, token_count=None, cfg=cfg)
+    assert res.basis == "byte_fallback"

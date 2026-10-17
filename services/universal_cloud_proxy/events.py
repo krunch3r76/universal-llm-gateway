@@ -467,3 +467,30 @@ def CloudproxyMcpStreamCancelled(  # noqa: N802
             "reason": reason,
         },
     )
+
+
+@event_factory
+def AnthropicCreditUsagePartial(**payload: object) -> Event:  # noqa: N802
+    """Anthropic credit commit used reservation floor due to partial usage."""
+    return Event(
+        signal="anthropic.credit.usage_partial",
+        payload=dict(payload),
+    )
+
+
+@event_factory
+def AnthropicCreditOverrun(**payload: object) -> Event:  # noqa: N802
+    """Anthropic credit commit exceeded the admitted reservation."""
+    return Event(
+        signal="anthropic.credit.overrun",
+        payload=dict(payload),
+    )
+
+
+@event_factory
+def AnthropicCreditLoopRefused(**payload: object) -> Event:  # noqa: N802
+    """Native agent loop stopped further turns after credit refusal."""
+    return Event(
+        signal="anthropic.credit.loop_refused",
+        payload=dict(payload),
+    )

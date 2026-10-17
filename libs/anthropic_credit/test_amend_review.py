@@ -96,7 +96,14 @@ def test_fable_mcp_reservation_at_least_640_usd() -> None:
 
 
 def test_ttl_then_late_commit_top_up_and_overrun(tmp_path: Path) -> None:
-    policy = _cfg(tmp_path)
+    events: list[tuple[str, dict]] = []
+    cfg = dataclasses.replace(
+        load_credit_config(), ledger_path=tmp_path / "ledger.sqlite"
+    )
+    init_ledger(cfg)
+    policy = CreditPolicy(
+        cfg, emit_fn=lambda name, payload: events.append((name, payload))
+    )
     body = {
         "model": "claude-sonnet-5",
         "max_tokens": 100_000,
@@ -119,6 +126,7 @@ def test_ttl_then_late_commit_top_up_and_overrun(tmp_path: Path) -> None:
         now=ttl_at + timedelta(seconds=1),
     )
     assert late > Decimal("1.0")
+    assert any(name == "anthropic.credit.overrun" for name, _ in events)
     st = policy.status(now=ttl_at + timedelta(minutes=1))
     assert st["committed_usd"] == late
 

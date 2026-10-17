@@ -44,6 +44,9 @@ def test_declarative_probe_anthropic_calls_models_get_only() -> None:
         ".post(",
         ".stream(",
         ".request(",
+        ".send(",
+        ".put(",
+        "build_request(",
     )
     for token in forbidden_strings:
         assert token not in section, f"forbidden {token!r} in Anthropic probe section"
@@ -52,19 +55,23 @@ def test_declarative_probe_anthropic_calls_models_get_only() -> None:
     client_names = _client_names_in_anthropic_section(tree)
     assert client_names, "expected make_sync_client(...) binding in Anthropic section"
 
+    forbidden_client_attrs = frozenset({"request", "post", "put", "send", "stream"})
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         if not isinstance(node.func, ast.Attribute):
             continue
-        if node.func.attr != "get":
-            continue
         if not isinstance(node.func.value, ast.Name):
             continue
         if node.func.value.id not in client_names:
             continue
-        if node.func.attr == "request":
-            pytest.fail("Anthropic client .request() is forbidden in the probe section")
+        if node.func.attr in forbidden_client_attrs:
+            pytest.fail(
+                f"Anthropic client .{node.func.attr}() is forbidden in the probe section"
+            )
+        if node.func.attr != "get":
+            continue
         if not node.args:
             pytest.fail("Anthropic client .get() must pass explicit path")
         path_arg = node.args[0]

@@ -5,11 +5,20 @@ from __future__ import annotations
 
 import sys
 
-from anthropic_credit.ledger_init import init_ledger, ledger_instance_id, load_credit_config
+from anthropic_credit.ledger_init import (
+    init_ledger,
+    ledger_instance_id,
+    load_credit_config,
+)
 
 
 def main() -> int:
     cfg = load_credit_config()
+    if cfg.available_balance.as_of is None:
+        print(
+            "warning: available_balance.as_of is null — set Console snapshot before relying on balance cap",
+            file=sys.stderr,
+        )
     path = init_ledger(cfg)
     instance_id = ledger_instance_id(path) or ""
     print(f"ledger_path={path}")

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS entries (
     created_at TEXT,
     window_start TEXT,
     tag TEXT,
+    caller_tag TEXT,
     mcp_class INTEGER
 );
 """
@@ -41,10 +42,19 @@ _WINDOW_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_entries_window_created "
     "ON entries(window_start, created_at)"
 )
+_REQUEST_KIND_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_entries_request_kind "
+    "ON entries(request_id, kind)"
+)
+_CREATED_AT_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at)"
+)
 _RESERVE_UNIQUE_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_reserve_request "
     "ON entries(request_id) WHERE kind = 'reserve'"
 )
+
+_LEDGER_SCHEMA_VERSION = "2"
 
 _UNSAFE_FS_TYPES = frozenset(
     {"nfs", "nfs4", "cifs", "smb3", "fuse.sshfs", "ceph"}
@@ -67,6 +77,7 @@ class LedgerEntry:
     created_at: str
     window_start: str
     tag: str | None
+    caller_tag: str | None
     mcp_class: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +90,7 @@ class LedgerEntry:
             "created_at": self.created_at,
             "window_start": self.window_start,
             "tag": self.tag,
+            "caller_tag": self.caller_tag,
             "mcp_class": int(self.mcp_class),
         }
 
@@ -216,6 +228,8 @@ class CreditLedger:
                 conn.execute(_ENTRIES_SCHEMA_SQL)
                 conn.execute(_META_SCHEMA_SQL)
                 conn.execute(_WINDOW_INDEX_SQL)
+                conn.execute(_REQUEST_KIND_INDEX_SQL)
+                conn.execute(_CREATED_AT_INDEX_SQL)
                 conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
         except (sqlite3.Error, OSError) as exc:
             raise LedgerUnavailable(
@@ -247,6 +261,8 @@ class CreditLedger:
             conn.row_factory = sqlite3.Row
             conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
             conn.execute(_WINDOW_INDEX_SQL)
+            conn.execute(_REQUEST_KIND_INDEX_SQL)
+            conn.execute(_CREATED_AT_INDEX_SQL)
             conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
             CreditLedger._ensure_openable(conn)
             return conn
@@ -289,10 +305,25 @@ class CreditLedger:
         *,
         now: datetime,
         ttl_minutes: int,
+        window_start: datetime | None = None,
+        reset_at: datetime | None = None,
     ) -> int:
         """Convert open reservations older than ``ttl_minutes`` into full commits."""
-        open_rows = conn.execute(
+        window_clause = ""
+        window_params: tuple[str, ...] = ()
+        if window_start is not None and reset_at is not None:
+            win_start_iso = window_start.astimezone(UTC).isoformat()
+            reset_iso = reset_at.astimezone(UTC).isoformat()
+            window_clause = """
+              AND (
+                r.window_start = ?
+                OR (r.created_at >= ? AND r.created_at < ?)
+              )
             """
+            window_params = (win_start_iso, win_start_iso, reset_iso)
+
+        open_rows = conn.execute(
+            f"""
             SELECT r.id, r.request_id, r.model, r.usd, r.created_at, r.window_start, r.tag, r.mcp_class
             FROM entries r
             WHERE r.kind = 'reserve'
@@ -301,8 +332,10 @@ class CreditLedger:
                   WHERE c.request_id = r.request_id
                     AND c.kind IN ('commit', 'release')
               )
+              {window_clause}
             ORDER BY r.id ASC
-            """
+            """,
+            window_params,
         ).fetchall()
 
         expired_count = 0
@@ -322,8 +355,8 @@ class CreditLedger:
                 conn.execute(
                     """
                     INSERT INTO entries (
-                        kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                    ) VALUES ('commit', ?, ?, ?, ?, ?, ?, ?)
+                        kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                    ) VALUES ('commit', ?, ?, ?, ?, ?, 'ttl_expired', ?, ?)
                     """,
                     (
                         row["request_id"],
@@ -331,7 +364,7 @@ class CreditLedger:
                         row["usd"],
                         now_iso,
                         row["window_start"],
-                        row["tag"] or "ttl_expired",
+                        row["tag"],
                         int(row["mcp_class"] or 0),
                     ),
                 )
@@ -442,7 +475,10 @@ class CreditLedger:
             finalized = has_commit and not only_ttl
 
             if not has_commit:
-                if r_row["window_start"] == win_start_iso:
+                reserve_in_win = r_row["window_start"] == win_start_iso or (
+                    win_start_iso <= str(r_row["created_at"]) < reset_iso
+                )
+                if reserve_in_win:
                     open_usd += r_usd
                     open_count += 1
                     if mcp_class:
@@ -475,7 +511,7 @@ class CreditLedger:
         """Return the last ``limit`` ledger entries ordered by id descending."""
         rows = conn.execute(
             """
-            SELECT id, kind, request_id, model, usd, created_at, window_start, tag, mcp_class
+            SELECT id, kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
             FROM entries
             ORDER BY id DESC
             LIMIT ?
@@ -500,6 +536,7 @@ class CreditLedger:
                     created_at=str(row["created_at"]),
                     window_start=str(row["window_start"]),
                     tag=row["tag"],
+                    caller_tag=row["caller_tag"],
                     mcp_class=bool(row["mcp_class"]),
                 )
             )

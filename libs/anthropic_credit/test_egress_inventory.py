@@ -35,12 +35,6 @@ _ALLOWLIST: dict[str, str] = {
     "libs/claude_bundles/skills_api.py": (
         "Skills upload API, not token-billed Messages"
     ),
-    "libs/claude_bundles/test_skills_ui_upload.py": (
-        "Test fixture URLs, not production egress"
-    ),
-    "libs/llm_adapters/test_anthropic_remote_mcp.py": (
-        "Unit test adapter construction, not production egress"
-    ),
 }
 
 _LINE_ALLOWLIST: dict[str, tuple[str, ...]] = {

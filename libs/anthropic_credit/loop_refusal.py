@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 
-from .policy import AnthropicCreditRefused, emit
+from .policy import AnthropicCreditRefused
+
+logger = logging.getLogger(__name__)
 
 
 def parse_credit_refusal_type(exc: BaseException) -> str | None:
@@ -47,10 +50,12 @@ def parse_credit_refusal_type(exc: BaseException) -> str | None:
 
 
 def emit_loop_refused(turn_index: int) -> None:
-    emit(
-        "anthropic.credit.loop_refused",
-        {"turn_index": turn_index},
-    )
+    payload = {"turn_index": turn_index}
+    from . import policy as _policy
+
+    _policy.emit("anthropic.credit.loop_refused", payload)
+    if _policy._module_emit is _policy._noop_emit:
+        logger.info("anthropic.credit.loop_refused %s", payload)
 
 
 def credit_cap_notice() -> str:

@@ -265,6 +265,8 @@ class CreditPolicy:
                     conn,
                     now=now_utc,
                     ttl_minutes=cfg.reservation_ttl_minutes,
+                    window_start=window_start,
+                    reset_at=reset_at,
                 )
                 snap = CreditLedger.compute_window_snapshot(
                     conn,
@@ -362,8 +364,8 @@ class CreditPolicy:
                 conn.execute(
                     """
                     INSERT INTO entries (
-                        kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                    ) VALUES ('reserve', ?, ?, ?, ?, ?, ?, ?)
+                        kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                    ) VALUES ('reserve', ?, ?, ?, ?, ?, ?, NULL, ?)
                     """,
                     (
                         request_id,
@@ -495,8 +497,14 @@ class CreditPolicy:
                 target_total = computed if computed is not None else reservation_usd
 
             insert_usd = target_total - prior_total
-            if insert_usd <= Decimal("0"):
+            must_finalize_after_ttl = only_ttl and insert_usd <= Decimal("0")
+            first_zero_commit = not commit_rows and insert_usd <= Decimal("0")
+            if insert_usd <= Decimal("0") and not (
+                must_finalize_after_ttl or first_zero_commit
+            ):
                 return prior_total
+            if insert_usd <= Decimal("0"):
+                insert_usd = Decimal("0")
 
             if partial:
                 partial_event = {
@@ -511,8 +519,8 @@ class CreditPolicy:
             conn.execute(
                 """
                 INSERT INTO entries (
-                    kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, ?)
+                    kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     request_id,
@@ -589,8 +597,8 @@ class CreditPolicy:
             conn.execute(
                 """
                 INSERT INTO entries (
-                    kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, ?)
+                    kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     request_id,
@@ -658,8 +666,8 @@ class CreditPolicy:
             conn.execute(
                 """
                 INSERT INTO entries (
-                    kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                ) VALUES ('release', ?, ?, '0.000000', ?, ?, ?, ?)
+                    kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                ) VALUES ('release', ?, ?, '0.000000', ?, ?, ?, NULL, ?)
                 """,
                 (
                     request_id,
@@ -689,8 +697,8 @@ class CreditPolicy:
             conn.execute(
                 """
                 INSERT INTO entries (
-                    kind, request_id, model, usd, created_at, window_start, tag, mcp_class
-                ) VALUES ('latch', NULL, NULL, '0.000000', ?, ?, ?, 0)
+                    kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                ) VALUES ('latch', NULL, NULL, '0.000000', ?, ?, ?, NULL, 0)
                 """,
                 (
                     now_utc.isoformat(),
@@ -719,6 +727,8 @@ class CreditPolicy:
                 conn,
                 now=now_utc,
                 ttl_minutes=cfg.reservation_ttl_minutes,
+                window_start=window_start,
+                reset_at=reset_at,
             )
             snap = CreditLedger.compute_window_snapshot(
                 conn,

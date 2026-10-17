@@ -10,11 +10,14 @@ from pathlib import Path
 
 from .config import CreditConfig, load_credit_config
 from .ledger import (
-    LedgerUnavailable,
+    _CREATED_AT_INDEX_SQL,
     _ENTRIES_SCHEMA_SQL,
+    _LEDGER_SCHEMA_VERSION,
     _META_SCHEMA_SQL,
+    _REQUEST_KIND_INDEX_SQL,
     _RESERVE_UNIQUE_INDEX_SQL,
     _WINDOW_INDEX_SQL,
+    LedgerUnavailable,
     validate_ledger_path,
 )
 
@@ -64,7 +67,13 @@ def init_ledger(cfg: CreditConfig | None = None, *, config_path: Path | None = N
                 "INSERT INTO meta (key, value) VALUES ('created_at', ?)",
                 (created_at,),
             )
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
+                (_LEDGER_SCHEMA_VERSION,),
+            )
             conn.execute(_WINDOW_INDEX_SQL)
+            conn.execute(_REQUEST_KIND_INDEX_SQL)
+            conn.execute(_CREATED_AT_INDEX_SQL)
             conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
     except (sqlite3.Error, OSError) as exc:
         raise LedgerUnavailable(f"failed to initialize ledger at {target}: {exc}") from exc

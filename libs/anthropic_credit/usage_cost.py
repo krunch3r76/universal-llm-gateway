@@ -127,13 +127,14 @@ def usage_cost_usd(
         else:
             cache_creation_cost_num = Decimal(cache_creation_tokens) * cw_1h_rate
 
-    total_num = (
+    token_cost_num = (
         Decimal(input_tokens) * in_rate
         + cache_creation_cost_num
         + Decimal(cache_read_tokens) * cr_rate
         + Decimal(output_tokens) * out_rate
     )
     unknown_server_tool = False
+    server_tool_fees_usd_total = Decimal("0")
     server_tool_use = usage.get("server_tool_use")
     fees_map = server_tool_fees_usd or {}
     if isinstance(server_tool_use, dict):
@@ -147,9 +148,9 @@ def usage_cost_usd(
             if fee is None:
                 unknown_server_tool = True
                 continue
-            total_num += Decimal(count) * fee
+            server_tool_fees_usd_total += Decimal(count) * fee
 
-    cost = total_num / _TOKENS_PER_MILLION
+    cost = token_cost_num / _TOKENS_PER_MILLION + server_tool_fees_usd_total
     return cost, tuple(missing), unknown_server_tool
 
 

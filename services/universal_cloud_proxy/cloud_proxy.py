@@ -33,6 +33,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from anthropic_credit.config import CreditConfigInvalid, load_credit_config
+from anthropic_credit.ledger import LedgerUnavailable
+from anthropic_credit.ledger_init import ledger_instance_id
 from anthropic_credit.policy import AnthropicCreditRefused, healthy
 from anthropic_credit.policy import (
     status as credit_status,
@@ -43,7 +46,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from llm_adapters._mcp_entry import normalize_mcp_public_url
 from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
-from universal_event_bus import Event, EventBus, MinimalEventDebugBroadcaster
+from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from .adapters.anthropic_credit_gate import refuse_to_json
 from .adapters.base import ProviderAdapter
@@ -53,6 +56,9 @@ from .browser_routes import register_browser_routes
 from .catalog import CatalogManager
 from .config import load_config
 from .events import (
+    AnthropicCreditLoopRefused,
+    AnthropicCreditOverrun,
+    AnthropicCreditUsagePartial,
     CloudProxyBrowserCatalogRefreshed,
     CloudProxyBrowserCatalogRefreshFailed,
     CloudProxyBrowserUiUnavailable,
@@ -124,9 +130,19 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     from anthropic_credit.policy import set_event_emitter
 
+    _credit_event_factories: dict[str, Any] = {
+        "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
+        "anthropic.credit.overrun": AnthropicCreditOverrun,
+        "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
+    }
+
     def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
+        factory = _credit_event_factories.get(name)
+        if factory is None:
+            return
+
         async def _publish() -> None:
-            await event_bus.publish(Event(signal=name, payload=dict(payload)))
+            await event_bus.publish(factory(**payload))
 
         try:
             loop = asyncio.get_running_loop()
@@ -1138,14 +1154,39 @@ async def embeddings(request: Request) -> JSONResponse:
 @app.get("/internal/anthropic-credit/status")
 async def anthropic_credit_status_route() -> JSONResponse:
     """Expose cycle meter headroom and ledger health for operators."""
-    payload = json.loads(json.dumps(credit_status(), default=str))
-    payload["healthy"] = healthy()
-    if not payload["healthy"]:
-        payload.setdefault(
-            "unavailable_reason",
-            "config invalid or ledger unreachable",
+    try:
+        cfg = load_credit_config()
+        payload = json.loads(json.dumps(credit_status(), default=str))
+        payload["ledger_path"] = str(cfg.ledger_path)
+        payload["ledger_instance_id"] = ledger_instance_id(cfg.ledger_path)
+        payload["available_balance_as_of"] = cfg.available_balance.as_of
+        payload["healthy"] = healthy()
+        if not payload["healthy"]:
+            payload.setdefault(
+                "unavailable_reason",
+                "config invalid or ledger unreachable",
+            )
+        return JSONResponse(content=payload)
+    except (LedgerUnavailable, CreditConfigInvalid) as exc:
+        ledger_path: str | None = None
+        as_of: str | None = None
+        instance_id: str | None = None
+        try:
+            cfg_exc = load_credit_config()
+            ledger_path = str(cfg_exc.ledger_path)
+            as_of = cfg_exc.available_balance.as_of
+            instance_id = ledger_instance_id(cfg_exc.ledger_path)
+        except Exception:
+            pass
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "unavailable_reason": str(exc),
+                "ledger_path": ledger_path,
+                "ledger_instance_id": instance_id,
+                "available_balance_as_of": as_of,
+            }
         )
-    return JSONResponse(content=payload)
 
 
 app.include_router(native_router)

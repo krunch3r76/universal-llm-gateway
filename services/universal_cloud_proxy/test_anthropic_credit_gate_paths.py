@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import time
 from collections.abc import AsyncIterator
 from decimal import Decimal
 from pathlib import Path
