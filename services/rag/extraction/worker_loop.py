@@ -31,6 +31,7 @@ from services.rag.extraction.record_failure import record_source_failure
 from services.rag.extraction_admission import ExtractionAdmissionGate
 from services.rag.knowledge_extractor import (
     configure_timeouts,
+    probe_stargate_models,
     wait_until_extraction_ready,
 )
 
@@ -157,6 +158,13 @@ async def run_extraction_worker(
                 if shutdown_event.is_set():
                     break
 
+        if not await probe_stargate_models():
+            logger.info(
+                "Extraction worker: Stargate probe failed; skipping dequeue"
+            )
+            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
+            continue
+
         try:
             claims = await property_index.dequeue_extraction(
                 limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS
@@ -249,6 +257,32 @@ async def run_extraction_worker(
                 increment_attempt=False,
                 failure_category="capacity",
                 error=str(exc) or "timeout",
+                error_type=type(exc).__qualname__,
+            )
+            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
+
+        except (
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            probe_ok = await probe_stargate_models()
+            increment_attempt = not (
+                isinstance(exc, httpx.ConnectError) and probe_ok
+            )
+            logger.warning(
+                "Extraction worker: transport error for %s (probe_ok=%s, burn=%s)",
+                source,
+                probe_ok,
+                increment_attempt,
+            )
+            await record_source_failure(
+                property_index=property_index,
+                event_bus=event_bus,
+                source=source,
+                increment_attempt=increment_attempt,
+                failure_category="capacity" if not increment_attempt else "transport",
+                error=str(exc) or type(exc).__qualname__,
                 error_type=type(exc).__qualname__,
             )
             await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
