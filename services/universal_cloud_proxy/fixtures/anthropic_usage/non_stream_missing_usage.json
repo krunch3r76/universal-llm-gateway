@@ -1,0 +1,8 @@
+{
+  "id": "msg_fixture_3",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "ok"}],
+  "model": "claude-sonnet-5",
+  "stop_reason": "end_turn"
+}

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import httpx
+from anthropic_credit.policy import AnthropicCreditRefused
 from fastapi import HTTPException
 from universal_event_bus import EventBus
 
+from .adapters.anthropic_credit_gate import refuse_to_json
 from .events import CloudProxyRequestFailed
 
 
@@ -33,6 +35,8 @@ async def publish_failed(
 
 def status_code_for_native_exc(exc: Exception) -> int:
     """Map upstream/adapter exceptions to HTTP status (ValueError → 500)."""
+    if isinstance(exc, AnthropicCreditRefused):
+        return exc.http_status
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code if exc.response else 502
     if isinstance(exc, ValueError):
@@ -61,6 +65,10 @@ async def publish_and_raise(
         error=error_text,
         adapter_type=adapter_type,
     )
+    if isinstance(exc, AnthropicCreditRefused):
+        raise HTTPException(
+            status_code=status_code, detail=refuse_to_json(exc.refuse)
+        ) from exc
     detail = (
         f"Upstream provider error: {error_text}"
         if isinstance(exc, httpx.HTTPStatusError)

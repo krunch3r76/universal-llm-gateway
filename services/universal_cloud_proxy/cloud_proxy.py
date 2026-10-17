@@ -33,6 +33,16 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from anthropic_credit.policy import (
+    AnthropicCreditRefused,
+    admit,
+    commit,
+    healthy,
+    release,
+)
+from anthropic_credit.policy import (
+    status as credit_status,
+)
 from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -41,6 +51,7 @@ from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+from .adapters.anthropic_credit_gate import refuse_to_json
 from .adapters.base import ProviderAdapter
 from .adapters.factory import create_provider_adapter
 from .browser import BrowserCatalogCache
@@ -255,6 +266,19 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         "uds" if config.socket_path else "tcp",
     )
 
+    try:
+        from anthropic_credit.policy import get_policy
+
+        if not get_policy().healthy():
+            logger.warning(
+                "Anthropic credit gate is unhealthy — anthropic requests will refuse "
+                "with anthropic_credit_gate_unavailable until config/ledger recover"
+            )
+    except Exception as exc:
+        logger.warning(
+            "Anthropic credit gate policy init failed (fail-closed): %s", exc
+        )
+
     _application.state.config = config
     _application.state.catalog = catalog
     _application.state.forwarder = forwarder
@@ -437,6 +461,27 @@ async def _json_completion_to_sse(
     yield b"data: [DONE]\n\n"
 
 
+async def _raise_anthropic_credit_refused(
+    exc: AnthropicCreditRefused,
+    *,
+    event_bus: EventBus | None,
+    provider: str,
+    model_id: str,
+    adapter_type: str,
+) -> None:
+    await _publish_request_failed_event(
+        event_bus=event_bus,
+        provider=provider,
+        model=model_id,
+        status_code=exc.http_status,
+        error=str(exc)[:300],
+        adapter_type=adapter_type,
+    )
+    raise HTTPException(
+        status_code=exc.http_status, detail=refuse_to_json(exc.refuse)
+    ) from exc
+
+
 async def _relay_stream_safe(
     chunks: AsyncIterator[bytes],
     provider: str,
@@ -453,6 +498,14 @@ async def _relay_stream_safe(
     try:
         async for chunk in chunks:
             yield chunk
+    except AnthropicCreditRefused as exc:
+        await _raise_anthropic_credit_refused(
+            exc,
+            event_bus=event_bus,
+            provider=provider,
+            model_id=model_id,
+            adapter_type=adapter_type,
+        )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
         full_error_text = str(exc)
@@ -801,6 +854,14 @@ async def chat_completions(request: Request) -> Response:
             response_json = await mcp_executor.run_tool_loop(
                 _proxy_forward, body, client_id=loop_client_id
             )
+        except AnthropicCreditRefused as exc:
+            await _raise_anthropic_credit_refused(
+                exc,
+                event_bus=event_bus,
+                provider=provider_catalog.provider,
+                model_id=model_id,
+                adapter_type=adapter,
+            )
         except CatalogMissError as exc:
             await raise_catalog_miss_http(
                 exc=exc,
@@ -875,6 +936,14 @@ async def chat_completions(request: Request) -> Response:
             event_bus=event_bus,
             provider=provider_catalog.provider,
             model=model_id,
+            adapter_type=adapter,
+        )
+    except AnthropicCreditRefused as exc:
+        await _raise_anthropic_credit_refused(
+            exc,
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model_id=model_id,
             adapter_type=adapter,
         )
     except httpx.HTTPStatusError as exc:
@@ -1035,6 +1104,87 @@ async def embeddings(request: Request) -> JSONResponse:
             adapter_type=adapter,
         )
         raise HTTPException(status_code=422, detail=error_text) from exc
+
+
+@app.get("/internal/anthropic-credit/status")
+async def anthropic_credit_status_route() -> JSONResponse:
+    """Expose cycle meter headroom and ledger health for operators."""
+    payload = json.loads(json.dumps(credit_status(), default=str))
+    payload["healthy"] = healthy()
+    if not payload["healthy"]:
+        payload.setdefault(
+            "unavailable_reason",
+            "config invalid or ledger unreachable",
+        )
+    return JSONResponse(content=payload)
+
+
+@app.post("/internal/anthropic-credit/reserve")
+async def anthropic_credit_reserve_route(request: Request) -> JSONResponse:
+    from anthropic_credit.policy import Refuse
+
+    body = await _read_json_object_body(
+        request=request,
+        event_bus=_get_event_bus(),
+        endpoint_name="Anthropic credit reserve",
+    )
+    request_id = str(body.get("request_id", "")).strip()
+    model = str(body.get("model", ""))
+    upstream_body = body.get("upstream_body")
+    if not isinstance(upstream_body, dict):
+        raise HTTPException(status_code=422, detail="upstream_body must be an object")
+    tag = body.get("tag")
+    token_count = body.get("token_count")
+    parsed_token_count = (
+        token_count if isinstance(token_count, int) and token_count >= 0 else None
+    )
+    result = admit(
+        request_id,
+        model,
+        upstream_body,
+        str(tag) if tag is not None else None,
+        token_count=parsed_token_count,
+    )
+    if isinstance(result, Refuse):
+        raise HTTPException(
+            status_code=result.http_status,
+            detail=refuse_to_json(result),
+        )
+    return JSONResponse(
+        content={
+            "request_id": result.request_id,
+            "reservation_usd": str(result.reservation_usd),
+            "headroom_usd": str(result.headroom_usd),
+            "mcp_class": result.mcp_class,
+        }
+    )
+
+
+@app.post("/internal/anthropic-credit/commit")
+async def anthropic_credit_commit_route(request: Request) -> JSONResponse:
+    body = await _read_json_object_body(
+        request=request,
+        event_bus=_get_event_bus(),
+        endpoint_name="Anthropic credit commit",
+    )
+    request_id = str(body.get("request_id", "")).strip()
+    usage = body.get("usage")
+    if usage is not None and not isinstance(usage, dict):
+        raise HTTPException(status_code=422, detail="usage must be an object or null")
+    committed = commit(request_id, usage if isinstance(usage, dict) else None)
+    return JSONResponse(content={"request_id": request_id, "committed_usd": str(committed)})
+
+
+@app.post("/internal/anthropic-credit/release")
+async def anthropic_credit_release_route(request: Request) -> JSONResponse:
+    body = await _read_json_object_body(
+        request=request,
+        event_bus=_get_event_bus(),
+        endpoint_name="Anthropic credit release",
+    )
+    request_id = str(body.get("request_id", "")).strip()
+    release(request_id)
+    return JSONResponse(content={"request_id": request_id, "released": True})
 
 
 app.include_router(native_router)

@@ -249,7 +249,43 @@ async def _run_native_tool_loop_body(
             cancelled = True
             break
 
-        raw = await send_native(path, json_body)
+        try:
+            raw = await send_native(path, json_body)
+        except Exception as exc:
+            if turn_idx == 0:
+                raise
+            from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+                credit_cap_notice,
+                emit_loop_refused,
+                parse_credit_refusal_type,
+            )
+
+            refusal_code = parse_credit_refusal_type(exc)
+            if refusal_code != "anthropic_cycle_budget_exhausted":
+                raise
+            emit_loop_refused(turns_used)
+            notice = credit_cap_notice()
+            prior_content = (
+                result.get("content", "") if isinstance(result, dict) else ""
+            )
+            content = f"{prior_content}\n\n{notice}".strip() if prior_content else notice
+            return NativeLoopResult(
+                content=content,
+                reasoning=(
+                    result.get("reasoning") or result.get("thinking")
+                    if isinstance(result, dict)
+                    else None
+                ),
+                tool_calls=captured,
+                turns_used=turns_used,
+                exhausted=False,
+                cancelled=False,
+                usage=usage_acc,
+                finish_reason="credit_cap",
+                block_reason="anthropic_cycle_budget_exhausted",
+                provider=provider,
+                raw=raw,
+            )
         if not isinstance(raw, dict):
             raise ValueError(
                 f"send_native returned non-dict response: {type(raw).__name__}"
