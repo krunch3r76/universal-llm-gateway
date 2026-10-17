@@ -1,0 +1,7 @@
+<closing>
+The session is ending ({stop_reason}). Please write the final design note body for Kaywan:
+1. For each fork F-a, F-b, F-c (including the F-h question), F-d and the decay form: recommendation, confidence, corpus evidence (search ids), falsifier, and where you differ from document 1, why.
+2. Open questions you could not settle, and the search or data that would settle them.
+3. One paragraph on what this dialogue changed relative to document 1.
+Use plain prose and tables, no reply contract this time.
+</closing>
