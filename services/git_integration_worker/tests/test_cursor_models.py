@@ -19,6 +19,7 @@ from services.git_integration_worker.cursor_models import (
     CapabilityDescriptorDrift,
     assert_capability_descriptor_fresh,
     build_model_selection,
+    card_knob_catalog_projection,
     list_live_sdk_models,
     live_admission_error,
     project_live_catalog,
@@ -187,11 +188,69 @@ def test_card_knob_wire_map_maps_reasoning_effort_pairs() -> None:
     assert set(cm_mod._CARD_KNOB_WIRE_ID.keys()) == {
         ("grok-4.7", "effort"),
         ("gemini-4-argon", "effort"),
+        ("muse-wonder-1.0", "effort"),
     }
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
     cfg = resolve_cursor("cursor/gemini-4-argon")
     sel = build_model_selection(cfg, {"effort": "high"})
     assert {p.id: p.value for p in sel.params} == {"reasoning_effort": "high"}
+
+
+def test_build_model_selection_muse_wonder_maps_effort_wire_id() -> None:
+    cfg = resolve_cursor("cursor/muse-wonder-1.0")
+    sel = build_model_selection(cfg, {"effort": "high", "context": "300k"})
+    assert sel.id == "muse-wonder-1.0"
+    assert {p.id: p.value for p in sel.params} == {
+        "context": "300k",
+        "reasoning_effort": "high",
+    }
+
+
+def test_build_model_selection_muse_wonder_omit_defaults_300k() -> None:
+    sel = build_model_selection(resolve_cursor("cursor/muse-wonder-1.0"))
+    assert {p.id: p.value for p in sel.params} == {
+        "context": "300k",
+        "reasoning_effort": "xhigh",
+    }
+
+
+def test_card_knob_catalog_projection_maps_reasoning_effort_to_effort() -> None:
+    wonder = SDKModel(
+        id="muse-wonder-1.0",
+        display_name="muse-wonder-1.0",
+        description="muse-wonder-1.0",
+        parameters=[
+            ModelParameterDefinition(
+                id="context",
+                display_name="context",
+                values=[
+                    ModelParameterDefinitionValue(value="300k", display_name="300k"),
+                    ModelParameterDefinitionValue(value="1m", display_name="1m"),
+                ],
+            ),
+            ModelParameterDefinition(
+                id="reasoning_effort",
+                display_name="reasoning_effort",
+                values=[
+                    ModelParameterDefinitionValue(value="high", display_name="high"),
+                ],
+            ),
+        ],
+        variants=[
+            ModelVariant(
+                params=[
+                    ModelParameterValue(id="context", value="1m"),
+                    ModelParameterValue(id="reasoning_effort", value="high"),
+                ],
+                display_name="default",
+                description="default",
+                is_default=True,
+            )
+        ],
+    )
+    projected = card_knob_catalog_projection([wonder])["muse-wonder-1.0"]
+    assert set(projected["knobs"]) == {"context", "effort"}
+    assert projected["default_variant"] == {"context": "1m", "effort": "high"}
 
 
 def test_auto_selection_uses_listmodels_id_and_refuses_knobs() -> None:

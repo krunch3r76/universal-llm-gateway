@@ -65,6 +65,12 @@ models:
     output_rate_per_m: 4.25
     source: manual_seed
     pinned: true
+  - model_id: cursor/muse-wonder-1.0
+    input_rate_per_m: 4.0
+    cache_read_rate_per_m: 0.20
+    output_rate_per_m: 20.0
+    source: manual_seed
+    pinned: true
   - model_id: cursor/claude-opus-5
     input_rate_per_m: 5.0
     cache_write_rate_per_m: 6.25

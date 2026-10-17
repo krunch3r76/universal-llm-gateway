@@ -14,8 +14,8 @@ from fastapi import APIRouter
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_models import (
+    card_knob_catalog_projection,
     list_live_sdk_models,
-    project_live_catalog,
 )
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-catalog"])
 
 
 def _build_catalog_entries(models: list[Any]) -> list[dict[str, Any]]:
-    projected = project_live_catalog(models)
+    projected = card_knob_catalog_projection(models)
     entries: list[dict[str, Any]] = []
     for model in models:
         bare_id = model.id

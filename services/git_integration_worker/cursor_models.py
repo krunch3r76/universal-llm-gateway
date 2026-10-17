@@ -79,7 +79,7 @@ def project_live_catalog(models: Sequence[SDKModel]) -> dict[str, dict[str, obje
     return projected
 
 
-def _card_knob_catalog_projection(
+def card_knob_catalog_projection(
     models: Sequence[SDKModel],
 ) -> dict[str, dict[str, object]]:
     """Project live models with wire ids mapped back to card knob names."""
@@ -111,7 +111,7 @@ def live_admission_error(bare_id: str, models: Sequence[SDKModel]) -> str | None
     capability = CURSOR_MODEL_CAPABILITIES.get(bare_id)
     if capability is None:
         return f"model {bare_id!r} not in CURSOR_MODEL_CAPABILITIES"
-    projected = _card_knob_catalog_projection(models)
+    projected = card_knob_catalog_projection(models)
     live = projected.get(bare_id)
     if live is None:
         live = projected.get(live_model_id(bare_id))
@@ -188,7 +188,7 @@ def assert_capability_descriptor_fresh(
         models = Client().list_models()
     else:
         models = list_models()
-    divergences = catalog_divergences(project_live_catalog(models))
+    divergences = catalog_divergences(card_knob_catalog_projection(models))
     if divergences:
         raise CapabilityDescriptorDrift("; ".join(divergences))
 
@@ -224,6 +224,7 @@ def validate_knobs(config: CursorSdkModelConfig, overrides: Mapping[str, str]) -
 _CARD_KNOB_WIRE_ID: Final[dict[tuple[str, str], str]] = {
     ("grok-4.7", "effort"): "reasoning_effort",
     ("gemini-4-argon", "effort"): "reasoning_effort",
+    ("muse-wonder-1.0", "effort"): "reasoning_effort",
 }
 
 

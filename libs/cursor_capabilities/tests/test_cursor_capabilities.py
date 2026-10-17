@@ -32,6 +32,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "glm-5.2": "reasoner",
     "grok-4.7": "reasoner",
     "gemini-4-argon": "reasoner",
+    "muse-wonder-1.0": "reasoner",
 }
 
 
@@ -52,7 +53,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 22
+    assert len(CURSOR_MODEL_CAPABILITIES) == 23
     opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert opus55.knobs == opus5.knobs

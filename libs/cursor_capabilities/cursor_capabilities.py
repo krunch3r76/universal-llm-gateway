@@ -326,14 +326,31 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # 300k default / 1m Max Mode at the same rates); no live ListModels probe yet.
     "muse-spark-1.3": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("300k", "1m"), default="300k"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(
                 accepted=("minimal", "low", "medium", "high", "xhigh", "max"),
                 default="high",
             ),
         },
-        default_variant={"context": "300k", "effort": "high"},
+        default_variant={"context": "1m", "effort": "high"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
+    ),
+    # Meta Muse Wonder 1.0. Wire knob reasoning_effort (card ``effort``). The
+    # ``1m`` context label is 1M tokens (Max Mode); card pins 300k standard
+    # window for omit-path dispatch (same pattern as grok-4.7 vs 500k live).
+    "muse-wonder-1.0": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("300k", "1m"), default="300k"),
+            "effort": KnobSpec(
+                accepted=("minimal", "low", "medium", "high", "xhigh", "max"),
+                default="xhigh",
+            ),
+        },
+        default_variant={"context": "300k", "effort": "xhigh"},
+        instruction_profile="reasoner",
+        context_window_tokens=300_000,
+        probed_at="2026-10-16",
     ),
     # Cursor Grok 4.7. ListModels accepts context=256k|500k and its default
     # variant is 500k (long-context, 2× the standard rate). team_dispatch pins
