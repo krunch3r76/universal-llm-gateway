@@ -248,6 +248,44 @@ def refuse_conductor_descended_manage(
     }
 
 
+def stamp_resume_caller_dispatch_id(
+    message: dict[str, Any],
+    *,
+    dispatch_id: str,
+) -> dict[str, Any]:
+    """Stamp the bridge dispatch id onto resume_of generate calls.
+
+    ``team_dispatch`` ``op=generate`` with ``resume_of`` set gets
+    ``caller_dispatch_id`` overwritten from the bridge stamp, even when the
+    model omitted it or passed another id. ``to_thread`` and generates
+    without ``resume_of`` are unchanged. An empty stamp leaves arguments
+    unchanged, including a model-supplied id.
+    """
+    stamp = (dispatch_id or "").strip()
+    if not stamp or message.get("method") != "tools/call":
+        return message
+    params = message.get("params")
+    if not isinstance(params, dict) or params.get("name") != "team_dispatch":
+        return message
+    arguments = params.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return message
+    if not isinstance(arguments, dict):
+        return message
+    if arguments.get("op") != "generate" or not arguments.get("resume_of"):
+        return message
+    stamped = dict(arguments)
+    stamped["caller_dispatch_id"] = stamp
+    new_params = dict(params)
+    new_params["arguments"] = stamped
+    new_message = dict(message)
+    new_message["params"] = new_params
+    return new_message
+
+
 def _copy_downstream(
     downstream: BinaryIO,
     upstream: BinaryIO,
@@ -293,6 +331,9 @@ def _copy_downstream(
                     with client_out_lock:
                         write_framed_message(client_out, refusal)
                 continue
+        message = stamp_resume_caller_dispatch_id(
+            message, dispatch_id=conductor_dispatch_id
+        )
         msg_id = message.get("id")
         method = message.get("method")
         if msg_id is not None and isinstance(method, str):

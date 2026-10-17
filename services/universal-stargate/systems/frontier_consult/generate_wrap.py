@@ -528,6 +528,7 @@ async def dispatch_cursor_sdk_generate_route(
             hop_seq=getattr(body, "hop_seq", None),
             hop_reason=getattr(body, "hop_reason", None),
             resume_of=getattr(body, "resume_of", None),
+            caller_dispatch_id=getattr(body, "caller_dispatch_id", None),
             skills=getattr(body, "skills", None),
             work_key=getattr(body, "work_key", None),
             force=bool(getattr(body, "force", False)),

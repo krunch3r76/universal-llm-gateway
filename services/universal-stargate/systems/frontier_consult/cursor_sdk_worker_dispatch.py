@@ -102,6 +102,11 @@ def _transport_failure_detail(
 
 
 def worker_base_url() -> str:
+    """Base URL for the git-integration-worker HTTP admit the SDK poster calls.
+
+    Host and port come from ``GIT_INTEGRATION_WORKER_HOST`` and
+    ``GIT_INTEGRATION_WORKER_PORT``. Defaults are loopback port 8091.
+    """
     host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
     port = os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091")
     return f"http://{host}:{port}"
@@ -233,6 +238,7 @@ async def dispatch_cursor_sdk_worker(
     hop_seq: int | None = None,
     hop_reason: str | None = None,
     resume_of: str | None = None,
+    caller_dispatch_id: str | None = None,
     continuity_root_thread_id: str | None = None,
     skills: tuple[str, ...] | list[str] | None = None,
     work_key: str | None = None,
@@ -286,6 +292,8 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_reason"] = hop_reason
     if resume_of:
         payload["resume_of"] = resume_of
+    if caller_dispatch_id:
+        payload["caller_dispatch_id"] = caller_dispatch_id
     if continuity_root_thread_id:
         payload["continuity_root_thread_id"] = continuity_root_thread_id
     if skills:
@@ -365,6 +373,7 @@ async def dispatch_cursor_sdk_worker_message(
     hop_seq: int | None = None,
     hop_reason: str | None = None,
     resume_of: str | None = None,
+    caller_dispatch_id: str | None = None,
     continuity_root_thread_id: str | None = None,
     skills: tuple[str, ...] | list[str] | None = None,
     work_key: str | None = None,
@@ -406,6 +415,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["hop_reason"] = hop_reason
     if resume_of:
         payload["resume_of"] = resume_of
+    if caller_dispatch_id:
+        payload["caller_dispatch_id"] = caller_dispatch_id
     if continuity_root_thread_id:
         payload["continuity_root_thread_id"] = continuity_root_thread_id
     if skills:

@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pytest
 
+from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
+    ResumeBehindCaller,
     WriteLeaseHeld,
     _connect,
 )
@@ -193,3 +200,201 @@ def test_refuse_rejects_stale_nest_under() -> None:
             nest_under="wrong-parent",
             refuse_if_lease_held=True,
         )
+
+
+def _row(dispatch_id: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT status, read_only, park_child_dispatch_id, park_resumed_by "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    return None if row is None else dict(row)
+
+
+def test_caller_polls_own_queued_child_is_refused() -> None:
+    """Caller-polls-own-queued-child: no child row, so there is nothing to poll.
+
+    A resume_of whose caller_dispatch_id is the live non-read_only holder of
+    the same lease raises ResumeBehindCaller before INSERT. A foreign caller
+    still queues. A read-only resume of the same caller still admits.
+    """
+    ledger = CursorDispatchLedger.instance()
+    key = "/repo"
+
+    assert _admit(ledger, _req(dispatch_id="holder-live"), lease_key=key) is None
+    holder = _row("holder-live")
+    assert holder is not None
+    assert holder["status"] == "admitted"
+
+    child = _req(
+        dispatch_id="child-self",
+        resume_of="terminal-parent",
+        caller_dispatch_id="holder-live",
+    )
+    with pytest.raises(ResumeBehindCaller) as exc_info:
+        _admit(ledger, child, lease_key=key)
+    assert exc_info.value.holder_dispatch_id == "holder-live"
+    hint = exc_info.value.fix_hint
+    assert "exit-then-resume_of" in hint
+    assert "nest_under=holder-live" in hint
+    assert "omit resume_of" in hint
+    assert "does not inherit the agent store" in hint
+    assert "Do not send nest_under and resume_of together" in hint
+
+    assert _row("child-self") is None
+    holder_after = _row("holder-live")
+    assert holder_after is not None
+    assert holder_after["status"] == "admitted"
+    assert holder_after["park_child_dispatch_id"] is None
+
+    foreign = _admit(
+        ledger,
+        _req(
+            dispatch_id="child-foreign",
+            resume_of="terminal-parent",
+            caller_dispatch_id="other-seat",
+        ),
+        lease_key=key,
+    )
+    assert foreign is not None
+    assert foreign.status == "queued"
+    foreign_row = _row("child-foreign")
+    assert foreign_row is not None
+    assert foreign_row["status"] == "queued"
+
+    read_only = _admit(
+        ledger,
+        _req(
+            dispatch_id="child-ro",
+            thread_id="t-read",
+            resume_of="terminal-parent",
+            caller_dispatch_id="holder-live",
+        ),
+        lease_key=key,
+        read_only=True,
+    )
+    assert read_only is None
+    ro_row = _row("child-ro")
+    assert ro_row is not None
+    assert ro_row["status"] == "admitted"
+    assert ro_row["read_only"] == 1
+
+
+def test_resume_of_without_caller_dispatch_id_stays_queued() -> None:
+    """Missing caller_dispatch_id keeps today's queue (F3, beside the helper)."""
+    ledger = CursorDispatchLedger.instance()
+    key = "/repo"
+
+    _admit(ledger, _req(dispatch_id="holder-unstamped"), lease_key=key)
+    queued = _admit(
+        ledger,
+        _req(dispatch_id="child-unstamped", resume_of="terminal-parent"),
+        lease_key=key,
+    )
+    assert queued is not None
+    assert queued.status == "queued"
+    row = _row("child-unstamped")
+    assert row is not None
+    assert row["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_route_resume_behind_caller_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """422 leaves no child row and does not park or retarget the holder.
+
+    The route calls the same lane-B mint rollback hook as WriteLeaseHeld.
+    resume_of binding is ``resumed`` (nothing minted), so the hook runs with
+    minted_lane_b false and the holder's lease row stays admitted.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    worktrees = tmp_path / "worktrees"
+    worktrees.mkdir()
+    dispatch_ws = tmp_path / "dispatch_ws"
+    dispatch_ws.mkdir()
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=source,
+        worktree_root=worktrees,
+        dispatch_workspace=dispatch_ws,
+        green_gate_cmd=["true"],
+    )
+    ledger = CursorDispatchLedger.instance()
+    parent_lease = str(source.resolve())
+    child_lease = str(dispatch_ws.resolve())
+    assert (
+        _admit(
+            ledger,
+            _req(dispatch_id="parent-term", thread_id="t-parent"),
+            lease_key=parent_lease,
+            source_repo=parent_lease,
+        )
+        is None
+    )
+    assert (
+        _admit(
+            ledger,
+            _req(dispatch_id="holder-live", thread_id="t-holder"),
+            lease_key=child_lease,
+            source_repo=parent_lease,
+        )
+        is None
+    )
+
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    monkeypatch.setattr(
+        route_mod,
+        "validate_dispatch_context",
+        lambda *_a, **_k: {"setting_sources": ["projectSettings"]},
+    )
+    monkeypatch.setattr(route_mod, "reject_resume_if_ineligible", lambda _req: None)
+    rollback_calls: list[dict[str, object]] = []
+    real_rollback = route_mod._rollback_lane_b_mint_if_needed
+
+    async def _spy(**kwargs: object) -> None:
+        rollback_calls.append(kwargs)
+        await real_rollback(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(route_mod, "_rollback_lane_b_mint_if_needed", _spy)
+
+    child = _req(
+        dispatch_id="child-route",
+        thread_id="t-child",
+        resume_of="parent-term",
+        caller_dispatch_id="holder-live",
+        handoff_contract="freeform",
+    )
+    response = await route_mod.admit_cursor_dispatch(
+        child,
+        cfg=cfg,
+        controller=WorkAdmissionController(
+            ledger=ledger,
+            worker_id="w",
+            pid=0,
+            worker_started_at=datetime.now(UTC).isoformat(),
+        ),
+    )
+    assert response.status_code == 422
+    body = json.loads(bytes(response.body).decode())
+    assert body.get("code") == "CURSOR_RESUME_BEHIND_CALLER"
+    assert body.get("retryable") is False
+    data = body.get("data") or {}
+    assert data.get("validation_stage") == "ledger_resume_behind_caller"
+    hint = str(data.get("fix_hint") or "")
+    assert "exit-then-resume_of" in hint
+    assert "nest_under=holder-live" in hint
+    assert "does not inherit the agent store" in hint
+    assert _row("child-route") is None
+    holder = _row("holder-live")
+    assert holder is not None
+    assert holder["status"] == "admitted"
+    assert holder["park_child_dispatch_id"] is None
+    assert rollback_calls
+    assert rollback_calls[-1]["dispatch_id"] == "child-route"
+    assert rollback_calls[-1]["minted_lane_b"] is False
+    assert rollback_calls[-1]["reason"] == "resume_behind_caller"

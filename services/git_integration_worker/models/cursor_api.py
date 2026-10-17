@@ -96,6 +96,15 @@ class CursorDispatchRequest(BaseModel):
     ) = None
     work_key: str | None = None
     resume_of: str | None = None
+    caller_dispatch_id: str | None = Field(
+        default=None,
+        description=(
+            "Dispatch id of the seat admitting this request. The stdio bridge "
+            "stamps it only when resume_of is set. When that id is the live "
+            "non-read_only holder of this write lease, admit raises "
+            "ResumeBehindCaller before insert."
+        ),
+    )
     continuity_root_thread_id: str | None = None
     parent_dispatch_thread_id: str | None = None
     operator_contract: str | None = Field(

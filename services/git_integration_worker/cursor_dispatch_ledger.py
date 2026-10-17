@@ -119,6 +119,39 @@ class WriteLeaseHeld(Exception):  # noqa: N818 — release-before-admit fence (2
         )
 
 
+class ResumeBehindCaller(Exception):  # noqa: N818 — not a retryable lease wait
+    """resume_of whose caller is the live write-lease holder.
+
+    Raised inside the admit transaction before INSERT. The child would stay
+    queued until the caller exits, and the caller's poll waits on that child.
+    Not WriteLeaseHeld: the route maps that exception to a retryable 409, and
+    retrying this same resume_of cannot free the lease the caller still holds.
+    """
+
+    def __init__(
+        self,
+        *,
+        lease_key: str,
+        holder_dispatch_id: str,
+        holder_thread_id: str | None,
+    ) -> None:
+        self.lease_key = lease_key
+        self.holder_dispatch_id = holder_dispatch_id
+        self.holder_thread_id = holder_thread_id
+        self.fix_hint = (
+            f"caller {holder_dispatch_id} holds this write lease, so resume_of "
+            "would queue behind its own caller. Exit this dispatch, then "
+            "resume_of the terminal parent (exit-then-resume_of inherits the "
+            "agent store via emit_sdk_worker_resumed). Or re-admit with "
+            f"nest_under={holder_dispatch_id} and omit resume_of (nest_under "
+            "parks the holder and does not inherit the agent store). Do not "
+            "send nest_under and resume_of together."
+        )
+        super().__init__(
+            f"resume_of caller {holder_dispatch_id!r} holds write lease {lease_key!r}"
+        )
+
+
 class WorkerThreadOccupied(Exception):  # noqa: N818 — second live admit on thread
     """Raised when a top-level admit would occupy a thread that already has a live runner."""
 
@@ -1360,6 +1393,11 @@ class CursorDispatchLedger:
         ``lease_key``, that parent is moved to ``parked_waiting`` and the
         child inserts as ``admitted``.
 
+        ``resume_of`` does not enter that park. When ``req.caller_dispatch_id``
+        is a live non-read_only holder of the same lease, admit raises
+        ``ResumeBehindCaller`` before INSERT. A missing or foreign caller id
+        still queues. Read from the request, not a separate kwarg.
+
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         self._inherit_resume_wake_lane(req)
         record_json = _dispatch_record_json(req)
@@ -1708,6 +1746,20 @@ class CursorDispatchLedger:
                     (conflict and conflict_holder is not None)
                     or prior_queued is not None
                 ):
+                    caller_id = (req.caller_dispatch_id or "").strip()
+                    if req.resume_of and caller_id:
+                        caller_row = conn.execute(
+                            "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                            "AND status IN ('admitted','running') AND dispatch_id=?",
+                            (writer_key, caller_id),
+                        ).fetchone()
+                        if caller_row is not None:
+                            raise ResumeBehindCaller(
+                                lease_key=writer_key or "",
+                                holder_dispatch_id=caller_row["dispatch_id"],
+                                holder_thread_id=caller_row["thread_id"],
+                            )
                     if refuse_if_lease_held:
                         holder = _fetch_active_holder_conn(conn, lease_key=writer_key)
                         projection = _holder_projection(holder)

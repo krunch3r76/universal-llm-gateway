@@ -38,6 +38,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     DispatchConflict,
     PromotedDispatch,
     RemintCapExceeded,
+    ResumeBehindCaller,
     SourceRefConflict,
     WorkerThreadOccupied,
     WriteLeaseHeld,
@@ -4196,6 +4197,29 @@ async def admit_cursor_dispatch(
                 "holder_dispatch_id": exc.holder_dispatch_id,
                 "holder_thread_id": exc.holder_thread_id,
                 "queue_depth": exc.queue_depth,
+            },
+        )
+    except ResumeBehindCaller as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="resume_behind_caller",
+        )
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_RESUME_BEHIND_CALLER",
+            failure_layer="admission",
+            http_status=422,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_resume_behind_caller",
+            extra_data={
+                "lease_key": exc.lease_key,
+                "holder_dispatch_id": exc.holder_dispatch_id,
+                "holder_thread_id": exc.holder_thread_id,
+                "fix_hint": exc.fix_hint,
             },
         )
     except ResumeAlreadyAdmitted as exc:

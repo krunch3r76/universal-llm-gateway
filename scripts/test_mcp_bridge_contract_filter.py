@@ -26,6 +26,7 @@ from scripts.mcp_bridge_contract_filter import (  # noqa: E402
     read_framed_message,
     refuse_conductor_descended_manage,
     should_filter_stdio,
+    stamp_resume_caller_dispatch_id,
     write_framed_message,
 )
 
@@ -110,7 +111,11 @@ def _tools_call(arguments: dict) -> dict:
 
 
 def _drive_downstream(
-    message: dict, *, review_gate: bool, seat_thread: str | None = None
+    message: dict,
+    *,
+    review_gate: bool,
+    seat_thread: str | None = None,
+    conductor_dispatch_id: str = "",
 ) -> tuple[dict | None, dict | None]:
     client_in = io.BytesIO()
     write_framed_message(client_in, message)
@@ -125,6 +130,7 @@ def _drive_downstream(
         allow=frozenset({"team_dispatch", "cortex"}) if review_gate else None,
         seat_thread=seat_thread,
         client_out=client_out,
+        conductor_dispatch_id=conductor_dispatch_id,
     )
     child_in.seek(0)
     client_out.seek(0)
@@ -329,3 +335,60 @@ def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:
     forwarded, refused = _drive_downstream(_tools_call(spawn), review_gate=False)
     assert forwarded == _tools_call(spawn)
     assert refused is None
+
+
+def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread() -> None:
+    """Bridge stamp wins on resume_of generate; to_thread and empty stamp do not."""
+    omitted = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "model": "cursor/composer-2.5",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(omitted),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    assert forwarded["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+    assert forwarded["params"]["arguments"]["resume_of"] == "terminal-parent"
+
+    overridden = dict(omitted)
+    overridden["caller_dispatch_id"] = "other-seat"
+    forwarded, refused = _drive_downstream(
+        _tools_call(overridden),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    assert forwarded["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+
+    unchanged, refused = _drive_downstream(
+        _tools_call(overridden), review_gate=False, conductor_dispatch_id=""
+    )
+    assert refused is None
+    assert unchanged == _tools_call(overridden)
+
+    to_thread = {
+        "op": "to_thread",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "thread": "9",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(to_thread),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded == _tools_call(to_thread)
+    assert "caller_dispatch_id" not in forwarded["params"]["arguments"]
+
+    bare = stamp_resume_caller_dispatch_id(
+        _tools_call({"op": "generate", "seat": "cursor-sdk"}),
+        dispatch_id="holder-live",
+    )
+    assert "caller_dispatch_id" not in bare["params"]["arguments"]
