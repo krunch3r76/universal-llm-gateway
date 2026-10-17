@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _model_measured_vram_from_federated(fg: Any) -> dict[Any, int]:
+    raw = getattr(fg, "model_measured_vram", None) or {}
+    return dict(raw)
+
+
 def _map_model_resources_to_details(
     model_resources: dict[Any, dict[str, Any]],
 ) -> dict[Any, dict[str, int]]:
@@ -74,6 +79,7 @@ def stargate_to_gateway(stargate: Stargate) -> Gateway:
         loading_models=stargate.loading_models,
         available_models=stargate.available_models,
         model_details=stargate.model_details,
+        model_measured_vram=dict(stargate.model_measured_vram),
         active_requests=stargate.active_requests,
         telemetry_timestamp=stargate.telemetry_timestamp,
         last_heartbeat=stargate.last_heartbeat,
@@ -126,6 +132,7 @@ def federated_gateways_to_routing_candidates(
                 last_heartbeat=fg.last_heartbeat,
                 model_details=model_details,
                 model_loaded_at=getattr(fg, "model_loaded_at", {}),
+                model_measured_vram=_model_measured_vram_from_federated(fg),
                 remote_stargate_id=fg.remote_stargate_id,
                 node_id=getattr(fg, "node_id", ""),
                 is_cloud=fg.is_cloud,
@@ -204,6 +211,7 @@ def _collect_federated_stargates(
                 ),
                 last_heartbeat=getattr(fed_gw, "last_update_time", 0.0) or 0.0,
                 model_details=model_details,
+                model_measured_vram=_model_measured_vram_from_federated(fed_gw),
             )
         )
     return stargates

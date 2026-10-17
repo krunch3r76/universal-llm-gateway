@@ -190,6 +190,25 @@ models:
     output_rate_per_m: 10.0
     source: manual_seed
     pinned: true
+  - model_id: anthropic/claude-sonnet-5-5
+    input_rate_per_m: 2.0
+    cache_write_rate_per_m: 2.5
+    cache_read_rate_per_m: 0.10
+    output_rate_per_m: 10.0
+    source: platform pricing page 2026-10-16 (analysis § 2.1)
+    pinned: true
+  - model_id: anthropic/claude-haiku-5-5
+    input_rate_per_m: 0.10
+    cache_write_rate_per_m: 0.125
+    cache_read_rate_per_m: 0.01
+    output_rate_per_m: 0.50
+    long_prompt_threshold_tokens: 100000
+    long_input_rate_per_m: 0.50
+    long_cache_write_rate_per_m: 0.625
+    long_cache_read_rate_per_m: 0.05
+    long_output_rate_per_m: 2.50
+    source: platform pricing page 2026-10-16 (analysis § 2.1)
+    pinned: true
   - model_id: anthropic/claude-opus-5-5
     input_rate_per_m: 4.0
     cache_write_rate_per_m: 5.0

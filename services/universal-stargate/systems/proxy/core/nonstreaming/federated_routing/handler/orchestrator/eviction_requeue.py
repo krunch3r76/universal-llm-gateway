@@ -127,6 +127,10 @@ async def requeue_after_transient_eviction(
         for g in federated_gateways_to_routing_candidates(fresh_gateways)
         if g.name not in (context.excluded_gateway_ids or set())
     ]
+    from systems.proxy.core.nonstreaming.capacity_deadline import (
+        embedding_capacity_acquire_deadline_mono,
+    )
+
     selected_gateway = await acquire_admission_token(
         context=context,
         selected_gateway=selected_gateway,
@@ -139,6 +143,7 @@ async def requeue_after_transient_eviction(
         overflow_origin_gateway=None,
         overflow_depth_before=0,
         selection_trace=trace,
+        acquire_deadline_mono=embedding_capacity_acquire_deadline_mono(context),
     )
 
     return await finalize_selection_and_load(

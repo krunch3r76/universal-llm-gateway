@@ -158,6 +158,10 @@ async def execute_embedding_request(
     forward_embedding_fn: Callable[..., Awaitable[dict[str, Any]]],
     event_bus: EventBus,
     oom_recovery_fn: Callable[..., Awaitable[bool]] | None = None,
+    routing_config: dict | None = None,
+    request_timeout_hint: float | None = None,
+    query_cpu_failover_enabled: bool = False,
+    batch_cpu_failover_enabled: bool = False,
 ) -> dict[str, Any]:
     """
     Execute an embedding request via federation.
@@ -193,6 +197,12 @@ async def execute_embedding_request(
         emit_execution_completed,
         emit_execution_failed,
     )
+    from systems.proxy.core.nonstreaming.capacity_deadline import (
+        apply_capacity_deadline,
+    )
+    from systems.proxy.core.nonstreaming.executor.embedding_failover import (
+        run_embedding_with_cpu_failover,
+    )
 
     parsed_model_id = ModelId.parse(model_id)
     resolved_request_id = request_id or str(uuid.uuid4())
@@ -216,41 +226,31 @@ async def execute_embedding_request(
     # calls so routing cannot derive it; wrong key causes capacity reservation leak.
     context.routing_endpoint_category = EndpointCategory.EMBEDDING
     context.model_sticky = False
+    apply_capacity_deadline(
+        context,
+        routing_config=routing_config,
+        request_timeout_hint=request_timeout_hint,
+    )
 
+    cpu_failover_enabled = query_cpu_failover_enabled or batch_cpu_failover_enabled
     fed_gateway = None
     try:
-        await select_gateway_fn(context)
-        fed_gateway = context.federated_gateway
-        if not fed_gateway:
-            raise HTTPException(
-                status_code=503,
-                detail=error_envelope(
-                    code=ErrorCode.RESOURCE_UNAVAILABLE,
-                    message=f"No gateway available for model: {model_id}",
-                    source="master",
-                    retryable=True,
-                    data={"model_id": model_id},
-                ),
-            )
-
-        result = await _forward_with_retry(
-            forward_fn=forward_embedding_fn,
-            fed_gateway=fed_gateway,
-            request_body=request_body,
-            request_id=resolved_request_id,
+        return await run_embedding_with_cpu_failover(
+            context=context,
             parsed_model_id=parsed_model_id,
-            oom_recovery_fn=oom_recovery_fn,
-        )
-
-        await emit_execution_completed(
+            request_body=request_body,
+            resolved_request_id=resolved_request_id,
+            select_gateway_fn=select_gateway_fn,
+            forward_with_retry_fn=_forward_with_retry,
+            forward_embedding_fn=forward_embedding_fn,
+            release_capacity_token_fn=release_capacity_token_fn,
+            emit_execution_completed_fn=emit_execution_completed,
             event_bus=event_bus,
-            url=fed_gateway.remote_stargate_url,
-            model_id=context.selected_model.routing_key,
-            request_id=resolved_request_id,
-            gateway_id=fed_gateway.gateway_id,
+            oom_recovery_fn=oom_recovery_fn,
+            cpu_failover_enabled=cpu_failover_enabled,
         )
-        return result
     except Exception as e:
+        fed_gateway = context.federated_gateway
         gateway_url = fed_gateway.remote_stargate_url if fed_gateway else "unknown"
         gateway_id = fed_gateway.gateway_id if fed_gateway else "unknown"
         await emit_execution_failed(

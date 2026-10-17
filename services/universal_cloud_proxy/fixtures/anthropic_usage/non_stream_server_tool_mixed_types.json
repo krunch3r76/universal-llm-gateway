@@ -1,0 +1,18 @@
+{
+  "id": "msg_non_stream_mix",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "done"}],
+  "model": "claude-sonnet-5",
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 1000,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 500,
+    "server_tool_use": {
+      "web_search_requests": 10,
+      "code_execution": {"seconds": 40}
+    }
+  }
+}

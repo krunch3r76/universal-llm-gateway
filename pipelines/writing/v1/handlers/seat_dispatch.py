@@ -22,14 +22,24 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
-from .assemble import _unwrap
+from .assemble import (
+    _unwrap,
+    build_held_reviewer_unfunded_review,
+    openai_reviewer_quota_reason,
+    post_reviewer_unfunded_bus_report,
+    resolve_openai_reviewer_model,
+)
 
 DEFAULT_DISPATCH_THREAD = "15790"
 REFUSED_THREAD = "12286"
 _CALLER = "pipeline:writer-specialist-v1"
 _JSON_ONLY = "Return only the JSON object, with no prose before or after it."
 _POSTED: set[str] = set()
-_DEFAULT_MODELS = {"cdp": "cdp/opus-5.5", "cursor_pool1": "cursor/grok-4.7"}
+_DEFAULT_MODELS = {
+    "cdp": "cdp/opus-5.5",
+    "cursor_pool1": "cursor/grok-4.7",
+    "openai": "openai/gpt-5.5",
+}
 _ERROR_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 _DISPATCH_IDS = (
     "execution_id",
@@ -162,9 +172,10 @@ async def _post_json(client: Any, path: str, body: dict[str, Any]) -> dict[str, 
     if not isinstance(data, dict):
         data = {"value": data}
     status = getattr(resp, "status_code", 200)
-    if isinstance(status, int) and status >= 400:
-        data.setdefault("error", f"http_{status}")
+    if isinstance(status, int):
         data["http_status"] = status
+        if status >= 400:
+            data.setdefault("error", f"http_{status}")
     return data
 
 
@@ -321,5 +332,177 @@ class WritingSeatDispatchHandler(BaseHandler):
                 "execution_id": execution_id,
                 "poll_hint": poll_hint,
                 "dispatch": _safe_dispatch(dispatched),
+            }
+        )
+
+
+def _result_text(data: dict[str, Any]) -> str:
+    for key in ("result_text", "output", "text", "content"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    result = data.get("result")
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("text", "content", "output"):
+            nested = result.get(key)
+            if isinstance(nested, str):
+                return nested
+    return ""
+
+
+async def _held_openai_quota_step(
+    *,
+    thread: str,
+    writer_model: str,
+    reviewer_model: str,
+    reason: str,
+    bus_client: Any | None,
+) -> StepOutput:
+    held = build_held_reviewer_unfunded_review(reason=reason)
+    posted = await post_reviewer_unfunded_bus_report(
+        bus_client=bus_client,
+        thread_id=thread,
+        reason=held["reason"],
+        writer_model=writer_model,
+        reviewer_model=reviewer_model,
+    )
+    if not posted:
+        held = dict(held)
+        held["bus_report_failed"] = True
+    return _step(held)
+
+
+class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
+    """Admit an OpenAI reviewer via team_dispatch (202 + execution_id)."""
+
+    step_type = "writing_review_openai_v1"
+
+    def __init__(
+        self,
+        client: Any | None = None,
+        bus_client: Any | None = None,
+        sidecar_writer: Callable[[str, str], str] | None = None,
+    ) -> None:
+        super().__init__(client=client, sidecar_writer=sidecar_writer)
+        self._bus_client = bus_client
+
+    async def execute(self, step: Any, context: Any) -> StepOutput:
+        options = getattr(context, "options", {}) or {}
+        outputs = getattr(context, "outputs", {}) or {}
+        assemble = getattr(outputs.get("assemble"), "json", None)
+        if not isinstance(assemble, dict):
+            assemble = {}
+        if assemble.get("reviewer_seat") != "openai":
+            return _step({"ok": False, "refused": "reviewer_seat_failed", "error": "not_openai"})
+        thread = _thread_id(options)
+        run_id = _run_id(context)
+        key = f"writer-specialist-v1:{run_id}:reviewer"
+        if key in _POSTED:
+            return _step(
+                {"ok": False, "duplicate_suppressed": True, "idempotency_key": key}
+            )
+        prompts = _prompts()
+        row = prompts.get("reviewer") or {}
+        draft = getattr(outputs.get("draft"), "json", None)
+        draft_text = ""
+        if isinstance(draft, dict) and isinstance(draft.get("draft"), str):
+            draft_text = draft["draft"]
+        fields: dict[str, Any] = {
+            "documents": assemble.get("documents_block") or "",
+            "brief": assemble.get("brief_block") or "",
+            "draft": draft_text,
+        }
+        prompt = PromptBuilder().render(str(row.get("template") or ""), fields)
+        prompt = prompt.rstrip() + "\n" + _JSON_ONLY
+        system = str(row.get("system_prompt") or "")
+        try:
+            model = str(
+                assemble.get("reviewer_model")
+                or resolve_openai_reviewer_model(_seat_models(options))
+            )
+        except ValueError as exc:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "reviewer_seat_unavailable",
+                    "error": str(exc),
+                }
+            )
+        writer_model = str(assemble.get("writer_model") or "")
+        timeout_s = _timeout(options)
+        sensitive = assemble.get("sensitivity") != "non_sensitive"
+        body: dict[str, Any] = {
+            "op": "generate",
+            "model": model,
+            "prompt": prompt,
+            "system": system,
+            "dispatch_thread_id": thread,
+            "caller_agent": _CALLER,
+            "transcript_id": key,
+            "job": "freeform",
+            "timeout_seconds": timeout_s,
+        }
+        digest = hashlib.sha256(prompt.encode()).hexdigest()
+        if sensitive:
+            sidecar_ref = self._sidecar_writer(prompt, key)
+            body.pop("prompt", None)
+            body["sidecar_ref"] = sidecar_ref
+            body["prompt_sha256"] = digest
+            body["bus_body"] = "pointer_only"
+        _POSTED.add(key)
+        if self._client is not None:
+            dispatched = await _post_json(self._client, "/api/v1/team/dispatch", body)
+        else:
+            async with make_async_client(DEFAULT_STARGATE_URL, timeout=30.0) as client:
+                dispatched = await _post_json(client, "/api/v1/team/dispatch", body)
+        if dispatched.get("transport"):
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "review_transport_failed",
+                    "error": "transport_error",
+                }
+            )
+        status = dispatched.get("http_status")
+        if isinstance(status, int) and status >= 400:
+            quota_reason = openai_reviewer_quota_reason(dispatched)
+            if quota_reason:
+                return await _held_openai_quota_step(
+                    thread=thread,
+                    writer_model=writer_model,
+                    reviewer_model=model,
+                    reason=quota_reason,
+                    bus_client=self._bus_client,
+                )
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "review_transport_failed",
+                    "error": _error_code(dispatched, status),
+                }
+            )
+        execution_id = dispatched.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "review_transport_failed",
+                    "error": "missing_execution_id",
+                }
+            )
+        return _step(
+            {
+                "ok": True,
+                "admit": "admitted",
+                "seat": "openai",
+                "role": "reviewer",
+                "model": model,
+                "execution_id": execution_id,
+                "dispatch_thread_id": thread,
+                "idempotency_key": key,
+                "prompt_sha256": digest,
+                "status": dispatched.get("status") or "running",
             }
         )

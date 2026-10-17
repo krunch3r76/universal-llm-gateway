@@ -245,3 +245,17 @@ def test_anthropic_frontier_resolution_cases(
 )
 def test_responses_floor_bump_cases(requested: int | None, expected: int) -> None:
     assert _resolve_responses_frontier("gpt-5.5", requested) == expected
+
+
+def test_sonnet_5_5_uses_sonnet_5_marker_adaptive_128k() -> None:
+    dispatch = resolve_dispatch("anthropic/claude-sonnet-5-5")
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"
+
+
+def test_haiku_5_5_adaptive_128k() -> None:
+    dispatch = resolve_dispatch("anthropic/claude-haiku-5-5")
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"

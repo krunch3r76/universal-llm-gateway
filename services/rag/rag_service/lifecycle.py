@@ -95,7 +95,10 @@ async def _startup() -> None:
     await state._broadcaster.start_debug_server()
 
     state._config = load_config()
-    configure_embeddings(state._config.embedding_model)
+    configure_embeddings(
+        state._config.embedding_model,
+        query_embed_request_timeout_s=state._config.query_embed_request_timeout_s,
+    )
     set_embeddings_event_bus(state._event_bus)
 
     if state._config.contextualize_model:

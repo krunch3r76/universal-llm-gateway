@@ -27,7 +27,7 @@ options:
     default: local
   reviewer_seat:
     type: string
-    description: auto, local, or cdp
+    description: auto, local, cdp, or openai
     default: auto
   dispatch_thread_id:
     type: string
@@ -154,6 +154,14 @@ steps:
     type: writing_seat_dispatch_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
 
+  - name: review_openai
+    type: writing_review_openai_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
+
+  - name: review_openai_wait
+    type: writing_review_openai_wait_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
+
   - name: review_wait
     type: writing_seat_wait_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
@@ -259,6 +267,10 @@ steps:
       - step: independence
         fields: [json]
       - step: review_dispatch
+        fields: [json]
+      - step: review_openai
+        fields: [json]
+      - step: review_openai_wait
         fields: [json]
       - step: review_wait
         fields: [json]

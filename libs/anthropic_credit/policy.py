@@ -231,6 +231,14 @@ class CreditPolicy:
                 if cfg.available_balance.as_of
                 else None
             )
+            if as_of_dt is not None and as_of_dt > now_utc:
+                return Refuse(
+                    code="anthropic_credit_gate_unavailable",
+                    http_status=503,
+                    reservation_usd=None,
+                    headroom_usd=None,
+                    detail="balance_as_of_in_future",
+                )
 
             if not request_id or not str(request_id).strip():
                 return Refuse(
@@ -271,8 +279,6 @@ class CreditPolicy:
                     conn,
                     now=now_utc,
                     ttl_minutes=cfg.reservation_ttl_minutes,
-                    window_start=window_start,
-                    reset_at=reset_at,
                 )
                 snap = CreditLedger.compute_window_snapshot(
                     conn,
@@ -747,8 +753,6 @@ class CreditPolicy:
                 conn,
                 now=now_utc,
                 ttl_minutes=cfg.reservation_ttl_minutes,
-                window_start=window_start,
-                reset_at=reset_at,
             )
             snap = CreditLedger.compute_window_snapshot(
                 conn,
@@ -803,8 +807,26 @@ class CreditPolicy:
 
         return ledger.run_immediate(_txn)
 
+    def balance_as_of_unavailable_reason(
+        self, now: datetime | None = None
+    ) -> str | None:
+        """Return a status reason when configured balance as-of is in the future."""
+        try:
+            now_utc = _normalize_now(now)
+            cfg, _ledger = self._resolve_config_and_ledger()
+        except Exception:
+            return None
+        if not cfg.available_balance.as_of:
+            return None
+        as_of_dt = parse_utc_iso(cfg.available_balance.as_of)
+        if as_of_dt > now_utc:
+            return "balance_as_of_in_future"
+        return None
+
     def healthy(self) -> bool:
         """Return True iff config validates and the SQLite ledger is reachable."""
+        if self.balance_as_of_unavailable_reason() is not None:
+            return False
         try:
             _cfg, ledger = self._resolve_config_and_ledger()
             ledger.run_immediate(

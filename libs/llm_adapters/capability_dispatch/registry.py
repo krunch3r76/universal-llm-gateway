@@ -44,6 +44,7 @@ _ALL_EFFORTS: tuple[str, ...] = tuple(sorted(VALID_REASONING_EFFORTS))
 # ── Anthropic max-output ceilings (reshaped _ANTHROPIC_MAX_OUTPUT_TOKENS) ──────
 # Ordered most-specific first; substring match reproduces the OLD helper.
 _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
+    ("claude-haiku-5-5", 128000),
     ("claude-fable-5", 128000),
     ("claude-mythos-5", 128000),
     ("claude-mythos-preview", 128000),
@@ -90,6 +91,7 @@ _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
 # markers fall through to ``None`` (no input-aware clamp). Manually extend with a
 # researched value when adding a model.
 _ANTHROPIC_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("claude-haiku-5-5", 1_000_000),
     ("claude-fable-5", 1_000_000),
     ("claude-mythos-5", 1_000_000),
     ("claude-mythos-preview", 1_000_000),
@@ -150,6 +152,8 @@ _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
         "claude-opus-5",
         "claude-opus-5-5",
         "claude-sonnet-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
         "claude-opus-4-8",
         "claude-opus-4-7",
         "claude-opus-4-6",
