@@ -33,13 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from anthropic_credit.policy import (
-    AnthropicCreditRefused,
-    admit,
-    commit,
-    healthy,
-    release,
-)
+from anthropic_credit.policy import AnthropicCreditRefused, healthy
 from anthropic_credit.policy import (
     status as credit_status,
 )
@@ -49,7 +43,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from llm_adapters._mcp_entry import normalize_mcp_public_url
 from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
-from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
+from universal_event_bus import Event, EventBus, MinimalEventDebugBroadcaster
 
 from .adapters.anthropic_credit_gate import refuse_to_json
 from .adapters.base import ProviderAdapter
@@ -73,6 +67,7 @@ from .events import (
     CloudProxyRequestTranslationFailed,
     CloudProxyShutdown,
     CloudProxyStarted,
+    CloudProxyAnthropicCreditSignal,
 )
 from .forwarder import ProviderForwarder
 from .local_catalog import LocalCatalogCache
@@ -127,6 +122,22 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     event_bus = EventBus()
     _atexit_event_bus = event_bus
+
+    from anthropic_credit.policy import set_event_emitter
+
+    def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
+        async def _publish() -> None:
+            await event_bus.publish(
+                CloudProxyAnthropicCreditSignal(signal=name, payload=payload)
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(_publish())
+
+    set_event_emitter(_credit_event_emit)
     broadcaster = MinimalEventDebugBroadcaster(
         uds_publish_path=os.environ.get(
             "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -293,6 +304,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     yield
 
+    set_event_emitter(None)
     _shutdown_clean = True
     await event_bus.publish(CloudProxyShutdown(reason="clean"))
     await catalog.shutdown()
@@ -888,10 +900,22 @@ async def chat_completions(request: Request) -> Response:
         return JSONResponse(content=response_json)
 
     if streaming:
+        from .native_streaming import preflight_native_byte_stream
+
         chunks = forwarder.forward_request_stream(
             provider=provider_catalog.provider,
             request_body=body,
         )
+        try:
+            primed = await preflight_native_byte_stream(chunks)
+        except AnthropicCreditRefused as exc:
+            await _raise_anthropic_credit_refused(
+                exc,
+                event_bus=event_bus,
+                provider=provider_catalog.provider,
+                model_id=model_id,
+                adapter_type=adapter,
+            )
         if event_bus:
             await event_bus.publish(
                 CloudProxyRequestForwarded(
@@ -904,7 +928,7 @@ async def chat_completions(request: Request) -> Response:
             )
         return StreamingResponse(
             _relay_stream_safe(
-                chunks,
+                primed,
                 provider_catalog.provider,
                 model_id,
                 adapter,
@@ -1117,74 +1141,6 @@ async def anthropic_credit_status_route() -> JSONResponse:
             "config invalid or ledger unreachable",
         )
     return JSONResponse(content=payload)
-
-
-@app.post("/internal/anthropic-credit/reserve")
-async def anthropic_credit_reserve_route(request: Request) -> JSONResponse:
-    from anthropic_credit.policy import Refuse
-
-    body = await _read_json_object_body(
-        request=request,
-        event_bus=_get_event_bus(),
-        endpoint_name="Anthropic credit reserve",
-    )
-    request_id = str(body.get("request_id", "")).strip()
-    model = str(body.get("model", ""))
-    upstream_body = body.get("upstream_body")
-    if not isinstance(upstream_body, dict):
-        raise HTTPException(status_code=422, detail="upstream_body must be an object")
-    tag = body.get("tag")
-    token_count = body.get("token_count")
-    parsed_token_count = (
-        token_count if isinstance(token_count, int) and token_count >= 0 else None
-    )
-    result = admit(
-        request_id,
-        model,
-        upstream_body,
-        str(tag) if tag is not None else None,
-        token_count=parsed_token_count,
-    )
-    if isinstance(result, Refuse):
-        raise HTTPException(
-            status_code=result.http_status,
-            detail=refuse_to_json(result),
-        )
-    return JSONResponse(
-        content={
-            "request_id": result.request_id,
-            "reservation_usd": str(result.reservation_usd),
-            "headroom_usd": str(result.headroom_usd),
-            "mcp_class": result.mcp_class,
-        }
-    )
-
-
-@app.post("/internal/anthropic-credit/commit")
-async def anthropic_credit_commit_route(request: Request) -> JSONResponse:
-    body = await _read_json_object_body(
-        request=request,
-        event_bus=_get_event_bus(),
-        endpoint_name="Anthropic credit commit",
-    )
-    request_id = str(body.get("request_id", "")).strip()
-    usage = body.get("usage")
-    if usage is not None and not isinstance(usage, dict):
-        raise HTTPException(status_code=422, detail="usage must be an object or null")
-    committed = commit(request_id, usage if isinstance(usage, dict) else None)
-    return JSONResponse(content={"request_id": request_id, "committed_usd": str(committed)})
-
-
-@app.post("/internal/anthropic-credit/release")
-async def anthropic_credit_release_route(request: Request) -> JSONResponse:
-    body = await _read_json_object_body(
-        request=request,
-        event_bus=_get_event_bus(),
-        endpoint_name="Anthropic credit release",
-    )
-    request_id = str(body.get("request_id", "")).strip()
-    release(request_id)
-    return JSONResponse(content={"request_id": request_id, "released": True})
 
 
 app.include_router(native_router)

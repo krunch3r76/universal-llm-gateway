@@ -55,7 +55,7 @@ def test_exact_usd_with_5m_and_1h_breakdown() -> None:
         },
         "output_tokens": 400,
     }
-    cost, missing = usage_cost_usd(usage, _sonnet_row())
+    cost, missing, _unknown = usage_cost_usd(usage, _sonnet_row())
     assert missing == ()
     # input: 1000 * 2.0 / 1e6 = 0.002000
     # 5m write: 148 * 2.5 / 1e6 = 0.000370
@@ -74,7 +74,7 @@ def test_no_breakdown_prices_cache_creation_at_2x_input() -> None:
         "cache_read_input_tokens": 0,
         "output_tokens": 100,
     }
-    cost, missing = usage_cost_usd(usage, _sonnet_row())
+    cost, missing, _unknown = usage_cost_usd(usage, _sonnet_row())
     assert missing == ()
     # input: 1000 * 2.0 / 1e6 = 0.002
     # cache_creation (2x input = 4.0): 500 * 4.0 / 1e6 = 0.002
@@ -90,7 +90,7 @@ def test_long_tier_triggered_by_combined_input_and_cache_tokens() -> None:
         "cache_read_input_tokens": 120_000,
         "output_tokens": 2_000,
     }
-    cost, missing = usage_cost_usd(usage, _haiku_long_row())
+    cost, missing, _unknown = usage_cost_usd(usage, _haiku_long_row())
     assert missing == ()
     # Total input = 121,000 > 100,000 -> long tier:
     # input: 1,000 * 0.50 / 1e6 = 0.0005
@@ -104,7 +104,7 @@ def test_missing_counters_listed_for_none_and_partial_usage() -> None:
     """Break covered: partial/missing usage silently treated as 0 tokens without flagging missing fields."""
     row = _sonnet_row()
 
-    cost_none, missing_none = usage_cost_usd(None, row)
+    cost_none, missing_none, _u0 = usage_cost_usd(None, row)
     assert cost_none is None
     assert missing_none == (
         "input_tokens",
@@ -113,13 +113,13 @@ def test_missing_counters_listed_for_none_and_partial_usage() -> None:
         "output_tokens",
     )
 
-    cost_empty, missing_empty = usage_cost_usd({}, row)
+    cost_empty, missing_empty, _u1 = usage_cost_usd({}, row)
     assert cost_empty is None
     assert len(missing_empty) == 4
 
     # OpenAI-translated or stream-truncated usage missing cache fields and/or output_tokens
     partial = {"input_tokens": 1000, "output_tokens": 200}
-    cost_partial, missing_partial = usage_cost_usd(partial, row)
+    cost_partial, missing_partial, _u2 = usage_cost_usd(partial, row)
     assert missing_partial == (
         "cache_creation_input_tokens",
         "cache_read_input_tokens",

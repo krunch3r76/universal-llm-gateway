@@ -43,6 +43,7 @@ def test_declarative_probe_anthropic_calls_models_get_only() -> None:
         "/v1/messages/batches",
         ".post(",
         ".stream(",
+        ".request(",
     )
     for token in forbidden_strings:
         assert token not in section, f"forbidden {token!r} in Anthropic probe section"
@@ -62,10 +63,14 @@ def test_declarative_probe_anthropic_calls_models_get_only() -> None:
             continue
         if node.func.value.id not in client_names:
             continue
+        if node.func.attr == "request":
+            pytest.fail("Anthropic client .request() is forbidden in the probe section")
         if not node.args:
             pytest.fail("Anthropic client .get() must pass explicit path")
         path_arg = node.args[0]
-        if isinstance(path_arg, ast.Constant) and path_arg.value != "/v1/models":
+        if not isinstance(path_arg, ast.Constant):
+            pytest.fail("Anthropic client .get() must use a constant path")
+        if path_arg.value != "/v1/models":
             pytest.fail(
                 f"Anthropic client .get() must use /v1/models, got {path_arg.value!r}"
             )

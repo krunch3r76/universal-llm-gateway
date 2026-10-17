@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 from anthropic_credit.config import load_credit_config
+from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.policy import Admit, AnthropicCreditRefused, CreditPolicy, set_policy
 from fastapi.testclient import TestClient
 
@@ -26,6 +27,7 @@ def _tight_policy(tmp_path: Path, committed_usd: str) -> CreditPolicy:
         hard_stop_usd=Decimal("185"),
         mcp_connector_stop_usd=Decimal("170"),
     )
+    init_ledger(cfg)
     policy = CreditPolicy(cfg)
     _seed = policy.admit(
         "seed",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,10 @@ def test_shipped_yaml_loads() -> None:
     assert "anthropic/claude-sonnet-5" in cfg.metered_models
     assert cfg.cycle.anchor_day == 4
     assert cfg.cycle.owner == "kaywan"
-    assert str(cfg.ledger_path).endswith("anthropic_credit.sqlite")
+    assert str(cfg.ledger_path).endswith(
+        "anthropic_credit/ledger.sqlite"
+    )
+    assert cfg.server_tool_fees_usd["web_search_requests"] == Decimal("0.01")
 
 
 def _write_minimal_config(tmp_path: Path, **overrides: object) -> Path:

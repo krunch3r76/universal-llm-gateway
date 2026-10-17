@@ -207,10 +207,13 @@ def _effective_rates(
         output_rate = rate.output_rate_per_m
         cache_write_rate = rate.cache_write_rate_per_m
         cache_read_rate = rate.cache_read_rate_per_m
-    if cache_write_rate is None:
-        cache_write_rate = input_rate
-    if cache_read_rate is None:
-        cache_read_rate = input_rate
+    if use_long:
+        base_cw = rate.cache_write_rate_per_m
+        base_cr = rate.cache_read_rate_per_m
+        if cache_write_rate is None:
+            cache_write_rate = base_cw
+        if cache_read_rate is None:
+            cache_read_rate = base_cr
     assert input_rate is not None and output_rate is not None
     return input_rate, cache_write_rate, cache_read_rate, output_rate
 
@@ -258,10 +261,10 @@ def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
     if billable_prompt is not None:
         total += (billable_prompt / 1_000_000) * input_rate
         has_component = True
-    if cache_write is not None:
+    if cache_write is not None and cache_write_rate is not None:
         total += (cache_write / 1_000_000) * cache_write_rate
         has_component = True
-    if cache_read is not None:
+    if cache_read is not None and cache_read_rate is not None:
         total += (cache_read / 1_000_000) * cache_read_rate
         has_component = True
     if completion is not None:

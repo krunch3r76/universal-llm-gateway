@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from anthropic_credit.config import load_credit_config
+from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.policy import (
     Admit,
     AnthropicCreditRefused,
@@ -80,6 +81,7 @@ def _policy(
             dict.fromkeys([*base.metered_models, "anthropic/claude-sonnet-5"])
         ),
     )
+    init_ledger(cfg)
     return CreditPolicy(cfg, rates_path=_rates_path(tmp_path))
 
 
@@ -370,6 +372,14 @@ async def test_native_loop_credit_cap_on_turn_two_via_real_forward_native(
         return "tool-ok"
 
     monkeypatch.setattr(_nl_tools_mod, "execute_tool", _exec_tool)
+
+    from llm_adapters.anthropic import AnthropicAdapter
+
+    monkeypatch.setattr(
+        "agent_seat.native_loop.resolve_llm_adapter",
+        lambda *_a, **_k: AnthropicAdapter(api_key="k-test"),
+    )
+
     req = FrontierRequest(
         messages=[{"role": "user", "content": "hi"}],
         model="claude-sonnet-5",

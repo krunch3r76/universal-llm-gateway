@@ -80,7 +80,7 @@ def raise_if_refused(result: Admit | Refuse) -> Admit:
 
 def count_tokens_body(upstream_body: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    for key in ("model", "messages", "system", "tools"):
+    for key in ("model", "messages", "system", "tools", "tool_choice", "thinking"):
         if key in upstream_body:
             payload[key] = upstream_body[key]
     return payload
@@ -275,58 +275,5 @@ def finalize_stream_credit(
         reason = "stream_unparseable_frame"
     if exc is not None:
         reason = f"stream_error:{type(exc).__name__}"
-    commit_full(request_id, reason)
-
-
-def parse_credit_refusal_type(exc: BaseException) -> str | None:
-    """Extract anthropic credit refusal code from HTTP-layer errors."""
-    if isinstance(exc, AnthropicCreditRefused):
-        return exc.code
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-        try:
-            payload = exc.response.json()
-        except json.JSONDecodeError:
-            payload = None
-        if isinstance(payload, dict):
-            err = payload.get("error")
-            if isinstance(err, dict):
-                code = err.get("type")
-                if isinstance(code, str):
-                    return code
-            detail = payload.get("detail")
-            if isinstance(detail, dict):
-                err = detail.get("error")
-                if isinstance(err, dict):
-                    code = err.get("type")
-                    if isinstance(code, str):
-                        return code
-    if isinstance(exc, RuntimeError):
-        text = str(exc)
-        marker = '"type":'
-        if marker in text:
-            try:
-                start = text.index("{")
-                payload = json.loads(text[start:])
-                err = payload.get("error") if isinstance(payload, dict) else None
-                if isinstance(err, dict) and isinstance(err.get("type"), str):
-                    return err["type"]
-            except (ValueError, json.JSONDecodeError):
-                pass
-    return None
-
-
-def emit_loop_refused(turn_index: int) -> None:
-    from anthropic_credit.policy import emit
-
-    emit(
-        "anthropic.credit.loop_refused",
-        {"turn_index": turn_index},
-    )
-
-
-def credit_cap_notice() -> str:
-    return (
-        "[Anthropic credit cycle budget exhausted] Further model turns were "
-        "stopped to stay within the configured spend cap. Partial results above "
-        "are preserved."
-    )
+    _ = reason
+    commit(request_id, tap.usage, floor=True)

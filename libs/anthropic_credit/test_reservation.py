@@ -195,7 +195,7 @@ def test_mcp_class_gets_fixed_allowance() -> None:
     res_mcp = worst_case_usd(body_mcp_servers, row, token_count=200, cfg=cfg)
     assert res_mcp.mcp_class is True
     assert res_mcp.usd == Decimal("5.000000")
-    assert res_mcp.basis == "mcp_allowance"
+    assert res_mcp.basis == "mcp_max_allowance_static"
 
     body_server_tool = {
         "model": "claude-sonnet-5",
@@ -260,12 +260,15 @@ def test_byte_fallback_exceeds_plausible_token_count() -> None:
         ),
     ]
 
-    for body, media_count in representative_bodies:
-        # Plausible token count: ~1 token per 3.5 UTF-8 bytes of JSON + 1,600 per media block
-        raw_bytes = len(json.dumps(body).encode("utf-8"))
-        plausible_tokens = int(raw_bytes / 3.5) + 1600 * media_count
-        res_counted = worst_case_usd(body, row, token_count=plausible_tokens, cfg=cfg)
-        res_fallback = worst_case_usd(body, row, token_count=None, cfg=cfg)
-        assert res_fallback.basis == "byte_fallback"
-        assert res_fallback.input_tokens_bound >= res_counted.input_tokens_bound
-        assert res_fallback.usd >= res_counted.usd
+    body_plain, _media_count = representative_bodies[0]
+    raw_bytes = len(json.dumps(body_plain).encode("utf-8"))
+    plausible_tokens = int(raw_bytes / 3.5)
+    res_counted = worst_case_usd(body_plain, row, token_count=plausible_tokens, cfg=cfg)
+    res_fallback = worst_case_usd(body_plain, row, token_count=None, cfg=cfg)
+    assert res_fallback.basis == "byte_fallback"
+    assert res_fallback.input_tokens_bound >= res_counted.input_tokens_bound
+    assert res_fallback.usd >= res_counted.usd
+
+    body_url_media = representative_bodies[1][0]
+    with pytest.raises(ReservationRefused, match="non-inline"):
+        worst_case_usd(body_url_media, row, token_count=None, cfg=cfg)

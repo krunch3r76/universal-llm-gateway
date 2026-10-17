@@ -440,10 +440,7 @@ class McpToolExecutor:
     ) -> dict[str, Any]:
         from anthropic_credit.policy import AnthropicCreditRefused
 
-        from .adapters.anthropic_credit_gate import (
-            credit_cap_notice,
-            emit_loop_refused,
-        )
+        from anthropic_credit.loop_refusal import credit_cap_notice, emit_loop_refused
 
         response: dict[str, Any] = {}
         for iteration in range(max_iterations):
@@ -467,6 +464,7 @@ class McpToolExecutor:
                     message["content"] = (
                         f"{prior}\n\n{notice}".strip() if prior else notice
                     )
+                    message.pop("tool_calls", None)
                     choices[0]["finish_reason"] = "credit_cap"
                     response["choices"] = choices
                 break

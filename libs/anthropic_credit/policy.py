@@ -16,7 +16,7 @@ from .config import CreditConfig, CreditConfigInvalid, load_credit_config
 from .cycle_window import meter_window
 from .ledger import CreditLedger, LedgerUnavailable, parse_utc_iso, validate_ledger_path
 from .reservation import Reservation, ReservationRefused, worst_case_usd
-from .usage_cost import usage_cost_usd
+from .usage_cost import usage_cost_usd_for_config
 
 EventEmitter = Callable[[str, dict[str, Any]], None]
 
@@ -170,7 +170,7 @@ class CreditPolicy:
             self._ledger = CreditLedger(
                 target_path,
                 busy_timeout_ms=self._busy_timeout_ms,
-                create_if_missing=True,
+                create_if_missing=False,
             )
         return cfg, self._ledger
 
@@ -271,7 +271,21 @@ class CreditPolicy:
                     window_start=window_start,
                     reset_at=reset_at,
                     as_of=as_of_dt,
+                    now=now_utc,
+                    reservation_ttl_minutes=cfg.reservation_ttl_minutes,
                 )
+                existing_any = conn.execute(
+                    "SELECT 1 FROM entries WHERE request_id = ? LIMIT 1",
+                    (request_id,),
+                ).fetchone()
+                if existing_any is not None:
+                    return Refuse(
+                        code="anthropic_reservation_refused",
+                        http_status=422,
+                        reservation_usd=None,
+                        headroom_usd=None,
+                        detail=f"request_id {request_id!r} already has ledger rows",
+                    )
                 allowance = self._effective_mcp_allowance(
                     cfg,
                     window_start_iso=win_start_iso,
@@ -397,27 +411,17 @@ class CreditPolicy:
         usage: dict[str, Any] | None,
         *,
         now: datetime | None = None,
+        floor: bool = False,
     ) -> Decimal:
         """Commit actual usage cost (or ``max(computed, reservation)`` on partial usage)."""
         now_utc = _normalize_now(now)
-        _cfg, ledger = self._resolve_config_and_ledger()
+        cfg, ledger = self._resolve_config_and_ledger()
 
         partial_event: dict[str, Any] | None = None
         overrun_event: dict[str, Any] | None = None
 
         def _txn(conn: Any) -> Decimal:
             nonlocal partial_event, overrun_event
-            existing_commit = conn.execute(
-                """
-                SELECT usd FROM entries
-                WHERE request_id = ? AND kind = 'commit'
-                ORDER BY id DESC LIMIT 1
-                """,
-                (request_id,),
-            ).fetchone()
-            if existing_commit is not None:
-                return Decimal(str(existing_commit["usd"]))
-
             existing_release = conn.execute(
                 """
                 SELECT id FROM entries
@@ -451,6 +455,21 @@ class CreditPolicy:
             tag = reserve_row["tag"]
             mcp_class = int(reserve_row["mcp_class"] or 0)
 
+            commit_rows = conn.execute(
+                """
+                SELECT usd, tag FROM entries
+                WHERE request_id = ? AND kind = 'commit'
+                ORDER BY id ASC
+                """,
+                (request_id,),
+            ).fetchall()
+            prior_total = sum(Decimal(str(r["usd"])) for r in commit_rows)
+            only_ttl = bool(commit_rows) and all(
+                (r["tag"] or "") == "ttl_expired" for r in commit_rows
+            )
+            if commit_rows and not only_ttl and not floor:
+                return prior_total
+
             rate_row = resolve_pinned_rate(model_id, path=self._rates_path)
             if rate_row is None:
                 computed: Decimal | None = None
@@ -460,24 +479,34 @@ class CreditPolicy:
                     "cache_read_input_tokens",
                     "output_tokens",
                 )
+                unknown_server_tool = False
             else:
-                computed, missing_fields = usage_cost_usd(usage, rate_row)
+                computed, missing_fields, unknown_server_tool = usage_cost_usd_for_config(
+                    usage, rate_row, cfg
+                )
 
-            if missing_fields or computed is None:
-                committed_usd = max(
+            partial = bool(missing_fields) or computed is None or unknown_server_tool
+            if partial or floor:
+                target_total = max(
                     computed if computed is not None else Decimal("0"),
                     reservation_usd,
                 )
+            else:
+                target_total = computed if computed is not None else reservation_usd
+
+            insert_usd = target_total - prior_total
+            if insert_usd <= Decimal("0"):
+                return prior_total
+
+            if partial:
                 partial_event = {
                     "request_id": request_id,
                     "model": model_id,
                     "missing_fields": list(missing_fields),
                     "computed_usd": str(computed) if computed is not None else None,
                     "reservation_usd": str(reservation_usd),
-                    "committed_usd": str(committed_usd),
+                    "committed_usd": str(target_total),
                 }
-            else:
-                committed_usd = computed
 
             conn.execute(
                 """
@@ -488,7 +517,7 @@ class CreditPolicy:
                 (
                     request_id,
                     model_id,
-                    str(committed_usd),
+                    str(insert_usd),
                     now_utc.isoformat(),
                     win_start_iso,
                     tag,
@@ -496,7 +525,7 @@ class CreditPolicy:
                 ),
             )
 
-            if committed_usd > reservation_usd:
+            if target_total > reservation_usd:
                 self._overrun_multiplier_by_window[win_start_iso] = (
                     self._overrun_multiplier_by_window.get(win_start_iso, 0) + 1
                 )
@@ -504,12 +533,12 @@ class CreditPolicy:
                     "request_id": request_id,
                     "model": model_id,
                     "reservation_usd": str(reservation_usd),
-                    "actual_usd": str(committed_usd),
+                    "actual_usd": str(target_total),
                     "mcp_class": bool(mcp_class),
                     "window_start": win_start_iso,
                 }
 
-            return committed_usd
+            return target_total
 
         committed = ledger.run_immediate(_txn)
         if partial_event is not None:
@@ -696,6 +725,8 @@ class CreditPolicy:
                 window_start=window_start,
                 reset_at=reset_at,
                 as_of=as_of_dt,
+                now=now_utc,
+                reservation_ttl_minutes=cfg.reservation_ttl_minutes,
             )
             entries = CreditLedger.recent_entries(conn, limit=20)
             cap_usd, hard_headroom, mcp_headroom = self._compute_caps(
@@ -798,9 +829,10 @@ def commit(
     usage: dict[str, Any] | None,
     *,
     now: datetime | None = None,
+    floor: bool = False,
 ) -> Decimal:
     """Module-level convenience wrapper delegating to ``get_policy().commit``."""
-    return get_policy().commit(request_id, usage, now=now)
+    return get_policy().commit(request_id, usage, now=now, floor=floor)
 
 
 def commit_full(

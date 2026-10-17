@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 from anthropic_credit.config import load_credit_config
+from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.policy import Admit, CreditPolicy, get_policy, set_policy
 
 from services.universal_cloud_proxy.adapters.anthropic import AnthropicAdapter
@@ -215,6 +216,7 @@ models:
             "anthropic/claude-haiku-5-5",
         ],
     )
+    init_ledger(cfg)
     set_policy(CreditPolicy(cfg, rates_path=rates_path))
 
     payload = _load_json("non_stream_haiku_long_tier.json")

@@ -14,7 +14,9 @@ reservation_ttl_minutes: 15
 count_tokens_margin: 1.10
 fallback_overhead_tokens: 2000
 fallback_tokens_per_image: 5000
-ledger_path: ~/.gateway/state/anthropic_credit.sqlite
+ledger_path: ~/.gateway/state/anthropic_credit/ledger.sqlite
+server_tool_fees_usd:
+  web_search_requests: 0.01
 reconcile_drift_usd: 1.00
 available_balance:              # "or whatever is available" → stop on balance too, whichever is first
   usd: 200                      # operator-entered snapshot; default = grant (assumes $0 purchased, no auto-reload)

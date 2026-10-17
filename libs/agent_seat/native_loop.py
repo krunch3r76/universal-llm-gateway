@@ -254,7 +254,7 @@ async def _run_native_tool_loop_body(
         except Exception as exc:
             if turn_idx == 0:
                 raise
-            from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            from anthropic_credit.loop_refusal import (
                 credit_cap_notice,
                 emit_loop_refused,
                 parse_credit_refusal_type,

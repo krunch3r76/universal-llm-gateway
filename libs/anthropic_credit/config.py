@@ -56,6 +56,7 @@ class CreditConfig:
     standard_models: tuple[str, ...]
     high_cost_models: tuple[str, ...]
     fail_mode: str
+    server_tool_fees_usd: dict[str, Decimal]
 
 
 def credit_config_path() -> Path:
@@ -180,6 +181,33 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
     if mcp_stop > hard_stop_usd:
         raise CreditConfigInvalid("mcp_connector_stop_usd must be <= hard_stop_usd")
 
+    mcp_allowance = _decimal(
+        payload.get("mcp_connector_allowance_usd"),
+        field="mcp_connector_allowance_usd",
+    )
+    if mcp_allowance <= Decimal("0"):
+        raise CreditConfigInvalid("mcp_connector_allowance_usd must be > 0")
+
+    ttl_minutes = _int_nonneg(
+        payload.get("reservation_ttl_minutes"), field="reservation_ttl_minutes"
+    )
+    if ttl_minutes < 1:
+        raise CreditConfigInvalid("reservation_ttl_minutes must be >= 1")
+
+    fees_raw = payload.get("server_tool_fees_usd")
+    if fees_raw is None:
+        fees_raw = {}
+    if not isinstance(fees_raw, dict):
+        raise CreditConfigInvalid("server_tool_fees_usd must be a mapping")
+    server_tool_fees: dict[str, Decimal] = {}
+    for key, val in fees_raw.items():
+        fee = _decimal(val, field=f"server_tool_fees_usd.{key}")
+        if fee < Decimal("0"):
+            raise CreditConfigInvalid(
+                f"server_tool_fees_usd.{key} must be >= 0"
+            )
+        server_tool_fees[str(key)] = fee
+
     fail_mode = str(payload.get("fail_mode") or "").strip()
     if fail_mode != "closed":
         raise CreditConfigInvalid('fail_mode must be "closed"')
@@ -218,13 +246,8 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
         grant_usd=grant_usd,
         hard_stop_usd=hard_stop_usd,
         mcp_connector_stop_usd=mcp_stop,
-        mcp_connector_allowance_usd=_decimal(
-            payload.get("mcp_connector_allowance_usd"),
-            field="mcp_connector_allowance_usd",
-        ),
-        reservation_ttl_minutes=_int_nonneg(
-            payload.get("reservation_ttl_minutes"), field="reservation_ttl_minutes"
-        ),
+        mcp_connector_allowance_usd=mcp_allowance,
+        reservation_ttl_minutes=ttl_minutes,
         count_tokens_margin=margin,
         fallback_overhead_tokens=_int_nonneg(
             payload.get("fallback_overhead_tokens"), field="fallback_overhead_tokens"
@@ -248,4 +271,5 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
             payload.get("high_cost_models"), field="high_cost_models"
         ),
         fail_mode=fail_mode,
+        server_tool_fees_usd=server_tool_fees,
     )

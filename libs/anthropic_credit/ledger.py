@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 
 T = TypeVar("T")
 
-_SCHEMA_SQL = """
+_ENTRIES_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS entries (
     id INTEGER PRIMARY KEY,
     kind TEXT CHECK(kind IN ('reserve','commit','release','latch')),
@@ -27,6 +27,28 @@ CREATE TABLE IF NOT EXISTS entries (
     mcp_class INTEGER
 );
 """
+
+_META_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+_SCHEMA_SQL = _ENTRIES_SCHEMA_SQL
+
+_WINDOW_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_entries_window_created "
+    "ON entries(window_start, created_at)"
+)
+_RESERVE_UNIQUE_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_reserve_request "
+    "ON entries(request_id) WHERE kind = 'reserve'"
+)
+
+_UNSAFE_FS_TYPES = frozenset(
+    {"nfs", "nfs4", "cifs", "smb3", "fuse.sshfs", "ceph"}
+)
 
 
 class LedgerUnavailable(Exception):  # noqa: N818
@@ -84,8 +106,41 @@ def parse_utc_iso(raw: str) -> datetime:
     return dt.astimezone(UTC)
 
 
-def validate_ledger_path(raw_path: Path | str) -> Path:
-    """Expand ``~`` and refuse paths under ``/mnt/`` (K38)."""
+def _fs_type_for_path(
+    resolved: Path,
+    *,
+    mounts_table: list[tuple[str, str]] | None = None,
+) -> str | None:
+    """Return filesystem type for ``resolved`` from ``/proc/mounts`` (injectable in tests)."""
+    if mounts_table is None:
+        try:
+            mounts_text = Path("/proc/mounts").read_text(encoding="utf-8")
+        except OSError:
+            return None
+        mounts_table = []
+        for line in mounts_text.splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            mounts_table.append((parts[1], parts[2]))
+
+    path_str = str(resolved)
+    best_mount = ""
+    best_fstype: str | None = None
+    for mount_point, fstype in mounts_table:
+        if path_str == mount_point or path_str.startswith(mount_point.rstrip("/") + "/"):
+            if len(mount_point) >= len(best_mount):
+                best_mount = mount_point
+                best_fstype = fstype
+    return best_fstype
+
+
+def validate_ledger_path(
+    raw_path: Path | str,
+    *,
+    mounts_table: list[tuple[str, str]] | None = None,
+) -> Path:
+    """Expand ``~`` and refuse paths under ``/mnt/`` or unsafe FS types (K38)."""
     if raw_path is None or not str(raw_path).strip():
         raise LedgerUnavailable("ledger_path is empty")
     expanded = Path(str(raw_path).strip()).expanduser()
@@ -99,6 +154,11 @@ def validate_ledger_path(raw_path: Path | str) -> Path:
         ) from exc
     if str(resolved).startswith("/mnt/"):
         raise LedgerUnavailable(f"ledger_path resolves under /mnt/ (K38): {resolved}")
+    fstype = _fs_type_for_path(resolved, mounts_table=mounts_table)
+    if fstype is not None and fstype.lower() in _UNSAFE_FS_TYPES:
+        raise LedgerUnavailable(
+            f"ledger_path on refused filesystem type {fstype!r} (K38): {resolved}"
+        )
     return resolved
 
 
@@ -126,9 +186,13 @@ class CreditLedger:
 
     def _bootstrap(self) -> None:
         parent = self._path.parent
+        created_parent = False
         try:
-            parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            os.chmod(parent, 0o700)
+            if not parent.is_dir():
+                parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                created_parent = True
+            if created_parent:
+                os.chmod(parent, 0o700)
         except OSError as exc:
             raise LedgerUnavailable(
                 f"failed to create ledger parent directory {parent}: {exc}"
@@ -149,13 +213,26 @@ class CreditLedger:
                 mode_row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
                 if not mode_row:
                     raise LedgerUnavailable("failed to enable WAL mode")
-                conn.execute(_SCHEMA_SQL)
+                conn.execute(_ENTRIES_SCHEMA_SQL)
+                conn.execute(_META_SCHEMA_SQL)
+                conn.execute(_WINDOW_INDEX_SQL)
+                conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
         except (sqlite3.Error, OSError) as exc:
             raise LedgerUnavailable(
                 f"failed to initialize ledger at {self._path}: {exc}"
             ) from exc
 
         self._bootstrapped = True
+
+    @staticmethod
+    def _ensure_openable(conn: sqlite3.Connection) -> None:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'instance_id' LIMIT 1"
+        ).fetchone()
+        if row is None:
+            raise LedgerUnavailable(
+                "ledger missing meta.instance_id — run anthropic-credit-ledger-init"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         if not self._path.is_file():
@@ -169,6 +246,9 @@ class CreditLedger:
             )
             conn.row_factory = sqlite3.Row
             conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+            conn.execute(_WINDOW_INDEX_SQL)
+            conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
+            CreditLedger._ensure_openable(conn)
             return conn
         except (sqlite3.Error, OSError) as exc:
             raise LedgerUnavailable(f"cannot open ledger {self._path}: {exc}") from exc
@@ -265,28 +345,25 @@ class CreditLedger:
         window_start: datetime,
         reset_at: datetime,
         as_of: datetime | None,
+        now: datetime | None = None,
+        reservation_ttl_minutes: int = 15,
     ) -> WindowSnapshot:
         """Compute committed, open reservations, latch state, and overrun count in window."""
+        win_start_iso = window_start.astimezone(UTC).isoformat()
+        reset_iso = reset_at.astimezone(UTC).isoformat()
+        now_dt = (now or datetime.now(tz=UTC)).astimezone(UTC)
+        mcp_serialize_minutes = max(1, int(reservation_ttl_minutes)) * 4
+
         rows = conn.execute(
             """
             SELECT id, kind, request_id, model, usd, created_at, window_start, tag, mcp_class
             FROM entries
+            WHERE window_start = ?
+               OR (created_at >= ? AND created_at < ?)
             ORDER BY id ASC
-            """
+            """,
+            (win_start_iso, win_start_iso, reset_iso),
         ).fetchall()
-
-        win_start_iso = window_start.astimezone(UTC).isoformat()
-
-        def _in_window(row: sqlite3.Row) -> bool:
-            if row["window_start"] == win_start_iso:
-                return True
-            try:
-                created_dt = parse_utc_iso(row["created_at"])
-            except Exception as exc:
-                raise LedgerUnavailable(
-                    f"corrupt timestamp in entries id={row['id']}: {exc}"
-                ) from exc
-            return window_start <= created_dt < reset_at
 
         def _parse_usd(row: sqlite3.Row) -> Decimal:
             try:
@@ -296,25 +373,24 @@ class CreditLedger:
                     f"corrupt usd in entries id={row['id']}: {exc}"
                 ) from exc
 
-        terminal_req_ids: set[str] = set()
-        reserve_by_req_id: dict[str, sqlite3.Row] = {}
-        commit_by_req_id: dict[str, sqlite3.Row] = {}
-        unlinked_commits: list[sqlite3.Row] = []
+        reserve_by_req: dict[str, sqlite3.Row] = {}
+        commits_by_req: dict[str, list[sqlite3.Row]] = {}
+        released_req_ids: set[str] = set()
         latch_rows: list[sqlite3.Row] = []
+        unlinked_commits: list[sqlite3.Row] = []
 
         for row in rows:
             kind = row["kind"]
             req_id = row["request_id"]
             if kind == "reserve" and req_id:
-                reserve_by_req_id[req_id] = row
+                reserve_by_req[req_id] = row
             elif kind == "commit":
                 if req_id:
-                    terminal_req_ids.add(req_id)
-                    commit_by_req_id[req_id] = row
+                    commits_by_req.setdefault(req_id, []).append(row)
                 else:
                     unlinked_commits.append(row)
             elif kind == "release" and req_id:
-                terminal_req_ids.add(req_id)
+                released_req_ids.add(req_id)
             elif kind == "latch":
                 latch_rows.append(row)
 
@@ -325,37 +401,56 @@ class CreditLedger:
         overrun_count = 0
         spend_since_as_of = Decimal("0")
 
-        for req_id, c_row in commit_by_req_id.items():
-            r_row = reserve_by_req_id.get(req_id)
-            in_win = _in_window(c_row) or (r_row is not None and _in_window(r_row))
-            c_usd = _parse_usd(c_row)
+        for req_id, commit_rows in commits_by_req.items():
+            reserve_row = reserve_by_req.get(req_id)
+            commit_sum = sum(_parse_usd(c) for c in commit_rows)
+            in_win = any(
+                c["window_start"] == win_start_iso
+                or (
+                    win_start_iso <= str(c["created_at"]) < reset_iso
+                )
+                for c in commit_rows
+            ) or (reserve_row is not None and reserve_row["window_start"] == win_start_iso)
             if in_win:
-                committed_usd += c_usd
-                if r_row is not None and c_usd > _parse_usd(r_row):
+                committed_usd += commit_sum
+                if reserve_row is not None and commit_sum > _parse_usd(reserve_row):
                     overrun_count += 1
             if as_of is not None:
-                ref_row = r_row if r_row is not None else c_row
-                if parse_utc_iso(ref_row["created_at"]) >= as_of:
-                    spend_since_as_of += c_usd
+                ref = reserve_row if reserve_row is not None else commit_rows[-1]
+                if parse_utc_iso(ref["created_at"]) >= as_of:
+                    spend_since_as_of += commit_sum
 
         for c_row in unlinked_commits:
             c_usd = _parse_usd(c_row)
-            if _in_window(c_row):
-                committed_usd += c_usd
+            committed_usd += c_usd
             if as_of is not None and parse_utc_iso(c_row["created_at"]) >= as_of:
                 spend_since_as_of += c_usd
 
-        for req_id, r_row in reserve_by_req_id.items():
-            if req_id in terminal_req_ids:
+        for req_id, r_row in reserve_by_req.items():
+            if req_id in released_req_ids:
                 continue
+            commit_rows = commits_by_req.get(req_id, [])
+            has_commit = bool(commit_rows)
             r_usd = _parse_usd(r_row)
-            if _in_window(r_row):
-                open_usd += r_usd
-                open_count += 1
-                if int(r_row["mcp_class"] or 0) != 0:
-                    open_mcp_count += 1
-            if as_of is not None and parse_utc_iso(r_row["created_at"]) >= as_of:
-                spend_since_as_of += r_usd
+            mcp_class = int(r_row["mcp_class"] or 0) != 0
+            reserve_created = parse_utc_iso(r_row["created_at"])
+            reserve_age_min = (now_dt - reserve_created).total_seconds() / 60.0
+
+            only_ttl = has_commit and all(
+                (c["tag"] or "") == "ttl_expired" for c in commit_rows
+            )
+            finalized = has_commit and not only_ttl
+
+            if not has_commit:
+                if r_row["window_start"] == win_start_iso:
+                    open_usd += r_usd
+                    open_count += 1
+                    if mcp_class:
+                        open_mcp_count += 1
+                if as_of is not None and reserve_created >= as_of:
+                    spend_since_as_of += r_usd
+            elif mcp_class and not finalized and reserve_age_min < mcp_serialize_minutes:
+                open_mcp_count += 1
 
         latch_active = False
         latch_reason: str | None = None

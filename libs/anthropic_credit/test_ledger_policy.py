@@ -18,6 +18,7 @@ from anthropic_credit.config import (
     CreditConfig,
     load_credit_config,
 )
+from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.ledger import CreditLedger, LedgerUnavailable
 from anthropic_credit.policy import Admit, CreditPolicy, Refuse
 
@@ -30,6 +31,7 @@ def _make_cfg(tmp_path: Path, **overrides: Any) -> CreditConfig:
     base = load_credit_config()
     ledger_path = tmp_path / "state" / "anthropic_credit.sqlite"
     replaced = dataclasses.replace(base, ledger_path=ledger_path, **overrides)
+    init_ledger(replaced)
     return replaced
 
 

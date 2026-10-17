@@ -423,7 +423,7 @@ class AnthropicAdapter:
                 headers=req_headers,
                 request_id=correlation_id,
                 upstream_body=body,
-                catalog_model=str(request_body.get("model", "")),
+                catalog_model=str(body.get("model", "")),
                 tag=tag,
             )
             credit_admitted = True
@@ -448,14 +448,14 @@ class AnthropicAdapter:
             return result
         except AnthropicCreditRefused:
             raise
-        except Exception as exc:
+        except BaseException as exc:
             if credit_admitted and not credit_finalized:
                 if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
                     release(correlation_id)
                 else:
                     commit_full(correlation_id, f"forward_chat_error:{type(exc).__name__}")
                 credit_finalized = True
-            if self._event_bus:
+            if self._event_bus and isinstance(exc, Exception):
                 await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,
@@ -524,7 +524,7 @@ class AnthropicAdapter:
                     headers=req_headers,
                     request_id=correlation_id,
                     upstream_body=body,
-                    catalog_model=requested_model,
+                    catalog_model=str(body.get("model", "")),
                     tag=tag,
                 )
                 credit_admitted = True
@@ -757,7 +757,7 @@ class AnthropicAdapter:
             return response.json()
         except AnthropicCreditRefused:
             raise
-        except Exception as exc:
+        except BaseException as exc:
             if credit_admitted and not credit_finalized:
                 if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
                     release(correlation_id)
@@ -767,7 +767,7 @@ class AnthropicAdapter:
                         f"forward_native_error:{type(exc).__name__}",
                     )
                 credit_finalized = True
-            if self._event_bus:
+            if self._event_bus and isinstance(exc, Exception):
                 await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,

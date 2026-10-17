@@ -7,6 +7,8 @@ from typing import Any
 
 from event_store.model_rate_table import ModelRateRow
 
+from .config import CreditConfig
+
 _TOKENS_PER_MILLION = Decimal("1000000")
 _REQUIRED_USAGE_FIELDS: tuple[str, ...] = (
     "input_tokens",
@@ -28,7 +30,9 @@ def _extract_nonneg_int(mapping: dict[str, Any], key: str) -> int | None:
 def usage_cost_usd(
     usage: dict[str, Any] | None,
     rate_row: ModelRateRow,
-) -> tuple[Decimal | None, tuple[str, ...]]:
+    *,
+    server_tool_fees_usd: dict[str, Decimal] | None = None,
+) -> tuple[Decimal | None, tuple[str, ...], bool]:
     """Compute actual USD cost and tuple of missing counter names.
 
     Pricing rules (PLAN-r2 § r2.3):
@@ -43,7 +47,7 @@ def usage_cost_usd(
       exceeds ``rate_row.long_prompt_threshold_tokens``
     """
     if usage is None or not isinstance(usage, dict):
-        return None, _REQUIRED_USAGE_FIELDS
+        return None, _REQUIRED_USAGE_FIELDS, False
 
     present: dict[str, int] = {}
     missing: list[str] = []
@@ -55,7 +59,7 @@ def usage_cost_usd(
             present[field] = val
 
     if len(missing) == len(_REQUIRED_USAGE_FIELDS):
-        return None, tuple(missing)
+        return None, tuple(missing), False
 
     input_tokens = present.get("input_tokens", 0)
     cache_creation_tokens = present.get("cache_creation_input_tokens", 0)
@@ -129,5 +133,33 @@ def usage_cost_usd(
         + Decimal(cache_read_tokens) * cr_rate
         + Decimal(output_tokens) * out_rate
     )
+    unknown_server_tool = False
+    server_tool_use = usage.get("server_tool_use")
+    fees_map = server_tool_fees_usd or {}
+    if isinstance(server_tool_use, dict):
+        for key, count in server_tool_use.items():
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                unknown_server_tool = True
+                continue
+            if count == 0:
+                continue
+            fee = fees_map.get(str(key))
+            if fee is None:
+                unknown_server_tool = True
+                continue
+            total_num += Decimal(count) * fee
+
     cost = total_num / _TOKENS_PER_MILLION
-    return cost, tuple(missing)
+    return cost, tuple(missing), unknown_server_tool
+
+
+def usage_cost_usd_for_config(
+    usage: dict[str, Any] | None,
+    rate_row: ModelRateRow,
+    cfg: CreditConfig,
+) -> tuple[Decimal | None, tuple[str, ...], bool]:
+    return usage_cost_usd(
+        usage,
+        rate_row,
+        server_tool_fees_usd=cfg.server_tool_fees_usd,
+    )

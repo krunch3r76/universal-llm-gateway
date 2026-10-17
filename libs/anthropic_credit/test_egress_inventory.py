@@ -38,15 +38,17 @@ _ALLOWLIST: dict[str, str] = {
     "libs/claude_bundles/test_skills_ui_upload.py": (
         "Test fixture URLs, not production egress"
     ),
-    "libs/llm_adapters/core.py": (
-        "Legacy adapter factory default base; mcp-server llm_proxy posts to Stargate "
-        "/api/v1/providers/anthropic/messages (gated cloud proxy)"
-    ),
-    "libs/llm_adapters/anthropic/adapter.py": (
-        "Legacy Anthropic adapter default base; direct use superseded by cloud-proxy path"
-    ),
     "libs/llm_adapters/test_anthropic_remote_mcp.py": (
         "Unit test adapter construction, not production egress"
+    ),
+}
+
+_LINE_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "libs/llm_adapters/core.py": (
+        r'os\.getenv\("ANTHROPIC_BASE_URL", "https://api\.anthropic\.com"\)',
+    ),
+    "libs/llm_adapters/anthropic/adapter.py": (
+        r'os\.getenv\("ANTHROPIC_BASE_URL", "https://api\.anthropic\.com"\)',
     ),
 }
 
@@ -100,7 +102,33 @@ def test_egress_inventory_no_ungated_api_anthropic_or_resolve_calls() -> None:
         if reasons:
             hits[rel] = reasons
 
-    unlisted = sorted(rel for rel in hits if rel not in _ALLOWLIST)
+    line_violations: list[str] = []
+    for rel, reasons in hits.items():
+        if "api.anthropic.com" not in reasons:
+            continue
+        path = _REPO_ROOT / rel
+        allowed = _LINE_ALLOWLIST.get(rel, ())
+        if allowed:
+            for line_no, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if _API_ANTHROPIC_RE.search(line) and not any(
+                    re.search(pat, line) for pat in allowed
+                ):
+                    line_violations.append(f"{rel}:{line_no}: {line.strip()}")
+        elif rel not in _ALLOWLIST:
+            line_violations.append(f"{rel}: (whole-file hit)")
+
+    unlisted = sorted(
+        rel
+        for rel in hits
+        if rel not in _ALLOWLIST and rel not in _LINE_ALLOWLIST
+    )
+    if line_violations:
+        pytest.fail(
+            "Ungated api.anthropic.com on non-allowlisted lines:\n"
+            + "\n".join(f"  {v}" for v in line_violations)
+        )
     if unlisted:
         detail = "\n".join(f"  {rel}: {hits[rel]}" for rel in unlisted)
         allowlisted_report = "\n".join(

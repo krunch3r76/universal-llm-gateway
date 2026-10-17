@@ -14,6 +14,18 @@ from .config import CreditConfig
 _MICRO_USD = Decimal("0.000001")
 _TOKENS_PER_MILLION = Decimal("1000000")
 _PLAIN_TOOL_TYPES = frozenset({"custom", "function"})
+_CLIENT_EXECUTED_PREFIXES = (
+    "bash_",
+    "text_editor_",
+    "memory_",
+    "computer_",
+)
+_SERVER_EXECUTED_PREFIXES = (
+    "web_search_",
+    "web_fetch_",
+    "code_execution_",
+    "tool_search_",
+)
 
 
 class ReservationRefused(Exception):  # noqa: N818
@@ -67,6 +79,20 @@ def _has_cache_control(upstream_body: dict[str, Any]) -> bool:
     return False
 
 
+def _tool_type_str(tool: dict[str, Any]) -> str:
+    return str(tool.get("type") or "").strip()
+
+
+def _is_server_executed_tool_type(tool_type: str) -> bool:
+    if not tool_type or tool_type in _PLAIN_TOOL_TYPES:
+        return False
+    if any(tool_type.startswith(p) for p in _CLIENT_EXECUTED_PREFIXES):
+        return False
+    if any(tool_type.startswith(p) for p in _SERVER_EXECUTED_PREFIXES):
+        return True
+    return True
+
+
 def _is_mcp_connector_class(upstream_body: dict[str, Any]) -> bool:
     """Return True if the body uses MCP servers or any server-side tool."""
     mcp_servers = upstream_body.get("mcp_servers")
@@ -80,13 +106,29 @@ def _is_mcp_connector_class(upstream_body: dict[str, Any]) -> bool:
         for tool in tools:
             if not isinstance(tool, dict):
                 continue
-            tool_type = tool.get("type")
-            if tool_type is None:
-                continue
-            tool_type_str = str(tool_type).strip()
-            if tool_type_str and tool_type_str not in _PLAIN_TOOL_TYPES:
+            if _is_server_executed_tool_type(_tool_type_str(tool)):
                 return True
     return False
+
+
+def _non_base64_media_in_body(upstream_body: dict[str, Any]) -> bool:
+    """True when image/document blocks use a non-inline ``source``."""
+
+    def _walk(node: Any) -> bool:
+        if isinstance(node, dict):
+            block_type = node.get("type")
+            if block_type in ("image", "document"):
+                source = node.get("source")
+                if isinstance(source, dict):
+                    src_type = str(source.get("type") or "").strip().lower()
+                    if src_type and src_type != "base64":
+                        return True
+            return any(_walk(v) for v in node.values())
+        if isinstance(node, list):
+            return any(_walk(item) for item in node)
+        return False
+
+    return _walk(upstream_body.get("messages")) or _walk(upstream_body.get("system"))
 
 
 def _compute_input_bound(
@@ -109,6 +151,12 @@ def _compute_input_bound(
             rounding=ROUND_CEILING
         )
         return int(scaled), "count_tokens"
+
+    if _non_base64_media_in_body(upstream_body):
+        raise ReservationRefused(
+            "anthropic_reservation_refused",
+            "byte fallback cannot bound non-inline image or document sources",
+        )
 
     utf8_bytes = len(json.dumps(upstream_body).encode("utf-8"))
     media_blocks = _count_media_blocks(
@@ -157,18 +205,6 @@ def worst_case_usd(
     input_bound, input_basis = _compute_input_bound(upstream_body, token_count, cfg)
     output_bound = max_tokens
 
-    if _is_mcp_connector_class(upstream_body):
-        allowance = cfg.mcp_connector_allowance_usd.quantize(
-            _MICRO_USD, rounding=ROUND_CEILING
-        )
-        return Reservation(
-            usd=allowance,
-            input_tokens_bound=input_bound,
-            output_tokens_bound=output_bound,
-            mcp_class=True,
-            basis="mcp_allowance",
-        )
-
     threshold = rate_row.long_prompt_threshold_tokens
     use_long = threshold is not None and input_bound > threshold
     if use_long:
@@ -192,12 +228,26 @@ def worst_case_usd(
     in_rate = Decimal(str(base_in)) * input_multiplier
     out_rate = Decimal(str(base_out))
 
-    raw_usd = (
+    static_usd = (
         Decimal(input_bound) * in_rate + Decimal(output_bound) * out_rate
     ) / _TOKENS_PER_MILLION
-    usd = raw_usd.quantize(_MICRO_USD, rounding=ROUND_CEILING)
+    static_usd = static_usd.quantize(_MICRO_USD, rounding=ROUND_CEILING)
+
+    if _is_mcp_connector_class(upstream_body):
+        allowance = cfg.mcp_connector_allowance_usd.quantize(
+            _MICRO_USD, rounding=ROUND_CEILING
+        )
+        usd = max(allowance, static_usd)
+        return Reservation(
+            usd=usd,
+            input_tokens_bound=input_bound,
+            output_tokens_bound=output_bound,
+            mcp_class=True,
+            basis="mcp_max_allowance_static",
+        )
+
     return Reservation(
-        usd=usd,
+        usd=static_usd,
         input_tokens_bound=input_bound,
         output_tokens_bound=output_bound,
         mcp_class=False,

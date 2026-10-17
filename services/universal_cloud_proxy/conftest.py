@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from anthropic_credit.config import load_credit_config
+from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.policy import CreditPolicy, set_policy
 
 
@@ -34,6 +35,7 @@ def _anthropic_credit_test_policy(tmp_path: Path) -> None:
             base.available_balance, usd=Decimal("999999")
         ),
     )
+    init_ledger(cfg)
     rates_path = tmp_path / "test_model_rates.yaml"
     rates_path.write_text(
         """
