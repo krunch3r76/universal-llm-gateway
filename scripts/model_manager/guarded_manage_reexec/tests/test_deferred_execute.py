@@ -21,6 +21,7 @@ from scripts.model_manager.guarded_manage_reexec.deferred_execute import (
 from scripts.model_manager.guarded_manage_reexec.deferred_gate import (
     RECYCLE_FLEET_SERVICES,
     evaluate_r3_pass_verdict,
+    fleet_child_pids,
     fleet_liveness_snapshot,
     mcp_row_matches_exception_b,
     run_recycle_step1_per_service_gate,
@@ -57,6 +58,8 @@ def _manage_from_rows(rows: dict[str, dict[str, Any]]):
                     "service": name,
                     "pid": r.get("fleet_pid", 100),
                 }
+                if "load_marker" in r:
+                    entry["load_marker"] = r["load_marker"]
                 if (ve := r.get("version_evidence")) and p.get("code_ref"):
                     entry["version_evidence"] = ve
                 services_out.append(entry)
@@ -68,6 +71,48 @@ def _manage_from_rows(rows: dict[str, dict[str, Any]]):
         raise AssertionError((method, params))
 
     return manage_call
+
+
+def _child_record(pid: Any = 100, marker: Any = None) -> dict[str, Any]:
+    return {"pid": pid, "marker": marker}
+
+
+def _equal_children(pid: Any = 100, marker: Any = None) -> dict[str, Any]:
+    return {name: _child_record(pid, marker) for name in RECYCLE_FLEET_SERVICES}
+
+
+def _proof_rows(**overrides: Any) -> dict[str, Any]:
+    rows: dict[str, Any] = {
+        name: _idle_row(name, fleet_pid=100) for name in RECYCLE_FLEET_SERVICES
+    }
+    rows["mcp"] = {
+        **_idle_row("mcp", fleet_pid=100),
+        "version_evidence": {
+            "authoritative_for_liveness": "process_start_code_version",
+        },
+    }
+    rows["_checkout"] = {"head_sha": "abc"}
+    rows.update(overrides)
+    return rows
+
+
+def _verdict(
+    child_before: dict[str, Any],
+    child_after: dict[str, Any],
+    *,
+    rows: dict[str, Any] | None = None,
+    result_status: str = "proof-satisfied",
+    target_ref: str = "abc",
+) -> tuple[str, dict[str, Any]]:
+    manage = _manage_from_rows(rows if rows is not None else _proof_rows())
+    return evaluate_r3_pass_verdict(
+        target_ref=target_ref,
+        result_status=result_status,
+        child_before=child_before,
+        child_after=child_after,
+        manage_call=manage,
+        sock_path=None,
+    )
 
 
 def test_dispatch_status_terminal_cases() -> None:
@@ -219,7 +264,7 @@ def test_mcp_version_evidence_requires_code_ref_on_fleet_liveness() -> None:
     assert mcp_ref.get("version_evidence", {}).get("authoritative_for_liveness") == (
         "process_start_code_version"
     )
-    child = {name: 100 for name in RECYCLE_FLEET_SERVICES}
+    child = _equal_children()
     verdict, extra = evaluate_r3_pass_verdict(
         target_ref="abc",
         result_status="proof-satisfied",
@@ -460,6 +505,179 @@ def test_deferred_success_single_reply_and_p3_probes(
     assert "VERDICT: PASS" in replies[0]["body"]
     assert "authoritative_for_liveness" in replies[0]["body"]
     assert "39455: evidence = step 5" in replies[0]["body"]
+
+
+_GATEWAY_STARTED_AT = "2026-10-17T16:00:00Z"
+_GATEWAY_MARKER = {
+    "kind": "container_started_at",
+    "value_utc": _GATEWAY_STARTED_AT,
+    "error": None,
+}
+
+
+def _success_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rows: dict[str, Any],
+    replies: list[dict[str, Any]],
+    *,
+    result_name: str,
+) -> int:
+    fake_result = GuardedReexecResult(
+        status="proof-satisfied",
+        reason="proof_satisfied",
+        dry_run=False,
+        target_ref="abc",
+        executed=True,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: fake_result,
+    )
+    ctx = DeferredRecycleContext(
+        parent_dispatch_id="d-done",
+        report_thread="15851",
+        report_after_turn=1293,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=tmp_path / result_name,
+        wait_timeout_s=10.0,
+        repo_root=tmp_path,
+    )
+    code, _result = run_deferred_recycle(
+        ctx,
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **kw: replies.append(kw),
+        sleep_fn=lambda _s: None,
+    )
+    return code
+
+
+def test_deferred_success_reply_carries_pid_unverifiable_and_marker_compare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replies: list[dict[str, Any]] = []
+    rows = _proof_rows(
+        gateway={
+            **_idle_row("gateway", fleet_pid=None),
+            "load_marker": _GATEWAY_MARKER,
+        }
+    )
+    code = _success_reply(tmp_path, monkeypatch, rows, replies, result_name="out.json")
+    assert code == 0
+    assert len(replies) == 1
+    assert "pid_unverifiable: gateway" in replies[0]["body"]
+    assert (
+        "marker_compare: gateway container_started_at "
+        "2026-10-17T16:00:00Z -> 2026-10-17T16:00:00Z unchanged"
+        in replies[0]["body"]
+    )
+
+    replies.clear()
+    control = _proof_rows()
+    code = _success_reply(
+        tmp_path, monkeypatch, control, replies, result_name="control.json"
+    )
+    assert code == 0
+    assert len(replies) == 1
+    assert "pid_unverifiable" not in replies[0]["body"]
+
+
+def test_none_pid_absent_marker_is_indeterminate() -> None:
+    rows = _proof_rows(gateway=_idle_row("gateway", fleet_pid=None))
+    manage = _manage_from_rows(rows)
+    child = fleet_child_pids(manage, None)
+    assert child["gateway"] == {"pid": None, "marker": None}
+    verdict, extra = _verdict(child, child, rows=rows)
+    assert verdict == "INDETERMINATE"
+    assert "pid_unverifiable" not in extra
+
+
+def test_none_pid_errored_or_wrong_kind_marker_is_indeterminate() -> None:
+    errored = {
+        "kind": "container_started_at",
+        "value_utc": _GATEWAY_STARTED_AT,
+        "error": "clock_skew",
+    }
+    wrong_kind = {
+        "kind": "host_proc_start",
+        "value_utc": _GATEWAY_STARTED_AT,
+        "error": None,
+    }
+    for marker in (errored, wrong_kind):
+        rows = _proof_rows(
+            gateway={
+                **_idle_row("gateway", fleet_pid=None),
+                "load_marker": marker,
+            }
+        )
+        manage = _manage_from_rows(rows)
+        child = fleet_child_pids(manage, None)
+        assert child["gateway"]["marker"] is None
+        verdict, extra = _verdict(child, child, rows=rows)
+        assert verdict == "INDETERMINATE"
+        assert "pid_unverifiable" not in extra
+
+
+def test_none_pid_marker_change_is_fail() -> None:
+    before = _equal_children()
+    after = _equal_children()
+    before["gateway"] = _child_record(None, _GATEWAY_STARTED_AT)
+    after["gateway"] = _child_record(None, "2026-10-17T17:00:00Z")
+    verdict, _extra = _verdict(before, after)
+    assert verdict == "FAIL"
+
+
+def test_host_pid_change_is_fail() -> None:
+    before = _equal_children()
+    after = _equal_children()
+    after["stargate"] = _child_record(101, None)
+    verdict, _extra = _verdict(before, after)
+    assert verdict == "FAIL"
+
+
+def test_none_pid_on_one_side_is_fail() -> None:
+    before = _equal_children()
+    after = _equal_children()
+    before["gateway"] = _child_record(None, _GATEWAY_STARTED_AT)
+    verdict, _extra = _verdict(before, after)
+    assert verdict == "FAIL"
+
+
+def test_identical_non_null_pids_pass_without_pid_unverifiable() -> None:
+    child = _equal_children()
+    verdict, extra = _verdict(child, child)
+    assert verdict == "PASS"
+    assert "pid_unverifiable" not in extra
+    assert "marker_compare" not in extra
+
+
+def test_none_pid_equal_markers_pass_and_record_unverifiable() -> None:
+    child = _equal_children()
+    child["gateway"] = _child_record(None, _GATEWAY_STARTED_AT)
+    verdict, extra = _verdict(child, child)
+    assert verdict == "PASS"
+    assert extra["pid_unverifiable"] == ["gateway"]
+    assert extra["marker_compare"] == [
+        "marker_compare: gateway container_started_at "
+        "2026-10-17T16:00:00Z -> 2026-10-17T16:00:00Z unchanged"
+    ]
+
+
+def test_service_fail_beats_indeterminate_and_head_sha_still_fails() -> None:
+    before = _equal_children()
+    after = _equal_children()
+    before["gateway"] = _child_record(None, None)
+    after["rag"] = _child_record(101, None)
+    verdict, _extra = _verdict(before, after)
+    assert verdict == "FAIL"
+
+    child = _equal_children()
+    child["gateway"] = _child_record(None, None)
+    verdict, _extra = _verdict(child, child, target_ref="not-the-head")
+    assert verdict == "FAIL"
 
 
 def test_report_deferred_crash_one_reply_and_result_file(tmp_path: Path) -> None:

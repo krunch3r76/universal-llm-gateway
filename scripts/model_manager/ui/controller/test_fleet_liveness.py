@@ -1101,7 +1101,47 @@ def test_compact_projection_omits_porcelain_and_heavy_fields(
         "code_ref_validation": {
             "liveness": {"answer": "yes", "relation": "equal"},
         },
+        "load_marker": {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
     }
+
+
+def test_compact_service_row_copies_load_marker_and_omits_when_absent() -> None:
+    """Container row keeps load_marker; a full row with none omits the key."""
+    marker = {
+        "kind": "container_started_at",
+        "value_utc": "2026-10-17T16:00:00Z",
+        "clock_domain": "docker_host",
+        "error": None,
+    }
+    copied = live._compact_service_row(
+        {
+            "service": "gateway",
+            "pid": None,
+            "reported_version": None,
+            "load_marker": marker,
+        }
+    )
+    assert copied["load_marker"] == marker
+    assert copied["load_marker"] is not marker
+    omitted = live._compact_service_row(
+        {"service": "rag", "pid": 7, "reported_version": None}
+    )
+    assert "load_marker" not in omitted
+    none_marker = live._compact_service_row(
+        {
+            "service": "rag",
+            "pid": 7,
+            "reported_version": None,
+            "load_marker": None,
+        }
+    )
+    assert "load_marker" not in none_marker
 
 
 def test_compact_down_service_still_present(
