@@ -22,13 +22,13 @@ from ._spec import (
     json,
 )
 from .queue_policy import (
+    QUEUE_RETRY_CEILING,
     ExhaustedRedrive,
-    arm_backoff_minutes,
     claim_filter_sql,
-    disposition,
     is_dead_letter,
     queue_state_case_sql,
 )
+from .queue_redrive import redrive_exhausted_once as _redrive_exhausted_once
 
 
 class _PropertyIndexPart07:
@@ -184,7 +184,7 @@ class _PropertyIndexPart07:
         await self._seq.run(_write())
 
     async def dequeue_extraction(
-        self, limit: int = 10, max_attempts: int = 5
+        self, limit: int = 10, max_attempts: int = QUEUE_RETRY_CEILING
     ) -> list[ExtractionQueueClaim]:
         """Atomically claim sources ready for extraction.
 
@@ -360,64 +360,8 @@ class _PropertyIndexPart07:
         return await self._seq.run(_write())
 
     async def redrive_exhausted_once(self, *, dry_run: bool) -> ExhaustedRedrive:
-        """Arm one claim for retriable exhausted rows, or persist dead_letter.
-
-        Does not reset ``attempts`` and does not run extraction. In-flight rows
-        are left alone. ``dry_run`` reports the same classification without
-        writing.
-        """
-        rows = self.list_extraction_queue_rows(limit=None)
-        retried: list[str] = []
-        dead_lettered: list[str] = []
-        for row in rows:
-            if row.state == "in_flight":
-                continue
-            kind = disposition(row.attempts, row.last_error, row.last_failure_category)
-            if kind == "retry":
-                retried.append(row.source)
-            elif kind == "dead_letter":
-                dead_lettered.append(row.source)
-
-        if not dry_run and (retried or dead_lettered):
-
-            async def _write() -> None:
-                conn = self._ensure_conn()
-                for source in dead_lettered:
-                    conn.execute(
-                        "UPDATE extraction_queue"
-                        " SET last_failure_category = 'dead_letter'"
-                        " WHERE source = ?",
-                        (source,),
-                    )
-                for source in retried:
-                    current = conn.execute(
-                        "SELECT attempts FROM extraction_queue WHERE source = ?",
-                        (source,),
-                    ).fetchone()
-                    if current is None:
-                        continue
-                    minutes = arm_backoff_minutes(int(current[0]))
-                    conn.execute(
-                        "UPDATE extraction_queue SET"
-                        " last_attempt_at = datetime('now', ?),"
-                        " last_failure_at = datetime('now', ?),"
-                        " active_execution_id = NULL"
-                        " WHERE source = ?",
-                        (
-                            f"-{minutes + 1} minutes",
-                            f"-{minutes} minutes",
-                            source,
-                        ),
-                    )
-                conn.commit()
-
-            await self._seq.run(_write())
-
-        return ExhaustedRedrive(
-            dry_run=dry_run,
-            retried=tuple(retried),
-            dead_lettered=tuple(dead_lettered),
-        )
+        """Arm one claim or persist dead_letter. Body is ``queue_redrive``."""
+        return await _redrive_exhausted_once(self, dry_run=dry_run)
 
     def get_extraction_queue_breakdown(
         self, *, max_attempts: int = 5

@@ -91,9 +91,10 @@ def disposition(
 ) -> str:
     """Return ``retry``, ``dead_letter``, or ``skip`` for a one-shot re-drive.
 
-    ``skip`` is a row still inside the fast budget. ``retry`` is a retriable
-    map failure below the ceiling. Everything else past the fast budget is
-    ``dead_letter``.
+    ``skip`` is a row still inside the fast budget, or ``capacity`` below the
+    ceiling (the budget is held; redrive must not stamp ``dead_letter``).
+    ``retry`` is a retriable map failure below the ceiling. Everything else
+    past the fast budget is ``dead_letter``.
     """
     if attempts < QUEUE_FAST_ATTEMPTS and category != "dead_letter":
         return "skip"
@@ -101,6 +102,8 @@ def disposition(
         return "dead_letter"
     if is_retriable_map_error(error) and attempts < QUEUE_RETRY_CEILING:
         return "retry"
+    if category == "capacity" and attempts < QUEUE_RETRY_CEILING:
+        return "skip"
     return "dead_letter"
 
 

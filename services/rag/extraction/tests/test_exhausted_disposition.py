@@ -135,6 +135,96 @@ async def test_exhausted_prompt_too_large_is_listed_dead_letter(
 
 
 @pytest.mark.asyncio
+async def test_capacity_below_ceiling_stays_claimable_after_redrive(
+    tmp_path: Path,
+) -> None:
+    """Capacity at attempts 5 and 7 stays claimable; attempts 8 is dead_letter.
+
+    A redrive must not stamp category=capacity as dead_letter below the ceiling.
+    After the write, those rows are still claimed once their backoff has elapsed.
+    """
+    idx = await _property_index(tmp_path)
+    sources = {
+        5: "/data/cap-5.json",
+        7: "/data/cap-7.json",
+        8: "/data/cap-8.json",
+    }
+    try:
+        for attempts, source in sources.items():
+            await _seed(
+                idx, source, attempts=attempts, error="HTTP 503", age_minutes=241
+            )
+            conn = idx._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET last_failure_category = 'capacity'"
+                " WHERE source = ?",
+                (source,),
+            )
+            conn.commit()
+        outcome = await idx.redrive_exhausted_once(dry_run=False)
+        assert sources[5] not in outcome.dead_lettered
+        assert sources[7] not in outcome.dead_lettered
+        assert sources[8] in outcome.dead_lettered
+        listed = {row.source: row for row in idx.list_extraction_queue_rows(limit=None)}
+        assert listed[sources[5]].last_failure_category == "capacity"
+        assert listed[sources[7]].last_failure_category == "capacity"
+        assert listed[sources[8]].state == "dead_letter"
+        claims = await idx.dequeue_extraction(limit=3, max_attempts=QUEUE_RETRY_CEILING)
+        claimed = {row.source for row in claims}
+        assert sources[5] in claimed
+        assert sources[7] in claimed
+        assert sources[8] not in claimed
+    finally:
+        await idx.stop()
+
+
+@pytest.mark.asyncio
+async def test_redrive_keeps_execution_id_and_skips_in_flight(
+    tmp_path: Path,
+) -> None:
+    """Redrive does not clear active_execution_id and does not arm an in-flight row.
+
+    A claim that lands between the list snapshot and the UPDATE must keep its
+    execution id. The write's WHERE excludes that in-flight shape.
+    """
+    idx = await _property_index(tmp_path)
+    armed = "/data/armed.json"
+    inflight = "/data/inflight.json"
+    try:
+        await _seed(idx, armed, attempts=5, error=_MAP_TIMEOUT, age_minutes=16)
+        await _seed(idx, inflight, attempts=5, error=_MAP_TIMEOUT, age_minutes=16)
+        conn = idx._ensure_conn()
+        conn.execute(
+            "UPDATE extraction_queue SET active_execution_id = 'exec-keep'"
+            " WHERE source = ?",
+            (armed,),
+        )
+        conn.execute(
+            "UPDATE extraction_queue SET"
+            " active_execution_id = 'exec-live',"
+            " last_attempt_at = datetime('now'),"
+            " last_failure_at = datetime('now', '-5 minutes')"
+            " WHERE source = ?",
+            (inflight,),
+        )
+        conn.commit()
+        outcome = await idx.redrive_exhausted_once(dry_run=False)
+        assert armed in outcome.retried
+        assert inflight not in outcome.retried
+        conn = idx._ensure_conn()
+        ids = {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT source, active_execution_id FROM extraction_queue"
+            ).fetchall()
+        }
+        assert ids[armed] == "exec-keep"
+        assert ids[inflight] == "exec-live"
+    finally:
+        await idx.stop()
+
+
+@pytest.mark.asyncio
 async def test_worker_dequeues_at_retry_ceiling() -> None:
     """The worker claims with the retry ceiling, so attempts 5-7 are eligible."""
     property_index = AsyncMock()
