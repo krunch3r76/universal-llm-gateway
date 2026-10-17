@@ -34,7 +34,10 @@ from ..db import (
     update_turn_status,
 )
 from ..models import AgentName
-from ..routes.threads.send_prep import _resolve_send_supersedes
+from ..routes.threads.send_prep import (
+    _raise_if_unexpanded_file_token,
+    _resolve_send_supersedes,
+)
 from ..turns_models import (
     Attachment,
     Turn,
@@ -94,8 +97,13 @@ def _rows_to_turns(rows: list[dict[str, Any]]) -> list[Turn]:
     openapi_extra=x_mcp("reply", tool="agent_bus", pipeline=True),
 )
 async def create_turn(turn: TurnCreate) -> TurnCreated:
-    """Create one turn, enforcing unread and status invariants from storage logic."""
+    """Create one turn, enforcing unread and status invariants from storage logic.
+
+    A whole-value ``$file:`` body is refused with 422 before spill or insert,
+    including the deprecated reply binding on this same handler.
+    """
     turn.thread = await asyncio.to_thread(normalize_thread_id, turn.thread)
+    _raise_if_unexpanded_file_token(turn.body)
     thread_tags = await asyncio.to_thread(load_thread_tags, turn.thread)
     from ..seat_registration_gate import (
         apply_standing_bind,
@@ -392,12 +400,18 @@ async def mark_turn_read_route(turn_id: int) -> dict[str, str]:
     openapi_extra=x_mcp("update", tool="agent_bus"),
 )
 async def update_turn_route(turn_id: int, body: TurnUpdate) -> Turn:
-    """Update mutable turn fields while rejecting already acknowledged turns."""
+    """Update mutable turn fields while rejecting already acknowledged turns.
+
+    A whole-value ``$file:`` body or append is refused with 422 before the
+    row is replaced or concatenated.
+    """
     if body.subject is None and body.body is None and body.append is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one of subject, body, or append required",
         )
+    _raise_if_unexpanded_file_token(body.body)
+    _raise_if_unexpanded_file_token(body.append)
     try:
         row = update_turn(
             turn_id,

@@ -1,4 +1,9 @@
-"""Shared pre-processing helpers for the send + with-turn + sidecar flows."""
+"""Shared pre-write helpers for agent-bus send, turn, and dispatch routes.
+
+Callers are send, with-turn, sidecar, POST /turns, PATCH body/append, and
+dispatch claim-and-post / admit-and-post. The unexpanded ``$file:`` refusal
+lives here so those routes share one predicate and one 422 envelope.
+"""
 
 from __future__ import annotations
 
@@ -115,7 +120,9 @@ def _raise_if_unexpanded_file_token(text: str | None) -> None:
     """Refuse a whole-value ``$file:`` token before mint, insert, or sidecar write.
 
     Breaks when the nested token is stored (new thread, continue, with-turn,
-    or sidecar_content). Mid-text mentions are left alone.
+    sidecar_content, POST /turns, PATCH body or append, dispatch
+    claim-and-post, or dispatch admit-and-post). Mid-text mentions are left
+    alone. ``text is None`` is a no-op so optional patch fields can pass.
     """
     if text is None or not text_is_unexpanded_file_token(text):
         return
