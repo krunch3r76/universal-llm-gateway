@@ -2406,6 +2406,76 @@ def test_weekly_limit_approaching_banner_long_body_ok_with_warning_extra(
     assert result.extras.get("weekly_limit_warning")
 
 
+_SPECIMEN_USAGE_PERCENT_BANNER = "You've used 75% of your weekly limit Get more usage"
+
+
+def test_usage_percent_warning_harvests_complete_reply_hard_stop_still_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """75% usage warning with a complete reply succeeds; hard-stop still weekly_limit (a:39469)."""
+    complete_reply = "PLAN: ship the harvest fix.\n\n" + ("Seat reply paragraph. " * 80)
+    assert len(complete_reply) > 500
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-usage-75")
+    warning_client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-usage-75", "status": "running"},
+            {
+                "execution_id": "sat-wl-usage-75",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-usage-75.md",
+                "body": complete_reply,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": _SPECIMEN_USAGE_PERCENT_BANNER,
+                "attested_model": "Model: Opus 5.5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    harvested = run_cdp_generate(
+        execution_id="dispatch-wl-usage-75",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=warning_client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert harvested.ok is True
+    assert harvested.stall_stage is None
+    assert harvested.body == complete_reply
+    assert harvested.extras.get("weekly_limit_warning")
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-hard-stop")
+    hard_stop = "You've hit your weekly limit"
+    stop_client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-hard-stop", "status": "running"},
+            {
+                "execution_id": "sat-wl-hard-stop",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-hard-stop.md",
+                "body": complete_reply,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": hard_stop,
+                "attested_model": "Model: Opus 5.5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    stopped = run_cdp_generate(
+        execution_id="dispatch-wl-hard-stop",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=stop_client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert stopped.ok is False
+    assert stopped.stall_stage == "weekly_limit"
+
+
 def test_weekly_limit_hit_phrase_banner_long_body_still_stalls(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -79,6 +79,10 @@ _WEEKLY_LIMIT_APPROACHING_RE = re.compile(
     r"approaching|nearing|close\s+to",
     re.IGNORECASE,
 )
+_WEEKLY_LIMIT_USAGE_PERCENT_RE = re.compile(
+    r"\d{1,3}\s*%\s+of\s+(?:your\s+)?weekly\s+limit",
+    re.IGNORECASE,
+)
 _WEEKLY_LIMIT_WARNING_MAX_LEN = 200
 
 HarvestSource = Literal["chat", "output-file", "auto"]
@@ -413,11 +417,18 @@ def _joined_error_banner(snapshot: dict[str, Any]) -> str:
 def _classify_weekly_limit_banner(
     banner: str,
 ) -> Literal["stop", "warning", "other"] | None:
-    """Classify joined harvest banner text when it mentions weekly limit."""
+    """Classify joined harvest banner text when it mentions weekly limit.
+
+    Hard-stop phrases grade ``stop``. A usage-percentage notice
+    (``N% of your weekly limit``) and an approaching notice grade
+    ``warning``. Remaining weekly-limit mentions grade ``other``.
+    """
     if not _WEEKLY_LIMIT_RE.search(banner):
         return None
     if _WEEKLY_LIMIT_STOP_RE.search(banner):
         return "stop"
+    if _WEEKLY_LIMIT_USAGE_PERCENT_RE.search(banner):
+        return "warning"
     if _WEEKLY_LIMIT_APPROACHING_RE.search(banner) and re.search(
         r"weekly\s+limit", banner, re.IGNORECASE
     ):
@@ -426,7 +437,7 @@ def _classify_weekly_limit_banner(
 
 
 def _weekly_limit_warning_extra(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Surface approaching-limit notice on successful grades (operator paging)."""
+    """Surface a usage-percentage or approaching notice on successful grades."""
     banner = _joined_error_banner(snapshot)
     if _classify_weekly_limit_banner(banner) != "warning":
         return {}
@@ -534,6 +545,8 @@ def _matched_span_for_rule(snapshot: dict[str, Any], rule: str) -> str:
             haystacks.append(raw)
     for hay in haystacks:
         found = pattern.search(hay)
+        if not found and rule == "weekly_limit_warning":
+            found = _WEEKLY_LIMIT_USAGE_PERCENT_RE.search(hay)
         if found:
             return _collapse_trace_text(found.group(0))[:_GRADE_TRACE_MATCH_CAP]
         if rule == "weekly_limit_stop":
