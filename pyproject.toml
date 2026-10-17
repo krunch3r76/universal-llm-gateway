@@ -48,6 +48,8 @@ ignore = ["E501"]  # line-too-long
     "N802",
 ]  # event_factory PascalCase signal names
 "services/_universal-llm-gateway/src/core/errors.py" = ["N818"]  # SyntaxErrorException
+# Intentional stdout-to-stderr redirect before imports so incidental prints stay off JSON stdout.
+"scripts/model_manager/guarded_manage_reexec/__main__.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
