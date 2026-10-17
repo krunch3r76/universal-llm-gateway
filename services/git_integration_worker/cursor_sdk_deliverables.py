@@ -89,28 +89,67 @@ def _first_atx_offset(text: str) -> int | None:
     return None if match is None else match.start()
 
 
-def _last_line_start(pattern: re.Pattern[str], text: str) -> str | None:
-    found = list(pattern.finditer(text))
-    if not found:
-        return None
-    return found[-1].group(1)
+_FENCE_MARK_RE = re.compile(r"(?m)^```")
+_STATUS_TOKENS = frozenset(
+    {"complete", "partial", "failed", "gated", "degraded", "blocked"}
+)
+
+
+def _fenced_spans(text: str) -> tuple[tuple[int, int], ...]:
+    marks = [match.start() for match in _FENCE_MARK_RE.finditer(text)]
+    spans: list[tuple[int, int]] = []
+    for index in range(0, len(marks), 2):
+        end = marks[index + 1] if index + 1 < len(marks) else len(text)
+        spans.append((marks[index], end))
+    return tuple(spans)
+
+
+def _unfenced_line_starts(pattern: re.Pattern[str], text: str) -> list[str]:
+    spans = _fenced_spans(text)
+    hits: list[str] = []
+    for match in pattern.finditer(text):
+        if any(start <= match.start() < end for start, end in spans):
+            continue
+        hits.append(match.group(1))
+    return hits
+
+
+def _unique_line(hits: list[str]) -> str | None:
+    distinct = list(dict.fromkeys(hits))
+    if len(distinct) == 1:
+        return distinct[0]
+    return None
+
+
+def _accepted_status_line(line: str) -> bool:
+    value = line.split(":", 1)[1].strip().lower()
+    token = value.split()[0].split(":")[0] if value else ""
+    return token in _STATUS_TOKENS
 
 
 def _harvest_field_lines(content: str) -> tuple[str, str | None, str]:
     """Status, optional VERDICT, and residue to place in the harvest preamble.
 
     A leading ``status:`` line is the wrapper prefix (``full_result_text``
-    degraded). Otherwise the last line-start hit wins, because model closeouts
-    put the fields after the preamble. VERDICT is omitted when the model
-    emitted none. Missing status/residue use sentinels the structured receipt
-    can replace.
+    degraded). A single unfenced line is copied up. Fenced lines are ignored.
+    Distinct unfenced hits are not collapsed to the last one: status and
+    residue fall back to sentinels the receipt can replace, and VERDICT is
+    omitted so a quoted artifact cannot become the only line maestro reads.
     """
     if content.startswith("status:"):
         status = content.split("\n", 1)[0]
     else:
-        status = _last_line_start(_STATUS_LINE_RE, content) or _UNSTATED_STATUS_LINE
-    verdict = _last_line_start(_VERDICT_LINE_RE, content)
-    residue = _last_line_start(_RESIDUE_LINE_RE, content) or _EMPTY_RESIDUE_LINE
+        candidate = _unique_line(_unfenced_line_starts(_STATUS_LINE_RE, content))
+        status = (
+            candidate
+            if candidate and _accepted_status_line(candidate)
+            else _UNSTATED_STATUS_LINE
+        )
+    verdict = _unique_line(_unfenced_line_starts(_VERDICT_LINE_RE, content))
+    residue = (
+        _unique_line(_unfenced_line_starts(_RESIDUE_LINE_RE, content))
+        or _EMPTY_RESIDUE_LINE
+    )
     return status, verdict, residue
 
 

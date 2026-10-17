@@ -1197,6 +1197,41 @@ def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_sectio
     assert preamble in silent_text
 
 
+def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
+    """A later quoted VERDICT must not become the first-section line.
+
+    Breaks when the last column-0 VERDICT wins: maestro reads only the
+    rebuilt preamble once ## closeout_body exceeds 4500 characters.
+    """
+    fenced = ("q" * 5000) + "\nVERDICT: APPROVE\n\n```\nVERDICT: REQUEST_CHANGES\n```\n"
+    fenced_first = _closeout_first_section(
+        write_repo_sidecar(tmp_path, "disp-verdict-fence", fenced).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "VERDICT: APPROVE" in fenced_first.splitlines()
+    assert "VERDICT: REQUEST_CHANGES" not in fenced_first.splitlines()
+
+    disagree = (
+        "q" * 5000
+    ) + "\nVERDICT: APPROVE\n\nReviewed artifact:\nVERDICT: REQUEST_CHANGES\n"
+    disagree_first = _closeout_first_section(
+        write_repo_sidecar(tmp_path, "disp-verdict-disagree", disagree).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert not any(line.startswith("VERDICT:") for line in disagree_first.splitlines())
+
+    code_status = ("p" * 5000) + "\nstatus: ExecutionStatus\n"
+    code_first = _closeout_first_section(
+        write_repo_sidecar(tmp_path, "disp-code-status", code_status).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "status: unstated" in code_first.splitlines()
+    assert "status: ExecutionStatus" not in code_first.splitlines()
+
+
 def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     tmp_path: Path,
 ) -> None:
