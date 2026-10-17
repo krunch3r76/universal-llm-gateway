@@ -244,7 +244,9 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
             if isinstance(h, str)
         ]
         if unique_hashes:
-            articles = state._property_index.lookup_articles_by_hash(unique_hashes)
+            articles = await asyncio.to_thread(
+                state._property_index.lookup_articles_by_hash, unique_hashes
+            )
             for meta in metadatas:
                 h = meta.get("source_hash")
                 if isinstance(h, str) and h in articles:

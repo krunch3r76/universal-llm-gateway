@@ -334,7 +334,11 @@ class _PropertyIndexPart01:
         def _open() -> None:
             conn = sqlite3.connect(str(self._db_path), check_same_thread=True)
             conn.execute("PRAGMA journal_mode=WAL")
-            self._apply_migrations(conn)
+            try:
+                self._apply_migrations(conn)
+            except Exception:
+                conn.close()
+                raise
             self._conn = conn
 
         try:

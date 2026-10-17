@@ -10,6 +10,7 @@ rows (``record_failure``) and article upserts. Writes are serialized through
 ``self._seq`` (SequentialExecutor); ``article_exists`` reads SQLite directly.
 """
 
+# ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403

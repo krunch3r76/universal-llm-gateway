@@ -420,13 +420,18 @@ async def test_full_source_retry_deletes_properties_by_source(tmp_path) -> None:
     await idx.fts.insert("c2", "/src/a.md", "two")
     await idx.fts.insert("c9", "/src/b.md", "nine")
     await idx.remove_source_metadata("/src/a.md", ["c1"])
-    conn = idx._ensure_conn()
-    left = {
-        row[0] for row in conn.execute("SELECT chunk_id FROM properties").fetchall()
-    }
-    fts_left = {
-        row[0] for row in conn.execute("SELECT chunk_id FROM chunks_fts").fetchall()
-    }
+
+    def _leftover_ids() -> tuple[set[str], set[str]]:
+        conn = idx._ensure_conn()
+        left = {
+            row[0] for row in conn.execute("SELECT chunk_id FROM properties").fetchall()
+        }
+        fts_left = {
+            row[0] for row in conn.execute("SELECT chunk_id FROM chunks_fts").fetchall()
+        }
+        return left, fts_left
+
+    left, fts_left = idx.run_sqlite(_leftover_ids)
     assert "c2" not in left
     assert "c2" not in fts_left
     assert left == {"c9"}

@@ -30,7 +30,9 @@ _MAP_FAILED_ERR = RuntimeError(
 
 
 def _probe_ok_patch():
-    return patch.object(worker_loop, "probe_stargate_models", AsyncMock(return_value=True))
+    return patch.object(
+        worker_loop, "probe_stargate_models", AsyncMock(return_value=True)
+    )
 
 
 def test_is_map_iteration_timeout_error_positive() -> None:
@@ -76,15 +78,19 @@ async def test_iteration_timeout_failures_exhaust_queue_attempt_budget(
                 error=str(_MAP_TIMEOUT_ERR),
                 error_type="RuntimeError",
             )
-            conn = idx._ensure_conn()
-            conn.execute(
-                "UPDATE extraction_queue SET"
-                " last_attempt_at = datetime('now', '-3 minutes'),"
-                " last_failure_at = datetime('now', '-2 minutes')"
-                " WHERE source = ?",
-                (claims[0].source,),
-            )
-            conn.commit()
+
+            def _age() -> None:
+                conn = idx._ensure_conn()
+                conn.execute(
+                    "UPDATE extraction_queue SET"
+                    " last_attempt_at = datetime('now', '-3 minutes'),"
+                    " last_failure_at = datetime('now', '-2 minutes')"
+                    " WHERE source = ?",
+                    (claims[0].source,),
+                )
+                conn.commit()
+
+            idx.run_sqlite(_age)
 
         exhausted = await idx.dequeue_extraction(
             limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS
@@ -109,9 +115,7 @@ async def test_worker_loop_map_timeout_increments_attempt() -> None:
         active_execution_id="ecf7f2a0-8866-462a-95ab-630d32cc83a9",
     )
     property_index = AsyncMock()
-    property_index.dequeue_extraction = AsyncMock(
-        side_effect=[[claim], []]
-    )
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
     property_index.fail_extraction = AsyncMock()
     shutdown = asyncio.Event()
 
@@ -127,7 +131,9 @@ async def test_worker_loop_map_timeout_increments_attempt() -> None:
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
         _probe_ok_patch(),
-        patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_timeout)),
+        patch.object(
+            worker_loop, "extract_source", AsyncMock(side_effect=_raise_timeout)
+        ),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
     ):
         await run_extraction_worker(
@@ -204,8 +210,12 @@ async def test_worker_loop_probe_failure_skips_dequeue() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
-        patch.object(worker_loop, "probe_stargate_models", AsyncMock(return_value=False)),
-        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock(side_effect=_stop_after_sleep)),
+        patch.object(
+            worker_loop, "probe_stargate_models", AsyncMock(return_value=False)
+        ),
+        patch.object(
+            worker_loop, "_sleep_or_shutdown", AsyncMock(side_effect=_stop_after_sleep)
+        ),
     ):
         await run_extraction_worker(
             config=config,
@@ -259,7 +269,9 @@ async def test_worker_loop_connect_error_probe_down_burns_only_claimed_source(
                 shutdown_event=shutdown,
             )
 
-        rows = {r.source: r.attempts for r in idx.list_extraction_queue_rows(max_attempts=5)}
+        rows = {
+            r.source: r.attempts for r in idx.list_extraction_queue_rows(max_attempts=5)
+        }
         claimed = sum(1 for a in rows.values() if a > 0)
         assert claimed == 1
         assert rows["/a.json"] == 1 or rows["/b.json"] == 1 or rows["/c.json"] == 1
@@ -293,15 +305,19 @@ async def test_worker_loop_read_error_probe_down_exhausts_attempt_budget(
 
         async def _sleep_and_age_backoff(*_a: object, **_k: object) -> None:
             if failures < _MAX_QUEUE_ATTEMPTS:
-                conn = idx._ensure_conn()
-                conn.execute(
-                    "UPDATE extraction_queue SET"
-                    " last_attempt_at = datetime('now', '-3 minutes'),"
-                    " last_failure_at = datetime('now', '-2 minutes')"
-                    " WHERE source = ?",
-                    ("/s.json",),
-                )
-                conn.commit()
+
+                def _age() -> None:
+                    conn = idx._ensure_conn()
+                    conn.execute(
+                        "UPDATE extraction_queue SET"
+                        " last_attempt_at = datetime('now', '-3 minutes'),"
+                        " last_failure_at = datetime('now', '-2 minutes')"
+                        " WHERE source = ?",
+                        ("/s.json",),
+                    )
+                    conn.commit()
+
+                idx.run_sqlite(_age)
             rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
             if rows and rows[0].attempts >= _MAX_QUEUE_ATTEMPTS:
                 shutdown.set()
@@ -316,12 +332,18 @@ async def test_worker_loop_read_error_probe_down_exhausts_attempt_budget(
             patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
             patch.object(worker_loop, "configure_timeouts"),
             patch.object(
-                worker_loop, "probe_stargate_models", AsyncMock(side_effect=_probe_alternate)
+                worker_loop,
+                "probe_stargate_models",
+                AsyncMock(side_effect=_probe_alternate),
             ),
             patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
-            patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_read)),
             patch.object(
-                worker_loop, "_sleep_or_shutdown", AsyncMock(side_effect=_sleep_and_age_backoff)
+                worker_loop, "extract_source", AsyncMock(side_effect=_raise_read)
+            ),
+            patch.object(
+                worker_loop,
+                "_sleep_or_shutdown",
+                AsyncMock(side_effect=_sleep_and_age_backoff),
             ),
         ):
             await run_extraction_worker(
@@ -332,7 +354,9 @@ async def test_worker_loop_read_error_probe_down_exhausts_attempt_budget(
                 shutdown_event=shutdown,
             )
 
-        exhausted = await idx.dequeue_extraction(limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS)
+        exhausted = await idx.dequeue_extraction(
+            limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS
+        )
         assert exhausted == []
         rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
         assert len(rows) == 1
@@ -456,11 +480,16 @@ async def test_reclaim_cancel_retains_pointer_when_stargate_down(
                 prior_execution_id="stale-exec-id",
                 property_index=idx,
             )
-        conn = idx._ensure_conn()
-        row = conn.execute(
-            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
-            ("/s.json",),
-        ).fetchone()
+        row = idx.run_sqlite(
+            lambda: (
+                idx._ensure_conn()
+                .execute(
+                    "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
+                    ("/s.json",),
+                )
+                .fetchone()
+            )
+        )
         assert row[0] == "stale-exec-id"
     finally:
         await idx.stop()
@@ -482,11 +511,16 @@ async def test_reclaim_cancel_clears_pointer_on_404(tmp_path: Path) -> None:
                 prior_execution_id="gone-exec-id",
                 property_index=idx,
             )
-        conn = idx._ensure_conn()
-        row = conn.execute(
-            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
-            ("/s.json",),
-        ).fetchone()
+        row = idx.run_sqlite(
+            lambda: (
+                idx._ensure_conn()
+                .execute(
+                    "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
+                    ("/s.json",),
+                )
+                .fetchone()
+            )
+        )
         assert row[0] is None
     finally:
         await idx.stop()
@@ -505,9 +539,7 @@ async def test_sequential_reclaim_cancel_is_idempotent(tmp_path: Path) -> None:
         )
         await idx.enqueue_extraction("/s.json")
         await idx.record_extraction_execution_id("/s.json", "exec-a")
-        with patch.object(
-            chroma_source, "cancel_extraction_execution", cancel_mock
-        ):
+        with patch.object(chroma_source, "cancel_extraction_execution", cancel_mock):
             await chroma_source.reclaim_cancel_stored_execution(
                 source="/s.json",
                 prior_execution_id="exec-a",
@@ -541,11 +573,16 @@ async def test_reclaim_cancel_retains_pointer_on_connection_error(
                 prior_execution_id="stale-exec-id",
                 property_index=idx,
             )
-        conn = idx._ensure_conn()
-        row = conn.execute(
-            "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
-            ("/s.json",),
-        ).fetchone()
+        row = idx.run_sqlite(
+            lambda: (
+                idx._ensure_conn()
+                .execute(
+                    "SELECT active_execution_id FROM extraction_queue WHERE source = ?",
+                    ("/s.json",),
+                )
+                .fetchone()
+            )
+        )
         assert row[0] == "stale-exec-id"
     finally:
         await idx.stop()
@@ -572,7 +609,9 @@ async def test_worker_reclaim_before_chroma_empty_ids_early_complete() -> None:
         shutdown.set()
 
     config = MagicMock()
-    ke = MagicMock(pipeline="rag-extract-knowledge", schema_version=1, extraction_model="m")
+    ke = MagicMock(
+        pipeline="rag-extract-knowledge", schema_version=1, extraction_model="m"
+    )
     config.knowledge_extraction = ke
 
     collection = MagicMock()
@@ -583,7 +622,9 @@ async def test_worker_reclaim_before_chroma_empty_ids_early_complete() -> None:
         patch.object(worker_loop, "configure_timeouts"),
         _probe_ok_patch(),
         patch.object(
-            worker_loop, "reclaim_cancel_stored_execution", AsyncMock(side_effect=_track_reclaim)
+            worker_loop,
+            "reclaim_cancel_stored_execution",
+            AsyncMock(side_effect=_track_reclaim),
         ),
         patch.object(
             chroma_source,
@@ -679,7 +720,9 @@ async def test_worker_loop_map_failed_still_increments_attempt() -> None:
         patch.object(worker_loop, "configure_timeouts"),
         _probe_ok_patch(),
         patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
-        patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_failed)),
+        patch.object(
+            worker_loop, "extract_source", AsyncMock(side_effect=_raise_failed)
+        ),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
     ):
         await run_extraction_worker(
@@ -701,12 +744,16 @@ async def test_dequeue_returns_active_execution_id_for_claim(tmp_path: Path) -> 
     idx = await _property_index(tmp_path)
     try:
         await idx.enqueue_extraction("/s.json")
-        conn = idx._ensure_conn()
-        conn.execute(
-            "UPDATE extraction_queue SET active_execution_id = ? WHERE source = ?",
-            ("stored-id", "/s.json"),
-        )
-        conn.commit()
+
+        def _set_exec_id() -> None:
+            conn = idx._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET active_execution_id = ? WHERE source = ?",
+                ("stored-id", "/s.json"),
+            )
+            conn.commit()
+
+        idx.run_sqlite(_set_exec_id)
         claims = await idx.dequeue_extraction(limit=1, max_attempts=5)
         assert claims[0].active_execution_id == "stored-id"
     finally:

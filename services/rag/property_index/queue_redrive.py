@@ -57,38 +57,40 @@ async def redrive_exhausted_once(index: Any, *, dry_run: bool) -> ExhaustedRedri
     armed_dead: list[str] = []
 
     async def _write() -> None:
-        conn = index._ensure_conn()
-        for source in dead_lettered:
-            cursor = conn.execute(
-                "UPDATE extraction_queue"
-                " SET last_failure_category = 'dead_letter'"
-                " WHERE source = ?" + _NOT_IN_FLIGHT,
-                (source,),
-            )
-            if cursor.rowcount == 1:
-                armed_dead.append(source)
-        for source in retried:
-            current = conn.execute(
-                "SELECT attempts FROM extraction_queue WHERE source = ?",
-                (source,),
-            ).fetchone()
-            if current is None:
-                continue
-            minutes = arm_backoff_minutes(int(current[0]))
-            cursor = conn.execute(
-                "UPDATE extraction_queue SET"
-                " last_attempt_at = datetime('now', ?),"
-                " last_failure_at = datetime('now', ?)"
-                " WHERE source = ?" + _NOT_IN_FLIGHT,
-                (
-                    f"-{minutes + 1} minutes",
-                    f"-{minutes} minutes",
-                    source,
-                ),
-            )
-            if cursor.rowcount == 1:
-                armed_retry.append(source)
-        conn.commit()
+        def _sql(conn: object) -> None:
+            for source in dead_lettered:
+                cursor = conn.execute(
+                    "UPDATE extraction_queue"
+                    " SET last_failure_category = 'dead_letter'"
+                    " WHERE source = ?" + _NOT_IN_FLIGHT,
+                    (source,),
+                )
+                if cursor.rowcount == 1:
+                    armed_dead.append(source)
+            for source in retried:
+                current = conn.execute(
+                    "SELECT attempts FROM extraction_queue WHERE source = ?",
+                    (source,),
+                ).fetchone()
+                if current is None:
+                    continue
+                minutes = arm_backoff_minutes(int(current[0]))
+                cursor = conn.execute(
+                    "UPDATE extraction_queue SET"
+                    " last_attempt_at = datetime('now', ?),"
+                    " last_failure_at = datetime('now', ?)"
+                    " WHERE source = ?" + _NOT_IN_FLIGHT,
+                    (
+                        f"-{minutes + 1} minutes",
+                        f"-{minutes} minutes",
+                        source,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    armed_retry.append(source)
+            conn.commit()
+
+        await index._with_conn_async(_sql)
 
     await index._seq.run(_write())
     return ExhaustedRedrive(

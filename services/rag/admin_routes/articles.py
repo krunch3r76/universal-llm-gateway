@@ -114,9 +114,10 @@ def register_article_routes(
             " ORDER BY scope ASC, published_date DESC, filename ASC, source_path ASC"
         )
 
-        conn = prop_idx._ensure_conn()
         try:
-            rows = conn.execute(query, params).fetchall()
+            rows = prop_idx.run_sqlite(
+                lambda: prop_idx._ensure_conn().execute(query, params).fetchall()
+            )
         except sqlite3.Error as exc:
             logger.error("Article listing query failed: %s", exc, exc_info=True)
             raise HTTPException(
@@ -155,14 +156,19 @@ def register_article_routes(
         prop_idx = get_property_index_fn()
         if prop_idx is None:
             return {"orphans": [], "count": 0}
-        conn = prop_idx._ensure_conn()
-        rows = conn.execute(
-            "SELECT a.source_path, a.title, a.scope, a.updated_at "
-            "FROM articles a "
-            "LEFT JOIN indexed_sources s ON a.source_path = s.source "
-            "WHERE s.source IS NULL "
-            "ORDER BY a.updated_at DESC"
-        ).fetchall()
+        rows = prop_idx.run_sqlite(
+            lambda: (
+                prop_idx._ensure_conn()
+                .execute(
+                    "SELECT a.source_path, a.title, a.scope, a.updated_at "
+                    "FROM articles a "
+                    "LEFT JOIN indexed_sources s ON a.source_path = s.source "
+                    "WHERE s.source IS NULL "
+                    "ORDER BY a.updated_at DESC"
+                )
+                .fetchall()
+            )
+        )
         return {
             "orphans": [
                 {"source_path": r[0], "title": r[1], "scope": r[2], "updated_at": r[3]}

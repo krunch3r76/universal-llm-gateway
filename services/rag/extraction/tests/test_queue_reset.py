@@ -25,19 +25,23 @@ async def _property_index(tmp_path: Path) -> PropertyIndex:
 
 async def _seed_exhausted(idx: PropertyIndex, source: str, *, queued_at: str) -> None:
     await idx.enqueue_extraction(source)
-    conn = idx._ensure_conn()
-    conn.execute(
-        "UPDATE extraction_queue SET"
-        " attempts = 5,"
-        " last_attempt_at = datetime('now'),"
-        " last_failure_at = datetime('now'),"
-        " active_execution_id = 'exec-stale',"
-        " last_error = 'permanent failure',"
-        " queued_at = ?"
-        " WHERE source = ?",
-        (queued_at, source),
-    )
-    conn.commit()
+
+    def _mark_exhausted() -> None:
+        conn = idx._ensure_conn()
+        conn.execute(
+            "UPDATE extraction_queue SET"
+            " attempts = 5,"
+            " last_attempt_at = datetime('now'),"
+            " last_failure_at = datetime('now'),"
+            " active_execution_id = 'exec-stale',"
+            " last_error = 'permanent failure',"
+            " queued_at = ?"
+            " WHERE source = ?",
+            (queued_at, source),
+        )
+        conn.commit()
+
+    idx.run_sqlite(_mark_exhausted)
 
 
 class _RecordingEventBus:
@@ -96,12 +100,8 @@ async def test_reset_leaves_unlisted_source_unchanged(tmp_path: Path) -> None:
     listed_source = "/data/listed.messages.json"
     other_source = "/data/other.messages.json"
     try:
-        await _seed_exhausted(
-            idx, listed_source, queued_at="2026-10-01 00:00:00"
-        )
-        await _seed_exhausted(
-            idx, other_source, queued_at="2026-10-02 00:00:00"
-        )
+        await _seed_exhausted(idx, listed_source, queued_at="2026-10-01 00:00:00")
+        await _seed_exhausted(idx, other_source, queued_at="2026-10-02 00:00:00")
         before = idx.list_extraction_queue_rows(max_attempts=5, limit=None)
         other_before = next(r for r in before if r.source == other_source)
 
