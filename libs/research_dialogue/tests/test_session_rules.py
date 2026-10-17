@@ -10,6 +10,27 @@ from research_dialogue.session import TURN_LIMIT, evaluate_stop_rules
 pytestmark = pytest.mark.offline
 
 
+def test_pair_by_request_id_ignores_bare_model_commit_row() -> None:
+    from research_dialogue.session import _pair_by_request_id
+
+    entries = [
+        {
+            "kind": "reserve",
+            "model": "claude-opus-5-5",
+            "request_id": "r1",
+            "usd": "0.10",
+        },
+        {
+            "kind": "commit",
+            "model": "claude-opus-5-5",
+            "request_id": "r1",
+            "usd": "0.10",
+        },
+    ]
+    pairs = _pair_by_request_id(entries, "claude-opus-5-5")
+    assert pairs == {}
+
+
 def test_turn_limit_stop() -> None:
     state = {"turn_count": TURN_LIMIT}
     stop = evaluate_stop_rules(
