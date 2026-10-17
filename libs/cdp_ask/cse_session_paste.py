@@ -15,6 +15,7 @@ from typing import Any
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 
+from cdp_ask.cse_session_ack import STAND_DOWN_TYPE_RE
 from cdp_ask.cse_session_events import (
     emit,
     mcp_cse_session_conflict,
@@ -201,7 +202,9 @@ def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
     )
     caller_parent = _parent_thread_of(caller_prov)
     target_parent = _parent_thread_of(target_prov)
-    return bool(caller_parent and target_parent and caller_parent == target_parent == parent)
+    return bool(
+        caller_parent and target_parent and caller_parent == target_parent == parent
+    )
 
 
 async def execute_paste(
@@ -212,7 +215,9 @@ async def execute_paste(
     chat_url = (req.chat_url or "").strip() or None
     registration_id = (req.registration_id or "").strip() or None
     if not chat_url and not registration_id:
-        return _protocol_error("identity_required", detail="paste requires chat_url or registration_id")
+        return _protocol_error(
+            "identity_required", detail="paste requires chat_url or registration_id"
+        )
 
     target_prov = resolve_provenance(
         chat_url=chat_url,
@@ -227,9 +232,13 @@ async def execute_paste(
                 chat_url=chat_url,
             )
         )
-        return _protocol_error("ambiguous_identity", detail=str(target_prov.get("reason")))
+        return _protocol_error(
+            "ambiguous_identity", detail=str(target_prov.get("reason"))
+        )
 
-    target_reg = str(target_prov.get("registration_id") or registration_id or "").strip()
+    target_reg = str(
+        target_prov.get("registration_id") or registration_id or ""
+    ).strip()
     if not target_reg:
         return _protocol_error("not_attached")
 
@@ -266,7 +275,9 @@ async def execute_paste(
         return PasteResponse(**replay)
 
     if req.min_receipt == "human_visible":
-        return PasteResponse(ok=False, error="human_visible_unsatisfiable", send_verified=False)
+        return PasteResponse(
+            ok=False, error="human_visible_unsatisfiable", send_verified=False
+        )
 
     followup_req = FollowupProjectAskRequest(
         chat_url=chat_url or target_prov.get("chat_url"),
@@ -310,7 +321,10 @@ async def execute_paste(
         chat_url=result.url or chat_url,
     )
     _IDEMPOTENCY[cache_key] = response.model_dump()
-    if envelope == "stand_down" and send_verified:
+    stand_down = envelope == "stand_down" or bool(
+        STAND_DOWN_TYPE_RE.search(req.prompt_text or "")
+    )
+    if stand_down and send_verified:
         _append_standdown_token(
             registration_id=target_reg,
             chat_url=response.chat_url or chat_url,

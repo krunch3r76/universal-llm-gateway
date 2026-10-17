@@ -765,3 +765,113 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
         "reason": reason,
         "profile_reclaim": profile_outcome,
     }
+
+
+def prune_superseded_lane_hosts(parent_thread: str | None = None) -> list[str]:
+    """Detach closed lane rows outside the open seat and one unacked predecessor.
+
+    Phase 1a holds ``ports_lock`` only to read the fold, stamp evictions, and
+    append ``standdown_pasted``. ``fold_attachment_journal`` runs after that
+    lock is released because the fold takes the same non-reentrant flock.
+    Phase 2 seals each evicted row to tape and detaches it outside the lock.
+    A live port whose tape seal fails is left attached. Returns detached ids.
+    """
+    import asyncio
+
+    from .attachment_journal import fold_attachment_journal
+    from .journal_projection import read_fold_rows
+
+    lane_filter = (parent_thread or "").strip() or None
+    evict_rids: list[str] = []
+    appended = False
+    with _store.ports_lock():
+        active = _store.load_active()
+        fold_rows = read_fold_rows()
+        token_ids = {
+            str(record.get("registration_id") or "").strip()
+            for record in fold_rows
+            if str(record.get("event") or "")
+            in {"standdown_pasted", "standdown_unreachable"}
+        }
+        if lane_filter:
+            lanes = {lane_filter}
+        else:
+            lanes = {
+                str(row.get("parent_thread") or "").strip()
+                for row in active.values()
+                if isinstance(row, dict) and str(row.get("parent_thread") or "").strip()
+            }
+        now_ts = time.time()
+        for lane in lanes:
+            on_lane = [
+                (rid, row)
+                for rid, row in active.items()
+                if isinstance(row, dict)
+                and str(row.get("parent_thread") or "").strip() == lane
+            ]
+            open_ids = {rid for rid, row in on_lane if seat_open(row, lane)}
+            closed = [(rid, row) for rid, row in on_lane if rid not in open_ids]
+            unacked = [
+                (rid, row)
+                for rid, row in closed
+                if str(row.get("seat_lane") or "") == lane and rid not in token_ids
+            ]
+            newest = ""
+            if unacked:
+                newest = max(
+                    unacked,
+                    key=lambda item: (
+                        float(item[1].get("seat_bound_at") or 0.0),
+                        float(item[1].get("started_at") or 0.0),
+                        str(item[1].get("registration_id") or item[0]),
+                    ),
+                )[0]
+            keep = set(open_ids)
+            if newest:
+                keep.add(newest)
+            for rid, _row in closed:
+                if rid not in keep:
+                    evict_rids.append(rid)
+        for rid in evict_rids:
+            row = active.get(rid)
+            if not isinstance(row, dict):
+                continue
+            if row.get("seat_closed_at") is None:
+                row["seat_closed_at"] = now_ts
+                row["seat_close_reason"] = "superseded_keep_set_evicted"
+            if rid not in token_ids:
+                _store.append_log(
+                    "standdown_pasted",
+                    {
+                        "registration_id": rid,
+                        "chat_url": row.get("chat_url"),
+                        "reason": "superseded_keep_set_evicted",
+                        "pasted_at": now_ts,
+                    },
+                )
+                appended = True
+        _store.write_active(active)
+    if appended:
+        fold_attachment_journal()
+    detached: list[str] = []
+    for rid in evict_rids:
+        from cdp_ask.cse_session_harvest import seal_predecessor_cse_to_tape
+
+        try:
+            asyncio.run(seal_predecessor_cse_to_tape(rid))
+        except ProtocolError as exc:
+            if exc.code == "standdown.tape_seal_failed":
+                continue
+            raise
+        try:
+            detach(rid, reason="superseded_keep_set_evicted")
+        except ProtocolError as exc:
+            if exc.code in {
+                "attachment.not_attached",
+                "seat.open_on_detach",
+                "standdown.missing",
+            }:
+                continue
+            raise
+        detached.append(rid)
+    return detached

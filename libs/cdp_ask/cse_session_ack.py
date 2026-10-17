@@ -35,6 +35,7 @@ def classify_ack(
 MarkerType = Literal["stand_down_ack", "successor_attestation"]
 
 STAND_DOWN_ACK_TYPE_RE = re.compile(r"TYPE:\s*SEAT_STAND_DOWN_ACK\b", re.IGNORECASE)
+STAND_DOWN_TYPE_RE = re.compile(r"TYPE:\s*SEAT_STAND_DOWN\b", re.IGNORECASE)
 SUCCESSOR_ATTESTATION_TYPE_RE = re.compile(
     r"TYPE:\s*SUCCESSOR_ATTESTATION\b", re.IGNORECASE
 )

@@ -200,9 +200,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         refresh_flag = os.environ.get("CDP_ASK_TREE_STATE_REFRESH", "1").strip().lower()
         if refresh_flag not in ("0", "false", "no"):
             _tree_refresh_task = asyncio.create_task(_tree_state_refresh_loop())
-        health_refresh_flag = os.environ.get(
-            "CDP_ASK_HEALTH_CACHE_REFRESH", "1"
-        ).strip().lower()
+        health_refresh_flag = (
+            os.environ.get("CDP_ASK_HEALTH_CACHE_REFRESH", "1").strip().lower()
+        )
         if health_refresh_flag not in ("0", "false", "no"):
             _health_cache_refresh_task = asyncio.create_task(
                 _health_cache_refresh_loop()
@@ -397,10 +397,15 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.post("/v1/cse-session/detach")
     async def cse_session_detach(req: DetachRequest) -> JSONResponse:
-        """Authority-side detach relay — pops registry row after stand-down."""
+        """Authority-side detach relay — seal the predecessor tape, then pop the row."""
         from claude_bundles import cdp_registry
 
+        from cdp_ask.cse_session_harvest import seal_predecessor_cse_to_tape
+
         try:
+            await seal_predecessor_cse_to_tape(
+                req.registration_id, store=execution_store
+            )
             result = cdp_registry.detach(req.registration_id, reason=req.reason)
         except ProtocolError as exc:
             return JSONResponse(status_code=409, content=exc.to_dict())

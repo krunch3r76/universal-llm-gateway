@@ -191,9 +191,7 @@ def test_ensure_relaunches_dormant_open_seat_not_second_host(
 ) -> None:
     minted = _mint_driving()
     assert reg.bind_session_address(minted.registration_id, chat_url=_CSE)
-    parked = reg.make_dormant(
-        minted.registration_id, is_listening=lambda _p: False
-    )
+    parked = reg.make_dormant(minted.registration_id, is_listening=lambda _p: False)
     assert parked is not None
     assert seat_open(reg._load_active()[minted.registration_id], _LANE)
     before = set(reg._load_active())
@@ -429,3 +427,122 @@ def test_cross_home_registry_dir_byte_identical(
     monkeypatch.setenv("HOME", str(operator))
     from_operator = store._resolve_registry_dir()
     assert from_dispatch == from_operator
+
+
+def test_prune_superseded_lane_hosts_keep_set_and_lock_reentrancy(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the open seat and one unacked predecessor; fold outside the lock."""
+    import fcntl
+    import os
+
+    from claude_bundles.cdp_registry.attachment_journal import (
+        fold_attachment_journal as real_fold,
+    )
+    from claude_bundles.cdp_registry.lifecycle import prune_superseded_lane_hosts
+
+    fold_inside_lock = {"hit": False}
+    fold_calls = {"n": 0}
+
+    def _fold(*args: Any, **kwargs: Any) -> Any:
+        fold_calls["n"] += 1
+        fd = reg._store.open_lock(reg._store.PORTS_LOCK)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fold_inside_lock["hit"] = True
+            raise AssertionError("fold_attachment_journal ran inside ports_lock")
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        return real_fold(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.attachment_journal.fold_attachment_journal",
+        _fold,
+    )
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.release_holder_remote",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_provenance.append_episode",
+        lambda **_k: None,
+    )
+
+    def _row(
+        rid: str,
+        *,
+        bound: float,
+        started: float,
+        closed: float | None,
+        seat_lane: str | None,
+        port: int,
+    ) -> dict[str, Any]:
+        return {
+            "registration_id": rid,
+            "port": port,
+            "profile_suffix": rid,
+            "holder": "h",
+            "status": "active",
+            "purpose": "operator-proxy",
+            "parent_thread": "12286",
+            "seat_lane": seat_lane,
+            "seat_bound_at": bound,
+            "seat_closed_at": closed,
+            "started_at": started,
+            "chat_url": f"https://claude.ai/cowork/cse_{rid}",
+            "superseded_by": None if closed is None else "open-seat-0001",
+        }
+
+    reg._store.write_active(
+        {
+            "open-seat-0001": _row(
+                "open-seat-0001",
+                bound=10.0,
+                started=10.0,
+                closed=None,
+                seat_lane="12286",
+                port=9400,
+            ),
+            "pred-newer-02": _row(
+                "pred-newer-02",
+                bound=5.0,
+                started=6.0,
+                closed=8.0,
+                seat_lane="12286",
+                port=9401,
+            ),
+            "pred-older-01": _row(
+                "pred-older-01",
+                bound=5.0,
+                started=4.0,
+                closed=7.0,
+                seat_lane="12286",
+                port=9402,
+            ),
+            "legacy-unstamped-1": _row(
+                "legacy-unstamped-1",
+                bound=1.0,
+                started=1.0,
+                closed=None,
+                seat_lane=None,
+                port=9403,
+            ),
+            "legacy-unstamped-2": _row(
+                "legacy-unstamped-2",
+                bound=2.0,
+                started=2.0,
+                closed=None,
+                seat_lane=None,
+                port=9404,
+            ),
+        }
+    )
+    prune_superseded_lane_hosts("12286")
+    assert fold_inside_lock["hit"] is False
+    assert fold_calls["n"] >= 1
+    assert set(reg._load_active()) == {"open-seat-0001", "pred-newer-02"}

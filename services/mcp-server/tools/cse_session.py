@@ -171,6 +171,10 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 retain_lane=retain_lane,
                 min_receipt=min_receipt,
                 parent_thread=parent_thread,
+                envelope=envelope,
+                predecessor_registration_id=predecessor_registration_id,
+                successor_registration_id=successor_registration_id,
+                successor_birth_id=successor_birth_id,
             )
 
         if not chat_url and not registration_id:
