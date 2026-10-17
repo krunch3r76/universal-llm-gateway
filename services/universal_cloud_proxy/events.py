@@ -494,3 +494,12 @@ def AnthropicCreditLoopRefused(**payload: object) -> Event:  # noqa: N802
         signal="anthropic.credit.loop_refused",
         payload=dict(payload),
     )
+
+
+@event_factory
+def AnthropicCreditStreamFloored(**payload: object) -> Event:  # noqa: N802
+    """Anthropic credit stream commit used reservation floor."""
+    return Event(
+        signal="anthropic.credit.stream.floored",
+        payload=dict(payload),
+    )
