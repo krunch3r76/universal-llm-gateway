@@ -9,6 +9,8 @@ model_id, query_embed); values are module constants, not runtime config.
 
 from __future__ import annotations
 
+from services.rag.config._models import DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
+
 GATEWAY_URL = "http://localhost:9999"
 
 PROBE_TIMEOUT_S = 120.0
@@ -28,6 +30,11 @@ REWARM_POLL_INTERVAL_S = 10.0
 QUERY_RETRY_ATTEMPTS = 4
 QUERY_RETRY_BASE_S = 0.25
 QUERY_RETRY_MAX_S = 3.0
+
+# Stargate X-Request-Timeout budgets (seconds). Batch floor = starvation drain 15+30.
+BATCH_EMBED_REQUEST_TIMEOUT_S = 45.0
+# Default until RagConfig.load assigns query_embed_request_timeout_s at startup.
+QUERY_EMBED_REQUEST_TIMEOUT_S = DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
 
 TRANSIENT_STATUS_CODES = frozenset({429, 502, 503, 504})
 

@@ -122,6 +122,8 @@ class FederatedGateway:
     # routing data (max_concurrent_requests, context_length) and the optional
     # cloud "dispatch" facet (mirror of libs CapabilityDispatch).
     model_resources: dict[ModelId, dict[str, Any]] = field(default_factory=dict)
+    model_measured_vram: dict[ModelId, int] = field(default_factory=dict)
+    """Telemetry RESOURCE_UPDATE model_vram (MiB), preferred over catalog in routing."""
 
     # Activation rules from Edge catalog (for Master-side filtering if needed)
     activated_contexts: dict[str, dict[str, list[int]]] = field(default_factory=dict)

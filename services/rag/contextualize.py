@@ -1,25 +1,4 @@
-"""LLM-based contextual embedding enrichment for RAG chunks.
-
-Generates a short context prefix per chunk that disambiguates its content
-within the parent document. The prefix is prepended to the chunk text
-*only* for embedding — stored document text remains the original.
-
-This follows the "contextual retrieval" pattern: chunks that share
-overlapping vocabulary (e.g. "knowledge graph" appearing in both PKB
-schema papers and enterprise KG surveys) get distinct embedding vectors
-because their context prefixes anchor them to different documents.
-
-Architecture:
-  - contextualize_chunks() pre-builds user messages (with neighbor excerpts)
-    then dispatches a single pipeline call to the rag-contextualize pipeline.
-  - The pipeline's MapExecutor fans out over chunks with max_concurrency=32
-    and min_success_threshold=0.5, handling per-chunk parallelism, timeouts,
-    and partial-success accounting.
-  - admission_gate (AdmissionGate) pauses the pipeline call while Stargate's
-    admission is closed, the model is mid-cold-load, or a federated gateway
-    is degraded. Per the stargate-model-lifecycle invariant, this is an
-    optimization — the per-chunk pipeline timeout is the correctness backstop.
-"""
+"""Contextual retrieval: prepend LLM-generated chunk prefixes before embedding."""
 
 from __future__ import annotations
 
@@ -37,8 +16,9 @@ from services.rag.chunkers import Chunk
 if TYPE_CHECKING:
     from services.rag.admission_gate import AdmissionGate
 
-logger = logging.getLogger(__name__)
+from services.rag.contextualize_budget import contextualize_weighted_budget
 
+logger = logging.getLogger(__name__)
 
 _NEIGHBOR_CHARS = 800
 _NEIGHBOR_DIGEST_SEP = "\x1e"
@@ -258,16 +238,17 @@ async def contextualize_chunks(
     ]
 
     try:
-        response = await _CLIENT.post(
-            "/v1/chat/completions",
-            headers={"X-Internal-Request-ID": request_id},
-            json={
-                "model": pipeline,
-                "messages": [{"role": "user", "content": "contextualize"}],
-                "pipeline_options": {"chunks": chunk_payloads, "source": source},
-            },
-            timeout=client_timeout_s,
-        )
+        async with contextualize_weighted_budget(len(chunks)):
+            response = await _CLIENT.post(
+                "/v1/chat/completions",
+                headers={"X-Internal-Request-ID": request_id},
+                json={
+                    "model": pipeline,
+                    "messages": [{"role": "user", "content": "contextualize"}],
+                    "pipeline_options": {"chunks": chunk_payloads, "source": source},
+                },
+                timeout=client_timeout_s,
+            )
         response.raise_for_status()
     except Exception as exc:
         failure_repr = repr(exc)[:300]

@@ -32,6 +32,7 @@ from services.rag.embeddings.model_id import is_instruction_aware_model
 from services.rag.embeddings.runtime import (
     get_client,
     get_event_bus,
+    get_query_embed_request_timeout_s,
     require_configured,
 )
 from services.rag.events.query import (
@@ -142,6 +143,10 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
             response = await client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": [formatted]},
+                headers={
+                    "X-Request-Timeout": str(get_query_embed_request_timeout_s()),
+                    "X-Embedding-Class": "query",
+                },
             )
             if _is_transient_status(response.status_code):
                 last_status = response.status_code

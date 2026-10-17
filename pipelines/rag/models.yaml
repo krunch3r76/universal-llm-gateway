@@ -23,3 +23,5 @@ models:
     profile: qwen3-instruct
   cross_encoder:
     model: baai-bge-reranker-v2-m3
+  embedding:
+    model: qwen3-embedding-8b-q8-0-8192

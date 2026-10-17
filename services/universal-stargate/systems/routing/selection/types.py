@@ -165,6 +165,7 @@ class Stargate:
 
     # Model details for eviction scoring
     model_details: dict[ModelId, ModelDetails] = field(default_factory=dict)
+    model_measured_vram: dict[ModelId, int] = field(default_factory=dict)
 
     @property
     def telemetry_age_ms(self) -> int:

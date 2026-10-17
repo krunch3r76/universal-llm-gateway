@@ -1,0 +1,24 @@
+{
+  "texts": [
+    "The gateway routes embedding requests through federation.",
+    "Contextual retrieval adds a short prefix before embedding chunks.",
+    "VRAM telemetry overlays catalog estimates during eviction planning.",
+    "Capacity pools serialize concurrent requests per model routing key.",
+    "RAG indexing fans out contextualize calls across index workers.",
+    "Property indexes accelerate entity-like query term lookups.",
+    "Cold loads reserve VRAM while models transition from loading to loaded.",
+    "Sticky routing binds a model variant to one gateway until overflow.",
+    "Starvation drain pauses admission so competing models can load.",
+    "Measured VRAM from RESOURCE_UPDATE replaces catalog for victims.",
+    "Embedding batches split on HTTP 500 to isolate failing texts.",
+    "Query embeddings prefix instruct scopes for retrieval quality.",
+    "Parallel slots divide total context across concurrent sequences.",
+    "Protected models include live embedding and contextualize copies.",
+    "CPU failover uses a dedicated catalog profile with ngl zero.",
+    "Pre-route queues retry selection when capacity is transiently blocked.",
+    "Eviction hysteresis protects recently loaded models with demand.",
+    "Chroma stores cosine-indexed vectors after contextual prefixes apply.",
+    "Pipeline map steps cap concurrency per file and globally in RAG.",
+    "Four zero b probes validate parity after loader lever changes."
+  ]
+}

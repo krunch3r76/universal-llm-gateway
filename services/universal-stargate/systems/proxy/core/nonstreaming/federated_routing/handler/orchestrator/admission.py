@@ -6,6 +6,7 @@ selection logic remains focused on feasibility and scoring.
 """
 
 import asyncio
+import time
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -55,6 +56,7 @@ async def acquire_admission_token(
     overflow_origin_gateway: str | None,
     overflow_depth_before: int,
     selection_trace=None,
+    acquire_deadline_mono: float | None = None,
 ) -> "Gateway | None":
     """
     Reserve request capacity and return the final assigned gateway.
@@ -174,12 +176,19 @@ async def acquire_admission_token(
             g.name for g in gateways_for_routing if model_id in g.loaded_models
         )
 
+    acquire_timeout_s: float | None = None
+    if acquire_deadline_mono is not None:
+        acquire_timeout_s = max(0.0, acquire_deadline_mono - time.monotonic())
+
+    acquire_kwargs = {
+        "request_id": context.request_id,
+        "model_id": model_id.routing_key,
+        "allowed_gateway_ids": allowed_gateway_ids,
+    }
+    if acquire_timeout_s is not None:
+        acquire_kwargs["timeout_s"] = acquire_timeout_s
     try:
-        token = await capacity_pool.acquire_token(
-            request_id=context.request_id,
-            model_id=model_id.routing_key,
-            allowed_gateway_ids=allowed_gateway_ids,
-        )
+        token = await capacity_pool.acquire_token(**acquire_kwargs)
         context.capacity_token = token
         if (
             event_bus
@@ -208,7 +217,10 @@ async def acquire_admission_token(
                 token.gateway_id,
             )
     except Exception as exc:
-        from systems.routing.capacity.pool import QueueFullError
+        from systems.routing.capacity.pool import (
+            CapacityAcquireTimeoutError,
+            QueueFullError,
+        )
 
         if isinstance(exc, QueueFullError):
             logger.warning(
@@ -217,6 +229,14 @@ async def acquire_admission_token(
                 model_id.routing_key,
                 exc.current_depth,
                 exc.max_depth,
+                context.request_id,
+            )
+            raise_gateway_capacity_error(selected_gateway.name)
+        if isinstance(exc, CapacityAcquireTimeoutError):
+            logger.warning(
+                "Admission acquire timeout: model=%s after %.3fs — rejecting %s",
+                model_id.routing_key,
+                exc.timeout_s,
                 context.request_id,
             )
             raise_gateway_capacity_error(selected_gateway.name)
