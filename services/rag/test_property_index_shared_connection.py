@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -147,7 +148,6 @@ async def test_redrive_write_and_article_query_stay_on_sqlite_thread(
     index = PropertyIndex(tmp_path / "rag_metadata.db")
     await index.start()
     try:
-        await index.enqueue_extraction("/queue/test.json")
         article_count = index.run_sqlite(
             lambda: (
                 index._ensure_conn()
@@ -156,8 +156,16 @@ async def test_redrive_write_and_article_query_stay_on_sqlite_thread(
             )
         )
         assert article_count == 0
-        outcome = await redrive_exhausted_once(index, dry_run=True)
-        assert outcome.dry_run is True
+        row = SimpleNamespace(
+            state="failed",
+            attempts=99,
+            source="/x.md",
+            last_error="nope",
+            last_failure_category="permanent",
+        )
+        index.list_extraction_queue_rows = lambda limit=None: [row]  # type: ignore[method-assign]
+        outcome = await redrive_exhausted_once(index, dry_run=False)
+        assert outcome.dry_run is False
     finally:
         await index.stop()
 
