@@ -47,6 +47,16 @@ def test_gemini_4_argon_stamped_from_listmodels_probe() -> None:
     assert cap.context_window_tokens == 200_000
 
 
+def test_gemini_3_7_flash_stamped_from_listmodels_probe() -> None:
+    """Production card: stamped from live ListModels probe (2026-10-17)."""
+    cap = CURSOR_MODEL_CAPABILITIES["gemini-3.7-flash"]
+    assert cap.probed_at == "2026-10-17"
+    assert set(cap.knobs) == {"effort"}
+    assert cap.knobs["effort"].accepted == ("low", "medium", "high")
+    assert cap.knobs["effort"].default == "high"
+    assert cap.default_variant == {"effort": "high"}
+
+
 def test_model_capability_default_instruction_profile_is_mechanical() -> None:
     cap = ModelCapability(knobs={}, default_variant={})
     assert cap.instruction_profile == "mechanical"
