@@ -43,6 +43,22 @@ def _gateway_in_active_set(gw: object, active_nodes: set[str]) -> bool:
     return node_id in active_nodes or gateway_id in active_nodes
 
 
+def _gateway_reports_model(gw: object, model_id: str) -> bool:
+    """True when this gateway itself has the model loaded or busy.
+
+    ``loaded_on`` and ``busy_on`` store ``remote_stargate_id``, which every
+    gateway on that relay shares. ``model_resources`` is the installed catalog,
+    so an idle sibling must not add its ``parallel_slots`` to the sum.
+    """
+    loaded = getattr(gw, "loaded_models", ()) or ()
+    busy = getattr(gw, "busy_models", ()) or ()
+    if model_id in loaded or model_id in busy:
+        return True
+    return any(str(item) == model_id for item in loaded) or any(
+        str(item) == model_id for item in busy
+    )
+
+
 def _resolve_local_id() -> str:
     fed = get_federation_integration()
     return fed.config.stargate_id if fed and fed.config else "local"
@@ -93,9 +109,15 @@ async def get_model_capacity(
             continue
         if not _gateway_in_active_set(gw, active_nodes):
             continue
+        if not _gateway_reports_model(gw, model_id):
+            continue
         node_id = gw.node_id or gw.gateway_id
         slots = meta.get("parallel_slots", 1)
-        status = "busy" if node_id in summary.get("busy_on", []) else "loaded"
+        status = (
+            "busy"
+            if _gateway_in_active_set(gw, set(summary.get("busy_on", [])))
+            else "loaded"
+        )
         nodes.append({"node_id": node_id, "parallel_slots": slots, "status": status})
         total_slots += slots
 
