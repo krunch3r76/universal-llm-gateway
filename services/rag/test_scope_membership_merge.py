@@ -402,7 +402,7 @@ def _capture_load_failed(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 def _assert_one_load_failed(bus: MagicMock, path: Path, stage: str, error: str) -> None:
     bus.publish_from_sync.assert_called_once()
     event = bus.publish_from_sync.call_args.args[0]
-    assert event.signal == "rag.scope_membership.load_failed"
+    assert event.signal == "rag.scope.membership.load.failed"
     assert event.payload == {"path": str(path), "stage": stage, "error": error}
 
 
@@ -443,6 +443,19 @@ def test_root_type_failure_emits_load_failed_and_returns_none(
     assert loader._load_tracked_scopes(tracked) is None
 
     _assert_one_load_failed(bus, tracked, "root_type", "list")
+
+
+def test_factory_import_failure_still_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked = tmp_path / "scope_membership.yaml"
+    tracked.write_text("- 1\n", encoding="utf-8")
+    import services.rag.events.query as query
+
+    monkeypatch.delattr(query, "rag_scope_membership_load_failed")
+
+    assert loader._load_tracked_scopes(tracked) is None
 
 
 def test_emitter_raise_still_returns_none(

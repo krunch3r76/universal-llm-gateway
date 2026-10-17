@@ -13,7 +13,6 @@ import logging
 from pathlib import Path
 
 import yaml
-from universal_event_bus import Event, event_factory
 
 from ._models import (
     BASELINE_EXTENSIONS,
@@ -33,7 +32,6 @@ from ._parsing import (
 
 logger = logging.getLogger(__name__)
 
-_LOAD_FAILED = "rag.scope_membership.load_failed"
 _CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
 _TRACKED_MEMBERSHIP_PATH = Path(__file__).with_name("scope_membership.yaml")
 
@@ -95,24 +93,16 @@ def save_scope(
     logger.info("Persisted scope '%s' to %s", name, config_path)
 
 
-@event_factory
-def _scope_membership_load_failed(*, path: str, stage: str, error: str) -> Event:
-    """One observation that tracked scope membership could not be applied."""
-    return Event(
-        signal=_LOAD_FAILED,
-        payload={"path": path, "stage": stage, "error": error},
-    )
-
-
 def _emit_scope_membership_load_failed(path: Path, stage: str, error: str) -> None:
-    """Publish the load-failure event. Raises when the bus or loop is down."""
+    """Publish the load-failure event. Raises when the import, bus, or loop is down."""
+    from services.rag.events.query import rag_scope_membership_load_failed
     from services.rag.rag_service.state import get_event_bus
 
     bus = get_event_bus()
     if bus is None:
         return
     bus.publish_from_sync(
-        _scope_membership_load_failed(path=str(path), stage=stage, error=error)
+        rag_scope_membership_load_failed(path=str(path), stage=stage, error=error)
     )
 
 

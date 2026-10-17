@@ -203,6 +203,15 @@ def rag_scope_vocabulary_load_failed(*, path: str, error: str) -> Event:
 
 
 @event_factory
+def rag_scope_membership_load_failed(*, path: str, stage: str, error: str) -> Event:
+    """Emitted when tracked scope_membership.yaml cannot be applied."""
+    return Event(
+        signal="rag.scope.membership.load.failed",
+        payload={"path": path, "stage": stage, "error": error},
+    )
+
+
+@event_factory
 def rag_corpus_hints_filter_failed(*, error: str) -> Event:
     """Emitted when co-occurrence hint filtering fails."""
     return Event(
