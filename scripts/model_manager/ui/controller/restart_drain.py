@@ -77,6 +77,8 @@ GIT_INTEGRATION_WORKER_URL = os.environ.get(
 
 # Only these actions are drain-gated. start/status/health/wait_healthy never kill
 # live work; rebuild routes through sync_restart for the relevant services.
+# Rag start is the exception: ``_restart_slot_required`` holds the slot so the
+# settle hook can keep a later non-force sync_restart from SIGKILL.
 GATED_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
 
 _SELF_HOLDER_POLL_INTERVAL_S = 0.2
@@ -693,6 +695,18 @@ def starting_pid_from_lifecycle_message(message: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _restart_slot_required(action: str, service: str) -> bool:
+    """True when this action must hold the per-service restart slot.
+
+    ``start`` does not kill live work, so it stays ungated except for rag.
+    A rag start that releases the slot before transport is ready lets a
+    following non-force sync_restart stop the new process (SIGKILL).
+    """
+    if action in GATED_ACTIONS:
+        return True
+    return service == "rag" and action == "start"
+
+
 async def run_gated(
     gate: RestartDrainGate,
     action: str,
@@ -718,7 +732,7 @@ async def run_gated(
         or ``DrainOutcome.to_result()`` (``{"status": "deferred", ...}``) when the
         gate deferred. Non-gated actions run the lifecycle without touching the gate.
     """
-    if action not in GATED_ACTIONS:
+    if not _restart_slot_required(action, service):
         return {"status": "ok", "message": await lifecycle()}
     outcome = await gate.evaluate(service, force=force, exclude_job_id=exclude_job_id)
     if outcome is not None:
