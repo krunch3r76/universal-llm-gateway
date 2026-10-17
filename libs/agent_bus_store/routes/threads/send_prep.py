@@ -18,7 +18,13 @@ from ...supersedes_turn_boundary import (
     resolve_send_supersedes,
 )
 from ...thread_classification import liaison_tag_on_child_without_root
-from ...turns_models import TurnSendCreate, post_mint_detail, turn_body_limit_error
+from ...turns_models import (
+    TurnSendCreate,
+    body_unexpanded_file_token_envelope,
+    post_mint_detail,
+    text_is_unexpanded_file_token,
+    turn_body_limit_error,
+)
 
 
 def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> None:
@@ -103,6 +109,20 @@ def _validate_lane_bind_pre_mint(body: TurnSendCreate) -> None:
                 ),
             },
         )
+
+
+def _raise_if_unexpanded_file_token(text: str | None) -> None:
+    """Refuse a whole-value ``$file:`` token before mint, insert, or sidecar write.
+
+    Breaks when the nested token is stored (new thread, continue, with-turn,
+    or sidecar_content). Mid-text mentions are left alone.
+    """
+    if text is None or not text_is_unexpanded_file_token(text):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=body_unexpanded_file_token_envelope(),
+    )
 
 
 def _raise_if_turn_body_over_limit(body: str, *, allow_long_body: bool = False) -> None:

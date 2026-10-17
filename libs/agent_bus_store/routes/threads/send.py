@@ -30,6 +30,7 @@ from .new_thread_send import run_new_thread_send
 from .send_prep import (
     _maybe_auto_bind_lane_on_send,
     _raise_if_turn_body_over_limit,
+    _raise_if_unexpanded_file_token,
     _raise_spill_http,
     _resolve_send_supersedes,
     _validate_lane_bind_pre_mint,
@@ -70,6 +71,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_send_xor_violation(provided=[]),
         )
+    _raise_if_unexpanded_file_token(body.body)
+    _raise_if_unexpanded_file_token(body.sidecar_content)
     if body.sidecar_content is not None:
         created = await asyncio.to_thread(_send_with_sidecar, body)
         if created.idempotent_replay:
