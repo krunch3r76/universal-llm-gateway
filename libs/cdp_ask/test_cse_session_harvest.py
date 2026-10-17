@@ -613,7 +613,7 @@ async def test_typed_ack_seals_to_tape_and_detaches_closed_predecessor(
         return resp
 
     monkeypatch.setattr(
-        "cdp_ask.cse_session_harvest._post_session_close",
+        "cdp_ask.cse_session_tape_seal._post_session_close",
         _post,
     )
     monkeypatch.setattr(
@@ -636,7 +636,7 @@ async def test_typed_ack_seals_to_tape_and_detaches_closed_predecessor(
         ]
 
     monkeypatch.setattr(
-        "cdp_ask.cse_session_harvest._scrape_predecessor_turns",
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
         _scrape,
     )
     monkeypatch.setattr(
@@ -733,7 +733,7 @@ async def test_tape_seal_failure_blocks_detach_on_live_port(
         resp.json.return_value = {"error": "unavailable"}
         return resp
 
-    monkeypatch.setattr("cdp_ask.cse_session_harvest._post_session_close", _post)
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
     monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: True)
     monkeypatch.setattr(
         "claude_bundles.cdp_registry_store.load_active",
@@ -744,7 +744,7 @@ async def test_tape_seal_failure_blocks_detach_on_live_port(
         return [{"author": "user", "text": _USER_TURN, "ordinal": 1}]
 
     monkeypatch.setattr(
-        "cdp_ask.cse_session_harvest._scrape_predecessor_turns",
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
         _scrape,
     )
     monkeypatch.setattr(

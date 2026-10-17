@@ -228,6 +228,7 @@ async def send_followup_paste_half(
     dom_paste = _dom_paste(
         after if isinstance(after, dict) else {}, marker_in_committed
     )
+    poll_detail: str | None = None
     if not dom_paste and marker and _DOM_COMMIT_POLL_TIMEOUT_S > 0:
         import asyncio
 
@@ -237,7 +238,10 @@ async def send_followup_paste_half(
             try:
                 sample = await page.evaluate(_TRANSCRIPT_MARKER_JS)
                 committed = bool(await page.evaluate(_MARKER_IN_COMMITTED_JS, marker))
-            except (StopIteration, StopAsyncIteration, RuntimeError):
+            except (StopIteration, StopAsyncIteration):
+                break
+            except RuntimeError as exc:
+                poll_detail = str(exc)
                 break
             if not isinstance(sample, dict):
                 break
@@ -273,7 +277,7 @@ async def send_followup_paste_half(
     state = await harvest_assistant(page)
     pasted_at = time.time()
     send_verified = receipt is not None
-    return {
+    result = {
         "send_verified": send_verified,
         "receipt": receipt,
         "streaming_at_paste": bool(state.get("streaming")),
@@ -283,6 +287,9 @@ async def send_followup_paste_half(
         "error": None if send_verified else "send_unverified",
         "target_binding": target_binding,
     }
+    if poll_detail is not None:
+        result["detail"] = poll_detail
+    return result
 
 
 async def project_followup_on_page(

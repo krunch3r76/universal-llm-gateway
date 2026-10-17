@@ -320,3 +320,26 @@ async def test_dom_committed_after_delayed_mount_while_streaming() -> None:
     collapsed = verification_marker("header " + ("alpha\n\nbeta " + ("y" * 80)))
     assert "\n" not in collapsed
     assert "alpha beta" in collapsed
+
+
+@pytest.mark.asyncio
+async def test_runtime_error_during_commit_poll_records_detail() -> None:
+    """A live page.evaluate RuntimeError is kept on the unverified receipt."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    prompt = (
+        "TYPE: SEAT_STAND_DOWN\n#9-unique: poll-runtime\nstand down the predecessor\n"
+    )
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 2, "last_len": 4, "last_text": "old", "last_snippet": "old"},
+            {"count": 2, "last_len": 4, "last_text": "old", "last_snippet": "old"},
+            False,
+            RuntimeError("page.evaluate failed"),
+        ]
+    )
+    with _paste_env(streaming=True):
+        result = await send_followup_paste_half(page, prompt)
+    assert result["send_verified"] is False
+    assert result["error"] == "send_unverified"
+    assert result["detail"] == "page.evaluate failed"
