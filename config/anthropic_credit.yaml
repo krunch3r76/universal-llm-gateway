@@ -1,0 +1,33 @@
+cycle:
+  anchor_day: 4                 # Kaywan 2026-10-17 ~14:31Z, relay 303005c2
+  anchor_time_utc: "00:00"      # nominal only; see reset_tz
+  reset_tz: unverified          # see § 2.3
+  early_slack_hours: 14         # true reset may be up to 14 h before nominal (UTC+14 midnight)
+  late_slack_hours: 48          # up to 12 h after (UTC-12 midnight) + 36 h payment-processing lag
+  owner: kaywan                 # only he can see Max renewal / Console Promotional-credit expiry
+  steward: grok-bot-cc1         # house 12797 applies an edit only on Kaywan's word, with a K42 record
+grant_usd: 200
+hard_stop_usd: 185              # ULG never admits past this in any true cycle
+mcp_connector_stop_usd: 170     # requests whose input can grow server-side stop earlier (see § 2.4 step 3)
+mcp_connector_allowance_usd: 5.0
+reservation_ttl_minutes: 15
+count_tokens_margin: 1.10
+fallback_overhead_tokens: 2000
+fallback_tokens_per_image: 5000
+ledger_path: ~/.gateway/state/anthropic_credit/ledger.sqlite
+server_tool_fees_usd:
+  web_search_requests: 0.01
+reconcile_drift_usd: 1.00
+available_balance:              # "or whatever is available" → stop on balance too, whichever is first
+  usd: 200                      # operator-entered snapshot; default = grant (assumes $0 purchased, no auto-reload)
+  as_of: null
+  owner: kaywan
+probe_cap_usd: 0.05
+# every carded anthropic model with a pinned rate row; leg B adds sonnet-5-5 and haiku-5-5
+metered_models:
+  - anthropic/claude-sonnet-5
+  - anthropic/claude-opus-5-5
+  - anthropic/claude-fable-5-1
+standard_models: [anthropic/claude-sonnet-5-5, anthropic/claude-haiku-5-5]   # filled by leg B
+high_cost_models: [anthropic/claude-opus-5-5, anthropic/claude-fable-5-1]   # still need deliberate_high_cost
+fail_mode: closed

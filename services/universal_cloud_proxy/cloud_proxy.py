@@ -33,6 +33,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from anthropic_credit.config import CreditConfigInvalid
+from anthropic_credit.ledger import LedgerUnavailable
+from anthropic_credit.policy import AnthropicCreditRefused, get_policy
+from anthropic_credit.policy import (
+    status as credit_status,
+)
 from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -41,6 +47,7 @@ from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+from .adapters.anthropic_credit_gate import refuse_to_json
 from .adapters.base import ProviderAdapter
 from .adapters.factory import create_provider_adapter
 from .browser import BrowserCatalogCache
@@ -48,6 +55,9 @@ from .browser_routes import register_browser_routes
 from .catalog import CatalogManager
 from .config import load_config
 from .events import (
+    AnthropicCreditLoopRefused,
+    AnthropicCreditOverrun,
+    AnthropicCreditUsagePartial,
     CloudProxyBrowserCatalogRefreshed,
     CloudProxyBrowserCatalogRefreshFailed,
     CloudProxyBrowserUiUnavailable,
@@ -75,6 +85,36 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _REQUIRED_BROWSER_ASSETS = ("index.html", "app.js", "style.css")
 
 _atexit_event_bus: EventBus | None = None
+
+_credit_emit_tasks: set[asyncio.Task[Any]] = set()
+
+_CREDIT_EVENT_FACTORIES: dict[str, Any] = {
+    "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
+    "anthropic.credit.overrun": AnthropicCreditOverrun,
+    "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
+}
+
+
+def make_credit_emitter(event_bus: EventBus) -> Any:
+    """Build the anthropic credit event emitter used by ``CreditPolicy``."""
+
+    def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
+        factory = _CREDIT_EVENT_FACTORIES.get(name)
+        if factory is None:
+            return
+
+        async def _publish() -> None:
+            await event_bus.publish(factory(**payload))
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(_publish())
+        _credit_emit_tasks.add(task)
+        task.add_done_callback(_credit_emit_tasks.discard)
+
+    return _credit_event_emit
 
 # ∀ process exit: _shutdown_clean is set iff lifespan shutdown handler ran.
 # atexit fires on clean Python exit (crash, sys.exit) but NOT on SIGKILL.
@@ -116,6 +156,10 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     event_bus = EventBus()
     _atexit_event_bus = event_bus
+
+    from anthropic_credit.policy import set_event_emitter
+
+    set_event_emitter(make_credit_emitter(event_bus))
     broadcaster = MinimalEventDebugBroadcaster(
         uds_publish_path=os.environ.get(
             "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -255,6 +299,19 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         "uds" if config.socket_path else "tcp",
     )
 
+    try:
+        from anthropic_credit.policy import get_policy
+
+        if not get_policy().healthy():
+            logger.warning(
+                "Anthropic credit gate is unhealthy — anthropic requests will refuse "
+                "with anthropic_credit_gate_unavailable until config/ledger recover"
+            )
+    except Exception as exc:
+        logger.warning(
+            "Anthropic credit gate policy init failed (fail-closed): %s", exc
+        )
+
     _application.state.config = config
     _application.state.catalog = catalog
     _application.state.forwarder = forwarder
@@ -269,6 +326,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     yield
 
+    set_event_emitter(None)
     _shutdown_clean = True
     await event_bus.publish(CloudProxyShutdown(reason="clean"))
     await catalog.shutdown()
@@ -437,6 +495,33 @@ async def _json_completion_to_sse(
     yield b"data: [DONE]\n\n"
 
 
+async def _stream_reraise_error(exc: BaseException) -> AsyncIterator[bytes]:
+    """Defer a preflight failure to ``_relay_stream_safe`` (SSE error frame path)."""
+    raise exc
+    yield b""  # pragma: no cover
+
+
+async def _raise_anthropic_credit_refused(
+    exc: AnthropicCreditRefused,
+    *,
+    event_bus: EventBus | None,
+    provider: str,
+    model_id: str,
+    adapter_type: str,
+) -> None:
+    await _publish_request_failed_event(
+        event_bus=event_bus,
+        provider=provider,
+        model=model_id,
+        status_code=exc.http_status,
+        error=str(exc)[:300],
+        adapter_type=adapter_type,
+    )
+    raise HTTPException(
+        status_code=exc.http_status, detail=refuse_to_json(exc.refuse)
+    ) from exc
+
+
 async def _relay_stream_safe(
     chunks: AsyncIterator[bytes],
     provider: str,
@@ -453,6 +538,14 @@ async def _relay_stream_safe(
     try:
         async for chunk in chunks:
             yield chunk
+    except AnthropicCreditRefused as exc:
+        await _raise_anthropic_credit_refused(
+            exc,
+            event_bus=event_bus,
+            provider=provider,
+            model_id=model_id,
+            adapter_type=adapter_type,
+        )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
         full_error_text = str(exc)
@@ -801,6 +894,14 @@ async def chat_completions(request: Request) -> Response:
             response_json = await mcp_executor.run_tool_loop(
                 _proxy_forward, body, client_id=loop_client_id
             )
+        except AnthropicCreditRefused as exc:
+            await _raise_anthropic_credit_refused(
+                exc,
+                event_bus=event_bus,
+                provider=provider_catalog.provider,
+                model_id=model_id,
+                adapter_type=adapter,
+            )
         except CatalogMissError as exc:
             await raise_catalog_miss_http(
                 exc=exc,
@@ -827,10 +928,24 @@ async def chat_completions(request: Request) -> Response:
         return JSONResponse(content=response_json)
 
     if streaming:
+        from .native_streaming import preflight_native_byte_stream
+
         chunks = forwarder.forward_request_stream(
             provider=provider_catalog.provider,
             request_body=body,
         )
+        try:
+            stream_for_relay = await preflight_native_byte_stream(chunks)
+        except AnthropicCreditRefused as exc:
+            await _raise_anthropic_credit_refused(
+                exc,
+                event_bus=event_bus,
+                provider=provider_catalog.provider,
+                model_id=model_id,
+                adapter_type=adapter,
+            )
+        except Exception as exc:
+            stream_for_relay = _stream_reraise_error(exc)
         if event_bus:
             await event_bus.publish(
                 CloudProxyRequestForwarded(
@@ -843,7 +958,7 @@ async def chat_completions(request: Request) -> Response:
             )
         return StreamingResponse(
             _relay_stream_safe(
-                chunks,
+                stream_for_relay,
                 provider_catalog.provider,
                 model_id,
                 adapter,
@@ -875,6 +990,14 @@ async def chat_completions(request: Request) -> Response:
             event_bus=event_bus,
             provider=provider_catalog.provider,
             model=model_id,
+            adapter_type=adapter,
+        )
+    except AnthropicCreditRefused as exc:
+        await _raise_anthropic_credit_refused(
+            exc,
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model_id=model_id,
             adapter_type=adapter,
         )
     except httpx.HTTPStatusError as exc:
@@ -1035,6 +1158,52 @@ async def embeddings(request: Request) -> JSONResponse:
             adapter_type=adapter,
         )
         raise HTTPException(status_code=422, detail=error_text) from exc
+
+
+@app.get("/internal/anthropic-credit/status")
+async def anthropic_credit_status_route() -> JSONResponse:
+    """Expose cycle meter headroom and ledger health for operators."""
+    ledger_path: str | None = None
+    as_of: str | None = None
+    instance_id: str | None = None
+    try:
+        policy = get_policy()
+        ledger_fields = policy.status_ledger_fields()
+        ledger_path = ledger_fields["ledger_path"]
+        instance_id = ledger_fields["ledger_instance_id"]
+        as_of = ledger_fields["available_balance_as_of"]
+        payload = json.loads(json.dumps(credit_status(), default=str))
+        payload.update(ledger_fields)
+        payload["healthy"] = policy.healthy()
+        if not payload["healthy"]:
+            payload.setdefault(
+                "unavailable_reason",
+                "config invalid or ledger unreachable",
+            )
+        return JSONResponse(content=payload)
+    except (LedgerUnavailable, CreditConfigInvalid) as exc:
+        reason = str(exc)
+        if "corrupt" in reason.lower():
+            reason = "ledger_corrupt"
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "unavailable_reason": reason,
+                "ledger_path": ledger_path,
+                "ledger_instance_id": instance_id,
+                "available_balance_as_of": as_of,
+            }
+        )
+    except ValueError:
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "unavailable_reason": "ledger_corrupt",
+                "ledger_path": ledger_path,
+                "ledger_instance_id": instance_id,
+                "available_balance_as_of": as_of,
+            }
+        )
 
 
 app.include_router(native_router)

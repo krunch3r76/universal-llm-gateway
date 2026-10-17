@@ -438,6 +438,9 @@ class McpToolExecutor:
         original_stream: bool,
         client_id: str | None = None,
     ) -> dict[str, Any]:
+        from anthropic_credit.loop_refusal import credit_cap_notice, emit_loop_refused
+        from anthropic_credit.policy import AnthropicCreditRefused
+
         response: dict[str, Any] = {}
         for iteration in range(max_iterations):
             if time.monotonic() - loop_start > _MAX_LOOP_TIMEOUT:
@@ -446,7 +449,24 @@ class McpToolExecutor:
                 )
                 break
 
-            response = await forward_fn(body)
+            try:
+                response = await forward_fn(body)
+            except AnthropicCreditRefused as exc:
+                if iteration == 0 or exc.code != "anthropic_cycle_budget_exhausted":
+                    raise
+                emit_loop_refused(iteration + 1)
+                notice = credit_cap_notice()
+                choices = response.get("choices", [])
+                if choices:
+                    message = choices[0].get("message", {})
+                    prior = str(message.get("content") or "")
+                    message["content"] = (
+                        f"{prior}\n\n{notice}".strip() if prior else notice
+                    )
+                    message.pop("tool_calls", None)
+                    choices[0]["finish_reason"] = "credit_cap"
+                    response["choices"] = choices
+                break
             choices = response.get("choices", [])
             if not choices:
                 break

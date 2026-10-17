@@ -10,6 +10,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from anthropic_credit.policy import AnthropicCreditRefused, commit_full, release
 from llm_adapters.capability_dispatch import resolve
 from model_id import ModelId
 
@@ -22,6 +23,13 @@ from ..events import (
     CloudproxyMcpStreamHeartbeat,
     McpAdapterMcpToolUseSeen,
     McpAdapterToolSearchSeen,
+)
+from .anthropic_credit_gate import (
+    StreamUsageTap,
+    extract_credit_tag,
+    finalize_non_stream_credit,
+    finalize_stream_credit,
+    gate_admit,
 )
 from .anthropic_format import (
     build_native_tools,
@@ -383,6 +391,8 @@ class AnthropicAdapter:
         correlation_id = str(uuid.uuid4())
         t0 = time.monotonic()
         outcome = "error"
+        credit_admitted = False
+        credit_finalized = False
         try:
             body = self._openai_to_anthropic(request_body)
             has_mcp = bool(body.get("mcp_servers"))
@@ -404,13 +414,30 @@ class AnthropicAdapter:
                         streaming=False,
                     )
                 )
+            tag = extract_credit_tag(
+                extra_headers=req_headers, upstream_body=body
+            )
+            await gate_admit(
+                client=self._client,
+                base_url=self._config.base_url,
+                headers=req_headers,
+                request_id=correlation_id,
+                upstream_body=body,
+                catalog_model=str(body.get("model", "")),
+                tag=tag,
+            )
+            credit_admitted = True
             response = await self._client.post(
                 f"{self._config.base_url}/messages",
                 json=body,
                 headers=req_headers,
             )
             if response.status_code >= 400:
+                finalize_non_stream_credit(correlation_id, response=response)
+                credit_finalized = True
                 await self._raise_provider_http_error(response)
+            finalize_non_stream_credit(correlation_id, response=response)
+            credit_finalized = True
             result, mcp_meta = self._anthropic_to_openai_response(
                 response.json(), str(request_body.get("model", ""))
             )
@@ -419,8 +446,16 @@ class AnthropicAdapter:
             )
             outcome = "success"
             return result
-        except Exception as exc:
-            if self._event_bus:
+        except AnthropicCreditRefused:
+            raise
+        except BaseException as exc:
+            if credit_admitted and not credit_finalized:
+                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    release(correlation_id)
+                else:
+                    commit_full(correlation_id, f"forward_chat_error:{type(exc).__name__}")
+                credit_finalized = True
+            if self._event_bus and isinstance(exc, Exception):
                 await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,
@@ -454,6 +489,10 @@ class AnthropicAdapter:
         async def _gen() -> AsyncIterator[bytes]:
             nonlocal outcome
             stage = "build_request"
+            credit_admitted = False
+            credit_finalized = False
+            usage_tap = StreamUsageTap()
+            stream_normal_end = False
             try:
                 body = self._openai_to_anthropic({**request_body, "stream": True})
                 has_mcp = bool(body.get("mcp_servers"))
@@ -473,9 +512,22 @@ class AnthropicAdapter:
                             provider=self._config.provider,
                             model=str(request_body.get("model", "")),
                             has_mcp_servers=has_mcp,
-                            streaming=True,
-                        )
+                        streaming=True,
                     )
+                )
+                tag = extract_credit_tag(
+                    extra_headers=req_headers, upstream_body=body
+                )
+                await gate_admit(
+                    client=self._client,
+                    base_url=self._config.base_url,
+                    headers=req_headers,
+                    request_id=correlation_id,
+                    upstream_body=body,
+                    catalog_model=str(body.get("model", "")),
+                    tag=tag,
+                )
+                credit_admitted = True
                 stage = "open_upstream_stream"
                 async with self._client.stream(
                     "POST",
@@ -486,6 +538,13 @@ class AnthropicAdapter:
                     if response.status_code >= 400:
                         error_body = await response.aread()
                         error_preview = error_body.decode(errors="replace")[:300]
+                        resp = httpx.Response(
+                            status_code=response.status_code,
+                            content=error_body,
+                            request=response.request,
+                        )
+                        finalize_non_stream_credit(correlation_id, response=resp)
+                        credit_finalized = True
                         raise httpx.HTTPStatusError(
                             f"Provider returned {response.status_code}: {error_preview}",
                             request=response.request,
@@ -530,6 +589,7 @@ class AnthropicAdapter:
                                 break
                             pending_line = None
                             stage = "relay_upstream_chunk"
+                            usage_tap.feed_line(line)
                             chunks = translator.process_line(
                                 line,
                                 request=response.request,
@@ -563,9 +623,20 @@ class AnthropicAdapter:
                     await self._emit_mcp_response_events(
                         translator.mcp_meta, correlation_id=correlation_id
                     )
+                    stream_normal_end = True
                     outcome = "success"
+            except AnthropicCreditRefused:
+                raise
             except asyncio.CancelledError:
                 outcome = "cancelled"
+                if credit_admitted and not credit_finalized:
+                    finalize_stream_credit(
+                        correlation_id,
+                        usage_tap,
+                        normal_end=False,
+                        cancelled=True,
+                    )
+                    credit_finalized = True
                 if self._event_bus:
                     await self._event_bus.publish(
                         CloudproxyMcpStreamCancelled(
@@ -579,6 +650,14 @@ class AnthropicAdapter:
                     )
                 raise
             except Exception as exc:
+                if credit_admitted and not credit_finalized:
+                    finalize_stream_credit(
+                        correlation_id,
+                        usage_tap,
+                        normal_end=stream_normal_end,
+                        exc=exc,
+                    )
+                    credit_finalized = True
                 if self._event_bus:
                     await self._event_bus.publish(
                         CloudproxyMcpPathFailed(
@@ -590,6 +669,13 @@ class AnthropicAdapter:
                     )
                 raise
             finally:
+                if credit_admitted and not credit_finalized:
+                    finalize_stream_credit(
+                        correlation_id,
+                        usage_tap,
+                        normal_end=stream_normal_end,
+                    )
+                    credit_finalized = True
                 if self._event_bus:
                     duration = time.monotonic() - t0
                     await self._event_bus.publish(
@@ -601,14 +687,20 @@ class AnthropicAdapter:
                         )
                     )
 
-        async for chunk in _gen():
-            yield chunk
+        gen = _gen()
+        try:
+            async for chunk in gen:
+                yield chunk
+        finally:
+            await gen.aclose()
 
     async def forward_native(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """POST Anthropic Messages JSON unchanged (native ingress); no OpenAI translation."""
         correlation_id = str(uuid.uuid4())
         t0 = time.monotonic()
         outcome = "error"
+        credit_admitted = False
+        credit_finalized = False
         try:
             body = dict(request_body)
             strip_claude5_sampling(
@@ -638,17 +730,44 @@ class AnthropicAdapter:
                         streaming=False,
                     )
                 )
+            tag = extract_credit_tag(
+                extra_headers=req_headers, upstream_body=body
+            )
+            await gate_admit(
+                client=self._client,
+                base_url=self._config.base_url,
+                headers=req_headers,
+                request_id=correlation_id,
+                upstream_body=body,
+                tag=tag,
+            )
+            credit_admitted = True
             response = await self._client.post(
                 f"{self._config.base_url}/messages",
                 json=body,
                 headers=req_headers,
             )
             if response.status_code >= 400:
+                finalize_non_stream_credit(correlation_id, response=response)
+                credit_finalized = True
                 await self._raise_provider_http_error(response)
+            finalize_non_stream_credit(correlation_id, response=response)
+            credit_finalized = True
             outcome = "success"
             return response.json()
-        except Exception as exc:
-            if self._event_bus:
+        except AnthropicCreditRefused:
+            raise
+        except BaseException as exc:
+            if credit_admitted and not credit_finalized:
+                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    release(correlation_id)
+                else:
+                    commit_full(
+                        correlation_id,
+                        f"forward_native_error:{type(exc).__name__}",
+                    )
+                credit_finalized = True
+            if self._event_bus and isinstance(exc, Exception):
                 await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,
@@ -674,13 +793,25 @@ class AnthropicAdapter:
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
         """Stream Anthropic Messages API events; body forwarded without OpenAI translation."""
+        credit_state: dict[str, Any] = {
+            "admitted": False,
+            "finalized": False,
+            "request_id": "",
+            "tap": StreamUsageTap(),
+            "normal_end": False,
+        }
 
         async def _gen() -> AsyncIterator[bytes]:
             correlation_id = str(uuid.uuid4())
+            credit_state["request_id"] = correlation_id
             t0 = time.monotonic()
             outcome = "error"
             stage = "build_request"
             requested_model = str(request_body.get("model", ""))
+            credit_admitted = False
+            credit_finalized = False
+            usage_tap = credit_state["tap"]
+            stream_normal_end = False
             try:
                 body = {**request_body, "stream": True}
                 strip_claude5_sampling(
@@ -710,6 +841,19 @@ class AnthropicAdapter:
                             streaming=True,
                         )
                     )
+                tag = extract_credit_tag(
+                    extra_headers=req_headers, upstream_body=body
+                )
+                await gate_admit(
+                    client=self._client,
+                    base_url=self._config.base_url,
+                    headers=req_headers,
+                    request_id=correlation_id,
+                    upstream_body=body,
+                    tag=tag,
+                )
+                credit_admitted = True
+                credit_state["admitted"] = True
                 stage = "open_upstream_stream"
                 async with self._client.stream(
                     "POST",
@@ -720,6 +864,14 @@ class AnthropicAdapter:
                     if response.status_code >= 400:
                         error_body = await response.aread()
                         error_preview = error_body.decode(errors="replace")[:300]
+                        resp = httpx.Response(
+                            status_code=response.status_code,
+                            content=error_body,
+                            request=response.request,
+                        )
+                        finalize_non_stream_credit(correlation_id, response=resp)
+                        credit_finalized = True
+                        credit_state["finalized"] = True
                         raise httpx.HTTPStatusError(
                             f"Provider returned {response.status_code}: {error_preview}",
                             request=response.request,
@@ -734,6 +886,7 @@ class AnthropicAdapter:
                     # iter_sse_events to buffer the whole stream into one chunk.
                     pending_lines: list[str] = []
                     async for line in response.aiter_lines():
+                        usage_tap.feed_line(line)
                         if line == "":
                             # Blank line = end of one W3C event.
                             if pending_lines:
@@ -748,9 +901,22 @@ class AnthropicAdapter:
                     if pending_lines:
                         frame = "\n".join(pending_lines) + "\n\n"
                         yield frame.encode()
+                    stream_normal_end = True
+                    credit_state["normal_end"] = True
                 outcome = "success"
+            except AnthropicCreditRefused:
+                raise
             except asyncio.CancelledError:
                 outcome = "cancelled"
+                if credit_admitted and not credit_finalized:
+                    finalize_stream_credit(
+                        correlation_id,
+                        usage_tap,
+                        normal_end=False,
+                        cancelled=True,
+                    )
+                    credit_finalized = True
+                    credit_state["finalized"] = True
                 if self._event_bus:
                     await self._event_bus.publish(
                         CloudproxyMcpStreamCancelled(
@@ -764,6 +930,15 @@ class AnthropicAdapter:
                     )
                 raise
             except Exception as exc:
+                if credit_admitted and not credit_finalized:
+                    finalize_stream_credit(
+                        correlation_id,
+                        usage_tap,
+                        normal_end=stream_normal_end,
+                        exc=exc,
+                    )
+                    credit_finalized = True
+                    credit_state["finalized"] = True
                 if self._event_bus:
                     await self._event_bus.publish(
                         CloudproxyMcpPathFailed(
@@ -786,8 +961,19 @@ class AnthropicAdapter:
                         )
                     )
 
-        async for chunk in _gen():
-            yield chunk
+        gen = _gen()
+        try:
+            async for chunk in gen:
+                yield chunk
+        finally:
+            if credit_state["admitted"] and not credit_state["finalized"]:
+                finalize_stream_credit(
+                    str(credit_state["request_id"]),
+                    credit_state["tap"],
+                    normal_end=bool(credit_state["normal_end"]),
+                )
+                credit_state["finalized"] = True
+            await gen.aclose()
 
     async def _emit_mcp_response_events(
         self,

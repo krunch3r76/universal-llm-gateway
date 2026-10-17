@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from unittest.mock import patch
 
 import httpx
@@ -1146,3 +1147,71 @@ async def test_lifespan_normalizes_bare_mcp_url_for_executor(
         pass
     assert captured["mcp_url"] == "https://mcp.example/mcp/code/"
     assert captured["auth_token"] == "tok"
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_credit_cap_on_turn_two_returns_prior_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decimal import Decimal
+
+    from anthropic_credit.policy import AnthropicCreditRefused, Refuse
+
+    from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
+
+    calls = {"n": 0}
+
+    async def forward_fn(body: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "turn-one",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+        refuse = Refuse(
+            code="anthropic_cycle_budget_exhausted",
+            http_status=429,
+            reservation_usd=Decimal("1"),
+            headroom_usd=Decimal("0"),
+            detail="cap",
+        )
+        raise AnthropicCreditRefused(refuse)
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example/mcp")
+
+    async def _exec_tool(*_a: object, **_k: object) -> str:
+        return "tool-ok"
+
+    monkeypatch.setattr(executor, "execute_tool", _exec_tool)
+    body = {
+        "model": "anthropic/claude-sonnet-5",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [],
+    }
+    result = await executor._finish_tool_loop(
+        forward_fn,
+        body,
+        max_iterations=5,
+        loop_start=time.monotonic(),
+        original_stream=False,
+    )
+    assert calls["n"] == 2
+    assert result["choices"][0]["finish_reason"] == "credit_cap"
+    assert "turn-one" in result["choices"][0]["message"]["content"]
