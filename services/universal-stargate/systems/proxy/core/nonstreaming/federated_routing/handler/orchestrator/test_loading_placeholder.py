@@ -296,6 +296,48 @@ async def test_2_7_non_sticky_cold_t2_peer_excluded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loaded_peer_joins_cold_allow_set_without_t1() -> None:
+    model_id = _FakeModelId("qwen3-5-9b-q8-0-262144")
+    gateway = SimpleNamespace(
+        name="edge-a-gateway",
+        loaded_models=frozenset(),
+        loading_models=frozenset(),
+        busy_models=frozenset(),
+        model_details={model_id: {"max_concurrent_requests": 32}},
+    )
+    peer = SimpleNamespace(
+        name="edge-b-gateway",
+        loaded_models=frozenset({model_id}),
+        loading_models=frozenset(),
+        busy_models=frozenset(),
+        model_details={model_id: {"max_concurrent_requests": 32}},
+    )
+    context = SimpleNamespace(
+        request_id="req-loaded-peer",
+        selected_model=model_id,
+        model_sticky=False,
+        capacity_token=None,
+    )
+    pool = _RecordingPool()
+    await admission_mod.acquire_admission_token(
+        context=context,
+        selected_gateway=gateway,
+        gateways_for_routing=[gateway, peer],
+        routing_config={"capacity_pool": {"loading_phase_cap": 1}},
+        event_bus=_FakeEventBus(),
+        capacity_pool=pool,
+        stability_tracker=_FakeStabilityTracker(),
+        allowed_gateway_ids_override=None,
+        overflow_origin_gateway=None,
+        overflow_depth_before=0,
+        selection_trace=_trace_with_peer(b_tier="T2"),
+    )
+    assert pool.acquire_calls[-1][2] == frozenset(
+        {"edge-a-gateway", "edge-b-gateway"}
+    )
+
+
+@pytest.mark.asyncio
 async def test_2_8_sticky_cold_allow_set_is_selected_only() -> None:
     model_id = _FakeModelId("qwen3-5-9b-q8-0-262144")
     gateway = SimpleNamespace(

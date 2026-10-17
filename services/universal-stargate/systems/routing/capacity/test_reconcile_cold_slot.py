@@ -81,10 +81,15 @@ def _snapshot_payload() -> dict:
 
 
 def _apply_cold_snapshot(
-    mgr: FederatedGatewayManager, gw: FederatedGateway
+    mgr: FederatedGatewayManager,
+    gw: FederatedGateway,
+    *,
+    loaded: frozenset[ModelId] = frozenset(),
 ) -> FederatedGateway:
     mgr._gateways[gw.gateway_id] = gw
-    return mgr._apply_gateway_snapshot(gw, _snapshot_payload())
+    payload = _snapshot_payload()
+    payload["loaded_models"] = loaded
+    return mgr._apply_gateway_snapshot(gw, payload)
 
 
 def _apply_two_cold_snapshots(
@@ -247,4 +252,72 @@ async def test_2_13_release_refreshes_quiet_clock(
 
 def test_unstamped_slot_is_not_quiet() -> None:
     pool = CapacityPool(event_bus=None)
+    assert pool.slot_quiet_elapsed(GW, M.routing_key) is False
+
+
+@pytest.mark.asyncio
+async def test_idle_cold_slot_keeps_catalog_capacity(
+    pool: CapacityPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _install_clock(monkeypatch)
+    mgr = _manager(pool)
+    token = (await _hold(pool, 1))[0]
+    await token.release()
+    clock.now += 130.0
+    _apply_two_cold_snapshots(mgr, _gw())
+    assert pool.get_slot_info(GW, M.routing_key) == (4, 0, 4)
+
+
+@pytest.mark.asyncio
+async def test_loaded_snapshot_breaks_absence_streak(
+    pool: CapacityPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _install_clock(monkeypatch)
+    mgr = _manager(pool)
+    await _hold(pool, 2)
+    clock.now += 130.0
+    gw = _apply_cold_snapshot(mgr, _gw())
+    gw = _apply_cold_snapshot(mgr, gw, loaded=frozenset({M}))
+    _apply_cold_snapshot(mgr, gw)
+    _, in_flight, _ = pool.get_slot_info(GW, M.routing_key)
+    assert in_flight == 2
+    current = asyncio.current_task()
+    pending = [task for task in asyncio.all_tasks() if task is not current]
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_streak_so_one_snapshot_keeps_holder(
+    pool: CapacityPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _install_clock(monkeypatch)
+    mgr = _manager(pool)
+    await _hold(pool, 2)
+    clock.now += 130.0
+    _apply_two_cold_snapshots(mgr, _gw())
+    await asyncio.sleep(0)
+    await pool.acquire_token(
+        request_id="req-after-reset",
+        model_id=M.routing_key,
+        allowed_gateway_ids=frozenset({GW}),
+    )
+    clock.now += 130.0
+    _apply_cold_snapshot(mgr, _gw())
+    _, in_flight, _ = pool.get_slot_info(GW, M.routing_key)
+    assert in_flight == 1
+
+
+@pytest.mark.asyncio
+async def test_reset_refreshes_quiet_clock(
+    pool: CapacityPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _install_clock(monkeypatch)
+    mgr = _manager(pool)
+    await _hold(pool, 2)
+    clock.now += 130.0
+    assert pool.slot_quiet_elapsed(GW, M.routing_key) is True
+    _apply_two_cold_snapshots(mgr, _gw())
+    await asyncio.sleep(0)
     assert pool.slot_quiet_elapsed(GW, M.routing_key) is False
