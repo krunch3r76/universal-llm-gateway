@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -387,6 +388,73 @@ def test_prefix_coverage_guard_names_orphan(
 
     remaining = [covered_short, covered_long, unscoped]
     assert orphan_source_prefixes(remaining, scope_prefixes, [unscoped_root]) == []
+
+
+def _capture_load_failed(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    bus = MagicMock()
+    monkeypatch.setattr(
+        "services.rag.rag_service.state.get_event_bus",
+        lambda: bus,
+    )
+    return bus
+
+
+def _assert_one_load_failed(bus: MagicMock, path: Path, stage: str, error: str) -> None:
+    bus.publish_from_sync.assert_called_once()
+    event = bus.publish_from_sync.call_args.args[0]
+    assert event.signal == "rag.scope_membership.load_failed"
+    assert event.payload == {"path": str(path), "stage": stage, "error": error}
+
+
+def test_read_failure_emits_load_failed_and_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked = tmp_path / "scope_membership.yaml"
+    tracked.write_bytes(b"\xff")
+    bus = _capture_load_failed(monkeypatch)
+
+    assert loader._load_tracked_scopes(tracked) is None
+
+    _assert_one_load_failed(bus, tracked, "read", "UnicodeDecodeError")
+
+
+def test_parse_failure_emits_load_failed_and_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked = tmp_path / "scope_membership.yaml"
+    tracked.write_text(":\n", encoding="utf-8")
+    bus = _capture_load_failed(monkeypatch)
+
+    assert loader._load_tracked_scopes(tracked) is None
+
+    _assert_one_load_failed(bus, tracked, "parse", "ParserError")
+
+
+def test_root_type_failure_emits_load_failed_and_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked = tmp_path / "scope_membership.yaml"
+    tracked.write_text("- 1\n", encoding="utf-8")
+    bus = _capture_load_failed(monkeypatch)
+
+    assert loader._load_tracked_scopes(tracked) is None
+
+    _assert_one_load_failed(bus, tracked, "root_type", "list")
+
+
+def test_emitter_raise_still_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked = tmp_path / "scope_membership.yaml"
+    tracked.write_text("- 1\n", encoding="utf-8")
+    bus = _capture_load_failed(monkeypatch)
+    bus.publish_from_sync.side_effect = RuntimeError("bus down")
+
+    assert loader._load_tracked_scopes(tracked) is None
 
 
 def test_committed_scope_membership_adds_small_llm_prefix() -> None:
