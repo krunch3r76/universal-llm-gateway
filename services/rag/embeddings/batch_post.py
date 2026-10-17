@@ -19,6 +19,7 @@ import httpx
 from universal_logging import get_logger
 
 from services.rag.embeddings.constants import (
+    BATCH_EMBED_REQUEST_TIMEOUT_S,
     EMBED_RETRY_ATTEMPTS,
     EMBED_RETRY_BACKOFF_S,
     GATEWAY_URL,
@@ -228,6 +229,9 @@ async def post_embeddings(batch: list[str]) -> list[list[float]]:
             response = await client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": batch},
+                headers={
+                    "X-Request-Timeout": str(int(BATCH_EMBED_REQUEST_TIMEOUT_S)),
+                },
             )
             if response.status_code == 500:
                 body = response.text

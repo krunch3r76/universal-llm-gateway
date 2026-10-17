@@ -95,6 +95,8 @@ class RequestExecutor:
         model_id: str,
         request_body: dict[str, Any],
         request_id: str | None = None,
+        *,
+        request_timeout_hint: float | None = None,
     ) -> dict[str, Any]:
         """
         Execute an embedding request via federation.
@@ -154,6 +156,8 @@ class RequestExecutor:
             forward_embedding_fn=_forward,
             event_bus=self.event_bus,
             oom_recovery_fn=_oom_recovery if self._federated_manager else None,
+            routing_config=self._routing_config,
+            request_timeout_hint=request_timeout_hint,
         )
 
     async def execute_rerank_request(

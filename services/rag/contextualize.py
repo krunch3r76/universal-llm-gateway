@@ -23,6 +23,7 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import logging
@@ -38,6 +39,16 @@ if TYPE_CHECKING:
     from services.rag.admission_gate import AdmissionGate
 
 logger = logging.getLogger(__name__)
+
+CONTEXTUALIZE_GLOBAL_MAX = 8
+_contextualize_global_semaphore: asyncio.Semaphore | None = None
+
+
+def _contextualize_global_semaphore() -> asyncio.Semaphore:
+    global _contextualize_global_semaphore
+    if _contextualize_global_semaphore is None:
+        _contextualize_global_semaphore = asyncio.Semaphore(CONTEXTUALIZE_GLOBAL_MAX)
+    return _contextualize_global_semaphore
 
 
 _NEIGHBOR_CHARS = 800
@@ -258,16 +269,17 @@ async def contextualize_chunks(
     ]
 
     try:
-        response = await _CLIENT.post(
-            "/v1/chat/completions",
-            headers={"X-Internal-Request-ID": request_id},
-            json={
-                "model": pipeline,
-                "messages": [{"role": "user", "content": "contextualize"}],
-                "pipeline_options": {"chunks": chunk_payloads, "source": source},
-            },
-            timeout=client_timeout_s,
-        )
+        async with _contextualize_global_semaphore():
+            response = await _CLIENT.post(
+                "/v1/chat/completions",
+                headers={"X-Internal-Request-ID": request_id},
+                json={
+                    "model": pipeline,
+                    "messages": [{"role": "user", "content": "contextualize"}],
+                    "pipeline_options": {"chunks": chunk_payloads, "source": source},
+                },
+                timeout=client_timeout_s,
+            )
         response.raise_for_status()
     except Exception as exc:
         failure_repr = repr(exc)[:300]

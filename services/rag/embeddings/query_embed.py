@@ -21,6 +21,7 @@ from services.rag.embeddings.constants import (
     DEFAULT_INSTRUCTION,
     EMBED_RETRY_ATTEMPTS,
     GATEWAY_URL,
+    QUERY_EMBED_REQUEST_TIMEOUT_S,
     QUERY_RETRY_ATTEMPTS,
     QUERY_RETRY_BASE_S,
     QUERY_RETRY_MAX_S,
@@ -142,6 +143,9 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
             response = await client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": [formatted]},
+                headers={
+                    "X-Request-Timeout": str(int(QUERY_EMBED_REQUEST_TIMEOUT_S)),
+                },
             )
             if _is_transient_status(response.status_code):
                 last_status = response.status_code

@@ -19,6 +19,8 @@ from .eviction_victim_select import (
     select_eviction_victims,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .types import ConstraintFailure, EvictionPlanAbort, EvictionPlanSummary
 
 if TYPE_CHECKING:
@@ -118,7 +120,11 @@ def _compute_eviction_plan(
         return None
 
     target_model_id = placement.model_id
-    evictable = [mid for mid in idle if mid != target_model_id]
+    evictable = [
+        mid
+        for mid in idle
+        if mid != target_model_id and not is_rag_protected_model(mid)
+    ]
 
     logger.debug(
         f"After filtering target variants: evictable={evictable}, "

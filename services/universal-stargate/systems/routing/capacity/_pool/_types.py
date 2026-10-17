@@ -95,6 +95,17 @@ class _WaiterCancelledError(Exception):
         super().__init__(reason)
 
 
+class CapacityAcquireTimeoutError(TimeoutError):
+    """Raised when acquire_token exhausts the slot-acquire budget."""
+
+    def __init__(self, model_id: str, timeout_s: float) -> None:
+        self.model_id = model_id
+        self.timeout_s = timeout_s
+        super().__init__(
+            f"Capacity acquire timed out for {model_id} after {timeout_s:.3f}s"
+        )
+
+
 class QueueFullError(Exception):
     """Raised when the FIFO queue for a model is at max depth.
 

@@ -158,6 +158,10 @@ async def execute_embedding_request(
     forward_embedding_fn: Callable[..., Awaitable[dict[str, Any]]],
     event_bus: EventBus,
     oom_recovery_fn: Callable[..., Awaitable[bool]] | None = None,
+    routing_config: dict | None = None,
+    request_timeout_hint: float | None = None,
+    query_cpu_failover_enabled: bool = False,
+    batch_cpu_failover_enabled: bool = False,
 ) -> dict[str, Any]:
     """
     Execute an embedding request via federation.
@@ -193,6 +197,12 @@ async def execute_embedding_request(
         emit_execution_completed,
         emit_execution_failed,
     )
+    from systems.proxy.core.nonstreaming.capacity_deadline import apply_capacity_deadline
+    from systems.proxy.core.nonstreaming.executor.embedding_failover import (
+        CPU_EMBEDDING_MODEL_ID,
+        capacity_budget_expired,
+        http_exception_triggers_cpu_failover,
+    )
 
     parsed_model_id = ModelId.parse(model_id)
     resolved_request_id = request_id or str(uuid.uuid4())
@@ -216,40 +226,92 @@ async def execute_embedding_request(
     # calls so routing cannot derive it; wrong key causes capacity reservation leak.
     context.routing_endpoint_category = EndpointCategory.EMBEDDING
     context.model_sticky = False
+    apply_capacity_deadline(
+        context,
+        routing_config=routing_config,
+        request_timeout_hint=request_timeout_hint,
+    )
+
+    cpu_failover_enabled = query_cpu_failover_enabled or batch_cpu_failover_enabled
+    attempt_models = [parsed_model_id]
+    if cpu_failover_enabled:
+        attempt_models.append(ModelId.parse(CPU_EMBEDDING_MODEL_ID))
 
     fed_gateway = None
+    last_exc: Exception | None = None
     try:
-        await select_gateway_fn(context)
-        fed_gateway = context.federated_gateway
-        if not fed_gateway:
-            raise HTTPException(
-                status_code=503,
-                detail=error_envelope(
-                    code=ErrorCode.RESOURCE_UNAVAILABLE,
-                    message=f"No gateway available for model: {model_id}",
-                    source="master",
-                    retryable=True,
-                    data={"model_id": model_id},
-                ),
+        for attempt_idx, active_model in enumerate(attempt_models):
+            if attempt_idx > 0 and not cpu_failover_enabled:
+                break
+            context.selected_model = active_model
+            active_body = {**request_body, "model": str(active_model)}
+            try:
+                await select_gateway_fn(context)
+            except HTTPException as sel_exc:
+                last_exc = sel_exc
+                if (
+                    attempt_idx == 0
+                    and cpu_failover_enabled
+                    and (
+                        http_exception_triggers_cpu_failover(sel_exc)
+                        or capacity_budget_expired(context)
+                    )
+                ):
+                    continue
+                raise
+
+            fed_gateway = context.federated_gateway
+            if not fed_gateway:
+                no_gw = HTTPException(
+                    status_code=503,
+                    detail=error_envelope(
+                        code=ErrorCode.RESOURCE_UNAVAILABLE,
+                        message=f"No gateway available for model: {active_model}",
+                        source="master",
+                        retryable=True,
+                        data={"model_id": str(active_model)},
+                    ),
+                )
+                last_exc = no_gw
+                if attempt_idx == 0 and cpu_failover_enabled:
+                    continue
+                raise no_gw
+
+            try:
+                result = await _forward_with_retry(
+                    forward_fn=forward_embedding_fn,
+                    fed_gateway=fed_gateway,
+                    request_body=active_body,
+                    request_id=resolved_request_id,
+                    parsed_model_id=active_model,
+                    oom_recovery_fn=oom_recovery_fn,
+                )
+            except HTTPException as fwd_exc:
+                last_exc = fwd_exc
+                if (
+                    attempt_idx == 0
+                    and cpu_failover_enabled
+                    and (
+                        http_exception_triggers_cpu_failover(fwd_exc)
+                        or capacity_budget_expired(context)
+                    )
+                ):
+                    await release_capacity_token_fn(context)
+                    continue
+                raise
+
+            await emit_execution_completed(
+                event_bus=event_bus,
+                url=fed_gateway.remote_stargate_url,
+                model_id=context.selected_model.routing_key,
+                request_id=resolved_request_id,
+                gateway_id=fed_gateway.gateway_id,
             )
+            return result
 
-        result = await _forward_with_retry(
-            forward_fn=forward_embedding_fn,
-            fed_gateway=fed_gateway,
-            request_body=request_body,
-            request_id=resolved_request_id,
-            parsed_model_id=parsed_model_id,
-            oom_recovery_fn=oom_recovery_fn,
-        )
-
-        await emit_execution_completed(
-            event_bus=event_bus,
-            url=fed_gateway.remote_stargate_url,
-            model_id=context.selected_model.routing_key,
-            request_id=resolved_request_id,
-            gateway_id=fed_gateway.gateway_id,
-        )
-        return result
+        if last_exc is not None:
+            raise last_exc
+        raise HTTPException(status_code=503, detail="Embedding routing failed")
     except Exception as e:
         gateway_url = fed_gateway.remote_stargate_url if fed_gateway else "unknown"
         gateway_id = fed_gateway.gateway_id if fed_gateway else "unknown"

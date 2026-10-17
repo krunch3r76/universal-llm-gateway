@@ -1614,11 +1614,13 @@ class FederatedGatewayManager(Sequential):
         )
 
         model_resources = dict(gw.model_resources)
+        model_measured_vram = dict(gw.model_measured_vram)
 
         # Overlay measured VRAM onto catalog estimates for eviction planner
         model_vram: dict[ModelId, int] | None = parsed.get("model_vram")
         if model_vram:
             for model_id, measured_vram_mb in model_vram.items():
+                model_measured_vram[model_id] = measured_vram_mb
                 if model_id in model_resources:
                     merged = dict(model_resources[model_id])
                     merged["vram_usage"] = measured_vram_mb
@@ -1637,6 +1639,7 @@ class FederatedGatewayManager(Sequential):
             vram_total_mb=state["vram_total_mb"],
             active_requests=state.get("active_requests", 0),
             model_resources=model_resources,
+            model_measured_vram=model_measured_vram,
         )
 
         logger.debug(

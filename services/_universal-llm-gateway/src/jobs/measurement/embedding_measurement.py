@@ -8,6 +8,7 @@ from ...core.events import get_event_bus
 from ...core.events.measurement import MeasurementEmbeddingDetected
 from ..context_detection import get_embedding_contexts
 from .context_selection import resolve_embedding_task_default
+from .embedding_profile_loader import merged_profile_loader
 from .execution import SubprocessTracker
 from .gpu import run_layer_test
 from .request import MeasureJobRequest
@@ -26,7 +27,7 @@ async def measure_gguf_embedding_profiles(
     embedding mode. Step down from training_context_length so each
     profile's VRAM/RAM reflects the actual cost at that context size.
     """
-    loader_config = (entry or {}).get("loader", {})
+    catalog_entry = entry or {}
 
     training_ctx = request.training_context_length
     contexts = request.contexts or (
@@ -48,11 +49,14 @@ async def measure_gguf_embedding_profiles(
         )
     )
 
-    pooling = loader_config.get("pooling")
-    ubatch_size = loader_config.get("ubatch_size")
-
     results: dict[str, dict[str, Any]] = {}
+    profile_loader_updates: dict[str, dict[str, Any]] = {}
     for ctx in contexts:
+        loader_config = merged_profile_loader(
+            catalog_entry, ctx=ctx, mode=request.mode
+        )
+        pooling = loader_config.get("pooling")
+        ubatch_size = loader_config.get("ubatch_size")
         emit_log(f"  Probing context {ctx}...")
         profile = await run_layer_test(
             model_path,
@@ -73,19 +77,24 @@ async def measure_gguf_embedding_profiles(
             ram = profile.get("ram_mb", "N/A")
             emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB")
             results[str(ctx)] = profile
+            per_profile: dict[str, Any] = {}
+            if pooling is not None:
+                per_profile["pooling"] = pooling
+            if ubatch_size is not None:
+                per_profile["ubatch_size"] = ubatch_size
+            if per_profile:
+                profile_loader_updates[str(ctx)] = per_profile
         else:
             error = profile.get("error", "unknown")
             emit_log(f"  ❌ {ctx}: {error}")
             results[str(ctx)] = {"error": error}
 
+    base_loader = dict(catalog_entry.get("loader") or {})
     loader_updates: dict[str, Any] = {
         "embedding": True,
         "embedding_task_default": resolve_embedding_task_default(
-            request.model_id, loader_config
+            request.model_id, base_loader
         ),
+        "profile_loader_updates": profile_loader_updates,
     }
-    if pooling is not None:
-        loader_updates["pooling"] = pooling
-    if ubatch_size is not None:
-        loader_updates["ubatch_size"] = ubatch_size
     return results, loader_updates

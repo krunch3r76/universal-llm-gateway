@@ -18,6 +18,7 @@ from universal_logging import get_logger
 
 from ._types import (
     _WAITING_EVENT_INTERVAL_S,
+    CapacityAcquireTimeoutError,
     CapacityToken,
     QueueFullError,
     _Slot,
@@ -45,8 +46,10 @@ class _AcquisitionMixin:
         Raises:
             asyncio.CancelledError: if request cancelled
         """
-        del timeout_s
         self._ensure_subscribed()  # type: ignore[attr-defined]
+        wait_deadline: float | None = None
+        if timeout_s is not None and timeout_s > 0:
+            wait_deadline = time.monotonic() + timeout_s
         gateway_id = self._try_immediate(request_id, model_id, allowed_gateway_ids)
         queued = False
 
@@ -84,6 +87,7 @@ class _AcquisitionMixin:
                 request_id,
                 model_id,
                 allowed_gateway_ids,
+                wait_deadline=wait_deadline,
             )
             wait_ms = (time.monotonic() - queue_start) * 1000
             self._emit_queue_admitted(request_id, model_id, gateway_id, wait_ms)  # type: ignore[attr-defined]
@@ -164,6 +168,8 @@ class _AcquisitionMixin:
         request_id: str,
         model_id: str,
         allowed_gateway_ids: frozenset[str],
+        *,
+        wait_deadline: float | None = None,
     ) -> str:
         """Enqueue a waiter and block until a slot is assigned.  Returns gateway_id.
 
@@ -193,10 +199,28 @@ class _AcquisitionMixin:
         wait_start = time.monotonic()
         try:
             while True:
+                if wait_deadline is not None and time.monotonic() >= wait_deadline:
+                    self._remove_waiter(  # type: ignore[attr-defined]
+                        request_id,
+                        reason="acquire_timeout",
+                        wake_with_exception=False,
+                    )
+                    raise CapacityAcquireTimeoutError(
+                        model_id,
+                        max(0.0, wait_deadline - wait_start),
+                    )
+                slice_timeout = _WAITING_EVENT_INTERVAL_S
+                if wait_deadline is not None:
+                    slice_timeout = min(
+                        slice_timeout,
+                        max(0.0, wait_deadline - time.monotonic()),
+                    )
+                    if slice_timeout <= 0:
+                        continue
                 try:
                     gateway_id = await asyncio.wait_for(
                         asyncio.shield(future),
-                        timeout=_WAITING_EVENT_INTERVAL_S,
+                        timeout=slice_timeout,
                     )
                     logger.info(f"Admitted: {request_id} → {gateway_id}/{model_id}")
                     return gateway_id

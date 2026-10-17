@@ -240,9 +240,28 @@ async def _write_per_file_catalog_results(
 
         # Persist loader routing params (e.g. gpu_memory_utilization for vLLM)
         if loader_updates:
+            profile_loader_updates = loader_updates.pop("profile_loader_updates", None)
             loader = entry.setdefault("loader", {})
             for key, value in loader_updates.items():
                 loader.setdefault(key, value)
+            if isinstance(profile_loader_updates, dict):
+                for ctx_str, per_profile in profile_loader_updates.items():
+                    if not isinstance(per_profile, dict):
+                        continue
+                    n_gpu_layers = (results.get(ctx_str) or {}).get("n_gpu_layers")
+                    if n_gpu_layers is None or n_gpu_layers == 0:
+                        device_key = "cpu"
+                    elif n_gpu_layers == -1:
+                        device_key = "gpu"
+                    else:
+                        device_key = "hybrid"
+                    prof = (
+                        devices.setdefault(device_key, {})
+                        .setdefault("profiles", {})
+                        .setdefault(ctx_str, {})
+                    )
+                    prof_loader = prof.setdefault("loader", {})
+                    prof_loader.update(per_profile)
 
         # Activated contexts → metadata (stripped from static by _strip_measurement_data)
         gpu_contexts, cpu_contexts, reason = determine_activated_contexts(results, mode)

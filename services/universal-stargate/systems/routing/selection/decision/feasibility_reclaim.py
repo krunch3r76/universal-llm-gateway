@@ -18,6 +18,8 @@ from .admission_verdict import (
     evaluate_vram_admission,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .types import ConstraintFailure
 
 if TYPE_CHECKING:
@@ -70,6 +72,8 @@ def can_fit_after_eviction_including_busy(
     reclaimable_vram = effective_vram_free
     catalog_reclaimable_ram = 0
     for loaded_model_id in gateway.loaded_models:
+        if is_rag_protected_model(loaded_model_id):
+            continue
         measured_vram = gateway.model_measured_vram.get(loaded_model_id)
         catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
         catalog_req_vram_mb, catalog_req_ram_mb = requirements_lookup(loaded_model_id)
