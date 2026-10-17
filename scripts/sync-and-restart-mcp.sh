@@ -614,21 +614,16 @@ ensure_mcp_container() {
 # the container already has every such name (caller keeps stop/start). Exit on inspect
 # or compare failure — stop/start would keep a stale Config.Env.
 container_passthrough_env_keys_differ() {
-  local inspect_file rc
-  inspect_file="$(umask 077; mktemp)"
-  if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' mcp-server >"$inspect_file"; then
-    rm -f "$inspect_file"
-    echo "ERROR: docker inspect Config.Env failed; refusing stop/start." >&2
-    exit 1
-  fi
+  local rc
+  # Names only. split/index runs inside docker so values are not on stdout, stderr, or disk.
   set +e
-  "$PYTHON" -m deploy_identity.mcp_env_keys \
-    --workspace-root "$WORKSPACE_ROOT" \
-    --compose-browser "$ENABLE_BROWSER_TOOLS" \
-    --inspect-file "$inspect_file"
+  docker inspect -f '{{range .Config.Env}}{{println (index (split . "=") 0)}}{{end}}' mcp-server \
+    | "$PYTHON" -m deploy_identity.mcp_env_keys \
+        --workspace-root "$WORKSPACE_ROOT" \
+        --compose-browser "$ENABLE_BROWSER_TOOLS" \
+        --inspect-file -
   rc=$?
   set -e
-  rm -f "$inspect_file"
   case "$rc" in
     0) return 1 ;;
     10) return 0 ;;
@@ -741,8 +736,14 @@ else
   ensure_mcp_container
   if container_passthrough_env_keys_differ; then
     echo "MCP container env key names differ; recreating before source sync."
+    INCOMING_SHA="$(gate source-tree-sha)"
+    gate write-pending "$INCOMING_SHA"
     arm_restore_window
     remove_mcp_container_for_image_recreate
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+      echo "ERROR: mcp-server still present after rm; refusing compose up." >&2
+      exit 1
+    fi
     arm_restore_window
     docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
   fi

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from deploy_identity.mcp_env_keys import environment_key_names
+from deploy_identity.mcp_env_keys import config_env_key_names, environment_key_names
 
 pytestmark = pytest.mark.offline
 
@@ -53,6 +53,7 @@ def _stub_docker_dir(
     optional_root_remains: bool = False,
     mount_secret_container: str = "",
     inspect_env_keys: tuple[str, ...] | None = None,
+    health_none_after_rm: bool = False,
 ) -> Path:
     if inspect_env_keys is None:
         chosen_env_keys = tuple(
@@ -84,6 +85,9 @@ def _stub_docker_dir(
         prior_stamp_file="{prior_stamp_file}"
         case "$1" in
           ps)
+            if [[ -f "{tmp_path / "mcp_removed"}" ]]; then
+              exit 0
+            fi
             if [[ "$2" == "-a" ]]; then
               if [[ "{str(container_exists).lower()}" == "true" ]]; then
                 echo "mcp-server"
@@ -104,6 +108,10 @@ def _stub_docker_dir(
               exit 0
             fi
             if [[ "$*" == *"Health.Status"* ]] || [[ "$*" == *"State.Health"* ]]; then
+              if [[ -f "{tmp_path / "health_none_after_rm"}" ]]; then
+                echo none
+                exit 0
+              fi
               if [[ -f "{tmp_path / "health_exited"}" ]]; then
                 echo exited
                 exit 0
@@ -273,6 +281,9 @@ def _stub_docker_dir(
             if [[ "{str(compose_fails).lower()}" == "true" ]]; then
               exit 1
             fi
+            if [[ "$*" == *"mcp-server"* ]]; then
+              rm -f "{tmp_path / "mcp_removed"}" "{tmp_path / "health_none_after_rm"}"
+            fi
             exit 0
             ;;
           cp)
@@ -305,7 +316,18 @@ def _stub_docker_dir(
             fi
             exit 0
             ;;
-          tag|rm|image) exit 0 ;;
+          rm)
+            for arg in "$@"; do
+              if [[ "$arg" == "mcp-server" ]]; then
+                : > "{tmp_path / "mcp_removed"}"
+              fi
+            done
+            if [[ "{str(health_none_after_rm).lower()}" == "true" ]]; then
+              : > "{tmp_path / "health_none_after_rm"}"
+            fi
+            exit 0
+            ;;
+          tag|image) exit 0 ;;
           *) exit 0 ;;
         esac
         """
@@ -469,6 +491,53 @@ def test_env_key_name_diff_recreates_before_sync(
     assert "up -d mcp-server" in log
     assert sync_cp > rm_at, log
     assert stop_at > sync_cp, log
+
+
+def test_env_inspect_splits_names_inside_docker() -> None:
+    """Config.Env values never leave docker inspect, and a bare name is a key.
+
+    Breaks when the compare writes KEY=VALUE lines to a temp file, or when a
+    line with no '=' is dropped.
+    """
+    body = _extract_bash_function("container_passthrough_env_keys_differ")
+    assert '(split . "=")' in body
+    assert "mktemp" not in body
+    assert config_env_key_names("TOKEN=super-secret\nPLAIN\n") == {
+        "TOKEN",
+        "PLAIN",
+    }
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_env_key_recreate_compose_failure_restores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed compose up after env-key rm runs plan_restore_commands.
+
+    Breaks when rm happens before write-pending: pending is absent, restore
+    refuses, and mcp stays gone. Health must be none after rm or a healthy
+    inspect also refuses restore.
+    """
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "fixture-token-not-secret")
+    keys = tuple(
+        key for key in _compose_env_key_tuple() if key != "VORTEX_BEARER_TOKENS"
+    )
+    _seed_checked_image(tmp_path)
+    _seed_last_healthy_copy_set(tmp_path)
+    stub = _stub_docker_dir(
+        tmp_path,
+        inspect_health="healthy",
+        inspect_env_keys=keys,
+        compose_fails=True,
+        health_none_after_rm=True,
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    combined = proc.stdout + proc.stderr + log
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "create mcp-server" in log, log
+    assert "fixture-token-not-secret" not in combined
+    assert "super-secret" not in combined
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")

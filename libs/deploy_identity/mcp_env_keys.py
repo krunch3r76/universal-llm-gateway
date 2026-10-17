@@ -63,12 +63,10 @@ def passthrough_key_names(workspace_root: Path, *, browser: bool) -> set[str]:
 
 
 def config_env_key_names(inspect_text: str) -> set[str]:
-    """Parse key names from ``docker inspect`` Config.Env lines. Values are dropped."""
+    """Key names only. A bare name is kept. Text after the first ``=`` is dropped."""
     names: set[str] = set()
     for line in inspect_text.splitlines():
-        if "=" not in line:
-            continue
-        name = line.split("=", 1)[0]
+        name = line.split("=", 1)[0].strip()
         if name:
             names.add(name)
     return names
@@ -115,7 +113,12 @@ def _cli(argv: list[str] | None = None) -> int:
         print("ERROR: --inspect-file is required", file=sys.stderr)
         return 1
     try:
-        inspect_text = args.inspect_file.read_text(encoding="utf-8", errors="replace")
+        if str(args.inspect_file) == "-":
+            inspect_text = sys.stdin.read()
+        else:
+            inspect_text = args.inspect_file.read_text(
+                encoding="utf-8", errors="replace"
+            )
     except OSError:
         print("ERROR: could not read docker inspect Config.Env output", file=sys.stderr)
         return 1
