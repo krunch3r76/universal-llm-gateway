@@ -391,12 +391,14 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"effort": "high"},
         instruction_profile="mechanical",
     ),
+    # Live ListModels probe 2026-10-17 (dispatch 3dedf4295603-0581f0b9)
     "gemini-3.7-flash": ModelCapability(
         knobs={
             "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
         },
         default_variant={"effort": "high"},
         instruction_profile="mechanical",
+        probed_at="2026-10-17",
     ),
     # Gemini 4 Argon (Google frontier, Cursor GA 2026-10-13). Live ListModels
     # probe 2026-10-14: id=gemini-4-argon, single parameter reasoning_effort

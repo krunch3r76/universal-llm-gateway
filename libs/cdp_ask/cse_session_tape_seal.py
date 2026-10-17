@@ -4,7 +4,8 @@ cdp_ask detach and typed-ack harvest call ``seal_predecessor_cse_to_tape``.
 A live Chrome port is scraped and posted to Cortex ``/sessions/close`` over
 the Cortex unix socket. Failures emit ``cdp.tape.seal.failed`` and raise
 ``standdown.tape_seal_failed`` so the listener stays attached. A dead port
-returns a degraded dict and does not detach from this module.
+or a missing registry row emits ``cdp.tape.seal.degraded`` and returns a
+degraded dict; this module does not detach.
 """
 
 from __future__ import annotations
@@ -47,6 +48,34 @@ def _emit_seal_failed(registration_id: str, exc: BaseException, stage: str) -> N
             error_type=type(exc).__name__,
             detail=str(exc),
             stage=stage,
+        )
+    )
+
+
+@event_factory
+def cdp_tape_seal_degraded(
+    *,
+    registration_id: str,
+    reason: str,
+) -> Event:
+    """Report a predecessor seal that skipped scrape because the host is gone."""
+    return Event(
+        signal="cdp.tape.seal.degraded",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "reason": reason,
+            "stage": reason,
+        },
+    )
+
+
+def _emit_seal_degraded(registration_id: str, reason: str) -> None:
+    emit(
+        cdp_tape_seal_degraded(
+            registration_id=registration_id,
+            reason=reason,
         )
     )
 
@@ -140,9 +169,10 @@ async def seal_predecessor_cse_to_tape(
     """Seal a predecessor Cowork transcript onto continuity tape before detach.
 
     A listening Chrome port is scraped and posted to Cortex ``/sessions/close``.
-    HTTP errors, timeouts, and a missing ``transcript_path`` raise
-    ``standdown.tape_seal_failed`` and leave the listener up. A dead port
-    returns a degraded dict so detach of a gone host can proceed. This function
+    HTTP errors, timeouts, and a missing ``transcript_path`` emit
+    ``cdp.tape.seal.failed`` and raise ``standdown.tape_seal_failed``, leaving
+    the listener up. A dead port or missing row emits ``cdp.tape.seal.degraded``
+    and returns a degraded dict so detach of a gone host can proceed. This function
     does not take ``ports_lock`` and does not detach. ``store`` is accepted for
     the detach route's call shape and is not required for the registry read.
     """
@@ -154,9 +184,11 @@ async def seal_predecessor_cse_to_tape(
     rid = (registration_id or "").strip()
     row = registry_store.load_active().get(rid)
     if not isinstance(row, dict):
+        _emit_seal_degraded(rid, "missing_row")
         return {"degraded": True, "registration_id": rid, "reason": "missing_row"}
     port = row.get("port")
     if not isinstance(port, int) or not cdp_lane.is_listening(port):
+        _emit_seal_degraded(rid, "listener_down")
         return {
             "degraded": True,
             "registration_id": rid,
@@ -202,18 +234,29 @@ async def seal_predecessor_cse_to_tape(
         ) from exc
     status = getattr(response, "status_code", None)
     body: dict[str, Any] = {}
+    json_failed = False
     if status == 200:
         try:
             parsed = response.json()
         except Exception as exc:
             _emit_seal_failed(rid, exc, "response_json")
+            json_failed = True
             parsed = None
         if isinstance(parsed, dict):
             body = parsed
     path = str(body.get("transcript_path") or "").strip()
     already = bool(body.get("already_closed"))
     journal_row_id = body.get("journal_row_id")
-    if status != 200 or not path or (journal_row_id in (None, "") and not already):
+    seal_refused = (
+        status != 200 or not path or (journal_row_id in (None, "") and not already)
+    )
+    if seal_refused and not json_failed:
+        _emit_seal_failed(
+            rid,
+            RuntimeError(f"status_code={status}"),
+            "cortex_status",
+        )
+    if seal_refused:
         raise ProtocolError(
             code="standdown.tape_seal_failed",
             message="stand-down tape seal failed before detach",

@@ -43,6 +43,18 @@ def _gateway_in_active_set(gw: object, active_nodes: set[str]) -> bool:
     return node_id in active_nodes or gateway_id in active_nodes
 
 
+def _gateway_model_is_busy(gw: object, model_id: str) -> bool:
+    """True when this gateway's own ``busy_models`` contains ``model_id``.
+
+    ``busy_on`` is keyed by ``remote_stargate_id``. Every gateway on that relay
+    shares the id, so a relay-level match labels a loaded sibling busy.
+    """
+    busy = getattr(gw, "busy_models", ()) or ()
+    if model_id in busy:
+        return True
+    return any(str(item) == model_id for item in busy)
+
+
 def _gateway_reports_model(gw: object, model_id: str) -> bool:
     """True when this gateway itself has the model loaded or busy.
 
@@ -113,11 +125,7 @@ async def get_model_capacity(
             continue
         node_id = gw.node_id or gw.gateway_id
         slots = meta.get("parallel_slots", 1)
-        status = (
-            "busy"
-            if _gateway_in_active_set(gw, set(summary.get("busy_on", [])))
-            else "loaded"
-        )
+        status = "busy" if _gateway_model_is_busy(gw, model_id) else "loaded"
         nodes.append({"node_id": node_id, "parallel_slots": slots, "status": status})
         total_slots += slots
 
