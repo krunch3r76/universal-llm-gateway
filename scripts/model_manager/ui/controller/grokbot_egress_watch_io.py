@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -11,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from transport_utils.client_factory import DEFAULT_EVENTS_QUERY_SOCK_PATH
 
@@ -23,6 +25,25 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
 DEFAULT_DESKTOP_STATUS = Path.home() / ".gateway/grok-io/desktop-status.json"
 DEFAULT_DAEMON_LOG = Path.home() / ".gateway/grok-io/sand-data/local-exec-daemon.log"
 DEFAULT_DESKTOP_BINARY = Path("/opt/Grok Bot/grok-bot")
+_PRESENCE_KEEPALIVE_TIMEOUT_S = 5.0
+
+
+def keep_alive_grokbot_presence(
+    display: str = ":9", cdp_port: int = 9339
+) -> dict[str, Any]:
+    """Non-disruptive X11 + CDP presence wake when Grok Bot is running."""
+    from cursor_bridge.grok_computer import wake_grok_computer
+
+    try:
+        return asyncio.run(
+            wake_grok_computer(
+                cdp_port=cdp_port,
+                display=display,
+                timeout_s=_PRESENCE_KEEPALIVE_TIMEOUT_S,
+            )
+        )
+    except Exception as exc:
+        return {"ok": False, "error": type(exc).__name__, "detail": str(exc)}
 GC1_CLIENT_IP = "172.18.0.1"
 HM1_CLIENT_IPS = ("10.81.0.166",)
 STAGE_MANAGER_THREAD = "15851"
@@ -462,6 +483,7 @@ __all__ = [
     "DEFAULT_DAEMON_LOG",
     "DEFAULT_DESKTOP_BINARY",
     "DEFAULT_DESKTOP_STATUS",
+    "keep_alive_grokbot_presence",
     "GC1_BUS_TIP_STALE_MS",
     "GC1_CLIENT_IP",
     "IN_FLIGHT_STALE_MS",

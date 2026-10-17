@@ -26,6 +26,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     DEFAULT_DESKTOP_STATUS,
     build_snapshot_from_inputs,
     desktop_pid_alive,
+    keep_alive_grokbot_presence,
     query_events_rows,
     read_daemon_log,
     read_desktop_status,
@@ -236,6 +237,8 @@ class GrokbotEgressWatchLoop:
             if self._snapshot_fn is not None
             else await self._default_snapshot()
         )
+        if snapshot.desktop_running:
+            await asyncio.to_thread(keep_alive_grokbot_presence)
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
