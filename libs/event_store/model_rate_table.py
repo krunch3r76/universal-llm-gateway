@@ -39,6 +39,11 @@ class ModelRateRow:
     pinned: bool = False
     cache_write_rate_per_m: float | None = None
     cache_read_rate_per_m: float | None = None
+    long_prompt_threshold_tokens: int | None = None
+    long_input_rate_per_m: float | None = None
+    long_cache_write_rate_per_m: float | None = None
+    long_cache_read_rate_per_m: float | None = None
+    long_output_rate_per_m: float | None = None
 
 
 def rates_yaml_path() -> Path:
@@ -99,6 +104,26 @@ def _row_from_mapping(
     cache_read = _optional_nonneg_rate(raw, "cache_read_rate_per_m")
     if cache_write is _INVALID_OPTIONAL_RATE or cache_read is _INVALID_OPTIONAL_RATE:
         return None
+    long_threshold_raw = raw.get("long_prompt_threshold_tokens")
+    long_threshold: int | None = None
+    if long_threshold_raw is not None:
+        try:
+            long_threshold = int(long_threshold_raw)
+        except (TypeError, ValueError):
+            return None
+        if long_threshold < 0:
+            return None
+    long_input = _optional_nonneg_rate(raw, "long_input_rate_per_m")
+    long_cache_write = _optional_nonneg_rate(raw, "long_cache_write_rate_per_m")
+    long_cache_read = _optional_nonneg_rate(raw, "long_cache_read_rate_per_m")
+    long_output = _optional_nonneg_rate(raw, "long_output_rate_per_m")
+    if (
+        long_input is _INVALID_OPTIONAL_RATE
+        or long_cache_write is _INVALID_OPTIONAL_RATE
+        or long_cache_read is _INVALID_OPTIONAL_RATE
+        or long_output is _INVALID_OPTIONAL_RATE
+    ):
+        return None
     return ModelRateRow(
         model_id=model_id,
         input_rate_per_m=input_rate,
@@ -108,6 +133,15 @@ def _row_from_mapping(
         pinned=bool(raw.get("pinned")),
         cache_write_rate_per_m=cache_write if isinstance(cache_write, float) else None,
         cache_read_rate_per_m=cache_read if isinstance(cache_read, float) else None,
+        long_prompt_threshold_tokens=long_threshold,
+        long_input_rate_per_m=long_input if isinstance(long_input, float) else None,
+        long_cache_write_rate_per_m=(
+            long_cache_write if isinstance(long_cache_write, float) else None
+        ),
+        long_cache_read_rate_per_m=(
+            long_cache_read if isinstance(long_cache_read, float) else None
+        ),
+        long_output_rate_per_m=long_output if isinstance(long_output, float) else None,
     )
 
 
@@ -219,6 +253,11 @@ def _pricing_tuple(raw: dict[str, Any]) -> tuple[Any, ...]:
         bool(raw.get("pinned")),
         _coerce_rate(raw.get("cache_write_rate_per_m")),
         _coerce_rate(raw.get("cache_read_rate_per_m")),
+        raw.get("long_prompt_threshold_tokens"),
+        _coerce_rate(raw.get("long_input_rate_per_m")),
+        _coerce_rate(raw.get("long_cache_write_rate_per_m")),
+        _coerce_rate(raw.get("long_cache_read_rate_per_m")),
+        _coerce_rate(raw.get("long_output_rate_per_m")),
     )
 
 
@@ -440,4 +479,20 @@ def resolve_rate(
         row = merged.get(key)
         if row is not None:
             return row
+    return None
+
+
+def resolve_pinned_rate(
+    model_id: str | None,
+    *,
+    path: Path | None = None,
+) -> ModelRateRow | None:
+    """Exact ``model_id`` lookup on a pinned manual row only (no ``aliases:`` map)."""
+    if not model_id or not str(model_id).strip():
+        return None
+    key = str(model_id).strip()
+    manual_rows, _aliases = load_manual_rows(path)
+    row = manual_rows.get(key)
+    if row is not None and row.pinned:
+        return row
     return None
