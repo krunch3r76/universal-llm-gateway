@@ -1162,3 +1162,63 @@ def test_compact_failed_code_ref_surfaces_reason_not_live_answer(
     assert crv["probe_errors"] == ["connection refused"]
     assert crv["liveness"]["reason"] == "probe unreachable or returned no payload"
     assert "answer" not in crv["liveness"]
+
+
+def test_stamp_rewrite_before_recycle_labels_which_sha_is_authoritative(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Stamp rewritten while the process still serves the previous seal.
+
+    Source sync writes ``/app/.source_sync_stamp`` line 2 before the container
+    process recycles. ``reported_version`` cats that file live.
+    ``code_ref_validation`` reads ``/health`` ``code_version``, sealed once at
+    process import. Until recycle, the two SHAs differ. Liveness stays on the
+    process seal; the stamp stays the last sync write.
+    """
+    stamp_sha = "294372e0" + "a" * 32
+    seal_sha = "fe5abb39" + "b" * 32
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": stamp_sha,
+            "source": "docker:/app/.source_sync_stamp",
+            "denotes": "checkout_head_at_source_sync",
+            "source_sync_basis": "working_tree",
+            "source_sync_worktree_state": "clean",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref, activation_validation_id=None: {
+            "verdict": "not_running_committed_code",
+            "liveness": {
+                "answer": "no",
+                "observed_code_version": seal_sha,
+                "relation": "descendant-of-observed",
+                "reason": "sealed",
+                "observation": {"code_version": seal_sha, "probe_reachable": True},
+            },
+        },
+    )
+    result = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="mcp", code_ref="979dcded" + "c" * 32
+    )
+    evidence = result["services"][0]["version_evidence"]
+    assert evidence["agree"] is False
+    assert evidence["stamp_sha"] == stamp_sha
+    assert evidence["stamp_authority"] == "last_source_sync_write"
+    assert evidence["process_seal_sha"] == seal_sha
+    assert evidence["process_seal_authority"] == "process_start_code_version"
+    assert evidence["authoritative_for_liveness"] == "process_start_code_version"
