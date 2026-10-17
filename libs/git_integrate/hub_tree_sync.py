@@ -12,9 +12,39 @@ Paths outside the land diff are never named, so unrelated dirt stays.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+# Set while a post-move checkout is running so a nested reference-transaction
+# hook does not re-enter the repair.
+REPAIR_ENV = "GIW_MASTER_REF_REPAIR"
+
+# A reference-transaction hook inherits GIT_DIR from the worktree that ran
+# the ref update. ``git -C <hub>`` does not override that, so a lane
+# ``update-ref`` would checkout into the lane index and only half-update
+# the hub worktree. Every git call in this module names its repo with -C
+# and must not inherit those variables.
+_GIT_ENV_BLOCKLIST = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+)
+
+
+def _git_subprocess_env() -> dict[str, str]:
+    """Environment for ``git -C <explicit repo>`` with hook location vars removed."""
+    env = os.environ.copy()
+    for key in _GIT_ENV_BLOCKLIST:
+        env.pop(key, None)
+    return env
+
 
 _GIT_TIMEOUT = 30.0
 
@@ -45,6 +75,7 @@ def _probe_master_worktree(source_repo: str) -> tuple[str, str]:
             text=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=_git_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return "", "worktree-list-failed"
@@ -74,6 +105,7 @@ def _run_git(repo: str, *args: str) -> subprocess.CompletedProcess[str]:
             text=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=_git_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(
@@ -91,6 +123,7 @@ def _run_git_bytes(repo: str, *args: str) -> subprocess.CompletedProcess[bytes]:
             capture_output=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=_git_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(
@@ -208,6 +241,7 @@ def _blob_bytes(repo: str, sha: str, path: str) -> bytes | None:
             capture_output=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=_git_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -385,6 +419,121 @@ def paths_in_commit(source_repo: str, sha: str) -> list[str]:
                 seen.add(rel)
                 paths.append(rel)
     return paths
+
+
+def _rev_spec(repo: str, spec: str) -> str | None:
+    """Object name for ``spec``, or None when it does not resolve."""
+    proc = _run_git(repo, "rev-parse", "--verify", "--quiet", spec)
+    if proc.returncode != 0:
+        return None
+    value = proc.stdout.strip()
+    return value or None
+
+
+def _bytes_match_old_or_new(
+    current: bytes | None,
+    old_blob: bytes | None,
+    new_blob: bytes | None,
+) -> bool:
+    """True when the worktree is the pre-land blob, the incoming blob, or absent like either."""
+    return current == old_blob or current == new_blob
+
+
+def master_ref_move_refusal(source_repo: str, old_sha: str, new_sha: str) -> str | None:
+    """Refuse a master ref move that would clobber divergent hub bytes.
+
+    A path whose index already matches ``new_sha`` is a commit or merge that
+    has staged the incoming blob; later unstaged bytes on that path stay.
+    A path whose worktree still matches ``old_sha`` or already matches
+    ``new_sha`` is safe to repair after the ref moves. Any other bytes are
+    an operator edit. Returns a reason, or None when the move may proceed.
+    No checked-out master means there is no index to disagree with.
+    """
+    if not old_sha or not new_sha or old_sha == new_sha:
+        return None
+    checkout, probe_error = _probe_master_worktree(source_repo)
+    if probe_error:
+        return probe_error
+    if not checkout:
+        return None
+    entries = _changed_entries(source_repo, old_sha, new_sha)
+    if entries is None:
+        return "diff-failed"
+    divergent: list[str] = []
+    for kind, path in entries:
+        new_spec = f"{new_sha}:{path}"
+        index_oid = _rev_spec(checkout, f":{path}")
+        new_oid = _rev_spec(source_repo, new_spec)
+        if index_oid is not None and index_oid == new_oid:
+            continue
+        old_blob = None if kind == "A" else _blob_bytes(source_repo, old_sha, path)
+        new_blob = None if kind == "D" else _blob_bytes(source_repo, new_sha, path)
+        current = _file_bytes(checkout, path)
+        if _bytes_match_old_or_new(current, old_blob, new_blob):
+            continue
+        divergent.append(path)
+    if not divergent:
+        return None
+    return "divergent hub bytes: " + ", ".join(divergent)
+
+
+def repair_master_worktree(source_repo: str, old_sha: str, new_sha: str) -> str:
+    """Checkout landed paths that still hold the pre-move blob.
+
+    Call this after ``refs/heads/master`` has moved. Re-planning with
+    ``plan_hub_sync`` at that point treats the stale index as divergent
+    dirt and skips the checkout. This repair uses the old and new blobs
+    instead. Worktree bytes that match neither blob are left in place.
+    Returns porcelain of the paths it tried to update.
+    """
+    if os.environ.get(REPAIR_ENV) == "1":
+        return ""
+    if not old_sha or not new_sha or old_sha == new_sha:
+        return ""
+    checkout, probe_error = _probe_master_worktree(source_repo)
+    if probe_error:
+        return probe_error
+    if not checkout:
+        return ""
+    entries = _changed_entries(source_repo, old_sha, new_sha)
+    if not entries:
+        return ""
+    checkout_paths: list[str] = []
+    remove_paths: list[str] = []
+    for kind, path in entries:
+        new_oid = None if kind == "D" else _rev_spec(source_repo, f"{new_sha}:{path}")
+        index_oid = _rev_spec(checkout, f":{path}")
+        current = _file_bytes(checkout, path)
+        old_blob = None if kind == "A" else _blob_bytes(source_repo, old_sha, path)
+        new_blob = None if kind == "D" else _blob_bytes(source_repo, new_sha, path)
+        if not _bytes_match_old_or_new(current, old_blob, new_blob):
+            continue
+        if kind == "D":
+            if index_oid is None and current is None:
+                continue
+            remove_paths.append(path)
+            continue
+        if index_oid == new_oid and current == new_blob:
+            continue
+        checkout_paths.append(path)
+    if not checkout_paths and not remove_paths:
+        return ""
+    os.environ[REPAIR_ENV] = "1"
+    try:
+        watched = checkout_paths + remove_paths
+        if checkout_paths:
+            failed = _git_in_chunks(
+                checkout, ("checkout", new_sha, "--"), tuple(checkout_paths)
+            )
+            if failed:
+                return f"checkout-failed:{failed}"
+        if remove_paths:
+            failed = _git_in_chunks(checkout, ("rm", "-f", "--"), tuple(remove_paths))
+            if failed:
+                return f"rm-failed:{failed}"
+        return porcelain_for_paths(checkout, watched)
+    finally:
+        os.environ.pop(REPAIR_ENV, None)
 
 
 def hub_porcelain_for_sha(source_repo: str, sha: str) -> str | None:

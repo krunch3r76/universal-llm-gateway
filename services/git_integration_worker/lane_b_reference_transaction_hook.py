@@ -1,9 +1,15 @@
 """``reference-transaction`` hook logic (Lane-B forward-only git integrity).
 
-Invoked from ``hooks/reference-transaction`` during the ``prepared`` phase only.
+Invoked from ``hooks/reference-transaction`` during ``prepared`` and ``committed``.
 Always refuses non-fast-forward updates to existing ``refs/heads/*`` refs from
 any worktree (hub or linked). Ref creates (``oldrev`` all-zero) and branch
 deletes (``newrev`` all-zero) stay allowed.
+
+A fast-forward of ``refs/heads/master`` from any worktree moves the hub ref
+without updating the checked-out index (``git update-ref``). ``prepared``
+refuses that move when a landed path holds bytes that are neither the old
+nor the new blob. ``committed`` checks out the landed paths that still hold
+the pre-move blob so the hub index matches HEAD.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from pathlib import Path
 
 _ZERO_OID = "0" * 40
 _REFS_HEADS_PREFIX = "refs/heads/"
+_MASTER_REF = "refs/heads/master"
 _HEAD_REF = "HEAD"
 _DISPATCH_ENV = "CURSOR_SDK_DISPATCH_ID"
 _GIT_TIMEOUT_S = 30.0
@@ -114,6 +121,37 @@ def refuse_reason(
     return None
 
 
+def _master_ff_updates(repo: Path, updates: list[RefUpdate]) -> list[RefUpdate]:
+    """Fast-forward moves of ``refs/heads/master`` in this transaction."""
+    found: list[RefUpdate] = []
+    for upd in updates:
+        if upd.ref_name != _MASTER_REF:
+            continue
+        if upd.oldrev == _ZERO_OID or upd.newrev == _ZERO_OID:
+            continue
+        if upd.oldrev == upd.newrev:
+            continue
+        if not is_ancestor(repo, oldrev=upd.oldrev, newrev=upd.newrev):
+            continue
+        found.append(upd)
+    return found
+
+
+def _emit_refused(dispatch_id: str, repo: Path, ref_name: str) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_hub_checkout_refused,
+    )
+
+    try:
+        emit_sdk_lane_hub_checkout_refused(
+            dispatch_id=dispatch_id,
+            toplevel=str(repo.resolve()),
+            ref_name=ref_name,
+        )
+    except Exception:
+        pass
+
+
 def run_reference_transaction_hook(
     *,
     state: str,
@@ -122,7 +160,9 @@ def run_reference_transaction_hook(
     repo: Path | None = None,
 ) -> int:
     """Hook entry: return process exit code (0 allow, HOOK_POLICY_REFUSE_EXIT refuse)."""
-    if state != "prepared":
+    if state not in {"prepared", "committed"}:
+        return 0
+    if os.environ.get("GIW_MASTER_REF_REPAIR") == "1":
         return 0
 
     cwd = repo or Path.cwd()
@@ -131,24 +171,37 @@ def run_reference_transaction_hook(
         return 0
 
     dispatch_marker = (dispatch_id or "").strip() or "none"
-    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_marker)
-    if offending is None:
+    if state == "committed":
+        from git_integrate.hub_tree_sync import repair_master_worktree
+
+        for upd in _master_ff_updates(cwd, updates):
+            try:
+                repair_master_worktree(str(cwd), upd.oldrev, upd.newrev)
+            except Exception:
+                return 0
         return 0
 
-    from services.git_integration_worker.cursor_sdk_events import (
-        emit_sdk_lane_hub_checkout_refused,
-    )
+    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_marker)
+    if offending is not None:
+        _emit_refused(dispatch_marker, cwd, offending.ref_name)
+        return HOOK_POLICY_REFUSE_EXIT
 
-    try:
-        emit_sdk_lane_hub_checkout_refused(
-            dispatch_id=dispatch_marker,
-            toplevel=str(cwd.resolve()),
-            ref_name=offending.ref_name,
+    from git_integrate.hub_tree_sync import master_ref_move_refusal
+
+    for upd in _master_ff_updates(cwd, updates):
+        try:
+            reason = master_ref_move_refusal(str(cwd), upd.oldrev, upd.newrev)
+        except Exception:
+            return 0
+        if not reason:
+            continue
+        print(
+            f"reference-transaction: refusing {upd.ref_name} {reason}",
+            file=sys.stderr,
         )
-    except Exception:
-        pass
-
-    return HOOK_POLICY_REFUSE_EXIT
+        _emit_refused(dispatch_marker, cwd, upd.ref_name)
+        return HOOK_POLICY_REFUSE_EXIT
+    return 0
 
 
 def main() -> int:

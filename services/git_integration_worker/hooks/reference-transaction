@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Lane-B forward-only guard (reference-transaction, prepared phase only).
+# Lane-B forward-only guard, plus hub-index repair after a master ref move.
+# prepared: refuse non-ff and divergent hub bytes. committed: checkout the
+# landed paths that still hold the pre-move blob. Other phases are no-ops.
 set -euo pipefail
 
 state="${1:-}"
-if [[ "${state}" != "prepared" ]]; then
+if [[ "${state}" != "prepared" && "${state}" != "committed" ]]; then
   exit 0
 fi
 
