@@ -25,6 +25,7 @@ from ...turns_models import (
 )
 from . import router
 from .detail import _thread_detail
+from .send_prep import _raise_if_unexpanded_file_token
 
 
 @router.get(
@@ -95,8 +96,11 @@ async def dispatch_claim_and_post_route(
     transitions admitted->active in one SQLite write transaction.
 
     Returns 409 with code=pending_shell_contention when the CAS guard fails.
+    A whole-value ``$file:`` body is refused with 422 before the claim
+    transaction admits the shell or inserts the pointer turn.
     """
     thread_id = normalize_thread_id(thread_id)
+    _raise_if_unexpanded_file_token(body.body)
     try:
         row = claim_and_post_turn(
             thread_id=thread_id,
@@ -129,8 +133,13 @@ async def dispatch_claim_and_post_route(
 async def dispatch_admit_and_post_route(
     thread_id: str, body: DispatchAdmitAndPost
 ) -> ThreadDetail:
-    """Atomically register dispatch link + pointer turn (no pending-shell CAS)."""
+    """Atomically register dispatch link + pointer turn (no pending-shell CAS).
+
+    The stored pointer text is the caller-supplied body. A whole-value
+    ``$file:`` token is refused with 422 before the link or turn is written.
+    """
     thread_id = normalize_thread_id(thread_id)
+    _raise_if_unexpanded_file_token(body.body)
     try:
         row = admit_and_post_turn(
             thread_id=thread_id,
