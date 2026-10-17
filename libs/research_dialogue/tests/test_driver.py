@@ -185,6 +185,60 @@ def test_run_driver_writes_ledger_json(tmp_path: Path, monkeypatch: pytest.Monke
     assert ledger_max_id(ledger) == 2
 
 
+def test_run_driver_close_abort_on_pre_send_exit_3(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir(parents=True, exist_ok=True)
+    (session / "state.json").write_text(
+        json.dumps(
+            {
+                "turn_count": 1,
+                "committed_S0": "0",
+                "window_start": "w",
+                "ledger_instance_id": "i",
+                "deliverable": "/dev/null",
+                "minor_notes": str(session / "minor.md"),
+                "running_billed": "0.20",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (session / "minor.md").write_text("m", encoding="utf-8")
+    (session / "turn-01.json").write_text(
+        json.dumps({"billed_usd": "0.20", "usage": {}, "stop_reason": "end_turn", "send_ok": True}),
+        encoding="utf-8",
+    )
+    latched = Snapshot(
+        as_of_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        healthy=True,
+        committed_usd=Decimal("0"),
+        open_reservations_usd=Decimal("0"),
+        window_start="w",
+        ledger_instance_id="i",
+        latch_active=True,
+        raw={"healthy": True, "ledger_path": str(tmp_path / "ledger.sqlite")},
+    )
+    ledger = tmp_path / "ledger.sqlite"
+    _init_ledger(ledger)
+
+    code, summary = run_driver(
+        "close",
+        session,
+        stop_reason="stall",
+        expect_stargate_pid="1",
+        expect_cloud_proxy_pid="2",
+        ss_output="pid=1",
+        pidfile_text="2",
+        read_fn=lambda: latched,
+        sleep_after=lambda _s: None,
+        open_wait_max_s=0,
+    )
+    assert code == 3
+    abort_files = list(session.glob("turn-*-abort-*-ledger.json"))
+    assert len(abort_files) == 1
+    assert not (session / "close-01-ledger.json").exists()
+    assert summary.get("driver_stop") is None
+
+
 def test_run_driver_abort_on_pre_send_exit_3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     session = tmp_path / "session"
     _seed_session(session, turn_count=0)

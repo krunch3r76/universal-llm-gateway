@@ -52,7 +52,7 @@ def _ledger_model(model: str) -> str:
 
 def _entries_for_model(entries: list[dict[str, Any]], model: str) -> list[dict[str, Any]]:
     want = _ledger_model(model)
-    return [e for e in entries if e.get("model") == want or e.get("model") == model]
+    return [e for e in entries if e.get("model") == want]
 
 
 def _pair_by_request_id(entries: list[dict[str, Any]], model: str) -> dict[str, dict[str, Any]]:
@@ -701,108 +701,112 @@ def run_close(
     last_committed, last_inst, last_max_id = _post_baseline(state)
     if not no_p4:
         pre = read_fn()
-        if check_ok(
+        pre_reason = check_ok(
             pre,
             s0,
             last_post_committed=last_committed,
             last_post_ledger_instance_id=last_inst,
             last_post_ledger_max_id=last_max_id,
             pre_ledger_max_id=_pre_ledger_max_id(pre),
-        ) is None:
-            turn_index = int(state.get("turn_count", 0)) + 1
-            history = list(state.get("history") or [])
-            body = build_messages_body(
-                turn_index=turn_index,
-                history=history,
-                closing=True,
-                stop_reason=stop_reason,
-                stream=stream,
+        )
+        if pre_reason:
+            out = {"stop_reason": pre_reason, "send_skipped": True}
+            print(json.dumps(out))
+            return 3, out
+        turn_index = int(state.get("turn_count", 0)) + 1
+        history = list(state.get("history") or [])
+        body = build_messages_body(
+            turn_index=turn_index,
+            history=history,
+            closing=True,
+            stop_reason=stop_reason,
+            stream=stream,
+        )
+        assert_no_forbidden_keys(body)
+        send_result = _invoke_send(send_fn, body, stream=stream)
+        _write_turn_json(
+            session_dir,
+            turn_index=turn_index,
+            body=body,
+            send_result=send_result,
+            billed=Decimal("0"),
+            running=_dec(state.get("running_billed", "0")),
+            ledger_delta=Decimal("0"),
+            pre=pre,
+            post=pre,
+            post_reason=None,
+            matched=None,
+            closing=True,
+            partial=True,
+        )
+        post = pre
+        post_reason = None
+        billed = Decimal("0")
+        missing: list[str] = []
+        unknown: list[str] = []
+        running = _dec(state.get("running_billed", "0"))
+        ledger_delta = Decimal("0")
+        matched = None
+        try:
+            post = read_fn()
+            post_reason = check_ok(
+                post,
+                s0,
+                last_post_committed=last_committed,
+                last_post_ledger_instance_id=last_inst,
+                last_post_ledger_max_id=last_max_id,
+                pre_ledger_max_id=_pre_ledger_max_id(post),
             )
-            assert_no_forbidden_keys(body)
-            send_result = _invoke_send(send_fn, body, stream=stream)
-            _write_turn_json(
-                session_dir,
-                turn_index=turn_index,
-                body=body,
-                send_result=send_result,
-                billed=Decimal("0"),
-                running=_dec(state.get("running_billed", "0")),
-                ledger_delta=Decimal("0"),
-                pre=pre,
-                post=pre,
-                post_reason=None,
-                matched=None,
-                closing=True,
-                partial=True,
-            )
-            post = pre
-            post_reason = None
-            billed = Decimal("0")
-            missing: list[str] = []
-            unknown: list[str] = []
-            running = _dec(state.get("running_billed", "0"))
-            ledger_delta = Decimal("0")
-            matched = None
-            try:
-                post = read_fn()
-                post_reason = check_ok(
-                    post,
-                    s0,
-                    last_post_committed=last_committed,
-                    last_post_ledger_instance_id=last_inst,
-                    last_post_ledger_max_id=last_max_id,
-                    pre_ledger_max_id=_pre_ledger_max_id(post),
-                )
-                if send_result.ok:
-                    billed, missing, unknown = billed_usd(send_result.usage, model=body["model"])
-                running = _dec(state.get("running_billed", "0")) + billed
-                ledger_delta = _ledger_delta(_dec(state["committed_S0"]), post)
-                if send_result.ok:
-                    pairs = _pair_by_request_id(post.last_entries, body["model"])
-                    for info in pairs.values():
-                        if info.get("commit_row"):
-                            matched = info["commit_row"]
-                            break
-            except Exception as exc:  # noqa: BLE001
-                post_reason = post_reason or f"post_read_failed:{type(exc).__name__}"
-            _write_turn_json(
-                session_dir,
-                turn_index=turn_index,
-                body=body,
-                send_result=send_result,
-                billed=billed,
-                running=running,
-                ledger_delta=ledger_delta,
-                pre=pre,
-                post=post,
-                post_reason=post_reason,
-                matched=matched,
-                closing=True,
-                partial=False,
-                billed_missing=missing,
-                billed_unknown=unknown,
-            )
-            p4_text = send_result.text
-            reply_path = session_dir / f"turn-{turn_index:02d}-reply.txt"
-            reply_path.write_text(send_result.text, encoding="utf-8")
-            state["turn_count"] = turn_index
-            state["running_billed"] = str(running)
-            state["final_post_snapshot"] = _snap_dict(post)
-            state["stop_reason"] = stop_reason
-            state["closing_recorded"] = True
-            _store_post_baseline(state, post)
-            store.save(state)
-            session_line = {
-                "mode": "close",
-                "turn": turn_index,
-                "billed": str(billed),
-                "running_sum": str(running),
-                "ledger_delta": str(ledger_delta),
-                "researcher_status": "closing",
-                "stop_reason": stop_reason,
-                "reply_path": str(reply_path),
-                "send_ok": send_result.ok,
-            }
+            if send_result.ok:
+                billed, missing, unknown = billed_usd(send_result.usage, model=body["model"])
+            running = _dec(state.get("running_billed", "0")) + billed
+            ledger_delta = _ledger_delta(_dec(state["committed_S0"]), post)
+            if send_result.ok:
+                pairs = _pair_by_request_id(post.last_entries, body["model"])
+                for info in pairs.values():
+                    if info.get("commit_row"):
+                        matched = info["commit_row"]
+                        break
+        except Exception as exc:  # noqa: BLE001
+            post_reason = post_reason or f"post_read_failed:{type(exc).__name__}"
+        _write_turn_json(
+            session_dir,
+            turn_index=turn_index,
+            body=body,
+            send_result=send_result,
+            billed=billed,
+            running=running,
+            ledger_delta=ledger_delta,
+            pre=pre,
+            post=post,
+            post_reason=post_reason,
+            matched=matched,
+            closing=True,
+            partial=False,
+            billed_missing=missing,
+            billed_unknown=unknown,
+        )
+        p4_text = send_result.text
+        reply_path = session_dir / f"turn-{turn_index:02d}-reply.txt"
+        reply_path.write_text(send_result.text, encoding="utf-8")
+        state["turn_count"] = turn_index
+        state["running_billed"] = str(running)
+        state["final_post_snapshot"] = _snap_dict(post)
+        state["stop_reason"] = stop_reason
+        state["closing_recorded"] = True
+        _store_post_baseline(state, post)
+        store.save(state)
+        session_line = {
+            "mode": "close",
+            "turn": turn_index,
+            "billed": str(billed),
+            "running_sum": str(running),
+            "ledger_delta": str(ledger_delta),
+            "researcher_status": "closing",
+            "stop_reason": stop_reason,
+            "reply_path": str(reply_path),
+            "send_ok": send_result.ok,
+        }
     state = store.load()
     _write_design_note(session_dir, state, stop_reason, p4_text)
     _write_session_md(session_dir, state, stop_reason)

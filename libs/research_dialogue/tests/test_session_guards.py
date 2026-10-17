@@ -65,6 +65,27 @@ def test_run_close_refuses_second_closing(tmp_path: Path) -> None:
     assert out.get("send_skipped")
 
 
+def test_run_close_skips_p4_on_unhealthy_pre_read(tmp_path: Path) -> None:
+    _seed(tmp_path)
+
+    def read_fn() -> Snapshot:
+        return Snapshot(
+            as_of_utc=datetime(2026, 1, 1, tzinfo=UTC),
+            healthy=True,
+            committed_usd=Decimal("0"),
+            open_reservations_usd=Decimal("0"),
+            window_start="w",
+            ledger_instance_id="i",
+            latch_active=True,
+        )
+
+    code, out = run_close(tmp_path, stop_reason="stall", read_fn=read_fn)
+    assert code == 3
+    assert out.get("send_skipped")
+    assert out.get("stop_reason") == "ledger_latched"
+    assert not list(tmp_path.glob("turn-*.json"))
+
+
 def test_turn_json_records_billed_breakdown(tmp_path: Path) -> None:
     _seed(
         tmp_path,
