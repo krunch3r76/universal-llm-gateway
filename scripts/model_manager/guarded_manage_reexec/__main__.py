@@ -26,11 +26,11 @@ import subprocess
 import traceback
 from pathlib import Path
 
-from .deferred_execute import (
+from .deferred_execute import run_deferred_recycle
+from .deferred_gate import (
     DEFAULT_WAIT_PARENT_TIMEOUT_S,
     DeferredRecycleContext,
     report_deferred_crash,
-    run_deferred_recycle,
 )
 from .detach import RESULT_PATH, launch_detach
 from .result import GuardedReexecResult
