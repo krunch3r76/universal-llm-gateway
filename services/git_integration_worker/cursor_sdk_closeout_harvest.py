@@ -68,17 +68,29 @@ def _accepted_status_line(line: str) -> bool:
     return token in _STATUS_TOKENS
 
 
+def _rewrite_rejected_leading_status(section: str) -> str:
+    if not section.startswith("status:"):
+        return section
+    leading, sep, rest = section.partition("\n")
+    if _accepted_status_line(leading):
+        return section
+    return _UNSTATED_STATUS_LINE + (sep + rest if sep else "\n")
+
+
 def _harvest_field_lines(content: str) -> tuple[str, str | None, str]:
     """Status, optional VERDICT, and residue to place in the harvest preamble.
 
-    A leading ``status:`` line is the wrapper prefix (``full_result_text``
-    degraded). A single unfenced line is copied up. Fenced lines are ignored.
+    A leading ``status:`` line is kept only when its token is allowed.
+    ``full_result_text``'s ``status: degraded`` qualifies. A non-token leading
+    line becomes ``status: unstated`` so the receipt stamp can replace it.
+    A single unfenced line is copied up. Fenced lines are ignored.
     Distinct unfenced hits are not collapsed to the last one: status and
     residue fall back to sentinels the receipt can replace, and VERDICT is
     omitted so a quoted artifact cannot become the only line maestro reads.
     """
     if content.startswith("status:"):
-        status = content.split("\n", 1)[0]
+        leading = content.split("\n", 1)[0]
+        status = leading if _accepted_status_line(leading) else _UNSTATED_STATUS_LINE
     else:
         candidate = _unique_line(_unfenced_line_starts(_STATUS_LINE_RE, content))
         status = (
@@ -142,27 +154,36 @@ def bound_closeout_harvest_preamble(content: str) -> str:
     The first section is the preamble before the first ATX heading. When that
     preamble already fits and already carries status, residue, and VERDICT
     (only if the model emitted one), the bytes are unchanged. A short preamble
-    that is only missing lines gets those lines appended, so an existing
-    ``status:`` prefix stays at column 0. A preamble over the cap is closed
+    that is only missing lines gets those lines appended. An allowed
+    ``status:`` prefix stays at column 0. A non-token leading line becomes
+    ``status: unstated``. A preamble over the cap is closed
     with ``## closeout_body`` and the original bytes follow that heading.
     """
     heading_at = _first_atx_offset(content)
-    section = content if heading_at is None else content[:heading_at]
-    missing = _missing_harvest_lines(section, content)
+    raw_section = content if heading_at is None else content[:heading_at]
+    section = _rewrite_rejected_leading_status(raw_section)
+    normalized = (
+        content
+        if section == raw_section
+        else section
+        if heading_at is None
+        else section + content[heading_at:]
+    )
+    missing = _missing_harvest_lines(section, normalized)
     if len(section) <= _HARVEST_SECTION_CAP and not missing:
-        return content
+        return normalized
     if len(section) <= _HARVEST_SECTION_CAP and missing:
-        spliced = _splice_harvest_lines(content, section, heading_at, missing)
+        spliced = _splice_harvest_lines(normalized, section, heading_at, missing)
         if spliced is not None:
             return spliced
-    status, verdict, residue = _harvest_field_lines(content)
+    status, verdict, residue = _harvest_field_lines(normalized)
     lines = [status]
     if verdict:
         lines.append(verdict)
     lines.append(residue)
     preamble = _fit_preamble(lines)
-    if content.startswith(f"{preamble}{_CLOSEOUT_BODY_HEADING}"):
-        return content
+    if normalized.startswith(f"{preamble}{_CLOSEOUT_BODY_HEADING}"):
+        return normalized
     return f"{preamble}{_CLOSEOUT_BODY_HEADING}\n\n{content}"
 
 

@@ -1231,6 +1231,32 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     assert "status: unstated" in code_first.splitlines()
     assert "status: ExecutionStatus" not in code_first.splitlines()
 
+    leading_code = "status: ExecutionStatus\n" + ("p" * 5000) + "\n"
+    leading_first = _closeout_first_section(
+        write_repo_sidecar(
+            tmp_path, "disp-leading-code-status", leading_code
+        ).read_text(encoding="utf-8")
+    )
+    assert "status: unstated" in leading_first.splitlines()
+    assert "status: ExecutionStatus" not in leading_first.splitlines()
+
+    short_code = "status: ExecutionStatus\nresidue: none\n"
+    short_first = _closeout_first_section(
+        write_repo_sidecar(
+            tmp_path, "disp-leading-code-status-short", short_code
+        ).read_text(encoding="utf-8")
+    )
+    assert short_first.splitlines()[0] == "status: unstated"
+    assert "status: ExecutionStatus" not in short_first.splitlines()
+
+    kept = "status: complete\nresidue: none\n"
+    kept_first = _closeout_first_section(
+        write_repo_sidecar(tmp_path, "disp-leading-complete", kept).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert kept_first.splitlines()[0] == "status: complete"
+
 
 def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     tmp_path: Path,
