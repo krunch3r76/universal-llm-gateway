@@ -602,3 +602,240 @@ def test_cancel_discard_terminate_reads_producer_cancelled(tmp_path) -> None:
         assert body["producer"]["terminal_status"] == "cancelled"
         assert body["producer"]["liveness_reason"] == "terminal_status"
         assert body["producers"] == [body["producer"]]
+
+
+def _post_closeout(client: TestClient, thread_id: str) -> None:
+    posted = client.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor-sdk",
+            "to": "cursor",
+            "subject": "cursor-sdk CLOSEOUT abc contract=implement",
+            "body": '{"status": "partial"}',
+            "after_turn": 1,
+        },
+    )
+    assert posted.status_code == 201
+
+
+def test_wait_status_done_on_terminal_cursor_sdk_producer_is_422(tmp_path) -> None:
+    """Pure cursor-sdk-generate plus a CLOSEOUT subject refuses status:done.
+
+    The break is a terminal generate producer whose subject never starts with
+    status:done: the wait must 422 before the poll, with fix_hint naming
+    first_reply_from. Covers every-link generate and the tag with no links.
+    """
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-status-done-generate",
+                "from": "cursor",
+                "to": "cursor-sdk",
+                "subject": "implement",
+                "body": "packet",
+                "tags": ["cursor-sdk-generate"],
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-generate-only",
+            pipeline_id="cursor-sdk-generate",
+        )
+        _post_closeout(client, thread_id)
+        resp = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["error"] == "cursor_sdk_status_done_unsatisfiable"
+        assert "first_reply_from" in detail["fix_hint"]
+        assert "complete" not in detail
+
+        tagged = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-status-done-generate-tag",
+                "from": "cursor",
+                "to": "cursor-sdk",
+                "subject": "implement",
+                "body": "packet",
+                "tags": ["cursor-sdk-generate"],
+            },
+        )
+        assert tagged.status_code == 201
+        tag_id = tagged.json()["thread"]["id"]
+        _post_closeout(client, tag_id)
+        tag_resp = client.get(
+            f"/threads/{tag_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert tag_resp.status_code == 422
+        assert "first_reply_from" in tag_resp.json()["detail"]["fix_hint"]
+
+
+def test_wait_status_done_already_met_on_generate_thread_is_complete(
+    tmp_path,
+) -> None:
+    """An existing status:done subject completes before the generate refuse.
+
+    The break is refusing a pure generate thread whose later turn already
+    matches the subject-prefix matcher: that wait must return complete.
+    """
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-status-done-already-met",
+                "from": "cursor",
+                "to": "cursor-sdk",
+                "subject": "implement",
+                "body": "packet",
+                "tags": ["cursor-sdk-generate"],
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-generate-met",
+            pipeline_id="cursor-sdk-generate",
+        )
+        done = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor-sdk",
+                "to": "cursor",
+                "subject": "status:done — manual",
+                "body": "done",
+                "after_turn": 1,
+            },
+        )
+        assert done.status_code == 201
+        resp = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["complete"] is True
+        assert body["qualifying_reply_turn"] == 2
+
+        past = client.get(
+            f"/threads/{thread_id}/wait?after_turn=2&wait=0&completion=status:done"
+        )
+        assert past.status_code == 422
+        assert "first_reply_from" in past.json()["detail"]["fix_hint"]
+
+
+def test_wait_status_done_mixed_producer_does_not_422(tmp_path) -> None:
+    """A generate link plus another producer falls through while status:done is unmet.
+
+    The break is refusing on any cursor-sdk-generate link. The GET runs before
+    a status:done subject exists, so the matcher does not return first and
+    wait=0 is a normal incomplete snapshot rather than 422.
+    """
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-status-done-mixed",
+                "from": "cursor",
+                "to": "cursor-auto",
+                "subject": "implement",
+                "body": "packet",
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-mixed-generate",
+            pipeline_id="cursor-sdk-generate",
+        )
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-mixed-other",
+            pipeline_id="cdp-generate",
+        )
+        unmet = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert unmet.status_code == 200
+        assert unmet.json()["complete"] is False
+        assert unmet.json()["status"] == "no_new_turn"
+        done = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor-auto",
+                "to": "cursor",
+                "subject": "status:done — other producer",
+                "body": "done",
+                "after_turn": 1,
+            },
+        )
+        assert done.status_code == 201
+        resp = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["complete"] is True
+        assert body["qualifying_reply_turn"] == 2
+
+
+def test_wait_status_done_without_generate_producer_completes(tmp_path) -> None:
+    """Empty links without the generate tag stay on the normal wait.
+
+    The break is vacuous all() on an empty link list. The GET runs before any
+    status:done subject, so the matcher does not return first and wait=0 is
+    a normal incomplete snapshot rather than 422.
+    """
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-status-done-auto",
+                "from": "web-anthropic",
+                "to": "cursor-auto",
+                "subject": "request",
+                "body": "DIRECTIVE",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        unmet = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert unmet.status_code == 200
+        assert unmet.json()["complete"] is False
+        assert unmet.json()["status"] == "no_new_turn"
+        done = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor-auto",
+                "to": "web-anthropic",
+                "subject": "status:done — x",
+                "body": "done",
+                "after_turn": 1,
+            },
+        )
+        assert done.status_code == 201
+        resp = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["complete"] is True
