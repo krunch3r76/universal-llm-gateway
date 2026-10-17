@@ -347,6 +347,7 @@ def finalize_stream_credit(
         and _stream_usage_complete(usage)
     ):
         floor = tap.unknown_dict_usage or tap.output_details_undercount_risk
+        commit(request_id, usage, floor=floor)
         if floor:
             floor_reason = (
                 "unknown_dict_usage"
@@ -356,12 +357,11 @@ def finalize_stream_credit(
             _emit_stream_credit_floored(
                 request_id, reason=floor_reason, tap=tap, model=None
             )
-        commit(request_id, usage, floor=floor)
         return
     reason = "stream_cancelled" if cancelled else "stream_abnormal_end"
     if tap.parse_error:
         reason = "stream_unparseable_frame"
     if exc is not None:
         reason = f"stream_error:{type(exc).__name__}"
-    _emit_stream_credit_floored(request_id, reason=reason, tap=tap, model=None)
     commit(request_id, tap.usage, floor=True)
+    _emit_stream_credit_floored(request_id, reason=reason, tap=tap, model=None)
