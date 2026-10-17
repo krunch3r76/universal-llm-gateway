@@ -79,17 +79,17 @@ def test_first_zero_usage_commit_writes_finalize_row(tmp_path: Path) -> None:
     assert Decimal(str(commits[0]["usd"])) == Decimal("0")
 
 
-def test_spend_since_as_of_includes_prior_window(tmp_path: Path) -> None:
+def test_spend_since_as_of_balance_cap_uses_post_as_of_spend_only(tmp_path: Path) -> None:
     cfg = _make_cfg(
         tmp_path,
         available_balance=AvailableBalanceConfig(
-            usd=Decimal("200"),
-            as_of="2026-10-01T00:00:00+00:00",
+            usd=Decimal("2.00"),
+            as_of="2026-09-20T00:00:00+00:00",
             owner="kaywan",
         ),
     )
     policy = CreditPolicy(cfg)
-    t_prev = datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
+    t_prev = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
     assert isinstance(
         policy.admit(
             "prev-win",
@@ -100,10 +100,45 @@ def test_spend_since_as_of_includes_prior_window(tmp_path: Path) -> None:
         ),
         Admit,
     )
-    policy.commit_full("prev-win", "done", now=t_prev)
+    policy.commit(
+        "prev-win",
+        {
+            "input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 100_000,
+        },
+        now=t_prev,
+    )
     t_now = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
     st = policy.status(now=t_now)
-    assert st["balance_cap_usd"] < Decimal("200")
+    assert st["balance_cap_usd"] == Decimal("1")
+    first = policy.admit(
+        "cap-one",
+        "anthropic/claude-sonnet-5",
+        _body_1_usd_on_sonnet(),
+        token_count=0,
+        now=t_now,
+    )
+    assert isinstance(first, Admit)
+    policy.commit(
+        "cap-one",
+        {
+            "input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 100_000,
+        },
+        now=t_now,
+    )
+    second = policy.admit(
+        "cap-two",
+        "anthropic/claude-sonnet-5",
+        _body_1_usd_on_sonnet(),
+        token_count=0,
+        now=t_now,
+    )
+    assert not isinstance(second, Admit)
 
 
 def test_ledger_schema_mismatch_refused(tmp_path: Path) -> None:

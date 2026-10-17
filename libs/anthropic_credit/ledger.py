@@ -256,6 +256,7 @@ class CreditLedger:
     def _connect(self) -> sqlite3.Connection:
         if not self._path.is_file():
             raise LedgerUnavailable(f"ledger file missing: {self._path}")
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(
                 f"file:{self._path}?mode=rw",
@@ -265,13 +266,21 @@ class CreditLedger:
             )
             conn.row_factory = sqlite3.Row
             conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+            CreditLedger._ensure_openable(conn)
             conn.execute(_WINDOW_INDEX_SQL)
             conn.execute(_REQUEST_KIND_INDEX_SQL)
             conn.execute(_CREATED_AT_INDEX_SQL)
             conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
-            CreditLedger._ensure_openable(conn)
             return conn
+        except LedgerUnavailable:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.close()
+            raise
         except (sqlite3.Error, OSError) as exc:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.close()
             raise LedgerUnavailable(f"cannot open ledger {self._path}: {exc}") from exc
 
     def run_immediate(self, fn: Callable[[sqlite3.Connection], T]) -> T:
@@ -384,12 +393,15 @@ class CreditLedger:
     ) -> Decimal:
         """Sum committed and open-reserve USD for all rows with activity since ``as_of``."""
         as_of_dt = as_of.astimezone(UTC)
+        as_of_iso = as_of_dt.isoformat()
         rows = conn.execute(
             """
             SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
             FROM entries
+            WHERE created_at >= ?
             ORDER BY id ASC
-            """
+            """,
+            (as_of_iso,),
         ).fetchall()
 
         def _parse_usd(row: sqlite3.Row) -> Decimal:
@@ -418,16 +430,32 @@ class CreditLedger:
             elif kind == "release" and req_id:
                 released_req_ids.add(req_id)
 
+        def _row_at_or_after_as_of(row: sqlite3.Row | None) -> bool:
+            if row is None:
+                return False
+            return parse_utc_iso(row["created_at"]) >= as_of_dt
+
+        def _request_touches_as_of(
+            req_id: str,
+            *,
+            reserve_row: sqlite3.Row | None,
+            commit_rows: list[sqlite3.Row],
+        ) -> bool:
+            if _row_at_or_after_as_of(reserve_row):
+                return True
+            return any(_row_at_or_after_as_of(c) for c in commit_rows)
+
         spend = Decimal("0")
         for req_id, commit_rows in commits_by_req.items():
             reserve_row = reserve_by_req.get(req_id)
             commit_sum = sum(_parse_usd(c) for c in commit_rows)
-            ref = reserve_row if reserve_row is not None else commit_rows[-1]
-            if parse_utc_iso(ref["created_at"]) >= as_of_dt:
+            if _request_touches_as_of(
+                req_id, reserve_row=reserve_row, commit_rows=commit_rows
+            ):
                 spend += commit_sum
 
         for c_row in unlinked_commits:
-            if parse_utc_iso(c_row["created_at"]) >= as_of_dt:
+            if _row_at_or_after_as_of(c_row):
                 spend += _parse_usd(c_row)
 
         for req_id, r_row in reserve_by_req.items():
@@ -435,7 +463,7 @@ class CreditLedger:
                 continue
             if commits_by_req.get(req_id):
                 continue
-            if parse_utc_iso(r_row["created_at"]) >= as_of_dt:
+            if _row_at_or_after_as_of(r_row):
                 spend += _parse_usd(r_row)
 
         return spend
