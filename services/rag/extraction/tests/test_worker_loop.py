@@ -60,7 +60,7 @@ async def _property_index(tmp_path: Path) -> PropertyIndex:
 async def test_iteration_timeout_failures_exhaust_queue_attempt_budget(
     tmp_path: Path,
 ) -> None:
-    """Repeated iteration_timeout failures hit attempts == _MAX_QUEUE_ATTEMPTS then exhausted."""
+    """Map-timeout failures at the fast budget cool off; the fast cap does not claim them."""
     idx = await _property_index(tmp_path)
     try:
         await idx.enqueue_extraction("/cursor-fc9.messages.json")
@@ -92,7 +92,7 @@ async def test_iteration_timeout_failures_exhaust_queue_attempt_budget(
         assert exhausted == []
         rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
         assert len(rows) == 1
-        assert rows[0].state == "exhausted"
+        assert rows[0].state == "cooling_off"
         assert rows[0].attempts == _MAX_QUEUE_ATTEMPTS
     finally:
         await idx.stop()
@@ -336,7 +336,7 @@ async def test_worker_loop_read_error_probe_down_exhausts_attempt_budget(
         assert exhausted == []
         rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
         assert len(rows) == 1
-        assert rows[0].state == "exhausted"
+        assert rows[0].state == "dead_letter"
         assert rows[0].attempts == _MAX_QUEUE_ATTEMPTS
     finally:
         await idx.stop()

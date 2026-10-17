@@ -17,6 +17,7 @@ from ._spec import (
     _row_str,
     defaultdict,
 )
+from .queue_policy import queue_state_case_sql
 
 
 class _PropertyIndexPart09:
@@ -230,35 +231,16 @@ class _PropertyIndexPart09:
         - queue_row: dict with 'state' if in extraction_queue, else None
         - contextualized_chunks: count of cached context rows via articles.content_hash join
 
-        queue_state CASE mirrors list_extraction_queue_rows (max_attempts=5).
-        capacity_blocked is a sub-state of cooling_off where last_failure_category='capacity'.
+        queue_state CASE matches list_extraction_queue_rows (queue_policy).
+        capacity_blocked is the cooling-off row whose last failure was capacity.
         """
-        _max_attempts = 5
         conn = self._ensure_conn()
         is_row = conn.execute(
             "SELECT 1 FROM indexed_sources WHERE source = ?", (source_path,)
         ).fetchone()
         eq_row = conn.execute(
-            "SELECT"
-            " CASE"
-            "   WHEN attempts >= ? THEN 'exhausted'"
-            "   WHEN last_attempt_at IS NOT NULL"
-            "     AND (last_failure_at IS NULL"
-            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
-            "     THEN 'in_flight'"
-            "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
-            "     AND attempts < ?"
-            "     AND last_failure_category = 'capacity'"
-            "     THEN 'capacity_blocked'"
-            "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
-            "     AND attempts < ?"
-            "     THEN 'cooling_off'"
-            "   ELSE 'ready'"
-            " END"
-            " FROM extraction_queue WHERE source = ?",
-            (_max_attempts, _max_attempts, _max_attempts, source_path),
+            f"SELECT{queue_state_case_sql()} FROM extraction_queue WHERE source = ?",
+            (source_path,),
         ).fetchone()
         ctx_count: int = conn.execute(
             "SELECT COUNT(*) FROM contextualized_chunks cc"
@@ -279,7 +261,6 @@ class _PropertyIndexPart09:
         queue_row includes state, attempts, last_error, and position (1-based)
         when present, else None. indexed_at is updated_at from indexed_sources.
         """
-        _max_attempts = 5
         conn = self._ensure_conn()
         is_row = conn.execute(
             "SELECT updated_at FROM indexed_sources WHERE source = ?",
@@ -287,25 +268,9 @@ class _PropertyIndexPart09:
         ).fetchone()
         eq_row = conn.execute(
             "SELECT attempts, last_error,"
-            " CASE"
-            "   WHEN attempts >= ? THEN 'exhausted'"
-            "   WHEN last_attempt_at IS NOT NULL"
-            "     AND (last_failure_at IS NULL"
-            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
-            "     THEN 'in_flight'"
-            "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
-            "     AND attempts < ?"
-            "     AND last_failure_category = 'capacity'"
-            "     THEN 'capacity_blocked'"
-            "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
-            "     AND attempts < ?"
-            "     THEN 'cooling_off'"
-            "   ELSE 'ready'"
-            " END"
+            f"{queue_state_case_sql()}"
             " FROM extraction_queue WHERE source = ?",
-            (_max_attempts, _max_attempts, _max_attempts, source_path),
+            (source_path,),
         ).fetchone()
         ctx_count: int = conn.execute(
             "SELECT COUNT(*) FROM contextualized_chunks cc"
