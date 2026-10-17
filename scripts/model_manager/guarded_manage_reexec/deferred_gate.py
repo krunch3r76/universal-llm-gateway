@@ -141,10 +141,8 @@ def run_recycle_step1_per_service_gate(
             continue
         if name == "git_integration_worker":
             det = row.get("determination")
-            if (
-                row.get("probe_error") is not None
-                or det == "undetermined"
-                or (det is not None and det != "idle")
+            if row.get("probe_error") is not None or det == "undetermined" or (
+                det is not None and det != "idle"
             ):
                 return RefuseFinding(
                     reason="step1_giw_busy_status_undetermined",
@@ -214,9 +212,7 @@ def evaluate_r3_pass_verdict(
             ve = row.get("version_evidence")
             if isinstance(ve, dict):
                 mcp_auth = ve.get("authoritative_for_liveness")
-    probe_line = (
-        f"services[mcp].version_evidence.authoritative_for_liveness={mcp_auth!r}"
-    )
+    probe_line = f"services[mcp].version_evidence.authoritative_for_liveness={mcp_auth!r}"
     extra = {
         "probe_39439": probe_line,
         "line_39455": (
