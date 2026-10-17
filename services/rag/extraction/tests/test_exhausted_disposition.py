@@ -48,25 +48,29 @@ async def _seed(
     age_minutes: int,
 ) -> None:
     await idx.enqueue_extraction(source)
-    conn = idx._ensure_conn()
-    conn.execute(
-        "UPDATE extraction_queue SET"
-        " attempts = ?,"
-        " last_attempt_at = datetime('now', ?),"
-        " last_failure_at = datetime('now', ?),"
-        " last_error = ?,"
-        " last_error_type = 'RuntimeError',"
-        " last_failure_category = 'iteration_timeout'"
-        " WHERE source = ?",
-        (
-            attempts,
-            f"-{age_minutes + 1} minutes",
-            f"-{age_minutes} minutes",
-            error,
-            source,
-        ),
-    )
-    conn.commit()
+
+    def _mark() -> None:
+        conn = idx._ensure_conn()
+        conn.execute(
+            "UPDATE extraction_queue SET"
+            " attempts = ?,"
+            " last_attempt_at = datetime('now', ?),"
+            " last_failure_at = datetime('now', ?),"
+            " last_error = ?,"
+            " last_error_type = 'RuntimeError',"
+            " last_failure_category = 'iteration_timeout'"
+            " WHERE source = ?",
+            (
+                attempts,
+                f"-{age_minutes + 1} minutes",
+                f"-{age_minutes} minutes",
+                error,
+                source,
+            ),
+        )
+        conn.commit()
+
+    idx.run_sqlite(_mark)
 
 
 @pytest.mark.asyncio
@@ -83,27 +87,34 @@ async def test_exhausted_map_timeout_retries_after_backoff(tmp_path: Path) -> No
         too_soon = await idx.dequeue_extraction(limit=1, max_attempts=_RETRY_CEILING)
         assert too_soon == []
 
-        conn = idx._ensure_conn()
-        conn.execute(
-            "UPDATE extraction_queue SET"
-            " last_attempt_at = datetime('now', '-17 minutes'),"
-            " last_failure_at = datetime('now', '-16 minutes')"
-            " WHERE source = ?",
-            (source,),
-        )
-        conn.commit()
+        def _age_for_claim() -> None:
+            conn = idx._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET"
+                " last_attempt_at = datetime('now', '-17 minutes'),"
+                " last_failure_at = datetime('now', '-16 minutes')"
+                " WHERE source = ?",
+                (source,),
+            )
+            conn.commit()
+
+        idx.run_sqlite(_age_for_claim)
         claimed = await idx.dequeue_extraction(limit=1, max_attempts=_RETRY_CEILING)
         assert [row.source for row in claimed] == [source]
 
-        conn.execute(
-            "UPDATE extraction_queue SET"
-            " attempts = 8,"
-            " last_attempt_at = datetime('now', '-241 minutes'),"
-            " last_failure_at = datetime('now', '-240 minutes')"
-            " WHERE source = ?",
-            (source,),
-        )
-        conn.commit()
+        def _bump_to_ceiling() -> None:
+            conn = idx._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET"
+                " attempts = 8,"
+                " last_attempt_at = datetime('now', '-241 minutes'),"
+                " last_failure_at = datetime('now', '-240 minutes')"
+                " WHERE source = ?",
+                (source,),
+            )
+            conn.commit()
+
+        idx.run_sqlite(_bump_to_ceiling)
         capped = await idx.dequeue_extraction(limit=1, max_attempts=_RETRY_CEILING)
         assert capped == []
         listed = idx.list_extraction_queue_rows(limit=None)
@@ -154,13 +165,17 @@ async def test_capacity_below_ceiling_stays_claimable_after_redrive(
             await _seed(
                 idx, source, attempts=attempts, error="HTTP 503", age_minutes=241
             )
-            conn = idx._ensure_conn()
-            conn.execute(
-                "UPDATE extraction_queue SET last_failure_category = 'capacity'"
-                " WHERE source = ?",
-                (source,),
-            )
-            conn.commit()
+
+            def _capacity() -> None:
+                conn = idx._ensure_conn()
+                conn.execute(
+                    "UPDATE extraction_queue SET last_failure_category = 'capacity'"
+                    " WHERE source = ?",
+                    (source,),
+                )
+                conn.commit()
+
+            idx.run_sqlite(_capacity)
         outcome = await idx.redrive_exhausted_once(dry_run=False)
         assert sources[5] not in outcome.dead_lettered
         assert sources[7] not in outcome.dead_lettered
@@ -193,31 +208,39 @@ async def test_redrive_keeps_execution_id_and_skips_in_flight(
     try:
         await _seed(idx, armed, attempts=5, error=_MAP_TIMEOUT, age_minutes=16)
         await _seed(idx, inflight, attempts=5, error=_MAP_TIMEOUT, age_minutes=16)
-        conn = idx._ensure_conn()
-        conn.execute(
-            "UPDATE extraction_queue SET active_execution_id = 'exec-keep'"
-            " WHERE source = ?",
-            (armed,),
-        )
-        conn.execute(
-            "UPDATE extraction_queue SET"
-            " active_execution_id = 'exec-live',"
-            " last_attempt_at = datetime('now'),"
-            " last_failure_at = datetime('now', '-5 minutes')"
-            " WHERE source = ?",
-            (inflight,),
-        )
-        conn.commit()
+
+        def _mark_inflight() -> None:
+            conn = idx._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET active_execution_id = 'exec-keep'"
+                " WHERE source = ?",
+                (armed,),
+            )
+            conn.execute(
+                "UPDATE extraction_queue SET"
+                " active_execution_id = 'exec-live',"
+                " last_attempt_at = datetime('now'),"
+                " last_failure_at = datetime('now', '-5 minutes')"
+                " WHERE source = ?",
+                (inflight,),
+            )
+            conn.commit()
+
+        idx.run_sqlite(_mark_inflight)
         outcome = await idx.redrive_exhausted_once(dry_run=False)
         assert armed in outcome.retried
         assert inflight not in outcome.retried
-        conn = idx._ensure_conn()
-        ids = {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT source, active_execution_id FROM extraction_queue"
-            ).fetchall()
-        }
+
+        def _read_exec_ids() -> dict[str, object]:
+            conn = idx._ensure_conn()
+            return {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT source, active_execution_id FROM extraction_queue"
+                ).fetchall()
+            }
+
+        ids = idx.run_sqlite(_read_exec_ids)
         assert ids[armed] == "exec-keep"
         assert ids[inflight] == "exec-live"
     finally:

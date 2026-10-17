@@ -22,10 +22,15 @@ if __name__ == "__main__":
         try:
             total, updated = idx.rescope_all(config.get_scope_for_path)
             print(f"Rescoped {updated}/{total} property entries")
-            conn = idx._ensure_conn()
-            for row in conn.execute(
-                "SELECT scope, COUNT(*) FROM properties GROUP BY scope ORDER BY scope"
-            ).fetchall():
+            for row in idx.run_sqlite(
+                lambda: (
+                    idx._ensure_conn()
+                    .execute(
+                        "SELECT scope, COUNT(*) FROM properties GROUP BY scope ORDER BY scope"
+                    )
+                    .fetchall()
+                )
+            ):
                 print(f"  {row[0]}: {row[1]}")
         finally:
             asyncio.run(idx.stop())

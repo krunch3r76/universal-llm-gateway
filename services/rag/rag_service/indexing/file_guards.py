@@ -13,6 +13,7 @@ extraction.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -76,9 +77,7 @@ async def _handle_pdf_duplicate_or_move(
     if file_path.suffix.lower() != ".pdf" or force:
         return None
 
-    dup_result = await run_chroma(
-        check_pdf_duplicate, collection, source_hash, source
-    )
+    dup_result = await run_chroma(check_pdf_duplicate, collection, source_hash, source)
     if dup_result is None:
         return None
 
@@ -198,7 +197,7 @@ async def _handle_unchanged_prefix_skip(
     if any(is_legacy_chunk_id(chunk_id) for chunk_id in existing_ids):
         return None
     if prop_index is not None:
-        cached = prop_index.get_indexed_source(source)
+        cached = await asyncio.to_thread(prop_index.get_indexed_source, source)
         if cached is None or cached.source_hash != source_hash:
             return None
     else:
@@ -212,7 +211,7 @@ async def _handle_unchanged_prefix_skip(
             extraction_model=extraction_model,
             source_hash=source_hash,
         )
-        if not prop_index.article_exists(source):
+        if not await asyncio.to_thread(prop_index.article_exists, source):
             if state._config is None:
                 raise RuntimeError("RAG service configuration not loaded.")
             scope = state._config.get_scope_for_path(source)

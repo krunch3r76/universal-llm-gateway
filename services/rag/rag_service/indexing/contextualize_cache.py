@@ -12,6 +12,7 @@ the index run.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -116,7 +117,8 @@ async def _load_cached_contexts(
         if chunk_hash
     }
     try:
-        return prop_index.get_cached_contexts(
+        return await asyncio.to_thread(
+            prop_index.get_cached_contexts,
             source_identity=source_identity,
             source_hash=source_hash,
             chunk_hashes=chunk_hashes,

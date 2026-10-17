@@ -223,7 +223,9 @@ class WatcherManager(
             return False
         if self._property_index is None:
             return True
-        failure = self._property_index.get_indexing_failure(source)
+        failure = await asyncio.to_thread(
+            self._property_index.get_indexing_failure, source
+        )
         if failure is None:
             return True
         try:

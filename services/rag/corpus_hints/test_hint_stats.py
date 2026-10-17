@@ -262,15 +262,19 @@ async def test_update_writes_scored_hints_for_configured_scope(
     idx = PropertyIndex(db_path=tmp_path / "rag_metadata.db")
     await idx.start()
     try:
-        conn = idx._ensure_conn()
-        conn.executemany(
-            "INSERT INTO properties (key, chunk_id, scope, source) VALUES (?, ?, ?, ?)",
-            [
-                (_NAME + "retrieval", "c1", "alpha", "/data/alpha/a.md"),
-                (_NAME + "retrieval", "c2", "alpha", "/data/alpha/b.md"),
-            ],
-        )
-        conn.commit()
+
+        def _seed_props() -> None:
+            conn = idx._ensure_conn()
+            conn.executemany(
+                "INSERT INTO properties (key, chunk_id, scope, source) VALUES (?, ?, ?, ?)",
+                [
+                    (_NAME + "retrieval", "c1", "alpha", "/data/alpha/a.md"),
+                    (_NAME + "retrieval", "c2", "alpha", "/data/alpha/b.md"),
+                ],
+            )
+            conn.commit()
+
+        idx.run_sqlite(_seed_props)
         result = await update_corpus_hints(
             idx,
             configured_scopes={"alpha": ["/data/alpha"]},
@@ -280,10 +284,15 @@ async def test_update_writes_scored_hints_for_configured_scope(
             names_budget=5,
             topics_budget=5,
         )
-        stored = conn.execute(
-            "SELECT term, prefix FROM corpus_hints WHERE scope = ?",
-            ("alpha",),
-        ).fetchall()
+
+        def _read_hints() -> list[tuple[object, ...]]:
+            conn = idx._ensure_conn()
+            return conn.execute(
+                "SELECT term, prefix FROM corpus_hints WHERE scope = ?",
+                ("alpha",),
+            ).fetchall()
+
+        stored = idx.run_sqlite(_read_hints)
     finally:
         await idx.stop()
 
@@ -867,9 +876,7 @@ async def test_included_waiter_refuses_deferred_unequal_pending() -> None:
     assert set(result.keys()) & {"gamma", "delta"} == {"gamma", "delta"}
     assert "alpha" not in result
     assert gate._error is None
-    assert not any(
-        c.entity_boost_hyphen == 1.3 and c.scope is None for c in calls[-3:]
-    )
+    assert not any(c.entity_boost_hyphen == 1.3 and c.scope is None for c in calls[-3:])
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from ._spec import (
     ExtractionQueueRow,
     RecoveredExtractionClaim,
     json,
+    sqlite3,
 )
 from .queue_policy import (
     QUEUE_RETRY_CEILING,
@@ -36,40 +37,43 @@ class _PropertyIndexPart07:
         self, *, limit: int = 100
     ) -> list[ContextualizationException]:
         """Return recent degraded contextualization attempts."""
-        conn = self._ensure_conn()
-        rows = conn.execute(
-            "SELECT id, source, source_hash, contextualize_model, operation_id,"
-            " total_chunks, cache_miss_chunks, successful_chunks, failed_chunks,"
-            " abandoned_chunks, abandoned_indices_json, request_ids_json,"
-            " first_failure, idle_seconds, tail_idle_timeout_s, recorded_at"
-            " FROM contextualization_exceptions"
-            " ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [
-            ContextualizationException(
-                id=int(row[0]),
-                source=row[1],
-                source_hash=row[2],
-                contextualize_model=row[3],
-                operation_id=row[4],
-                total_chunks=int(row[5]),
-                cache_miss_chunks=int(row[6]),
-                successful_chunks=int(row[7]),
-                failed_chunks=int(row[8]),
-                abandoned_chunks=int(row[9]),
-                abandoned_indices=[int(idx) for idx in json.loads(row[10])],
-                request_ids={
-                    int(idx): request_id
-                    for idx, request_id in json.loads(row[11]).items()
-                },
-                first_failure=row[12],
-                idle_seconds=row[13],
-                tail_idle_timeout_s=row[14],
-                recorded_at=row[15],
-            )
-            for row in rows
-        ]
+
+        def _sql(conn: sqlite3.Connection):
+            rows = conn.execute(
+                "SELECT id, source, source_hash, contextualize_model, operation_id,"
+                " total_chunks, cache_miss_chunks, successful_chunks, failed_chunks,"
+                " abandoned_chunks, abandoned_indices_json, request_ids_json,"
+                " first_failure, idle_seconds, tail_idle_timeout_s, recorded_at"
+                " FROM contextualization_exceptions"
+                " ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                ContextualizationException(
+                    id=int(row[0]),
+                    source=row[1],
+                    source_hash=row[2],
+                    contextualize_model=row[3],
+                    operation_id=row[4],
+                    total_chunks=int(row[5]),
+                    cache_miss_chunks=int(row[6]),
+                    successful_chunks=int(row[7]),
+                    failed_chunks=int(row[8]),
+                    abandoned_chunks=int(row[9]),
+                    abandoned_indices=[int(idx) for idx in json.loads(row[10])],
+                    request_ids={
+                        int(idx): request_id
+                        for idx, request_id in json.loads(row[11]).items()
+                    },
+                    first_failure=row[12],
+                    idle_seconds=row[13],
+                    tail_idle_timeout_s=row[14],
+                    recorded_at=row[15],
+                )
+                for row in rows
+            ]
+
+        return self._with_conn(_sql)
 
     # ------------------------------------------------------------------
     # Extraction queue (async decoupled extraction)
@@ -88,16 +92,18 @@ class _PropertyIndexPart07:
         """
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            cursor = conn.execute(
-                "UPDATE extraction_queue"
-                " SET last_failure_at = NULL"
-                " WHERE last_failure_at IS NOT NULL"
-                "   AND (last_failure_category IS NULL"
-                "     OR last_failure_category != 'capacity')",
-            )
-            conn.commit()
-            return cursor.rowcount
+            def _sql(conn: sqlite3.Connection) -> int:
+                cursor = conn.execute(
+                    "UPDATE extraction_queue"
+                    " SET last_failure_at = NULL"
+                    " WHERE last_failure_at IS NOT NULL"
+                    "   AND (last_failure_category IS NULL"
+                    "     OR last_failure_category != 'capacity')",
+                )
+                conn.commit()
+                return cursor.rowcount
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -107,66 +113,70 @@ class _PropertyIndexPart07:
         """Reset exhausted queue rows for named sources (no insert on missing)."""
 
         async def _write() -> tuple[list[ExtractionQueueResetRow], int]:
-            conn = self._ensure_conn()
-            results: list[ExtractionQueueResetRow] = []
-            reset_count = 0
-            for source in sources:
-                row = conn.execute(
-                    "SELECT attempts FROM extraction_queue WHERE source = ?",
-                    (source,),
-                ).fetchone()
-                if row is None:
-                    results.append(
-                        ExtractionQueueResetRow(
-                            source=source,
-                            outcome="not_found",
-                            attempts=None,
+            def _sql(
+                conn: sqlite3.Connection,
+            ) -> tuple[list[ExtractionQueueResetRow], int]:
+                results: list[ExtractionQueueResetRow] = []
+                reset_count = 0
+                for source in sources:
+                    row = conn.execute(
+                        "SELECT attempts FROM extraction_queue WHERE source = ?",
+                        (source,),
+                    ).fetchone()
+                    if row is None:
+                        results.append(
+                            ExtractionQueueResetRow(
+                                source=source,
+                                outcome="not_found",
+                                attempts=None,
+                            )
                         )
-                    )
-                    continue
-                previous_attempts = int(row[0])
-                if previous_attempts < 5:
-                    results.append(
-                        ExtractionQueueResetRow(
-                            source=source,
-                            outcome="not_exhausted",
-                            attempts=previous_attempts,
+                        continue
+                    previous_attempts = int(row[0])
+                    if previous_attempts < 5:
+                        results.append(
+                            ExtractionQueueResetRow(
+                                source=source,
+                                outcome="not_exhausted",
+                                attempts=previous_attempts,
+                            )
                         )
+                        continue
+                    cursor = conn.execute(
+                        "UPDATE extraction_queue"
+                        " SET attempts = 0,"
+                        " last_attempt_at = NULL,"
+                        " last_failure_at = NULL,"
+                        " active_execution_id = NULL,"
+                        " last_error = NULL,"
+                        " last_error_type = NULL,"
+                        " last_failure_category = NULL,"
+                        " queued_at = datetime('now')"
+                        " WHERE source = ? AND attempts >= 5",
+                        (source,),
                     )
-                    continue
-                cursor = conn.execute(
-                    "UPDATE extraction_queue"
-                    " SET attempts = 0,"
-                    " last_attempt_at = NULL,"
-                    " last_failure_at = NULL,"
-                    " active_execution_id = NULL,"
-                    " last_error = NULL,"
-                    " last_error_type = NULL,"
-                    " last_failure_category = NULL,"
-                    " queued_at = datetime('now')"
-                    " WHERE source = ? AND attempts >= 5",
-                    (source,),
-                )
-                if cursor.rowcount > 0:
-                    reset_count += 1
-                    results.append(
-                        ExtractionQueueResetRow(
-                            source=source,
-                            outcome="reset",
-                            attempts=0,
-                            previous_attempts=previous_attempts,
+                    if cursor.rowcount > 0:
+                        reset_count += 1
+                        results.append(
+                            ExtractionQueueResetRow(
+                                source=source,
+                                outcome="reset",
+                                attempts=0,
+                                previous_attempts=previous_attempts,
+                            )
                         )
-                    )
-                else:
-                    results.append(
-                        ExtractionQueueResetRow(
-                            source=source,
-                            outcome="not_exhausted",
-                            attempts=previous_attempts,
+                    else:
+                        results.append(
+                            ExtractionQueueResetRow(
+                                source=source,
+                                outcome="not_exhausted",
+                                attempts=previous_attempts,
+                            )
                         )
-                    )
-            conn.commit()
-            return results, reset_count
+                conn.commit()
+                return results, reset_count
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -174,12 +184,14 @@ class _PropertyIndexPart07:
         """Add a source to the extraction queue (idempotent)."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT OR IGNORE INTO extraction_queue (source) VALUES (?)",
-                (source,),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO extraction_queue (source) VALUES (?)",
+                    (source,),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -196,31 +208,33 @@ class _PropertyIndexPart07:
         """
 
         async def _write() -> list[ExtractionQueueClaim]:
-            conn = self._ensure_conn()
-            rows = conn.execute(
-                "WITH candidates AS ("
-                " SELECT source FROM extraction_queue"
-                f" WHERE {claim_filter_sql()}"
-                " ORDER BY queued_at ASC LIMIT ?"
-                ")"
-                " UPDATE extraction_queue"
-                " SET last_attempt_at = datetime('now')"
-                " WHERE source IN (SELECT source FROM candidates)"
-                " RETURNING source, attempts, queued_at, last_attempt_at,"
-                " active_execution_id",
-                (max_attempts, limit),
-            ).fetchall()
-            conn.commit()
-            return [
-                ExtractionQueueClaim(
-                    source=row[0],
-                    attempts=int(row[1]),
-                    queued_at=row[2],
-                    claimed_at=row[3],
-                    active_execution_id=row[4],
-                )
-                for row in rows
-            ]
+            def _sql(conn: sqlite3.Connection) -> list[ExtractionQueueClaim]:
+                rows = conn.execute(
+                    "WITH candidates AS ("
+                    " SELECT source FROM extraction_queue"
+                    f" WHERE {claim_filter_sql()}"
+                    " ORDER BY queued_at ASC LIMIT ?"
+                    ")"
+                    " UPDATE extraction_queue"
+                    " SET last_attempt_at = datetime('now')"
+                    " WHERE source IN (SELECT source FROM candidates)"
+                    " RETURNING source, attempts, queued_at, last_attempt_at,"
+                    " active_execution_id",
+                    (max_attempts, limit),
+                ).fetchall()
+                conn.commit()
+                return [
+                    ExtractionQueueClaim(
+                        source=row[0],
+                        attempts=int(row[1]),
+                        queued_at=row[2],
+                        claimed_at=row[3],
+                        active_execution_id=row[4],
+                    )
+                    for row in rows
+                ]
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -228,9 +242,11 @@ class _PropertyIndexPart07:
         """Remove a source from the extraction queue after successful extraction."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("DELETE FROM extraction_queue WHERE source = ?", (source,))
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("DELETE FROM extraction_queue WHERE source = ?", (source,))
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -238,12 +254,14 @@ class _PropertyIndexPart07:
         """Clear the active_execution_id once a pipeline terminates."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "UPDATE extraction_queue SET active_execution_id = NULL WHERE source = ?",
-                (source,),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE extraction_queue SET active_execution_id = NULL WHERE source = ?",
+                    (source,),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -265,37 +283,39 @@ class _PropertyIndexPart07:
         attempt_increment = 1 if increment_attempt else 0
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            current = conn.execute(
-                "SELECT attempts, last_failure_category FROM extraction_queue"
-                " WHERE source = ?",
-                (source,),
-            ).fetchone()
-            previous = int(current[0]) if current is not None else 0
-            previous_category = current[1] if current is not None else None
-            attempts_after = previous + attempt_increment
-            category = failure_category
-            if previous_category == "dead_letter" or is_dead_letter(
-                attempts_after, error, failure_category
-            ):
-                category = "dead_letter"
-            conn.execute(
-                "UPDATE extraction_queue"
-                " SET attempts = attempts + ?,"
-                " last_error = ?,"
-                " last_error_type = ?,"
-                " last_failure_category = ?,"
-                " last_failure_at = datetime('now')"
-                " WHERE source = ?",
-                (
-                    attempt_increment,
-                    error[:1000],
-                    error_type,
-                    category,
-                    source,
-                ),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                current = conn.execute(
+                    "SELECT attempts, last_failure_category FROM extraction_queue"
+                    " WHERE source = ?",
+                    (source,),
+                ).fetchone()
+                previous = int(current[0]) if current is not None else 0
+                previous_category = current[1] if current is not None else None
+                attempts_after = previous + attempt_increment
+                category = failure_category
+                if previous_category == "dead_letter" or is_dead_letter(
+                    attempts_after, error, failure_category
+                ):
+                    category = "dead_letter"
+                conn.execute(
+                    "UPDATE extraction_queue"
+                    " SET attempts = attempts + ?,"
+                    " last_error = ?,"
+                    " last_error_type = ?,"
+                    " last_failure_category = ?,"
+                    " last_failure_at = datetime('now')"
+                    " WHERE source = ?",
+                    (
+                        attempt_increment,
+                        error[:1000],
+                        error_type,
+                        category,
+                        source,
+                    ),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -305,12 +325,14 @@ class _PropertyIndexPart07:
         """Store the Stargate async execution_id for an in-flight extraction claim."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "UPDATE extraction_queue SET active_execution_id = ? WHERE source = ?",
-                (execution_id, source),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE extraction_queue SET active_execution_id = ? WHERE source = ?",
+                    (execution_id, source),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -326,36 +348,38 @@ class _PropertyIndexPart07:
         """
 
         async def _write() -> list[RecoveredExtractionClaim]:
-            conn = self._ensure_conn()
-            rows = conn.execute(
-                "SELECT source, attempts, queued_at, last_attempt_at,"
-                " (julianday('now') - julianday(last_attempt_at)) * 86400.0,"
-                " active_execution_id"
-                " FROM extraction_queue"
-                " WHERE last_attempt_at IS NOT NULL"
-                "   AND (last_failure_at IS NULL"
-                "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
-                " ORDER BY queued_at ASC"
-            ).fetchall()
-            conn.execute(
-                "UPDATE extraction_queue"
-                " SET last_attempt_at = NULL, active_execution_id = NULL"
-                " WHERE last_attempt_at IS NOT NULL"
-                "   AND (last_failure_at IS NULL"
-                "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
-            )
-            conn.commit()
-            return [
-                RecoveredExtractionClaim(
-                    source=row[0],
-                    attempts=int(row[1]),
-                    queued_at=row[2],
-                    claimed_at=row[3],
-                    claimed_age_seconds=float(row[4] or 0.0),
-                    active_execution_id=row[5],
+            def _sql(conn: sqlite3.Connection) -> list[RecoveredExtractionClaim]:
+                rows = conn.execute(
+                    "SELECT source, attempts, queued_at, last_attempt_at,"
+                    " (julianday('now') - julianday(last_attempt_at)) * 86400.0,"
+                    " active_execution_id"
+                    " FROM extraction_queue"
+                    " WHERE last_attempt_at IS NOT NULL"
+                    "   AND (last_failure_at IS NULL"
+                    "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
+                    " ORDER BY queued_at ASC"
+                ).fetchall()
+                conn.execute(
+                    "UPDATE extraction_queue"
+                    " SET last_attempt_at = NULL, active_execution_id = NULL"
+                    " WHERE last_attempt_at IS NOT NULL"
+                    "   AND (last_failure_at IS NULL"
+                    "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
                 )
-                for row in rows
-            ]
+                conn.commit()
+                return [
+                    RecoveredExtractionClaim(
+                        source=row[0],
+                        attempts=int(row[1]),
+                        queued_at=row[2],
+                        claimed_at=row[3],
+                        claimed_age_seconds=float(row[4] or 0.0),
+                        active_execution_id=row[5],
+                    )
+                    for row in rows
+                ]
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -394,35 +418,41 @@ class _PropertyIndexPart07:
         ``queue_policy``.
         """
         del max_attempts
-        conn = self._ensure_conn()
-        limit_sql = "" if limit is None else " LIMIT ?"
-        params: tuple[int, ...] = (limit,) if limit is not None else ()
-        case_sql = queue_state_case_sql()
-        rows = conn.execute(
-            "SELECT source, queued_at, attempts, last_attempt_at, last_error,"
-            " last_error_type, last_failure_category, last_failure_at,"
-            f"{case_sql} AS queue_state"
-            " FROM extraction_queue"
-            " ORDER BY queued_at ASC"
-            f"{limit_sql}",
-            params,
-        ).fetchall()
-        return [
-            ExtractionQueueRow(
-                source=row[0],
-                queued_at=row[1],
-                attempts=int(row[2]),
-                last_attempt_at=row[3],
-                last_error=row[4],
-                last_error_type=row[5],
-                last_failure_category=row[6],
-                last_failure_at=row[7],
-                state=row[8],
-            )
-            for row in rows
-        ]
+
+        def _sql(conn: sqlite3.Connection):
+            limit_sql = "" if limit is None else " LIMIT ?"
+            params: tuple[int, ...] = (limit,) if limit is not None else ()
+            case_sql = queue_state_case_sql()
+            rows = conn.execute(
+                "SELECT source, queued_at, attempts, last_attempt_at, last_error,"
+                " last_error_type, last_failure_category, last_failure_at,"
+                f"{case_sql} AS queue_state"
+                " FROM extraction_queue"
+                " ORDER BY queued_at ASC"
+                f"{limit_sql}",
+                params,
+            ).fetchall()
+            return [
+                ExtractionQueueRow(
+                    source=row[0],
+                    queued_at=row[1],
+                    attempts=int(row[2]),
+                    last_attempt_at=row[3],
+                    last_error=row[4],
+                    last_error_type=row[5],
+                    last_failure_category=row[6],
+                    last_failure_at=row[7],
+                    state=row[8],
+                )
+                for row in rows
+            ]
+
+        return self._with_conn(_sql)
 
     def get_extraction_queue_count(self) -> int:
         """Return the number of sources pending extraction."""
-        conn = self._ensure_conn()
-        return conn.execute("SELECT COUNT(*) FROM extraction_queue").fetchone()[0]
+
+        def _sql(conn: sqlite3.Connection):
+            return conn.execute("SELECT COUNT(*) FROM extraction_queue").fetchone()[0]
+
+        return self._with_conn(_sql)

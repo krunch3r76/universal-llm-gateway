@@ -14,6 +14,9 @@ from services.rag.property_index._spec import (
     PendingSnapshot,
     RecoveredExtractionClaim,
 )
+from services.rag.property_index.mixin_00_sqlite_access import (
+    _PropertyIndexSqliteAccess,
+)
 from services.rag.property_index.mixin_01 import _PropertyIndexPart01
 from services.rag.property_index.mixin_02 import _PropertyIndexPart02
 from services.rag.property_index.mixin_03 import _PropertyIndexPart03
@@ -26,6 +29,7 @@ from services.rag.property_index.mixin_09_articles_ops import _PropertyIndexPart
 
 
 class PropertyIndex(
+    _PropertyIndexSqliteAccess,
     _PropertyIndexPart01,
     _PropertyIndexPart02,
     _PropertyIndexPart03,
@@ -38,8 +42,8 @@ class PropertyIndex(
 ):  # type: ignore[misc]
     """SQLite-backed property inverted index mapping property keys to chunk IDs.
 
-    Write methods route through ``SequentialExecutor``; reads use the SQLite
-    connection directly (single-writer).
+    Write methods route through ``SequentialExecutor``; SQLite uses a dedicated
+    single-thread executor (see ``run_sqlite`` / ``_with_conn``).
     """
 
 

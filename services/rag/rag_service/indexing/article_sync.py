@@ -12,6 +12,7 @@ different hash than the file on disk.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,7 +54,8 @@ async def _run_article_sync_phase(
     """
     migrated_from: str | None = None
     if prop_index is not None:
-        orphan = prop_index.find_orphaned_article_by_hash(
+        orphan = await asyncio.to_thread(
+            prop_index.find_orphaned_article_by_hash,
             content_hash=source_hash,
             new_source_path=source,
         )
@@ -69,7 +71,9 @@ async def _run_article_sync_phase(
             )
             if moved:
                 migrated_from = orphan["source_path"]
-                refresh_article_registry_from_row(prop_index.get_article_row(source))
+                refresh_article_registry_from_row(
+                    await asyncio.to_thread(prop_index.get_article_row, source)
+                )
                 if event_bus is not None:
                     await event_bus.publish_nowait(
                         rag_article_path_moved(

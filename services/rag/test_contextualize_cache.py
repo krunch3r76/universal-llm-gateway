@@ -111,10 +111,16 @@ def test_merge_preserves_order() -> None:
         contexts=["", "HIT", ""],
         cache_misses=[
             CacheMissChunk(
-                index=0, chunk=chunks[0], chunk_hash="h1", neighbor_digest=_digest(chunks, 0)
+                index=0,
+                chunk=chunks[0],
+                chunk_hash="h1",
+                neighbor_digest=_digest(chunks, 0),
             ),
             CacheMissChunk(
-                index=2, chunk=chunks[2], chunk_hash="h3", neighbor_digest=_digest(chunks, 2)
+                index=2,
+                chunk=chunks[2],
+                chunk_hash="h3",
+                neighbor_digest=_digest(chunks, 2),
             ),
         ],
         cache_hits=1,
@@ -130,7 +136,10 @@ def test_merge_length_mismatch_raises() -> None:
         contexts=[""],
         cache_misses=[
             CacheMissChunk(
-                index=0, chunk=chunks[0], chunk_hash="h1", neighbor_digest=_digest(chunks, 0)
+                index=0,
+                chunk=chunks[0],
+                chunk_hash="h1",
+                neighbor_digest=_digest(chunks, 0),
             ),
         ],
         cache_hits=0,
@@ -178,9 +187,7 @@ def test_append_delta_hit_miss_boundary_ac_b1() -> None:
     delta = 2
     chunks = [_chunk(f"c{i}") for i in range(n)]
     metadatas = [{"chunk_hash": f"h{i}"} for i in range(n)]
-    prefix_rows = {
-        f"h{i}": f"P{i}" for i in range(n - delta - 1)
-    }
+    prefix_rows = {f"h{i}": f"P{i}" for i in range(n - delta - 1)}
     plan = build_context_cache_plan(
         chunks=chunks, metadatas=metadatas, cached_contexts=prefix_rows
     )
@@ -267,8 +274,8 @@ async def test_store_idempotent_upsert(prop_index: PropertyIndex) -> None:
 async def test_store_rejects_empty_prefix_via_check_constraint(
     prop_index: PropertyIndex,
 ) -> None:
-    conn = prop_index._ensure_conn()
-    with pytest.raises(sqlite3.IntegrityError):
+    def _insert_empty_prefix() -> None:
+        conn = prop_index._ensure_conn()
         conn.execute(
             "INSERT INTO contextualized_chunks_g1 ("
             "  source_identity, chunk_hash, neighbor_digest, contextualize_model,"
@@ -277,6 +284,9 @@ async def test_store_rejects_empty_prefix_via_check_constraint(
             ("S", "h1", "d" * 64, "m", "v1", ""),
         )
 
+    with pytest.raises(sqlite3.IntegrityError):
+        prop_index.run_sqlite(_insert_empty_prefix)
+
 
 @pytest.mark.asyncio
 async def test_get_batched_over_900_hashes(prop_index: PropertyIndex) -> None:
@@ -284,9 +294,7 @@ async def test_get_batched_over_900_hashes(prop_index: PropertyIndex) -> None:
     identity = _source_id(source)
     solo = [_chunk("solo")]
     digest = _digest(solo, 0)
-    entries = [
-        _row(f"h{i}", f"P{i}", chunks=solo, idx=0) for i in range(1000)
-    ]
+    entries = [_row(f"h{i}", f"P{i}", chunks=solo, idx=0) for i in range(1000)]
     await prop_index.store_cached_contexts(
         source_identity=identity,
         contextualize_model="m",
@@ -346,7 +354,9 @@ async def test_different_schema_version_bypasses(prop_index: PropertyIndex) -> N
 
 
 @pytest.mark.asyncio
-async def test_delete_by_source_identity_removes_rows(prop_index: PropertyIndex) -> None:
+async def test_delete_by_source_identity_removes_rows(
+    prop_index: PropertyIndex,
+) -> None:
     source = "/tmp/rag-cache-delete.md"
     chunks = [_chunk("a")]
     identity = _source_id(source)
@@ -433,15 +443,19 @@ async def test_dual_read_legacy_insert_fixture(prop_index: PropertyIndex) -> Non
     """T3: legacy V10 row is visible via dual-read fallback."""
     source = "/tmp/legacy-dual-read.md"
     chunks = [_chunk("stable")]
-    conn = prop_index._ensure_conn()
-    conn.execute(
-        "INSERT INTO contextualized_chunks ("
-        "  source_hash, chunk_hash, contextualize_model,"
-        "  contextualize_schema_version, context_prefix"
-        ") VALUES (?, ?, ?, ?, ?)",
-        ("LEGACY_HASH", "h1", "m", "v1", "LEGACY_PREFIX"),
-    )
-    conn.commit()
+
+    def _seed_legacy() -> None:
+        conn = prop_index._ensure_conn()
+        conn.execute(
+            "INSERT INTO contextualized_chunks ("
+            "  source_hash, chunk_hash, contextualize_model,"
+            "  contextualize_schema_version, context_prefix"
+            ") VALUES (?, ?, ?, ?, ?)",
+            ("LEGACY_HASH", "h1", "m", "v1", "LEGACY_PREFIX"),
+        )
+        conn.commit()
+
+    prop_index.run_sqlite(_seed_legacy)
     got = prop_index.get_cached_contexts(
         source_identity=_source_id(source),
         source_hash="LEGACY_HASH",
@@ -548,6 +562,8 @@ async def test_append_miss_count_matches_delta_ac_b5_t9() -> None:
     chunks = [_chunk(f"x{i}") for i in range(n)]
     metadatas = [{"chunk_hash": f"h{i}"} for i in range(n)]
     cached = {f"h{i}": f"P{i}" for i in range(n - delta - 1)}
-    plan = build_context_cache_plan(chunks=chunks, metadatas=metadatas, cached_contexts=cached)
+    plan = build_context_cache_plan(
+        chunks=chunks, metadatas=metadatas, cached_contexts=cached
+    )
     assert plan.cache_misses_count == delta + 1
     assert plan.cache_misses_count < n

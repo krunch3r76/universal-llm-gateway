@@ -39,50 +39,60 @@ class _PropertyIndexPart04:
         deduped_rows = list(dict.fromkeys(rows))
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                placeholders = ",".join("?" for _ in scope_names)
-                conn.execute(
-                    f"DELETE FROM scope_vocabulary WHERE scope IN ({placeholders})",
-                    scope_names,
-                )
-                if deduped_rows:
-                    conn.executemany(
-                        "INSERT INTO scope_vocabulary (scope, register, term)"
-                        " VALUES (?, ?, ?)",
-                        deduped_rows,
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    placeholders = ",".join("?" for _ in scope_names)
+                    conn.execute(
+                        f"DELETE FROM scope_vocabulary WHERE scope IN ({placeholders})",
+                        scope_names,
                     )
-                conn.execute("COMMIT")
-            except sqlite3.Error as e:
-                conn.execute("ROLLBACK")
-                logger.exception("replace_scope_vocabulary_for_scopes failed: %s", e)
-                raise
+                    if deduped_rows:
+                        conn.executemany(
+                            "INSERT INTO scope_vocabulary (scope, register, term)"
+                            " VALUES (?, ?, ?)",
+                            deduped_rows,
+                        )
+                    conn.execute("COMMIT")
+                except sqlite3.Error as e:
+                    conn.execute("ROLLBACK")
+                    logger.exception(
+                        "replace_scope_vocabulary_for_scopes failed: %s", e
+                    )
+                    raise
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
     def has_scope_vocabulary(self, scope: str) -> bool:
         """Return True when at least one vocabulary row exists for *scope*."""
-        conn = self._ensure_conn()
-        row = conn.execute(
-            "SELECT 1 FROM scope_vocabulary WHERE scope = ? LIMIT 1",
-            (scope,),
-        ).fetchone()
-        return row is not None
+
+        def _sql(conn: sqlite3.Connection):
+            row = conn.execute(
+                "SELECT 1 FROM scope_vocabulary WHERE scope = ? LIMIT 1",
+                (scope,),
+            ).fetchone()
+            return row is not None
+
+        return self._with_conn(_sql)
 
     def get_scope_freshness(self, scope: str) -> tuple[str, str, str] | None:
         """Return (files_hash, classified_at, classified_tier) if a row exists."""
-        conn = self._ensure_conn()
-        row = conn.execute(
-            "SELECT files_hash, classified_at, classified_tier FROM scope_freshness "
-            "WHERE scope = ?",
-            (scope,),
-        ).fetchone()
-        if row is None:
-            return None
-        tier_raw = row[2] if len(row) > 2 else "local"
-        tier = str(tier_raw) if tier_raw is not None else "local"
-        return (str(row[0]), str(row[1]), tier)
+
+        def _sql(conn: sqlite3.Connection):
+            row = conn.execute(
+                "SELECT files_hash, classified_at, classified_tier FROM scope_freshness "
+                "WHERE scope = ?",
+                (scope,),
+            ).fetchone()
+            if row is None:
+                return None
+            tier_raw = row[2] if len(row) > 2 else "local"
+            tier = str(tier_raw) if tier_raw is not None else "local"
+            return (str(row[0]), str(row[1]), tier)
+
+        return self._with_conn(_sql)
 
     async def store_scope_freshness(
         self,
@@ -94,18 +104,20 @@ class _PropertyIndexPart04:
         """Persist per-scope file-list hash and classification tier after repair."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT INTO scope_freshness (scope, files_hash, classified_at, "
-                "classified_tier)"
-                " VALUES (?, ?, datetime('now'), ?)"
-                " ON CONFLICT(scope) DO UPDATE SET"
-                " files_hash = excluded.files_hash,"
-                " classified_at = datetime('now'),"
-                " classified_tier = excluded.classified_tier",
-                (scope, files_hash, classified_tier),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT INTO scope_freshness (scope, files_hash, classified_at, "
+                    "classified_tier)"
+                    " VALUES (?, ?, datetime('now'), ?)"
+                    " ON CONFLICT(scope) DO UPDATE SET"
+                    " files_hash = excluded.files_hash,"
+                    " classified_at = datetime('now'),"
+                    " classified_tier = excluded.classified_tier",
+                    (scope, files_hash, classified_tier),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -113,9 +125,11 @@ class _PropertyIndexPart04:
         """Delete scope_freshness row so next run reclassifies this scope."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("DELETE FROM scope_freshness WHERE scope = ?", (scope,))
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("DELETE FROM scope_freshness WHERE scope = ?", (scope,))
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -123,14 +137,16 @@ class _PropertyIndexPart04:
         """Record completion of a post-index enrichment step."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT INTO watermarks (step, completed_at)"
-                " VALUES (?, datetime('now'))"
-                " ON CONFLICT(step) DO UPDATE SET completed_at = datetime('now')",
-                (step,),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT INTO watermarks (step, completed_at)"
+                    " VALUES (?, datetime('now'))"
+                    " ON CONFLICT(step) DO UPDATE SET completed_at = datetime('now')",
+                    (step,),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -143,27 +159,30 @@ class _PropertyIndexPart04:
         the step has no watermark entry at all. If the reference itself is missing,
         returns an empty list (no reindex has ever been stamped).
         """
-        conn = self._ensure_conn()
-        ref_row = conn.execute(
-            "SELECT completed_at FROM watermarks WHERE step = ?", (reference,)
-        ).fetchone()
-        if ref_row is None:
-            return []
-        ref_ts = ref_row[0]
-        if not required:
-            return []
-        placeholders = ", ".join("?" for _ in required)
-        rows = conn.execute(
-            f"SELECT step, completed_at FROM watermarks WHERE step IN ({placeholders})",
-            required,
-        ).fetchall()
-        step_to_completed_at = {row[0]: row[1] for row in rows}
-        stale: list[str] = []
-        for step in required:
-            completed_at = step_to_completed_at.get(step)
-            if completed_at is None or completed_at < ref_ts:
-                stale.append(step)
-        return stale
+
+        def _sql(conn: sqlite3.Connection):
+            ref_row = conn.execute(
+                "SELECT completed_at FROM watermarks WHERE step = ?", (reference,)
+            ).fetchone()
+            if ref_row is None:
+                return []
+            ref_ts = ref_row[0]
+            if not required:
+                return []
+            placeholders = ", ".join("?" for _ in required)
+            rows = conn.execute(
+                f"SELECT step, completed_at FROM watermarks WHERE step IN ({placeholders})",
+                required,
+            ).fetchall()
+            step_to_completed_at = {row[0]: row[1] for row in rows}
+            stale: list[str] = []
+            for step in required:
+                completed_at = step_to_completed_at.get(step)
+                if completed_at is None or completed_at < ref_ts:
+                    stale.append(step)
+            return stale
+
+        return self._with_conn(_sql)
 
     def get_pending_files(self) -> list[str]:
         """Return all files with in-flight or interrupted indexing.
@@ -172,34 +191,36 @@ class _PropertyIndexPart04:
         Called once at startup before the watcher starts, so no concurrent
         writes are possible.
         """
-        conn = self._ensure_conn()
-        rows = conn.execute("SELECT file FROM pending").fetchall()
-        return [row[0] for row in rows]
+
+        def _sql(conn: sqlite3.Connection):
+            rows = conn.execute("SELECT file FROM pending").fetchall()
+            return [row[0] for row in rows]
+
+        return self._with_conn(_sql)
 
     def get_indexed_source(self, source: str) -> IndexedSourceSnapshot | None:
-        """Return the cached source freshness row, if present.
+        """Return the cached source freshness row, if present."""
 
-        Call from the event loop via ``asyncio.to_thread`` (shared connection uses
-        ``check_same_thread=False``).
-        """
-        conn = self._ensure_conn()
-        row = conn.execute(
-            "SELECT source, mtime_ns, size_bytes, extraction_schema_version,"
-            " extraction_model, updated_at, source_hash"
-            " FROM indexed_sources WHERE source = ?",
-            (source,),
-        ).fetchone()
-        if row is None:
-            return None
-        return IndexedSourceSnapshot(
-            source=row[0],
-            mtime_ns=row[1],
-            size_bytes=row[2],
-            extraction_schema_version=row[3],
-            extraction_model=row[4],
-            updated_at=row[5],
-            source_hash=_row_str(row[6]),
-        )
+        def _sql(conn: sqlite3.Connection):
+            row = conn.execute(
+                "SELECT source, mtime_ns, size_bytes, extraction_schema_version,"
+                " extraction_model, updated_at, source_hash"
+                " FROM indexed_sources WHERE source = ?",
+                (source,),
+            ).fetchone()
+            if row is None:
+                return None
+            return IndexedSourceSnapshot(
+                source=row[0],
+                mtime_ns=row[1],
+                size_bytes=row[2],
+                extraction_schema_version=row[3],
+                extraction_model=row[4],
+                updated_at=row[5],
+                source_hash=_row_str(row[6]),
+            )
+
+        return self._with_conn(_sql)
 
     def get_cached_contexts(
         self,
@@ -221,60 +242,63 @@ class _PropertyIndexPart04:
         if not chunk_hashes:
             return {}
         digests = neighbor_digests or {}
-        conn = self._ensure_conn()
-        out: dict[str, str] = {}
 
-        if source_identity:
-            for start in range(0, len(chunk_hashes), _SQLITE_MAX_VARIABLES):
-                batch = chunk_hashes[start : start + _SQLITE_MAX_VARIABLES]
-                placeholders = ",".join("?" for _ in batch)
-                sql = (
-                    "SELECT chunk_hash, neighbor_digest, context_prefix "
-                    "FROM contextualized_chunks_g1 "
-                    "WHERE source_identity = ? "
-                    "AND contextualize_model = ? "
-                    "AND contextualize_schema_version = ? "
-                    f"AND chunk_hash IN ({placeholders})"
-                )
-                params = [
-                    source_identity,
-                    contextualize_model,
-                    contextualize_schema_version,
-                    *batch,
-                ]
-                for row in conn.execute(sql, params):
-                    chunk_hash = str(row[0])
-                    row_digest = str(row[1])
-                    expected = digests.get(chunk_hash)
-                    if expected is not None and row_digest != expected:
-                        continue
-                    out[chunk_hash] = _row_str(row[2])
+        def _sql(conn: sqlite3.Connection):
+            out: dict[str, str] = {}
 
-        if (
-            contextualize_cache_legacy_fallback_enabled()
-            and source_hash
-            and len(out) < len(chunk_hashes)
-        ):
-            missing = [h for h in chunk_hashes if h not in out]
-            for start in range(0, len(missing), _SQLITE_MAX_VARIABLES):
-                batch = missing[start : start + _SQLITE_MAX_VARIABLES]
-                placeholders = ",".join("?" for _ in batch)
-                sql = (
-                    "SELECT chunk_hash, context_prefix FROM contextualized_chunks "
-                    "WHERE source_hash = ? "
-                    "AND contextualize_model = ? "
-                    "AND contextualize_schema_version = ? "
-                    f"AND chunk_hash IN ({placeholders})"
-                )
-                params = [
-                    source_hash,
-                    contextualize_model,
-                    contextualize_schema_version,
-                    *batch,
-                ]
-                for row in conn.execute(sql, params):
-                    out[str(row[0])] = _row_str(row[1])
-        return out
+            if source_identity:
+                for start in range(0, len(chunk_hashes), _SQLITE_MAX_VARIABLES):
+                    batch = chunk_hashes[start : start + _SQLITE_MAX_VARIABLES]
+                    placeholders = ",".join("?" for _ in batch)
+                    sql = (
+                        "SELECT chunk_hash, neighbor_digest, context_prefix "
+                        "FROM contextualized_chunks_g1 "
+                        "WHERE source_identity = ? "
+                        "AND contextualize_model = ? "
+                        "AND contextualize_schema_version = ? "
+                        f"AND chunk_hash IN ({placeholders})"
+                    )
+                    params = [
+                        source_identity,
+                        contextualize_model,
+                        contextualize_schema_version,
+                        *batch,
+                    ]
+                    for row in conn.execute(sql, params):
+                        chunk_hash = str(row[0])
+                        row_digest = str(row[1])
+                        expected = digests.get(chunk_hash)
+                        if expected is not None and row_digest != expected:
+                            continue
+                        out[chunk_hash] = _row_str(row[2])
+
+            if (
+                contextualize_cache_legacy_fallback_enabled()
+                and source_hash
+                and len(out) < len(chunk_hashes)
+            ):
+                missing = [h for h in chunk_hashes if h not in out]
+                for start in range(0, len(missing), _SQLITE_MAX_VARIABLES):
+                    batch = missing[start : start + _SQLITE_MAX_VARIABLES]
+                    placeholders = ",".join("?" for _ in batch)
+                    sql = (
+                        "SELECT chunk_hash, context_prefix FROM contextualized_chunks "
+                        "WHERE source_hash = ? "
+                        "AND contextualize_model = ? "
+                        "AND contextualize_schema_version = ? "
+                        f"AND chunk_hash IN ({placeholders})"
+                    )
+                    params = [
+                        source_hash,
+                        contextualize_model,
+                        contextualize_schema_version,
+                        *batch,
+                    ]
+                    for row in conn.execute(sql, params):
+                        out[str(row[0])] = _row_str(row[1])
+            return out
+
+        return self._with_conn(_sql)
 
     async def store_cached_contexts(
         self,
@@ -303,32 +327,34 @@ class _PropertyIndexPart04:
             return 0
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            rows = [
-                (
-                    source_identity,
-                    row.chunk_hash,
-                    row.neighbor_digest,
-                    contextualize_model,
-                    contextualize_schema_version,
-                    row.context_prefix,
+            def _sql(conn: sqlite3.Connection) -> int:
+                rows = [
+                    (
+                        source_identity,
+                        row.chunk_hash,
+                        row.neighbor_digest,
+                        contextualize_model,
+                        contextualize_schema_version,
+                        row.context_prefix,
+                    )
+                    for row in filtered
+                ]
+                conn.executemany(
+                    "INSERT INTO contextualized_chunks_g1 ("
+                    "  source_identity, chunk_hash, neighbor_digest,"
+                    "  contextualize_model, contextualize_schema_version, context_prefix"
+                    ") VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source_identity, chunk_hash, neighbor_digest, "
+                    "            contextualize_model, contextualize_schema_version) "
+                    "DO UPDATE SET "
+                    "  context_prefix = excluded.context_prefix, "
+                    "  cached_at = datetime('now')",
+                    rows,
                 )
-                for row in filtered
-            ]
-            conn.executemany(
-                "INSERT INTO contextualized_chunks_g1 ("
-                "  source_identity, chunk_hash, neighbor_digest,"
-                "  contextualize_model, contextualize_schema_version, context_prefix"
-                ") VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(source_identity, chunk_hash, neighbor_digest, "
-                "            contextualize_model, contextualize_schema_version) "
-                "DO UPDATE SET "
-                "  context_prefix = excluded.context_prefix, "
-                "  cached_at = datetime('now')",
-                rows,
-            )
-            conn.commit()
-            return len(rows)
+                conn.commit()
+                return len(rows)
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -340,13 +366,15 @@ class _PropertyIndexPart04:
             return 0
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            cursor = conn.execute(
-                "DELETE FROM contextualized_chunks_g1 WHERE source_identity = ?",
-                (source_identity,),
-            )
-            conn.commit()
-            return int(cursor.rowcount)
+            def _sql(conn: sqlite3.Connection) -> int:
+                cursor = conn.execute(
+                    "DELETE FROM contextualized_chunks_g1 WHERE source_identity = ?",
+                    (source_identity,),
+                )
+                conn.commit()
+                return int(cursor.rowcount)
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -356,12 +384,14 @@ class _PropertyIndexPart04:
             return 0
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            cursor = conn.execute(
-                "DELETE FROM contextualized_chunks WHERE source_hash = ?",
-                (source_hash,),
-            )
-            conn.commit()
-            return int(cursor.rowcount)
+            def _sql(conn: sqlite3.Connection) -> int:
+                cursor = conn.execute(
+                    "DELETE FROM contextualized_chunks WHERE source_hash = ?",
+                    (source_hash,),
+                )
+                conn.commit()
+                return int(cursor.rowcount)
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
