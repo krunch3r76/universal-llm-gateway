@@ -172,9 +172,10 @@ async def _post_json(client: Any, path: str, body: dict[str, Any]) -> dict[str, 
     if not isinstance(data, dict):
         data = {"value": data}
     status = getattr(resp, "status_code", 200)
-    if isinstance(status, int) and status >= 400:
-        data.setdefault("error", f"http_{status}")
+    if isinstance(status, int):
         data["http_status"] = status
+        if status >= 400:
+            data.setdefault("error", f"http_{status}")
     return data
 
 
@@ -246,14 +247,7 @@ class WritingSeatDispatchHandler(BaseHandler):
         system = str(row.get("system_prompt") or "")
         models = _seat_models(options)
         timeout_s = _timeout(options)
-        if seat == "openai":
-            model = resolve_openai_reviewer_model(
-                {str(k): str(v) for k, v in models.items()}
-            )
-            if role == "reviewer" and assemble.get("reviewer_model"):
-                model = str(assemble["reviewer_model"])
-        else:
-            model = str(models.get(str(seat)) or "")
+        model = str(models.get(str(seat)) or "")
         body: dict[str, Any] = {
             "op": "generate",
             "model": model,
@@ -266,9 +260,6 @@ class WritingSeatDispatchHandler(BaseHandler):
         if seat == "cdp":
             body["job"] = "confer"
             body["mcp"] = False
-            body["timeout_seconds"] = timeout_s
-        elif seat == "openai":
-            body["job"] = "freeform"
             body["timeout_seconds"] = timeout_s
         else:
             body["seat"] = "cursor-sdk"
@@ -361,8 +352,30 @@ def _result_text(data: dict[str, Any]) -> str:
     return ""
 
 
+async def _held_openai_quota_step(
+    *,
+    thread: str,
+    writer_model: str,
+    reviewer_model: str,
+    reason: str,
+    bus_client: Any | None,
+) -> StepOutput:
+    held = build_held_reviewer_unfunded_review(reason=reason)
+    posted = await post_reviewer_unfunded_bus_report(
+        bus_client=bus_client,
+        thread_id=thread,
+        reason=held["reason"],
+        writer_model=writer_model,
+        reviewer_model=reviewer_model,
+    )
+    if not posted:
+        held = dict(held)
+        held["bus_report_failed"] = True
+    return _step(held)
+
+
 class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
-    """Dispatch an OpenAI reviewer via team_dispatch and fold quota into held."""
+    """Admit an OpenAI reviewer via team_dispatch (202 + execution_id)."""
 
     step_type = "writing_review_openai_v1"
 
@@ -376,8 +389,6 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
         self._bus_client = bus_client
 
     async def execute(self, step: Any, context: Any) -> StepOutput:
-        from .seat_wait import _first_json, _valid, findings_actionable
-
         options = getattr(context, "options", {}) or {}
         outputs = getattr(context, "outputs", {}) or {}
         assemble = getattr(outputs.get("assemble"), "json", None)
@@ -408,6 +419,7 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
         )
         writer_model = str(assemble.get("writer_model") or "")
         timeout_s = _timeout(options)
+        sensitive = assemble.get("sensitivity") != "non_sensitive"
         body: dict[str, Any] = {
             "op": "generate",
             "model": model,
@@ -419,6 +431,13 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
             "job": "freeform",
             "timeout_seconds": timeout_s,
         }
+        digest = hashlib.sha256(prompt.encode()).hexdigest()
+        if sensitive:
+            sidecar_ref = self._sidecar_writer(prompt, key)
+            body.pop("prompt", None)
+            body["sidecar_ref"] = sidecar_ref
+            body["prompt_sha256"] = digest
+            body["bus_body"] = "pointer_only"
         if self._client is not None:
             dispatched = await _post_json(self._client, "/api/v1/team/dispatch", body)
         else:
@@ -435,19 +454,13 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
         status = dispatched.get("http_status")
         if isinstance(status, int) and status >= 400:
             if is_openai_reviewer_quota_error(dispatched):
-                held = build_held_reviewer_unfunded_review(
-                    reason=str(dispatched.get("error_code") or "insufficient_quota")
+                return await _held_openai_quota_step(
+                    thread=thread,
+                    writer_model=writer_model,
+                    reviewer_model=model,
+                    reason=str(dispatched.get("error_code") or "insufficient_quota"),
+                    bus_client=self._bus_client,
                 )
-                bus = self._bus_client
-                if bus is not None:
-                    await post_reviewer_unfunded_bus_report(
-                        bus_client=bus,
-                        thread_id=thread,
-                        reason=held["reason"],
-                        writer_model=writer_model,
-                        reviewer_model=model,
-                    )
-                return _step(held)
             return _step(
                 {
                     "ok": False,
@@ -455,15 +468,6 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
                     "error": _error_code(dispatched, status),
                 }
             )
-        inline = dispatched.get("result")
-        if isinstance(inline, dict) and _valid("reviewer", inline):
-            payload = dict(inline)
-            payload["ok"] = True
-            payload["seat_record"] = {"seat": "openai", "model_id": model}
-            payload["findings_actionable"] = findings_actionable(payload.get("findings"))
-            out = _step(payload)
-            out.model_id = model
-            return out
         execution_id = dispatched.get("execution_id")
         if not isinstance(execution_id, str) or not execution_id:
             return _step(
@@ -473,48 +477,17 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
                     "error": "missing_execution_id",
                 }
             )
-
-        async def _poll(client: Any) -> StepOutput:
-            try:
-                resp = await client.get(
-                    f"/api/v1/executions/{execution_id}",
-                    params={"wait": min(timeout_s, 30)},
-                )
-                data = resp.json() if getattr(resp, "content", True) else {}
-            except Exception as exc:
-                return _step(
-                    {
-                        "ok": False,
-                        "refused": "review_transport_failed",
-                        "error": type(exc).__name__,
-                    }
-                )
-            if not isinstance(data, dict):
-                data = {}
-            parsed = _first_json(_result_text(data))
-            if not parsed or not _valid("reviewer", parsed):
-                return _step(
-                    {
-                        "ok": False,
-                        "refused": "review_transport_failed",
-                        "error": "unparseable",
-                    }
-                )
-            payload = dict(parsed)
-            payload["ok"] = True
-            payload["seat_record"] = {
+        return _step(
+            {
+                "ok": True,
+                "admit": "admitted",
                 "seat": "openai",
-                "model_id": model,
+                "role": "reviewer",
+                "model": model,
                 "execution_id": execution_id,
+                "dispatch_thread_id": thread,
+                "idempotency_key": key,
+                "prompt_sha256": digest,
+                "status": dispatched.get("status") or "running",
             }
-            payload["findings_actionable"] = findings_actionable(payload.get("findings"))
-            out = _step(payload)
-            out.model_id = model
-            return out
-
-        if self._client is not None:
-            return await _poll(self._client)
-        async with make_async_client(
-            DEFAULT_STARGATE_URL, timeout=float(timeout_s) + 10.0
-        ) as client:
-            return await _poll(client)
+        )

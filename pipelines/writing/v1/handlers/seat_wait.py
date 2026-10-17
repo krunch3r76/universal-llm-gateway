@@ -19,7 +19,8 @@ from transport_utils import (
     make_async_client,
 )
 
-from .seat_dispatch import _role, _timeout
+from .assemble import is_openai_reviewer_quota_error
+from .seat_dispatch import _held_openai_quota_step, _role, _thread_id, _timeout
 
 _WAIT_SLICE = 55.0
 
@@ -119,6 +120,10 @@ def _valid(role: str, obj: dict[str, Any] | None) -> bool:
 
 
 def _result_text(data: dict[str, Any]) -> str:
+    for key in ("result_text", "output", "text", "content"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
     result = data.get("result")
     if isinstance(result, str):
         return result
@@ -128,10 +133,6 @@ def _result_text(data: dict[str, Any]) -> str:
             if isinstance(value, str):
                 return value
         return json.dumps(result)
-    for key in ("content", "text", "output"):
-        value = data.get(key)
-        if isinstance(value, str):
-            return value
     return json.dumps(data)
 
 
@@ -588,6 +589,180 @@ def _copy_usage(out: StepOutput, local: Any) -> StepOutput:
     return out
 
 
+class WritingReviewOpenaiWaitHandler(BaseHandler):
+    """Poll an OpenAI reviewer admit until terminal, quota-held, or timeout."""
+
+    step_type = "writing_review_openai_wait_v1"
+
+    def __init__(
+        self,
+        client: Any | None = None,
+        bus_client: Any | None = None,
+        *,
+        now: Any | None = None,
+        sleep: Any | None = None,
+    ) -> None:
+        super().__init__()
+        self._client = client
+        self._bus_client = bus_client
+        self._now = now or time.monotonic
+        self._sleep = sleep
+
+    async def _sleep_round(self, round_index: int, deadline: float) -> None:
+        delay = float(min(2**round_index, 10))
+        remaining = deadline - self._now()
+        if remaining <= 0:
+            return
+        pause = min(delay, remaining)
+        if self._sleep is not None:
+            await self._sleep(pause)
+        else:
+            import asyncio
+
+            await asyncio.sleep(pause)
+
+    async def execute(self, step: Any, context: Any) -> StepOutput:
+        del step
+        options = getattr(context, "options", {}) or {}
+        outputs = getattr(context, "outputs", {}) or {}
+        timeout_s = _timeout(options)
+        assemble = _json_of(outputs, "assemble") or {}
+        dispatch = _json_of(outputs, "review_openai") or {}
+        writer_model = str(assemble.get("writer_model") or "")
+        reviewer_model = str(dispatch.get("model") or assemble.get("reviewer_model") or "")
+        thread = _thread_id(options)
+        execution_id = dispatch.get("execution_id")
+        key = dispatch.get("idempotency_key")
+        if dispatch.get("status") == "held_reviewer_unfunded":
+            return _step(dispatch)
+        if dispatch.get("ok") is not True or dispatch.get("admit") != "admitted":
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "review_transport_failed",
+                    "error": dispatch.get("error") or "admit_failed",
+                }
+            )
+        if not execution_id:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "review_transport_failed",
+                    "error": "missing_execution_id",
+                }
+            )
+        started = self._now()
+        deadline = started + timeout_s
+        round_index = 0
+        own_client = self._client is None
+        client = self._client
+        if own_client:
+            slice_s = min(_WAIT_SLICE, max(deadline - self._now(), 0.1))
+            client_cm = make_async_client(DEFAULT_STARGATE_URL, timeout=slice_s + 10)
+            client = await client_cm.__aenter__()
+        try:
+            while self._now() < deadline:
+                slice_s = min(_WAIT_SLICE, deadline - self._now())
+                if slice_s <= 0:
+                    break
+                try:
+                    resp = await client.get(
+                        f"/api/v1/executions/{execution_id}",
+                        params={"wait": slice_s},
+                    )
+                except Exception:
+                    await self._sleep_round(round_index, deadline)
+                    round_index += 1
+                    continue
+                status_code = getattr(resp, "status_code", None)
+                if (
+                    isinstance(status_code, int)
+                    and 400 <= status_code < 500
+                    and status_code not in (408, 429)
+                ):
+                    return _step(
+                        {
+                            "ok": False,
+                            "refused": "review_transport_failed",
+                            "error": f"poll_http_{status_code}",
+                        }
+                    )
+                if isinstance(status_code, int) and (
+                    status_code >= 500 or status_code in (408, 429)
+                ):
+                    await self._sleep_round(round_index, deadline)
+                    round_index += 1
+                    continue
+                try:
+                    data = resp.json() if getattr(resp, "content", True) else {}
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                status = str(data.get("status") or "")
+                if status in {"failed", "cancelled", "canceled"}:
+                    if is_openai_reviewer_quota_error(data):
+                        return await _held_openai_quota_step(
+                            thread=thread,
+                            writer_model=writer_model,
+                            reviewer_model=reviewer_model,
+                            reason=str(
+                                (data.get("error") or {}).get("code")
+                                if isinstance(data.get("error"), dict)
+                                else data.get("error_code") or "insufficient_quota"
+                            ),
+                            bus_client=self._bus_client,
+                        )
+                    return _step(
+                        {
+                            "ok": False,
+                            "refused": "review_transport_failed",
+                            "error": "execution_failed",
+                            "execution_id": execution_id,
+                            "waited_s": self._now() - started,
+                        }
+                    )
+                if status in {"completed", "complete", "succeeded", "success"}:
+                    parsed = _first_json(_result_text(data))
+                    if not _valid("reviewer", parsed):
+                        return _step(
+                            {
+                                "ok": False,
+                                "refused": "review_transport_failed",
+                                "error": "unparseable",
+                                "execution_id": execution_id,
+                                "waited_s": self._now() - started,
+                            }
+                        )
+                    assert parsed is not None
+                    payload = dict(parsed)
+                    payload["ok"] = True
+                    payload["seat_record"] = {
+                        "seat": "openai",
+                        "model_id": reviewer_model,
+                        "execution_id": execution_id,
+                        "idempotency_key": key,
+                    }
+                    payload["findings_actionable"] = findings_actionable(
+                        payload.get("findings")
+                    )
+                    return _step(payload, model_id=reviewer_model)
+                await self._sleep_round(round_index, deadline)
+                round_index += 1
+        finally:
+            if own_client:
+                await client_cm.__aexit__(None, None, None)
+        return _step(
+            {
+                "ok": False,
+                "refused": "review_transport_failed",
+                "error": "timeout",
+                "execution_id": execution_id,
+                "waited_s": self._now() - started,
+            }
+        )
+
+
 class WritingSeatSelectHandler(BaseHandler):
     """Choose the wait result, else the local generate step, else a refusal.
 
@@ -606,8 +781,10 @@ class WritingSeatSelectHandler(BaseHandler):
         role = _role(step)
         outputs = getattr(context, "outputs", {}) or {}
         if role == "reviewer":
-            openai_review = _json_of(outputs, "review_openai")
-            if isinstance(openai_review, dict):
+            for step_name in ("review_openai_wait", "review_openai"):
+                openai_review = _json_of(outputs, step_name)
+                if not isinstance(openai_review, dict):
+                    continue
                 if openai_review.get("status") == "held_reviewer_unfunded":
                     return _step(openai_review)
                 if openai_review.get("ok") is True and openai_review.get("verdict") in {
@@ -623,9 +800,17 @@ class WritingSeatSelectHandler(BaseHandler):
                     model = (
                         record.get("model_id")
                         if isinstance(record, dict)
-                        else None
+                        else openai_review.get("model")
                     )
                     return _step(payload, model_id=str(model) if model else None)
+                if openai_review.get("refused") == "review_transport_failed":
+                    return _step(
+                        {
+                            "refused": "review_transport_failed",
+                            "reason": "review_transport_failed",
+                            "error": openai_review.get("error") or "review_transport_failed",
+                        }
+                    )
         wait_name = "draft_wait" if role == "writer" else "review_wait"
         local_name = "draft_local" if role == "writer" else "review_local"
         waited = _json_of(outputs, wait_name)

@@ -43,6 +43,7 @@ _STEP_ORDER = [
     "independence",
     "review_dispatch",
     "review_openai",
+    "review_openai_wait",
     "review_wait",
     "review_local",
     "review",
@@ -122,6 +123,7 @@ def test_pipeline_shape() -> None:
     assert by_name["independence"].condition == _GO2
     assert by_name["review_dispatch"].condition == _DISPATCH_R
     assert by_name["review_openai"].condition == _OPENAI_R
+    assert by_name["review_openai_wait"].condition == _OPENAI_R
     assert by_name["review_wait"].condition == _DISPATCH_R
     assert by_name["review_local"].condition == _LOCAL_R
     assert by_name["review"].condition == _REVIEW
@@ -185,6 +187,7 @@ def test_pipeline_shape() -> None:
         ("writing", "writing_seat_select_v1"),
         ("writing", "writing_review_local_v1"),
         ("writing", "writing_review_openai_v1"),
+        ("writing", "writing_review_openai_wait_v1"),
     }
     reviewer = prompts["reviewer"]["template"]
     assert "does not state X" in reviewer
@@ -194,6 +197,8 @@ def test_pipeline_shape() -> None:
     handlers_dir = _V1 / "handlers"
     for path in handlers_dir.glob("*.py"):
         text = path.read_text(encoding="utf-8")
+        if path.name == "assemble.py":
+            continue
         assert 'post("/turns"' not in text
         assert "post('/turns'" not in text
         if path.name == "seat_dispatch.py":

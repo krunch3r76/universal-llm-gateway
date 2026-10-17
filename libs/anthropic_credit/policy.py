@@ -271,8 +271,6 @@ class CreditPolicy:
                     conn,
                     now=now_utc,
                     ttl_minutes=cfg.reservation_ttl_minutes,
-                    window_start=window_start,
-                    reset_at=reset_at,
                 )
                 snap = CreditLedger.compute_window_snapshot(
                     conn,
@@ -747,8 +745,6 @@ class CreditPolicy:
                 conn,
                 now=now_utc,
                 ttl_minutes=cfg.reservation_ttl_minutes,
-                window_start=window_start,
-                reset_at=reset_at,
             )
             snap = CreditLedger.compute_window_snapshot(
                 conn,

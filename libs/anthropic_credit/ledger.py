@@ -47,7 +47,7 @@ _REQUEST_KIND_INDEX_SQL = (
     "ON entries(request_id, kind)"
 )
 _CREATED_AT_INDEX_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at)"
+    "CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at, id)"
 )
 _RESERVE_UNIQUE_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_reserve_request "
@@ -390,14 +390,19 @@ class CreditLedger:
         conn: sqlite3.Connection,
         *,
         as_of: datetime,
+        reservation_ttl_minutes: int = 15,
     ) -> Decimal:
         """Sum committed and open-reserve USD for all rows with activity since ``as_of``."""
         as_of_dt = as_of.astimezone(UTC)
         as_of_iso = as_of_dt.isoformat()
+        ttl_minutes = max(0, int(reservation_ttl_minutes))
+        open_reserve_lower_iso = (
+            as_of_dt - timedelta(minutes=ttl_minutes)
+        ).astimezone(UTC).isoformat()
         rows = conn.execute(
             """
             SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
-            FROM entries
+            FROM entries INDEXED BY idx_entries_created_at
             WHERE created_at >= ?
             ORDER BY id ASC
             """,
@@ -469,16 +474,18 @@ class CreditLedger:
         open_before_as_of = conn.execute(
             """
             SELECT r.id, r.usd, r.created_at
-            FROM entries r
+            FROM entries r INDEXED BY idx_entries_created_at
             WHERE r.kind = 'reserve'
+              AND r.created_at >= ?
               AND r.created_at < ?
               AND NOT EXISTS (
                 SELECT 1 FROM entries c
                 WHERE c.request_id = r.request_id
                   AND c.kind IN ('commit', 'release')
               )
+            ORDER BY r.id ASC
             """,
-            (as_of_iso,),
+            (open_reserve_lower_iso, as_of_iso),
         ).fetchall()
         for row in open_before_as_of:
             spend += _parse_usd(row)
@@ -603,7 +610,9 @@ class CreditLedger:
 
         if as_of is not None:
             spend_since_as_of = CreditLedger.compute_spend_since_as_of(
-                conn, as_of=as_of
+                conn,
+                as_of=as_of,
+                reservation_ttl_minutes=reservation_ttl_minutes,
             )
 
         return WindowSnapshot(

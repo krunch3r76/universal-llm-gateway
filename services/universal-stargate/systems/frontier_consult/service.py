@@ -508,13 +508,15 @@ async def build_dispatch_body(
             req.role, request_id=request_id
         )
         credit_healthy = False
+        standard_models: frozenset[str] = frozenset()
         try:
             from anthropic_credit.config import CreditConfigInvalid, load_credit_config
 
             cfg = load_credit_config()
+            standard_models = frozenset(cfg.standard_models)
             parsed = ModelId.parse(req.model)
             if (
-                parsed.normalized in cfg.standard_models
+                parsed.normalized in standard_models
                 and parsed.routing_layer is None
                 and parsed.backend_type == "cloud_api"
             ):
@@ -532,6 +534,7 @@ async def build_dispatch_body(
             cost_intent_reason=req.cost_intent_reason,
             spawn_review_provenance=req.spawn_review_provenance,
             credit_healthy=credit_healthy,
+            standard_models=standard_models,
         )
 
     inject_profile = _inject_profile_for_generate(req)

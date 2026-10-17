@@ -292,31 +292,62 @@ def _is_anthropic_api_writer(model_id: str) -> bool:
 
 
 def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> str:
-    """Return the gpt-5 family model id for an openai reviewer seat."""
+    """Return a carded openai/gpt-5.x model id for an openai reviewer seat."""
+    from model_capabilities.model_capabilities import MODEL_CAPABILITY_CARDS
+
     models = seat_models or _DEFAULT_SEAT_MODELS
-    raw = models.get("openai") or _DEFAULT_SEAT_MODELS["openai"]
-    text = str(raw).lower()
-    if text.startswith("openai/gpt-5"):
-        return str(raw)
+    raw = str(models.get("openai") or _DEFAULT_SEAT_MODELS["openai"])
+    if raw in MODEL_CAPABILITY_CARDS and raw.lower().startswith("openai/gpt-5"):
+        return raw
+    for candidate in (
+        "openai/gpt-5.5",
+        "openai/gpt-5.4",
+        "openai/gpt-5.6-terra",
+    ):
+        if candidate in MODEL_CAPABILITY_CARDS:
+            return candidate
     return _DEFAULT_SEAT_MODELS["openai"]
 
 
-def is_openai_reviewer_quota_error(dispatched: dict[str, Any]) -> bool:
-    """True when an OpenAI reviewer dispatch failed for insufficient quota."""
-    code = str(dispatched.get("error_code") or dispatched.get("code") or "").lower()
+def _quota_tokens_from_mapping(data: dict[str, Any]) -> bool:
+    code = str(data.get("error_code") or data.get("code") or "").lower()
     if code in {"insufficient_quota", "billing_hard_limit_reached"}:
         return True
-    status = dispatched.get("http_status")
-    if status == 429:
-        detail = dispatched.get("detail")
-        if isinstance(detail, dict):
-            nested = str(detail.get("code") or detail.get("type") or "").lower()
-            if "quota" in nested or nested == "insufficient_quota":
-                return True
-        body = str(dispatched.get("error") or dispatched.get("message") or "").lower()
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        nested = str(detail.get("code") or detail.get("type") or "").lower()
+        if "quota" in nested or nested == "insufficient_quota":
+            return True
+    error = data.get("error")
+    if isinstance(error, dict):
+        nested = str(error.get("code") or error.get("type") or "").lower()
+        if "quota" in nested or nested == "insufficient_quota":
+            return True
+        body = str(error.get("message") or error.get("detail") or "").lower()
         if "quota" in body or "insufficient_quota" in body:
             return True
+    body = str(data.get("error") or data.get("message") or "").lower()
+    if isinstance(data.get("error"), str) and (
+        "quota" in body or "insufficient_quota" in body
+    ):
+        return True
     return False
+
+
+def is_openai_reviewer_quota_error(record: dict[str, Any]) -> bool:
+    """True when an OpenAI reviewer dispatch or execution failed for quota."""
+    if _quota_tokens_from_mapping(record):
+        return True
+    status = record.get("http_status")
+    if status == 429 and _quota_tokens_from_mapping(record):
+        return True
+    if status == 429:
+        detail = record.get("detail")
+        if isinstance(detail, dict) and _quota_tokens_from_mapping(detail):
+            return True
+    return _quota_tokens_from_mapping(
+        {"error": record.get("error"), "code": record.get("code")}
+    )
 
 
 def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -> dict[str, Any]:
@@ -333,26 +364,42 @@ def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -
 
 async def post_reviewer_unfunded_bus_report(
     *,
-    bus_client: Any,
     thread_id: str,
     reason: str,
     writer_model: str,
     reviewer_model: str,
-) -> None:
-    """Emit a bus report for held_reviewer_unfunded through the pipeline report path."""
+    bus_client: Any | None = None,
+) -> bool:
+    """Emit a held_reviewer_unfunded bus turn; False when transport/post fails."""
+    import os
+
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
+
     body = (
         "writer-specialist-v1: review held — OpenAI reviewer unfunded "
         f"({reason}); writer={writer_model!r} reviewer={reviewer_model!r}; "
         "no anthropic or cdp reviewer fallback."
     )
-    await bus_client.post(
-        "/messages",
-        json={
-            "thread_id": thread_id,
-            "body": body,
-            "from_agent": "pipeline:writer-specialist-v1",
-        },
-    )
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    payload = {
+        "thread": thread_id,
+        "from": "pipeline:writer-specialist-v1",
+        "to": "web-anthropic",
+        "subject": "writer-specialist-v1 review held",
+        "body": body,
+        "status": "open",
+    }
+    try:
+        if bus_client is not None:
+            resp = await bus_client.post("/turns", json=payload, headers=headers)
+            status = getattr(resp, "status_code", 200)
+            return isinstance(status, int) and status < 400
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = await client.post("/turns", json=payload, headers=headers)
+            return resp.status_code < 400
+    except Exception:
+        return False
 
 
 def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:

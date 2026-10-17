@@ -44,23 +44,20 @@ def reset_credit_health_cache() -> None:
     _cache_expires_monotonic = 0.0
 
 
-def _configured_cloud_proxy_base_url() -> str:
+def _configured_cloud_proxy_url() -> str:
     from transport_utils import DEFAULT_CLOUD_PROXY_URL
 
     try:
         from systems.cloud.config import parse_cloud_proxy_config
-        from systems.cloud.forwarder import parse_cloud_proxy_url
         from systems.proxy.stargate_config.config import StargateConfig
 
         raw = StargateConfig().get_cloud_proxy_config()
         parsed = parse_cloud_proxy_config(raw)
         if parsed and parsed.url:
-            _uds, base = parse_cloud_proxy_url(parsed.url)
-            if base:
-                return base.rstrip("/")
+            return parsed.url.strip().rstrip("/")
     except Exception:
         pass
-    return DEFAULT_CLOUD_PROXY_URL.rstrip("/")
+    return DEFAULT_CLOUD_PROXY_URL.strip().rstrip("/")
 
 
 def _status_body_healthy(body: object) -> bool:
@@ -72,7 +69,7 @@ def _status_body_healthy(body: object) -> bool:
 async def _default_async_credit_health_probe() -> bool:
     from transport_utils import make_async_client
 
-    url = _configured_cloud_proxy_base_url()
+    url = _configured_cloud_proxy_url()
     try:
         async with make_async_client(url, timeout=httpx.Timeout(1.0)) as client:
             resp = await client.get("/internal/anthropic-credit/status")
@@ -109,27 +106,17 @@ async def credit_gate_healthy() -> bool:
         return healthy
 
 
-def _standard_model_admit(model: str, *, credit_healthy: bool) -> bool:
-    try:
-        from anthropic_credit.config import CreditConfigInvalid, load_credit_config
-    except ImportError:
-        _logger.warning("anthropic credit config unavailable for standard admit")
-        return False
-    try:
-        cfg = load_credit_config()
-    except CreditConfigInvalid as exc:
-        _logger.warning("anthropic credit config invalid for standard admit: %s", exc)
-        return False
-    except Exception as exc:
-        _logger.warning(
-            "anthropic credit config load failed for standard admit: %s", exc
-        )
-        return False
+def _standard_model_admit(
+    model: str,
+    *,
+    credit_healthy: bool,
+    standard_models: frozenset[str],
+) -> bool:
     parsed = ModelId.parse(model)
     if parsed.routing_layer is not None or parsed.backend_type != "cloud_api":
         return False
     canonical = parsed.normalized
-    return canonical in cfg.standard_models and credit_healthy
+    return canonical in standard_models and credit_healthy
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +135,7 @@ def evaluate_anthropic_override(
     cost_intent_reason: str | None = None,
     spawn_review_provenance: SpawnReviewProvenance = None,
     credit_healthy: bool = False,
+    standard_models: frozenset[str] = frozenset(),
 ) -> AnthropicOverrideVerdict:
     """Return admit when the gate no-ops or an authorization path is satisfied."""
     if ModelId.parse(model).provider != "anthropic":
@@ -166,7 +154,9 @@ def evaluate_anthropic_override(
     ):
         return AnthropicOverrideVerdict(admitted=True)
 
-    if _standard_model_admit(model, credit_healthy=credit_healthy):
+    if _standard_model_admit(
+        model, credit_healthy=credit_healthy, standard_models=standard_models
+    ):
         return AnthropicOverrideVerdict(admitted=True)
 
     return AnthropicOverrideVerdict(
@@ -193,6 +183,7 @@ def enforce_anthropic_override(
     cost_intent_reason: str | None = None,
     spawn_review_provenance: SpawnReviewProvenance = None,
     credit_healthy: bool = False,
+    standard_models: frozenset[str] = frozenset(),
 ) -> None:
     """Raise FrontierEndpointError when an explicit anthropic override lacks auth."""
     from .admission import FrontierEndpointError
@@ -205,6 +196,7 @@ def enforce_anthropic_override(
         cost_intent_reason=cost_intent_reason,
         spawn_review_provenance=spawn_review_provenance,
         credit_healthy=credit_healthy,
+        standard_models=standard_models,
     )
     if verdict.admitted:
         return

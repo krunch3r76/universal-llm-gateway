@@ -27,6 +27,7 @@ _SONNET55 = "anthropic/claude-sonnet-5-5"
 _HAIKU55 = "anthropic/claude-haiku-5-5"
 _FABLE = "anthropic/claude-fable-5-1"
 _DISPATCH_THREAD = "test-dispatch-thread"
+_STANDARD_MODELS = frozenset({_SONNET55, _HAIKU55})
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +122,7 @@ def test_standard_model_admitted_when_credit_gate_healthy(model: str) -> None:
         profile_provider="openai",
         profile_allowed_models=(),
         credit_healthy=True,
+        standard_models=_STANDARD_MODELS,
     )
     assert verdict.admitted
 
@@ -149,6 +151,7 @@ def test_standard_model_rejects_when_credit_unhealthy() -> None:
         profile_provider="openai",
         profile_allowed_models=(),
         credit_healthy=False,
+        standard_models=_STANDARD_MODELS,
     )
     assert not verdict.admitted
 
@@ -159,6 +162,7 @@ def test_openrouter_sonnet_not_standard_admitted_without_cost_intent() -> None:
         profile_provider="openai",
         profile_allowed_models=(),
         credit_healthy=True,
+        standard_models=_STANDARD_MODELS,
     )
     assert not verdict.admitted
 
@@ -171,6 +175,7 @@ def test_enforce_openrouter_sonnet_raises_422() -> None:
             profile_provider="openai",
             profile_allowed_models=(),
             credit_healthy=True,
+            standard_models=_STANDARD_MODELS,
         )
     assert exc_info.value.code == REJECT_CODE
 
@@ -185,24 +190,88 @@ def test_opus_5_5_still_requires_cost_intent_when_credit_healthy() -> None:
     assert not verdict.admitted
 
 
-def test_standard_model_rejects_on_invalid_credit_config(
+@pytest.mark.asyncio
+async def test_standard_model_rejects_on_invalid_credit_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def fake_hydrate(agent: str, **_k: Any) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=[_SONNET55, "openai/gpt-5.6-terra"],
+                allowed_options=None,
+            ),
+        )
+
     def _bad_config() -> None:
         from anthropic_credit.config import CreditConfigInvalid
 
         raise CreditConfigInvalid("broken")
 
     monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
         "anthropic_credit.config.load_credit_config",
         _bad_config,
     )
-    verdict = evaluate_anthropic_override(
-        model=_SONNET55,
-        profile_provider="openai",
-        profile_allowed_models=(),
+    async def _always_healthy() -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.credit_gate_healthy",
+        _always_healthy,
     )
-    assert not verdict.admitted
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "review this"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model=_SONNET55,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await build_dispatch_body(req)
+    assert exc_info.value.code == REJECT_CODE
+
+
+@pytest.mark.asyncio
+async def test_standard_model_rejects_when_credit_probe_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(agent: str, **_k: Any) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=[_SONNET55, "openai/gpt-5.6-terra"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    async def _boom() -> bool:
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.credit_gate_healthy",
+        _boom,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "review this"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model=_SONNET55,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await build_dispatch_body(req)
+    assert exc_info.value.code == REJECT_CODE
 
 
 def test_empty_cost_intent_reason_rejects() -> None:
@@ -383,6 +452,95 @@ async def test_default_credit_health_probe_mock_transport_cases(
         _factory(200, {"healthy": True}),
     )
     assert await gate_mod._default_async_credit_health_probe() is True
+
+
+@pytest.mark.asyncio
+async def test_slow_credit_probe_rejects_standard_model_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(agent: str, **_k: Any) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=[_SONNET55, "openai/gpt-5.6-terra"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict[str, bool]:
+            return {"healthy": True}
+
+    class _SlowClient:
+        async def __aenter__(self) -> _SlowClient:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def get(self, _path: str) -> _Resp:
+            raise httpx.ReadTimeout("simulated slow probe")
+
+    monkeypatch.setattr(
+        "transport_utils.make_async_client",
+        lambda *_a, **_k: _SlowClient(),
+    )
+    reset_credit_health_cache()
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "review this"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model=_SONNET55,
+    )
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await build_dispatch_body(req)
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_cloud_proxy_url_uses_uds_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import anthropic_override_gate as gate_mod
+
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict[str, bool]:
+            return {"healthy": True}
+
+    class _Transport:
+        async def __aenter__(self) -> _Transport:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def get(self, _path: str) -> _Resp:
+            return _Resp()
+
+    def _fake_make(url: str, timeout: httpx.Timeout) -> _Transport:
+        captured["url"] = url
+        return _Transport()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.anthropic_override_gate._configured_cloud_proxy_url",
+        lambda: "unix:///tmp/x.sock",
+    )
+    monkeypatch.setattr("transport_utils.make_async_client", _fake_make)
+
+    assert await gate_mod._default_async_credit_health_probe() is True
+    assert captured["url"] == "unix:///tmp/x.sock"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Executor-level OpenAI reviewer path (review_openai step)."""
+"""Executor-level OpenAI reviewer path (review_openai + review_openai_wait)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,12 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+import yaml
+from systems.pipeline.core.conditions import ConditionEvaluator
+from systems.pipeline.core.pipeline_config import PipelineSpec
 
 _PKG = "writing_v1_handlers"
 _V1 = Path(__file__).resolve().parents[1]
@@ -50,7 +54,10 @@ class _Out:
 class _Ctx:
     def __init__(self, outputs: dict, options: dict | None = None) -> None:
         self.outputs = outputs
-        self.options = options or {"dispatch_thread_id": "15790"}
+        self.options = options or {
+            "dispatch_thread_id": "15790",
+            "seat_timeout_s": 600,
+        }
         self.execution_id = "run-openai-review"
 
 
@@ -67,12 +74,33 @@ class _PostResp:
         return self._payload
 
 
-class _TransportLog:
-    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
-        self.status_code = status_code
-        self.payload = payload
+class _GetResp:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.content = True
+        self.status_code = 200
+        self._data = data
+
+    def json(self) -> dict[str, Any]:
+        return self._data
+
+
+class _StargateTransport:
+    def __init__(
+        self,
+        *,
+        admit_status: int = 202,
+        admit_body: dict[str, Any] | None = None,
+        poll_sequence: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.admit_status = admit_status
+        self.admit_body = admit_body or {
+            "execution_id": "exec-1",
+            "status": "running",
+        }
+        self.poll_sequence = list(poll_sequence or [])
         self.posts: list[dict[str, Any]] = []
         self.gets: list[str] = []
+        self._poll_index = 0
 
     async def post(self, path: str, json: dict[str, Any]) -> _PostResp:
         self.posts.append({"path": path, "json": json})
@@ -81,33 +109,40 @@ class _TransportLog:
             self.posts.append({"anthropic": True})
         if model.startswith("cdp/"):
             self.posts.append({"cdp": True})
-        return _PostResp(self.status_code, dict(self.payload))
+        return _PostResp(self.admit_status, dict(self.admit_body))
 
-    async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    async def get(self, path: str, params: dict[str, Any] | None = None) -> _GetResp:
         self.gets.append(path)
-        return _GetResp(
-            {"status": "completed", "result_text": json.dumps(_REVIEW_JSON)}
-        )
+        if self._poll_index < len(self.poll_sequence):
+            data = self.poll_sequence[self._poll_index]
+            self._poll_index += 1
+        else:
+            data = self.poll_sequence[-1] if self.poll_sequence else {"status": "running"}
+        return _GetResp(data)
 
 
-class _GetResp:
-    def __init__(self, data: dict[str, Any]) -> None:
-        self.content = True
-        self._data = data
-
-    def json(self) -> dict[str, Any]:
-        return self._data
-
-
-class _BusFake:
+class _BusTransport:
     def __init__(self) -> None:
         self.posts: list[dict[str, Any]] = []
 
-    async def post(self, path: str, json: dict[str, Any]) -> None:
-        self.posts.append({"path": path, "json": json})
+    async def post(self, path: str, json: dict[str, Any], headers: dict | None = None) -> _PostResp:
+        self.posts.append({"path": path, "json": json, "headers": headers or {}})
+        return _PostResp(201, {})
 
 
-def _assemble_openai_writer() -> dict[str, Any]:
+class _Clock:
+    def __init__(self, *, step: float = 5.0) -> None:
+        self.t = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        return self.t
+
+    async def sleep(self, _seconds: float) -> None:
+        self.t += self.step
+
+
+def _assemble_openai_writer(*, sensitivity: str = "sensitive") -> dict[str, Any]:
     return {
         "refused": None,
         "writer_seat": "cdp",
@@ -118,6 +153,7 @@ def _assemble_openai_writer() -> dict[str, Any]:
         "brief_block": "",
         "pin_ledger": [],
         "dispatch_thread_id": "15790",
+        "sensitivity": sensitivity,
     }
 
 
@@ -130,63 +166,221 @@ def _draft() -> dict[str, Any]:
     }
 
 
-@pytest.mark.asyncio
-async def test_openai_reviewer_success_one_openai_call_recorded() -> None:
-    transport = _TransportLog(
-        200,
-        {"execution_id": "exec-1", "result": _REVIEW_JSON},
+def _yaml_by_name() -> dict[str, Any]:
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
     )
-    handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport)
+    return {step.name: step for step in PipelineSpec(**raw).steps}
+
+
+def _stub_cdp_review_steps(outputs: dict) -> None:
+    outputs.setdefault("review_dispatch", _Out({}))
+    outputs.setdefault("review_wait", _Out({}))
+
+
+def _assert_openai_only_steps_run(by_name: dict, outputs: dict, options: dict) -> None:
+    _stub_cdp_review_steps(outputs)
+    evaluator = ConditionEvaluator()
+    assert evaluator.evaluate(by_name["review_dispatch"].condition, outputs, options) is False
+    assert evaluator.evaluate(by_name["review_wait"].condition, outputs, options) is False
+    assert evaluator.evaluate(by_name["review_local"].condition, outputs, options) is False
+    assert evaluator.evaluate(by_name["review_openai"].condition, outputs, options) is True
+    assert evaluator.evaluate(by_name["review_openai_wait"].condition, outputs, options) is True
+
+
+async def _run_openai_review_path(
+    transport: _StargateTransport,
+    *,
+    bus: Any | None = None,
+    sidecar_writer: Any | None = None,
+    clock: _Clock | None = None,
+    sensitivity: str = "sensitive",
+) -> tuple[dict, dict, dict]:
+    by_name = _yaml_by_name()
+    ctx = _Ctx(
+        {
+            "assemble": _Out(_assemble_openai_writer(sensitivity=sensitivity)),
+            "draft": _Out(_draft()),
+            "independence": _Out({"refused": None, "independence": "full"}),
+        }
+    )
+    _assert_openai_only_steps_run(by_name, ctx.outputs, ctx.options)
+
+    dispatch_handler = seat_dispatch.WritingReviewOpenaiHandler(
+        client=transport,
+        bus_client=bus,
+        sidecar_writer=sidecar_writer,
+    )
+    openai_out = await dispatch_handler.execute(_Step(), ctx)
+    ctx.outputs["review_openai"] = _Out(openai_out.json or {})
+
+    clk = clock or _Clock()
+    wait_handler = seat_wait.WritingReviewOpenaiWaitHandler(
+        client=transport,
+        bus_client=bus,
+        now=clk,
+        sleep=clk.sleep,
+    )
+    wait_out = await wait_handler.execute(_Step(), ctx)
+    ctx.outputs["review_openai_wait"] = _Out(wait_out.json or {})
+
+    selected = await seat_wait.WritingSeatSelectHandler().execute(_Step(), ctx)
+    ctx.outputs["review"] = _Out(selected.json or {})
+    ctx.outputs["provenance_check"] = _Out({"violations": [], "pass": True})
+    fin = await finalize.WritingFinalizeHandler().execute(_Step(), ctx)
+    return openai_out.json or {}, wait_out.json or {}, fin.json or {}
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_success_202_admit_then_poll() -> None:
+    transport = _StargateTransport(
+        poll_sequence=[
+            {"status": "running"},
+            {"status": "completed", "result_text": json.dumps(_REVIEW_JSON)},
+        ]
+    )
+    _admit, wait_json, fin = await _run_openai_review_path(transport)
+    assert transport.posts[0]["path"] == "/api/v1/team/dispatch"
+    assert len(transport.posts) == 1
+    assert not any(p.get("anthropic") for p in transport.posts)
+    assert not any(p.get("cdp") for p in transport.posts)
+    assert wait_json["verdict"] == "ship"
+    assert fin["review"]["status"] == "ok"
+    assert len(transport.gets) >= 1
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_quota_at_admit_held_bus_report() -> None:
+    transport = _StargateTransport(
+        admit_status=429,
+        admit_body={"error_code": "insufficient_quota"},
+    )
+    bus = _BusTransport()
+    ctx = _Ctx(
+        {
+            "assemble": _Out(_assemble_openai_writer()),
+            "draft": _Out(_draft()),
+        }
+    )
+    handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport, bus_client=bus)
+    openai_out = await handler.execute(_Step(), ctx)
+    assert openai_out.json["status"] == "held_reviewer_unfunded"
+    assert len(transport.posts) == 1
+    assert bus.posts and bus.posts[0]["path"] == "/turns"
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_quota_on_failed_execution_record() -> None:
+    transport = _StargateTransport(
+        poll_sequence=[
+            {
+                "status": "failed",
+                "error": {"code": "insufficient_quota", "message": "quota exceeded"},
+            }
+        ]
+    )
+    bus = _BusTransport()
+    _admit, wait_json, fin = await _run_openai_review_path(transport, bus=bus)
+    assert wait_json["status"] == "held_reviewer_unfunded"
+    assert bus.posts and bus.posts[0]["path"] == "/turns"
+    assert fin["review"]["status"] == "held_reviewer_unfunded"
+    assert fin["ship_gate"]["pass"] is False
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_bus_report_without_injected_client() -> None:
+    transport = _StargateTransport(
+        admit_status=429,
+        admit_body={"error_code": "insufficient_quota"},
+    )
+    bus = _BusTransport()
+
+    class _ClientCtx:
+        def __init__(self, inner: _BusTransport) -> None:
+            self._inner = inner
+
+        async def __aenter__(self) -> _BusTransport:
+            return self._inner
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+    with patch(
+        "transport_utils.make_async_client",
+        return_value=_ClientCtx(bus),
+    ):
+        handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport)
+        ctx = _Ctx(
+            {
+                "assemble": _Out(_assemble_openai_writer()),
+                "draft": _Out(_draft()),
+            }
+        )
+        out = await handler.execute(_Step(), ctx)
+    assert out.json["status"] == "held_reviewer_unfunded"
+    assert len(bus.posts) == 1
+    assert bus.posts[0]["path"] == "/turns"
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_timeout_failed_not_held() -> None:
+    clock = _Clock(step=400.0)
+    transport = _StargateTransport(poll_sequence=[{"status": "running"}] * 20)
+    ctx_options = {"dispatch_thread_id": "15790", "seat_timeout_s": 30}
     ctx = _Ctx(
         {
             "assemble": _Out(_assemble_openai_writer()),
             "draft": _Out(_draft()),
             "independence": _Out({"refused": None, "independence": "full"}),
-        }
+        },
+        options=ctx_options,
     )
-    openai_out = await handler.execute(_Step(), ctx)
-    assert openai_out.json["verdict"] == "ship"
-    assert len([p for p in transport.posts if p.get("path")]) == 1
-    assert not any(p.get("anthropic") for p in transport.posts)
-    assert not any(p.get("cdp") for p in transport.posts)
-
-    ctx.outputs["review_openai"] = openai_out
-    ctx.outputs["provenance_check"] = _Out({"violations": [], "pass": True})
-    selected = await seat_wait.WritingSeatSelectHandler().execute(_Step(), ctx)
-    assert selected.json["verdict"] == "ship"
-    ctx.outputs["review"] = selected
-    fin = await finalize.WritingFinalizeHandler().execute(_Step(), ctx)
-    assert fin.json["review"]["status"] == "ok"
+    dispatch_handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport)
+    openai_out = await dispatch_handler.execute(_Step(), ctx)
+    ctx.outputs["review_openai"] = _Out(openai_out.json or {})
+    wait_handler = seat_wait.WritingReviewOpenaiWaitHandler(
+        client=transport,
+        now=clock,
+        sleep=clock.sleep,
+    )
+    wait_out = await wait_handler.execute(_Step(), ctx)
+    assert wait_out.json["error"] == "timeout"
+    assert wait_out.json.get("status") != "held_reviewer_unfunded"
 
 
 @pytest.mark.asyncio
-async def test_openai_reviewer_quota_held_bus_report_no_fallback() -> None:
-    transport = _TransportLog(
-        429,
-        {"error_code": "insufficient_quota"},
+async def test_openai_reviewer_sensitive_brief_uses_sidecar_pointer() -> None:
+    transport = _StargateTransport(
+        poll_sequence=[
+            {"status": "completed", "result_text": json.dumps(_REVIEW_JSON)},
+        ]
     )
-    bus = _BusFake()
-    handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport, bus_client=bus)
-    ctx = _Ctx(
-        {
-            "assemble": _Out(_assemble_openai_writer()),
-            "draft": _Out(_draft()),
-        }
-    )
-    openai_out = await handler.execute(_Step(), ctx)
-    assert openai_out.json["status"] == "held_reviewer_unfunded"
-    assert len(transport.posts) == 1
-    assert not any(p.get("anthropic") for p in transport.posts)
-    assert not any(p.get("cdp") for p in transport.posts)
-    assert bus.posts
-    assert "unfunded" in bus.posts[0]["json"]["body"]
+    sidecars: list[tuple[str, str]] = []
 
-    ctx.outputs["review_openai"] = openai_out
-    ctx.outputs["provenance_check"] = _Out({"violations": [], "pass": True})
-    ctx.outputs["independence"] = _Out({"refused": None, "independence": "full"})
-    selected = await seat_wait.WritingSeatSelectHandler().execute(_Step(), ctx)
-    assert selected.json["status"] == "held_reviewer_unfunded"
-    ctx.outputs["review"] = selected
-    fin = await finalize.WritingFinalizeHandler().execute(_Step(), ctx)
-    assert fin.json["review"]["status"] == "held_reviewer_unfunded"
-    assert fin.json["ship_gate"]["pass"] is False
+    def _writer(prompt: str, key: str) -> str:
+        sidecars.append((prompt, key))
+        return "cortex://notes/system/threads/writer-prompts/deadbeef.txt"
+
+    await _run_openai_review_path(
+        transport,
+        sidecar_writer=_writer,
+        sensitivity="sensitive",
+    )
+    body = transport.posts[0]["json"]
+    assert "prompt" not in body
+    assert body.get("sidecar_ref", "").startswith("cortex://")
+    assert body.get("bus_body") == "pointer_only"
+    assert sidecars
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_other_execution_error_not_held() -> None:
+    transport = _StargateTransport(
+        poll_sequence=[
+            {"status": "failed", "error": {"code": "pipeline_execution_cancelled"}},
+        ]
+    )
+    _admit, wait_json, fin = await _run_openai_review_path(transport)
+    assert wait_json.get("status") != "held_reviewer_unfunded"
+    assert wait_json["refused"] == "review_transport_failed"
+    assert fin["review"]["status"] == "failed"

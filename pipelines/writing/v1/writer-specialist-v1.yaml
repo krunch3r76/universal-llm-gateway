@@ -158,6 +158,10 @@ steps:
     type: writing_review_openai_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
 
+  - name: review_openai_wait
+    type: writing_review_openai_wait_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
+
   - name: review_wait
     type: writing_seat_wait_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
@@ -265,6 +269,8 @@ steps:
       - step: review_dispatch
         fields: [json]
       - step: review_openai
+        fields: [json]
+      - step: review_openai_wait
         fields: [json]
       - step: review_wait
         fields: [json]
