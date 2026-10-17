@@ -30,6 +30,22 @@ def _gateway_in_active_set(gw: object, active_nodes: set[str]) -> bool:
     return node_id in active_nodes or gateway_id in active_nodes
 
 
+def _gateway_reports_model(gw: object, model_id: str) -> bool:
+    """True when this gateway itself has the model loaded or busy.
+
+    ``loaded_on`` and ``busy_on`` store ``remote_stargate_id``, which every
+    gateway on that relay shares. ``model_resources`` is the installed catalog,
+    so an idle sibling must not add its ``parallel_slots`` to the sum.
+    """
+    loaded = getattr(gw, "loaded_models", ()) or ()
+    busy = getattr(gw, "busy_models", ()) or ()
+    if model_id in loaded or model_id in busy:
+        return True
+    return any(str(item) == model_id for item in loaded) or any(
+        str(item) == model_id for item in busy
+    )
+
+
 def derive_model_capacity(
     executor: MapExecutor, pool_assignments: dict[int, str]
 ) -> int | None:
@@ -75,6 +91,8 @@ def derive_model_capacity(
         if meta is None:
             continue
         if not _gateway_in_active_set(gw, active_nodes):
+            continue
+        if not _gateway_reports_model(gw, model_id):
             continue
         found = True
         total += meta.get("parallel_slots", 1)

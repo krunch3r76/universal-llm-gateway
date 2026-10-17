@@ -27,6 +27,7 @@ def _federated_gateway(*, parallel_slots: int = 2) -> FederatedGateway:
         remote_stargate_id="relay-jupiter",
         remote_stargate_url="http://relay-jupiter:9999",
         model_resources={_MODEL: {"parallel_slots": parallel_slots}},
+        loaded_models=frozenset({_MODEL}),
     )
 
 
@@ -37,6 +38,7 @@ def _local_gateway(*, parallel_slots: int = 3) -> FederatedGateway:
         remote_stargate_id="",
         remote_stargate_url="http://localhost:9999",
         model_resources={_MODEL: {"parallel_slots": parallel_slots}},
+        loaded_models=frozenset({_MODEL}),
     )
 
 
@@ -61,7 +63,7 @@ def test_federated_loaded_on_uses_remote_stargate_id(
 def test_federated_does_not_match_node_id_in_active_set(
     mock_federation: MagicMock, mock_status_map: MagicMock
 ) -> None:
-    """Regression: node_id in loaded_on must not count when remote_stargate_id is set."""
+    """node_id in loaded_on does not count when remote_stargate_id is set."""
     mock_federation.return_value = SimpleNamespace(
         config=SimpleNamespace(stargate_id="master-local")
     )
@@ -101,3 +103,35 @@ def test_local_gateway_matches_gateway_id_in_loaded_on(
     executor = _executor_with_gateways([_local_gateway(parallel_slots=3)])
 
     assert derive_model_capacity(executor, {0: _MODEL}) == 3
+
+
+@patch("systems.routing.selection.catalog.get_model_status_map")
+@patch("systems.federation.get_federation_integration")
+def test_same_relay_sibling_slots_not_double_counted(
+    mock_federation: MagicMock, mock_status_map: MagicMock
+) -> None:
+    """Installed-only sibling on the same relay must not add parallel_slots."""
+    mock_federation.return_value = SimpleNamespace(
+        config=SimpleNamespace(stargate_id="master-local")
+    )
+    mock_status_map.return_value = {
+        _MODEL: {"loaded_on": ["relay-jupiter"], "busy_on": []},
+    }
+    loaded = FederatedGateway(
+        gateway_id="edge-jupiter-a",
+        node_id="jupiter-a",
+        remote_stargate_id="relay-jupiter",
+        remote_stargate_url="http://relay-jupiter:9999",
+        model_resources={_MODEL: {"parallel_slots": 2}},
+        loaded_models=frozenset({_MODEL}),
+    )
+    installed_only = FederatedGateway(
+        gateway_id="edge-jupiter-b",
+        node_id="jupiter-b",
+        remote_stargate_id="relay-jupiter",
+        remote_stargate_url="http://relay-jupiter:9999",
+        model_resources={_MODEL: {"parallel_slots": 5}},
+    )
+    executor = _executor_with_gateways([loaded, installed_only])
+
+    assert derive_model_capacity(executor, {0: _MODEL}) == 2
