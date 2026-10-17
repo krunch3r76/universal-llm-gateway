@@ -10,11 +10,11 @@ schema_version: 6
 id: grokbot-computer-update
 version: "1.0"
 type: grokbot_computer_update
-domain: grokbot_computer_update
+category: grokbot_computer_update
 description: >
   Probe, wake, or update Grok Bot shared computer via X11 :9 and CDP :9339.
   No model invocation.
-output: grokbot-computer-update
+output: run_grokbot_computer_ctl
 
 options:
   timeout_seconds: 240

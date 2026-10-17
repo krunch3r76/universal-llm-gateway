@@ -110,11 +110,36 @@ _PROBE_JS = """(async () => {
   const phase = await window.desktop.main.getBoxHostPhase();
   const egress = await window.desktop.main.getEgressTunnelStatus();
   const migration = await window.desktop.main.getBoxMigrationStatus();
+  const app_update = await window.desktop.main.getUpdateStatus();
   const snap = await window.desktop.main.getInitialSnapshot();
   const running_assistants = (snap.roster || [])
     .filter(r => r.runState?.state === "running")
     .map(r => ({id: r.id, name: r.name, state: r.runState}));
-  return {phase, egress, migration, running_assistants};
+  let forever_box = null;
+  try {
+    const root = document.getElementById("root") || document.body.firstElementChild;
+    const fk = root ? Object.keys(root).find(k => k.startsWith("__reactContainer") || k.startsWith("__reactFiber")) : null;
+    if (fk) {
+      const stack = [root[fk]];
+      const seen = new Set();
+      let client = null;
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node || seen.has(node)) continue;
+        seen.add(node);
+        if (node.memoizedProps?.value?.foreverBox) { client = node.memoizedProps.value; break; }
+        if (node.child) stack.push(node.child);
+        if (node.sibling) stack.push(node.sibling);
+      }
+      if (client) {
+        const sel = client.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
+        const agentId = sel?.currentAgentId || "b5c63fe1-61b5-47d6-be6e-319ec999c383";
+        await client.foreverBox.refresh(agentId);
+        forever_box = client.foreverBox.statusSnapshotsFor(agentId).get()?.status ?? null;
+      }
+    }
+  } catch (_) {}
+  return {phase, egress, migration, app_update, forever_box, running_assistants};
 })()"""
 
 
