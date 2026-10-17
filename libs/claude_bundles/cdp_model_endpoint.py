@@ -759,7 +759,7 @@ def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
         cls = _classify_weekly_limit_banner(banner)
         if cls != "warning":
             return True
-        # Sticky approaching banner: still run short-body check (review B1).
+        # Warning class (approaching or usage-percent): still run short-body check (review B1).
     body = str(snapshot.get("body") or "")
     stripped = body.strip()
     if stripped and len(stripped) <= _ERROR_BANNER_ONLY_MAX_LEN:
