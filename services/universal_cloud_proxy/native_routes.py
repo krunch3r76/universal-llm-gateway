@@ -195,5 +195,7 @@ async def native_openai_responses(request: Request) -> Response:
 # Re-export forwarders for tests that import from native_routes.
 from .native_forwarders import (  # noqa: E402
     _forward_native as _forward_native,
+)
+from .native_forwarders import (
     _inject_native_mcp as _inject_native_mcp,
 )
