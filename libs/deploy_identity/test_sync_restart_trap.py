@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import signal
 import stat
@@ -11,6 +12,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
+from deploy_identity.mcp_env_keys import environment_key_names
 
 pytestmark = pytest.mark.offline
 
@@ -49,7 +52,21 @@ def _stub_docker_dir(
     sync_services_cp_fails: bool = False,
     optional_root_remains: bool = False,
     mount_secret_container: str = "",
+    inspect_env_keys: tuple[str, ...] | None = None,
 ) -> Path:
+    if inspect_env_keys is None:
+        chosen_env_keys = tuple(
+            sorted(
+                environment_key_names(
+                    _REPO_ROOT / "docker" / "compose" / "mcp-server.yml"
+                )
+            )
+        )
+    else:
+        chosen_env_keys = inspect_env_keys
+    env_printf = " ".join(
+        shlex.quote(f"{key}=envkey-sentinel") for key in chosen_env_keys
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "docker.log"
@@ -91,7 +108,7 @@ def _stub_docker_dir(
                 echo exited
                 exit 0
               fi
-              if [[ -f "$health_phase" && "{post_restart_health or ''}" != "" ]]; then
+              if [[ -f "$health_phase" && "{post_restart_health or ""}" != "" ]]; then
                 echo "{post_restart_health or inspect_health}"
               else
                 echo "{inspect_health}"
@@ -100,6 +117,10 @@ def _stub_docker_dir(
             fi
             if [[ "$*" == *".Image"* ]]; then
               echo "sha256:deadbeef"
+              exit 0
+            fi
+            if [[ "$*" == *"Config.Env"* ]]; then
+              printf '%s\\n' {env_printf}
               exit 0
             fi
             echo "running"
@@ -382,6 +403,72 @@ def test_routine_path_writes_stamp_before_stop_start(tmp_path: Path) -> None:
     assert log.count("STAMP_WRITE") == 1, log
     assert idx["stop"] >= 0 and idx["start"] >= 0, log
     assert idx["stamp_write"] < idx["stop"] < idx["start"], log
+
+
+def _compose_env_key_tuple() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            environment_key_names(_REPO_ROOT / "docker" / "compose" / "mcp-server.yml")
+        )
+    )
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_equal_env_key_names_keep_stop_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Config.Env names that cover the passthrough set keep docker stop/start.
+
+    Breaks when a routine sync recreates even though every compose env key
+    build_mcp_env would pass is already on the container. Inspect values
+    must not be echoed.
+    """
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "fixture-token-not-secret")
+    keys = _compose_env_key_tuple()
+    assert "VORTEX_BEARER_TOKENS" in keys
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", inspect_env_keys=keys)
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    idx = _log_indices(log)
+    combined = proc.stdout + proc.stderr + log
+    assert proc.returncode == 0, proc.stderr
+    assert "rm -f mcp-server" not in log
+    assert idx["stop"] >= 0 and idx["start"] >= 0, log
+    assert idx["stamp_write"] < idx["stop"] < idx["start"], log
+    assert "envkey-sentinel" not in combined
+    assert "fixture-token-not-secret" not in combined
+    assert "missing env key names" not in proc.stdout
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_env_key_name_diff_recreates_before_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passthrough key missing from Config.Env recreates before docker cp.
+
+    Breaks when stop/start keeps create-time Config.Env after build_mcp_env
+    gains a key name. Recreate after the cp would wipe the synced tree.
+    """
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "fixture-token-not-secret")
+    keys = tuple(
+        key for key in _compose_env_key_tuple() if key != "VORTEX_BEARER_TOKENS"
+    )
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", inspect_env_keys=keys)
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    combined = proc.stdout + proc.stderr + log
+    assert proc.returncode == 0, proc.stderr
+    assert "MCP container missing env key names: " in proc.stdout
+    assert "VORTEX_BEARER_TOKENS" in proc.stdout
+    assert "fixture-token-not-secret" not in combined
+    assert "envkey-sentinel" not in combined
+    rm_at = log.find("rm -f mcp-server")
+    sync_cp = log.find("mcp-server:/app/libs/", rm_at)
+    stop_at = log.find("stop ")
+    assert rm_at >= 0, log
+    assert "up -d mcp-server" in log
+    assert sync_cp > rm_at, log
+    assert stop_at > sync_cp, log
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
@@ -734,9 +821,7 @@ def test_stamp_write_chown_failure_restores(tmp_path: Path) -> None:
 
 def test_import_probe_refusal_skips_stamp_and_stop(tmp_path: Path) -> None:
     """AC5: import probe failure exits before cp/stop/stamp writes."""
-    stub = _stub_docker_dir(
-        tmp_path, inspect_health="healthy", import_probe_fails=True
-    )
+    stub = _stub_docker_dir(tmp_path, inspect_health="healthy", import_probe_fails=True)
     proc = _run_sync_script(tmp_path, stub)
     log = _docker_log(tmp_path)
     assert proc.returncode == 1, proc.stdout
@@ -1254,7 +1339,9 @@ def test_optional_root_remaining_after_delete_disagrees(tmp_path: Path) -> None:
             optional_root_remains=True,
         )
         proc = _run_sync_script(tmp_path, stub)
-        assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr, proc.stderr[-500:]
+        assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr, proc.stderr[
+            -500:
+        ]
         assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr[-500:]
     finally:
         shutil.rmtree(local, ignore_errors=True)

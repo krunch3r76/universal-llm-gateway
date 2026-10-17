@@ -5,6 +5,9 @@
 #   ~/.grok/bin (and often ~/.local/bin), which can overwrite the Cursor agent binary.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Routine path: docker cp into /app + docker stop/start (preserves writable layer).
+# When a compose environment key that build_mcp_env would pass is missing from the
+# container Config.Env key names, recreate (rm + compose up) BEFORE the cp. stop/start
+# keeps create-time Config.Env, so a new key never arrives until recreate.
 # --no-cache: compose up -d creates the container (its entrypoint can import before any
 # stamp exists). This script then writes /app/.source_sync_stamp and docker stop/start
 # so the process that stays up seals the new line 2. That extra stop/start is required
@@ -607,6 +610,35 @@ ensure_mcp_container() {
   wait_for_mcp_healthy || return 1
 }
 
+# Return 0 when passthrough key names are missing (caller recreates). Return 1 when
+# the container already has every such name (caller keeps stop/start). Exit on inspect
+# or compare failure — stop/start would keep a stale Config.Env.
+container_passthrough_env_keys_differ() {
+  local inspect_file rc
+  inspect_file="$(umask 077; mktemp)"
+  if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' mcp-server >"$inspect_file"; then
+    rm -f "$inspect_file"
+    echo "ERROR: docker inspect Config.Env failed; refusing stop/start." >&2
+    exit 1
+  fi
+  set +e
+  "$PYTHON" -m deploy_identity.mcp_env_keys \
+    --workspace-root "$WORKSPACE_ROOT" \
+    --compose-browser "$ENABLE_BROWSER_TOOLS" \
+    --inspect-file "$inspect_file"
+  rc=$?
+  set -e
+  rm -f "$inspect_file"
+  case "$rc" in
+    0) return 1 ;;
+    10) return 0 ;;
+    *)
+      echo "ERROR: MCP env key-name compare failed (exit ${rc})." >&2
+      exit 1
+      ;;
+  esac
+}
+
 restart_mcp_gracefully() {
   local c=mcp-server
   if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
@@ -707,6 +739,13 @@ if [[ "$NO_CACHE" == "true" ]]; then
   restart_mcp_gracefully
 else
   ensure_mcp_container
+  if container_passthrough_env_keys_differ; then
+    echo "MCP container env key names differ; recreating before source sync."
+    arm_restore_window
+    remove_mcp_container_for_image_recreate
+    arm_restore_window
+    docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  fi
   sync_source_into_container
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"
