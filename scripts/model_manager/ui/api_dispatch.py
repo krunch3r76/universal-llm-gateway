@@ -195,8 +195,26 @@ async def execute(
 
         case "start":
             require_service(service)
-            msg = await _start(ctl, service)
-            return start_envelope(msg)
+            hook = rag_start_settle_hook(service)
+            if hook is None:
+                msg = await _start(ctl, service)
+                return start_envelope(msg)
+            result = await run_gated(
+                ctl.restart_gate,
+                "start",
+                service,
+                force=False,
+                lifecycle=lambda: _lifecycle_with_restart_window(
+                    ctl,
+                    service,
+                    "start",
+                    lambda: _start(ctl, service),
+                ),
+                before_release=hook,
+            )
+            if result.get("status") == "deferred":
+                return result
+            return start_envelope(str(result.get("message", "")))
 
         case "stop":
             require_service(service)
@@ -281,6 +299,7 @@ async def execute(
                         "restart",
                         lambda: _restart_cycle(ctl, service),
                     ),
+                    before_release=rag_start_settle_hook(service),
                 )
             return await _finalize_restart_rebuild(ctl, service, result)
 
@@ -386,11 +405,7 @@ async def execute(
             )
             if preempted is not None:
                 return preempted
-            before_release = (
-                _rag_restart_settle_before_release
-                if service == "rag" and not force
-                else None
-            )
+            before_release = rag_start_settle_hook(service)
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -587,6 +602,7 @@ async def sync_restart_charter_harvest(
                 "sync_restart",
                 lambda svc=service: _sync_restart(ctl, svc),
             ),
+            before_release=rag_start_settle_hook(service),
         )
         if last.get("status") != "deferred":
             break
@@ -740,6 +756,18 @@ async def _probe_rag_transport_ready() -> bool:
         return await loop.run_in_executor(None, _tcp_socket_live, host, port)
     socket_path = read_rag_socket_path()
     return await loop.run_in_executor(None, uds_socket_live, socket_path)
+
+
+def rag_start_settle_hook(service: str):
+    """Return the rag settle hold for a lifecycle that starts rag.
+
+    Stop does not start rag, so it does not open the hold. Start, restart,
+    and sync_restart (including force) share this hook so a later non-force
+    sync_restart waits out startup instead of SIGKILL.
+    """
+    if service != "rag":
+        return None
+    return _rag_restart_settle_before_release
 
 
 async def _rag_restart_settle_before_release(message: str) -> None:

@@ -675,6 +675,7 @@ class ServicesScreen(Screen):
         action: str,
         service: str,
         lifecycle: Callable[[], Awaitable[str]],
+        before_release: Callable[[str], Awaitable[None]] | None = None,
     ) -> bool:
         """Run a single-service gated TUI lifecycle action through the shared gate.
 
@@ -692,6 +693,7 @@ class ServicesScreen(Screen):
             lifecycle=lambda: self._tui_lifecycle_with_window(
                 svc, service, action, lifecycle
             ),
+            before_release=before_release,
         )
         if result.get("status") == "deferred":
             await self._render_deferral(action, service, result)
@@ -823,9 +825,15 @@ class ServicesScreen(Screen):
         self._refresh_status()
 
     async def _start_rag(self) -> None:
+        from ...api_dispatch import rag_start_settle_hook
+
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.start_rag()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "start",
+            "rag",
+            lambda: svc.start_rag(),
+            before_release=rag_start_settle_hook("rag"),
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 

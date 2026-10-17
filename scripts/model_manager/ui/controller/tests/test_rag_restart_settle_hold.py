@@ -1,10 +1,11 @@
-"""RAG sync_restart settle hold — friction a:39394 plan r2."""
+"""RAG sync_restart settle hold — friction a:39394 plan r2, a:39455 start paths."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -178,13 +179,13 @@ def test_rag_sync_restart_after_ready_runs_lifecycle_again() -> None:
     _run(_exercise())
 
 
-def test_rag_force_true_skips_settle_before_release(
+def test_rag_force_sync_restart_passes_settle_before_release(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settle = AsyncMock()
+    captured: dict[str, Any] = {}
 
-    async def _run_gated(*args, **kwargs):
-        assert kwargs.get("before_release") is None
+    async def _run_gated(*_args, **kwargs):
+        captured.update(kwargs)
         return {"status": "ok", "message": RAG_MSG}
 
     monkeypatch.setattr(api_dispatch, "run_gated", _run_gated)
@@ -198,13 +199,13 @@ def test_rag_force_true_skips_settle_before_release(
         "preempt_stargate_idle_drain_if_needed",
         AsyncMock(return_value=None),
     )
-    monkeypatch.setattr(api_dispatch, "_rag_restart_settle_before_release", settle)
     ctl = MagicMock()
-    result = _run(
-        api_dispatch.execute(ctl, "sync_restart", "rag", {"force": True})
-    )
+    result = _run(api_dispatch.execute(ctl, "sync_restart", "rag", {"force": True}))
     assert result["status"] == "ok"
-    settle.assert_not_called()
+    assert (
+        captured.get("before_release")
+        is api_dispatch._rag_restart_settle_before_release
+    )
 
 
 def test_rag_force_true_during_existing_hold_stays_in_progress() -> None:
@@ -403,6 +404,191 @@ def test_rag_sync_restart_e2e_second_execute_in_progress_during_settle(
 
     assert lifecycle_calls == 1
     assert first_result["status"] == "ok"
+    assert second["status"] == "deferred"
+    assert second["state"] == "in_progress"
+    assert "4242" in second["reason"]
+
+
+def _arm_settle_not_ready(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Pid stays alive and transport stays down until the returned event is set."""
+    allow_ready = asyncio.Event()
+
+    def _uds_live(_path: object) -> bool:
+        return allow_ready.is_set()
+
+    def _pid_alive(_pid: int) -> bool:
+        return True
+
+    async def _passthrough(_ctl: object, _service: str, _action: str, inner):
+        return await inner()
+
+    async def _finalize(_ctl: object, _service: str, result: dict[str, Any], **_kwargs):
+        return result
+
+    monkeypatch.setattr(api_dispatch, "RAG_RESTART_SETTLE_BUDGET_S", 0.3)
+    monkeypatch.setattr(api_dispatch, "_rag_pid_considered_alive", _pid_alive)
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_config.read_rag_tcp_config",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.startup_probe.uds_socket_live",
+        _uds_live,
+    )
+    monkeypatch.setattr(
+        api_dispatch,
+        "preempt_giw_keep_await_if_needed",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        api_dispatch,
+        "preempt_stargate_idle_drain_if_needed",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(api_dispatch, "_lifecycle_with_restart_window", _passthrough)
+    monkeypatch.setattr(api_dispatch, "_finalize_restart_rebuild", _finalize)
+    return allow_ready
+
+
+@pytest.mark.parametrize(
+    ("method", "params", "lifecycle_name"),
+    [
+        ("start", {}, "_start"),
+        ("restart", {}, "_restart_cycle"),
+        ("restart", {"force": True}, "_restart_cycle"),
+        ("sync_restart", {"force": True}, "_sync_restart"),
+        ("charter", {}, "_sync_restart"),
+    ],
+    ids=["start", "restart", "restart-force", "sync-restart-force", "charter-harvest"],
+)
+def test_rag_start_path_blocks_nonforce_sync_restart_during_settle(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    params: dict[str, Any],
+    lifecycle_name: str,
+) -> None:
+    """A non-force sync_restart during the hold must not run stop (SIGKILL)."""
+    allow_ready = _arm_settle_not_ready(monkeypatch)
+    counts = {"lifecycle": 0, "second_sync": 0}
+    entered = asyncio.Event()
+
+    async def _lifecycle(*_args, **_kwargs) -> str:
+        counts["lifecycle"] += 1
+        entered.set()
+        return RAG_MSG
+
+    async def _second_sync(*_args, **_kwargs) -> str:
+        counts["second_sync"] += 1
+        return RAG_MSG
+
+    monkeypatch.setattr(api_dispatch, lifecycle_name, _lifecycle)
+    if lifecycle_name != "_sync_restart":
+        monkeypatch.setattr(api_dispatch, "_sync_restart", _second_sync)
+    if method == "charter":
+        monkeypatch.setattr(
+            "scripts.model_manager.ui.controller.service_ctl.authority_identity"
+            ".snapshot_before_restart",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.setattr(api_dispatch, "_wait_healthy", AsyncMock(return_value=0.0))
+
+    ctl = _ctl_with_gate()
+
+    async def _exercise() -> tuple[dict[str, Any], dict[str, Any]]:
+        if method == "charter":
+            first = asyncio.create_task(
+                api_dispatch.sync_restart_charter_harvest(ctl, "rag")
+            )
+        else:
+            first = asyncio.create_task(
+                api_dispatch.execute(ctl, method, "rag", params)
+            )
+        await entered.wait()
+        second = await api_dispatch.execute(ctl, "sync_restart", "rag", {})
+        allow_ready.set()
+        return await first, second
+
+    first_result, second = _run(_exercise())
+
+    assert counts["lifecycle"] == 1
+    assert counts["second_sync"] == 0
+    assert first_result["status"] == "ok"
+    assert second["status"] == "deferred"
+    assert second["state"] == "in_progress"
+    assert "4242" in second["reason"]
+
+
+def test_tui_start_rag_blocks_nonforce_sync_restart_during_settle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TUI rag start opens the same hold; a later non-force sync_restart waits."""
+    from scripts.model_manager.ui.view.screens.services import ServicesScreen
+
+    allow_ready = _arm_settle_not_ready(monkeypatch)
+    counts = {"lifecycle": 0, "second_sync": 0}
+    entered = asyncio.Event()
+
+    async def _second_sync(*_args, **_kwargs) -> str:
+        counts["second_sync"] += 1
+        return RAG_MSG
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(api_dispatch, "_sync_restart", _second_sync)
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.view.screens.services.asyncio.sleep",
+        _no_sleep,
+    )
+
+    ctl = _ctl_with_gate()
+
+    async def _start_rag() -> str:
+        counts["lifecycle"] += 1
+        entered.set()
+        return RAG_MSG
+
+    ctl.start_rag = _start_rag
+
+    class _Tui:
+        _force_armed = False
+        _run_gated_action = ServicesScreen._run_gated_action
+
+        def __init__(self) -> None:
+            self.app = SimpleNamespace(service_controller=ctl, event_bus=None)
+
+        def query_one(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(write_line=lambda _line: None)
+
+        def _consume_force(self) -> None:
+            return None
+
+        def _refresh_status(self) -> None:
+            return None
+
+        async def _tui_lifecycle_with_window(
+            self,
+            _svc: object,
+            _service: str,
+            _action: str,
+            lifecycle,
+        ) -> str:
+            return await lifecycle()
+
+    screen = _Tui()
+
+    async def _exercise() -> dict[str, Any]:
+        first = asyncio.create_task(ServicesScreen._start_rag(screen))
+        await entered.wait()
+        second = await api_dispatch.execute(ctl, "sync_restart", "rag", {})
+        allow_ready.set()
+        await first
+        return second
+
+    second = _run(_exercise())
+
+    assert counts["lifecycle"] == 1
+    assert counts["second_sync"] == 0
     assert second["status"] == "deferred"
     assert second["state"] == "in_progress"
     assert "4242" in second["reason"]
