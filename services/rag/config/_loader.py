@@ -93,6 +93,31 @@ def save_scope(
     logger.info("Persisted scope '%s' to %s", name, config_path)
 
 
+def _emit_scope_membership_load_failed(path: Path, stage: str, error: str) -> None:
+    """Publish the load-failure event. Raises when the import, bus, or loop is down."""
+    from services.rag.events.query import rag_scope_membership_load_failed
+    from services.rag.rag_service.state import get_event_bus
+
+    bus = get_event_bus()
+    if bus is None:
+        return
+    bus.publish_from_sync(
+        rag_scope_membership_load_failed(path=str(path), stage=stage, error=error)
+    )
+
+
+def _note_scope_membership_load_failed(path: Path, stage: str, error: str) -> None:
+    """Emit the load-failure event. A dead bus does not escape the loader."""
+    try:
+        _emit_scope_membership_load_failed(path, stage, error)
+    except Exception:
+        logger.debug(
+            "Dropped scope membership load event: stage=%s error=%s",
+            stage,
+            error,
+        )
+
+
 def _tracked_prefix_strings(scope_name: str, entry: object) -> list[str] | None:
     """Return usable tracked prefix strings, or None when this delta is skipped.
 
@@ -141,26 +166,32 @@ def _load_tracked_scopes(path: Path) -> dict[object, object] | None:
     try:
         text = path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError) as exc:
+        error = type(exc).__name__
         logger.error(
             "Failed to read tracked scope membership: path=%s error=%s",
             path,
-            type(exc).__name__,
+            error,
         )
+        _note_scope_membership_load_failed(path, "read", error)
         return None
     try:
         loaded: object = yaml.safe_load(text)
     except yaml.YAMLError as exc:
+        error = type(exc).__name__
         logger.error(
             "Failed to parse tracked scope membership: path=%s error=%s",
             path,
-            type(exc).__name__,
+            error,
         )
+        _note_scope_membership_load_failed(path, "parse", error)
         return None
     if not isinstance(loaded, dict):
+        error = type(loaded).__name__
         logger.error(
             "Tracked scope membership root must be a mapping: path=%s",
             path,
         )
+        _note_scope_membership_load_failed(path, "root_type", error)
         return None
     ignored = sorted(str(key) for key in loaded if key != "scopes")
     if ignored:
