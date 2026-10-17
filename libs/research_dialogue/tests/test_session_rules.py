@@ -30,6 +30,24 @@ def test_pair_by_request_id_ignores_bare_model_commit_row() -> None:
     pairs = _pair_by_request_id(entries, "claude-opus-5-5")
     assert pairs == {}
 
+    prefixed = [
+        {
+            "kind": "reserve",
+            "model": "anthropic/claude-opus-5-5",
+            "request_id": "r2",
+            "usd": "0.10",
+        },
+        {
+            "kind": "commit",
+            "model": "anthropic/claude-opus-5-5",
+            "request_id": "r2",
+            "usd": "0.10",
+        },
+    ]
+    prefixed_pairs = _pair_by_request_id(prefixed, "claude-opus-5-5")
+    assert prefixed_pairs["r2"]["commit_row"] is not None
+    assert prefixed_pairs["r2"]["commit_usd"] == Decimal("0.10")
+
 
 def test_turn_limit_stop() -> None:
     state = {"turn_count": TURN_LIMIT}

@@ -755,7 +755,7 @@ def run_close(
                 last_post_committed=last_committed,
                 last_post_ledger_instance_id=last_inst,
                 last_post_ledger_max_id=last_max_id,
-                pre_ledger_max_id=_pre_ledger_max_id(pre),
+                pre_ledger_max_id=_pre_ledger_max_id(post),
             )
             if send_result.ok:
                 billed, missing, unknown = billed_usd(send_result.usage, model=body["model"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -121,6 +122,83 @@ def test_turn_transport_error_writes_record(tmp_path: Path) -> None:
     assert turn_doc["running_sum"]
     assert turn_doc["ledger_delta"]
     assert "post_open_usd" in turn_doc
+
+
+def _ledger_file(path: Path, max_id: int) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE entries (
+            id INTEGER PRIMARY KEY,
+            kind TEXT,
+            request_id TEXT,
+            model TEXT,
+            usd TEXT,
+            created_at TEXT,
+            window_start TEXT
+        );
+        """
+    )
+    if max_id > 0:
+        conn.execute(
+            "INSERT INTO entries (id, kind, request_id, model, usd, created_at, window_start) "
+            "VALUES (?, 'commit', 'r', 'm', '0', 't', 'w')",
+            (max_id,),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _snap_with_ledger(committed: str, ledger_path: Path) -> Snapshot:
+    return Snapshot(
+        as_of_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        healthy=True,
+        committed_usd=Decimal(committed),
+        open_reservations_usd=Decimal("0"),
+        window_start="w",
+        ledger_instance_id="i",
+        latch_active=False,
+        raw={"healthy": True, "ledger_path": str(ledger_path)},
+    )
+
+
+def test_close_post_read_stale_when_ledger_file_regresses(tmp_path: Path) -> None:
+    ledger_pre = tmp_path / "ledger-pre.sqlite"
+    ledger_post = tmp_path / "ledger-post.sqlite"
+    _ledger_file(ledger_pre, 10)
+    _ledger_file(ledger_post, 5)
+    _seed_state(tmp_path)
+    state_path = tmp_path / "state.json"
+    state = json.loads(state_path.read_text())
+    state["last_post_ledger_max_id"] = 10
+    state["last_post_committed_usd"] = "0"
+    state["last_post_ledger_instance_id"] = "i"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    reads = [_snap_with_ledger("0", ledger_pre), _snap_with_ledger("0", ledger_post)]
+
+    def read_fn() -> Snapshot:
+        return reads.pop(0)
+
+    def send_fn(body: dict) -> SendResult:
+        return SendResult(
+            ok=True,
+            status_code=200,
+            text="closing note",
+            usage={
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            stop_reason="end_turn",
+            message_id="m",
+        )
+
+    code, _ = run_close(tmp_path, stop_reason="turn_limit", read_fn=read_fn, send_fn=send_fn)
+    assert code == 0
+    doc = json.loads((tmp_path / "turn-02.json").read_text())
+    assert doc["post_read_failed"] == "stale_read"
 
 
 def test_close_p4_records_turn(tmp_path: Path) -> None:
