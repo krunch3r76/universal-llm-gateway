@@ -26,6 +26,8 @@ probe_cap_usd: 0.05
 # every carded anthropic model with a pinned rate row; leg B adds sonnet-5-5 and haiku-5-5
 metered_models:
   - anthropic/claude-sonnet-5
+  - anthropic/claude-sonnet-5-5
+  - anthropic/claude-haiku-5-5
   - anthropic/claude-opus-5-5
   - anthropic/claude-fable-5-1
 standard_models: [anthropic/claude-sonnet-5-5, anthropic/claude-haiku-5-5]   # filled by leg B

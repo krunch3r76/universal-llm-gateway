@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -11,6 +13,55 @@ CostIntent = Literal["deliberate_high_cost"] | None
 SpawnReviewProvenance = Literal["generate_review_child"] | None
 
 REJECT_CODE = "anthropic_override_requires_authorization"
+
+CreditHealthProbe = Callable[[], bool]
+_credit_health_probe: CreditHealthProbe | None = None
+
+
+def set_anthropic_credit_health_probe(probe: CreditHealthProbe | None) -> None:
+    """Inject or clear the credit-gate health probe (tests only)."""
+    global _credit_health_probe
+    _credit_health_probe = probe
+
+
+def _default_credit_health_probe() -> bool:
+    from transport_utils import DEFAULT_CLOUD_PROXY_URL, make_sync_client
+
+    try:
+        with make_sync_client(DEFAULT_CLOUD_PROXY_URL, timeout=2.0) as client:
+            resp = client.get("/internal/anthropic-credit/status")
+    except Exception:
+        return False
+    if resp.status_code != 200:
+        return False
+    try:
+        body = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    return body.get("healthy") is True
+
+
+def _credit_gate_healthy() -> bool:
+    probe = _credit_health_probe or _default_credit_health_probe
+    try:
+        return probe()
+    except Exception:
+        return False
+
+
+def _standard_model_admit(model: str) -> bool:
+    try:
+        from anthropic_credit.config import CreditConfigInvalid, load_credit_config
+    except ImportError:
+        return False
+    try:
+        cfg = load_credit_config()
+    except CreditConfigInvalid:
+        return False
+    canonical = ModelId.parse(model).normalized
+    return canonical in cfg.standard_models and _credit_gate_healthy()
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +95,9 @@ def evaluate_anthropic_override(
         and cost_intent_reason
         and cost_intent_reason.strip()
     ):
+        return AnthropicOverrideVerdict(admitted=True)
+
+    if _standard_model_admit(model):
         return AnthropicOverrideVerdict(admitted=True)
 
     return AnthropicOverrideVerdict(
@@ -99,4 +153,5 @@ __all__ = [
     "SpawnReviewProvenance",
     "enforce_anthropic_override",
     "evaluate_anthropic_override",
+    "set_anthropic_credit_health_probe",
 ]

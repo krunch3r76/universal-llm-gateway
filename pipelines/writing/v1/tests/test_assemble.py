@@ -448,6 +448,87 @@ def test_assemble_dispatch_thread_refused(thread: str, error: str) -> None:
     assert payload["error"] == error
 
 
+def test_assemble_anthropic_writer_auto_resolves_openai_reviewer() -> None:
+    payload = _run_assemble(
+        brief=_brief(),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="auto",
+        seat_models={"cdp": "anthropic/claude-sonnet-5-5", "openai": "openai/gpt-5.4"},
+    )
+    assert payload["ok"] is True
+    assert payload["reviewer_seat"] == "openai"
+    assert payload["reviewer_model"] == "openai/gpt-5.4"
+
+
+def test_assemble_anthropic_writer_cdp_reviewer_refused() -> None:
+    payload = _run_assemble(
+        brief=_brief(),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="cdp",
+        seat_models={"cdp": "anthropic/claude-sonnet-5-5"},
+    )
+    assert payload["refused"] == "reviewer_seat_unavailable"
+    assert "cdp reviewer refused" in payload["error"]
+
+
+def test_openai_quota_error_builds_held_review_without_fallback() -> None:
+    held = assemble.build_held_reviewer_unfunded_review()
+    assert held["status"] == "held_reviewer_unfunded"
+    assert held["refused"] == "held_reviewer_unfunded"
+    assert assemble.is_openai_reviewer_quota_error(
+        {"http_status": 429, "error_code": "insufficient_quota"}
+    )
+
+
+class _BusFake:
+    def __init__(self) -> None:
+        self.posts: list[dict[str, Any]] = []
+
+    async def post(self, path: str, json: dict[str, Any]) -> None:
+        self.posts.append({"path": path, "json": json})
+
+
+class _TransportLog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def post(self, path: str, json: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(path)
+        if "anthropic" in str(json.get("model", "")).lower():
+            self.calls.append("anthropic_dispatch")
+        if str(json.get("model", "")).startswith("cdp/"):
+            self.calls.append("cdp_dispatch")
+        return {"http_status": 429, "error_code": "insufficient_quota"}
+
+
+@pytest.mark.asyncio
+async def test_held_reviewer_unfunded_posts_bus_report_no_anthropic_or_cdp() -> None:
+    bus = _BusFake()
+    transport = _TransportLog()
+    dispatched = await transport.post(
+        "/api/v1/team/dispatch",
+        {"model": "openai/gpt-5.4", "op": "generate"},
+    )
+    assert assemble.is_openai_reviewer_quota_error(dispatched)
+    held = assemble.build_held_reviewer_unfunded_review(
+        reason=str(dispatched.get("error_code"))
+    )
+    await assemble.post_reviewer_unfunded_bus_report(
+        bus_client=bus,
+        thread_id="15790",
+        reason=held["reason"],
+        writer_model="anthropic/claude-sonnet-5-5",
+        reviewer_model="openai/gpt-5.4",
+    )
+    assert held["status"] == "held_reviewer_unfunded"
+    assert "anthropic_dispatch" not in transport.calls
+    assert "cdp_dispatch" not in transport.calls
+    assert bus.posts
+    assert "unfunded" in bus.posts[0]["json"]["body"]
+
+
 def test_assemble_local_local_omitted_thread_ok() -> None:
     payload = _run_assemble(
         brief=_brief(sensitivity="non_sensitive"),

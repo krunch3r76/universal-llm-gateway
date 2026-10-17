@@ -12,11 +12,22 @@ from .anthropic_override_gate import (
     REJECT_CODE,
     enforce_anthropic_override,
     evaluate_anthropic_override,
+    set_anthropic_credit_health_probe,
 )
 from .service import FrontierGenerateRequest, build_dispatch_body
 
 _OPUS = "anthropic/claude-opus-5"
+_SONNET55 = "anthropic/claude-sonnet-5-5"
+_HAIKU55 = "anthropic/claude-haiku-5-5"
+_FABLE = "anthropic/claude-fable-5-1"
 _DISPATCH_THREAD = "test-dispatch-thread"
+
+
+@pytest.fixture(autouse=True)
+def _reset_credit_health_probe() -> None:
+    set_anthropic_credit_health_probe(lambda: True)
+    yield
+    set_anthropic_credit_health_probe(None)
 
 
 def test_reviewer_opus_without_attestation_rejects() -> None:
@@ -93,6 +104,77 @@ def test_role_allowlist_alone_does_not_authorize_cross_family() -> None:
     assert err.code == REJECT_CODE
     assert err.field == "model"
     assert err.status_code == 422
+
+
+@pytest.mark.parametrize("model", [_SONNET55, _HAIKU55])
+def test_standard_model_admitted_when_credit_gate_healthy(model: str) -> None:
+    verdict = evaluate_anthropic_override(
+        model=model,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert verdict.admitted
+
+
+def test_opus_still_requires_cost_intent_when_healthy() -> None:
+    verdict = evaluate_anthropic_override(
+        model=_OPUS,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert not verdict.admitted
+
+
+def test_fable_still_requires_cost_intent_when_healthy() -> None:
+    verdict = evaluate_anthropic_override(
+        model=_FABLE,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert not verdict.admitted
+
+
+def test_standard_model_rejects_when_credit_unhealthy() -> None:
+    set_anthropic_credit_health_probe(lambda: False)
+    verdict = evaluate_anthropic_override(
+        model=_SONNET55,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert not verdict.admitted
+
+
+def test_standard_model_rejects_when_health_probe_errors() -> None:
+    def _boom() -> bool:
+        raise TimeoutError("probe down")
+
+    set_anthropic_credit_health_probe(_boom)
+    verdict = evaluate_anthropic_override(
+        model=_HAIKU55,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert not verdict.admitted
+
+
+def test_standard_model_rejects_on_invalid_credit_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _bad_config() -> None:
+        from anthropic_credit.config import CreditConfigInvalid
+
+        raise CreditConfigInvalid("broken")
+
+    monkeypatch.setattr(
+        "anthropic_credit.config.load_credit_config",
+        _bad_config,
+    )
+    verdict = evaluate_anthropic_override(
+        model=_SONNET55,
+        profile_provider="openai",
+        profile_allowed_models=(),
+    )
+    assert not verdict.admitted
 
 
 def test_empty_cost_intent_reason_rejects() -> None:

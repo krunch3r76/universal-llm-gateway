@@ -15,6 +15,8 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+ANTHROPIC_WRITER_REVIEWER = "openai/gpt-5"
+
 
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
@@ -28,6 +30,10 @@ def model_family(model_id: str) -> str | None:
     independence is explicitly allowed.
     """
     text = (model_id or "").lower()
+    if text.startswith("anthropic/"):
+        return "anthropic"
+    if text.startswith("openai/gpt-5"):
+        return "openai"
     if text.startswith("cdp/") or "claude" in text:
         return "anthropic"
     if text.startswith("xai/") or "grok" in text:
@@ -138,8 +144,14 @@ class WritingIndependenceHandler(BaseHandler):
             cdp_model = seat_models.get("cdp")
         if reviewer_seat == "cdp" and not cdp_model:
             cdp_model = "cdp/opus-5.5"
+        openai_model = None
+        if reviewer_seat == "openai" and isinstance(seat_models, dict):
+            openai_model = seat_models.get("openai")
+        if reviewer_seat == "openai" and not openai_model:
+            openai_model = ANTHROPIC_WRITER_REVIEWER
         reviewer = (
             self._reviewer_model
+            or (str(openai_model) if reviewer_seat == "openai" and openai_model else None)
             or (str(cdp_model) if reviewer_seat == "cdp" and cdp_model else None)
             or overrides.get("review")
             or overrides.get("reviewer")
