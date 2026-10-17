@@ -470,6 +470,12 @@ async def _json_completion_to_sse(
     yield b"data: [DONE]\n\n"
 
 
+async def _stream_reraise_error(exc: BaseException) -> AsyncIterator[bytes]:
+    """Defer a preflight failure to ``_relay_stream_safe`` (SSE error frame path)."""
+    raise exc
+    yield b""  # pragma: no cover
+
+
 async def _raise_anthropic_credit_refused(
     exc: AnthropicCreditRefused,
     *,
@@ -904,7 +910,7 @@ async def chat_completions(request: Request) -> Response:
             request_body=body,
         )
         try:
-            primed = await preflight_native_byte_stream(chunks)
+            stream_for_relay = await preflight_native_byte_stream(chunks)
         except AnthropicCreditRefused as exc:
             await _raise_anthropic_credit_refused(
                 exc,
@@ -913,6 +919,8 @@ async def chat_completions(request: Request) -> Response:
                 model_id=model_id,
                 adapter_type=adapter,
             )
+        except Exception as exc:
+            stream_for_relay = _stream_reraise_error(exc)
         if event_bus:
             await event_bus.publish(
                 CloudProxyRequestForwarded(
@@ -925,7 +933,7 @@ async def chat_completions(request: Request) -> Response:
             )
         return StreamingResponse(
             _relay_stream_safe(
-                primed,
+                stream_for_relay,
                 provider_catalog.provider,
                 model_id,
                 adapter,

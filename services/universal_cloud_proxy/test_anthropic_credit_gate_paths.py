@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
+from collections.abc import AsyncIterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,16 @@ from anthropic_credit.policy import (
     Admit,
     AnthropicCreditRefused,
     CreditPolicy,
+    Refuse,
     get_policy,
     set_policy,
 )
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
+from llm_adapters.capability_dispatch import CatalogMissError
 from model_id import ModelId
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from services.universal_cloud_proxy.adapters.anthropic import AnthropicAdapter
 from services.universal_cloud_proxy.adapters.factory import create_provider_adapter
@@ -498,3 +502,127 @@ def test_resolve_pinned_rate_never_returns_openrouter_alias_row() -> None:
 
     assert resolve_pinned_rate("anthropic/claude-opus-5") is None
     assert resolve_pinned_rate("openrouter/anthropic/claude-opus-5") is None
+
+
+def _chat_completions_scope(body: bytes) -> dict[str, object]:
+    return {
+        "type": "http",
+        "asgi": {"spec_version": "2.3", "version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "raw_path": b"/v1/chat/completions",
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 80),
+    }
+
+
+def _catalog_mgr_for_stream(mid: str) -> Any:
+    from services.universal_cloud_proxy.catalog import (
+        CatalogManager,
+        CatalogModel,
+        ProviderCatalog,
+    )
+
+    mgr = CatalogManager([], {})
+    mgr._catalogs["anthropic"] = ProviderCatalog(
+        provider="anthropic",
+        models=[CatalogModel(id=mid, provider="anthropic", max_concurrent=1)],
+    )
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_credit_refused_before_sse_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: preflight credit refusal must not commit SSE (429 before stream body)."""
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-sonnet-5"
+    refused = AnthropicCreditRefused(
+        Refuse(
+            code="anthropic_cycle_budget_exhausted",
+            http_status=429,
+            reservation_usd=None,
+            headroom_usd=None,
+            detail="cap",
+        )
+    )
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        def forward_request_stream(self, **_kwargs: object) -> AsyncIterator[bytes]:
+            async def _gen() -> AsyncIterator[bytes]:
+                raise refused
+                yield b""  # pragma: no cover
+
+            return _gen()
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog_mgr_for_stream(mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: None)
+
+    body = (
+        b'{"model":"anthropic/claude-sonnet-5","stream":true,'
+        b'"messages":[{"role":"user","content":"hi"}]}'
+    )
+    scope = _chat_completions_scope(body)
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    with pytest.raises(HTTPException) as caught:
+        await cp.chat_completions(Request(scope, receive))
+    assert caught.value.status_code == 429
+    assert caught.value.detail["error"]["type"] == "anthropic_cycle_budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_non_credit_preflight_error_sse_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: catalog miss during preflight must reach _relay_stream_safe (SSE 422 frame)."""
+    from services.universal_cloud_proxy import cloud_proxy as cp
+
+    mid = "anthropic/claude-fictional-99"
+
+    class _Forwarder:
+        def adapter_type(self, _provider: str) -> str:
+            return "anthropic"
+
+        def forward_request_stream(self, **_kwargs: object) -> AsyncIterator[bytes]:
+            async def _gen() -> AsyncIterator[bytes]:
+                raise CatalogMissError(mid, "no_capability_card")
+                yield b""  # pragma: no cover
+
+            return _gen()
+
+    monkeypatch.setattr(cp, "_get_catalog", lambda: _catalog_mgr_for_stream(mid))
+    monkeypatch.setattr(cp, "_get_forwarder", lambda: _Forwarder())
+    monkeypatch.setattr(cp, "_get_event_bus", lambda: None)
+    monkeypatch.setattr(cp, "_get_mcp_executor", lambda: None)
+
+    body = (
+        b'{"model":"anthropic/claude-fictional-99","stream":true,'
+        b'"messages":[{"role":"user","content":"hi"}]}'
+    )
+    scope = _chat_completions_scope(body)
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    resp = await cp.chat_completions(Request(scope, receive))
+    assert isinstance(resp, StreamingResponse)
+    parts = [p async for p in resp.body_iterator]
+    payload = json.loads(parts[0].decode().removeprefix("data: ").strip())
+    assert payload["error"]["type"] == "catalog_miss"
+    assert payload["error"]["code"] == "422"
+    assert parts[1] == b"data: [DONE]\n\n"
