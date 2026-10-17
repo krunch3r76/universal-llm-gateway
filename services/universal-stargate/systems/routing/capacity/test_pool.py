@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Regression tests for CapacityPool — specifically the slot leak on cancellation.
 
@@ -18,7 +19,9 @@ _stargate_root = str(Path(__file__).resolve().parents[3])
 if _stargate_root not in sys.path:
     sys.path.insert(0, _stargate_root)
 
-from systems.routing.capacity._pool import _acquisition as acquisition_module  # noqa: E402
+from systems.routing.capacity._pool import (
+    _acquisition as acquisition_module,  # noqa: E402
+)
 from systems.routing.capacity.pool import CapacityPool, CapacityToken  # noqa: E402
 
 
@@ -314,6 +317,56 @@ async def test_waiting_event_emitted_while_request_stays_queued(
     with pytest.raises(asyncio.CancelledError):
         await task_b
     await token_a.release()
+
+
+@pytest.mark.asyncio
+async def test_r8_slice4_acquire_deadline_returns_completed_future_token(
+    seeded_pool: CapacityPool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 3: deadline path returns token when waiter future already done."""
+    from systems.routing.capacity._pool._types import _Slot
+
+    model = "hermes3"
+    gw = "edge-jupiter-gateway"
+    mono = {"t": 100.0}
+    monkeypatch.setattr(acquisition_module.time, "monotonic", lambda: mono["t"])
+
+    token_a = await seeded_pool.acquire_token(
+        request_id="req-a",
+        model_id=model,
+        allowed_gateway_ids=frozenset({gw}),
+    )
+
+    wait_task = asyncio.create_task(
+        seeded_pool._wait_for_slot(
+            "req-b",
+            model,
+            frozenset({gw}),
+            wait_deadline=200.0,
+        )
+    )
+    await asyncio.sleep(0)
+    waiter = seeded_pool._queues[model][-1]
+    slot = _Slot(gateway_id=gw, model_id=model)
+    seeded_pool._in_flight[slot] = seeded_pool._in_flight.get(slot, 0) + 1
+    waiter.future.set_result(gw)
+    mono["t"] = 200.0
+    gateway_id = await wait_task
+    assert gateway_id == gw
+
+    token = CapacityToken(
+        gateway_id=gateway_id,
+        model_id=model,
+        request_id="req-b",
+        queued=True,
+        _pool=seeded_pool,
+    )
+    await token.release()
+    await token_a.release()
+    _, in_flight, _ = seeded_pool.get_slot_info(gw, model)
+    assert in_flight == 0
+    assert seeded_pool.get_snapshot()["total_queued"] == 0
 
 
 @pytest.mark.asyncio

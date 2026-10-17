@@ -30,7 +30,7 @@ def _reset_contextualize_budget() -> None:
     yield
 
 
-def test_4_23_query_embed_timeout_default_not_rag_client_ceiling() -> None:
+def test_4_24_query_embed_timeout_default_not_rag_client_ceiling() -> None:
     assert DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S == 10.0
     assert QUERY_EMBED_REQUEST_TIMEOUT_S == 10.0
     assert QUERY_EMBED_REQUEST_TIMEOUT_S < 120.0
