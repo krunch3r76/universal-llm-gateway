@@ -101,6 +101,26 @@ def _user_block(text: str, *, cache_ephemeral: bool) -> dict[str, Any]:
     return block
 
 
+def _cache_last_history_block(messages: list[dict[str, Any]]) -> None:
+    """Mark the final history message's last text block ephemeral (P4 prefix cache)."""
+    if not messages:
+        return
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        last["content"] = [
+            {
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    elif isinstance(content, list) and content:
+        block = content[-1]
+        if isinstance(block, dict):
+            block["cache_control"] = {"type": "ephemeral"}
+
+
 def build_messages_body(
     *,
     turn_index: int,
@@ -135,6 +155,7 @@ def build_messages_body(
             messages.append({"role": "assistant", "content": content})
 
     if closing:
+        _cache_last_history_block(messages)
         user_text = _fill_p4(stop_reason or "unknown")
     elif turn_index <= 1:
         if excerpt_text is None:

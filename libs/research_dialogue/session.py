@@ -489,10 +489,11 @@ def run_close(
     no_p4: bool = False,
     read_fn: Callable[[], Snapshot] = read_status,
     send_fn: Callable[[dict[str, Any]], SendResult] = send_messages,
-) -> None:
+) -> tuple[int, dict[str, Any]]:
     store = SessionStore(session_dir)
     state = store.load()
     p4_text = ""
+    session_line: dict[str, Any] = {"mode": "close", "stop_reason": stop_reason}
     s0 = Snapshot(
         as_of_utc=datetime.now(tz=UTC),
         healthy=True,
@@ -552,10 +553,23 @@ def run_close(
             state["final_post_snapshot"] = _snap_dict(post)
             state["stop_reason"] = stop_reason
             store.save(state)
+            session_line = {
+                "mode": "close",
+                "turn": turn_index,
+                "billed": str(billed),
+                "running_sum": str(running),
+                "ledger_delta": str(ledger_delta),
+                "researcher_status": "closing",
+                "stop_reason": stop_reason,
+                "reply_path": str(reply_path),
+            }
     state = store.load()
     _write_design_note(session_dir, state, stop_reason, p4_text)
     _write_session_md(session_dir, state, stop_reason)
     _write_transcript(session_dir, state)
+    session_line.setdefault("turns", state.get("turn_count"))
+    session_line.setdefault("running_billed", state.get("running_billed"))
+    return 0, session_line
 
 
 def _write_design_note(

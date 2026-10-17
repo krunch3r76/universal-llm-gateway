@@ -61,3 +61,30 @@ def test_multiturn_cache_breakpoints() -> None:
         if isinstance(content, list):
             for block in content:
                 assert "cache_control" not in block
+
+
+def test_closing_cache_on_last_history_not_p4_user() -> None:
+    history = [
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "assistant reply"},
+    ]
+    body = build_messages_body(
+        turn_index=3,
+        history=history,
+        closing=True,
+        stop_reason="turn_limit",
+    )
+    assert body["system"][0].get("cache_control") == {"type": "ephemeral"}
+    history_cache = 0
+    for msg in body["messages"][:-1]:
+        content = msg.get("content")
+        if isinstance(content, str):
+            continue
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and "cache_control" in block:
+                    history_cache += 1
+                    assert msg is body["messages"][-2]
+    assert history_cache == 1
+    p4_user = body["messages"][-1]["content"][0]
+    assert "cache_control" not in p4_user

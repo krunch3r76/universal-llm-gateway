@@ -1,0 +1,31 @@
+<documents>
+<document index="1" source="15851-salience-research-s3-fable-5.1.md" sha256="24a0d446…" lines="3-11,98-146,150-160,170,196,198,201,203">
+{excerpt lines 3-11}
+{excerpt lines 98-146}
+{excerpt lines 150-160}
+{excerpt line 170}
+{excerpt lines 196, 198, 201, 203}
+</document>
+<document index="2" source="15851 #1402: independent review notes on document 1 (7 MINOR)">
+{the seven MINOR notes, verbatim from #1402}
+</document>
+</documents>
+
+<context>
+Document 1 is a research report written by another model on this corpus. Treat it as a strong colleague's draft, not as settled. Document 2 lists errors an independent reviewer found in it. Kaywan's rule is that salience keys on substance only: claim, evidence, values and confirmation. Context such as link counts, mention frequency and text length is reported, never scored.
+</context>
+
+<question>
+Under the substance-only rule, what design for myelination M(a,t) does the corpus support? Settle these, each with a recommendation, corpus evidence (search ids) and a falsifier:
+F-a: is retrieval a small live rung, rated at night by a seat, or dropped? And does the existing entity-grain access count in compute_entrenchment stay?
+F-b: which current scoring inputs stop counting toward salience?
+F-c: is the carrier assertions, edges, or both? Within F-c, should M(a,t) be stored separately from entrenchment_score (document 1's F-h)?
+F-d: does a "confirmed" label without evidence_uris or a named reviewer earn the top rung, half, or nothing?
+Decay form: power-law, or exponential with per-domain time constants?
+</question>
+
+<turn_frame>
+Allowed search scopes: knowledge_systems, agent_skills_research, event_salience, temporal_provenance, belief_consistency, llm_prompting, claude_api, prompt_injection, all_research.
+Start wherever you judge best. The first turn usually sets out your initial position on each fork and the searches that would most test it.
+Reply using the contract in your instructions.
+</turn_frame>

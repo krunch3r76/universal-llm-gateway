@@ -145,7 +145,10 @@ def test_close_p4_records_turn(tmp_path: Path) -> None:
             message_id="m",
         )
 
-    run_close(tmp_path, stop_reason="turn_limit", read_fn=read_fn, send_fn=send_fn)
+    code, line = run_close(tmp_path, stop_reason="turn_limit", read_fn=read_fn, send_fn=send_fn)
+    assert code == 0
+    assert line.get("mode") == "close"
+    assert line.get("turn") == 2
     doc = json.loads((tmp_path / "turn-02.json").read_text())
     assert doc["closing"] is True
     assert doc["running_sum"] != "0.01"
