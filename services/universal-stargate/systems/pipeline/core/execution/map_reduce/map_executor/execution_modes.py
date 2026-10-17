@@ -150,7 +150,7 @@ class MapExecutionModes:
         iteration_metadata: list[tuple[int, str | None]],
         iteration_context: dict[int, dict[str, Any]],
         inference_timeout_seconds: float | None = None,
-    ) -> tuple[list[StepOutput], list[str | None], list[int]]:
+    ) -> tuple[list[StepOutput], list[str | None], list[int], list[dict[str, Any]]]:
         """
         Execute with stall-aware timeout and optional partial success.
 

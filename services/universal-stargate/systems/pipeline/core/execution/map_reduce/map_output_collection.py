@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ...schemas import StepOutput
 
+# Per-index failure hints for threshold-met map runs (not embedded in json_array).
+FailedIterationHint = dict[str, Any]
+
 
 class MapOutputCollection:
     """
@@ -78,6 +81,7 @@ class MapOutputCollection:
         total_count: int | None = None,
         processing_seconds: float | None = None,
         queue_wait_seconds: float | None = None,
+        failed_iteration_hints: list[FailedIterationHint] | None = None,
     ) -> None:
         """
         Args:
@@ -87,6 +91,8 @@ class MapOutputCollection:
             total_count: Total number of iterations (including failures)
             processing_seconds: Optional Stargate-derived work time (post-queue).
             queue_wait_seconds: Optional time from step start to first inference.
+            failed_iteration_hints: Failed iterations when threshold was met
+                (``{"index": int, "error_message": str}`` entries).
         """
         self._outputs = tuple(outputs)  # Immutable
         self._keys = tuple(keys) if keys is not None else tuple([None] * len(outputs))
@@ -96,6 +102,15 @@ class MapOutputCollection:
         self._total_count = total_count
         self.processing_seconds = processing_seconds
         self.queue_wait_seconds = queue_wait_seconds
+        self.failed_iteration_hints = failed_iteration_hints or None
+
+    @property
+    def failed_iteration_hints(self) -> list[FailedIterationHint] | None:
+        return self._failed_iteration_hints
+
+    @failed_iteration_hints.setter
+    def failed_iteration_hints(self, value: list[FailedIterationHint] | None) -> None:
+        self._failed_iteration_hints = value if value else None
 
     def all_outputs(self) -> list["StepOutput"]:
         """Return all outputs as list."""
