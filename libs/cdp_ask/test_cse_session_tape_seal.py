@@ -131,3 +131,84 @@ async def test_close_body_parse_failure_emits_before_falling_through(
     assert events[0].signal == "cdp.tape.seal.failed"
     assert events[0].payload["stage"] == "response_json"
     assert events[0].payload["error_type"] == "ValueError"
+    assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_cortex_non_200_emits_failed_then_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Cortex non-200 emits one cdp.tape.seal.failed, then raises."""
+    from universal_protocol.errors import ProtocolError
+
+    from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
+
+    events: list = []
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal.emit",
+        lambda event: events.append(event),
+    )
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: True)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {"rid-39528": _listening_row()},
+    )
+
+    async def _scrape(_port: int, _url: str) -> list[dict]:
+        return [
+            {"author": "user", "text": "keep the predecessor reasoning", "ordinal": 1}
+        ]
+
+    def _post(_payload: dict) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 503
+        response.json.return_value = {"error": "unavailable"}
+        return response
+
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
+        _scrape,
+    )
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+    monkeypatch.setattr(
+        "chat_harvest.archive.archive_chat_transcript",
+        lambda **_k: ("cortex://x", "sha", "new"),
+    )
+    with pytest.raises(ProtocolError) as exc_info:
+        await seal_predecessor_cse_to_tape("rid-39528")
+    assert exc_info.value.code == "standdown.tape_seal_failed"
+    assert exc_info.value.data["status_code"] == 503
+    assert len(events) == 1
+    assert events[0].signal == "cdp.tape.seal.failed"
+    assert events[0].payload["stage"] == "cortex_status"
+    assert "503" in events[0].payload["detail"]
+
+
+@pytest.mark.asyncio
+async def test_listener_down_emits_degraded_and_returns_same_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead port emits one degraded event and returns the listener_down dict."""
+    from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
+
+    events: list = []
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal.emit",
+        lambda event: events.append(event),
+    )
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: False)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {"rid-39528": _listening_row()},
+    )
+    result = await seal_predecessor_cse_to_tape("rid-39528")
+    assert result == {
+        "degraded": True,
+        "registration_id": "rid-39528",
+        "transcript_path": None,
+        "reason": "listener_down",
+    }
+    assert len(events) == 1
+    assert events[0].signal == "cdp.tape.seal.degraded"
+    assert events[0].payload["reason"] == "listener_down"
+    assert events[0].payload["stage"] == "listener_down"
