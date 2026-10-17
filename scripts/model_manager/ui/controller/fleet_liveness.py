@@ -135,6 +135,48 @@ def _service_info(service_state: ServiceState, service: str) -> ServiceInfo:
     return checker()
 
 
+_STAMP_SOURCE = "docker:/app/.source_sync_stamp"
+
+
+def _version_evidence(
+    reported: dict[str, Any], validation: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Label the live sync stamp against the process-start code_version seal.
+
+    ``reported_version`` cats ``/app/.source_sync_stamp`` line 2 on each probe.
+    ``code_ref_validation`` reads ``/health`` ``code_version``, sealed once at
+    process import. Source sync writes that stamp before the serving process
+    recycles, so the SHAs differ until the new process seals the new stamp.
+    The process seal answers whether a code_ref is live. The stamp answers
+    what the last source sync wrote.
+    """
+    if reported.get("source") != _STAMP_SOURCE:
+        return None
+    stamp = reported.get("value")
+    sealed = (validation.get("liveness") or {}).get("observed_code_version")
+    if not isinstance(stamp, str) or not stamp.strip():
+        return None
+    if not isinstance(sealed, str) or not sealed.strip():
+        return None
+    agree = stamp == sealed
+    evidence: dict[str, Any] = {
+        "stamp_sha": stamp,
+        "stamp_source": _STAMP_SOURCE,
+        "stamp_authority": "last_source_sync_write",
+        "process_seal_sha": sealed,
+        "process_seal_authority": "process_start_code_version",
+        "authoritative_for_liveness": "process_start_code_version",
+        "agree": agree,
+    }
+    if not agree:
+        evidence["disagreement"] = (
+            "source_sync_stamp line 2 is the last sync write; "
+            "observed_code_version is the process-start seal. "
+            "Liveness uses the process seal."
+        )
+    return evidence
+
+
 def _code_ref_validation_with_provenance(
     service: str,
     code_ref: str,
@@ -220,6 +262,8 @@ def _compact_service_row(row: dict[str, Any]) -> dict[str, Any]:
         compact["code_ref_validation"] = _compact_code_ref_validation(
             row["code_ref_validation"]
         )
+    if "version_evidence" in row:
+        compact["version_evidence"] = row["version_evidence"]
     return compact
 
 
@@ -376,6 +420,11 @@ def build_snapshot(
                 health_url=row.get("health_url"),
                 activation_validation_id=activation_validation_id,
             )
+            evidence = _version_evidence(
+                row["reported_version"], row["code_ref_validation"]
+            )
+            if evidence is not None:
+                row["version_evidence"] = evidence
 
     behind = _paths_index_behind_head(
         root, before.get("head_sha"), before.get("paths", {})
