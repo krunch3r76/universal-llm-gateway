@@ -16,6 +16,20 @@ if TYPE_CHECKING:
     from .map_executor import MapExecutor
 
 
+def _gateway_in_active_set(gw: object, active_nodes: set[str]) -> bool:
+    """True when this gateway's catalog id is in loaded_on | busy_on.
+
+    Federated catalogs key active sets by ``remote_stargate_id``; the local
+    gateway uses ``local_stargate_id`` (node_id / gateway_id when remote is empty).
+    """
+    remote_id = getattr(gw, "remote_stargate_id", "") or ""
+    if remote_id:
+        return remote_id in active_nodes
+    node_id = getattr(gw, "node_id", "") or ""
+    gateway_id = getattr(gw, "gateway_id", "") or ""
+    return node_id in active_nodes or gateway_id in active_nodes
+
+
 def derive_model_capacity(
     executor: MapExecutor, pool_assignments: dict[int, str]
 ) -> int | None:
@@ -60,8 +74,7 @@ def derive_model_capacity(
         meta = gw.model_resources.get(model_id)
         if meta is None:
             continue
-        node_id = gw.node_id or gw.gateway_id
-        if node_id not in active_nodes:
+        if not _gateway_in_active_set(gw, active_nodes):
             continue
         found = True
         total += meta.get("parallel_slots", 1)

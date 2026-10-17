@@ -33,6 +33,16 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/model-capacity", tags=["model-capacity"])
 
 
+def _gateway_in_active_set(gw: object, active_nodes: set[str]) -> bool:
+    """True when this gateway's catalog id is in loaded_on | busy_on."""
+    remote_id = getattr(gw, "remote_stargate_id", "") or ""
+    if remote_id:
+        return remote_id in active_nodes
+    node_id = getattr(gw, "node_id", "") or ""
+    gateway_id = getattr(gw, "gateway_id", "") or ""
+    return node_id in active_nodes or gateway_id in active_nodes
+
+
 def _resolve_local_id() -> str:
     fed = get_federation_integration()
     return fed.config.stargate_id if fed and fed.config else "local"
@@ -81,9 +91,9 @@ async def get_model_capacity(
         meta = gw.model_resources.get(model_id)
         if meta is None:
             continue
-        node_id = gw.node_id or gw.gateway_id
-        if node_id not in active_nodes:
+        if not _gateway_in_active_set(gw, active_nodes):
             continue
+        node_id = gw.node_id or gw.gateway_id
         slots = meta.get("parallel_slots", 1)
         status = "busy" if node_id in summary.get("busy_on", []) else "loaded"
         nodes.append({"node_id": node_id, "parallel_slots": slots, "status": status})
