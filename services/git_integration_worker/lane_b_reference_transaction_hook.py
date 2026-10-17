@@ -137,6 +137,23 @@ def _master_ff_updates(repo: Path, updates: list[RefUpdate]) -> list[RefUpdate]:
     return found
 
 
+def _load_hub_tree_sync():
+    """Import ``hub_tree_sync`` from the repo that contains this module.
+
+    Hook cwd is the worktree that ran git, so ``services`` resolves to that
+    tree, while the hook script's ``PYTHONPATH`` may still point at the hub
+    libs. A lane copy of this module must load the lane's repair function.
+    """
+    import sys
+
+    libs = str(Path(__file__).resolve().parents[2] / "libs")
+    if libs not in sys.path:
+        sys.path.insert(0, libs)
+    import git_integrate.hub_tree_sync as hub_tree_sync
+
+    return hub_tree_sync
+
+
 def _emit_refused(dispatch_id: str, repo: Path, ref_name: str) -> None:
     from services.git_integration_worker.cursor_sdk_events import (
         emit_sdk_lane_hub_checkout_refused,
@@ -171,12 +188,17 @@ def run_reference_transaction_hook(
         return 0
 
     dispatch_marker = (dispatch_id or "").strip() or "none"
+    master_updates = _master_ff_updates(cwd, updates)
     if state == "committed":
-        from git_integrate.hub_tree_sync import repair_master_worktree
-
-        for upd in _master_ff_updates(cwd, updates):
+        if not master_updates:
+            return 0
+        try:
+            hub_tree_sync = _load_hub_tree_sync()
+        except Exception:
+            return 0
+        for upd in master_updates:
             try:
-                repair_master_worktree(str(cwd), upd.oldrev, upd.newrev)
+                hub_tree_sync.repair_master_worktree(str(cwd), upd.oldrev, upd.newrev)
             except Exception:
                 return 0
         return 0
@@ -186,11 +208,18 @@ def run_reference_transaction_hook(
         _emit_refused(dispatch_marker, cwd, offending.ref_name)
         return HOOK_POLICY_REFUSE_EXIT
 
-    from git_integrate.hub_tree_sync import master_ref_move_refusal
+    if not master_updates:
+        return 0
+    try:
+        hub_tree_sync = _load_hub_tree_sync()
+    except Exception:
+        return 0
 
-    for upd in _master_ff_updates(cwd, updates):
+    for upd in master_updates:
         try:
-            reason = master_ref_move_refusal(str(cwd), upd.oldrev, upd.newrev)
+            reason = hub_tree_sync.master_ref_move_refusal(
+                str(cwd), upd.oldrev, upd.newrev
+            )
         except Exception:
             return 0
         if not reason:
