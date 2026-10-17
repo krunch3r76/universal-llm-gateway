@@ -8,7 +8,15 @@ from pathlib import Path
 import pytest
 
 from libs.anthropic_credit import egress_inventory
-from libs.anthropic_credit.egress_inventory import derive_served_roots, render, scan
+from libs.anthropic_credit.egress_inventory import (
+    _API_DOMAIN_RE,
+    _KEY_HEADER_RE,
+    _RESOLVE_ANTHROPIC_RE,
+    _SK_ANT_KEY_RE,
+    derive_served_roots,
+    render,
+    scan,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -94,9 +102,18 @@ def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_g2a_gitignored_outside_served_root_not_scanned(fake_repo: Path) -> None:
-    ignored = fake_repo / "services/x/ignored.js"
-    ignored.parent.mkdir(parents=True)
+    x_dir = fake_repo / "services/x"
+    x_dir.mkdir(parents=True)
+    (x_dir / ".gitignore").write_text("ignored.js\n", encoding="utf-8")
+    ignored = x_dir / "ignored.js"
     ignored.write_text(_API_SNIPPET, encoding="utf-8")
+    check = subprocess.run(
+        ["git", "check-ignore", "services/x/ignored.js"],
+        cwd=fake_repo,
+        capture_output=True,
+        check=False,
+    )
+    assert check.returncode == 0
     report = scan(fake_repo)
     assert report.ok, render(report)
 
@@ -156,6 +173,32 @@ def test_g3c_dangerous_direct_header_fails(
     assert report.served_key_header_violations
 
 
+def test_g3e_tracked_served_key_header_fails_even_allowlisted(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rel = "services/web/dist/app.js"
+    monkeypatch.setattr(
+        egress_inventory,
+        "_SERVED_ROOT_ALLOWLIST",
+        _fixture_allowlist(),
+    )
+    monkeypatch.setitem(
+        egress_inventory._ALLOWLIST,
+        rel,
+        "fixture tracked allowlist must not excuse served key header",
+    )
+    served = fake_repo / rel
+    served.parent.mkdir(parents=True, exist_ok=True)
+    served.write_text(
+        _API_SNIPPET + '\nheaders:{"x-api-key":k}',
+        encoding="utf-8",
+    )
+    _commit_all(fake_repo, "tracked served with key header")
+    report = scan(fake_repo)
+    assert not report.ok
+    assert any("app.js" in v for v in report.served_key_header_violations)
+
+
 def test_g3d_keyless_served_not_allowlisted_fails(fake_repo: Path) -> None:
     served = fake_repo / "services/web/dist/a.js"
     served.write_text(_API_SNIPPET, encoding="utf-8")
@@ -179,6 +222,7 @@ def mount_web(app):
     report = scan(fake_repo)
     assert not report.ok
     assert report.derivation_errors
+    assert any("outside grammar" in e for e in report.derivation_errors)
 
 
 def test_d2_stray_staticfiles_unresolved(fake_repo: Path) -> None:
@@ -191,6 +235,7 @@ def test_d2_stray_staticfiles_unresolved(fake_repo: Path) -> None:
     report = scan(fake_repo)
     assert not report.ok
     assert report.derivation_errors
+    assert any("unresolved StaticFiles mount" in e for e in report.derivation_errors)
 
 
 def test_d3_stale_served_allowlist_key(
@@ -213,6 +258,99 @@ def test_d4_not_a_git_repo_fails(tmp_path: Path) -> None:
     report = scan(repo)
     assert not report.ok
     assert report.derivation_errors
+    assert any(":git-ls-files:" in e for e in report.derivation_errors)
+
+
+def test_d5_zero_roots_fails(tmp_path: Path) -> None:
+    repo = tmp_path / "zero"
+    repo.mkdir()
+    _git_init(repo)
+    base = repo / "services/universal-stargate/systems/proxy"
+    base.mkdir(parents=True)
+    (base / "app.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
+    _commit_all(repo)
+    report = scan(repo)
+    assert not report.ok
+    assert any(
+        "app.py:1" in e and "zero served roots derived" in e
+        for e in report.derivation_errors
+    )
+
+
+def test_d6_root_outside_repo_fails(fake_repo: Path) -> None:
+    outside_router = """\
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+_DIR = (
+    Path(__file__).resolve().parent.parent.parent.parent.parent.parent.parent
+    / "outside"
+)
+
+def mount_web(app):
+    app.mount(
+        "/web",
+        StaticFiles(directory=str(_DIR)),
+        name="web",
+    )
+"""
+    (fake_repo / "services/outside").mkdir(parents=True, exist_ok=True)
+    (fake_repo / "services/universal-stargate/systems/proxy/routers/wb.py").write_text(
+        outside_router, encoding="utf-8"
+    )
+    _commit_all(fake_repo, "outside root")
+    report = scan(fake_repo)
+    assert not report.ok
+    assert any(
+        "static root resolves outside repository" in e for e in report.derivation_errors
+    )
+
+
+def test_tracked_non_utf8_still_flags_api(fake_repo: Path) -> None:
+    bad = fake_repo / "services/x/badutf.py"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(b"\xff\xfe\n" + b'X="https://api.anthropic.com/v1/messages"\n')
+    _commit_all(fake_repo, "non-utf8 tracked")
+    report = scan(fake_repo)
+    assert not report.ok
+    assert any("badutf.py" in v for v in report.tracked_whole_file_violations)
+
+
+def test_served_symlink_inside_root_scanned(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        egress_inventory, "_SERVED_ROOT_ALLOWLIST", _fixture_allowlist()
+    )
+    inner = fake_repo / "services/web/dist/nested"
+    inner.mkdir(parents=True)
+    linked = inner / "a.js"
+    linked.write_text(_API_SNIPPET, encoding="utf-8")
+    link = fake_repo / "services/web/dist/link.js"
+    link.symlink_to(linked)
+    report = scan(fake_repo)
+    assert report.ok, render(report)
+    assert report.keyless_receipts
+
+
+def test_served_symlink_outside_root_fails(fake_repo: Path) -> None:
+    outside = fake_repo / "services/outside.js"
+    outside.write_text("outside\n", encoding="utf-8")
+    link = fake_repo / "services/web/dist/escape.js"
+    link.symlink_to(outside)
+    report = scan(fake_repo)
+    assert not report.ok
+    assert report.scan_errors
+    assert any("outside served root" in e for e in report.scan_errors)
+
+
+def test_module_source_does_not_self_match() -> None:
+    module_path = Path(egress_inventory.__file__)
+    source = module_path.read_text(encoding="utf-8")
+    assert _API_DOMAIN_RE.search(source) is None
+    assert _RESOLVE_ANTHROPIC_RE.search(source) is None
+    assert _KEY_HEADER_RE.search(source) is None
+    assert _SK_ANT_KEY_RE.search(source) is None
 
 
 def test_sk_ant_literal_hard_fail_tracked(fake_repo: Path) -> None:

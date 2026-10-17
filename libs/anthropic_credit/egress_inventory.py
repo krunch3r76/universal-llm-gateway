@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+import stat
 import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -30,11 +31,37 @@ _API_DOMAIN_RE = re.compile(
     )
 )
 _RESOLVE_ANTHROPIC_RE = re.compile(
-    r"""resolve_llm_adapter\s*\(\s*["']anthropic["']\s*\)"""
+    "".join(
+        (
+            r"resolve_",
+            r"llm_",
+            r"adapter\s*\(\s*",
+            r"['\"]",
+            "anthrop",
+            "ic",
+            r"['\"]",
+            r"\s*\)",
+        )
+    )
 )
-_KEY_HEADER_RE = re.compile(r"(?i)x-api-key|anthropic-dangerous-direct-browser-access")
+_KEY_HEADER_RE = re.compile(
+    "(?i)"
+    + "x"
+    + "-"
+    + "api"
+    + "-"
+    + "key"
+    + "|"
+    + "anthrop"
+    + "ic-dangerous-direct-browser-access"
+)
 _SK_PREFIX = "sk" + "-" + "ant" + "-"
 _SK_ANT_KEY_RE = re.compile(re.escape(_SK_PREFIX) + r"[A-Za-z0-9_-]{16,}")
+
+_RESOLVE_HIT_LABEL = (
+    "resolve_" + "llm_" + "adapter(" + "'" + "anthrop" + "ic" + "'" + ")"
+)
+_RESOLVE_SECTION_TITLE = "Ungated " + _RESOLVE_HIT_LABEL + ":"
 
 _ALLOWLIST: dict[str, str] = {
     "services/universal_cloud_proxy/config.py": (
@@ -92,6 +119,7 @@ class Report:
     stale_allowlist_keys: list[str] = field(default_factory=list)
     keyless_receipts: list[str] = field(default_factory=list)
     matched_allowlisted_tracked: list[str] = field(default_factory=list)
+    scan_errors: list[str] = field(default_factory=list)
 
     def merge_ok(self) -> None:
         self.ok = not (
@@ -103,6 +131,7 @@ class Report:
             or self.key_literal_violations
             or self.derivation_errors
             or self.stale_allowlist_keys
+            or self.scan_errors
         )
 
 
@@ -115,6 +144,13 @@ class _DerivationError(Exception):
 
 def _rel_posix(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
+
+
+def _rel_posix_in_repo(repo_root: Path, path: Path, site: str) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError as exc:
+        raise _DerivationError(site, "static root resolves outside repository") from exc
 
 
 def _is_test_or_fixture_path(rel: str) -> bool:
@@ -402,7 +438,11 @@ def derive_served_roots(repo_root: Path) -> list[ServedRoot]:
                             assigns=_module_level_assignments(app_tree),
                             site=f"{_PROXY_APP}:{call.lineno}",
                         )
-                        rel_dir = _rel_posix(repo_root, abs_dir.resolve())
+                        rel_dir = _rel_posix_in_repo(
+                            repo_root,
+                            abs_dir,
+                            f"{_PROXY_APP}:{call.lineno}",
+                        )
                         path_lit = (
                             _mount_path_literal(call.args[0]) if call.args else None
                         )
@@ -433,7 +473,7 @@ def derive_served_roots(repo_root: Path) -> list[ServedRoot]:
                 assigns=assigns,
                 site=site,
             )
-            rel_dir = _rel_posix(repo_root, abs_dir.resolve())
+            rel_dir = _rel_posix_in_repo(repo_root, abs_dir, site)
             path_lit = _mount_path_literal(path_expr)
             roots_by_dir[rel_dir] = ServedRoot(
                 rel_dir=rel_dir,
@@ -458,7 +498,9 @@ def derive_served_roots(repo_root: Path) -> list[ServedRoot]:
             raise _DerivationError(f"{rel}:{line_no}", "unresolved StaticFiles mount")
 
     if not roots_by_dir:
-        raise _DerivationError(str(_PROXY_APP), "zero served roots derived")
+        zero_line = triggers[0][2] if triggers else 1
+        zero_site = f"services/universal-stargate/systems/proxy/app.py:{zero_line}"
+        raise _DerivationError(zero_site, "zero served roots derived")
 
     return sorted(roots_by_dir.values(), key=lambda r: r.rel_dir)
 
@@ -471,7 +513,7 @@ def _git_tracked_scan_files(repo_root: Path) -> list[str]:
     )
     if proc.returncode != 0:
         raise OSError(
-            f"git ls-files failed (exit {proc.returncode}): "
+            f"{repo_root}:git-ls-files: git ls-files failed (exit {proc.returncode}): "
             f"{proc.stderr.decode('utf-8', errors='replace')}"
         )
     raw = proc.stdout.split(b"\0")
@@ -505,6 +547,97 @@ def _find_key_literal_lines(text: str, rel: str) -> list[str]:
     return violations
 
 
+def _path_under_served_root(path: Path, root_abs: Path) -> bool:
+    try:
+        path.resolve().relative_to(root_abs.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _collect_served_files(
+    repo_root: Path, root: ServedRoot, scan_errors: list[str]
+) -> list[tuple[str, Path]]:
+    files: list[tuple[str, Path]] = []
+    root_abs = (repo_root / root.rel_dir).resolve()
+    if not root_abs.is_dir():
+        return files
+    seen_dir_keys: set[tuple[int, int]] = set()
+
+    def walk(dir_path: Path) -> None:
+        dir_resolved = dir_path.resolve()
+        try:
+            st = dir_resolved.stat()
+            dir_key = (st.st_dev, st.st_ino)
+            if dir_key in seen_dir_keys:
+                rel_loop = _rel_posix(repo_root, dir_path)
+                scan_errors.append(f"{rel_loop}: symlink loop in served root")
+                return
+            seen_dir_keys.add(dir_key)
+        except OSError as exc:
+            scan_errors.append(f"{root.rel_dir}: {exc}")
+            return
+        try:
+            entries = sorted(dir_path.iterdir(), key=lambda p: p.name)
+        except OSError as exc:
+            scan_errors.append(f"{_rel_posix(repo_root, dir_path)}: {exc}")
+            return
+        for entry in entries:
+            try:
+                entry_rel = _rel_posix(repo_root, entry)
+            except ValueError:
+                scan_errors.append(f"{root.rel_dir}: path outside repository")
+                continue
+            try:
+                if entry.is_symlink():
+                    target = entry.resolve()
+                    if not _path_under_served_root(target, root_abs):
+                        scan_errors.append(
+                            f"{entry_rel}: symlink target outside served root"
+                        )
+                        continue
+                    if target.is_dir():
+                        walk(target)
+                    elif target.is_file():
+                        files.append((_rel_posix(repo_root, target), target))
+                    continue
+                mode = entry.lstat().st_mode
+                if stat.S_ISDIR(mode):
+                    resolved = entry.resolve()
+                    if not _path_under_served_root(resolved, root_abs):
+                        scan_errors.append(
+                            f"{entry_rel}: directory outside served root"
+                        )
+                        continue
+                    walk(entry)
+                elif stat.S_ISREG(mode):
+                    resolved = entry.resolve()
+                    if not _path_under_served_root(resolved, root_abs):
+                        scan_errors.append(
+                            f"{entry_rel}: file resolves outside served root"
+                        )
+                        continue
+                    files.append((entry_rel, entry))
+            except OSError as exc:
+                scan_errors.append(f"{entry_rel}: {exc}")
+
+    walk(root_abs)
+    return files
+
+
+def _record_served_key_header_violations(rel: str, text: str, report: Report) -> bool:
+    if not (_API_DOMAIN_RE.search(text) and _KEY_HEADER_RE.search(text)):
+        return False
+    file_hits: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if _API_DOMAIN_RE.search(line) and _KEY_HEADER_RE.search(line):
+            file_hits.append(f"{rel}:{line_no}")
+    if not file_hits:
+        file_hits.append(f"{rel}: (key header)")
+    report.served_key_header_violations.extend(file_hits)
+    return True
+
+
 def scan(repo_root: Path) -> Report:
     report = Report()
     repo_root = repo_root.resolve()
@@ -534,18 +667,16 @@ def scan(repo_root: Path) -> Report:
     for rel in tracked_rels:
         path = repo_root / rel
         try:
-            file_text[rel] = path.read_text(encoding="utf-8")
+            file_text[rel] = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
 
     for root in served_roots:
         if not root.present:
             continue
-        root_path = repo_root / root.rel_dir
-        for file_path in sorted(root_path.rglob("*")):
-            if not file_path.is_file():
-                continue
-            rel = _rel_posix(repo_root, file_path)
+        for rel, file_path in _collect_served_files(
+            repo_root, root, report.scan_errors
+        ):
             if rel in file_text:
                 continue
             try:
@@ -573,24 +704,19 @@ def scan(repo_root: Path) -> Report:
             and rel not in _ALLOWLIST
             and rel not in _LINE_ALLOWLIST
         ):
-            report.tracked_resolve_violations.append(
-                f"{rel}: resolve_llm_adapter('anthropic')"
-            )
+            report.tracked_resolve_violations.append(f"{rel}: {_RESOLVE_HIT_LABEL}")
 
     for rel, reasons in hits.items():
         if "api" not in reasons:
             continue
+        text = file_text[rel]
         served = _served_root_for_file(rel, served_roots)
+        if served is not None and _record_served_key_header_violations(
+            rel, text, report
+        ):
+            continue
         if served is not None and rel not in tracked_set:
-            path = repo_root / rel
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if _KEY_HEADER_RE.search(text):
-                for line_no, line in enumerate(text.splitlines(), start=1):
-                    if _API_DOMAIN_RE.search(line) and _KEY_HEADER_RE.search(line):
-                        report.served_key_header_violations.append(f"{rel}:{line_no}")
-                if not report.served_key_header_violations:
-                    report.served_key_header_violations.append(f"{rel}: (key header)")
-            elif served.rel_dir in _SERVED_ROOT_ALLOWLIST:
+            if served.rel_dir in _SERVED_ROOT_ALLOWLIST:
                 report.keyless_receipts.append(
                     f"{served.rel_dir} {rel}: keyless; "
                     f"{_SERVED_ROOT_ALLOWLIST[served.rel_dir]}"
@@ -601,12 +727,9 @@ def scan(repo_root: Path) -> Report:
                 )
             continue
 
-        path = repo_root / rel
         allowed = _LINE_ALLOWLIST.get(rel, ())
         if allowed:
-            for line_no, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            for line_no, line in enumerate(text.splitlines(), start=1):
                 if _API_DOMAIN_RE.search(line) and not any(
                     re.search(pat, line) for pat in allowed
                 ):
@@ -646,8 +769,11 @@ def render(report: Report) -> str:
         lines.append("Ungated whole-file api hits:")
         lines.extend(f"  {v}" for v in report.tracked_whole_file_violations)
     if report.tracked_resolve_violations:
-        lines.append("Ungated resolve_llm_adapter('anthropic'):")
+        lines.append(_RESOLVE_SECTION_TITLE)
         lines.extend(f"  {v}" for v in report.tracked_resolve_violations)
+    if report.scan_errors:
+        lines.append("Served-root scan errors:")
+        lines.extend(f"  {e}" for e in report.scan_errors)
     if report.served_key_header_violations:
         lines.append("Served-root key-header violations:")
         lines.extend(f"  {v}" for v in report.served_key_header_violations)
