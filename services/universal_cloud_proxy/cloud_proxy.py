@@ -67,7 +67,6 @@ from .events import (
     CloudProxyRequestTranslationFailed,
     CloudProxyShutdown,
     CloudProxyStarted,
-    CloudProxyAnthropicCreditSignal,
 )
 from .forwarder import ProviderForwarder
 from .local_catalog import LocalCatalogCache
@@ -127,9 +126,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
         async def _publish() -> None:
-            await event_bus.publish(
-                CloudProxyAnthropicCreditSignal(signal=name, payload=payload)
-            )
+            await event_bus.publish(Event(signal=name, payload=dict(payload)))
 
         try:
             loop = asyncio.get_running_loop()
