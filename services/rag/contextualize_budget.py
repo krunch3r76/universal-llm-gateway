@@ -24,7 +24,6 @@ class ContextualizeWeightedBudget:
         self._available = capacity
         self._inflight = 0
         self._waiters: collections.deque[_BudgetWaiter] = collections.deque()
-        self._lock = asyncio.Lock()
 
     @property
     def inflight_permits(self) -> int:
@@ -41,29 +40,31 @@ class ContextualizeWeightedBudget:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[None] = loop.create_future()
         granted = False
-        async with self._lock:
-            if not self._waiters and self._available >= permits:
-                self._available -= permits
-                self._inflight += permits
-                granted = True
-            else:
-                self._waiters.append(_BudgetWaiter(permits=permits, future=fut))
+        if not self._waiters and self._available >= permits:
+            self._available -= permits
+            self._inflight += permits
+            granted = True
+        else:
+            self._waiters.append(_BudgetWaiter(permits=permits, future=fut))
         if granted:
             return
         try:
             await fut
         except asyncio.CancelledError:
-            async with self._lock:
+            if fut.done() and not fut.cancelled():
+                self._available += permits
+                self._inflight -= permits
+            else:
                 self._drop_waiter(fut)
+            self._wake_waiters_locked()
             raise
 
-    async def release(self, permits: int) -> None:
+    def release(self, permits: int) -> None:
         if permits <= 0:
             return
-        async with self._lock:
-            self._available += permits
-            self._inflight -= permits
-            self._wake_waiters_locked()
+        self._available += permits
+        self._inflight -= permits
+        self._wake_waiters_locked()
 
     def _drop_waiter(self, fut: asyncio.Future[None]) -> None:
         for idx, waiter in enumerate(self._waiters):
@@ -105,4 +106,4 @@ async def contextualize_weighted_budget(chunk_count: int):
     try:
         yield permits
     finally:
-        await _budget.release(permits)
+        _budget.release(permits)

@@ -133,4 +133,5 @@ async def test_4_33_helpers_writeback_merges_profile_loader(monkeypatch) -> None
     )
     assert prof_loader["ubatch_size"] == 2048
     assert prof_loader["cache_type_k"] == "f16"
+    assert prof_loader["cache_type_v"] == "f16"
     assert upserted["data"]["loader"]["ubatch_size"] == 9999

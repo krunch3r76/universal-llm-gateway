@@ -314,10 +314,6 @@ def test_4_22_protected_only_loaded_no_eviction_plan() -> None:
 def test_4_22_without_protection_evicts_protected_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "systems.routing.selection.decision.eviction_planning.is_rag_protected_model",
-        lambda _m: False,
-    )
     emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
     ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
     target = ModelId.parse("qwen3-14b-q4-k-m-40960")
@@ -328,7 +324,7 @@ def test_4_22_without_protection_evicts_protected_models(
         return (15_000, 0)
 
     gw = _gateway(
-        vram_free_mb=13_000,
+        vram_free_mb=500,
         loaded_models=frozenset({emb, ctx}),
         available_models=frozenset({target, emb, ctx}),
         model_details={
@@ -337,6 +333,21 @@ def test_4_22_without_protection_evicts_protected_models(
             ctx: {"vram_usage": 14_000, "ram_usage": 0},
         },
     )
+    from systems.routing.selection.decision.types import EvictionPlanSummary
+
+    protected_plan = _compute_eviction_plan(
+        gw,
+        Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
+        req,
+        eviction_cooldown_s=0.0,
+        eviction_request_class=EvictionRequestClass.REQUIRED,
+    )
+    assert not isinstance(protected_plan, EvictionPlanSummary)
+
+    monkeypatch.setattr(
+        "systems.routing.selection.decision.eviction_planning.is_rag_protected_model",
+        lambda _m: False,
+    )
     plan = _compute_eviction_plan(
         gw,
         Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
@@ -344,10 +355,11 @@ def test_4_22_without_protection_evicts_protected_models(
         eviction_cooldown_s=0.0,
         eviction_request_class=EvictionRequestClass.REQUIRED,
     )
-    from systems.routing.selection.decision.types import EvictionPlanSummary
-
     assert isinstance(plan, EvictionPlanSummary)
     assert emb in plan.models_to_evict or ctx in plan.models_to_evict
+    assert isinstance(plan, EvictionPlanSummary) ^ isinstance(
+        protected_plan, EvictionPlanSummary
+    )
 
 
 @pytest.mark.asyncio
@@ -951,6 +963,57 @@ async def test_4_37_eviction_reselect_budget_returns_503(
     assert wait_mock.await_args.kwargs["timeout_s"] == pytest.approx(2.0, abs=0.01)
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail["code"] == ErrorCode.STICKY_CAPACITY
+
+
+@pytest.mark.asyncio
+async def test_4_37_eviction_requeue_clamps_wait_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator import (
+        eviction_requeue,
+        load_and_finalize,
+    )
+
+    model = ModelId.parse("qwen3-5-9b-q8-0-131072")
+    wait_mock = AsyncMock(return_value=(None, SimpleNamespace(), 50))
+    monkeypatch.setattr(eviction_requeue, "_wait_and_retry_selection", wait_mock)
+    monkeypatch.setattr(
+        load_and_finalize,
+        "finalize_selection_and_load",
+        AsyncMock(return_value=("gw", None)),
+    )
+    mono = {"t": 1000.0}
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.wait_continuation.time.monotonic",
+        lambda: mono["t"],
+    )
+    context = SimpleNamespace(
+        capacity_token=None,
+        selected_model=model,
+        _capacity_deadline_mono=1002.0,
+        excluded_gateway_ids=set(),
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await eviction_requeue.requeue_after_transient_eviction(
+            context=context,
+            federated_manager=SimpleNamespace(get_all_gateways=lambda: []),
+            federated_load_orchestrator=None,
+            federation_forwarder=None,
+            routing_config={"eviction_wait_timeout_s": 300.0},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=model),
+            event_bus=None,
+            stability_tracker=SimpleNamespace(),
+            routing_start_time=0.0,
+            eviction_cooldown_s=0.0,
+            capacity_pool=None,
+            routing_key_tracker=None,
+            continuation_mode="transient_capacity",
+            timeout_reason="test",
+        )
+    wait_mock.assert_awaited_once()
+    assert wait_mock.await_args.kwargs["timeout_s"] == pytest.approx(2.0, abs=0.01)
+    assert exc_info.value.status_code == 503
 
 
 def test_4_4_embedding_capacity_acquire_deadline_mono_helper() -> None:

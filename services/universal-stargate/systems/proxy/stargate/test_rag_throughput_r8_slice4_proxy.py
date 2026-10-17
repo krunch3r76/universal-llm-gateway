@@ -77,6 +77,18 @@ async def test_proxy_non_positive_x_request_timeout_ignored() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("header_value", ["-1", "-0.5"])
+async def test_proxy_negative_x_request_timeout_ignored(header_value: str) -> None:
+    proxy, captured = _proxy_with_capture()
+    await proxy.process_embedding_request(
+        "qwen3-embedding-8b-q8-0-8192",
+        ["text"],
+        _request({"X-Request-Timeout": header_value}),
+    )
+    assert captured["request_timeout_hint"] is None
+
+
+@pytest.mark.asyncio
 async def test_proxy_garbage_x_request_timeout_ignored() -> None:
     proxy, captured = _proxy_with_capture()
     await proxy.process_embedding_request(
