@@ -30,7 +30,6 @@ def _repo_root() -> Path:
     env_root = os.environ.get("PROJECT_ROOT")
     if env_root:
         candidates.append(Path(env_root).expanduser())
-    candidates.append(Path("/mnt/torus/projects").expanduser())
     seen: set[Path] = set()
     for root in candidates:
         if root in seen:
@@ -115,27 +114,6 @@ def is_rag_protected_model(model_id: ModelId) -> bool:
     if ctx_key and model_id.routing_key == ctx_key:
         return True
     return False
-
-
-def verify_rag_embedding_config_matches_yaml(
-    config_embedding_model: str | None,
-) -> None:
-    """Startup check: rag config embedding_model must match pipelines alias."""
-    yaml_id = rag_embedding_model_id()
-    if yaml_id is None:
-        logger.error(
-            "RAG embedding model id unavailable from %s; config=%s",
-            _rag_models_path(),
-            config_embedding_model,
-        )
-        return
-    if not config_embedding_model or config_embedding_model.strip() != yaml_id:
-        logger.error(
-            "RAG config.embedding_model=%r does not match pipelines/rag/models.yaml "
-            "embedding alias %r",
-            config_embedding_model,
-            yaml_id,
-        )
 
 
 def clear_rag_protected_cache() -> None:

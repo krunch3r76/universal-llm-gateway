@@ -10,9 +10,9 @@ from uuid import uuid4
 import pytest
 
 from services.rag.config._models import DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
-from services.rag.contextualize import (
+from services.rag.contextualize import contextualize_chunks
+from services.rag.contextualize_budget import (
     CONTEXTUALIZE_GLOBAL_MAX,
-    contextualize_chunks,
     contextualize_inflight_permits,
 )
 from services.rag.embeddings.constants import QUERY_EMBED_REQUEST_TIMEOUT_S
@@ -23,11 +23,11 @@ from services.rag.search_scope.property_boost import apply_property_boost
 
 @pytest.fixture(autouse=True)
 def _reset_contextualize_budget() -> None:
-    import services.rag.contextualize as contextualize_mod
+    from services.rag.contextualize_budget import reset_contextualize_budget_for_tests
 
-    contextualize_mod._contextualize_budget_available = CONTEXTUALIZE_GLOBAL_MAX
-    contextualize_mod._contextualize_inflight_permits = 0
+    reset_contextualize_budget_for_tests()
     yield
+    reset_contextualize_budget_for_tests()
 
 
 def test_4_24_query_embed_timeout_default_not_rag_client_ceiling() -> None:
@@ -102,15 +102,23 @@ async def test_4_28_contextualize_global_cap(monkeypatch: pytest.MonkeyPatch) ->
 
     worker_sem = asyncio.Semaphore(4)
 
-    async def _one_file(file_idx: int) -> None:
+    chunk_sizes = [1, 2, 3, 4, 5, 6, 7, 8] * 3 + [1, 2, 3, 4]
+
+    async def _mixed_file(file_idx: int) -> None:
         async with worker_sem:
-            chunks = [Chunk(text=f"t{file_idx}-{i}", metadata={}) for i in range(8)]
+            n = chunk_sizes[file_idx % len(chunk_sizes)]
+            chunks = [Chunk(text=f"m{file_idx}-{i}", metadata={}) for i in range(n)]
             await contextualize_chunks(
                 chunks,
-                source=f"f{file_idx}",
+                source=f"m{file_idx}",
                 model="qwen3-5-9b-q8-0-131072",
             )
 
-    await asyncio.gather(*[_one_file(i) for i in range(20)])
+    wall_start = asyncio.get_event_loop().time()
+    proc_start = __import__("time").process_time()
+    await asyncio.gather(*[_mixed_file(i) for i in range(20)])
+    wall = asyncio.get_event_loop().time() - wall_start
+    cpu = __import__("time").process_time() - proc_start
     assert peak_permits <= 8
     assert peak_permits >= 5
+    assert cpu < 0.5 * wall

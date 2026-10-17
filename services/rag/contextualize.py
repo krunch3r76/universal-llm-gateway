@@ -1,33 +1,10 @@
-"""LLM-based contextual embedding enrichment for RAG chunks.
-
-Generates a short context prefix per chunk that disambiguates its content
-within the parent document. The prefix is prepended to the chunk text
-*only* for embedding — stored document text remains the original.
-
-This follows the "contextual retrieval" pattern: chunks that share
-overlapping vocabulary (e.g. "knowledge graph" appearing in both PKB
-schema papers and enterprise KG surveys) get distinct embedding vectors
-because their context prefixes anchor them to different documents.
-
-Architecture:
-  - contextualize_chunks() pre-builds user messages (with neighbor excerpts)
-    then dispatches a single pipeline call to the rag-contextualize pipeline.
-  - The pipeline's MapExecutor fans out over chunks with max_concurrency=32
-    and min_success_threshold=0.5, handling per-chunk parallelism, timeouts,
-    and partial-success accounting.
-  - admission_gate (AdmissionGate) pauses the pipeline call while Stargate's
-    admission is closed, the model is mid-cold-load, or a federated gateway
-    is degraded. Per the stargate-model-lifecycle invariant, this is an
-    optimization — the per-chunk pipeline timeout is the correctness backstop.
-"""
+"""Contextual retrieval: prepend LLM-generated chunk prefixes before embedding."""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import inspect
 import logging
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -39,46 +16,9 @@ from services.rag.chunkers import Chunk
 if TYPE_CHECKING:
     from services.rag.admission_gate import AdmissionGate
 
+from services.rag.contextualize_budget import contextualize_weighted_budget
+
 logger = logging.getLogger(__name__)
-
-CONTEXTUALIZE_GLOBAL_MAX = 8
-_contextualize_budget_available = CONTEXTUALIZE_GLOBAL_MAX
-_contextualize_inflight_permits = 0
-_contextualize_budget_lock: asyncio.Lock | None = None
-
-
-def _get_contextualize_budget_lock() -> asyncio.Lock:
-    global _contextualize_budget_lock
-    if _contextualize_budget_lock is None:
-        _contextualize_budget_lock = asyncio.Lock()
-    return _contextualize_budget_lock
-
-
-def contextualize_inflight_permits() -> int:
-    """Test hook: weighted in-flight contextualize request permits (cap 8)."""
-    return _contextualize_inflight_permits
-
-
-@asynccontextmanager
-async def _contextualize_inflight_budget(chunk_count: int):
-    """Acquire min(chunks, 8) permits atomically from the rag-wide budget of 8."""
-    global _contextualize_inflight_permits, _contextualize_budget_available
-    permits = min(chunk_count, CONTEXTUALIZE_GLOBAL_MAX)
-    lock = _get_contextualize_budget_lock()
-    while True:
-        async with lock:
-            if _contextualize_budget_available >= permits:
-                _contextualize_budget_available -= permits
-                _contextualize_inflight_permits += permits
-                break
-        await asyncio.sleep(0)
-    try:
-        yield permits
-    finally:
-        async with lock:
-            _contextualize_inflight_permits -= permits
-            _contextualize_budget_available += permits
-
 
 _NEIGHBOR_CHARS = 800
 _NEIGHBOR_DIGEST_SEP = "\x1e"
@@ -298,7 +238,7 @@ async def contextualize_chunks(
     ]
 
     try:
-        async with _contextualize_inflight_budget(len(chunks)):
+        async with contextualize_weighted_budget(len(chunks)):
             response = await _CLIENT.post(
                 "/v1/chat/completions",
                 headers={"X-Internal-Request-ID": request_id},

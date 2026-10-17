@@ -9,6 +9,16 @@ if TYPE_CHECKING:
     from .context import RequestContext
 
 
+def embedding_capacity_acquire_deadline_mono(context: RequestContext) -> float | None:
+    """Embedding-only: pass pool acquire deadline; chat/generation leave unbounded."""
+    from systems.federation.common.config.schema import EndpointCategory
+
+    category = getattr(context, "routing_endpoint_category", None)
+    if category == EndpointCategory.EMBEDDING:
+        return getattr(context, "_capacity_deadline_mono", None)
+    return None
+
+
 def _queue_timeout_s(routing_config: dict | None) -> float:
     rq = (routing_config or {}).get("request_queue", {})
     raw = rq.get("queue_timeout", 1800.0)

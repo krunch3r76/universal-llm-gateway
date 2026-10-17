@@ -137,24 +137,6 @@ class _PropertyIndexPart05:
 
         return self._with_conn(_sql)
 
-    def lookup_keys_batch(self, keys: list[str]) -> set[str]:
-        """Single-query lookup for many exact property keys."""
-
-        if not keys:
-            return set()
-
-        normalized = [k.lower() for k in keys]
-
-        def _sql(conn: sqlite3.Connection) -> set[str]:
-            placeholders = ",".join("?" for _ in normalized)
-            rows = conn.execute(
-                f"SELECT chunk_id FROM properties WHERE key IN ({placeholders})",
-                normalized,
-            ).fetchall()
-            return {row[0] for row in rows}
-
-        return self._with_conn(_sql)
-
     async def lookup_keys_batch_async(self, keys: list[str]) -> set[str]:
         """Async batch lookup — one sqlite executor hop, no nested run_sqlite."""
 

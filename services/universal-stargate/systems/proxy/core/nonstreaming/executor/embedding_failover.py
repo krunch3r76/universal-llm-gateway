@@ -117,6 +117,7 @@ async def run_embedding_with_cpu_failover(
             )
             last_exc = no_gw
             if attempt_idx == 0 and cpu_failover_enabled:
+                await release_capacity_token_fn(context)
                 continue
             raise no_gw
 

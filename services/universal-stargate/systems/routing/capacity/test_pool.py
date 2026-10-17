@@ -370,6 +370,43 @@ async def test_r8_slice4_acquire_deadline_returns_completed_future_token(
 
 
 @pytest.mark.asyncio
+async def test_r8_slice4_acquire_deadline_waiter_cancelled_at_deadline(
+    seeded_pool: CapacityPool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K3: at deadline, completed future with _WaiterCancelledError → CancelledError."""
+    from systems.routing.capacity._pool._types import _WaiterCancelledError
+
+    model = "hermes3"
+    gw = "edge-jupiter-gateway"
+    mono = {"t": 100.0}
+    monkeypatch.setattr(acquisition_module.time, "monotonic", lambda: mono["t"])
+
+    token_a = await seeded_pool.acquire_token(
+        request_id="req-a",
+        model_id=model,
+        allowed_gateway_ids=frozenset({gw}),
+    )
+
+    wait_task = asyncio.create_task(
+        seeded_pool._wait_for_slot(
+            "req-b",
+            model,
+            frozenset({gw}),
+            wait_deadline=200.0,
+        )
+    )
+    await asyncio.sleep(0)
+    waiter = seeded_pool._queues[model][-1]
+    waiter.future.set_exception(_WaiterCancelledError("explicit_cancel"))
+    mono["t"] = 200.0
+    with pytest.raises(asyncio.CancelledError, match="explicit_cancel"):
+        await wait_task
+
+    await token_a.release()
+
+
+@pytest.mark.asyncio
 async def test_set_capacity_dispatches_waiters_when_capacity_increases() -> None:
     pool = CapacityPool(event_bus=None)
     pool.set_capacity("edge-jupiter-gateway", "hermes3", 1)

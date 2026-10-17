@@ -204,6 +204,11 @@ class _AcquisitionMixin:
             while True:
                 if wait_deadline is not None and time.monotonic() >= wait_deadline:
                     if future.done() and not future.cancelled():
+                        exc = future.exception()
+                        if exc is not None:
+                            if isinstance(exc, _WaiterCancelledError):
+                                raise asyncio.CancelledError(exc.reason) from exc
+                            raise exc
                         gateway_id = future.result()
                         logger.info(
                             "Admitted at deadline: %s → %s/%s",

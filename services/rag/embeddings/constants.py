@@ -33,10 +33,8 @@ QUERY_RETRY_MAX_S = 3.0
 
 # Stargate X-Request-Timeout budgets (seconds). Batch floor = starvation drain 15+30.
 BATCH_EMBED_REQUEST_TIMEOUT_S = 45.0
-# Overridden at startup from RagConfig.query_embed_request_timeout_s.
+# Default until RagConfig.load assigns query_embed_request_timeout_s at startup.
 QUERY_EMBED_REQUEST_TIMEOUT_S = DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
-QUERY_CPU_FAILOVER_ENABLED = False
-BATCH_CPU_FAILOVER_ENABLED = False
 
 TRANSIENT_STATUS_CODES = frozenset({429, 502, 503, 504})
 

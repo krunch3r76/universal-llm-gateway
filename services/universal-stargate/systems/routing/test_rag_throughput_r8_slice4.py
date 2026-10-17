@@ -279,14 +279,117 @@ def test_4_22_compute_eviction_plan_excludes_rag_protected() -> None:
     assert rerank in plan.models_to_evict
 
 
-def test_4_23_cpu_failover_constants_and_immediate_trigger() -> None:
-    from services.rag.embeddings.constants import (
-        BATCH_CPU_FAILOVER_ENABLED,
-        QUERY_CPU_FAILOVER_ENABLED,
+def test_4_22_protected_only_loaded_no_eviction_plan() -> None:
+    emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
+    ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
+    target = ModelId.parse("qwen3-14b-q4-k-m-40960")
+
+    def req(mid: ModelId) -> tuple[int, int]:
+        if mid == target:
+            return (12_000, 0)
+        return (15_000, 0)
+
+    gw = _gateway(
+        vram_free_mb=500,
+        loaded_models=frozenset({emb, ctx}),
+        available_models=frozenset({target, emb, ctx}),
+        model_details={
+            target: {"vram_usage": 12_000, "ram_usage": 0},
+            emb: {"vram_usage": 15_000, "ram_usage": 0},
+            ctx: {"vram_usage": 14_000, "ram_usage": 0},
+        },
+    )
+    plan = _compute_eviction_plan(
+        gw,
+        Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
+        req,
+        eviction_cooldown_s=0.0,
+        eviction_request_class=EvictionRequestClass.REQUIRED,
+    )
+    from systems.routing.selection.decision.types import EvictionPlanSummary
+
+    assert not isinstance(plan, EvictionPlanSummary)
+
+
+def test_4_22_without_protection_evicts_protected_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.routing.selection.decision.eviction_planning.is_rag_protected_model",
+        lambda _m: False,
+    )
+    emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
+    ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
+    target = ModelId.parse("qwen3-14b-q4-k-m-40960")
+
+    def req(mid: ModelId) -> tuple[int, int]:
+        if mid == target:
+            return (12_000, 0)
+        return (15_000, 0)
+
+    gw = _gateway(
+        vram_free_mb=13_000,
+        loaded_models=frozenset({emb, ctx}),
+        available_models=frozenset({target, emb, ctx}),
+        model_details={
+            target: {"vram_usage": 12_000, "ram_usage": 0},
+            emb: {"vram_usage": 15_000, "ram_usage": 0},
+            ctx: {"vram_usage": 14_000, "ram_usage": 0},
+        },
+    )
+    plan = _compute_eviction_plan(
+        gw,
+        Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
+        req,
+        eviction_cooldown_s=0.0,
+        eviction_request_class=EvictionRequestClass.REQUIRED,
+    )
+    from systems.routing.selection.decision.types import EvictionPlanSummary
+
+    assert isinstance(plan, EvictionPlanSummary)
+    assert emb in plan.models_to_evict or ctx in plan.models_to_evict
+
+
+@pytest.mark.asyncio
+async def test_k3_embedding_failover_releases_token_when_no_gateway() -> None:
+    from systems.proxy.core.nonstreaming.executor.embedding_failover import (
+        run_embedding_with_cpu_failover,
     )
 
-    assert QUERY_CPU_FAILOVER_ENABLED is False
-    assert BATCH_CPU_FAILOVER_ENABLED is False
+    gpu_model = ModelId.parse("qwen3-embedding-8b-q8-0-8192")
+    context = RequestContext(
+        request_id="req-no-gw",
+        start_time=time.time(),
+        selected_model=gpu_model,
+        original_request={"input": ["x"]},
+        raw_client_fields={},
+        user_params={},
+        middleware_actions=[],
+    )
+    release = AsyncMock()
+
+    async def select(_ctx: RequestContext) -> None:
+        _ctx.selected_gateway = None
+
+    with pytest.raises(HTTPException):
+        await run_embedding_with_cpu_failover(
+            context=context,
+            parsed_model_id=gpu_model,
+            request_body={"input": ["x"]},
+            resolved_request_id="req-no-gw",
+            select_gateway_fn=select,
+            forward_with_retry_fn=AsyncMock(),
+            forward_embedding_fn=AsyncMock(),
+            release_capacity_token_fn=release,
+            emit_execution_completed_fn=AsyncMock(),
+            event_bus=MagicMock(),
+            oom_recovery_fn=None,
+            cpu_failover_enabled=True,
+        )
+    assert release.await_count >= 1
+
+
+def test_4_23_cpu_failover_constants_and_immediate_trigger() -> None:
     exc = HTTPException(
         status_code=get_http_status(ErrorCode.NO_FEASIBLE_GATEWAY),
         detail=error_envelope(
@@ -622,7 +725,7 @@ async def test_4_36_resource_update_measured_vram_in_reclaim_and_eviction() -> N
         )
         assert isinstance(plan, EvictionPlanSummary)
         assert loaded_rerank in plan.models_to_evict
-        assert plan.catalog_freed_vram_mb <= 2_500
+        assert plan.catalog_freed_vram_mb == 2_500
     finally:
         await mgr.stop()
 
@@ -742,19 +845,19 @@ async def test_4_37_pre_route_queue_budget_returns_503(
         middleware_actions=[],
     )
     context.model_sticky = False
-    context.queue_wait_timeout_s = 1.0
+    context.queue_wait_timeout_s = 10.0
+    context._capacity_deadline_mono = 1003.0
+    wait_timeouts: list[float] = []
     _mono = {"t": 1000.0}
 
-    def _advance_mono() -> float:
-        _mono["t"] += 2.0
-        return _mono["t"]
-
-    monkeypatch.setattr(_pre_route_mod.time, "monotonic", _advance_mono)
+    monkeypatch.setattr(_pre_route_mod.time, "monotonic", lambda: _mono["t"])
     federated_manager = MagicMock()
     federated_manager.get_state_version.return_value = 0
     federated_manager.get_all_gateways.return_value = []
 
-    async def _wait_change(_version: int, _timeout: float) -> None:
+    async def _wait_change(_version: int, timeout: float) -> None:
+        wait_timeouts.append(timeout)
+        _mono["t"] += 3.5
         await asyncio.sleep(0)
 
     federated_manager.wait_for_state_change = _wait_change
@@ -778,6 +881,8 @@ async def test_4_37_pre_route_queue_budget_returns_503(
         stability_tracker=StickyPlacementTracker(),
     )
     assert selected is None
+    assert wait_timeouts
+    assert wait_timeouts[0] == pytest.approx(3.0, abs=0.05)
     monkeypatch.setattr(
         rejection_mod,
         "_wait_and_retry_selection",
@@ -816,12 +921,17 @@ async def test_4_37_eviction_reselect_budget_returns_503(
     trace = _transient_capacity_trace(model)
     wait_mock = AsyncMock(return_value=(None, trace, 50))
     monkeypatch.setattr(rejection_mod, "_wait_and_retry_selection", wait_mock)
+    mono = {"t": 1000.0}
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.wait_continuation.time.monotonic",
+        lambda: mono["t"],
+    )
     context = SimpleNamespace(
         request_id="req-evict-wait",
         selected_model=model,
         model_sticky=True,
         excluded_gateway_ids=set(),
-        _capacity_deadline_mono=None,
+        _capacity_deadline_mono=1002.0,
     )
     with pytest.raises(HTTPException) as exc_info:
         await rejection_mod.handle_selection_rejection(
@@ -838,21 +948,19 @@ async def test_4_37_eviction_reselect_budget_returns_503(
             stability_tracker=SimpleNamespace(),
         )
     wait_mock.assert_awaited_once()
+    assert wait_mock.await_args.kwargs["timeout_s"] == pytest.approx(2.0, abs=0.01)
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail["code"] == ErrorCode.STICKY_CAPACITY
 
 
-@pytest.mark.asyncio
-async def test_4_4_chat_admission_unbounded_despite_capacity_deadline_on_context() -> None:
-    """Chat admission ignores capacity deadline for bounded pool acquire."""
-    model = ModelId.parse("hermes-3-llama-3-1-70b-uncensored-q4-k-m-16384-hybrid")
-    gw = _gateway(
-        name="edge-io",
-        loaded_models=frozenset({model}),
-        available_models=frozenset({model}),
+def test_4_4_embedding_capacity_acquire_deadline_mono_helper() -> None:
+    from systems.proxy.core.nonstreaming.capacity_deadline import (
+        embedding_capacity_acquire_deadline_mono,
     )
-    context = RequestContext(
-        request_id="req-chat",
+
+    model = ModelId.parse("qwen3-embedding-8b-q8-0-8192")
+    emb_ctx = RequestContext(
+        request_id="emb",
         start_time=time.time(),
         selected_model=model,
         original_request={},
@@ -860,32 +968,22 @@ async def test_4_4_chat_admission_unbounded_despite_capacity_deadline_on_context
         user_params={},
         middleware_actions=[],
     )
-    context.routing_endpoint_category = EndpointCategory.GENERATION
-    context._capacity_deadline_mono = time.monotonic() + 0.001
-    context.queue_wait_timeout_s = 120.0
+    emb_ctx.routing_endpoint_category = EndpointCategory.EMBEDDING
+    emb_ctx._capacity_deadline_mono = 12345.0
+    assert embedding_capacity_acquire_deadline_mono(emb_ctx) == 12345.0
 
-    pool = MagicMock()
-    token = SimpleNamespace(gateway_id="edge-io")
-
-    async def acquire_token(**kwargs):
-        assert "timeout_s" not in kwargs
-        return token
-
-    pool.acquire_token = acquire_token
-
-    result = await acquire_admission_token(
-        context=context,
-        selected_gateway=gw,
-        gateways_for_routing=[gw],
-        routing_config={},
-        event_bus=None,
-        capacity_pool=pool,
-        stability_tracker=StickyPlacementTracker(),
-        allowed_gateway_ids_override=None,
-        overflow_origin_gateway=None,
-        overflow_depth_before=0,
+    chat_ctx = RequestContext(
+        request_id="chat",
+        start_time=time.time(),
+        selected_model=model,
+        original_request={},
+        raw_client_fields={},
+        user_params={},
+        middleware_actions=[],
     )
-    assert result is gw
+    chat_ctx.routing_endpoint_category = EndpointCategory.GENERATION
+    chat_ctx._capacity_deadline_mono = 99999.0
+    assert embedding_capacity_acquire_deadline_mono(chat_ctx) is None
 
 
 @pytest.mark.asyncio
