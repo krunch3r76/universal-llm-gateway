@@ -124,3 +124,59 @@ def test_hook_still_allows_commit_on_checked_out_master(tmp_path: Path) -> None:
     ) == "committed\nplus unstaged\n"
     show = _git(hub, "show", "HEAD:README.md")
     assert show.stdout == "committed\n"
+
+
+def test_commit_keeps_worktree_bytes_that_equal_old(tmp_path: Path) -> None:
+    """Index matches the new commit and the worktree is still the old blob.
+
+    The prepared hook sees the index already equal to the incoming blob.
+    Checking that path out would replace the worktree with the commit.
+    """
+    hub = _init_hub(tmp_path)
+    (hub / "README.md").write_text("committed\n", encoding="utf-8")
+    assert _git(hub, "add", "README.md").returncode == 0
+    (hub / "README.md").write_text("base\n", encoding="utf-8")
+    committed = _git(hub, "commit", "-m", "ordinary")
+    assert committed.returncode == 0, committed.stderr
+    assert (hub / "README.md").read_text(encoding="utf-8") == "base\n"
+
+
+def test_staged_third_blob_blocks_ref_move(tmp_path: Path) -> None:
+    """A staged blob other than old or new blocks the ref and stays in the index."""
+    hub = _init_hub(tmp_path)
+    old, new = _commit_ahead(hub)
+    (hub / "README.md").write_text("operator staged\n", encoding="utf-8")
+    assert _git(hub, "add", "README.md").returncode == 0
+    (hub / "README.md").write_text("base\n", encoding="utf-8")
+    moved = _git(hub, "update-ref", "refs/heads/master", new, old)
+    assert moved.returncode != 0, moved.stderr
+    assert _git(hub, "rev-parse", "refs/heads/master").stdout.strip() == old
+    assert (hub / "README.md").read_text(encoding="utf-8") == "base\n"
+    staged = _git(hub, "show", ":README.md")
+    assert staged.stdout == "operator staged\n"
+
+
+def test_clean_symlink_land_updates_the_link(tmp_path: Path) -> None:
+    """A clean symlink in the land diff is the link text, not the target body."""
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    assert _git(hub, "init", "-b", "master").returncode == 0
+    assert _git(hub, "config", "user.email", "t@example.com").returncode == 0
+    assert _git(hub, "config", "user.name", "t").returncode == 0
+    assert _git(hub, "config", "core.hooksPath", str(_HOOKS_DIR)).returncode == 0
+    (hub / "README.md").write_text("base\n", encoding="utf-8")
+    (hub / "link").symlink_to("README.md")
+    assert _git(hub, "add", "README.md", "link").returncode == 0
+    assert _git(hub, "commit", "-m", "base").returncode == 0
+    old = _git(hub, "rev-parse", "HEAD").stdout.strip()
+    assert _git(hub, "checkout", "-b", "land").returncode == 0
+    (hub / "link").unlink()
+    (hub / "link").symlink_to("added-target")
+    (hub / "added-target").write_text("t\n", encoding="utf-8")
+    assert _git(hub, "add", "link", "added-target").returncode == 0
+    assert _git(hub, "commit", "-m", "land").returncode == 0
+    new = _git(hub, "rev-parse", "HEAD").stdout.strip()
+    assert _git(hub, "checkout", "master").returncode == 0
+    moved = _git(hub, "update-ref", "refs/heads/master", new, old)
+    assert moved.returncode == 0, moved.stderr
+    assert (hub / "link").readlink() == Path("added-target")

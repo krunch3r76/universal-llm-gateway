@@ -19,6 +19,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 _ZERO_OID = "0" * 40
 _REFS_HEADS_PREFIX = "refs/heads/"
@@ -137,15 +138,13 @@ def _master_ff_updates(repo: Path, updates: list[RefUpdate]) -> list[RefUpdate]:
     return found
 
 
-def _load_hub_tree_sync():
+def _load_hub_tree_sync() -> ModuleType:
     """Import ``hub_tree_sync`` from the repo that contains this module.
 
     Hook cwd is the worktree that ran git, so ``services`` resolves to that
     tree, while the hook script's ``PYTHONPATH`` may still point at the hub
     libs. A lane copy of this module must load the lane's repair function.
     """
-    import sys
-
     libs = str(Path(__file__).resolve().parents[2] / "libs")
     if libs not in sys.path:
         sys.path.insert(0, libs)

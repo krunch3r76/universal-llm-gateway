@@ -252,9 +252,11 @@ def _blob_bytes(repo: str, sha: str, path: str) -> bytes | None:
 
 def _file_bytes(root: str, rel_path: str) -> bytes | None:
     path = Path(root) / rel_path
-    if not path.is_file():
-        return None
     try:
+        if path.is_symlink():
+            return os.readlink(path).encode()
+        if not path.is_file():
+            return None
         return path.read_bytes()
     except OSError:
         return None
@@ -442,10 +444,11 @@ def _bytes_match_old_or_new(
 def master_ref_move_refusal(source_repo: str, old_sha: str, new_sha: str) -> str | None:
     """Refuse a master ref move that would clobber divergent hub bytes.
 
-    A path whose index already matches ``new_sha`` is a commit or merge that
-    has staged the incoming blob; later unstaged bytes on that path stay.
-    A path whose worktree still matches ``old_sha`` or already matches
-    ``new_sha`` is safe to repair after the ref moves. Any other bytes are
+    A path whose index blob is neither the old nor the new blob is divergent,
+    even when the worktree still matches the old blob. A path whose index
+    already matches ``new_sha`` is a commit or merge that has staged the
+    incoming blob; the worktree is not checked out over, including when it
+    still holds the old blob. A path whose worktree matches neither blob is
     an operator edit. Returns a reason, or None when the move may proceed.
     No checked-out master means there is no index to disagree with.
     """
@@ -464,7 +467,11 @@ def master_ref_move_refusal(source_repo: str, old_sha: str, new_sha: str) -> str
         new_spec = f"{new_sha}:{path}"
         index_oid = _rev_spec(checkout, f":{path}")
         new_oid = _rev_spec(source_repo, new_spec)
-        if index_oid is not None and index_oid == new_oid:
+        old_oid = None if kind == "A" else _rev_spec(source_repo, f"{old_sha}:{path}")
+        if index_oid != old_oid and index_oid != new_oid:
+            divergent.append(path)
+            continue
+        if index_oid == new_oid and kind != "D":
             continue
         old_blob = None if kind == "A" else _blob_bytes(source_repo, old_sha, path)
         new_blob = None if kind == "D" else _blob_bytes(source_repo, new_sha, path)
@@ -483,7 +490,10 @@ def repair_master_worktree(source_repo: str, old_sha: str, new_sha: str) -> str:
     Call this after ``refs/heads/master`` has moved. Re-planning with
     ``plan_hub_sync`` at that point treats the stale index as divergent
     dirt and skips the checkout. This repair uses the old and new blobs
-    instead. Worktree bytes that match neither blob are left in place.
+    instead. An index blob that is neither old nor new is left in place.
+    An index that already matches ``new_sha`` is not checked out, so a
+    worktree that still holds the old blob survives. Worktree bytes that
+    match neither blob are left in place.
     Returns porcelain of the paths it tried to update.
     """
     if os.environ.get(REPAIR_ENV) == "1":
@@ -502,10 +512,13 @@ def repair_master_worktree(source_repo: str, old_sha: str, new_sha: str) -> str:
     remove_paths: list[str] = []
     for kind, path in entries:
         new_oid = None if kind == "D" else _rev_spec(source_repo, f"{new_sha}:{path}")
+        old_oid = None if kind == "A" else _rev_spec(source_repo, f"{old_sha}:{path}")
         index_oid = _rev_spec(checkout, f":{path}")
         current = _file_bytes(checkout, path)
         old_blob = None if kind == "A" else _blob_bytes(source_repo, old_sha, path)
         new_blob = None if kind == "D" else _blob_bytes(source_repo, new_sha, path)
+        if index_oid != old_oid and index_oid != new_oid:
+            continue
         if not _bytes_match_old_or_new(current, old_blob, new_blob):
             continue
         if kind == "D":
@@ -513,7 +526,7 @@ def repair_master_worktree(source_repo: str, old_sha: str, new_sha: str) -> str:
                 continue
             remove_paths.append(path)
             continue
-        if index_oid == new_oid and current == new_blob:
+        if index_oid == new_oid:
             continue
         checkout_paths.append(path)
     if not checkout_paths and not remove_paths:
