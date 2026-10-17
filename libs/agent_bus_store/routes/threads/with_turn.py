@@ -20,6 +20,7 @@ from . import router
 from .crud import _raise_enrollment_denied
 from .detail import _thread_detail
 from .new_thread_send import run_new_thread_send
+from .send_prep import _raise_if_unexpanded_file_token
 
 
 @router.post(
@@ -37,6 +38,7 @@ async def create_thread_with_turn_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_detail,
         )
+    _raise_if_unexpanded_file_token(body.body)
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     try:
         thread_row, turn_id, ts, turn_number, prepared = await asyncio.to_thread(

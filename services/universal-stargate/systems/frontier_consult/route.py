@@ -675,6 +675,25 @@ async def team_dispatch(
     is for Stargate-internal and pipeline-composition callers.
     """
     request_id = uuid.uuid4().hex[:12]
+    prompt = getattr(body, "prompt", None)
+    if isinstance(prompt, str):
+        from agent_bus_store.turns_models import (
+            UNEXPANDED_FILE_TOKEN_FIX_HINT,
+            text_is_unexpanded_file_token,
+        )
+
+        if text_is_unexpanded_file_token(prompt):
+            return JSONResponse(
+                status_code=422,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="prompt",
+                    reason=UNEXPANDED_FILE_TOKEN_FIX_HINT,
+                    status_code=422,
+                    code="prompt_unexpanded_file_token",
+                    details={"fix_hint": UNEXPANDED_FILE_TOKEN_FIX_HINT},
+                ).to_dict(),
+            )
     try:
         from ._frontier_intake import reject_unsupported_packet_inputs
 

@@ -48,6 +48,7 @@ def active_since_window_label(value: str | datetime | None) -> str:
         return f"{day_match.group(1)}d window"
     return raw
 
+
 # Self-addressed guard removed — root cause fixed (fix-1, todo:agent-bus-from-attribution-root-cause).
 
 # Free-form strings. The agent_bus docstring documents a `namespace:value`
@@ -139,6 +140,39 @@ def _whole_string_is_balanced_dollar_paren(text: str) -> bool:
             if depth < 0:
                 return False
     return False
+
+
+_UNEXPANDED_FILE_TOKEN_RE = re.compile(r"^\$file:\S+$")
+
+UNEXPANDED_FILE_TOKEN_FIX_HINT = (
+    "the $file: token was not expanded by the caller; "
+    "send the body inline or via sidecar_content"
+)
+
+
+def text_is_unexpanded_file_token(text: str) -> bool:
+    """True when stripped text is exactly one unexpanded ``$file:`` token.
+
+    A value that merely contains ``$file:`` mid-text returns False. The
+    caller harness expands the token only when it is a whole top-level
+    string argument; a nested token arrives here literal.
+    """
+    return _UNEXPANDED_FILE_TOKEN_RE.fullmatch(text.strip()) is not None
+
+
+def body_unexpanded_file_token_envelope() -> dict[str, object]:
+    """Structured 422 detail when a body or sidecar is a literal ``$file:`` token."""
+    return {
+        "code": "body_unexpanded_file_token",
+        "reason": "body_unexpanded_file_token",
+        "message": (
+            "The value is an unexpanded $file: token. "
+            "The gateway stores the literal string and does not expand it."
+        ),
+        "fix_hint": UNEXPANDED_FILE_TOKEN_FIX_HINT,
+        "retryable": True,
+        "source": "agent_bus_store.send",
+    }
 
 
 def sidecar_unexpanded_shell_envelope() -> dict[str, object]:
@@ -765,7 +799,9 @@ TRIAGE_CONFIRM_TTL_SECONDS = 600
 _BROADCAST_TO_AGENTS = frozenset({"all", "team"})
 
 
-def parse_older_than(value: str | datetime, *, anchor: datetime | None = None) -> datetime:
+def parse_older_than(
+    value: str | datetime, *, anchor: datetime | None = None
+) -> datetime:
     """Normalize ``older_than`` to a UTC cutoff (threads at or before qualify)."""
     ref = anchor if anchor is not None else datetime.now(UTC)
     if isinstance(value, datetime):
