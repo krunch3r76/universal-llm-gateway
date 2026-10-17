@@ -41,14 +41,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CONTEXTUALIZE_GLOBAL_MAX = 8
-_contextualize_global_semaphore: asyncio.Semaphore | None = None
+_contextualize_global_sem: asyncio.Semaphore | None = None
 
 
 def _contextualize_global_semaphore() -> asyncio.Semaphore:
-    global _contextualize_global_semaphore
-    if _contextualize_global_semaphore is None:
-        _contextualize_global_semaphore = asyncio.Semaphore(CONTEXTUALIZE_GLOBAL_MAX)
-    return _contextualize_global_semaphore
+    global _contextualize_global_sem
+    if _contextualize_global_sem is None:
+        _contextualize_global_sem = asyncio.Semaphore(CONTEXTUALIZE_GLOBAL_MAX)
+    return _contextualize_global_sem
 
 
 _NEIGHBOR_CHARS = 800

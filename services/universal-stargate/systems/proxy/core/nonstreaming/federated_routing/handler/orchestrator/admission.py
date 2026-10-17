@@ -180,13 +180,15 @@ async def acquire_admission_token(
     if deadline is not None:
         acquire_timeout_s = max(0.0, deadline - time.monotonic())
 
+    acquire_kwargs = {
+        "request_id": context.request_id,
+        "model_id": model_id.routing_key,
+        "allowed_gateway_ids": allowed_gateway_ids,
+    }
+    if acquire_timeout_s is not None:
+        acquire_kwargs["timeout_s"] = acquire_timeout_s
     try:
-        token = await capacity_pool.acquire_token(
-            request_id=context.request_id,
-            model_id=model_id.routing_key,
-            allowed_gateway_ids=allowed_gateway_ids,
-            timeout_s=acquire_timeout_s,
-        )
+        token = await capacity_pool.acquire_token(**acquire_kwargs)
         context.capacity_token = token
         if (
             event_bus
