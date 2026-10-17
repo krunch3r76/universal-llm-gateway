@@ -552,3 +552,53 @@ def test_wait_probes_only_pinned_past_grace_link(tmp_path, monkeypatch) -> None:
             ).fetchall()
         assert stored
         assert all(row["terminal_status"] is None for row in stored)
+
+
+def test_cancel_discard_terminate_reads_producer_cancelled(tmp_path) -> None:
+    """steer=cancel_discard posts terminal_status=cancelled on the link.
+
+    The break is a live link whose terminate payload is cancelled: the writer
+    rejected that status, the row stayed NULL, and wait producers[] read
+    state=unknown with terminal_status=null (friction a:39453). After the
+    write, the pinned producer is terminal cancelled.
+    """
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "cancel-discard-link",
+                "from": "cursor",
+                "to": "cursor-sdk",
+                "subject": "implement",
+                "body": "packet",
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-discard",
+            pipeline_id="cursor-sdk-generate",
+        )
+        terminated = client.post(
+            f"/threads/{thread_id}/dispatch-terminate",
+            json={
+                "terminal_status": "cancelled",
+                "execution_id": "exec-discard",
+            },
+        )
+        assert terminated.status_code == 200
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from"
+            "&from_agent=cursor-sdk&execution_id=exec-discard"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["producer"]["state"] == "terminal"
+        assert body["producer"]["terminal_status"] == "cancelled"
+        assert body["producer"]["liveness_reason"] == "terminal_status"
+        assert body["producers"] == [body["producer"]]
