@@ -448,6 +448,40 @@ def test_assemble_dispatch_thread_refused(thread: str, error: str) -> None:
     assert payload["error"] == error
 
 
+def test_assemble_anthropic_writer_auto_resolves_openai_reviewer() -> None:
+    payload = _run_assemble(
+        brief=_brief(),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="auto",
+        seat_models={"cdp": "anthropic/claude-sonnet-5-5", "openai": "openai/gpt-5.4"},
+    )
+    assert payload["ok"] is True
+    assert payload["reviewer_seat"] == "openai"
+    assert payload["reviewer_model"] == "openai/gpt-5.4"
+
+
+def test_assemble_anthropic_writer_cdp_reviewer_refused() -> None:
+    payload = _run_assemble(
+        brief=_brief(),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="cdp",
+        seat_models={"cdp": "anthropic/claude-sonnet-5-5"},
+    )
+    assert payload["refused"] == "reviewer_seat_unavailable"
+    assert "cdp reviewer refused" in payload["error"]
+
+
+def test_openai_quota_error_builds_held_review_without_fallback() -> None:
+    held = assemble.build_held_reviewer_unfunded_review()
+    assert held["status"] == "held_reviewer_unfunded"
+    assert held["refused"] == "held_reviewer_unfunded"
+    assert assemble.is_openai_reviewer_quota_error(
+        {"http_status": 429, "error_code": "insufficient_quota"}
+    )
+
+
 def test_assemble_local_local_omitted_thread_ok() -> None:
     payload = _run_assemble(
         brief=_brief(sensitivity="non_sensitive"),

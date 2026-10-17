@@ -128,6 +128,24 @@ def test_sonnet_5_is_carded_adaptive_128k() -> None:
     assert dispatch.reasoning.value_kind == "adaptive"
 
 
+def test_sonnet_5_5_matches_sonnet_5_substring_adaptive_128k_1m() -> None:
+    dispatch = resolve("anthropic/claude-sonnet-5-5")
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.max_output.context_window == 1_000_000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"
+
+
+def test_haiku_5_5_adaptive_128k_1m_before_shorter_haiku() -> None:
+    dispatch = resolve("anthropic/claude-haiku-5-5")
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.max_output.context_window == 1_000_000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"
+    haiku45 = resolve("anthropic/claude-haiku-4-5")
+    assert haiku45.max_output.ceiling == 64000
+
+
 # ── §3.5: reasoning value_kind ⇔ surface ─────────────────────────────────────
 
 

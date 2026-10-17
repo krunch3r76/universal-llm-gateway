@@ -57,6 +57,7 @@ from .config import load_config
 from .events import (
     AnthropicCreditLoopRefused,
     AnthropicCreditOverrun,
+    AnthropicCreditStreamFloored,
     AnthropicCreditUsagePartial,
     CloudProxyBrowserCatalogRefreshed,
     CloudProxyBrowserCatalogRefreshFailed,
@@ -92,6 +93,7 @@ _CREDIT_EVENT_FACTORIES: dict[str, Any] = {
     "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
     "anthropic.credit.overrun": AnthropicCreditOverrun,
     "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
+    "anthropic.credit.stream.floored": AnthropicCreditStreamFloored,
 }
 
 
@@ -1172,6 +1174,17 @@ async def anthropic_credit_status_route() -> JSONResponse:
         ledger_path = ledger_fields["ledger_path"]
         instance_id = ledger_fields["ledger_instance_id"]
         as_of = ledger_fields["available_balance_as_of"]
+        future_reason = policy.balance_as_of_unavailable_reason()
+        if future_reason is not None:
+            return JSONResponse(
+                content={
+                    "healthy": False,
+                    "unavailable_reason": future_reason,
+                    "ledger_path": ledger_path,
+                    "ledger_instance_id": instance_id,
+                    "available_balance_as_of": as_of,
+                }
+            )
         payload = json.loads(json.dumps(credit_status(), default=str))
         payload.update(ledger_fields)
         payload["healthy"] = policy.healthy()

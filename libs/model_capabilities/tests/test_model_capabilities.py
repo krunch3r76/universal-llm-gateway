@@ -31,6 +31,13 @@ def test_capability_card_lookup_normalized() -> None:
     assert card.mcp_remote_connector is True
 
 
+def test_sonnet_5_5_and_haiku_5_5_api_cards() -> None:
+    sonnet = capability_card("anthropic/claude-sonnet-5-5")
+    haiku = capability_card("anthropic/claude-haiku-5-5")
+    assert sonnet.mcp_client_tool_loop is True
+    assert haiku.mcp_remote_connector is True
+
+
 def test_shared_card_constants_for_provider_variants() -> None:
     anthropic = capability_card("anthropic/claude-sonnet-4-6")
     assert capability_card("anthropic/claude-opus-4") == anthropic

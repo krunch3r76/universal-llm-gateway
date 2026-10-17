@@ -147,6 +147,42 @@ def test_independence_cdp_reviewer_local_writer_full() -> None:
     assert payload["reviewer_model"] == "cdp/opus-5.5"
 
 
+def test_anthropic_writer_auto_resolves_openai_gpt5_reviewer() -> None:
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={
+                    "draft": _Out({}, model_id="anthropic/claude-sonnet-5-5"),
+                    "assemble": _Out({"reviewer_seat": "openai"}),
+                },
+                seat_models={"openai": "openai/gpt-5.4"},
+            ),
+        )
+    ).json
+    assert payload["refused"] is None
+    assert payload["independence"] == "full"
+    assert payload["writer_family"] == "anthropic"
+    assert payload["reviewer_family"] == "openai"
+    assert payload["reviewer_model"] == "openai/gpt-5.4"
+
+
+def test_anthropic_writer_cdp_reviewer_still_refused() -> None:
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={
+                    "draft": _Out({}, model_id="anthropic/claude-haiku-5-5"),
+                    "assemble": _Out({"reviewer_seat": "cdp"}),
+                },
+                seat_models={"cdp": "cdp/opus-5.5"},
+            ),
+        )
+    ).json
+    assert payload["refused"] == "independence_violation"
+
+
 def test_independence_cdp_writer_and_reviewer_refused() -> None:
     payload = asyncio.run(
         independence.WritingIndependenceHandler().execute(

@@ -11,7 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from universal_protocol import error_envelope
 
+from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.execution.async_tracker import (
     PipelineExecutionTracker,
 )
@@ -30,6 +32,60 @@ def _openai_400_body() -> dict[str, Any]:
     }
 
 
+def _federated_quota_detail() -> dict[str, Any]:
+    return error_envelope(
+        code="upstream_rate_limited",
+        message="Remote provider rejected request: 429 (gateway_id=openai-test)",
+        source="master",
+        retryable=False,
+        data={
+            "status_code": 429,
+            "gateway_id": "openai-test",
+            "upstream_error": {
+                "error": {
+                    "type": "insufficient_quota",
+                    "code": "insufficient_quota",
+                }
+            },
+        },
+    )
+
+
+def test_normalize_prefers_cause_detail_over_context() -> None:
+    cause_detail = {"marker": "from_cause", "code": "insufficient_quota"}
+    context_detail = {"marker": "from_context"}
+    cause = ProxyClientError("cause", status_code=429, detail=cause_detail)
+    context = ProxyClientError("context", status_code=400, detail=context_detail)
+    try:
+        raise cause
+    except ProxyClientError as c_exc:
+        try:
+            raise RuntimeError("wrapper") from c_exc
+        except RuntimeError as wrap:
+            wrap.__context__ = context  # type: ignore[attr-defined]
+            exc = wrap
+    _code, _message, data = _normalize_pipeline_exception(exc)
+    assert data == {"upstream": cause_detail}
+
+
+def test_normalize_walks_cause_chain_for_proxy_detail() -> None:
+    inner = ProxyClientError(
+        "Stargate returned 429: Remote provider rejected request",
+        status_code=429,
+        detail=_federated_quota_detail(),
+    )
+    try:
+        raise PipelineExecutionError("Step 'review-openai' failed: quota") from inner
+    except PipelineExecutionError as outer:
+        exc = outer
+    code, message, data = _normalize_pipeline_exception(exc)
+    assert code == "pipeline_execution_failed"
+    assert "Step 'review-openai' failed" in message
+    assert data == {"upstream": _federated_quota_detail()}
+    upstream = data["upstream"]["data"]["upstream_error"]["error"]
+    assert upstream["code"] == "insufficient_quota"
+
+
 def test_normalize_preserves_proxy_error_dict_detail() -> None:
     exc = ProxyClientError(
         "Stargate returned 400: Remote provider rejected request",
@@ -39,7 +95,7 @@ def test_normalize_preserves_proxy_error_dict_detail() -> None:
     code, message, data = _normalize_pipeline_exception(exc)
     assert code == "pipeline_execution_failed"
     assert "Stargate returned 400" in message
-    assert data == _openai_400_body()
+    assert data == {"upstream": _openai_400_body()}
 
 
 def test_normalize_ignores_proxy_error_string_detail() -> None:

@@ -1,0 +1,9 @@
+{
+  "plan_sha256": "0825df177a5563bf9ba1971e3b7f7eba13d82a3ba9c6052857ad9d46c78e61c5",
+  "files": {
+    "p1_system.txt": "863d0c4dd4420ea249309d3f149a939a0a7c51ecccd786d0ab23482a8ac7fac2",
+    "p2_turn1.txt": "52acb19cfb08b02e866f9c6870d9fae40f9e12deb6d883a43ac6723efabd4c47",
+    "p3_partner.txt": "6c9e2ed4af6522b5c6c5a97493fa43279f09418989eac29bb1ccad4fdd15e084",
+    "p4_closing.txt": "d2cc1acdd6f0cf744892afd2510be14ed2c0d1c66ca111d1e22aa1501583d43b"
+  }
+}
