@@ -1,7 +1,9 @@
 """RAG service configuration: YAML parsing and dataclass definitions.
 
 Loads ``~/.gateway/rag.yaml`` into typed dataclasses (``RagConfig``,
-``WatchDirectory``, ``KnowledgeExtractionConfig``). Configuration controls
+``WatchDirectory``, ``KnowledgeExtractionConfig``). Scope prefixes are that
+box file unioned with ``scope_membership.yaml`` beside the loader; every
+other key stays box-only. Configuration controls
 watch directories, scopes, embedding model, knowledge extraction settings,
 contextualization, and post-index enforcement watermarks.
 """

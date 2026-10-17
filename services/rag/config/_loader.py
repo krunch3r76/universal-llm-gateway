@@ -27,11 +27,13 @@ from ._parsing import (
     _parse_watch_directories,
     _pipeline_contextualize_model,
     _pipeline_vocab_model,
+    _resolve_path,
 )
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
+_TRACKED_MEMBERSHIP_PATH = Path(__file__).with_name("scope_membership.yaml")
 
 
 def _resolve_config_path() -> Path | None:
@@ -91,13 +93,182 @@ def save_scope(
     logger.info("Persisted scope '%s' to %s", name, config_path)
 
 
-def load_config() -> RagConfig:
-    """Read ``~/.gateway/rag.yaml`` from disk and build a validated ``RagConfig``.
+def _tracked_prefix_strings(scope_name: str, entry: object) -> list[str] | None:
+    """Return usable tracked prefix strings, or None when this delta is skipped.
 
-    Malformed optional fields (workers, timeouts, enforcement, vocabulary mode or
-    taxonomy) silently fall back to defaults; watch directories and scope
-    prefixes are symlink-resolved. Raises ``ValueError`` if the file is missing,
-    is not valid YAML, or its root is not a mapping. No caching: rereads each call.
+    A non-mapping entry, a non-list ``prefixes`` value, or a list with no
+    non-empty string is logged and skipped. The box scope, when present, stays.
+    """
+    if not isinstance(entry, dict):
+        logger.warning(
+            "Skipping tracked scope '%s': entry must be a mapping",
+            scope_name,
+        )
+        return None
+    prefixes = entry.get("prefixes")
+    if not isinstance(prefixes, list):
+        logger.warning(
+            "Skipping tracked scope '%s': prefixes must be a list",
+            scope_name,
+        )
+        return None
+    usable = [
+        prefix.strip()
+        for prefix in prefixes
+        if isinstance(prefix, str) and prefix.strip()
+    ]
+    if not usable:
+        logger.warning(
+            "Skipping tracked scope '%s': no non-empty string prefix",
+            scope_name,
+        )
+        return None
+    return usable
+
+
+def _load_tracked_scopes(path: Path) -> dict[object, object] | None:
+    """Return the tracked ``scopes`` mapping, or None to keep the box scopes.
+
+    Called only after the box file has parsed to a mapping. A missing path is
+    a warning. ``UnicodeDecodeError``, ``OSError``, ``yaml.YAMLError``, a
+    non-mapping root, and a non-mapping ``scopes`` value are errors. None of
+    those raise: rag startup continues on the box membership. Top-level keys
+    other than ``scopes`` are ignored and named in a warning.
+    """
+    if not path.exists():
+        logger.warning("Tracked scope membership missing: path=%s", path)
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        logger.error(
+            "Failed to read tracked scope membership: path=%s error=%s",
+            path,
+            type(exc).__name__,
+        )
+        return None
+    try:
+        loaded: object = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        logger.error(
+            "Failed to parse tracked scope membership: path=%s error=%s",
+            path,
+            type(exc).__name__,
+        )
+        return None
+    if not isinstance(loaded, dict):
+        logger.error(
+            "Tracked scope membership root must be a mapping: path=%s",
+            path,
+        )
+        return None
+    ignored = sorted(str(key) for key in loaded if key != "scopes")
+    if ignored:
+        logger.warning(
+            "Ignoring non-scope keys in tracked scope membership: %s",
+            ignored,
+        )
+    scopes = loaded.get("scopes", {})
+    if not isinstance(scopes, dict):
+        logger.error(
+            "Tracked scope membership scopes must be a mapping: path=%s",
+            path,
+        )
+        return None
+    return scopes
+
+
+def _merge_tracked_scopes(
+    box_scopes: object,
+    tracked_scopes: dict[object, object],
+) -> object:
+    """Union tracked prefixes onto box scopes. Box order, then new paths.
+
+    A resolved tracked path already present is dropped and the box string is
+    kept. ``union: true`` entries are left untouched. Description, vocab mode,
+    and every other box key stay. A tracked scope the box does not name is
+    added. Nothing in the tracked file deletes a box scope or a box prefix.
+    """
+    if not isinstance(box_scopes, dict):
+        return box_scopes
+    merged: dict[object, object] = {}
+    for key, value in box_scopes.items():
+        if isinstance(value, dict):
+            entry = dict(value)
+            prefixes = entry.get("prefixes")
+            if isinstance(prefixes, list):
+                entry["prefixes"] = list(prefixes)
+            merged[key] = entry
+        else:
+            merged[key] = value
+    for name, tracked_entry in tracked_scopes.items():
+        if not isinstance(name, str):
+            logger.warning("Skipping tracked scope with a non-string name")
+            continue
+        if name in merged:
+            box_entry = merged[name]
+            if isinstance(box_entry, dict) and box_entry.get("union") is True:
+                logger.warning(
+                    "Skipping tracked prefixes for union scope '%s'",
+                    name,
+                )
+                continue
+        usable = _tracked_prefix_strings(name, tracked_entry)
+        if usable is None or not isinstance(tracked_entry, dict):
+            continue
+        if name not in merged:
+            added = dict(tracked_entry)
+            added["prefixes"] = usable
+            merged[name] = added
+            continue
+        box_entry = merged[name]
+        if not isinstance(box_entry, dict):
+            logger.warning(
+                "Skipping tracked scope '%s': box entry is not a mapping",
+                name,
+            )
+            continue
+        box_prefixes = box_entry.get("prefixes")
+        if not isinstance(box_prefixes, list):
+            logger.warning(
+                "Skipping tracked scope '%s': box prefixes are not a list",
+                name,
+            )
+            continue
+        ignored_keys = sorted(str(key) for key in tracked_entry if key != "prefixes")
+        if ignored_keys:
+            logger.warning(
+                "Ignoring tracked scope keys for '%s': %s",
+                name,
+                ignored_keys,
+            )
+        resolved_box = {
+            _resolve_path(prefix.strip())
+            for prefix in box_prefixes
+            if isinstance(prefix, str) and prefix.strip()
+        }
+        kept = list(box_prefixes)
+        for prefix in usable:
+            resolved = _resolve_path(prefix)
+            if resolved in resolved_box:
+                continue
+            kept.append(prefix)
+            resolved_box.add(resolved)
+        box_entry["prefixes"] = kept
+    return merged
+
+
+def load_config() -> RagConfig:
+    """Read ``~/.gateway/rag.yaml`` and union tracked scope prefixes.
+
+    The box file is required. A missing box file, YAML that does not parse, or
+    a non-mapping root raises ``ValueError``. An empty file stays an empty
+    mapping, as before. Only after that mapping is in hand does
+    ``scope_membership.yaml`` beside this module add scope prefixes. A missing
+    tracked file, ``UnicodeDecodeError``, ``OSError``, bad YAML, or a
+    non-mapping root or ``scopes`` value is logged and the box scopes are kept.
+    Workers, watch directories, and other non-scope keys stay box-only. No
+    caching: each call rereads both files.
     """
     config_path = _resolve_config_path()
     if config_path is None:
@@ -121,7 +292,11 @@ def load_config() -> RagConfig:
     watch_directories = _parse_watch_directories(
         parsed_root.get("watch_directories", [])
     )
-    scopes = _parse_scopes(parsed_root.get("scopes", {}))
+    raw_scopes = parsed_root.get("scopes", {})
+    tracked_scopes = _load_tracked_scopes(_TRACKED_MEMBERSHIP_PATH)
+    if tracked_scopes is not None:
+        raw_scopes = _merge_tracked_scopes(raw_scopes, tracked_scopes)
+    scopes = _parse_scopes(raw_scopes)
     knowledge_extraction = _parse_knowledge_extraction(
         parsed_root.get("knowledge_extraction", {})
     )

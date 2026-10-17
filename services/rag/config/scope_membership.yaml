@@ -1,0 +1,4 @@
+scopes:
+  llm_prompting:
+    prefixes:
+      - /mnt/torus/projects/universal-llm-gateway/docs/research/small_llm/prompting
