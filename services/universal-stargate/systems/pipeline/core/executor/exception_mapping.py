@@ -16,6 +16,28 @@ from __future__ import annotations
 from typing import Any
 
 
+def _first_dict_detail(exc: BaseException) -> dict[str, Any] | None:
+    """Return the first dict-shaped ``detail`` on the exception chain."""
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        cid = id(current)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        detail = getattr(current, "detail", None)
+        if isinstance(detail, dict):
+            return detail
+        cause = current.__cause__
+        context = current.__context__
+        if cause is not None:
+            stack.append(cause)
+        if context is not None and context is not cause:
+            stack.append(context)
+    return None
+
+
 def _normalize_pipeline_exception(
     exc: BaseException,
 ) -> tuple[str, str, dict[str, Any] | None]:
@@ -29,15 +51,7 @@ def _normalize_pipeline_exception(
     - Returns ``data=None`` for non-HTTP exceptions or when the upstream
       body was not JSON.
     """
-    data: dict[str, Any] | None = None
-
-    # ProxyClientError.detail is the structured upstream JSON body when
-    # the provider returned a parseable error response. Surface it so
-    # async callers can inspect {type, code, param, message} without
-    # re-parsing a flattened error string.
-    proxy_detail = getattr(exc, "detail", None)
-    if isinstance(proxy_detail, dict):
-        data = proxy_detail
+    data: dict[str, Any] | None = _first_dict_detail(exc)
 
     # Step-level wrappers (e.g. ``PipelineExecutionError`` raised by the DAG
     # executor) lack ``to_dict`` but preserve the originating step exception

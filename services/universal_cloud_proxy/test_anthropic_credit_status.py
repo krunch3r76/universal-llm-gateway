@@ -199,3 +199,29 @@ def test_status_uses_policy_cached_config_not_fresh_load(
     )
     resp2 = client.get("/internal/anthropic-credit/status")
     assert resp2.json()["available_balance_as_of"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_status_future_available_balance_as_of_unhealthy(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ledger = tmp_path / "ledger.sqlite"
+    future = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
+    cfg_path = _write_config(
+        tmp_path,
+        ledger,
+        available_balance={
+            "usd": 200,
+            "as_of": future.isoformat(),
+            "owner": "kaywan",
+        },
+    )
+    monkeypatch.setenv("ANTHROPIC_CREDIT_CONFIG_PATH", str(cfg_path))
+    cfg = load_credit_config(cfg_path)
+    init_ledger(cfg)
+    set_policy(None)
+    set_policy(CreditPolicy(cfg))
+    resp = client.get("/internal/anthropic-credit/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["healthy"] is False
+    assert body["unavailable_reason"] == "balance_as_of_in_future"

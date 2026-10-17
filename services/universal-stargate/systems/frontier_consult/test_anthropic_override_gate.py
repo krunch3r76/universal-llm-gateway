@@ -15,6 +15,7 @@ from .anthropic_override_gate import (
     credit_gate_healthy,
     enforce_anthropic_override,
     evaluate_anthropic_override,
+    reset_configured_cloud_proxy_url_cache,
     reset_credit_health_cache,
     set_anthropic_credit_health_probe,
 )
@@ -34,9 +35,11 @@ _STANDARD_MODELS = frozenset({_SONNET55, _HAIKU55})
 def _reset_credit_health_probe() -> None:
     set_anthropic_credit_health_probe(None)
     reset_credit_health_cache()
+    reset_configured_cloud_proxy_url_cache()
     yield
     set_anthropic_credit_health_probe(None)
     reset_credit_health_cache()
+    reset_configured_cloud_proxy_url_cache()
 
 
 def test_reviewer_opus_without_attestation_rejects() -> None:
@@ -458,6 +461,11 @@ async def test_default_credit_health_probe_mock_transport_cases(
 async def test_slow_credit_probe_rejects_standard_model_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import socket
+    import threading
+
+    from systems.frontier_consult import anthropic_override_gate as gate_mod
+
     async def fake_hydrate(agent: str, **_k: Any) -> HydrationBundle:
         return _bundle(
             AgentMeta(
@@ -472,26 +480,29 @@ async def test_slow_credit_probe_rejects_standard_model_422(
         fake_hydrate,
     )
 
-    class _Resp:
-        status_code = 200
+    stall_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stall_sock.bind(("127.0.0.1", 0))
+    stall_sock.listen(5)
+    port = stall_sock.getsockname()[1]
 
-        def json(self) -> dict[str, bool]:
-            return {"healthy": True}
+    def _accept_and_stall() -> None:
+        while True:
+            try:
+                conn, _addr = stall_sock.accept()
+            except OSError:
+                break
+            try:
+                threading.Event().wait(5.0)
+            finally:
+                conn.close()
 
-    class _SlowClient:
-        async def __aenter__(self) -> _SlowClient:
-            return self
-
-        async def __aexit__(self, *_a: object) -> None:
-            return None
-
-        async def get(self, _path: str) -> _Resp:
-            raise httpx.ReadTimeout("simulated slow probe")
-
+    threading.Thread(target=_accept_and_stall, daemon=True).start()
     monkeypatch.setattr(
-        "transport_utils.make_async_client",
-        lambda *_a, **_k: _SlowClient(),
+        gate_mod,
+        "_configured_cloud_proxy_url",
+        lambda: f"http://127.0.0.1:{port}",
     )
+    reset_configured_cloud_proxy_url_cache()
     reset_credit_health_cache()
 
     req = FrontierGenerateRequest(
@@ -503,44 +514,67 @@ async def test_slow_credit_probe_rejects_standard_model_422(
     with pytest.raises(FrontierEndpointError) as exc_info:
         await build_dispatch_body(req)
     assert exc_info.value.status_code == 422
+    stall_sock.close()
 
 
 @pytest.mark.asyncio
 async def test_cloud_proxy_url_uses_uds_transport(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
+    import threading
+    import time
+
+    import uvicorn
+    from fastapi import FastAPI
+    from transport_utils.client_factory import make_async_client, parse_rag_url
+
     from systems.frontier_consult import anthropic_override_gate as gate_mod
 
-    captured: dict[str, str] = {}
+    sock_path = tmp_path / "cloud-proxy.sock"
+    probe_app = FastAPI()
 
-    class _Resp:
-        status_code = 200
+    @probe_app.get("/internal/anthropic-credit/status")
+    def _status() -> dict[str, bool]:
+        return {"healthy": True}
 
-        def json(self) -> dict[str, bool]:
-            return {"healthy": True}
+    def _serve_uds() -> None:
+        uvicorn.run(
+            probe_app,
+            uds=str(sock_path),
+            log_level="error",
+            access_log=False,
+        )
 
-    class _Transport:
-        async def __aenter__(self) -> _Transport:
-            return self
+    thread = threading.Thread(target=_serve_uds, daemon=True)
+    thread.start()
+    for _ in range(50):
+        if sock_path.exists():
+            break
+        time.sleep(0.02)
 
-        async def __aexit__(self, *_a: object) -> None:
-            return None
+    url = f"unix://{sock_path}"
+    monkeypatch.setattr(gate_mod, "_configured_cloud_proxy_url", lambda: url)
+    reset_configured_cloud_proxy_url_cache()
+    reset_credit_health_cache()
 
-        async def get(self, _path: str) -> _Resp:
-            return _Resp()
+    captured: dict[str, Any] = {}
+    real_make = make_async_client
 
-    def _fake_make(url: str, timeout: httpx.Timeout) -> _Transport:
-        captured["url"] = url
-        return _Transport()
+    def _capture_make(
+        target_url: str, timeout: httpx.Timeout | float = 10.0, **kw: Any
+    ):
+        client = real_make(target_url, timeout=timeout, **kw)
+        captured["transport"] = client._transport
+        captured["url"] = target_url
+        return client
 
-    monkeypatch.setattr(
-        "systems.frontier_consult.anthropic_override_gate._configured_cloud_proxy_url",
-        lambda: "unix:///tmp/x.sock",
-    )
-    monkeypatch.setattr("transport_utils.make_async_client", _fake_make)
+    monkeypatch.setattr("transport_utils.make_async_client", _capture_make)
 
     assert await gate_mod._default_async_credit_health_probe() is True
-    assert captured["url"] == "unix:///tmp/x.sock"
+    assert captured["url"] == url
+    uds_path, _ = parse_rag_url(captured["url"])
+    assert uds_path == str(sock_path)
+    assert isinstance(captured["transport"], httpx.AsyncHTTPTransport)
 
 
 @pytest.mark.asyncio

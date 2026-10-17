@@ -399,6 +399,10 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
         thread = _thread_id(options)
         run_id = _run_id(context)
         key = f"writer-specialist-v1:{run_id}:reviewer"
+        if key in _POSTED:
+            return _step(
+                {"ok": False, "duplicate_suppressed": True, "idempotency_key": key}
+            )
         prompts = _prompts()
         row = prompts.get("reviewer") or {}
         draft = getattr(outputs.get("draft"), "json", None)
@@ -413,10 +417,19 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
         prompt = PromptBuilder().render(str(row.get("template") or ""), fields)
         prompt = prompt.rstrip() + "\n" + _JSON_ONLY
         system = str(row.get("system_prompt") or "")
-        model = str(
-            assemble.get("reviewer_model")
-            or resolve_openai_reviewer_model(_seat_models(options))
-        )
+        try:
+            model = str(
+                assemble.get("reviewer_model")
+                or resolve_openai_reviewer_model(_seat_models(options))
+            )
+        except ValueError as exc:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "reviewer_seat_unavailable",
+                    "error": str(exc),
+                }
+            )
         writer_model = str(assemble.get("writer_model") or "")
         timeout_s = _timeout(options)
         sensitive = assemble.get("sensitivity") != "non_sensitive"
@@ -438,6 +451,7 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
             body["sidecar_ref"] = sidecar_ref
             body["prompt_sha256"] = digest
             body["bus_body"] = "pointer_only"
+        _POSTED.add(key)
         if self._client is not None:
             dispatched = await _post_json(self._client, "/api/v1/team/dispatch", body)
         else:

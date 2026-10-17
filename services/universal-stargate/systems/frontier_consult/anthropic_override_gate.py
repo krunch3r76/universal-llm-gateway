@@ -28,6 +28,13 @@ _UNHEALTHY_TTL_S = 1.0
 _cache_lock = asyncio.Lock()
 _cache_value: bool | None = None
 _cache_expires_monotonic = 0.0
+_cloud_proxy_url_resolved: str | None = None
+
+
+def reset_configured_cloud_proxy_url_cache() -> None:
+    """Clear resolved cloud-proxy URL (tests)."""
+    global _cloud_proxy_url_resolved
+    _cloud_proxy_url_resolved = None
 
 
 def set_anthropic_credit_health_probe(probe: CreditHealthProbe | None) -> None:
@@ -45,8 +52,12 @@ def reset_credit_health_cache() -> None:
 
 
 def _configured_cloud_proxy_url() -> str:
+    global _cloud_proxy_url_resolved
+    if _cloud_proxy_url_resolved is not None:
+        return _cloud_proxy_url_resolved
     from transport_utils import DEFAULT_CLOUD_PROXY_URL
 
+    url = DEFAULT_CLOUD_PROXY_URL.strip().rstrip("/")
     try:
         from systems.cloud.config import parse_cloud_proxy_config
         from systems.proxy.stargate_config.config import StargateConfig
@@ -54,10 +65,11 @@ def _configured_cloud_proxy_url() -> str:
         raw = StargateConfig().get_cloud_proxy_config()
         parsed = parse_cloud_proxy_config(raw)
         if parsed and parsed.url:
-            return parsed.url.strip().rstrip("/")
+            url = parsed.url.strip().rstrip("/")
     except Exception:
         pass
-    return DEFAULT_CLOUD_PROXY_URL.strip().rstrip("/")
+    _cloud_proxy_url_resolved = url
+    return url
 
 
 def _status_body_healthy(body: object) -> bool:
@@ -217,6 +229,7 @@ __all__ = [
     "credit_gate_healthy",
     "enforce_anthropic_override",
     "evaluate_anthropic_override",
+    "reset_configured_cloud_proxy_url_cache",
     "reset_credit_health_cache",
     "set_anthropic_credit_health_probe",
 ]

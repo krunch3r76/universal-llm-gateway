@@ -291,6 +291,9 @@ def _is_anthropic_api_writer(model_id: str) -> bool:
     return str(model_id or "").lower().startswith("anthropic/")
 
 
+_QUOTA_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached"})
+
+
 def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> str:
     """Return a carded openai/gpt-5.x model id for an openai reviewer seat."""
     from model_capabilities.model_capabilities import MODEL_CAPABILITY_CARDS
@@ -299,55 +302,61 @@ def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> 
     raw = str(models.get("openai") or _DEFAULT_SEAT_MODELS["openai"])
     if raw in MODEL_CAPABILITY_CARDS and raw.lower().startswith("openai/gpt-5"):
         return raw
-    for candidate in (
-        "openai/gpt-5.5",
-        "openai/gpt-5.4",
-        "openai/gpt-5.6-terra",
-    ):
-        if candidate in MODEL_CAPABILITY_CARDS:
-            return candidate
-    return _DEFAULT_SEAT_MODELS["openai"]
+    raise ValueError(
+        f"openai reviewer model {raw!r} is not a carded openai/gpt-5.x id"
+    )
 
 
-def _quota_tokens_from_mapping(data: dict[str, Any]) -> bool:
-    code = str(data.get("error_code") or data.get("code") or "").lower()
-    if code in {"insufficient_quota", "billing_hard_limit_reached"}:
-        return True
-    detail = data.get("detail")
-    if isinstance(detail, dict):
-        nested = str(detail.get("code") or detail.get("type") or "").lower()
-        if "quota" in nested or nested == "insufficient_quota":
+def _quota_code_in_mapping(data: dict[str, Any]) -> bool:
+    for key in ("error_code", "code", "type"):
+        token = str(data.get(key) or "").lower()
+        if token in _QUOTA_CODES:
             return True
     error = data.get("error")
     if isinstance(error, dict):
-        nested = str(error.get("code") or error.get("type") or "").lower()
-        if "quota" in nested or nested == "insufficient_quota":
+        for key in ("code", "type"):
+            token = str(error.get(key) or "").lower()
+            if token in _QUOTA_CODES:
+                return True
+    upstream = data.get("upstream_error")
+    if isinstance(upstream, dict):
+        nested = upstream.get("error")
+        if isinstance(nested, dict):
+            for key in ("code", "type"):
+                token = str(nested.get(key) or "").lower()
+                if token in _QUOTA_CODES:
+                    return True
+    return False
+
+
+def _walk_quota_payload(record: dict[str, Any]) -> bool:
+    stack: list[Any] = [record]
+    seen: set[int] = set()
+    while stack:
+        obj = stack.pop()
+        if not isinstance(obj, dict):
+            continue
+        oid = id(obj)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if _quota_code_in_mapping(obj):
             return True
-        body = str(error.get("message") or error.get("detail") or "").lower()
-        if "quota" in body or "insufficient_quota" in body:
-            return True
-    body = str(data.get("error") or data.get("message") or "").lower()
-    if isinstance(data.get("error"), str) and (
-        "quota" in body or "insufficient_quota" in body
-    ):
-        return True
+        for key in ("data", "detail", "error", "upstream_error"):
+            nested = obj.get(key)
+            if isinstance(nested, dict):
+                stack.append(nested)
     return False
 
 
 def is_openai_reviewer_quota_error(record: dict[str, Any]) -> bool:
     """True when an OpenAI reviewer dispatch or execution failed for quota."""
-    if _quota_tokens_from_mapping(record):
+    if _walk_quota_payload(record):
         return True
-    status = record.get("http_status")
-    if status == 429 and _quota_tokens_from_mapping(record):
+    error = record.get("error")
+    if isinstance(error, dict) and _walk_quota_payload(error):
         return True
-    if status == 429:
-        detail = record.get("detail")
-        if isinstance(detail, dict) and _quota_tokens_from_mapping(detail):
-            return True
-    return _quota_tokens_from_mapping(
-        {"error": record.get("error"), "code": record.get("code")}
-    )
+    return False
 
 
 def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -> dict[str, Any]:
@@ -497,10 +506,17 @@ def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, 
     }
     if anthropic_writer:
         payload["writer_model"] = writer_model
-        if reviewer_seat == "openai":
+    if reviewer_seat == "openai":
+        try:
             payload["reviewer_model"] = resolve_openai_reviewer_model(
                 _seat_models(options)
             )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "refused": "reviewer_seat_unavailable",
+                "error": str(exc),
+            }
     return payload
 
 

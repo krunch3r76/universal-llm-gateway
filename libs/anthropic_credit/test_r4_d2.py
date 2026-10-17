@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from anthropic_credit.config import load_credit_config
-from anthropic_credit.ledger import CreditLedger, LedgerUnavailable
+from anthropic_credit.ledger import (
+    OPEN_RESERVE_BEFORE_ASOF_SQL,
+    SPEND_SINCE_AS_OF_SQL,
+    TTL_EXPIRE_CANDIDATES_SQL,
+    CreditLedger,
+    LedgerUnavailable,
+)
 from anthropic_credit.ledger_init import init_ledger
 from anthropic_credit.policy import Admit, CreditPolicy
 from anthropic_credit.test_ledger_policy import _body_1_usd_on_sonnet, _make_cfg
@@ -222,10 +228,6 @@ def test_ledger_writes_created_at_utc_plus00_suffix(tmp_path: Path) -> None:
         Admit,
     )
     policy.release("ts-release", now=t0)
-    for entry in policy.status(now=t0)["entries"]:
-        created = entry["created_at"]
-        assert isinstance(created, str)
-        assert created.endswith("+00:00")
     assert isinstance(
         policy.admit(
             "ts-ttl",
@@ -236,6 +238,11 @@ def test_ledger_writes_created_at_utc_plus00_suffix(tmp_path: Path) -> None:
         ),
         Admit,
     )
+    policy.latch("credit_balance_too_low", now=t0)
+    for entry in policy.status(now=t0)["entries"]:
+        created = entry["created_at"]
+        assert isinstance(created, str)
+        assert created.endswith("+00:00")
     ttl_at = t0 + timedelta(minutes=16)
     policy.status(now=ttl_at)
     ttl_commit = next(
@@ -274,13 +281,7 @@ def test_compute_spend_since_as_of_uses_created_at_index(tmp_path: Path) -> None
     try:
         conn.execute("ANALYZE")
         rows = conn.execute(
-            """
-            EXPLAIN QUERY PLAN
-            SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
-            FROM entries INDEXED BY idx_entries_created_at
-            WHERE created_at >= ?
-            ORDER BY id ASC
-            """,
+            f"EXPLAIN QUERY PLAN {SPEND_SINCE_AS_OF_SQL}",
             (as_of_iso,),
         ).fetchall()
         plan_text = " ".join(str(row[3]) for row in rows).lower()
@@ -297,26 +298,111 @@ def test_compute_spend_open_reserve_query_uses_created_at_index(tmp_path: Path) 
 
     def _plan(conn: sqlite3.Connection) -> list[str]:
         rows = conn.execute(
-            """
-            EXPLAIN QUERY PLAN
-            SELECT r.id, r.usd, r.created_at
-            FROM entries r INDEXED BY idx_entries_created_at
-            WHERE r.kind = 'reserve'
-              AND r.created_at >= ?
-              AND r.created_at < ?
-              AND NOT EXISTS (
-                SELECT 1 FROM entries c
-                WHERE c.request_id = r.request_id
-                  AND c.kind IN ('commit', 'release')
-              )
-            ORDER BY r.id ASC
-            """,
+            f"EXPLAIN QUERY PLAN {OPEN_RESERVE_BEFORE_ASOF_SQL}",
             (lower, as_of_iso),
         ).fetchall()
         return [str(row[3]) for row in rows]
 
     plan = ledger.run_immediate(_plan)
     assert "idx_entries_created_at" in " ".join(plan).lower()
+
+
+def test_ttl_expire_candidates_query_uses_created_at_index(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+    now = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
+    expire_before = (now - timedelta(minutes=cfg.reservation_ttl_minutes)).isoformat()
+    lower = "2026-10-01T00:00:00+00:00"
+
+    def _plan(conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            f"EXPLAIN QUERY PLAN {TTL_EXPIRE_CANDIDATES_SQL}",
+            (lower, expire_before),
+        ).fetchall()
+        return [str(row[3]) for row in rows]
+
+    plan = ledger.run_immediate(_plan)
+    assert "idx_entries_created_at" in " ".join(plan).lower()
+
+
+def test_ttl_sweep_watermark_bounds_second_pass(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    policy = CreditPolicy(cfg)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+    t0 = datetime(2026, 10, 17, 10, 0, 0, tzinfo=UTC)
+    t1 = t0 + timedelta(minutes=20)
+
+    def _seed(conn: sqlite3.Connection) -> None:
+        _insert_row(
+            conn,
+            kind="reserve",
+            request_id="stale-a",
+            usd="1.000000",
+            created_at="2026-10-17T09:30:00+00:00",
+        )
+        _insert_row(
+            conn,
+            kind="reserve",
+            request_id="stale-b",
+            usd="2.000000",
+            created_at="2026-10-17T09:44:00+00:00",
+        )
+
+    ledger.run_immediate(_seed)
+    first = policy.status(now=t0)["entries"]
+    ttl_first = [e for e in first if e.get("tag") == "ttl_expired"]
+    assert len(ttl_first) == 2
+    watermark_after_first = ledger.run_immediate(
+        lambda conn: CreditLedger._meta_get(conn, "ttl_swept_before")
+    )
+    assert watermark_after_first is not None
+    second = policy.status(now=t1)["entries"]
+    ttl_second = [e for e in second if e.get("tag") == "ttl_expired"]
+    assert len(ttl_second) == 2
+
+
+def test_orphan_ttl_commit_stays_in_previous_window(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    policy = CreditPolicy(cfg)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+    t_now = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
+    from anthropic_credit.policy import meter_window
+
+    window_start, reset_at = meter_window(t_now, cfg)
+
+    def _seed(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            INSERT INTO entries (
+                kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+            ) VALUES ('reserve', 'orphan-prev', 'anthropic/claude-sonnet-5', '3.000000',
+                '2026-10-02T10:00:00+00:00', '2026-10-02T10:00:00+00:00', NULL, NULL, 0)
+            """
+        )
+
+    ledger.run_immediate(_seed)
+    snap_before = ledger.run_immediate(
+        lambda conn: CreditLedger.compute_window_snapshot(
+            conn,
+            window_start=window_start,
+            reset_at=reset_at,
+            as_of=None,
+            now=t_now,
+            reservation_ttl_minutes=cfg.reservation_ttl_minutes,
+        )
+    )
+    policy.status(now=t_now)
+    snap_after = ledger.run_immediate(
+        lambda conn: CreditLedger.compute_window_snapshot(
+            conn,
+            window_start=window_start,
+            reset_at=reset_at,
+            as_of=None,
+            now=t_now,
+            reservation_ttl_minutes=cfg.reservation_ttl_minutes,
+        )
+    )
+    assert snap_after.committed_usd == snap_before.committed_usd
 
 
 def test_orphan_reserve_previous_window_expired_once(tmp_path: Path) -> None:
@@ -362,6 +448,32 @@ def test_orphan_reserve_previous_window_expired_once(tmp_path: Path) -> None:
     assert ttl_rows[0].get("tag") == "ttl_expired"
     assert spend_once == Decimal("3")
     assert spend_twice == spend_once
+
+
+def test_admit_refuses_future_available_balance_as_of(tmp_path: Path) -> None:
+    future = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
+    base = load_credit_config()
+    cfg = _make_cfg(
+        tmp_path,
+        available_balance=dataclasses.replace(
+            base.available_balance,
+            as_of=future.isoformat(),
+        ),
+    )
+    policy = CreditPolicy(cfg)
+    now = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
+    from anthropic_credit.policy import Refuse
+
+    result = policy.admit(
+        "future-asof",
+        "anthropic/claude-sonnet-5",
+        _body_1_usd_on_sonnet(),
+        token_count=0,
+        now=now,
+    )
+    assert isinstance(result, Refuse)
+    assert result.code == "anthropic_credit_gate_unavailable"
+    assert result.http_status == 503
 
 
 def test_gate_extract_credit_tag_refuses_ttl_expired_string() -> None:

@@ -35,6 +35,13 @@ finalize = importlib.import_module("writing_v1_handlers.finalize")
 
 pytestmark = pytest.mark.offline
 
+
+@pytest.fixture(autouse=True)
+def _clear_openai_posted() -> None:
+    seat_dispatch._POSTED.clear()
+    yield
+    seat_dispatch._POSTED.clear()
+
 _REVIEW_JSON = {
     "verdict": "ship",
     "findings": [],
@@ -269,22 +276,117 @@ async def test_openai_reviewer_quota_at_admit_held_bus_report() -> None:
     assert bus.posts and bus.posts[0]["path"] == "/turns"
 
 
+def _federated_quota_detail() -> dict[str, Any]:
+    from universal_protocol import error_envelope
+
+    return error_envelope(
+        code="upstream_rate_limited",
+        message="Remote provider rejected request: 429 (gateway_id=openai-test)",
+        source="master",
+        retryable=False,
+        data={
+            "status_code": 429,
+            "gateway_id": "openai-test",
+            "upstream_error": {
+                "error": {
+                    "type": "insufficient_quota",
+                    "code": "insufficient_quota",
+                }
+            },
+        },
+    )
+
+
+def _failed_execution_monitor_payload() -> dict[str, Any]:
+    from systems.pipeline.core.dag import PipelineExecutionError
+    from systems.pipeline.core.execution.async_tracker import PipelineExecutionTracker
+    from systems.pipeline.core.execution.proxy_client import ProxyClientError
+    from systems.pipeline.core.executor import _normalize_pipeline_exception
+    from systems.proxy.routers.api.execution_monitor import tracker_monitor_payload
+
+    inner = ProxyClientError(
+        "Stargate returned 429: Remote provider rejected request",
+        status_code=429,
+        detail=_federated_quota_detail(),
+    )
+    try:
+        raise PipelineExecutionError("Step 'review-openai' failed: quota") from inner
+    except PipelineExecutionError as wrapped:
+        exc = wrapped
+    code, message, data = _normalize_pipeline_exception(exc)
+    tracker = PipelineExecutionTracker()
+    tracker.register_execution(
+        execution_id="exec-quota",
+        pipeline="writer-specialist-v1",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    tracker.fail_execution("exec-quota", code=code, message=message, data=data)
+    record = tracker.get("exec-quota")
+    assert record is not None
+    return tracker_monitor_payload(record)
+
+
 @pytest.mark.asyncio
-async def test_openai_reviewer_quota_on_failed_execution_record() -> None:
+async def test_openai_reviewer_quota_production_execution_record_held() -> None:
+    failed_payload = _failed_execution_monitor_payload()
     transport = _StargateTransport(
-        poll_sequence=[
-            {
-                "status": "failed",
-                "error": {"code": "insufficient_quota", "message": "quota exceeded"},
-            }
-        ]
+        admit_status=202,
+        admit_body={"execution_id": "exec-quota", "status": "running"},
+        poll_sequence=[failed_payload],
     )
     bus = _BusTransport()
     _admit, wait_json, fin = await _run_openai_review_path(transport, bus=bus)
     assert wait_json["status"] == "held_reviewer_unfunded"
-    assert bus.posts and bus.posts[0]["path"] == "/turns"
+    assert len(bus.posts) == 1
+    assert bus.posts[0]["path"] == "/turns"
     assert fin["review"]["status"] == "held_reviewer_unfunded"
     assert fin["ship_gate"]["pass"] is False
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_rate_limit_failed_not_held() -> None:
+    from universal_protocol import error_envelope
+
+    detail = error_envelope(
+        code="upstream_rate_limited",
+        message="Remote provider rejected request: 429 (gateway_id=openai-test)",
+        source="master",
+        retryable=True,
+        data={
+            "status_code": 429,
+            "gateway_id": "openai-test",
+            "upstream_error": {"error": {"type": "rate_limit", "code": "rate_limit_exceeded"}},
+        },
+    )
+    from systems.pipeline.core.dag import PipelineExecutionError
+    from systems.pipeline.core.execution.async_tracker import PipelineExecutionTracker
+    from systems.pipeline.core.execution.proxy_client import ProxyClientError
+    from systems.pipeline.core.executor import _normalize_pipeline_exception
+    from systems.proxy.routers.api.execution_monitor import tracker_monitor_payload
+
+    inner = ProxyClientError("Stargate returned 429", status_code=429, detail=detail)
+    try:
+        raise PipelineExecutionError("Step 'review-openai' failed") from inner
+    except PipelineExecutionError as wrapped:
+        exc = wrapped
+    code, message, data = _normalize_pipeline_exception(exc)
+    tracker = PipelineExecutionTracker()
+    tracker.register_execution(
+        execution_id="exec-rate",
+        pipeline="writer-specialist-v1",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    tracker.fail_execution("exec-rate", code=code, message=message, data=data)
+    monitor = tracker_monitor_payload(tracker.get("exec-rate"))
+    transport = _StargateTransport(
+        admit_status=202,
+        admit_body={"execution_id": "exec-rate", "status": "running"},
+        poll_sequence=[monitor],
+    )
+    _admit, wait_json, fin = await _run_openai_review_path(transport)
+    assert wait_json.get("status") != "held_reviewer_unfunded"
+    assert wait_json["refused"] == "review_transport_failed"
+    assert fin["review"]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -371,6 +473,31 @@ async def test_openai_reviewer_sensitive_brief_uses_sidecar_pointer() -> None:
     assert body.get("sidecar_ref", "").startswith("cortex://")
     assert body.get("bus_body") == "pointer_only"
     assert sidecars
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_duplicate_dispatch_suppressed() -> None:
+    transport = _StargateTransport(
+        poll_sequence=[{"status": "completed", "result_text": json.dumps(_REVIEW_JSON)}],
+    )
+    ctx = _Ctx(
+        {
+            "assemble": _Out(_assemble_openai_writer()),
+            "draft": _Out(_draft()),
+        }
+    )
+    handler = seat_dispatch.WritingReviewOpenaiHandler(client=transport)
+    first = await handler.execute(_Step(), ctx)
+    assert first.json.get("duplicate_suppressed") is not True
+    second = await handler.execute(_Step(), ctx)
+    assert second.json.get("duplicate_suppressed") is True
+    assert len(transport.posts) == 1
+
+
+def test_resolve_openai_reviewer_refuses_uncarded_model() -> None:
+    assemble = importlib.import_module("writing_v1_handlers.assemble")
+    with pytest.raises(ValueError, match="not a carded"):
+        assemble.resolve_openai_reviewer_model({"openai": "openai/gpt-4o-mini"})
 
 
 @pytest.mark.asyncio
