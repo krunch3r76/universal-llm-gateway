@@ -12,8 +12,6 @@ rows (``record_failure``) and article upserts. Writes are serialized through
 
 from __future__ import annotations
 
-import asyncio
-
 from ._spec import *  # noqa: F401,F403
 
 
@@ -29,13 +27,15 @@ class _PropertyIndexPart02:
         normalized = [(k.lower(), cid, scope, src) for k, cid, scope, src in entries]
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.executemany(
-                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
-                " VALUES (?, ?, ?, ?)",
-                normalized,
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                    " VALUES (?, ?, ?, ?)",
+                    normalized,
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -43,15 +43,14 @@ class _PropertyIndexPart02:
         """Remove all property entries for a chunk. Returns count removed."""
 
         async def _write() -> int:
-            def _sync() -> int:
-                conn = self._ensure_conn()
+            def _sql(conn: sqlite3.Connection) -> int:
                 cursor = conn.execute(
                     "DELETE FROM properties WHERE chunk_id = ?", (chunk_id,)
                 )
                 conn.commit()
                 return cursor.rowcount
 
-            return await asyncio.to_thread(_sync)
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -59,16 +58,18 @@ class _PropertyIndexPart02:
         """Remove property entries for a batch of chunk IDs. Returns total removed."""
 
         async def _write() -> int:
-            conn = self._ensure_conn()
-            if not chunk_ids:
-                return 0
-            placeholders = ",".join("?" for _ in chunk_ids)
-            cursor = conn.execute(
-                f"DELETE FROM properties WHERE chunk_id IN ({placeholders})",
-                chunk_ids,
-            )
-            conn.commit()
-            return cursor.rowcount
+            def _sql(conn: sqlite3.Connection) -> int:
+                if not chunk_ids:
+                    return 0
+                placeholders = ",".join("?" for _ in chunk_ids)
+                cursor = conn.execute(
+                    f"DELETE FROM properties WHERE chunk_id IN ({placeholders})",
+                    chunk_ids,
+                )
+                conn.commit()
+                return cursor.rowcount
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
@@ -76,10 +77,12 @@ class _PropertyIndexPart02:
         """Remove all entries."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("DELETE FROM properties")
-            conn.execute("DELETE FROM indexed_sources")
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("DELETE FROM properties")
+                conn.execute("DELETE FROM indexed_sources")
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
         await self.fts.clear()
@@ -106,29 +109,31 @@ class _PropertyIndexPart02:
         """
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT INTO indexed_sources ("
-                "  source, mtime_ns, size_bytes, extraction_schema_version,"
-                "  extraction_model, source_hash, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
-                " ON CONFLICT(source) DO UPDATE SET"
-                "  mtime_ns = excluded.mtime_ns,"
-                "  size_bytes = excluded.size_bytes,"
-                "  extraction_schema_version = excluded.extraction_schema_version,"
-                "  extraction_model = excluded.extraction_model,"
-                "  source_hash = excluded.source_hash,"
-                "  updated_at = datetime('now')",
-                (
-                    source,
-                    mtime_ns,
-                    size_bytes,
-                    extraction_schema_version,
-                    extraction_model,
-                    source_hash,
-                ),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT INTO indexed_sources ("
+                    "  source, mtime_ns, size_bytes, extraction_schema_version,"
+                    "  extraction_model, source_hash, updated_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
+                    " ON CONFLICT(source) DO UPDATE SET"
+                    "  mtime_ns = excluded.mtime_ns,"
+                    "  size_bytes = excluded.size_bytes,"
+                    "  extraction_schema_version = excluded.extraction_schema_version,"
+                    "  extraction_model = excluded.extraction_model,"
+                    "  source_hash = excluded.source_hash,"
+                    "  updated_at = datetime('now')",
+                    (
+                        source,
+                        mtime_ns,
+                        size_bytes,
+                        extraction_schema_version,
+                        extraction_model,
+                        source_hash,
+                    ),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -136,9 +141,11 @@ class _PropertyIndexPart02:
         """Remove one cached source freshness row."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -146,9 +153,11 @@ class _PropertyIndexPart02:
         """Mark a file as having an in-flight indexing operation."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("INSERT OR IGNORE INTO pending (file) VALUES (?)", (file,))
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("INSERT OR IGNORE INTO pending (file) VALUES (?)", (file,))
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -156,9 +165,11 @@ class _PropertyIndexPart02:
         """Clear the pending mark after successful indexing."""
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute("DELETE FROM pending WHERE file = ?", (file,))
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute("DELETE FROM pending WHERE file = ?", (file,))
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -186,28 +197,30 @@ class _PropertyIndexPart02:
         attempt_increment = 1 if increment_attempt else 0
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT INTO failed_extractions"
-                " (chunk_id, source, error, parse_failure_reason, attempt_count, permanent)"
-                " VALUES (?, ?, ?, ?, ?, ?)"
-                " ON CONFLICT(chunk_id) DO UPDATE SET"
-                "   error = excluded.error,"
-                "   parse_failure_reason = excluded.parse_failure_reason,"
-                "   attempt_count = attempt_count + ?,"
-                "   permanent = MAX(permanent, excluded.permanent),"
-                "   recorded_at = datetime('now')",
-                (
-                    chunk_id,
-                    source,
-                    error,
-                    parse_failure_reason,
-                    attempt_increment,
-                    permanent,
-                    attempt_increment,
-                ),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT INTO failed_extractions"
+                    " (chunk_id, source, error, parse_failure_reason, attempt_count, permanent)"
+                    " VALUES (?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT(chunk_id) DO UPDATE SET"
+                    "   error = excluded.error,"
+                    "   parse_failure_reason = excluded.parse_failure_reason,"
+                    "   attempt_count = attempt_count + ?,"
+                    "   permanent = MAX(permanent, excluded.permanent),"
+                    "   recorded_at = datetime('now')",
+                    (
+                        chunk_id,
+                        source,
+                        error,
+                        parse_failure_reason,
+                        attempt_increment,
+                        permanent,
+                        attempt_increment,
+                    ),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())
 
@@ -229,51 +242,56 @@ class _PropertyIndexPart02:
         """Insert or update an articles row. Returns True if a new row was created."""
 
         async def _write() -> bool:
-            conn = self._ensure_conn()
-            existing = conn.execute(
-                "SELECT 1 FROM articles WHERE source_path = ?", (source_path,)
-            ).fetchone()
-            conn.execute(
-                "INSERT INTO articles ("
-                "  source_path, filename, title, authors, venue, published_date,"
-                "  doi, abstract, scope, content_hash, subdirectory, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-                " ON CONFLICT(source_path) DO UPDATE SET"
-                "  filename = excluded.filename,"
-                "  title = CASE WHEN excluded.title != '' THEN excluded.title ELSE articles.title END,"
-                "  authors = CASE WHEN excluded.authors != '' THEN excluded.authors ELSE articles.authors END,"
-                "  venue = CASE WHEN excluded.venue != '' THEN excluded.venue ELSE articles.venue END,"
-                "  published_date = CASE WHEN excluded.published_date != '' THEN excluded.published_date ELSE articles.published_date END,"
-                "  doi = CASE WHEN excluded.doi != '' THEN excluded.doi ELSE articles.doi END,"
-                "  abstract = CASE WHEN excluded.abstract != '' THEN excluded.abstract ELSE articles.abstract END,"
-                "  scope = excluded.scope,"
-                "  content_hash = CASE WHEN excluded.content_hash != '' THEN excluded.content_hash ELSE articles.content_hash END,"
-                "  subdirectory = CASE WHEN excluded.subdirectory != '' THEN excluded.subdirectory ELSE articles.subdirectory END,"
-                "  updated_at = datetime('now')",
-                (
-                    source_path,
-                    filename,
-                    title,
-                    authors,
-                    venue,
-                    published_date,
-                    doi,
-                    abstract,
-                    scope,
-                    content_hash,
-                    subdirectory,
-                ),
-            )
-            conn.commit()
-            return existing is None
+            def _sql(conn: sqlite3.Connection) -> bool:
+                existing = conn.execute(
+                    "SELECT 1 FROM articles WHERE source_path = ?", (source_path,)
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO articles ("
+                    "  source_path, filename, title, authors, venue, published_date,"
+                    "  doi, abstract, scope, content_hash, subdirectory, updated_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+                    " ON CONFLICT(source_path) DO UPDATE SET"
+                    "  filename = excluded.filename,"
+                    "  title = CASE WHEN excluded.title != '' THEN excluded.title ELSE articles.title END,"
+                    "  authors = CASE WHEN excluded.authors != '' THEN excluded.authors ELSE articles.authors END,"
+                    "  venue = CASE WHEN excluded.venue != '' THEN excluded.venue ELSE articles.venue END,"
+                    "  published_date = CASE WHEN excluded.published_date != '' THEN excluded.published_date ELSE articles.published_date END,"
+                    "  doi = CASE WHEN excluded.doi != '' THEN excluded.doi ELSE articles.doi END,"
+                    "  abstract = CASE WHEN excluded.abstract != '' THEN excluded.abstract ELSE articles.abstract END,"
+                    "  scope = excluded.scope,"
+                    "  content_hash = CASE WHEN excluded.content_hash != '' THEN excluded.content_hash ELSE articles.content_hash END,"
+                    "  subdirectory = CASE WHEN excluded.subdirectory != '' THEN excluded.subdirectory ELSE articles.subdirectory END,"
+                    "  updated_at = datetime('now')",
+                    (
+                        source_path,
+                        filename,
+                        title,
+                        authors,
+                        venue,
+                        published_date,
+                        doi,
+                        abstract,
+                        scope,
+                        content_hash,
+                        subdirectory,
+                    ),
+                )
+                conn.commit()
+                return existing is None
+
+            return await self._with_conn_async(_sql)
 
         return await self._seq.run(_write())
 
     def article_exists(self, source_path: str) -> bool:
         """Return whether an articles row already exists for the exact source path."""
-        conn = self._ensure_conn()
-        row = conn.execute(
-            "SELECT 1 FROM articles WHERE source_path = ?",
-            (source_path,),
-        ).fetchone()
-        return row is not None
+
+        def _sql(conn: sqlite3.Connection):
+            row = conn.execute(
+                "SELECT 1 FROM articles WHERE source_path = ?",
+                (source_path,),
+            ).fetchone()
+            return row is not None
+
+        return self._with_conn(_sql)

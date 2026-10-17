@@ -5,10 +5,12 @@ First of the mixins composed into ``PropertyIndex`` in
 ``__init__``, ``start``/``stop`` (SQLite connect in WAL mode, legacy DB path
 move, FtsIndex attach), the ordered schema_version migrations v1 through v16,
 and the first write method ``add``. Writes are serialized via
-SequentialExecutor; reads use the shared connection directly.
+SequentialExecutor; all SQLite I/O runs on a dedicated single-thread executor.
 """
 
 from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
 
 from ._spec import (
     _CREATE_SCHEMA_VERSION_SQL,
@@ -42,13 +44,13 @@ class _PropertyIndexPart01:
     ``prop.name@@stargate``) so entity/topic filters can do exact lookup
     against chunk IDs and complement vector retrieval.
 
-    Write methods route through SequentialExecutor for lock-free serialization.
-    Read methods access SQLite directly (safe with single writer).
+    Write methods route through SequentialExecutor; SQLite runs on one thread.
     """
 
     def __init__(self, db_path: Path = _DEFAULT_DB_PATH) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        self._sqlite_executor: ThreadPoolExecutor | None = None
         self._seq = SequentialExecutor()
         self.fts: FtsIndex = FtsIndex()
 
@@ -325,30 +327,38 @@ class _PropertyIndexPart01:
     async def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_db_path()
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        try:
+        self._sqlite_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="propindex-sqlite"
+        )
+
+        def _open() -> None:
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=True)
+            conn.execute("PRAGMA journal_mode=WAL")
             self._apply_migrations(conn)
+            self._conn = conn
+
+        try:
+            await self.run_sqlite_async(_open)
             await self._seq.start()
         except Exception as e:
             logger.exception("Failed to start PropertyIndex: %s", e)
-            conn.close()
+            if self._conn is not None:
+                await self.run_sqlite_async(self._close_conn_on_sqlite_thread)
+            if self._sqlite_executor is not None:
+                self._sqlite_executor.shutdown(wait=False, cancel_futures=True)
+                self._sqlite_executor = None
             raise
-        self._conn = conn
-        self.fts.attach(conn, self._seq)
+        self.fts.attach(self, self._seq)
         logger.info("PropertyIndex started: %s", self._db_path)
 
     async def stop(self) -> None:
         self.fts.detach()
         await self._seq.stop()
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        if self._sqlite_executor is not None:
+            await self.run_sqlite_async(self._close_conn_on_sqlite_thread)
+            self._sqlite_executor.shutdown(wait=True)
+            self._sqlite_executor = None
         logger.info("PropertyIndex stopped")
-
-    def _ensure_conn(self) -> sqlite3.Connection:
-        assert self._conn is not None, "PropertyIndex not started"
-        return self._conn
 
     # ------------------------------------------------------------------
     # Write methods (serialized through SequentialExecutor)
@@ -361,12 +371,14 @@ class _PropertyIndexPart01:
         normalized = key.lower()
 
         async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
-                " VALUES (?, ?, ?, ?)",
-                (normalized, chunk_id, scope, source),
-            )
-            conn.commit()
+            def _sql(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                    " VALUES (?, ?, ?, ?)",
+                    (normalized, chunk_id, scope, source),
+                )
+                conn.commit()
+
+            await self._with_conn_async(_sql)
 
         await self._seq.run(_write())

@@ -16,14 +16,33 @@ class _FakeCursor:
         return self._rows
 
 
+class _StubPropertyIndex:
+    """Minimal PropertyIndex stand-in for FtsIndex unit tests."""
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def _ensure_conn(self) -> Any:
+        return self._conn
+
+    def run_sqlite(self, fn: Any) -> Any:
+        return fn()
+
+    def _with_conn(self, fn: Any) -> Any:
+        return fn(self._conn)
+
+
 class _RecordingConn:
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
-    def execute(self, sql: str, params: tuple[Any, ...]) -> _FakeCursor:
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
         self.calls.append((sql, params))
         return _FakeCursor(self.rows)
+
+    def executescript(self, script: str) -> None:
+        self.calls.append((script.strip(), ()))
 
 
 class _FakeFts:
@@ -64,14 +83,13 @@ class _FakeCollection:
 def test_search_scoped_pushes_prefix_filter_into_sql() -> None:
     conn = _RecordingConn(rows=[("chunk-1", "/allowed/doc.md", -1.25)])
     index = FtsIndex()
-    index._conn = conn  # type: ignore[assignment]
-    index._seq = object()  # type: ignore[assignment]
+    index.attach(_StubPropertyIndex(conn), seq=object())  # type: ignore[arg-type]
 
     result = index.search_scoped("needle", ["/allowed", "/also"], limit=7)
 
     assert result == [("chunk-1", -1.25)]
-    assert len(conn.calls) == 1
-    sql, params = conn.calls[0]
+    sql, params = conn.calls[-1]
+    assert len(conn.calls) >= 1
     assert "chunks_fts MATCH ?" in sql
     assert "source LIKE ?" in sql
     assert params == ("needle", "/allowed%", "/also%", 7)
@@ -89,7 +107,7 @@ def test_fts_search_preserves_or_expression() -> None:
         db = Path(tmp) / "fts.db"
         conn = sqlite3.connect(str(db))
         index = FtsIndex()
-        index.attach(conn, seq=object())  # type: ignore[arg-type]
+        index.attach(_StubPropertyIndex(conn), seq=object())  # type: ignore[arg-type]
         conn.execute(
             "INSERT INTO chunks_fts (chunk_id, source, content) VALUES (?, ?, ?)",
             ("c1", "/s/a.md", "alpha text here"),
@@ -115,7 +133,7 @@ def test_fts_search_colspec_token_fallback() -> None:
         db = Path(tmp) / "fts.db"
         conn = sqlite3.connect(str(db))
         index = FtsIndex()
-        index.attach(conn, seq=object())  # type: ignore[arg-type]
+        index.attach(_StubPropertyIndex(conn), seq=object())  # type: ignore[arg-type]
         conn.execute(
             "INSERT INTO chunks_fts (chunk_id, source, content) VALUES (?, ?, ?)",
             ("c1", "/s/a.md", "residual friction:39420 on the loop"),
@@ -129,14 +147,13 @@ def test_fts_search_colspec_token_fallback() -> None:
 def test_sources_for_prefixes_uses_like_without_fts_match() -> None:
     conn = _RecordingConn(rows=[("/allowed/a.md",), ("/also/b.md",)])
     index = FtsIndex()
-    index._conn = conn  # type: ignore[assignment]
-    index._seq = object()  # type: ignore[assignment]
+    index.attach(_StubPropertyIndex(conn), seq=object())  # type: ignore[arg-type]
 
     sources = index.sources_for_prefixes(["/allowed", "/also"])
 
     assert sources == ["/allowed/a.md", "/also/b.md"]
-    assert len(conn.calls) == 1
-    sql, params = conn.calls[0]
+    sql, params = conn.calls[-1]
+    assert len(conn.calls) >= 1
     assert "SELECT DISTINCT source FROM chunks_fts" in sql
     assert "chunks_fts MATCH" not in sql
     assert "source LIKE ?" in sql
