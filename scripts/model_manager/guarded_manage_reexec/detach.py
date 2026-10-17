@@ -85,8 +85,12 @@ def child_execute_argv(
     tmux_target: str,
     result_path: Path,
     python_bin: str,
+    parent_dispatch_id: str | None = None,
+    report_thread: str | None = None,
+    report_after_turn: int | None = None,
+    wait_parent_timeout_s: int = 900,
 ) -> list[str]:
-    return [
+    argv = [
         python_bin,
         "-m",
         "scripts.model_manager.guarded_manage_reexec",
@@ -99,6 +103,15 @@ def child_execute_argv(
         "--result-path",
         str(result_path),
     ]
+    if parent_dispatch_id:
+        argv.extend(["--parent-dispatch-id", parent_dispatch_id])
+    if report_thread:
+        argv.extend(["--report-thread", report_thread])
+    if report_after_turn is not None:
+        argv.extend(["--report-after-turn", str(report_after_turn)])
+    if parent_dispatch_id:
+        argv.extend(["--wait-parent-timeout-s", str(wait_parent_timeout_s)])
+    return argv
 
 
 def build_child_env(hub: Path) -> dict[str, str]:
@@ -147,10 +160,16 @@ def launch_detach(
     result_path: Path = RESULT_PATH,
     run_cmd: RunCmd | None = None,
     python_bin: str | None = None,
+    parent_dispatch_id: str | None = None,
+    report_thread: str | None = None,
+    report_after_turn: int | None = None,
+    wait_parent_timeout_s: int = 900,
 ) -> tuple[int, dict[str, object]]:
     """Admit one transient user service; return (exit_code, payload dict)."""
     run = run_cmd or _default_run
-    python_bin = seat_python_bin(python_bin, default=str(seat_operator_home() / ".venvs/universal/bin/python"))
+    python_bin = seat_python_bin(
+        python_bin, default=str(seat_operator_home() / ".venvs/universal/bin/python")
+    )
     launcher_env = launcher_env_for_systemctl()
 
     try:
@@ -182,6 +201,10 @@ def launch_detach(
         tmux_target=tmux_target,
         result_path=result_path,
         python_bin=python_bin,
+        parent_dispatch_id=parent_dispatch_id,
+        report_thread=report_thread,
+        report_after_turn=report_after_turn,
+        wait_parent_timeout_s=wait_parent_timeout_s,
     )
 
     systemd_argv = build_systemd_run_cmd(
