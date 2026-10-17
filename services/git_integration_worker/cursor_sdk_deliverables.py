@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -12,6 +11,17 @@ from typing import Any
 from implement_admission.closeout_helpers import cortex_files_root
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_sdk_closeout_artifacts import (
+    artifact_paths_for_closeout as artifact_paths_for_closeout,
+)
+from services.git_integration_worker.cursor_sdk_closeout_artifacts import (
+    body_relocated_meta,
+)
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    bound_closeout_harvest_preamble,
+    stamp_harvest_status_from_structured,
+)
 
 logger = get_logger(__name__)
 
@@ -71,7 +81,7 @@ def full_result_text(body: str, degraded_reason: str | None) -> str:
 def write_repo_sidecar(source_repo: Path, dispatch_id: str, content: str) -> Path:
     path = source_repo / _sidecar_rel_path(dispatch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(bound_closeout_harvest_preamble(content), encoding="utf-8")
     return path
 
 
@@ -105,59 +115,10 @@ def cortex_expected_rels(files_expected: list[str]) -> list[str]:
     return rels
 
 
-def artifact_paths_for_closeout(
-    sidecar_ref: str,
-    cortex_uris: list[str],
-    *,
-    cortex_first: bool = False,
-    offgit_deliverable_uris: list[str] | None = None,
-) -> list[str]:
-    if cortex_first and cortex_uris:
-        paths: list[str] = []
-        seen: set[str] = set()
-        for uri in cortex_uris:
-            if uri == sidecar_ref:
-                continue
-            if uri not in seen:
-                paths.append(uri)
-                seen.add(uri)
-        if sidecar_ref not in seen:
-            paths.append(sidecar_ref)
-        for uri in offgit_deliverable_uris or []:
-            if uri not in seen:
-                paths.append(uri)
-                seen.add(uri)
-        return paths
-    paths = [sidecar_ref]
-    seen = {sidecar_ref}
-    for uri in cortex_uris:
-        if uri not in seen:
-            paths.append(uri)
-            seen.add(uri)
-    for uri in offgit_deliverable_uris or []:
-        if uri not in seen:
-            paths.append(uri)
-            seen.add(uri)
-    return paths
-
-
 def closeout_cortex_sidecar_rel_path(thread_id: str, dispatch_id: str) -> str:
     return (
         f"{_CLOSEOUT_CORTEX_REL_DIR}/{thread_id}-cursor-sdk-closeout-{dispatch_id}.md"
     )
-
-
-def body_relocated_meta(
-    full_body: str,
-    uri: str,
-    *,
-    sha256: str | None = None,
-) -> dict[str, Any]:
-    return {
-        "uri": uri,
-        "sha256": sha256 or hashlib.sha256(full_body.encode("utf-8")).hexdigest(),
-        "body_chars": len(full_body),
-    }
 
 
 STRUCTURED_CLOSEOUT_FULL_HEADING = "## structured_closeout_full"
@@ -175,8 +136,9 @@ def append_structured_closeout_full_to_repo_sidecar(
     existing = sidecar_path.read_text(encoding="utf-8")
     if sidecar_has_structured_closeout_full(existing):
         return
+    stamped = stamp_harvest_status_from_structured(existing, full_body)
     sidecar_path.write_text(
-        existing + f"\n\n{STRUCTURED_CLOSEOUT_FULL_HEADING}\n\n" + full_body,
+        stamped + f"\n\n{STRUCTURED_CLOSEOUT_FULL_HEADING}\n\n" + full_body,
         encoding="utf-8",
     )
 
