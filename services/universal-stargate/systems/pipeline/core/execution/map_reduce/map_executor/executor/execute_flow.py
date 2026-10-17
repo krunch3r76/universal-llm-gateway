@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
@@ -122,6 +122,7 @@ async def execute_map(executor: MapExecutor) -> MapOutputCollection:
         for idx, value, key in iteration_items
     }
 
+    failed_iteration_hints: list[dict[str, Any]] | None = None
     try:
         strict_output_keys = [key for _, _, key in iteration_items]
         has_timeout_constraints = (
@@ -146,6 +147,7 @@ async def execute_map(executor: MapExecutor) -> MapOutputCollection:
                 outputs,
                 output_keys,
                 output_positions,
+                failed_iteration_hints,
             ) = await executor._execution_modes.execute_with_timeout(
                 tasks,
                 total,
@@ -205,4 +207,5 @@ async def execute_map(executor: MapExecutor) -> MapOutputCollection:
         total_count=total,
         processing_seconds=processing_seconds,
         queue_wait_seconds=queue_wait_seconds,
+        failed_iteration_hints=failed_iteration_hints,
     )

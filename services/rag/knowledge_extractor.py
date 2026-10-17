@@ -357,13 +357,23 @@ async def poll_extraction_result(
             continue  # server-side wait already provided backoff
         if status == "failed":
             err = record.get("error") or {}
-            raise RuntimeError(
-                f"Extraction pipeline failed: {err.get('code')} — {err.get('message')}"
+            return (
+                [None] * len(chunk_ids),
+                {
+                    "execution_id": execution_id,
+                    "pipeline_failed": True,
+                    "error_code": err.get("code"),
+                    "error_message": err.get("message"),
+                    "error_data": err.get("data"),
+                },
             )
         # completed
-        content = (record.get("result") or {}).get("content", "")
+        result = record.get("result") or {}
+        content = result.get("content", "")
+        hints = result.get("hints")
         parsed, parse_failure_reasons = _parse_map_response(content, chunk_ids)
         timing: dict[str, Any] = {"execution_id": execution_id}
+        timing["result_hints"] = hints if isinstance(hints, list) else []
         if parse_failure_reasons:
             timing["parse_failure_reasons"] = parse_failure_reasons
         return parsed, timing

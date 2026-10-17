@@ -52,8 +52,19 @@ def extract_output_hints(
     parent-name lookup. Hints only apply to single ``StepOutput`` terminals;
     map-collection terminals and unresolved references return ``None``.
     """
+    from ..execution.map_reduce.collection import MapOutputCollection
+
     output_ref = resolve_terminal_output_ref(pipeline, output_aliases)
     output = context.get_output(output_ref)
+    if isinstance(output, MapOutputCollection):
+        hints = output.failed_iteration_hints
+        if hints:
+            return [
+                {"index": h["index"], "error_message": h.get("error_message", "")}
+                for h in hints
+                if isinstance(h, dict) and "index" in h
+            ]
+        return None
     if not isinstance(output, StepOutput):
         return None
     if not isinstance(output.json, dict):

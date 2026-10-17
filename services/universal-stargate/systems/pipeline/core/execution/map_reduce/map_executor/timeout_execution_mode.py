@@ -62,7 +62,7 @@ class TimeoutExecutionMode:
         iteration_metadata: list[tuple[int, str | None]],
         iteration_context: dict[int, dict[str, Any]],
         inference_timeout_seconds: float | None = None,
-    ) -> tuple[list[StepOutput], list[str | None], list[int]]:
+    ) -> tuple[list[StepOutput], list[str | None], list[int], list[dict[str, Any]]]:
         """
         Execute with stall-aware timeout and optional partial success.
 
@@ -207,4 +207,13 @@ class TimeoutExecutionMode:
             )
         )
 
-        return outputs, output_keys, output_positions
+        failed_hints = [
+            {
+                "index": r.index,
+                "error_message": r.error_message or "",
+            }
+            for r in iteration_results
+            if r.status != IterationStatus.COMPLETED
+        ]
+
+        return outputs, output_keys, output_positions, failed_hints
