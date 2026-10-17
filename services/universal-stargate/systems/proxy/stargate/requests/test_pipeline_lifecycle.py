@@ -11,6 +11,7 @@ from fastapi.responses import Response
 
 from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
+from systems.pipeline.core.execution.proxy_client import ProxyClientError
 from systems.proxy.stargate.requests.pipeline_lifecycle import (
     _build_recoverable_failure_response,
     _is_recoverable_frontier_exhaustion,
@@ -62,6 +63,35 @@ def _wrapped_frontier_exhaustion() -> PipelineExecutionError:
         raise cause
     except FrontierDispatchExhaustedError as exc:
         raise PipelineExecutionError("Step 'respond' failed") from exc
+
+
+def _openai_400_body() -> dict[str, Any]:
+    return {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "unsupported_parameter",
+            "param": "temperature",
+            "message": "Unsupported value: 'temperature' does not support 0.7",
+        }
+    }
+
+
+def test_pipeline_execution_error_detail_proxy_400_preserves_sync_envelope() -> None:
+    inner = ProxyClientError(
+        "Stargate returned 400: Remote provider rejected request",
+        status_code=400,
+        detail=_openai_400_body(),
+    )
+    try:
+        raise PipelineExecutionError("Step 'draft_local' failed: bad param") from inner
+    except PipelineExecutionError as exc:
+        detail = _pipeline_execution_error_detail(exc, context=_FakeContext())
+
+    assert detail["code"] == "pipeline_execution_failed"
+    assert detail["retryable"] is True
+    assert "Step 'draft_local' failed" in detail["message"]
+    assert detail["upstream"] == _openai_400_body()
+    assert detail.get("error", {}).get("code") != "unsupported_parameter"
 
 
 def test_wrapped_frontier_exhaustion_preserves_recoverable_code() -> None:

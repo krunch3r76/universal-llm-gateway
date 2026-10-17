@@ -19,7 +19,7 @@ from transport_utils import (
     make_async_client,
 )
 
-from .assemble import is_openai_reviewer_quota_error
+from .assemble import openai_reviewer_quota_reason
 from .seat_dispatch import _held_openai_quota_step, _role, _thread_id, _timeout
 
 _WAIT_SLICE = 55.0
@@ -701,16 +701,13 @@ class WritingReviewOpenaiWaitHandler(BaseHandler):
                     data = {}
                 status = str(data.get("status") or "")
                 if status in {"failed", "cancelled", "canceled"}:
-                    if is_openai_reviewer_quota_error(data):
+                    quota_reason = openai_reviewer_quota_reason(data)
+                    if quota_reason:
                         return await _held_openai_quota_step(
                             thread=thread,
                             writer_model=writer_model,
                             reviewer_model=reviewer_model,
-                            reason=str(
-                                (data.get("error") or {}).get("code")
-                                if isinstance(data.get("error"), dict)
-                                else data.get("error_code") or "insufficient_quota"
-                            ),
+                            reason=quota_reason,
                             bus_client=self._bus_client,
                         )
                     return _step(

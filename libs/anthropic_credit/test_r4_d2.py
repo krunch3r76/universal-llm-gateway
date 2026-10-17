@@ -360,6 +360,59 @@ def test_ttl_sweep_watermark_bounds_second_pass(tmp_path: Path) -> None:
     ttl_second = [e for e in second if e.get("tag") == "ttl_expired"]
     assert len(ttl_second) == 2
 
+    def _insert_below_watermark(conn: sqlite3.Connection) -> None:
+        _insert_row(
+            conn,
+            kind="reserve",
+            request_id="below-watermark",
+            usd="9.000000",
+            created_at="2026-10-17T08:00:00+00:00",
+        )
+
+    ledger.run_immediate(_insert_below_watermark)
+    third = policy.status(now=t1 + timedelta(minutes=5))["entries"]
+    ttl_third = [
+        e for e in third if e.get("request_id") == "below-watermark" and e.get("tag") == "ttl_expired"
+    ]
+    assert ttl_third == []
+
+
+def test_spend_since_counts_ttl_commit_before_as_of_for_touched_request(
+    tmp_path: Path,
+) -> None:
+    cfg = _make_cfg(tmp_path)
+    policy = CreditPolicy(cfg)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+    as_of = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
+    reserve_at = as_of - timedelta(minutes=20)
+    final_at = as_of + timedelta(minutes=5)
+
+    assert isinstance(
+        policy.admit(
+            "long-run",
+            "anthropic/claude-sonnet-5",
+            _body_1_usd_on_sonnet(),
+            token_count=0,
+            now=reserve_at,
+        ),
+        Admit,
+    )
+    policy.status(now=reserve_at + timedelta(minutes=16))
+    policy.commit(
+        "long-run",
+        {
+            "input_tokens": 500,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 500,
+        },
+        now=final_at,
+    )
+    spend = ledger.run_immediate(
+        lambda conn: CreditLedger.compute_spend_since_as_of(conn, as_of=as_of)
+    )
+    assert spend == Decimal("1.000000")
+
 
 def test_orphan_ttl_commit_stays_in_previous_window(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)

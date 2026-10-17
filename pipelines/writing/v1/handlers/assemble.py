@@ -12,6 +12,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+_QUOTA_MESSAGE_TOKEN_RE = re.compile(
+    r"\b(insufficient_quota|billing_hard_limit_reached)\b"
+)
+
 import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -307,29 +311,38 @@ def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> 
     )
 
 
-def _quota_code_in_mapping(data: dict[str, Any]) -> bool:
+def _quota_code_in_mapping(data: dict[str, Any]) -> str | None:
     for key in ("error_code", "code", "type"):
-        token = str(data.get(key) or "").lower()
+        token = str(data.get(key) or "")
         if token in _QUOTA_CODES:
-            return True
+            return token
+        lowered = token.lower()
+        if lowered in _QUOTA_CODES:
+            return lowered
     error = data.get("error")
     if isinstance(error, dict):
         for key in ("code", "type"):
-            token = str(error.get(key) or "").lower()
+            token = str(error.get(key) or "")
             if token in _QUOTA_CODES:
-                return True
+                return token
+            lowered = token.lower()
+            if lowered in _QUOTA_CODES:
+                return lowered
     upstream = data.get("upstream_error")
     if isinstance(upstream, dict):
         nested = upstream.get("error")
         if isinstance(nested, dict):
             for key in ("code", "type"):
-                token = str(nested.get(key) or "").lower()
+                token = str(nested.get(key) or "")
                 if token in _QUOTA_CODES:
-                    return True
-    return False
+                    return token
+                lowered = token.lower()
+                if lowered in _QUOTA_CODES:
+                    return lowered
+    return None
 
 
-def _walk_quota_payload(record: dict[str, Any]) -> bool:
+def _walk_quota_payload(record: dict[str, Any]) -> str | None:
     stack: list[Any] = [record]
     seen: set[int] = set()
     while stack:
@@ -340,23 +353,45 @@ def _walk_quota_payload(record: dict[str, Any]) -> bool:
         if oid in seen:
             continue
         seen.add(oid)
-        if _quota_code_in_mapping(obj):
-            return True
-        for key in ("data", "detail", "error", "upstream_error"):
+        code = _quota_code_in_mapping(obj)
+        if code:
+            return code
+        for key in ("data", "detail", "error", "upstream_error", "upstream"):
             nested = obj.get(key)
             if isinstance(nested, dict):
                 stack.append(nested)
-    return False
+    return None
+
+
+def _quota_token_in_message(message: str) -> str | None:
+    match = _QUOTA_MESSAGE_TOKEN_RE.search(message)
+    return match.group(1) if match else None
+
+
+def openai_reviewer_quota_reason(record: dict[str, Any]) -> str | None:
+    """Return the matched OpenAI quota token, or None when not a quota failure."""
+    structured = _walk_quota_payload(record)
+    if structured:
+        return structured
+    error = record.get("error")
+    if isinstance(error, dict):
+        token = _quota_token_in_message(str(error.get("message") or ""))
+        if token:
+            return token
+        structured = _walk_quota_payload(error)
+        if structured:
+            return structured
+    message = record.get("message")
+    if isinstance(message, str):
+        token = _quota_token_in_message(message)
+        if token:
+            return token
+    return None
 
 
 def is_openai_reviewer_quota_error(record: dict[str, Any]) -> bool:
     """True when an OpenAI reviewer dispatch or execution failed for quota."""
-    if _walk_quota_payload(record):
-        return True
-    error = record.get("error")
-    if isinstance(error, dict) and _walk_quota_payload(error):
-        return True
-    return False
+    return openai_reviewer_quota_reason(record) is not None
 
 
 def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -> dict[str, Any]:

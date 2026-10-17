@@ -479,14 +479,26 @@ class CreditLedger:
                 return True
             return any(_row_at_or_after_as_of(c) for c in commit_rows)
 
-        spend = Decimal("0")
-        for req_id, commit_rows in commits_by_req.items():
+        touched_req_ids: set[str] = set()
+        for req_id in set(commits_by_req) | set(reserve_by_req):
             reserve_row = reserve_by_req.get(req_id)
-            commit_sum = sum(_parse_usd(c) for c in commit_rows)
+            commit_rows = commits_by_req.get(req_id, [])
             if _request_touches_as_of(
                 req_id, reserve_row=reserve_row, commit_rows=commit_rows
             ):
-                spend += commit_sum
+                touched_req_ids.add(req_id)
+
+        spend = Decimal("0")
+        for req_id in touched_req_ids:
+            all_commits = conn.execute(
+                """
+                SELECT usd FROM entries
+                WHERE kind = 'commit' AND request_id = ?
+                ORDER BY id ASC
+                """,
+                (req_id,),
+            ).fetchall()
+            spend += sum(_parse_usd(row) for row in all_commits)
 
         for c_row in unlinked_commits:
             if _row_at_or_after_as_of(c_row):

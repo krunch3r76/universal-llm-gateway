@@ -67,7 +67,7 @@ def _configured_cloud_proxy_url() -> str:
         if parsed and parsed.url:
             url = parsed.url.strip().rstrip("/")
     except Exception:
-        pass
+        return url
     _cloud_proxy_url_resolved = url
     return url
 

@@ -25,7 +25,7 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from .assemble import (
     _unwrap,
     build_held_reviewer_unfunded_review,
-    is_openai_reviewer_quota_error,
+    openai_reviewer_quota_reason,
     post_reviewer_unfunded_bus_report,
     resolve_openai_reviewer_model,
 )
@@ -467,12 +467,13 @@ class WritingReviewOpenaiHandler(WritingSeatDispatchHandler):
             )
         status = dispatched.get("http_status")
         if isinstance(status, int) and status >= 400:
-            if is_openai_reviewer_quota_error(dispatched):
+            quota_reason = openai_reviewer_quota_reason(dispatched)
+            if quota_reason:
                 return await _held_openai_quota_step(
                     thread=thread,
                     writer_model=writer_model,
                     reviewer_model=model,
-                    reason=str(dispatched.get("error_code") or "insufficient_quota"),
+                    reason=quota_reason,
                     bus_client=self._bus_client,
                 )
             return _step(

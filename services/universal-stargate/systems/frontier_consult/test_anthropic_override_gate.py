@@ -492,7 +492,7 @@ async def test_slow_credit_probe_rejects_standard_model_422(
             except OSError:
                 break
             try:
-                threading.Event().wait(5.0)
+                threading.Event().wait(30.0)
             finally:
                 conn.close()
 
@@ -511,10 +511,38 @@ async def test_slow_credit_probe_rejects_standard_model_422(
         dispatch_thread_id=_DISPATCH_THREAD,
         model=_SONNET55,
     )
+    import time
+
+    started = time.monotonic()
     with pytest.raises(FrontierEndpointError) as exc_info:
         await build_dispatch_body(req)
+    elapsed = time.monotonic() - started
     assert exc_info.value.status_code == 422
+    assert elapsed < 2.5
     stall_sock.close()
+
+
+@pytest.mark.asyncio
+def test_configured_cloud_proxy_url_not_cached_when_stargate_config_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import anthropic_override_gate as gate_mod
+
+    reset_configured_cloud_proxy_url_cache()
+    calls = {"n": 0}
+
+    def _boom() -> None:
+        calls["n"] += 1
+        raise RuntimeError("config unavailable")
+
+    monkeypatch.setattr(
+        "systems.proxy.stargate_config.config.StargateConfig",
+        _boom,
+    )
+    first = gate_mod._configured_cloud_proxy_url()
+    second = gate_mod._configured_cloud_proxy_url()
+    assert calls["n"] == 2
+    assert first == second
 
 
 @pytest.mark.asyncio

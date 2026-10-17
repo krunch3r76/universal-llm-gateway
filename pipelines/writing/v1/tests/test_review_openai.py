@@ -326,6 +326,82 @@ def _failed_execution_monitor_payload() -> dict[str, Any]:
     return tracker_monitor_payload(record)
 
 
+def _native_provider_quota_monitor_payload(*, quota_code: str = "insufficient_quota") -> dict[str, Any]:
+    """Frontier native loop: RuntimeError provider-native 429 with JSON body, data=null."""
+    import httpx
+    from systems.pipeline.core.dag import PipelineExecutionError
+    from systems.pipeline.core.execution.async_tracker import PipelineExecutionTracker
+    from systems.pipeline.core.executor import _normalize_pipeline_exception
+    from systems.proxy.routers.api.execution_monitor import tracker_monitor_payload
+
+    body = json.dumps(
+        {"error": {"type": quota_code, "code": quota_code, "message": "quota"}}
+    )
+    native = RuntimeError(f"provider-native 429: {body}")
+    try:
+        req = httpx.Request("POST", "https://example.test/v1/chat/completions")
+        resp = httpx.Response(429, request=req, text=body)
+        raise httpx.HTTPStatusError("429", request=req, response=resp) from native
+    except httpx.HTTPStatusError as http_exc:
+        try:
+            raise RuntimeError(f"provider-native 429: {body}") from http_exc
+        except RuntimeError as provider_exc:
+            try:
+                raise PipelineExecutionError(
+                    f"Step 'review-openai' failed: {provider_exc}"
+                ) from provider_exc
+            except PipelineExecutionError as wrapped:
+                exc = wrapped
+    code, message, data = _normalize_pipeline_exception(exc)
+    assert data is None
+    tracker = PipelineExecutionTracker()
+    tracker.register_execution(
+        execution_id="exec-native-quota",
+        pipeline="writer-specialist-v1",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    tracker.fail_execution("exec-native-quota", code=code, message=message, data=data)
+    record = tracker.get("exec-native-quota")
+    assert record is not None
+    return tracker_monitor_payload(record)
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_native_runtime_quota_held_with_reason() -> None:
+    failed_payload = _native_provider_quota_monitor_payload()
+    transport = _StargateTransport(
+        admit_status=202,
+        admit_body={"execution_id": "exec-native-quota", "status": "running"},
+        poll_sequence=[failed_payload],
+    )
+    bus = _BusTransport()
+    _admit, wait_json, fin = await _run_openai_review_path(transport, bus=bus)
+    assert wait_json["status"] == "held_reviewer_unfunded"
+    assert wait_json["reason"] == "insufficient_quota"
+    assert len(bus.posts) == 1
+    assert bus.posts[0]["path"] == "/turns"
+    assert "insufficient_quota" in str(bus.posts[0]["json"].get("body", ""))
+    assert fin["review"]["status"] == "held_reviewer_unfunded"
+
+
+@pytest.mark.asyncio
+async def test_openai_reviewer_native_rate_limit_failed_zero_bus_posts() -> None:
+    failed_payload = _native_provider_quota_monitor_payload(
+        quota_code="rate_limit_exceeded"
+    )
+    transport = _StargateTransport(
+        admit_status=202,
+        admit_body={"execution_id": "exec-native-rate", "status": "running"},
+        poll_sequence=[failed_payload],
+    )
+    bus = _BusTransport()
+    _admit, wait_json, fin = await _run_openai_review_path(transport, bus=bus)
+    assert wait_json.get("status") != "held_reviewer_unfunded"
+    assert wait_json["refused"] == "review_transport_failed"
+    assert not bus.posts
+    assert fin["review"]["status"] == "failed"
+
+
 @pytest.mark.asyncio
 async def test_openai_reviewer_quota_production_execution_record_held() -> None:
     failed_payload = _failed_execution_monitor_payload()
@@ -337,6 +413,7 @@ async def test_openai_reviewer_quota_production_execution_record_held() -> None:
     bus = _BusTransport()
     _admit, wait_json, fin = await _run_openai_review_path(transport, bus=bus)
     assert wait_json["status"] == "held_reviewer_unfunded"
+    assert wait_json.get("reason") == "insufficient_quota"
     assert len(bus.posts) == 1
     assert bus.posts[0]["path"] == "/turns"
     assert fin["review"]["status"] == "held_reviewer_unfunded"
