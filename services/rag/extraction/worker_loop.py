@@ -34,6 +34,7 @@ from services.rag.knowledge_extractor import (
     probe_stargate_models,
     wait_until_extraction_ready,
 )
+from services.rag.property_index.queue_policy import QUEUE_RETRY_CEILING
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 _POLL_INTERVAL_S = 15.0
 _IDLE_INTERVAL_S = 60.0
 _ERROR_BACKOFF_S = 30.0
-_MAX_QUEUE_ATTEMPTS = 5
+_MAX_QUEUE_ATTEMPTS = 5  # fast budget; claims use QUEUE_RETRY_CEILING
 _ADMISSION_WAIT_TIMEOUT_S: float = 60.0
 
 
@@ -167,7 +168,7 @@ async def run_extraction_worker(
 
         try:
             claims = await property_index.dequeue_extraction(
-                limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS
+                limit=1, max_attempts=QUEUE_RETRY_CEILING
             )
         except Exception:
             logger.error("Extraction worker: queue claim failed", exc_info=True)

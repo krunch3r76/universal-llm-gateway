@@ -234,3 +234,19 @@ class ExtractionQueueResetResponse(BaseModel):
 
     results: list[ExtractionQueueResetResultItem]
     reset_count: int
+
+
+class ExtractionQueueRedriveResponse(BaseModel):
+    """Response of ``POST /extraction/queue/redrive``.
+
+    ``retried`` sources were armed for one claim (attempts unchanged).
+    ``dead_lettered`` sources were marked and will not be claimed.
+    ``succeeded`` and ``failed_again`` are empty: this call does not run
+    extraction. A later ``GET /extraction/queue`` shows what the worker did.
+    """
+
+    dry_run: bool
+    retried: list[str]
+    dead_lettered: list[str]
+    succeeded: list[str]
+    failed_again: list[str]

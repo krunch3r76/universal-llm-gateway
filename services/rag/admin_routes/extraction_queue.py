@@ -16,15 +16,14 @@ if TYPE_CHECKING:
 
 from services.rag.events.extraction_queue import rag_extraction_source_reset
 from services.rag.models.extraction_admin import (
+    ExtractionQueueRedriveResponse,
     ExtractionQueueResetResponse,
     ExtractionQueueResetResultItem,
 )
 
 logger = logging.getLogger(__name__)
 
-_INVALID_SOURCES_DETAIL = (
-    "sources must be a non-empty list of absolute path strings"
-)
+_INVALID_SOURCES_DETAIL = "sources must be a non-empty list of absolute path strings"
 
 
 def register_extraction_queue_routes(
@@ -61,9 +60,7 @@ def register_extraction_queue_routes(
 
         prop_idx = get_property_index_fn()
         if prop_idx is None:
-            raise HTTPException(
-                status_code=503, detail="Property index not available"
-            )
+            raise HTTPException(status_code=503, detail="Property index not available")
 
         rows, reset_count = await prop_idx.reset_extraction_queue_sources(sources)
         eb = get_event_bus_fn() if get_event_bus_fn else None
@@ -88,4 +85,45 @@ def register_extraction_queue_routes(
                 for row in rows
             ],
             reset_count=reset_count,
+        )
+
+    @router.post(
+        "/extraction/queue/redrive",
+        response_model=ExtractionQueueRedriveResponse,
+    )
+    async def redrive_extraction_queue(
+        request: Request,
+    ) -> ExtractionQueueRedriveResponse:
+        """Arm one retry or persist dead_letter for rows past the fast budget.
+
+        Missing body or omitted ``dry_run`` defaults to a read-only count.
+        ``dry_run: false`` writes. Does not reset attempts and does not run
+        extraction.
+        """
+        dry_run = True
+        if await request.body():
+            try:
+                raw = await request.json()
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400, detail="redrive body must be a JSON object"
+                ) from exc
+            if not isinstance(raw, dict):
+                raise HTTPException(
+                    status_code=400, detail="redrive body must be a JSON object"
+                )
+            if "dry_run" in raw and not isinstance(raw["dry_run"], bool):
+                raise HTTPException(status_code=400, detail="dry_run must be a boolean")
+            dry_run = bool(raw.get("dry_run", True))
+
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            raise HTTPException(status_code=503, detail="Property index not available")
+        outcome = await prop_idx.redrive_exhausted_once(dry_run=dry_run)
+        return ExtractionQueueRedriveResponse(
+            dry_run=outcome.dry_run,
+            retried=list(outcome.retried),
+            dead_lettered=list(outcome.dead_lettered),
+            succeeded=list(outcome.succeeded),
+            failed_again=list(outcome.failed_again),
         )

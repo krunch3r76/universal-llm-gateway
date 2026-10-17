@@ -21,6 +21,14 @@ from ._spec import (
     RecoveredExtractionClaim,
     json,
 )
+from .queue_policy import (
+    QUEUE_RETRY_CEILING,
+    ExhaustedRedrive,
+    claim_filter_sql,
+    is_dead_letter,
+    queue_state_case_sql,
+)
+from .queue_redrive import redrive_exhausted_once as _redrive_exhausted_once
 
 
 class _PropertyIndexPart07:
@@ -176,7 +184,7 @@ class _PropertyIndexPart07:
         await self._seq.run(_write())
 
     async def dequeue_extraction(
-        self, limit: int = 10, max_attempts: int = 5
+        self, limit: int = 10, max_attempts: int = QUEUE_RETRY_CEILING
     ) -> list[ExtractionQueueClaim]:
         """Atomically claim sources ready for extraction.
 
@@ -192,11 +200,7 @@ class _PropertyIndexPart07:
             rows = conn.execute(
                 "WITH candidates AS ("
                 " SELECT source FROM extraction_queue"
-                " WHERE attempts < ?"
-                "   AND (last_attempt_at IS NULL"
-                "     OR (last_failure_at IS NOT NULL"
-                "       AND datetime(last_failure_at) >= datetime(last_attempt_at)"
-                "       AND datetime(last_failure_at, '+1 minutes') < datetime('now')))"
+                f" WHERE {claim_filter_sql()}"
                 " ORDER BY queued_at ASC LIMIT ?"
                 ")"
                 " UPDATE extraction_queue"
@@ -262,6 +266,19 @@ class _PropertyIndexPart07:
 
         async def _write() -> None:
             conn = self._ensure_conn()
+            current = conn.execute(
+                "SELECT attempts, last_failure_category FROM extraction_queue"
+                " WHERE source = ?",
+                (source,),
+            ).fetchone()
+            previous = int(current[0]) if current is not None else 0
+            previous_category = current[1] if current is not None else None
+            attempts_after = previous + attempt_increment
+            category = failure_category
+            if previous_category == "dead_letter" or is_dead_letter(
+                attempts_after, error, failure_category
+            ):
+                category = "dead_letter"
             conn.execute(
                 "UPDATE extraction_queue"
                 " SET attempts = attempts + ?,"
@@ -274,7 +291,7 @@ class _PropertyIndexPart07:
                     attempt_increment,
                     error[:1000],
                     error_type,
-                    failure_category,
+                    category,
                     source,
                 ),
             )
@@ -342,6 +359,10 @@ class _PropertyIndexPart07:
 
         return await self._seq.run(_write())
 
+    async def redrive_exhausted_once(self, *, dry_run: bool) -> ExhaustedRedrive:
+        """Arm one claim or persist dead_letter. Body is ``queue_redrive``."""
+        return await _redrive_exhausted_once(self, dry_run=dry_run)
+
     def get_extraction_queue_breakdown(
         self, *, max_attempts: int = 5
     ) -> ExtractionQueueBreakdown:
@@ -349,13 +370,11 @@ class _PropertyIndexPart07:
         rows = self.list_extraction_queue_rows(max_attempts=max_attempts, limit=None)
         ready = sum(1 for row in rows if row.state == "ready")
         in_flight = sum(1 for row in rows if row.state == "in_flight")
-        cooling_off = sum(1 for row in rows if row.state == "cooling_off")
-        exhausted = sum(1 for row in rows if row.state == "exhausted")
-        capacity_blocked = sum(
-            1
-            for row in rows
-            if row.state == "cooling_off" and row.last_failure_category == "capacity"
+        cooling_off = sum(
+            1 for row in rows if row.state in ("cooling_off", "capacity_blocked")
         )
+        exhausted = sum(1 for row in rows if row.state in ("exhausted", "dead_letter"))
+        capacity_blocked = sum(1 for row in rows if row.state == "capacity_blocked")
         return ExtractionQueueBreakdown(
             total=len(rows),
             ready=ready,
@@ -368,29 +387,21 @@ class _PropertyIndexPart07:
     def list_extraction_queue_rows(
         self, *, max_attempts: int = 5, limit: int | None = 100
     ) -> list[ExtractionQueueRow]:
-        """Return source-level queue rows with computed state."""
+        """Return source-level queue rows with computed state.
+
+        ``max_attempts`` is retained for callers. Thresholds are
+        ``QUEUE_FAST_ATTEMPTS`` and ``QUEUE_RETRY_CEILING`` in
+        ``queue_policy``.
+        """
+        del max_attempts
         conn = self._ensure_conn()
         limit_sql = "" if limit is None else " LIMIT ?"
-        params: tuple[int, ...] = (
-            (max_attempts, max_attempts, limit)
-            if limit is not None
-            else (max_attempts, max_attempts)
-        )
+        params: tuple[int, ...] = (limit,) if limit is not None else ()
+        case_sql = queue_state_case_sql()
         rows = conn.execute(
             "SELECT source, queued_at, attempts, last_attempt_at, last_error,"
             " last_error_type, last_failure_category, last_failure_at,"
-            " CASE"
-            "   WHEN attempts >= ? THEN 'exhausted'"
-            "   WHEN last_attempt_at IS NOT NULL"
-            "     AND (last_failure_at IS NULL"
-            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
-            "     THEN 'in_flight'"
-            "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
-            "     AND attempts < ?"
-            "     THEN 'cooling_off'"
-            "   ELSE 'ready'"
-            " END AS queue_state"
+            f"{case_sql} AS queue_state"
             " FROM extraction_queue"
             " ORDER BY queued_at ASC"
             f"{limit_sql}",
