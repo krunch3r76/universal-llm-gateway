@@ -13,6 +13,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
     WorktreeMintError,
+    lane_worktree_dir,
     maybe_prune_worktree_on_terminal,
     mint_dispatch_worktree,
     reap_orphan_worktrees,
@@ -202,6 +203,45 @@ def test_s1b_route_wires_resolve_admit_binding() -> None:
 
     source = Path(route_mod.__file__).read_text(encoding="utf-8")
     assert "resolve_admit_binding" in source
+
+
+def test_mint_refuses_when_main_checkout_off_default_branch(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Mint refuses while the main checkout is off its default branch.
+
+    Breaks when that checkout holds ``cursor-sdk/lane-*`` (a:39422): a later
+    lane mint either dies with ``already used by worktree`` or creates a
+    sibling lane while the service checkout stays off the default branch.
+    The refusal must not move HEAD.
+    """
+    worktree_root = tmp_path / "worktrees"
+    held = "cursor-sdk/lane-17116"
+    _git("checkout", "-b", held, cwd=source_repo)
+    with pytest.raises(WorktreeMintError, match="not on default branch") as exc:
+        mint_dispatch_worktree(
+            source_repo=source_repo,
+            worktree_root=worktree_root,
+            dispatch_id="mint-other",
+            thread_id="99999",
+        )
+    assert exc.value.retryable is False
+    assert _git("branch", "--show-current", cwd=source_repo).stdout.strip() == held
+    assert not lane_worktree_dir(
+        worktree_root, "99999", source_repo=source_repo
+    ).exists()
+    _git("checkout", "master", cwd=source_repo)
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="mint-on-default",
+        thread_id="17558",
+    )
+    assert _git("branch", "--show-current", cwd=source_repo).stdout.strip() == "master"
+    assert (
+        _git("branch", "--show-current", cwd=wt).stdout.strip()
+        == "cursor-sdk/lane-17558"
+    )
 
 
 def test_s1b_mint_reattaches_existing_lane_branch(

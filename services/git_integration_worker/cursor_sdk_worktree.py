@@ -225,6 +225,77 @@ def _branch_exists(source_repo: Path, branch_name: str) -> bool:
     return proc.returncode == 0
 
 
+def _abbrev_head(source_repo: Path) -> str:
+    """Current branch of the main checkout, or ``HEAD`` when detached."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_repo.resolve()),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    head = proc.stdout.strip()
+    if proc.returncode != 0 or not head:
+        raise WorktreeMintError(
+            f"rev-parse HEAD failed for {source_repo}: {proc.stderr.strip()}"
+        )
+    return head
+
+
+def _default_branch(source_repo: Path) -> str:
+    """Default branch: ``origin/HEAD``, else ``master``, else ``main``."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_repo.resolve()),
+            "symbolic-ref",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    short = proc.stdout.strip()
+    if proc.returncode == 0 and short:
+        prefix = "origin/"
+        return short[len(prefix) :] if short.startswith(prefix) else short
+    for name in ("master", "main"):
+        if _branch_exists(source_repo, name):
+            return name
+    raise WorktreeMintError(
+        f"no default branch (origin/HEAD, master, or main) on {source_repo}"
+    )
+
+
+def _refuse_main_checkout_off_default(source_repo: Path) -> None:
+    """Refuse mint when the main checkout is off its default branch.
+
+    Does not move HEAD. A lane branch checked out in the satellite main
+    checkout makes a later ``git worktree add`` of that branch fail with
+    ``already used by worktree``, and a service that loads from that
+    checkout would serve the lane tree. Sibling lane mints must not proceed
+    while the main checkout stays off the default branch.
+    """
+    head = _abbrev_head(source_repo)
+    default = _default_branch(source_repo)
+    if head == default:
+        return
+    raise WorktreeMintError(
+        f"main checkout {source_repo.resolve()} is on {head!r}, not on default "
+        f"branch {default!r}; refusing worktree mint without moving HEAD"
+    )
+
+
 def _rev_parse(source_repo: Path, ref: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(source_repo.resolve()), "rev-parse", ref],
@@ -304,7 +375,11 @@ def mint_dispatch_worktree(
     thread_id: str | None = None,
     branch_point: str | None = None,
 ) -> Path:
-    """Mint a lane-owned worktree once under master-keyed serialization."""
+    """Mint a lane-owned worktree once under master-keyed serialization.
+
+    Refuses when the main checkout is not on its default branch. Never
+    checks a lane branch out in that checkout.
+    """
     lane_id = thread_id or dispatch_id
     subroot = repo_worktree_subroot(worktree_root, source_repo)
     subroot.mkdir(parents=True, exist_ok=True)
@@ -323,6 +398,7 @@ def mint_dispatch_worktree(
         source_repo=source_repo, holder_id=dispatch_id
     )
     try:
+        _refuse_main_checkout_off_default(source_repo)
         if _branch_exists(source_repo, branch):
             _git_worktree_add(
                 source_repo=source_repo,
