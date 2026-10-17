@@ -240,6 +240,11 @@ class CreditLedger:
 
     @staticmethod
     def _ensure_openable(conn: sqlite3.Connection) -> None:
+        schema_row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version' LIMIT 1"
+        ).fetchone()
+        if schema_row is None or str(schema_row[0]) != _LEDGER_SCHEMA_VERSION:
+            raise LedgerUnavailable("schema_mismatch")
         row = conn.execute(
             "SELECT value FROM meta WHERE key = 'instance_id' LIMIT 1"
         ).fetchone()
@@ -324,7 +329,7 @@ class CreditLedger:
 
         open_rows = conn.execute(
             f"""
-            SELECT r.id, r.request_id, r.model, r.usd, r.created_at, r.window_start, r.tag, r.mcp_class
+            SELECT r.id, r.request_id, r.model, r.usd, r.created_at, r.window_start, r.tag, r.caller_tag, r.mcp_class
             FROM entries r
             WHERE r.kind = 'reserve'
               AND NOT EXISTS (
@@ -364,12 +369,76 @@ class CreditLedger:
                         row["usd"],
                         now_iso,
                         row["window_start"],
-                        row["tag"],
+                        row["caller_tag"] or row["tag"],
                         int(row["mcp_class"] or 0),
                     ),
                 )
                 expired_count += 1
         return expired_count
+
+    @staticmethod
+    def compute_spend_since_as_of(
+        conn: sqlite3.Connection,
+        *,
+        as_of: datetime,
+    ) -> Decimal:
+        """Sum committed and open-reserve USD for all rows with activity since ``as_of``."""
+        as_of_dt = as_of.astimezone(UTC)
+        rows = conn.execute(
+            """
+            SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
+            FROM entries
+            ORDER BY id ASC
+            """
+        ).fetchall()
+
+        def _parse_usd(row: sqlite3.Row) -> Decimal:
+            try:
+                return Decimal(str(row["usd"]))
+            except Exception as exc:
+                raise LedgerUnavailable(
+                    f"corrupt usd in entries id={row['id']}: {exc}"
+                ) from exc
+
+        reserve_by_req: dict[str, sqlite3.Row] = {}
+        commits_by_req: dict[str, list[sqlite3.Row]] = {}
+        released_req_ids: set[str] = set()
+        unlinked_commits: list[sqlite3.Row] = []
+
+        for row in rows:
+            kind = row["kind"]
+            req_id = row["request_id"]
+            if kind == "reserve" and req_id:
+                reserve_by_req[req_id] = row
+            elif kind == "commit":
+                if req_id:
+                    commits_by_req.setdefault(req_id, []).append(row)
+                else:
+                    unlinked_commits.append(row)
+            elif kind == "release" and req_id:
+                released_req_ids.add(req_id)
+
+        spend = Decimal("0")
+        for req_id, commit_rows in commits_by_req.items():
+            reserve_row = reserve_by_req.get(req_id)
+            commit_sum = sum(_parse_usd(c) for c in commit_rows)
+            ref = reserve_row if reserve_row is not None else commit_rows[-1]
+            if parse_utc_iso(ref["created_at"]) >= as_of_dt:
+                spend += commit_sum
+
+        for c_row in unlinked_commits:
+            if parse_utc_iso(c_row["created_at"]) >= as_of_dt:
+                spend += _parse_usd(c_row)
+
+        for req_id, r_row in reserve_by_req.items():
+            if req_id in released_req_ids:
+                continue
+            if commits_by_req.get(req_id):
+                continue
+            if parse_utc_iso(r_row["created_at"]) >= as_of_dt:
+                spend += _parse_usd(r_row)
+
+        return spend
 
     @staticmethod
     def compute_window_snapshot(
@@ -448,16 +517,10 @@ class CreditLedger:
                 committed_usd += commit_sum
                 if reserve_row is not None and commit_sum > _parse_usd(reserve_row):
                     overrun_count += 1
-            if as_of is not None:
-                ref = reserve_row if reserve_row is not None else commit_rows[-1]
-                if parse_utc_iso(ref["created_at"]) >= as_of:
-                    spend_since_as_of += commit_sum
 
         for c_row in unlinked_commits:
             c_usd = _parse_usd(c_row)
             committed_usd += c_usd
-            if as_of is not None and parse_utc_iso(c_row["created_at"]) >= as_of:
-                spend_since_as_of += c_usd
 
         for req_id, r_row in reserve_by_req.items():
             if req_id in released_req_ids:
@@ -483,8 +546,6 @@ class CreditLedger:
                     open_count += 1
                     if mcp_class:
                         open_mcp_count += 1
-                if as_of is not None and reserve_created >= as_of:
-                    spend_since_as_of += r_usd
             elif mcp_class and not finalized and reserve_age_min < mcp_serialize_minutes:
                 open_mcp_count += 1
 
@@ -494,6 +555,11 @@ class CreditLedger:
             if l_row["window_start"] == win_start_iso:
                 latch_active = True
                 latch_reason = l_row["tag"] or "credit_balance_too_low"
+
+        if as_of is not None:
+            spend_since_as_of = CreditLedger.compute_spend_since_as_of(
+                conn, as_of=as_of
+            )
 
         return WindowSnapshot(
             committed_usd=committed_usd,

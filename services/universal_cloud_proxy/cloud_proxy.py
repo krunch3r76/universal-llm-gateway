@@ -33,10 +33,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from anthropic_credit.config import CreditConfigInvalid, load_credit_config
+from anthropic_credit.config import CreditConfigInvalid
 from anthropic_credit.ledger import LedgerUnavailable
-from anthropic_credit.ledger_init import ledger_instance_id
-from anthropic_credit.policy import AnthropicCreditRefused, healthy
+from anthropic_credit.policy import AnthropicCreditRefused, get_policy
 from anthropic_credit.policy import (
     status as credit_status,
 )
@@ -87,6 +86,36 @@ _REQUIRED_BROWSER_ASSETS = ("index.html", "app.js", "style.css")
 
 _atexit_event_bus: EventBus | None = None
 
+_credit_emit_tasks: set[asyncio.Task[Any]] = set()
+
+_CREDIT_EVENT_FACTORIES: dict[str, Any] = {
+    "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
+    "anthropic.credit.overrun": AnthropicCreditOverrun,
+    "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
+}
+
+
+def make_credit_emitter(event_bus: EventBus) -> Any:
+    """Build the anthropic credit event emitter used by ``CreditPolicy``."""
+
+    def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
+        factory = _CREDIT_EVENT_FACTORIES.get(name)
+        if factory is None:
+            return
+
+        async def _publish() -> None:
+            await event_bus.publish(factory(**payload))
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(_publish())
+        _credit_emit_tasks.add(task)
+        task.add_done_callback(_credit_emit_tasks.discard)
+
+    return _credit_event_emit
+
 # ∀ process exit: _shutdown_clean is set iff lifespan shutdown handler ran.
 # atexit fires on clean Python exit (crash, sys.exit) but NOT on SIGKILL.
 # Absence of shutdown log + _shutdown_clean=False → crash or unhandled exception.
@@ -130,27 +159,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
 
     from anthropic_credit.policy import set_event_emitter
 
-    _credit_event_factories: dict[str, Any] = {
-        "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
-        "anthropic.credit.overrun": AnthropicCreditOverrun,
-        "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
-    }
-
-    def _credit_event_emit(name: str, payload: dict[str, Any]) -> None:
-        factory = _credit_event_factories.get(name)
-        if factory is None:
-            return
-
-        async def _publish() -> None:
-            await event_bus.publish(factory(**payload))
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        loop.create_task(_publish())
-
-    set_event_emitter(_credit_event_emit)
+    set_event_emitter(make_credit_emitter(event_bus))
     broadcaster = MinimalEventDebugBroadcaster(
         uds_publish_path=os.environ.get(
             "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -1154,13 +1163,18 @@ async def embeddings(request: Request) -> JSONResponse:
 @app.get("/internal/anthropic-credit/status")
 async def anthropic_credit_status_route() -> JSONResponse:
     """Expose cycle meter headroom and ledger health for operators."""
+    ledger_path: str | None = None
+    as_of: str | None = None
+    instance_id: str | None = None
     try:
-        cfg = load_credit_config()
+        policy = get_policy()
+        ledger_fields = policy.status_ledger_fields()
+        ledger_path = ledger_fields["ledger_path"]
+        instance_id = ledger_fields["ledger_instance_id"]
+        as_of = ledger_fields["available_balance_as_of"]
         payload = json.loads(json.dumps(credit_status(), default=str))
-        payload["ledger_path"] = str(cfg.ledger_path)
-        payload["ledger_instance_id"] = ledger_instance_id(cfg.ledger_path)
-        payload["available_balance_as_of"] = cfg.available_balance.as_of
-        payload["healthy"] = healthy()
+        payload.update(ledger_fields)
+        payload["healthy"] = policy.healthy()
         if not payload["healthy"]:
             payload.setdefault(
                 "unavailable_reason",
@@ -1168,20 +1182,23 @@ async def anthropic_credit_status_route() -> JSONResponse:
             )
         return JSONResponse(content=payload)
     except (LedgerUnavailable, CreditConfigInvalid) as exc:
-        ledger_path: str | None = None
-        as_of: str | None = None
-        instance_id: str | None = None
-        try:
-            cfg_exc = load_credit_config()
-            ledger_path = str(cfg_exc.ledger_path)
-            as_of = cfg_exc.available_balance.as_of
-            instance_id = ledger_instance_id(cfg_exc.ledger_path)
-        except Exception:
-            pass
+        reason = str(exc)
+        if "corrupt" in reason.lower():
+            reason = "ledger_corrupt"
         return JSONResponse(
             content={
                 "healthy": False,
-                "unavailable_reason": str(exc),
+                "unavailable_reason": reason,
+                "ledger_path": ledger_path,
+                "ledger_instance_id": instance_id,
+                "available_balance_as_of": as_of,
+            }
+        )
+    except ValueError:
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "unavailable_reason": "ledger_corrupt",
                 "ledger_path": ledger_path,
                 "ledger_instance_id": instance_id,
                 "available_balance_as_of": as_of,

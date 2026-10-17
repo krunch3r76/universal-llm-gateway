@@ -194,6 +194,14 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
     if ttl_minutes < 1:
         raise CreditConfigInvalid("reservation_ttl_minutes must be >= 1")
 
+    overlap_minutes = (early_slack + late_slack) * 60
+    min_overlap = 4 * ttl_minutes
+    if overlap_minutes < min_overlap:
+        raise CreditConfigInvalid(
+            "(early_slack_hours + late_slack_hours) * 60 must be >= "
+            f"4 * reservation_ttl_minutes ({min_overlap})"
+        )
+
     fees_raw = payload.get("server_tool_fees_usd")
     if fees_raw is None:
         fees_raw = {}

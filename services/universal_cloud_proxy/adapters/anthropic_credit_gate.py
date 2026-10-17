@@ -45,13 +45,17 @@ def extract_credit_tag(
             "X-Ulg-Credit-Tag"
         )
         if tag:
-            return str(tag)
+            text = str(tag).strip()
+            if text and text != "ttl_expired":
+                return text
     if upstream_body:
         metadata = upstream_body.get("metadata")
         if isinstance(metadata, dict):
             tag = metadata.get("x-ulg-credit-tag") or metadata.get("ulg_credit_tag")
             if tag:
-                return str(tag)
+                text = str(tag).strip()
+                if text and text != "ttl_expired":
+                    return text
     return None
 
 
@@ -177,6 +181,7 @@ class StreamUsageTap:
 
     _usage: dict[str, Any] = field(default_factory=dict)
     _parse_error: bool = False
+    _unknown_dict_usage: bool = False
     _current_event: str = ""
     _delta_usage_seen: bool = False
 
@@ -220,6 +225,16 @@ class StreamUsageTap:
                     existing = {}
                 existing.update(val)
                 self._usage["cache_creation"] = existing
+            elif key == "server_tool_use" and isinstance(val, dict):
+                existing = self._usage.get("server_tool_use")
+                if not isinstance(existing, dict):
+                    existing = {}
+                for sub_key, sub_val in val.items():
+                    if isinstance(sub_val, int) and sub_val >= 0:
+                        existing[sub_key] = sub_val
+                self._usage["server_tool_use"] = existing
+            elif isinstance(val, dict):
+                self._unknown_dict_usage = True
             elif isinstance(val, int) and val >= 0:
                 self._usage[key] = val
 
@@ -234,6 +249,10 @@ class StreamUsageTap:
     @property
     def delta_usage_seen(self) -> bool:
         return self._delta_usage_seen
+
+    @property
+    def unknown_dict_usage(self) -> bool:
+        return self._unknown_dict_usage
 
 
 def _stream_usage_complete(usage: dict[str, Any]) -> bool:
@@ -268,7 +287,7 @@ def finalize_stream_credit(
         and tap.delta_usage_seen
         and _stream_usage_complete(usage)
     ):
-        commit(request_id, usage)
+        commit(request_id, usage, floor=tap.unknown_dict_usage)
         return
     reason = "stream_cancelled" if cancelled else "stream_abnormal_end"
     if tap.parse_error:

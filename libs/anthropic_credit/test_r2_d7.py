@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from event_store.model_rate_table import ModelRateRow
+from event_store.model_rate_table import ModelRateRow, resolve_pinned_rate
 
 from anthropic_credit.config import CreditConfigInvalid, load_credit_config
 from anthropic_credit.policy import Admit, CreditPolicy, Refuse
@@ -39,7 +39,8 @@ def _sonnet_row() -> ModelRateRow:
 
 def test_server_tool_fees_not_scaled_by_tokens_per_million() -> None:
     """Break covered: web-search USD fees divided by 1e6 with token rates."""
-    row = _sonnet_row()
+    row = resolve_pinned_rate("anthropic/claude-sonnet-5")
+    assert row is not None
     cfg = load_credit_config()
     usage = {
         "input_tokens": 1000,
@@ -164,14 +165,22 @@ def test_tagged_ttl_commit_then_real_commit_overrun_and_doubles_mcp(
     policy = CreditPolicy(
         cfg, emit_fn=lambda name, payload: events.append((name, payload))
     )
+    mcp_body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 1024,
+        "mcp_servers": [
+            {"type": "url", "url": "https://example.com/mcp", "name": "vortex"}
+        ],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
     t0 = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
     assert isinstance(
         policy.admit(
             "tagged-req",
             "anthropic/claude-sonnet-5",
-            _body_1_usd_on_sonnet(),
+            mcp_body,
             tag="workbench-session",
-            token_count=0,
+            token_count=100,
             now=t0,
         ),
         Admit,
@@ -184,7 +193,7 @@ def test_tagged_ttl_commit_then_real_commit_overrun_and_doubles_mcp(
             "input_tokens": 0,
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
-            "output_tokens": 150_000,
+            "output_tokens": 600_000,
         },
         now=ttl_at + timedelta(seconds=1),
     )

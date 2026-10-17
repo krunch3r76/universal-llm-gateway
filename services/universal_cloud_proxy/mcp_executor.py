@@ -438,9 +438,8 @@ class McpToolExecutor:
         original_stream: bool,
         client_id: str | None = None,
     ) -> dict[str, Any]:
-        from anthropic_credit.policy import AnthropicCreditRefused
-
         from anthropic_credit.loop_refusal import credit_cap_notice, emit_loop_refused
+        from anthropic_credit.policy import AnthropicCreditRefused
 
         response: dict[str, Any] = {}
         for iteration in range(max_iterations):

@@ -16,9 +16,9 @@ from event_store.dispatch_economics_pricing import (
     _rate_x_tokens,
     wire_usd_present,
 )
-from event_store.model_rate_table import ModelRateRow
 from event_store.dispatch_economics_rollup import build_dispatch_economics_rollup
 from event_store.model_rate_table import (
+    ModelRateRow,
     catalog_yaml_path,
     clear_catalog_rows_for_tests,
     load_catalog_rows_from_disk,

@@ -106,3 +106,13 @@ def test_malformed_yaml(tmp_path: Path) -> None:
     path.write_text("cycle: [unterminated\n", encoding="utf-8")
     with pytest.raises(CreditConfigInvalid, match="malformed YAML"):
         load_credit_config(path)
+
+
+def test_window_overlap_covers_reservation_ttl(tmp_path: Path) -> None:
+    path = _write_minimal_config(
+        tmp_path,
+        cycle={"early_slack_hours": 0, "late_slack_hours": 0},
+        reservation_ttl_minutes=15,
+    )
+    with pytest.raises(CreditConfigInvalid, match="reservation_ttl_minutes"):
+        load_credit_config(path)

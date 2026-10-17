@@ -241,6 +241,12 @@ class CreditPolicy:
                     detail="request_id must be non-empty",
                 )
 
+            caller_tag: str | None = None
+            if tag is not None:
+                tag_text = str(tag).strip()
+                if tag_text and tag_text != "ttl_expired":
+                    caller_tag = tag_text
+
             canonical_model = _normalize_model_id(model)
             if canonical_model not in cfg.metered_models:
                 return Refuse(
@@ -365,7 +371,7 @@ class CreditPolicy:
                     """
                     INSERT INTO entries (
                         kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
-                    ) VALUES ('reserve', ?, ?, ?, ?, ?, ?, NULL, ?)
+                    ) VALUES ('reserve', ?, ?, ?, ?, ?, NULL, ?, ?)
                     """,
                     (
                         request_id,
@@ -373,7 +379,7 @@ class CreditPolicy:
                         str(reservation.usd),
                         now_utc.isoformat(),
                         win_start_iso,
-                        tag,
+                        caller_tag,
                         1 if reservation.mcp_class else 0,
                     ),
                 )
@@ -439,7 +445,7 @@ class CreditPolicy:
 
             reserve_row = conn.execute(
                 """
-                SELECT model, usd, window_start, tag, mcp_class
+                SELECT model, usd, window_start, tag, caller_tag, mcp_class
                 FROM entries
                 WHERE request_id = ? AND kind = 'reserve'
                 ORDER BY id DESC LIMIT 1
@@ -455,6 +461,7 @@ class CreditPolicy:
             reservation_usd = Decimal(str(reserve_row["usd"]))
             win_start_iso = str(reserve_row["window_start"])
             tag = reserve_row["tag"]
+            caller_tag = reserve_row["caller_tag"]
             mcp_class = int(reserve_row["mcp_class"] or 0)
 
             commit_rows = conn.execute(
@@ -520,7 +527,7 @@ class CreditPolicy:
                 """
                 INSERT INTO entries (
                     kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
-                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, NULL, ?)
+                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
@@ -529,6 +536,7 @@ class CreditPolicy:
                     now_utc.isoformat(),
                     win_start_iso,
                     tag,
+                    caller_tag,
                     mcp_class,
                 ),
             )
@@ -567,20 +575,24 @@ class CreditPolicy:
         _cfg, ledger = self._resolve_config_and_ledger()
 
         def _txn(conn: Any) -> Decimal:
-            existing_commit = conn.execute(
+            commit_rows = conn.execute(
                 """
-                SELECT usd FROM entries
+                SELECT usd, tag FROM entries
                 WHERE request_id = ? AND kind = 'commit'
-                ORDER BY id DESC LIMIT 1
+                ORDER BY id ASC
                 """,
                 (request_id,),
-            ).fetchone()
-            if existing_commit is not None:
-                return Decimal(str(existing_commit["usd"]))
+            ).fetchall()
+            if commit_rows:
+                only_ttl = all(
+                    (r["tag"] or "") == "ttl_expired" for r in commit_rows
+                )
+                if not only_ttl:
+                    return Decimal(str(commit_rows[-1]["usd"]))
 
             reserve_row = conn.execute(
                 """
-                SELECT model, usd, window_start, tag, mcp_class
+                SELECT model, usd, window_start, tag, caller_tag, mcp_class
                 FROM entries
                 WHERE request_id = ? AND kind = 'reserve'
                 ORDER BY id DESC LIMIT 1
@@ -593,24 +605,31 @@ class CreditPolicy:
                 )
 
             reservation_usd = Decimal(str(reserve_row["usd"]))
-            commit_tag = reason if reason else reserve_row["tag"]
+            caller_tag = reserve_row["caller_tag"]
+            if commit_rows:
+                commit_tag = reason if reason else None
+                insert_usd = Decimal("0")
+            else:
+                commit_tag = reason if reason else reserve_row["tag"]
+                insert_usd = reservation_usd
             conn.execute(
                 """
                 INSERT INTO entries (
                     kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
-                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, NULL, ?)
+                ) VALUES ('commit', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
                     reserve_row["model"],
-                    str(reservation_usd),
+                    str(insert_usd),
                     now_utc.isoformat(),
                     reserve_row["window_start"],
                     commit_tag,
+                    caller_tag,
                     int(reserve_row["mcp_class"] or 0),
                 ),
             )
-            return reservation_usd
+            return insert_usd if commit_rows else reservation_usd
 
         return ledger.run_immediate(_txn)
 
@@ -651,7 +670,7 @@ class CreditPolicy:
 
             reserve_row = conn.execute(
                 """
-                SELECT model, window_start, tag, mcp_class
+                SELECT model, window_start, tag, caller_tag, mcp_class
                 FROM entries
                 WHERE request_id = ? AND kind = 'reserve'
                 ORDER BY id DESC LIMIT 1
@@ -667,7 +686,7 @@ class CreditPolicy:
                 """
                 INSERT INTO entries (
                     kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
-                ) VALUES ('release', ?, ?, '0.000000', ?, ?, ?, NULL, ?)
+                ) VALUES ('release', ?, ?, '0.000000', ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
@@ -675,6 +694,7 @@ class CreditPolicy:
                     now_utc.isoformat(),
                     reserve_row["window_start"],
                     reserve_row["tag"],
+                    reserve_row["caller_tag"],
                     int(reserve_row["mcp_class"] or 0),
                 ),
             )
@@ -793,6 +813,32 @@ class CreditPolicy:
             return True
         except Exception:
             return False
+
+    def status_ledger_fields(self) -> dict[str, Any]:
+        """Return ledger path, instance id, and balance as-of from the cached policy objects."""
+        from anthropic_credit.ledger_init import ledger_instance_id
+
+        try:
+            cfg, ledger = self._resolve_config_and_ledger()
+            return {
+                "ledger_path": str(ledger.path),
+                "ledger_instance_id": ledger_instance_id(ledger.path),
+                "available_balance_as_of": cfg.available_balance.as_of,
+            }
+        except (LedgerUnavailable, CreditConfigInvalid):
+            cfg = self._cfg
+            if cfg is None:
+                raise
+            target = (
+                self._ledger_path_override
+                if self._ledger_path_override is not None
+                else cfg.ledger_path
+            )
+            return {
+                "ledger_path": str(target),
+                "ledger_instance_id": ledger_instance_id(target),
+                "available_balance_as_of": cfg.available_balance.as_of,
+            }
 
 
 _singleton_policy: CreditPolicy | None = None

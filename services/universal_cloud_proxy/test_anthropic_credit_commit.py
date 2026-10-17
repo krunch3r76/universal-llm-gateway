@@ -265,13 +265,56 @@ async def test_stream_aclose_mid_stream_one_floor_commit(method_name: str) -> No
     assert Decimal(str(commits[0]["usd"])) == Decimal(str(reserve["usd"]))
 
 
+def _make_blocking_stream_adapter(
+    first_sse: str,
+    block: asyncio.Event,
+) -> tuple[AnthropicAdapter, dict[str, int]]:
+    counts = {"messages": 0, "count_tokens": 0}
+    first_bytes = (first_sse.split("\n\n")[0] + "\n\n").encode("utf-8")
+
+    class _BlockStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self._sent_first = False
+
+        async def __aiter__(self):
+            if not self._sent_first:
+                self._sent_first = True
+                yield first_bytes
+            await block.wait()
+            if False:  # pragma: no cover — keep async generator form
+                yield b""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/messages/count_tokens"):
+            counts["count_tokens"] += 1
+            return httpx.Response(200, json={"input_tokens": 1000})
+        if path.endswith("/messages"):
+            counts["messages"] += 1
+            return httpx.Response(
+                200,
+                stream=_BlockStream(),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(404, text="not found")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    config = ProviderConfig(
+        provider="anthropic",
+        api_key="test-key",
+        base_url="https://api.example.com/v1",
+    )
+    return AnthropicAdapter(config=config, client=client), counts
+
+
 @pytest.mark.parametrize(
     "method_name",
     ["forward_chat_stream", "forward_native_stream"],
 )
 @pytest.mark.asyncio
 async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) -> None:
-    adapter, _ = _make_adapter(_partial_stream_sse(), stream=True)
+    block = asyncio.Event()
+    adapter, _ = _make_blocking_stream_adapter(_partial_stream_sse(), block)
     body = {
         "model": "claude-sonnet-5",
         "max_tokens": 400,
@@ -283,15 +326,70 @@ async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) 
             pass
 
     task = asyncio.create_task(_consume())
-    await asyncio.sleep(0.05)
+    for _ in range(50):
+        st = get_policy().status()
+        entries = st.get("entries") or []
+        if any(e.get("kind") == "reserve" for e in entries):
+            break
+        await asyncio.sleep(0.01)
+    entries = get_policy().status().get("entries") or []
+    assert any(e.get("kind") == "reserve" for e in entries)
+    assert not any(e.get("kind") == "commit" for e in entries)
     task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
-    st = get_policy().status()
-    entries = st.get("entries") or []
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+    entries = get_policy().status().get("entries") or []
     commits = [e for e in entries if e.get("kind") == "commit"]
     reserve = next(e for e in entries if e.get("kind") == "reserve")
     assert len(commits) == 1
-    assert Decimal(str(commits[0]["usd"])) == Decimal(str(reserve["usd"]))
+    tapped = Decimal("0.002000")
+    reservation = Decimal(str(reserve["usd"]))
+    assert Decimal(str(commits[0]["usd"])) == max(tapped, reservation)
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["forward_chat_stream", "forward_native_stream"],
+)
+@pytest.mark.asyncio
+async def test_stream_web_search_usage_commits_token_plus_fee(method_name: str) -> None:
+    sse = _load_sse("stream_web_search_usage.sse")
+    adapter, _ = _make_adapter(sse, stream=True)
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    async for _chunk in getattr(adapter, method_name)(body):
+        pass
+    assert _committed_for_last_request() == Decimal("0.107")
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["forward_chat_stream", "forward_native_stream"],
+)
+@pytest.mark.asyncio
+async def test_stream_unknown_server_tool_commits_max_reservation(
+    method_name: str,
+) -> None:
+    sse = _load_sse("stream_unknown_server_tool.sse")
+    adapter, _ = _make_adapter(sse, stream=True)
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    async for _chunk in getattr(adapter, method_name)(body):
+        pass
+    st = get_policy().status()
+    entries = st.get("entries") or []
+    reserve = next(e for e in entries if e.get("kind") == "reserve")
+    commit = next(e for e in entries if e.get("kind") == "commit")
+    computed = Decimal("0.000000")
+    reservation = Decimal(str(reserve["usd"]))
+    assert Decimal(str(commit["usd"])) == max(computed, reservation)
 
 
 @pytest.mark.asyncio
