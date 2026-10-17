@@ -55,6 +55,7 @@ async def attempt_oom_recovery(
     INVARIANT: gateway.is_cloud ⇒ ¬evict (cloud APIs have no VRAM)
     """
     from systems.routing.eviction.executor import execute_eviction_plan
+    from systems.routing.rag_protected_models import is_rag_protected_model
     from systems.routing.selection.decision.types import EvictionPlanSummary
 
     gateway_id = gateway.gateway_id
@@ -81,6 +82,7 @@ async def attempt_oom_recovery(
         for m in gateway.loaded_models
         if m.routing_key != target_routing_key
         and m.routing_key not in busy_routing_keys
+        and not is_rag_protected_model(m)
     )
 
     if not idle_models:

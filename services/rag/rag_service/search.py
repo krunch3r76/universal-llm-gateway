@@ -195,14 +195,16 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
 
     property_hits = 0
     if state._property_index is not None and state._config is not None:
-        result_ids, chunks, metadatas, distances, property_hits = apply_property_boost(
-            ids=result_ids,
-            chunks=chunks,
-            metadatas=metadatas,
-            distances=distances,
-            query=request.query,
-            property_index=state._property_index,
-            boost_factor=state._config.knowledge_extraction.property_boost_factor,
+        result_ids, chunks, metadatas, distances, property_hits = (
+            await apply_property_boost(
+                ids=result_ids,
+                chunks=chunks,
+                metadatas=metadatas,
+                distances=distances,
+                query=request.query,
+                property_index=state._property_index,
+                boost_factor=state._config.knowledge_extraction.property_boost_factor,
+            )
         )
 
     # max_distance gates on raw cosine before any tier adjustment so that

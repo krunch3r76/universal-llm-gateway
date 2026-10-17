@@ -507,14 +507,11 @@ class ModelRouter:
                     g.name for g in gateways if parsed in g.loaded_models
                 )
 
-            timeout_s = self._routing_policy.capacity_acquire_timeout_s
-
             try:
                 token = await self._capacity_pool.acquire_token(
                     request_id=request_id or "unknown",
                     model_id=parsed.routing_key,
                     allowed_gateway_ids=allowed_gateway_ids,
-                    timeout_s=timeout_s,
                 )
 
                 if token.gateway_id != selected.name:

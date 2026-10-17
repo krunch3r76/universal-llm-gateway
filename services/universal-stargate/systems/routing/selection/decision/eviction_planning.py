@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .busy_view import actually_busy_models, idle_models
 from .eviction_cooldown_policy import EvictionRequestClass
 from .eviction_hysteresis import filter_evictable_with_hysteresis
@@ -118,17 +120,23 @@ def _compute_eviction_plan(
         return None
 
     target_model_id = placement.model_id
-    evictable = [mid for mid in idle if mid != target_model_id]
+    evictable = [
+        mid
+        for mid in idle
+        if mid != target_model_id and not is_rag_protected_model(mid)
+    ]
 
     logger.debug(
         f"After filtering target variants: evictable={evictable}, "
         f"target_key={target_model_id}"
     )
+    protected_excluded = sum(1 for mid in idle if is_rag_protected_model(mid))
     logger.info(
         f"🔍 EVICTION CANDIDATES: {len(evictable)} evictable models "
         f"(after filtering {len(gateway.busy_models)} busy, "
         f"{stale_busy_count} stale-busy reclassified idle, "
-        f"{len(idle) - len(evictable)} same routing key)"
+        f"{protected_excluded} rag-protected, "
+        f"{len(idle) - len(evictable) - protected_excluded} same routing key)"
     )
 
     if not evictable:

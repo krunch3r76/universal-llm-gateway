@@ -514,17 +514,29 @@ class StargateProxy:
                 status_code=500,
                 detail="Request executor unavailable for embedding requests",
             )
-        if self.request_executor is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Request executor unavailable for embedding requests",
-            )
 
-        # Use pre-initialized RequestExecutor (from component_factory)
+        timeout_hint: float | None = None
+        timeout_raw = request.headers.get("X-Request-Timeout")
+        if timeout_raw:
+            try:
+                parsed = float(timeout_raw)
+                if parsed > 0:
+                    timeout_hint = parsed
+            except ValueError:
+                pass
+
+        failover_cfg = self.config.get_embedding_failover_config()
+        emb_class = (request.headers.get("X-Embedding-Class") or "batch").lower()
+        query_cpu = emb_class == "query" and failover_cfg["query_cpu_failover"]
+        batch_cpu = emb_class != "query" and failover_cfg["batch_cpu_failover"]
+
         result = await self.request_executor.execute_embedding_request(
             model_id=model_id,
             request_body=request_body,
             request_id=request_id_val,
+            request_timeout_hint=timeout_hint,
+            query_cpu_failover_enabled=query_cpu,
+            batch_cpu_failover_enabled=batch_cpu,
         )
 
         return result

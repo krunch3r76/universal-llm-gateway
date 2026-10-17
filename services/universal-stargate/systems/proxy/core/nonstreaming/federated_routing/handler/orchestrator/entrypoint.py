@@ -98,6 +98,10 @@ async def _route_to_federated_gateway(
         stability_tracker=stability_tracker,
     )
 
+    from systems.proxy.core.nonstreaming.capacity_deadline import (
+        embedding_capacity_acquire_deadline_mono,
+    )
+
     selected_gateway = await acquire_admission_token(
         context=context,
         selected_gateway=selected_gateway,
@@ -110,6 +114,7 @@ async def _route_to_federated_gateway(
         overflow_origin_gateway=overflow_origin_gateway,
         overflow_depth_before=overflow_depth_before,
         selection_trace=trace,
+        acquire_deadline_mono=embedding_capacity_acquire_deadline_mono(context),
     )
 
     if selected_gateway is None:

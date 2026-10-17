@@ -92,6 +92,8 @@ DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
 DEFAULT_INDEX_WORKERS = 8
 # Outer HTTP ceiling for one contextualize pipeline call (queue wait + inference).
 DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 3600.0
+# Stargate X-Request-Timeout for one query embed (seconds). 4.0b sets 2× GPU p99.
+DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S = 10.0
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -134,6 +136,7 @@ class RagConfig:
     contextualize_pipeline: str = "rag-contextualize"
     # Outer HTTP ceiling for one contextualize pipeline call (queue wait + all-chunk inference).
     contextualize_client_timeout_s: float = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
+    query_embed_request_timeout_s: float = DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0

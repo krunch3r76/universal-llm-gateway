@@ -54,7 +54,7 @@ def extract_entity_terms(query: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
-def apply_property_boost(
+async def apply_property_boost(
     ids: list[str],
     chunks: list[str],
     metadatas: list[dict[str, str | int | float | bool]],
@@ -74,9 +74,9 @@ def apply_property_boost(
     if not terms:
         return ids, chunks, metadatas, distances, 0
 
-    hit_chunk_ids: set[str] = set()
-    for term in terms:
-        hit_chunk_ids.update(property_index.lookup(f"prop.name@@{term}"))
+    keys = [f"prop.name@@{term}" for term in terms]
+
+    hit_chunk_ids = await property_index.lookup_keys_batch_async(keys)
 
     if not hit_chunk_ids:
         return ids, chunks, metadatas, distances, 0
