@@ -53,6 +53,7 @@ class PreparedCursorSdkHandle:
     hop_seq: int | None = None
     hop_reason: str | None = None
     resume_of: str | None = None
+    caller_dispatch_id: str | None = None
     continuity_root_thread_id: str | None = None
     #: Canonical skill slugs, already resolved to a Cursor-discoverable SoT at
     #: admit. The worker stages these into the dispatch HOME user layer.
@@ -132,6 +133,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "hop_seq": handle.hop_seq,
         "hop_reason": handle.hop_reason,
         "resume_of": handle.resume_of,
+        "caller_dispatch_id": handle.caller_dispatch_id,
         "continuity_root_thread_id": handle.continuity_root_thread_id,
         "skills": list(handle.skills),
         "work_key": handle.work_key,
@@ -193,6 +195,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         hop_seq=data.get("hop_seq"),
         hop_reason=data.get("hop_reason"),
         resume_of=data.get("resume_of"),
+        caller_dispatch_id=data.get("caller_dispatch_id"),
         continuity_root_thread_id=data.get("continuity_root_thread_id"),
         skills=tuple(data.get("skills") or ()),
         work_key=data.get("work_key"),

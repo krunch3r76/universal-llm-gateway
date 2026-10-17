@@ -235,6 +235,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # SDK agent-plane resume: terminal parent dispatch_id. Requires reuse_thread
     # (same mailbox). XOR nest_under. GIW sole eligibility authority.
     resume_of: str | None = None
+    # Stamped by the stdio bridge only when resume_of is set. GIW refuses when
+    # this id is the live write-lease holder (CURSOR_RESUME_BEHIND_CALLER).
+    caller_dispatch_id: str | None = None
     # Required on top-level cursor-sdk generate. Omit only for nest_under or
     # resume_of inherit. Missing → 422 lane_required. wrap is exempt.
     lane: Literal["A", "B"] | None = None

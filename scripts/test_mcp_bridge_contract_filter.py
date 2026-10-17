@@ -26,6 +26,7 @@ from scripts.mcp_bridge_contract_filter import (  # noqa: E402
     read_framed_message,
     refuse_conductor_descended_manage,
     should_filter_stdio,
+    stamp_resume_caller_dispatch_id,
     write_framed_message,
 )
 
@@ -110,7 +111,11 @@ def _tools_call(arguments: dict) -> dict:
 
 
 def _drive_downstream(
-    message: dict, *, review_gate: bool, seat_thread: str | None = None
+    message: dict,
+    *,
+    review_gate: bool,
+    seat_thread: str | None = None,
+    conductor_dispatch_id: str = "",
 ) -> tuple[dict | None, dict | None]:
     client_in = io.BytesIO()
     write_framed_message(client_in, message)
@@ -125,6 +130,7 @@ def _drive_downstream(
         allow=frozenset({"team_dispatch", "cortex"}) if review_gate else None,
         seat_thread=seat_thread,
         client_out=client_out,
+        conductor_dispatch_id=conductor_dispatch_id,
     )
     child_in.seek(0)
     client_out.seek(0)
@@ -329,3 +335,106 @@ def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:
     forwarded, refused = _drive_downstream(_tools_call(spawn), review_gate=False)
     assert forwarded == _tools_call(spawn)
     assert refused is None
+
+
+def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bridge stamp wins on resume_of generate; to_thread and empty stamp do not."""
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
+    omitted = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "model": "cursor/composer-2.5",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(omitted),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    assert forwarded["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+    assert forwarded["params"]["arguments"]["resume_of"] == "terminal-parent"
+
+    overridden = dict(omitted)
+    overridden["caller_dispatch_id"] = "other-seat"
+    forwarded, refused = _drive_downstream(
+        _tools_call(overridden),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    assert forwarded["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+
+    unchanged, refused = _drive_downstream(
+        _tools_call(overridden), review_gate=False, conductor_dispatch_id=""
+    )
+    assert refused is None
+    assert unchanged == _tools_call(overridden)
+
+    to_thread = {
+        "op": "to_thread",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "thread": "9",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(to_thread),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded == _tools_call(to_thread)
+    assert "caller_dispatch_id" not in forwarded["params"]["arguments"]
+
+    bare = stamp_resume_caller_dispatch_id(
+        _tools_call({"op": "generate", "seat": "cursor-sdk"}),
+        dispatch_id="holder-live",
+    )
+    assert "caller_dispatch_id" not in bare["params"]["arguments"]
+
+
+def test_stamp_off_hides_caller_dispatch_id_from_old_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset stamp flag: resume_of generate never carries caller_dispatch_id.
+
+    An MCP still on the old team_dispatch signature rejects that keyword
+    (unexpected_keyword_argument / extra=forbid). The default-off bridge
+    must forward resume_of without the field, including when the model
+    supplied one, so the old receiver still accepts the call.
+    """
+    from pydantic import BaseModel, ConfigDict, ValidationError
+
+    class _OldTeamDispatch(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        op: str
+        seat: str | None = None
+        resume_of: str | None = None
+        model: str | None = None
+
+    monkeypatch.delenv("ULG_STAMP_CALLER_DISPATCH_ID", raising=False)
+    supplied = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "resume_of": "terminal-parent",
+        "model": "cursor/composer-2.5",
+        "caller_dispatch_id": "model-supplied",
+    }
+    forwarded, refused = _drive_downstream(
+        _tools_call(supplied),
+        review_gate=False,
+        conductor_dispatch_id="holder-live",
+    )
+    assert refused is None
+    assert forwarded is not None
+    got = forwarded["params"]["arguments"]
+    assert got["op"] == "generate"
+    assert got["resume_of"] == "terminal-parent"
+    assert "caller_dispatch_id" not in got
+    _OldTeamDispatch.model_validate(got)
+    with pytest.raises(ValidationError):
+        _OldTeamDispatch.model_validate({**got, "caller_dispatch_id": "holder-live"})

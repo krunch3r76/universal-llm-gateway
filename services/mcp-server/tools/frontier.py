@@ -367,6 +367,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        caller_dispatch_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Live cursor-sdk dispatch id of the seat calling "
+                    "team_dispatch. Forwarded on generate only when resume_of "
+                    "is set. The stdio bridge overwrites a model-supplied value "
+                    "from its own dispatch stamp. Omitted on to_thread."
+                ),
+            ),
+        ] = None,
         lane: Annotated[
             Literal["A", "B"] | None,
             Field(
@@ -1018,6 +1029,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["nest_under"] = nest_under
             if resume_of is not None:
                 body["resume_of"] = resume_of
+                if caller_dispatch_id:
+                    body["caller_dispatch_id"] = caller_dispatch_id
             if lane is not None:
                 body["lane"] = lane
             if workspace is not None:

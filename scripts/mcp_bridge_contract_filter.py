@@ -39,6 +39,8 @@ from scripts.mcp_bridge_steer_inject import (  # noqa: E402
 
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 ULG_DISPATCH_THREAD_ENV = "ULG_DISPATCH_THREAD_ID"
+ULG_STAMP_CALLER_DISPATCH_ID_ENV = "ULG_STAMP_CALLER_DISPATCH_ID"
+_STAMP_CALLER_DISPATCH_ID_ON = frozenset({"1", "true", "yes", "on"})
 FILTERED_CONTRACTS: frozenset[str] = frozenset({"implement", "pure-mechanical"})
 _LIFE_ONLY_TOOLS: frozenset[str] = frozenset(
     {"imprint", "recall", "delegate", "notify"}
@@ -66,6 +68,18 @@ def contract_from_env(env: dict[str, str] | None = None) -> str:
 def should_filter_stdio(env: dict[str, str] | None = None) -> bool:
     """True when the bridge must proxy and filter instead of execve."""
     return contract_from_env(env) in FILTERED_CONTRACTS
+
+
+def caller_dispatch_id_stamp_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return whether the bridge may send caller_dispatch_id on resume_of.
+
+    Defaults off. GIW copies the parent environment into the bridge
+    subprocess, so the switch is ``ULG_STAMP_CALLER_DISPATCH_ID`` there.
+    Leave it unset until mcp, stargate, and GIW all accept the field.
+    """
+    source = env if env is not None else os.environ
+    raw = (source.get(ULG_STAMP_CALLER_DISPATCH_ID_ENV) or "").strip().lower()
+    return raw in _STAMP_CALLER_DISPATCH_ID_ON
 
 
 def resolve_contract_allow_list(
@@ -248,6 +262,58 @@ def refuse_conductor_descended_manage(
     }
 
 
+def stamp_resume_caller_dispatch_id(
+    message: dict[str, Any],
+    *,
+    dispatch_id: str,
+) -> dict[str, Any]:
+    """Stamp the bridge dispatch id onto resume_of generate calls.
+
+    The stamp stays off unless ``ULG_STAMP_CALLER_DISPATCH_ID`` is on. While
+    off, a model-supplied ``caller_dispatch_id`` is removed so an MCP,
+    stargate, or GIW process still on the old extra=forbid signature never
+    sees the field. While on, ``team_dispatch`` ``op=generate`` with
+    ``resume_of`` set gets ``caller_dispatch_id`` overwritten from the bridge
+    stamp. ``to_thread`` and generates without ``resume_of`` are unchanged.
+    An empty stamp leaves arguments unchanged, including a model-supplied id.
+    """
+    if message.get("method") != "tools/call":
+        return message
+    params = message.get("params")
+    if not isinstance(params, dict) or params.get("name") != "team_dispatch":
+        return message
+    arguments = params.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return message
+    if not isinstance(arguments, dict):
+        return message
+    if not caller_dispatch_id_stamp_enabled():
+        if "caller_dispatch_id" not in arguments:
+            return message
+        stripped = dict(arguments)
+        stripped.pop("caller_dispatch_id", None)
+        new_params = dict(params)
+        new_params["arguments"] = stripped
+        new_message = dict(message)
+        new_message["params"] = new_params
+        return new_message
+    stamp = (dispatch_id or "").strip()
+    if not stamp:
+        return message
+    if arguments.get("op") != "generate" or not arguments.get("resume_of"):
+        return message
+    stamped = dict(arguments)
+    stamped["caller_dispatch_id"] = stamp
+    new_params = dict(params)
+    new_params["arguments"] = stamped
+    new_message = dict(message)
+    new_message["params"] = new_params
+    return new_message
+
+
 def _copy_downstream(
     downstream: BinaryIO,
     upstream: BinaryIO,
@@ -293,6 +359,9 @@ def _copy_downstream(
                     with client_out_lock:
                         write_framed_message(client_out, refusal)
                 continue
+        message = stamp_resume_caller_dispatch_id(
+            message, dispatch_id=conductor_dispatch_id
+        )
         msg_id = message.get("id")
         method = message.get("method")
         if msg_id is not None and isinstance(method, str):
