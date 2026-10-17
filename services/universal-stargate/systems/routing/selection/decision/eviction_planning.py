@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .busy_view import actually_busy_models, idle_models
 from .eviction_cooldown_policy import EvictionRequestClass
 from .eviction_hysteresis import filter_evictable_with_hysteresis
@@ -19,8 +21,6 @@ from .eviction_victim_select import (
     select_eviction_victims,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
-from systems.routing.rag_protected_models import is_rag_protected_model
-
 from .types import ConstraintFailure, EvictionPlanAbort, EvictionPlanSummary
 
 if TYPE_CHECKING:

@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING
 
 from model_id import ModelId
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .admission_verdict import (
     AdmissionVerdict,
     evaluate_ram_reclaim,
     evaluate_vram_admission,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
-from systems.routing.rag_protected_models import is_rag_protected_model
-
 from .types import ConstraintFailure
 
 if TYPE_CHECKING:

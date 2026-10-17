@@ -17,6 +17,8 @@ import httpx
 import sniffio  # noqa: F401 — preload before the loop; cold import blocks on the import lock
 from universal_logging import get_logger
 
+from services.rag.config._models import DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
+
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
 
@@ -24,12 +26,17 @@ logger = get_logger(__name__)
 
 _client = httpx.AsyncClient(timeout=120.0)
 _embed_model: str = ""
+_query_embed_request_timeout_s: float = DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
 _probe_payload: dict[str, str | list[str]] = {}
 _event_bus: EventBus | None = None
 _embed_dim: int | None = None
 
 
-def configure(model_id: str) -> None:
+def configure(
+    model_id: str,
+    *,
+    query_embed_request_timeout_s: float | None = None,
+) -> None:
     """Record the embedding model ID and build the probe payload at startup.
 
     Called from RAG lifecycle startup with the configured embedding model. Logs
@@ -38,11 +45,13 @@ def configure(model_id: str) -> None:
     Raises:
         ValueError: When ``model_id`` is empty or whitespace.
     """
-    global _embed_model, _probe_payload
+    global _embed_model, _probe_payload, _query_embed_request_timeout_s
     if not model_id or not model_id.strip():
         raise ValueError(f"configure() received blank model_id: {model_id!r}")
     _embed_model = model_id
     _probe_payload = {"model": _embed_model, "input": ["probe"]}
+    if query_embed_request_timeout_s is not None and query_embed_request_timeout_s > 0:
+        _query_embed_request_timeout_s = float(query_embed_request_timeout_s)
 
     from services.rag.embeddings.model_id import extract_context_suffix
 
@@ -106,6 +115,11 @@ async def close() -> None:
 def get_client() -> httpx.AsyncClient:
     """Return the shared embedding ``httpx.AsyncClient`` used for all gateway POSTs."""
     return _client
+
+
+def get_query_embed_request_timeout_s() -> float:
+    """Return the Stargate X-Request-Timeout budget for query embeddings."""
+    return _query_embed_request_timeout_s
 
 
 def get_event_bus() -> EventBus | None:

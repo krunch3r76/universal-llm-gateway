@@ -8,9 +8,17 @@ from pathlib import Path
 
 import pytest
 
+from services.rag.config._models import DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
 from services.rag.contextualize import CONTEXTUALIZE_GLOBAL_MAX, contextualize_chunks
+from services.rag.embeddings.constants import QUERY_EMBED_REQUEST_TIMEOUT_S
 from services.rag.embeddings.cosine_similarity import cosine_similarity
 from services.rag.search_scope.property_boost import apply_property_boost
+
+
+def test_4_23_query_embed_timeout_default_not_rag_client_ceiling() -> None:
+    assert DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S == 10.0
+    assert QUERY_EMBED_REQUEST_TIMEOUT_S == 10.0
+    assert QUERY_EMBED_REQUEST_TIMEOUT_S < 120.0
 
 
 def test_4_24_cosine_helper_identity() -> None:

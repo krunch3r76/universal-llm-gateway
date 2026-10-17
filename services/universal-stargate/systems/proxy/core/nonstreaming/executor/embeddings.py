@@ -197,7 +197,9 @@ async def execute_embedding_request(
         emit_execution_completed,
         emit_execution_failed,
     )
-    from systems.proxy.core.nonstreaming.capacity_deadline import apply_capacity_deadline
+    from systems.proxy.core.nonstreaming.capacity_deadline import (
+        apply_capacity_deadline,
+    )
     from systems.proxy.core.nonstreaming.executor.embedding_failover import (
         CPU_EMBEDDING_MODEL_ID,
         capacity_budget_expired,

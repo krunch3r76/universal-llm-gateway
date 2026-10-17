@@ -19,6 +19,7 @@ from ._models import (
     DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_INDEX_WORKERS,
+    DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S,
     RagConfig,
 )
 from ._parsing import (
@@ -335,6 +336,14 @@ def load_config() -> RagConfig:
         contextualize_client_timeout_s = float(raw_ctx_client_timeout)
     else:
         contextualize_client_timeout_s = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
+    raw_query_embed_timeout = parsed_root.get(
+        "query_embed_request_timeout_s",
+        DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S,
+    )
+    if isinstance(raw_query_embed_timeout, int | float) and raw_query_embed_timeout > 0:
+        query_embed_request_timeout_s = float(raw_query_embed_timeout)
+    else:
+        query_embed_request_timeout_s = DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
     if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
         reconcile_interval_s = float(raw_reconcile)
@@ -381,6 +390,7 @@ def load_config() -> RagConfig:
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
         contextualize_client_timeout_s=contextualize_client_timeout_s,
+        query_embed_request_timeout_s=query_embed_request_timeout_s,
         reconcile_interval_s=reconcile_interval_s,
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,
