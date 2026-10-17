@@ -37,6 +37,7 @@ from ..wait_status import (
     derive_status,
     is_dead_wait_no_auto_producer,
     qualifying_reply_for_wait,
+    qualifying_status_turn,
     wait_predicate_satisfied,
 )
 
@@ -49,6 +50,9 @@ router = APIRouter(dependencies=[Depends(require_token)])
 # remains a separate historical SSE/tools ceiling — do not conflate with wait.
 MAX_WAIT_SECONDS = 60.0
 _POLL_INTERVAL_SECONDS = 1.0
+_GENERATE_PIPELINE_ID = "cursor-sdk-generate"
+_STATUS_DONE_UNSATISFIABLE = "cursor_sdk_status_done_unsatisfiable"
+_STATUS_DONE_FIX_HINT = "completion=first_reply_from from_agent=cursor-sdk"
 
 
 async def _pinned_reader_witness(
@@ -179,6 +183,55 @@ async def _snapshot(
     }
 
 
+def _cursor_sdk_generate_only(thread_row: dict[str, Any]) -> bool:
+    """True when no producer on the thread can post a status:done subject.
+
+    Refuse only when every dispatch_links row is pipeline_id
+    cursor-sdk-generate, or the thread carries that tag and has no links.
+    Any other pipeline falls through. An empty link list without the tag is
+    not treated as pure: vacuous all() would refuse Auto waits that have
+    no dispatch row.
+    """
+    links = list(thread_row.get("dispatch_links") or [])
+    if not links:
+        tags = thread_row.get("tags") or []
+        return _GENERATE_PIPELINE_ID in tags
+    return all(link.get("pipeline_id") == _GENERATE_PIPELINE_ID for link in links)
+
+
+def _raise_if_status_done_unsatisfiable(
+    thread_id: str,
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    completion: str,
+) -> None:
+    """422 status:done on a pure cursor-sdk-generate thread before the poll.
+
+    The generate closeout subject never carries the status: prefix, so
+    sleeping out the wait budget cannot succeed. The existing subject-prefix
+    matcher runs once over turns after after_turn first: a hit means the
+    predicate is already met and the caller returns the normal snapshot.
+    """
+    if completion != "status:done":
+        return
+    if (
+        qualifying_status_turn(turns, after_turn=after_turn, status_token="status:done")
+        is not None
+    ):
+        return
+    thread_row = get_thread_with_links(thread_id)
+    if thread_row is None or not _cursor_sdk_generate_only(thread_row):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": _STATUS_DONE_UNSATISFIABLE,
+            "fix_hint": _STATUS_DONE_FIX_HINT,
+        },
+    )
+
+
 @router.get(
     "/threads/{thread_id}/wait",
     openapi_extra=x_mcp("wait", tool="agent_bus"),
@@ -198,6 +251,12 @@ async def wait_thread_route(
     ``from_agent`` is required for first_reply_from and proof_reply_from.
     when no turn exists after ``after_turn``, else ``predicate_unmet`` (turns
     advanced, predicate still false). Push state is not inferred from read_at.
+
+    ``status:done`` on a pure cursor-sdk-generate producer (every dispatch
+    link is that pipeline, or the tag and no links) returns 422
+    ``cursor_sdk_status_done_unsatisfiable`` with ``fix_hint`` naming
+    ``first_reply_from``, unless a later turn already matches the subject
+    prefix. A thread with any other producer keeps the normal poll.
     """
     thread_id = normalize_thread_id(thread_id)
     allowed = (
@@ -241,6 +300,12 @@ async def wait_thread_route(
                 "pointer_turn": after_turn,
             },
         )
+    _raise_if_status_done_unsatisfiable(
+        thread_id,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+    )
 
     wait_clamped = max(0.0, min(wait, MAX_WAIT_SECONDS))
     loop = asyncio.get_running_loop()

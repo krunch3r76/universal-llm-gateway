@@ -132,7 +132,9 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         # TOCTOU note (F9): a turn arriving between this peek and the phase-2
         # fetch below can skew fetch_last / has_earlier by one. Advisory only —
         # the next fetch self-corrects.
-        unread_count = _thread_unread_count(args.thread, token, to=getattr(args, "to", None))
+        unread_count = _thread_unread_count(
+            args.thread, token, to=getattr(args, "to", None)
+        )
 
         # Phase 2: fetch (context + unread + 1) turns — the +1 is a probe that
         # lets us detect whether earlier turns exist without a separate count query.
@@ -282,9 +284,7 @@ def _cmd_fetch_unread(args: argparse.Namespace, token: str) -> None:
     print(json.dumps(result, indent=indent, default=str))
 
 
-def _resolve_supersedes_turn_id(
-    thread: str, turn_number: int, token: str
-) -> int:
+def _resolve_supersedes_turn_id(thread: str, turn_number: int, token: str) -> int:
     """Map a thread-local turn_number to the store turn id for supersedes_turn."""
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     turn = _request("GET", f"/turns/by-number?{qs}", token)
@@ -511,6 +511,22 @@ def _cmd_delete_turn(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_wait(args: argparse.Namespace, token: str) -> None:
+    """Issue one wait GET and print the snapshot.
+
+    ``--until-complete`` is parsed but this handler, the one ``main`` binds,
+    does not re-issue. Callers who pass the flag get a stderr warning that
+    it is not honored. A 422 whose detail dict carries ``error`` or
+    ``fix_hint`` is printed to stderr and the process exits 1; other HTTP
+    failures still propagate to ``main``.
+    """
+    import httpx
+
+    if getattr(args, "until_complete", False):
+        print(
+            "warning: --until-complete is not honored; "
+            "wait issues one request and returns",
+            file=sys.stderr,
+        )
     params = {
         "after_turn": args.after_turn,
         "wait": args.wait_seconds,
@@ -519,7 +535,25 @@ def _cmd_wait(args: argparse.Namespace, token: str) -> None:
     if args.from_agent:
         params["from_agent"] = args.from_agent
     qs = urlencode(params)
-    result = _request("GET", f"/threads/{args.thread}/wait?{qs}", token)
+    try:
+        result = _request("GET", f"/threads/{args.thread}/wait?{qs}", token)
+    except httpx.HTTPStatusError as exc:
+        detail: Any = None
+        try:
+            payload = exc.response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+        if isinstance(detail, dict) and (detail.get("fix_hint") or detail.get("error")):
+            error = str(detail.get("error") or "")
+            hint = str(detail.get("fix_hint") or "")
+            print(
+                f"agent-bus wait refused: {error}; fix_hint: {hint}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        raise
     print(json.dumps(result, indent=2, default=str))
 
 

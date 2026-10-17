@@ -104,6 +104,74 @@ def test_cmd_wait_loops_until_complete(capsys: pytest.CaptureFixture[str]) -> No
     assert len(responses) == 0
 
 
+def test_cmd_wait_warns_when_until_complete_not_honored(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Live wait warns when --until-complete is passed and then returns once.
+
+    The break is the bound handler ignoring the flag the stalled author used,
+    with no stderr signal. The dead loop at the first _cmd_wait stays unbound.
+    """
+    cli = _load_cli()
+    calls: list[str] = []
+
+    def fake_request(method: str, path: str, token: str, body=None, *, timeout=10.0):
+        assert method == "GET"
+        assert token == "tok"
+        calls.append(path)
+        return {"complete": False, "status": "predicate_unmet"}
+
+    cli._request = fake_request
+    cli._cmd_wait(
+        _wait_args(until_complete=True, completion="status:done", from_agent=None),
+        token="tok",
+    )
+    captured = capsys.readouterr()
+    assert "--until-complete" in captured.err
+    assert "not honored" in captured.err
+    assert len(calls) == 1
+    out = json.loads(captured.out)
+    assert out["complete"] is False
+
+
+def test_cmd_wait_prints_fix_hint_on_status_done_422(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A 422 detail dict is printed to stderr instead of a bare HTTP error.
+
+    The break is raise_for_status hiding fix_hint, so the generate refuse
+    never reaches the caller that invoked the live wait handler.
+    """
+    import httpx
+
+    cli = _load_cli()
+    request = httpx.Request("GET", "http://localhost/threads/9977/wait")
+    response = httpx.Response(
+        422,
+        json={
+            "detail": {
+                "error": "cursor_sdk_status_done_unsatisfiable",
+                "fix_hint": "completion=first_reply_from from_agent=cursor-sdk",
+            }
+        },
+        request=request,
+    )
+
+    def fake_request(method: str, path: str, token: str, body=None, *, timeout=10.0):
+        raise httpx.HTTPStatusError("422", request=request, response=response)
+
+    cli._request = fake_request
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_wait(
+            _wait_args(until_complete=False, completion="status:done"),
+            token="tok",
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "fix_hint" in err
+    assert "first_reply_from" in err
+
+
 def test_wait_once_requires_from_agent_for_first_reply_from(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
