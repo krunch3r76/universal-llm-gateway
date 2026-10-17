@@ -321,3 +321,16 @@ async def test_reset_refreshes_quiet_clock(
     _apply_two_cold_snapshots(mgr, _gw())
     await asyncio.sleep(0)
     assert pool.slot_quiet_elapsed(GW, M.routing_key) is False
+
+
+def test_snapshot_with_model_resources_and_no_pool_returns() -> None:
+    """Two absent snapshots with model_resources and no pool must not touch the pool."""
+    mgr = FederatedGatewayManager(event_bus=None, capacity_pool=None)
+    assert mgr._capacity_pool is None
+    returned = _apply_two_cold_snapshots(mgr, _gw())
+    assert returned.model_resources[M]["max_concurrent_requests"] == 4
+    assert returned.available_models == frozenset({M})
+    assert returned.ram_free_mb == 100_000
+    assert mgr._gateways[GW] is returned
+    assert mgr._cold_absent_snapshot_streak == {}
+    assert mgr._capacity_pool is None
