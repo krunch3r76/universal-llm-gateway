@@ -270,7 +270,7 @@ def _make_blocking_stream_adapter(
     block: asyncio.Event,
 ) -> tuple[AnthropicAdapter, dict[str, int]]:
     counts = {"messages": 0, "count_tokens": 0}
-    first_bytes = (first_sse.split("\n\n")[0] + "\n\n").encode("utf-8")
+    first_bytes = first_sse.encode("utf-8")
 
     class _BlockStream(httpx.AsyncByteStream):
         def __init__(self) -> None:
@@ -314,22 +314,27 @@ def _make_blocking_stream_adapter(
 @pytest.mark.asyncio
 async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) -> None:
     block = asyncio.Event()
-    adapter, _ = _make_blocking_stream_adapter(_partial_stream_sse(), block)
+    sse = _load_sse("stream_web_search_usage.sse")
+    parts = [part for part in sse.split("\n\n") if part.strip()]
+    head_sse = parts[0] + "\n\n" + parts[1] + "\n\n"
+    adapter, _ = _make_blocking_stream_adapter(head_sse, block)
     body = {
         "model": "claude-sonnet-5",
         "max_tokens": 400,
         "messages": [{"role": "user", "content": "hi"}],
     }
+    first_chunk = asyncio.Event()
 
     async def _consume() -> None:
         async for _chunk in getattr(adapter, method_name)(body):
-            pass
+            if not first_chunk.is_set():
+                first_chunk.set()
 
     task = asyncio.create_task(_consume())
+    await asyncio.wait_for(first_chunk.wait(), timeout=2.0)
+    await asyncio.sleep(0.05)
     for _ in range(50):
-        st = get_policy().status()
-        entries = st.get("entries") or []
-        if any(e.get("kind") == "reserve" for e in entries):
+        if get_policy().status().get("entries"):
             break
         await asyncio.sleep(0.01)
     entries = get_policy().status().get("entries") or []
@@ -343,8 +348,9 @@ async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) 
     commits = [e for e in entries if e.get("kind") == "commit"]
     reserve = next(e for e in entries if e.get("kind") == "reserve")
     assert len(commits) == 1
-    tapped = Decimal("0.002000")
+    tapped = Decimal("0.107")
     reservation = Decimal(str(reserve["usd"]))
+    assert tapped > reservation
     assert Decimal(str(commits[0]["usd"])) == max(tapped, reservation)
 
 
@@ -354,6 +360,16 @@ async def test_stream_task_cancel_mid_stream_one_floor_commit(method_name: str) 
 )
 @pytest.mark.asyncio
 async def test_stream_web_search_usage_commits_token_plus_fee(method_name: str) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    shipped_rates = repo_root / "config" / "model_rates.yaml"
+    prior = get_policy()
+    set_policy(
+        CreditPolicy(
+            prior._cfg,
+            ledger=prior._ledger,
+            rates_path=shipped_rates,
+        )
+    )
     sse = _load_sse("stream_web_search_usage.sse")
     adapter, _ = _make_adapter(sse, stream=True)
     body = {
@@ -364,6 +380,88 @@ async def test_stream_web_search_usage_commits_token_plus_fee(method_name: str) 
     async for _chunk in getattr(adapter, method_name)(body):
         pass
     assert _committed_for_last_request() == Decimal("0.107")
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["forward_chat_stream", "forward_native_stream"],
+)
+@pytest.mark.asyncio
+async def test_stream_server_tool_mixed_types_floors_to_reservation(
+    method_name: str,
+) -> None:
+    sse = _load_sse("stream_server_tool_mixed_types.sse")
+    adapter, _ = _make_adapter(sse, stream=True)
+    body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 20000,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    async for _chunk in getattr(adapter, method_name)(body):
+        pass
+    st = get_policy().status()
+    entries = st.get("entries") or []
+    reserve = next(e for e in entries if e.get("kind") == "reserve")
+    commit = next(e for e in entries if e.get("kind") == "commit")
+    computed = Decimal("0.107000")
+    reservation = Decimal(str(reserve["usd"]))
+    assert reservation > computed
+    assert Decimal(str(commit["usd"])) == reservation
+    assert Decimal(str(commit["usd"])) != computed
+
+
+@pytest.mark.asyncio
+async def test_non_stream_server_tool_mixed_types_floors_to_reservation() -> None:
+    payload = _load_json("non_stream_server_tool_mixed_types.json")
+    adapter, _ = _make_adapter(payload)
+    await adapter.forward_native(
+        {
+            "model": "claude-sonnet-5",
+            "max_tokens": 20000,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    )
+    st = get_policy().status()
+    entries = st.get("entries") or []
+    reserve = next(e for e in entries if e.get("kind") == "reserve")
+    commit = next(e for e in entries if e.get("kind") == "commit")
+    computed = Decimal("0.107")
+    reservation = Decimal(str(reserve["usd"]))
+    assert reservation > computed
+    assert Decimal(str(commit["usd"])) == reservation
+    assert Decimal(str(commit["usd"])) != computed
+
+
+@pytest.mark.asyncio
+async def test_stream_top_level_dict_usage_key_floors_commit() -> None:
+    sse = (
+        'event: message_start\n'
+        'data: {"type":"message_start","message":{"usage":{'
+        '"input_tokens":100,"cache_creation_input_tokens":0,'
+        '"cache_read_input_tokens":0,"output_tokens":50}}}\n\n'
+        'event: message_delta\n'
+        'data: {"type":"message_delta","usage":{'
+        '"input_tokens":100,"cache_creation_input_tokens":0,'
+        '"cache_read_input_tokens":0,"output_tokens":50,'
+        '"opaque_usage":{"nested":1}}}\n\n'
+        'event: message_stop\n'
+        'data: {"type":"message_stop"}\n\n'
+    )
+    adapter, _ = _make_adapter(sse, stream=True)
+    async for _chunk in adapter.forward_native_stream(
+        {
+            "model": "claude-sonnet-5",
+            "max_tokens": 400,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    ):
+        pass
+    st = get_policy().status()
+    reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+    commit = next(e for e in st["entries"] if e["kind"] == "commit")
+    reservation = Decimal(str(reserve["usd"]))
+    computed = Decimal("0.000700")
+    assert Decimal(str(commit["usd"])) == max(computed, reservation)
 
 
 @pytest.mark.parametrize(

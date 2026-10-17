@@ -423,9 +423,6 @@ def _pipeline_execution_error_detail(
     }
     if isinstance(data, dict):
         error_detail.update(data)
-        error_detail["pipeline_id"] = str(context.selected_model)
-        error_detail.setdefault("message", message)
-        error_detail.setdefault("code", code)
     return error_detail
 
 

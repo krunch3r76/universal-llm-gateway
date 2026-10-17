@@ -232,6 +232,8 @@ class StreamUsageTap:
                 for sub_key, sub_val in val.items():
                     if isinstance(sub_val, int) and sub_val >= 0:
                         existing[sub_key] = sub_val
+                    else:
+                        self._unknown_dict_usage = True
                 self._usage["server_tool_use"] = existing
             elif isinstance(val, dict):
                 self._unknown_dict_usage = True

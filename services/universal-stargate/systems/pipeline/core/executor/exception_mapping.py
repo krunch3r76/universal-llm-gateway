@@ -2,8 +2,7 @@
 
 Extracted from ``core/executor.py`` so the proxy lifecycle layer and the
 async-tracker tests have a stable, single-source import for the
-``_normalize_pipeline_exception`` symbol. Behavior preserved byte-identical
-from the pre-split implementation.
+``_normalize_pipeline_exception`` symbol.
 
 The leading underscore on ``_normalize_pipeline_exception`` is preserved
 because existing consumers
@@ -15,6 +14,39 @@ from __future__ import annotations
 
 from typing import Any
 
+_UPSTREAM_DATA_KEY = "upstream"
+
+
+def _first_dict_detail(exc: BaseException) -> dict[str, Any] | None:
+    """Return the first dict-shaped ``detail`` on the exception chain.
+
+    Walks ``__cause__`` before ``__context__`` at each link.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        cid = id(current)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        detail = getattr(current, "detail", None)
+        if isinstance(detail, dict):
+            return detail
+        cause = current.__cause__
+        context = current.__context__
+        if context is not None and context is not cause:
+            stack.append(context)
+        if cause is not None:
+            stack.append(cause)
+    return None
+
+
+def _wrap_upstream_data(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(detail, dict):
+        return None
+    return {_UPSTREAM_DATA_KEY: detail}
+
 
 def _normalize_pipeline_exception(
     exc: BaseException,
@@ -23,28 +55,13 @@ def _normalize_pipeline_exception(
 
     - ``code`` / ``message`` come from ``to_dict()`` when the exception
       provides one (e.g. ``PipelineError``), else from ``str(exc)``.
-    - ``data`` carries the structured upstream body when the exception is
-      a ``ProxyClientError`` with a dict-shaped ``detail`` — that path
-      preserves provider HTTP 4xx/5xx JSON without flattening to a string.
+    - ``data`` carries structured upstream bodies under the ``upstream`` key
+      when a dict-shaped ``detail`` was found on the exception chain.
     - Returns ``data=None`` for non-HTTP exceptions or when the upstream
       body was not JSON.
     """
-    data: dict[str, Any] | None = None
+    upstream_detail = _first_dict_detail(exc)
 
-    # ProxyClientError.detail is the structured upstream JSON body when
-    # the provider returned a parseable error response. Surface it so
-    # async callers can inspect {type, code, param, message} without
-    # re-parsing a flattened error string.
-    proxy_detail = getattr(exc, "detail", None)
-    if isinstance(proxy_detail, dict):
-        data = proxy_detail
-
-    # Step-level wrappers (e.g. ``PipelineExecutionError`` raised by the DAG
-    # executor) lack ``to_dict`` but preserve the originating step exception
-    # as ``__cause__``. Walk the cause chain so structured ``PipelineError``
-    # subclasses (e.g. ``UnknownPipelineOptionsError``) surface their ``code``
-    # to the final error envelope rather than collapsing to the generic
-    # ``pipeline_execution_failed`` fallback.
     chain: list[BaseException] = []
     current: BaseException | None = exc
     while current is not None and current not in chain:
@@ -65,5 +82,13 @@ def _normalize_pipeline_exception(
                 or "pipeline_execution_failed"
             )
             message = str(payload.get("message") or payload.get("error") or candidate)
-            return code, message, data or payload
-    return "pipeline_execution_failed", str(exc), data
+            if upstream_detail is not None:
+                return code, message, {**payload, _UPSTREAM_DATA_KEY: upstream_detail}
+            return code, message, payload
+    if upstream_detail is not None:
+        return (
+            "pipeline_execution_failed",
+            str(exc),
+            _wrap_upstream_data(upstream_detail),
+        )
+    return "pipeline_execution_failed", str(exc), None

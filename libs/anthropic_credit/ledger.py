@@ -47,7 +47,7 @@ _REQUEST_KIND_INDEX_SQL = (
     "ON entries(request_id, kind)"
 )
 _CREATED_AT_INDEX_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at)"
+    "CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at, id)"
 )
 _RESERVE_UNIQUE_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_reserve_request "
@@ -55,6 +55,43 @@ _RESERVE_UNIQUE_INDEX_SQL = (
 )
 
 _LEDGER_SCHEMA_VERSION = "2"
+_TTL_SWEPT_BEFORE_KEY = "ttl_swept_before"
+_TTL_SWEEP_EPOCH = "1970-01-01T00:00:00+00:00"
+
+SPEND_SINCE_AS_OF_SQL = """
+SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
+FROM entries INDEXED BY idx_entries_created_at
+WHERE created_at >= ?
+ORDER BY id ASC
+"""
+
+OPEN_RESERVE_BEFORE_ASOF_SQL = """
+SELECT r.id, r.usd, r.created_at
+FROM entries r INDEXED BY idx_entries_created_at
+WHERE r.kind = 'reserve'
+  AND r.created_at >= ?
+  AND r.created_at < ?
+  AND NOT EXISTS (
+    SELECT 1 FROM entries c
+    WHERE c.request_id = r.request_id
+      AND c.kind IN ('commit', 'release')
+  )
+ORDER BY r.id ASC
+"""
+
+TTL_EXPIRE_CANDIDATES_SQL = """
+SELECT r.id, r.request_id, r.model, r.usd, r.created_at, r.window_start, r.tag, r.caller_tag, r.mcp_class
+FROM entries r INDEXED BY idx_entries_created_at
+WHERE r.kind = 'reserve'
+  AND r.created_at >= ?
+  AND r.created_at <= ?
+  AND NOT EXISTS (
+      SELECT 1 FROM entries c
+      WHERE c.request_id = r.request_id
+        AND c.kind IN ('commit', 'release')
+  )
+ORDER BY r.id ASC
+"""
 
 _UNSAFE_FS_TYPES = frozenset(
     {"nfs", "nfs4", "cifs", "smb3", "fuse.sshfs", "ceph"}
@@ -256,6 +293,7 @@ class CreditLedger:
     def _connect(self) -> sqlite3.Connection:
         if not self._path.is_file():
             raise LedgerUnavailable(f"ledger file missing: {self._path}")
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(
                 f"file:{self._path}?mode=rw",
@@ -265,13 +303,21 @@ class CreditLedger:
             )
             conn.row_factory = sqlite3.Row
             conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+            CreditLedger._ensure_openable(conn)
             conn.execute(_WINDOW_INDEX_SQL)
             conn.execute(_REQUEST_KIND_INDEX_SQL)
             conn.execute(_CREATED_AT_INDEX_SQL)
             conn.execute(_RESERVE_UNIQUE_INDEX_SQL)
-            CreditLedger._ensure_openable(conn)
             return conn
+        except LedgerUnavailable:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.close()
+            raise
         except (sqlite3.Error, OSError) as exc:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.close()
             raise LedgerUnavailable(f"cannot open ledger {self._path}: {exc}") from exc
 
     def run_immediate(self, fn: Callable[[sqlite3.Connection], T]) -> T:
@@ -305,6 +351,26 @@ class CreditLedger:
                 conn.close()
 
     @staticmethod
+    def _meta_get(conn: sqlite3.Connection, key: str) -> str | None:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ? LIMIT 1",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row[0])
+
+    @staticmethod
+    def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO meta (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+
+    @staticmethod
     def expire_stale_reservations(
         conn: sqlite3.Connection,
         *,
@@ -314,39 +380,20 @@ class CreditLedger:
         reset_at: datetime | None = None,
     ) -> int:
         """Convert open reservations older than ``ttl_minutes`` into full commits."""
-        window_clause = ""
-        window_params: tuple[str, ...] = ()
-        if window_start is not None and reset_at is not None:
-            win_start_iso = window_start.astimezone(UTC).isoformat()
-            reset_iso = reset_at.astimezone(UTC).isoformat()
-            window_clause = """
-              AND (
-                r.window_start = ?
-                OR (r.created_at >= ? AND r.created_at < ?)
-              )
-            """
-            window_params = (win_start_iso, win_start_iso, reset_iso)
+        del window_start, reset_at
+        ttl_delta = timedelta(minutes=ttl_minutes)
+        now_utc = now.astimezone(UTC)
+        expire_before = now_utc - ttl_delta
+        expire_before_iso = expire_before.isoformat()
+        watermark = CreditLedger._meta_get(conn, _TTL_SWEPT_BEFORE_KEY)
+        lower_bound = watermark if watermark else _TTL_SWEEP_EPOCH
 
         open_rows = conn.execute(
-            f"""
-            SELECT r.id, r.request_id, r.model, r.usd, r.created_at, r.window_start, r.tag, r.caller_tag, r.mcp_class
-            FROM entries r
-            WHERE r.kind = 'reserve'
-              AND NOT EXISTS (
-                  SELECT 1 FROM entries c
-                  WHERE c.request_id = r.request_id
-                    AND c.kind IN ('commit', 'release')
-              )
-              {window_clause}
-            ORDER BY r.id ASC
-            """,
-            window_params,
+            TTL_EXPIRE_CANDIDATES_SQL,
+            (lower_bound, expire_before_iso),
         ).fetchall()
 
         expired_count = 0
-        ttl_delta = timedelta(minutes=ttl_minutes)
-        now_iso = now.astimezone(UTC).isoformat()
-
         for row in open_rows:
             try:
                 created_dt = parse_utc_iso(row["created_at"])
@@ -354,26 +401,25 @@ class CreditLedger:
                 raise LedgerUnavailable(
                     f"corrupt created_at in entries id={row['id']}: {exc}"
                 ) from exc
-            age = now - created_dt
-            is_expired = age > ttl_delta if ttl_minutes == 0 else age >= ttl_delta
-            if is_expired:
-                conn.execute(
-                    """
-                    INSERT INTO entries (
-                        kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
-                    ) VALUES ('commit', ?, ?, ?, ?, ?, 'ttl_expired', ?, ?)
-                    """,
-                    (
-                        row["request_id"],
-                        row["model"],
-                        row["usd"],
-                        now_iso,
-                        row["window_start"],
-                        row["caller_tag"] or row["tag"],
-                        int(row["mcp_class"] or 0),
-                    ),
-                )
-                expired_count += 1
+            commit_at = (created_dt + ttl_delta).astimezone(UTC).isoformat()
+            conn.execute(
+                """
+                INSERT INTO entries (
+                    kind, request_id, model, usd, created_at, window_start, tag, caller_tag, mcp_class
+                ) VALUES ('commit', ?, ?, ?, ?, ?, 'ttl_expired', ?, ?)
+                """,
+                (
+                    row["request_id"],
+                    row["model"],
+                    row["usd"],
+                    commit_at,
+                    row["window_start"],
+                    row["caller_tag"] or row["tag"],
+                    int(row["mcp_class"] or 0),
+                ),
+            )
+            expired_count += 1
+        CreditLedger._meta_set(conn, _TTL_SWEPT_BEFORE_KEY, expire_before_iso)
         return expired_count
 
     @staticmethod
@@ -381,16 +427,16 @@ class CreditLedger:
         conn: sqlite3.Connection,
         *,
         as_of: datetime,
+        reservation_ttl_minutes: int = 15,
     ) -> Decimal:
         """Sum committed and open-reserve USD for all rows with activity since ``as_of``."""
         as_of_dt = as_of.astimezone(UTC)
-        rows = conn.execute(
-            """
-            SELECT id, kind, request_id, usd, created_at, tag, caller_tag, mcp_class
-            FROM entries
-            ORDER BY id ASC
-            """
-        ).fetchall()
+        as_of_iso = as_of_dt.isoformat()
+        ttl_minutes = max(0, int(reservation_ttl_minutes))
+        open_reserve_lower_iso = (
+            as_of_dt - timedelta(minutes=ttl_minutes)
+        ).astimezone(UTC).isoformat()
+        rows = conn.execute(SPEND_SINCE_AS_OF_SQL, (as_of_iso,)).fetchall()
 
         def _parse_usd(row: sqlite3.Row) -> Decimal:
             try:
@@ -418,16 +464,44 @@ class CreditLedger:
             elif kind == "release" and req_id:
                 released_req_ids.add(req_id)
 
-        spend = Decimal("0")
-        for req_id, commit_rows in commits_by_req.items():
+        def _row_at_or_after_as_of(row: sqlite3.Row | None) -> bool:
+            if row is None:
+                return False
+            return parse_utc_iso(row["created_at"]) >= as_of_dt
+
+        def _request_touches_as_of(
+            req_id: str,
+            *,
+            reserve_row: sqlite3.Row | None,
+            commit_rows: list[sqlite3.Row],
+        ) -> bool:
+            if _row_at_or_after_as_of(reserve_row):
+                return True
+            return any(_row_at_or_after_as_of(c) for c in commit_rows)
+
+        touched_req_ids: set[str] = set()
+        for req_id in set(commits_by_req) | set(reserve_by_req):
             reserve_row = reserve_by_req.get(req_id)
-            commit_sum = sum(_parse_usd(c) for c in commit_rows)
-            ref = reserve_row if reserve_row is not None else commit_rows[-1]
-            if parse_utc_iso(ref["created_at"]) >= as_of_dt:
-                spend += commit_sum
+            commit_rows = commits_by_req.get(req_id, [])
+            if _request_touches_as_of(
+                req_id, reserve_row=reserve_row, commit_rows=commit_rows
+            ):
+                touched_req_ids.add(req_id)
+
+        spend = Decimal("0")
+        for req_id in touched_req_ids:
+            all_commits = conn.execute(
+                """
+                SELECT usd FROM entries
+                WHERE kind = 'commit' AND request_id = ?
+                ORDER BY id ASC
+                """,
+                (req_id,),
+            ).fetchall()
+            spend += sum(_parse_usd(row) for row in all_commits)
 
         for c_row in unlinked_commits:
-            if parse_utc_iso(c_row["created_at"]) >= as_of_dt:
+            if _row_at_or_after_as_of(c_row):
                 spend += _parse_usd(c_row)
 
         for req_id, r_row in reserve_by_req.items():
@@ -435,8 +509,15 @@ class CreditLedger:
                 continue
             if commits_by_req.get(req_id):
                 continue
-            if parse_utc_iso(r_row["created_at"]) >= as_of_dt:
+            if _row_at_or_after_as_of(r_row):
                 spend += _parse_usd(r_row)
+
+        open_before_as_of = conn.execute(
+            OPEN_RESERVE_BEFORE_ASOF_SQL,
+            (open_reserve_lower_iso, as_of_iso),
+        ).fetchall()
+        for row in open_before_as_of:
+            spend += _parse_usd(row)
 
         return spend
 
@@ -558,7 +639,9 @@ class CreditLedger:
 
         if as_of is not None:
             spend_since_as_of = CreditLedger.compute_spend_since_as_of(
-                conn, as_of=as_of
+                conn,
+                as_of=as_of,
+                reservation_ttl_minutes=reservation_ttl_minutes,
             )
 
         return WindowSnapshot(

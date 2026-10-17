@@ -19,6 +19,9 @@ from systems.pipeline.core.prompts import PromptBuilder
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
 
+_QUOTA_MESSAGE_TOKEN_RE = re.compile(
+    r"\b(insufficient_quota|billing_hard_limit_reached)\b"
+)
 _EXCERPT_MAX = 1200
 _EXCERPT_SUFFIX = " [truncated]"
 _FENCE_TAG = re.compile(
@@ -216,21 +219,24 @@ class WritingAssembleHandler(BaseHandler):
             {"documents": documents, "brief": brief_block},
         )
         output = str(_unwrap(options.get("output", "envelope"), "envelope"))
-        return _step(
-            {
-                "ok": True,
-                "refused": None,
-                "pin_ledger": pins,
-                "documents_block": documents,
-                "brief_block": brief_block,
-                "packet": packet,
-                "writer_seat": seats["writer_seat"],
-                "reviewer_seat": seats["reviewer_seat"],
-                "sensitivity": seats["sensitivity"],
-                "dispatch_thread_id": seats["dispatch_thread_id"],
-                "output": output,
-            }
-        )
+        success: dict[str, Any] = {
+            "ok": True,
+            "refused": None,
+            "pin_ledger": pins,
+            "documents_block": documents,
+            "brief_block": brief_block,
+            "packet": packet,
+            "writer_seat": seats["writer_seat"],
+            "reviewer_seat": seats["reviewer_seat"],
+            "sensitivity": seats["sensitivity"],
+            "dispatch_thread_id": seats["dispatch_thread_id"],
+            "output": output,
+        }
+        if seats.get("writer_model"):
+            success["writer_model"] = seats["writer_model"]
+        if seats.get("reviewer_model"):
+            success["reviewer_model"] = seats["reviewer_model"]
+        return _step(success)
 
 
 def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
@@ -252,9 +258,191 @@ def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
 
 
 _WRITER_SEATS = frozenset({"local", "cdp", "cursor_pool1"})
-_REVIEWER_SEATS = frozenset({"auto", "local", "cdp"})
+_REVIEWER_SEATS = frozenset({"auto", "local", "cdp", "openai"})
 _DEFAULT_THREAD = "15790"
 _REFUSED_THREAD = "12286"
+_DEFAULT_SEAT_MODELS = {
+    "cdp": "cdp/opus-5.5",
+    "cursor_pool1": "cursor/grok-4.7",
+    "openai": "openai/gpt-5.5",
+}
+
+
+def _seat_models(options: dict[str, Any]) -> dict[str, str]:
+    raw = _unwrap(options.get("seat_models", _DEFAULT_SEAT_MODELS), _DEFAULT_SEAT_MODELS)
+    if not isinstance(raw, dict):
+        return dict(_DEFAULT_SEAT_MODELS)
+    merged = dict(_DEFAULT_SEAT_MODELS)
+    for key, value in raw.items():
+        if value is not None:
+            merged[str(key)] = str(value)
+    return merged
+
+
+def _writer_model_id(options: dict[str, Any], writer_seat: str) -> str:
+    override = options.get("writer_model")
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+    if writer_seat == "local":
+        from .independence import load_writing_models
+
+        return load_writing_models().get("writer") or ""
+    return _seat_models(options).get(writer_seat, "")
+
+
+def _is_anthropic_api_writer(model_id: str) -> bool:
+    return str(model_id or "").lower().startswith("anthropic/")
+
+
+_QUOTA_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached"})
+
+
+def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> str:
+    """Return a carded openai/gpt-5.x model id for an openai reviewer seat."""
+    from model_capabilities.model_capabilities import MODEL_CAPABILITY_CARDS
+
+    models = seat_models or _DEFAULT_SEAT_MODELS
+    raw = str(models.get("openai") or _DEFAULT_SEAT_MODELS["openai"])
+    if raw in MODEL_CAPABILITY_CARDS and raw.lower().startswith("openai/gpt-5"):
+        return raw
+    raise ValueError(
+        f"openai reviewer model {raw!r} is not a carded openai/gpt-5.x id"
+    )
+
+
+def _quota_code_in_mapping(data: dict[str, Any]) -> str | None:
+    for key in ("error_code", "code", "type"):
+        token = str(data.get(key) or "")
+        if token in _QUOTA_CODES:
+            return token
+        lowered = token.lower()
+        if lowered in _QUOTA_CODES:
+            return lowered
+    error = data.get("error")
+    if isinstance(error, dict):
+        for key in ("code", "type"):
+            token = str(error.get(key) or "")
+            if token in _QUOTA_CODES:
+                return token
+            lowered = token.lower()
+            if lowered in _QUOTA_CODES:
+                return lowered
+    upstream = data.get("upstream_error")
+    if isinstance(upstream, dict):
+        nested = upstream.get("error")
+        if isinstance(nested, dict):
+            for key in ("code", "type"):
+                token = str(nested.get(key) or "")
+                if token in _QUOTA_CODES:
+                    return token
+                lowered = token.lower()
+                if lowered in _QUOTA_CODES:
+                    return lowered
+    return None
+
+
+def _walk_quota_payload(record: dict[str, Any]) -> str | None:
+    stack: list[Any] = [record]
+    seen: set[int] = set()
+    while stack:
+        obj = stack.pop()
+        if not isinstance(obj, dict):
+            continue
+        oid = id(obj)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        code = _quota_code_in_mapping(obj)
+        if code:
+            return code
+        for key in ("data", "detail", "error", "upstream_error", "upstream"):
+            nested = obj.get(key)
+            if isinstance(nested, dict):
+                stack.append(nested)
+    return None
+
+
+def _quota_token_in_message(message: str) -> str | None:
+    match = _QUOTA_MESSAGE_TOKEN_RE.search(message)
+    return match.group(1) if match else None
+
+
+def openai_reviewer_quota_reason(record: dict[str, Any]) -> str | None:
+    """Return the matched OpenAI quota token, or None when not a quota failure."""
+    structured = _walk_quota_payload(record)
+    if structured:
+        return structured
+    error = record.get("error")
+    if isinstance(error, dict):
+        token = _quota_token_in_message(str(error.get("message") or ""))
+        if token:
+            return token
+        structured = _walk_quota_payload(error)
+        if structured:
+            return structured
+    message = record.get("message")
+    if isinstance(message, str):
+        token = _quota_token_in_message(message)
+        if token:
+            return token
+    return None
+
+
+def is_openai_reviewer_quota_error(record: dict[str, Any]) -> bool:
+    """True when an OpenAI reviewer dispatch or execution failed for quota."""
+    return openai_reviewer_quota_reason(record) is not None
+
+
+def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -> dict[str, Any]:
+    """Review-step payload when OpenAI reviewer credit is unavailable."""
+    return {
+        "ok": False,
+        "refused": "held_reviewer_unfunded",
+        "status": "held_reviewer_unfunded",
+        "reason": reason,
+        "findings": None,
+        "verdict": None,
+    }
+
+
+async def post_reviewer_unfunded_bus_report(
+    *,
+    thread_id: str,
+    reason: str,
+    writer_model: str,
+    reviewer_model: str,
+    bus_client: Any | None = None,
+) -> bool:
+    """Emit a held_reviewer_unfunded bus turn; False when transport/post fails."""
+    import os
+
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
+
+    body = (
+        "writer-specialist-v1: review held — OpenAI reviewer unfunded "
+        f"({reason}); writer={writer_model!r} reviewer={reviewer_model!r}; "
+        "no anthropic or cdp reviewer fallback."
+    )
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    payload = {
+        "thread": thread_id,
+        "from": "pipeline:writer-specialist-v1",
+        "to": "web-anthropic",
+        "subject": "writer-specialist-v1 review held",
+        "body": body,
+        "status": "open",
+    }
+    try:
+        if bus_client is not None:
+            resp = await bus_client.post("/turns", json=payload, headers=headers)
+            status = getattr(resp, "status_code", 200)
+            return isinstance(status, int) and status < 400
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = await client.post("/turns", json=payload, headers=headers)
+            return resp.status_code < 400
+    except Exception:
+        return False
 
 
 def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
@@ -281,11 +469,16 @@ def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, 
         return {
             "ok": False,
             "refused": "reviewer_seat_unavailable",
-            "error": "reviewer_seat must be auto, local, or cdp",
+            "error": "reviewer_seat must be auto, local, cdp, or openai",
         }
+    writer_model = _writer_model_id(options, writer_seat)
+    anthropic_writer = _is_anthropic_api_writer(writer_model)
     reviewer_seat = reviewer_given
     if reviewer_seat == "auto":
-        reviewer_seat = "cdp" if sensitivity == "sensitive" else "local"
+        if anthropic_writer:
+            reviewer_seat = "openai"
+        else:
+            reviewer_seat = "cdp" if sensitivity == "sensitive" else "local"
     if reviewer_seat == "local" and sensitivity == "sensitive":
         return {
             "ok": False,
@@ -295,6 +488,19 @@ def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, 
     allow = options.get("allow_partial_independence", False)
     if isinstance(allow, dict) and "default" in allow:
         allow = allow.get("default", False)
+    if (
+        anthropic_writer
+        and reviewer_given == "cdp"
+        and allow is not True
+    ):
+        return {
+            "ok": False,
+            "refused": "reviewer_seat_unavailable",
+            "error": (
+                "anthropic API writer requires an independent openai reviewer; "
+                "cdp reviewer refused"
+            ),
+        }
     if writer_seat == "cdp" and reviewer_seat == "cdp" and allow is not True:
         return {
             "ok": False,
@@ -326,12 +532,26 @@ def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, 
                 "refused": "options_invalid",
                 "error": "dispatch_thread_id_invalid",
             }
-    return {
+    payload: dict[str, Any] = {
         "writer_seat": writer_seat,
         "reviewer_seat": reviewer_seat,
         "sensitivity": sensitivity,
         "dispatch_thread_id": thread or _DEFAULT_THREAD,
     }
+    if anthropic_writer:
+        payload["writer_model"] = writer_model
+    if reviewer_seat == "openai":
+        try:
+            payload["reviewer_model"] = resolve_openai_reviewer_model(
+                _seat_models(options)
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "refused": "reviewer_seat_unavailable",
+                "error": str(exc),
+            }
+    return payload
 
 
 def _validate_brief(raw: Any) -> dict[str, Any]:
