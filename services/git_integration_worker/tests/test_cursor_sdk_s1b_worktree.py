@@ -244,6 +244,32 @@ def test_mint_refuses_when_main_checkout_off_default_branch(
     )
 
 
+def test_mint_allows_local_master_when_origin_head_is_main(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """origin/HEAD → main must still mint when the checkout is on master.
+
+    Breaks for cryptax: local master is the mint branch point and the
+    checked-out branch, while refs/remotes/origin/HEAD points at origin/main.
+    """
+    _git("branch", "main", "master", cwd=source_repo)
+    _git(
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+        cwd=source_repo,
+    )
+    worktree_root = tmp_path / "worktrees"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="mint-origin-head",
+        thread_id="cryptax-shape",
+    )
+    assert _git("branch", "--show-current", cwd=source_repo).stdout.strip() == "master"
+    assert wt.is_dir()
+
+
 def test_s1b_mint_reattaches_existing_lane_branch(
     source_repo: Path, tmp_path: Path
 ) -> None:
