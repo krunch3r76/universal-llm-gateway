@@ -127,6 +127,12 @@ async def requeue_after_transient_eviction(
         for g in federated_gateways_to_routing_candidates(fresh_gateways)
         if g.name not in (context.excluded_gateway_ids or set())
     ]
+    from systems.federation.common.config.schema import EndpointCategory
+
+    acquire_deadline_mono = None
+    if getattr(context, "routing_endpoint_category", None) == EndpointCategory.EMBEDDING:
+        acquire_deadline_mono = getattr(context, "_capacity_deadline_mono", None)
+
     selected_gateway = await acquire_admission_token(
         context=context,
         selected_gateway=selected_gateway,
@@ -139,6 +145,7 @@ async def requeue_after_transient_eviction(
         overflow_origin_gateway=None,
         overflow_depth_before=0,
         selection_trace=trace,
+        acquire_deadline_mono=acquire_deadline_mono,
     )
 
     return await finalize_selection_and_load(

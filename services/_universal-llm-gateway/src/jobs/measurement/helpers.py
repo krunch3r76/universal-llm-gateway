@@ -229,9 +229,13 @@ async def _write_per_file_catalog_results(
             if schema_name == "llama-cpp" and n_gpu_layers is not None:
                 profile_entry["n_gpu_layers"] = n_gpu_layers
 
-            devices.setdefault(device_key, {}).setdefault("profiles", {})[ctx_str] = (
-                profile_entry
-            )
+            profiles = devices.setdefault(device_key, {}).setdefault("profiles", {})
+            existing = profiles.get(ctx_str)
+            if isinstance(existing, dict):
+                merged = {**existing, **profile_entry}
+            else:
+                merged = profile_entry
+            profiles[ctx_str] = merged
             success_count += 1
 
         if not success_count:

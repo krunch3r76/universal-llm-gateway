@@ -201,9 +201,7 @@ async def execute_embedding_request(
         apply_capacity_deadline,
     )
     from systems.proxy.core.nonstreaming.executor.embedding_failover import (
-        CPU_EMBEDDING_MODEL_ID,
-        capacity_budget_expired,
-        http_exception_triggers_cpu_failover,
+        run_embedding_with_cpu_failover,
     )
 
     parsed_model_id = ModelId.parse(model_id)
@@ -235,86 +233,24 @@ async def execute_embedding_request(
     )
 
     cpu_failover_enabled = query_cpu_failover_enabled or batch_cpu_failover_enabled
-    attempt_models = [parsed_model_id]
-    if cpu_failover_enabled:
-        attempt_models.append(ModelId.parse(CPU_EMBEDDING_MODEL_ID))
-
     fed_gateway = None
-    last_exc: Exception | None = None
     try:
-        for attempt_idx, active_model in enumerate(attempt_models):
-            if attempt_idx > 0 and not cpu_failover_enabled:
-                break
-            context.selected_model = active_model
-            active_body = {**request_body, "model": str(active_model)}
-            try:
-                await select_gateway_fn(context)
-            except HTTPException as sel_exc:
-                last_exc = sel_exc
-                if (
-                    attempt_idx == 0
-                    and cpu_failover_enabled
-                    and (
-                        http_exception_triggers_cpu_failover(sel_exc)
-                        or capacity_budget_expired(context)
-                    )
-                ):
-                    continue
-                raise
-
-            fed_gateway = context.federated_gateway
-            if not fed_gateway:
-                no_gw = HTTPException(
-                    status_code=503,
-                    detail=error_envelope(
-                        code=ErrorCode.RESOURCE_UNAVAILABLE,
-                        message=f"No gateway available for model: {active_model}",
-                        source="master",
-                        retryable=True,
-                        data={"model_id": str(active_model)},
-                    ),
-                )
-                last_exc = no_gw
-                if attempt_idx == 0 and cpu_failover_enabled:
-                    continue
-                raise no_gw
-
-            try:
-                result = await _forward_with_retry(
-                    forward_fn=forward_embedding_fn,
-                    fed_gateway=fed_gateway,
-                    request_body=active_body,
-                    request_id=resolved_request_id,
-                    parsed_model_id=active_model,
-                    oom_recovery_fn=oom_recovery_fn,
-                )
-            except HTTPException as fwd_exc:
-                last_exc = fwd_exc
-                if (
-                    attempt_idx == 0
-                    and cpu_failover_enabled
-                    and (
-                        http_exception_triggers_cpu_failover(fwd_exc)
-                        or capacity_budget_expired(context)
-                    )
-                ):
-                    await release_capacity_token_fn(context)
-                    continue
-                raise
-
-            await emit_execution_completed(
-                event_bus=event_bus,
-                url=fed_gateway.remote_stargate_url,
-                model_id=context.selected_model.routing_key,
-                request_id=resolved_request_id,
-                gateway_id=fed_gateway.gateway_id,
-            )
-            return result
-
-        if last_exc is not None:
-            raise last_exc
-        raise HTTPException(status_code=503, detail="Embedding routing failed")
+        return await run_embedding_with_cpu_failover(
+            context=context,
+            parsed_model_id=parsed_model_id,
+            request_body=request_body,
+            resolved_request_id=resolved_request_id,
+            select_gateway_fn=select_gateway_fn,
+            forward_with_retry_fn=_forward_with_retry,
+            forward_embedding_fn=forward_embedding_fn,
+            release_capacity_token_fn=release_capacity_token_fn,
+            emit_execution_completed_fn=emit_execution_completed,
+            event_bus=event_bus,
+            oom_recovery_fn=oom_recovery_fn,
+            cpu_failover_enabled=cpu_failover_enabled,
+        )
     except Exception as e:
+        fed_gateway = context.federated_gateway
         gateway_url = fed_gateway.remote_stargate_url if fed_gateway else "unknown"
         gateway_id = fed_gateway.gateway_id if fed_gateway else "unknown"
         await emit_execution_failed(

@@ -74,14 +74,18 @@ async def wait_for_retryable_capacity(
     # _capacity_deadline_mono is the overall capacity deadline (may be shorter
     # due to inference hint); fall back to it only if the dedicated field is absent.
     queue_wait_s = getattr(context, "queue_wait_timeout_s", None)
+    deadline = getattr(context, "_capacity_deadline_mono", None)
+    deadline_remaining = (
+        max(0.0, deadline - queue_start) if deadline is not None else None
+    )
     if queue_wait_s is not None and queue_wait_s > 0:
         queue_timeout = queue_wait_s
+        if deadline_remaining is not None:
+            queue_timeout = min(queue_timeout, deadline_remaining)
+    elif deadline_remaining is not None:
+        queue_timeout = deadline_remaining
     else:
-        deadline = getattr(context, "_capacity_deadline_mono", None)
-        if deadline is not None:
-            queue_timeout = max(0.0, deadline - queue_start)
-        else:
-            queue_timeout = _DEFAULT_PRE_ROUTE_TIMEOUT_S
+        queue_timeout = _DEFAULT_PRE_ROUTE_TIMEOUT_S
 
     register_demand(routing_key, context.request_id)
 

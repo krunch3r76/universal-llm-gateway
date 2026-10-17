@@ -56,6 +56,7 @@ async def acquire_admission_token(
     overflow_origin_gateway: str | None,
     overflow_depth_before: int,
     selection_trace=None,
+    acquire_deadline_mono: float | None = None,
 ) -> "Gateway | None":
     """
     Reserve request capacity and return the final assigned gateway.
@@ -176,9 +177,8 @@ async def acquire_admission_token(
         )
 
     acquire_timeout_s: float | None = None
-    deadline = getattr(context, "_capacity_deadline_mono", None)
-    if deadline is not None:
-        acquire_timeout_s = max(0.0, deadline - time.monotonic())
+    if acquire_deadline_mono is not None:
+        acquire_timeout_s = max(0.0, acquire_deadline_mono - time.monotonic())
 
     acquire_kwargs = {
         "request_id": context.request_id,

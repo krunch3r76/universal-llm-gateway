@@ -8,29 +8,66 @@ hard-coded in eviction logic.
 from __future__ import annotations
 
 import functools
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from model_id import ModelId
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_RAG_MODELS = _REPO_ROOT / "pipelines" / "rag" / "models.yaml"
-_CONTEXTUALIZE_MODELS = _REPO_ROOT / "pipelines" / "rag_contextualize" / "models.yaml"
+logger = logging.getLogger(__name__)
+
+_ULG_REPO_DIRNAME = "universal-llm-gateway"
+_RAG_MODELS_REL = Path("pipelines") / "rag" / "models.yaml"
+_CONTEXTUALIZE_MODELS_REL = Path("pipelines") / "rag_contextualize" / "models.yaml"
+_yaml_missing_logged = False
+
+
+def _repo_root() -> Path:
+    here = Path(__file__).resolve().parents[4]
+    candidates: list[Path] = [here]
+    env_root = os.environ.get("PROJECT_ROOT")
+    if env_root:
+        candidates.append(Path(env_root).expanduser())
+    candidates.append(Path("/mnt/torus/projects").expanduser())
+    seen: set[Path] = set()
+    for root in candidates:
+        if root in seen:
+            continue
+        seen.add(root)
+        if (root / _RAG_MODELS_REL).is_file():
+            return root
+        nested = root / _ULG_REPO_DIRNAME
+        if (nested / _RAG_MODELS_REL).is_file():
+            return nested
+    return here
 
 
 def _read_models_yaml(path: Path) -> dict[str, Any]:
+    global _yaml_missing_logged
     if not path.is_file():
+        if not _yaml_missing_logged:
+            logger.error("RAG protected models yaml missing: %s", path)
+            _yaml_missing_logged = True
         return {}
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     models = raw.get("models")
     return models if isinstance(models, dict) else {}
 
 
+def _rag_models_path() -> Path:
+    return _repo_root() / _RAG_MODELS_REL
+
+
+def _contextualize_models_path() -> Path:
+    return _repo_root() / _CONTEXTUALIZE_MODELS_REL
+
+
 @functools.lru_cache(maxsize=1)
 def rag_embedding_model_id() -> str | None:
     """Configured embedding model id (pipelines/rag/models.yaml embedding alias)."""
-    models = _read_models_yaml(_RAG_MODELS)
+    models = _read_models_yaml(_rag_models_path())
     emb = models.get("embedding")
     if isinstance(emb, dict):
         mid = emb.get("model")
@@ -41,7 +78,7 @@ def rag_embedding_model_id() -> str | None:
 
 @functools.lru_cache(maxsize=1)
 def rag_contextualize_model_id() -> str | None:
-    models = _read_models_yaml(_CONTEXTUALIZE_MODELS)
+    models = _read_models_yaml(_contextualize_models_path())
     ctx = models.get("contextualize")
     if isinstance(ctx, dict):
         mid = ctx.get("model")
@@ -78,6 +115,27 @@ def is_rag_protected_model(model_id: ModelId) -> bool:
     if ctx_key and model_id.routing_key == ctx_key:
         return True
     return False
+
+
+def verify_rag_embedding_config_matches_yaml(
+    config_embedding_model: str | None,
+) -> None:
+    """Startup check: rag config embedding_model must match pipelines alias."""
+    yaml_id = rag_embedding_model_id()
+    if yaml_id is None:
+        logger.error(
+            "RAG embedding model id unavailable from %s; config=%s",
+            _rag_models_path(),
+            config_embedding_model,
+        )
+        return
+    if not config_embedding_model or config_embedding_model.strip() != yaml_id:
+        logger.error(
+            "RAG config.embedding_model=%r does not match pipelines/rag/models.yaml "
+            "embedding alias %r",
+            config_embedding_model,
+            yaml_id,
+        )
 
 
 def clear_rag_protected_cache() -> None:

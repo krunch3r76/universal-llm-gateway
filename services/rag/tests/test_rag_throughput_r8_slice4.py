@@ -5,14 +5,29 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from services.rag.config._models import DEFAULT_QUERY_EMBED_REQUEST_TIMEOUT_S
-from services.rag.contextualize import CONTEXTUALIZE_GLOBAL_MAX, contextualize_chunks
+from services.rag.contextualize import (
+    CONTEXTUALIZE_GLOBAL_MAX,
+    contextualize_chunks,
+    contextualize_inflight_permits,
+)
 from services.rag.embeddings.constants import QUERY_EMBED_REQUEST_TIMEOUT_S
 from services.rag.embeddings.cosine_similarity import cosine_similarity
+from services.rag.property_index import PropertyIndex
 from services.rag.search_scope.property_boost import apply_property_boost
+
+
+@pytest.fixture(autouse=True)
+def _reset_contextualize_budget() -> None:
+    import services.rag.contextualize as contextualize_mod
+
+    contextualize_mod._contextualize_budget_available = CONTEXTUALIZE_GLOBAL_MAX
+    contextualize_mod._contextualize_inflight_permits = 0
+    yield
 
 
 def test_4_23_query_embed_timeout_default_not_rag_client_ceiling() -> None:
@@ -33,27 +48,26 @@ def test_4_24_fixture_has_twenty_texts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_4_25_property_boost_batch_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[list[str]] = []
-
-    class _Index:
-        async def run_sqlite_async(self, fn):
-            return fn()
-
-        def lookup_keys_batch(self, keys: list[str]) -> set[str]:
-            calls.append(keys)
-            return {"chunk-a"} if keys else set()
-
-    ids, chunks, metas, dists, hits = await apply_property_boost(
-        ids=["chunk-a", "chunk-b"],
-        chunks=["a", "b"],
-        metadatas=[{}, {}],
-        distances=[0.5, 0.6],
-        query="Gateway Stargate",
-        property_index=_Index(),  # type: ignore[arg-type]
-        boost_factor=0.5,
-    )
-    assert len(calls) == 1
+async def test_4_25_property_boost_batch_lookup() -> None:
+    db_path = Path("/tmp") / f"prop-boost-{uuid4().hex}.sqlite"
+    index = PropertyIndex(db_path=db_path)
+    await index.start()
+    try:
+        await index.add("prop.name@@Gateway", "chunk-a", source="doc")
+        ids, _chunks, _metas, dists, hits = await asyncio.wait_for(
+            apply_property_boost(
+                ids=["chunk-a", "chunk-b"],
+                chunks=["a", "b"],
+                metadatas=[{}, {}],
+                distances=[0.5, 0.6],
+                query="Gateway Stargate",
+                property_index=index,
+                boost_factor=0.5,
+            ),
+            timeout=2.0,
+        )
+    finally:
+        await index.stop()
     assert hits == 1
     assert dists[0] == pytest.approx(0.25)
 
@@ -61,18 +75,13 @@ async def test_4_25_property_boost_batch_lookup(monkeypatch: pytest.MonkeyPatch)
 @pytest.mark.asyncio
 async def test_4_28_contextualize_global_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     assert CONTEXTUALIZE_GLOBAL_MAX == 8
-    in_flight = 0
-    max_in_flight = 0
-    lock = asyncio.Lock()
+    peak_permits = 0
 
     async def _fake_post(*args, **kwargs):
-        nonlocal in_flight, max_in_flight
-        async with lock:
-            in_flight += 1
-            max_in_flight = max(max_in_flight, in_flight)
-        await asyncio.sleep(0.05)
-        async with lock:
-            in_flight -= 1
+        nonlocal peak_permits
+        peak_permits = max(peak_permits, contextualize_inflight_permits())
+        n = len(kwargs.get("json", {}).get("pipeline_options", {}).get("chunks", []))
+        payload = json.dumps([{"context": "ok"}] * max(1, n))
 
         class _Resp:
             status_code = 200
@@ -81,19 +90,27 @@ async def test_4_28_contextualize_global_cap(monkeypatch: pytest.MonkeyPatch) ->
                 return None
 
             def json(self) -> dict:
-                return {
-                    "choices": [{"message": {"content": '[{"context": "ok"}]'}}],
-                }
+                return {"choices": [{"message": {"content": payload}}]}
 
+        await asyncio.sleep(0.03)
         return _Resp()
 
-    monkeypatch.setattr("services.rag.contextualize._CLIENT.post", _fake_post)
+    import services.rag.contextualize as contextualize_mod
+
+    monkeypatch.setattr(contextualize_mod, "_CLIENT", type("_C", (), {"post": _fake_post})())
     from services.rag.chunkers import Chunk
 
-    chunks = [Chunk(text=f"t{i}", metadata={}) for i in range(6)]
-    tasks = [
-        contextualize_chunks(chunks[:1], source=f"f{i}", model="qwen3-5-9b-q8-0-131072")
-        for i in range(6)
-    ]
-    await asyncio.gather(*tasks)
-    assert max_in_flight <= 8
+    worker_sem = asyncio.Semaphore(4)
+
+    async def _one_file(file_idx: int) -> None:
+        async with worker_sem:
+            chunks = [Chunk(text=f"t{file_idx}-{i}", metadata={}) for i in range(8)]
+            await contextualize_chunks(
+                chunks,
+                source=f"f{file_idx}",
+                model="qwen3-5-9b-q8-0-131072",
+            )
+
+    await asyncio.gather(*[_one_file(i) for i in range(20)])
+    assert peak_permits <= 8
+    assert peak_permits >= 5

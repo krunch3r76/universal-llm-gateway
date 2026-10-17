@@ -98,6 +98,12 @@ async def _route_to_federated_gateway(
         stability_tracker=stability_tracker,
     )
 
+    from systems.federation.common.config.schema import EndpointCategory
+
+    acquire_deadline_mono = None
+    if getattr(context, "routing_endpoint_category", None) == EndpointCategory.EMBEDDING:
+        acquire_deadline_mono = getattr(context, "_capacity_deadline_mono", None)
+
     selected_gateway = await acquire_admission_token(
         context=context,
         selected_gateway=selected_gateway,
@@ -110,6 +116,7 @@ async def _route_to_federated_gateway(
         overflow_origin_gateway=overflow_origin_gateway,
         overflow_depth_before=overflow_depth_before,
         selection_trace=trace,
+        acquire_deadline_mono=acquire_deadline_mono,
     )
 
     if selected_gateway is None:

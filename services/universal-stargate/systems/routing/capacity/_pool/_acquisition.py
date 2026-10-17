@@ -48,8 +48,11 @@ class _AcquisitionMixin:
         """
         self._ensure_subscribed()  # type: ignore[attr-defined]
         wait_deadline: float | None = None
-        if timeout_s is not None and timeout_s > 0:
-            wait_deadline = time.monotonic() + timeout_s
+        if timeout_s is not None:
+            if timeout_s <= 0:
+                wait_deadline = time.monotonic()
+            else:
+                wait_deadline = time.monotonic() + timeout_s
         gateway_id = self._try_immediate(request_id, model_id, allowed_gateway_ids)
         queued = False
 
@@ -200,6 +203,15 @@ class _AcquisitionMixin:
         try:
             while True:
                 if wait_deadline is not None and time.monotonic() >= wait_deadline:
+                    if future.done() and not future.cancelled():
+                        gateway_id = future.result()
+                        logger.info(
+                            "Admitted at deadline: %s → %s/%s",
+                            request_id,
+                            gateway_id,
+                            model_id,
+                        )
+                        return gateway_id
                     self._remove_waiter(  # type: ignore[attr-defined]
                         request_id,
                         reason="acquire_timeout",

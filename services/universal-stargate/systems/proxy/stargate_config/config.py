@@ -213,6 +213,16 @@ class StargateConfig:
             },
         )
 
+    def get_embedding_failover_config(self) -> dict[str, bool]:
+        """CPU embedding failover toggles (default off for query and batch)."""
+        section = self.config.get("embedding_failover", {})
+        if not isinstance(section, dict):
+            return {"query_cpu_failover": False, "batch_cpu_failover": False}
+        return {
+            "query_cpu_failover": bool(section.get("query_cpu_failover", False)),
+            "batch_cpu_failover": bool(section.get("batch_cpu_failover", False)),
+        }
+
     def get_capacity_pool_config(self) -> dict[str, Any]:
         """Return CapacityPool queue depth and loading-placeholder settings."""
         raw_section = self.config.get("capacity_pool", {})

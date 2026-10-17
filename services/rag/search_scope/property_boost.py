@@ -76,10 +76,7 @@ async def apply_property_boost(
 
     keys = [f"prop.name@@{term}" for term in terms]
 
-    def _batch_lookup() -> set[str]:
-        return property_index.lookup_keys_batch(keys)
-
-    hit_chunk_ids = await property_index.run_sqlite_async(_batch_lookup)
+    hit_chunk_ids = await property_index.lookup_keys_batch_async(keys)
 
     if not hit_chunk_ids:
         return ids, chunks, metadatas, distances, 0

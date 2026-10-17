@@ -70,6 +70,15 @@ _OVERFLOW_MODEL = ModelId.parse("qwen3-5-9b-q8-0-131072")
 
 
 @pytest.fixture(autouse=True)
+def _clear_rag_protected_cache() -> None:
+    from systems.routing.rag_protected_models import clear_rag_protected_cache
+
+    clear_rag_protected_cache()
+    yield
+    clear_rag_protected_cache()
+
+
+@pytest.fixture(autouse=True)
 def _pin_stargate_sys_path() -> None:
     """Keep universal-stargate ahead of gateway ``src`` after cross-package tests."""
     while _stargate_root in sys.path:
@@ -589,6 +598,9 @@ async def test_4_37_acquire_token_budget_returns_503() -> None:
         middleware_actions=[],
     )
     context.model_sticky = False
+    from systems.federation.common.config.schema import EndpointCategory
+
+    context.routing_endpoint_category = EndpointCategory.EMBEDDING
     apply_capacity_deadline(
         context,
         routing_config={"request_queue": {"queue_timeout": 300.0}},
@@ -606,6 +618,7 @@ async def test_4_37_acquire_token_budget_returns_503() -> None:
             allowed_gateway_ids_override=None,
             overflow_origin_gateway=None,
             overflow_depth_before=0,
+            acquire_deadline_mono=context._capacity_deadline_mono,
         )
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail["code"] == ErrorCode.GATEWAY_AT_CAPACITY

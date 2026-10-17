@@ -27,6 +27,7 @@ from ._parsing import (
     _parse_scopes,
     _parse_watch_directories,
     _pipeline_contextualize_model,
+    _pipeline_embedding_model,
     _pipeline_vocab_model,
     _resolve_path,
 )
@@ -368,6 +369,20 @@ def load_config() -> RagConfig:
         vocabulary_mode = raw_vocab_mode.strip().lower()
     else:
         vocabulary_mode = "local"
+    yaml_embedding = _pipeline_embedding_model()
+    if not yaml_embedding:
+        logger.error(
+            "pipelines/rag/models.yaml embedding alias missing; config embedding_model=%r",
+            embedding_model,
+        )
+    elif embedding_model != yaml_embedding:
+        logger.error(
+            "rag config embedding_model=%r does not match pipelines/rag/models.yaml "
+            "embedding alias %r",
+            embedding_model,
+            yaml_embedding,
+        )
+
     # Derived from pipelines/vocab_classify/models.yaml — not read from rag.yaml.
     vocabulary_model = _pipeline_vocab_model()
     raw_taxonomy = parsed_root.get("vocabulary_taxonomy")

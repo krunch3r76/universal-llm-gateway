@@ -144,7 +144,8 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": [formatted]},
                 headers={
-                    "X-Request-Timeout": str(int(get_query_embed_request_timeout_s())),
+                    "X-Request-Timeout": str(get_query_embed_request_timeout_s()),
+                    "X-Embedding-Class": "query",
                 },
             )
             if _is_transient_status(response.status_code):

@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import inspect
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -41,14 +42,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CONTEXTUALIZE_GLOBAL_MAX = 8
-_contextualize_global_sem: asyncio.Semaphore | None = None
+_contextualize_budget_available = CONTEXTUALIZE_GLOBAL_MAX
+_contextualize_inflight_permits = 0
+_contextualize_budget_lock: asyncio.Lock | None = None
 
 
-def _contextualize_global_semaphore() -> asyncio.Semaphore:
-    global _contextualize_global_sem
-    if _contextualize_global_sem is None:
-        _contextualize_global_sem = asyncio.Semaphore(CONTEXTUALIZE_GLOBAL_MAX)
-    return _contextualize_global_sem
+def _get_contextualize_budget_lock() -> asyncio.Lock:
+    global _contextualize_budget_lock
+    if _contextualize_budget_lock is None:
+        _contextualize_budget_lock = asyncio.Lock()
+    return _contextualize_budget_lock
+
+
+def contextualize_inflight_permits() -> int:
+    """Test hook: weighted in-flight contextualize request permits (cap 8)."""
+    return _contextualize_inflight_permits
+
+
+@asynccontextmanager
+async def _contextualize_inflight_budget(chunk_count: int):
+    """Acquire min(chunks, 8) permits atomically from the rag-wide budget of 8."""
+    global _contextualize_inflight_permits, _contextualize_budget_available
+    permits = min(chunk_count, CONTEXTUALIZE_GLOBAL_MAX)
+    lock = _get_contextualize_budget_lock()
+    while True:
+        async with lock:
+            if _contextualize_budget_available >= permits:
+                _contextualize_budget_available -= permits
+                _contextualize_inflight_permits += permits
+                break
+        await asyncio.sleep(0)
+    try:
+        yield permits
+    finally:
+        async with lock:
+            _contextualize_inflight_permits -= permits
+            _contextualize_budget_available += permits
 
 
 _NEIGHBOR_CHARS = 800
@@ -269,7 +298,7 @@ async def contextualize_chunks(
     ]
 
     try:
-        async with _contextualize_global_semaphore():
+        async with _contextualize_inflight_budget(len(chunks)):
             response = await _CLIENT.post(
                 "/v1/chat/completions",
                 headers={"X-Internal-Request-ID": request_id},

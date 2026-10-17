@@ -55,6 +55,11 @@ def _pipeline_extraction_model(pipeline_id: str) -> str:
     )
 
 
+def _pipeline_embedding_model() -> str:
+    """Return the model ID for the 'embedding' ref in pipelines/rag/models.yaml."""
+    return _pipeline_model("rag", "embedding", "embedding_model")
+
+
 def _pipeline_contextualize_model() -> str:
     """Return the model ID for the 'contextualize' ref in rag_contextualize/models.yaml."""
     return _pipeline_model("rag_contextualize", "contextualize", "contextualize_model")

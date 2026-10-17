@@ -46,6 +46,13 @@ _pending_event_tasks: set[asyncio.Task[object]] = set()
 __all__ = ["post_embeddings"]
 
 
+def _batch_embedding_headers() -> dict[str, str]:
+    return {
+        "X-Request-Timeout": str(BATCH_EMBED_REQUEST_TIMEOUT_S),
+        "X-Embedding-Class": "batch",
+    }
+
+
 def parse_embedding_rows(payload: dict[str, object]) -> list[list[float]]:
     """Pull the ``data[*].embedding`` vectors out of an OpenAI-style response.
 
@@ -91,6 +98,7 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
             response = await client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": [truncated]},
+                headers=_batch_embedding_headers(),
             )
             if response.status_code == 200:
                 result = parse_embedding_rows(response.json())
@@ -191,6 +199,7 @@ async def _wait_for_model_ready(timeout_s: float = REWARM_TIMEOUT_S) -> bool:
                 f"{GATEWAY_URL}/v1/embeddings",
                 json=probe_payload,
                 timeout=probe_timeout,
+                headers=_batch_embedding_headers(),
             )
             if response.status_code == 200:
                 logger.info(
@@ -229,9 +238,7 @@ async def post_embeddings(batch: list[str]) -> list[list[float]]:
             response = await client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": model_id, "input": batch},
-                headers={
-                    "X-Request-Timeout": str(int(BATCH_EMBED_REQUEST_TIMEOUT_S)),
-                },
+                headers=_batch_embedding_headers(),
             )
             if response.status_code == 500:
                 body = response.text
