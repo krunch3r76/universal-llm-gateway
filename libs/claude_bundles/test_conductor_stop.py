@@ -439,6 +439,12 @@ def test_next_admit_presence_without_value_not_harvest() -> None:
     assert not next_admit_names_harvest(body)
 
 
+def test_next_admit_substrate_owned_after_terminal_not_harvest_block() -> None:
+    body = "NEXT_ADMIT: substrate-owned after terminal\n"
+    assert not next_admit_names_harvest(body)
+    assert not next_admit_blocks_hop_body(body)
+
+
 def test_next_admit_blocks_hop_body_none_harvest_land() -> None:
     assert next_admit_blocks_hop_body("NEXT_ADMIT: none\n")
     assert next_admit_blocks_hop_body("NEXT_ADMIT: harvest G7\n")

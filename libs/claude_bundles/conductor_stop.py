@@ -74,7 +74,6 @@ _ARCHIVE_OR_HARVEST_RE = re.compile(
 )
 _NEXT_ADMIT_RE = re.compile(r"(?im)\bNEXT_ADMIT\b")
 _NEXT_ADMIT_NONE_RE = re.compile(r"(?im)^NEXT_ADMIT\s*:\s*none\b")
-_NEXT_ADMIT_HARVEST_RE = re.compile(r"(?im)^NEXT_ADMIT\s*:\s*(?!none\b)\S+")
 _SCORE_RATIFY_MARKERS = (
     "do-not-fight",
     "do not fight",
@@ -282,10 +281,11 @@ def has_consult_handoff(body: str) -> bool:
 
 def next_admit_names_harvest(body: str) -> bool:
     """True on NEXT_ADMIT naming a non-none harvest target; False on none or absent."""
-    text = body or ""
-    if _NEXT_ADMIT_NONE_RE.search(text):
-        return False
-    return _NEXT_ADMIT_HARVEST_RE.search(text) is not None
+    for value in _iter_next_admit_values(body or ""):
+        lower = value.lower().strip()
+        if lower and lower != "none" and "harvest" in lower:
+            return True
+    return False
 
 
 _NEXT_ADMIT_VALUE_RE = re.compile(
