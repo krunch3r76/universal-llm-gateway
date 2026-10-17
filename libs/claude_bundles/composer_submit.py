@@ -42,9 +42,8 @@ def verification_marker(prompt: str) -> str:
     match = _UNIQUE_MARKER_RE.search(text)
     if match:
         return match.group(0)
-    if len(text) >= 120:
-        return text[40:120].strip()
-    return text[:80]
+    slice_text = text[40:120] if len(text) >= 120 else text[:80]
+    return " ".join(slice_text.split())
 
 
 def composer_holds_needle(draft: dict[str, Any], needle: str) -> bool:
@@ -212,7 +211,9 @@ async def prove_composer_submitted(page, prompt: str) -> None:
     )
 
 
-async def marker_survives_settle(page, needle: str, *, settle_ms: int = _SETTLE_MS) -> bool:
+async def marker_survives_settle(
+    page, needle: str, *, settle_ms: int = _SETTLE_MS
+) -> bool:
     """True when *needle* remains in committed-turn nodes after a short settle.
 
     Replaces page.reload() as the ``dom_committed`` upgrade. Reload of an
@@ -244,8 +245,9 @@ _MARKER_IN_COMMITTED_JS = """
   for (const sel of selectors) {
     for (const el of document.querySelectorAll(sel)) {
       if (excluded(el)) continue;
-      const t = (el.innerText || '').trim();
-      if (t && t.includes(marker)) return true;
+      const normMarker = (marker || '').replace(/\\s+/g, ' ').trim();
+      const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (normMarker && t.includes(normMarker)) return true;
     }
   }
   return false;

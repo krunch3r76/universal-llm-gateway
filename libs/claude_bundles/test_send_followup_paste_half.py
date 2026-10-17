@@ -62,7 +62,12 @@ async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
-            {"count": 2, "last_len": 80, "last_snippet": prompt[:400], "last_text": prompt},
+            {
+                "count": 2,
+                "last_len": 80,
+                "last_snippet": prompt[:400],
+                "last_text": prompt,
+            },
             True,
         ]
     )
@@ -87,7 +92,12 @@ async def test_dom_paste_when_marker_does_not_survive_settle() -> None:
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
-            {"count": 2, "last_len": 80, "last_snippet": prompt[:400], "last_text": prompt},
+            {
+                "count": 2,
+                "last_len": 80,
+                "last_snippet": prompt[:400],
+                "last_text": prompt,
+            },
             True,
         ]
     )
@@ -230,7 +240,12 @@ async def test_composer_dirty_when_committed_turn_contains_extra_text() -> None:
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
-            {"count": 2, "last_len": len(dirty), "last_snippet": dirty[:400], "last_text": dirty},
+            {
+                "count": 2,
+                "last_len": len(dirty),
+                "last_snippet": dirty[:400],
+                "last_text": dirty,
+            },
             True,
         ]
     )
@@ -248,7 +263,12 @@ async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 0, "last_len": 0, "last_snippet": "", "last_text": ""},
-            {"count": 1, "last_len": 17, "last_snippet": "hi there mid body", "last_text": "hi there mid body"},
+            {
+                "count": 1,
+                "last_len": 17,
+                "last_snippet": "hi there mid body",
+                "last_text": "hi there mid body",
+            },
             True,
         ]
     )
@@ -268,3 +288,35 @@ async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
     wait_mock.assert_not_called()
     resolve_mock.assert_not_called()
     page.reload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dom_committed_after_delayed_mount_while_streaming() -> None:
+    """User turn mounts ~150ms after draft clear; receipt is dom_committed."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    prompt = (
+        "TYPE: SEAT_STAND_DOWN\n#9-unique: delayed-mount\nstand down the predecessor\n"
+    )
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 2, "last_len": 4, "last_text": "old", "last_snippet": "old"},
+            {"count": 2, "last_len": 4, "last_text": "old", "last_snippet": "old"},
+            False,
+            {
+                "count": 3,
+                "last_len": len(prompt),
+                "last_text": prompt,
+                "last_snippet": prompt[:400],
+            },
+            True,
+        ]
+    )
+    with _paste_env(survives=True, streaming=True):
+        result = await send_followup_paste_half(page, prompt)
+    assert result["send_verified"] is True
+    assert result["receipt"] == "dom_committed"
+    assert result["error"] is None
+    collapsed = verification_marker("header " + ("alpha\n\nbeta " + ("y" * 80)))
+    assert "\n" not in collapsed
+    assert "alpha beta" in collapsed
