@@ -10,7 +10,10 @@ from typing import Any
 from fastapi.responses import Response
 
 from systems.pipeline.core.dag import PipelineExecutionError
-from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
+from systems.pipeline.core.execution.errors import (
+    FrontierDispatchExhaustedError,
+    UnknownPipelineOptionsError,
+)
 from systems.pipeline.core.execution.proxy_client import ProxyClientError
 from systems.proxy.stargate.requests.pipeline_lifecycle import (
     _build_recoverable_failure_response,
@@ -92,6 +95,24 @@ def test_pipeline_execution_error_detail_proxy_400_preserves_sync_envelope() -> 
     assert "Step 'draft_local' failed" in detail["message"]
     assert detail["upstream"] == _openai_400_body()
     assert detail.get("error", {}).get("code") != "unsupported_parameter"
+
+
+def test_unknown_pipeline_options_keeps_retryable_and_error_type() -> None:
+    inner = UnknownPipelineOptionsError(
+        step_name="chat_dispatch",
+        unknown_keys=["effort"],
+        accepted_keys=["job", "generation_parameters"],
+        agent=None,
+    )
+    try:
+        raise PipelineExecutionError("Step 'chat_dispatch' failed") from inner
+    except PipelineExecutionError as exc:
+        detail = _pipeline_execution_error_detail(exc, context=_FakeContext())
+
+    assert detail["code"] == "unknown_pipeline_options"
+    assert detail["retryable"] is False
+    assert detail["error_type"] == "UnknownPipelineOptionsError"
+    assert detail["unknown_keys"] == ["effort"]
 
 
 def test_wrapped_frontier_exhaustion_preserves_recoverable_code() -> None:

@@ -60,7 +60,7 @@ def _normalize_pipeline_exception(
     - Returns ``data=None`` for non-HTTP exceptions or when the upstream
       body was not JSON.
     """
-    data: dict[str, Any] | None = _wrap_upstream_data(_first_dict_detail(exc))
+    upstream_detail = _first_dict_detail(exc)
 
     chain: list[BaseException] = []
     current: BaseException | None = exc
@@ -82,5 +82,13 @@ def _normalize_pipeline_exception(
                 or "pipeline_execution_failed"
             )
             message = str(payload.get("message") or payload.get("error") or candidate)
-            return code, message, data or payload
-    return "pipeline_execution_failed", str(exc), data
+            if upstream_detail is not None:
+                return code, message, {**payload, _UPSTREAM_DATA_KEY: upstream_detail}
+            return code, message, payload
+    if upstream_detail is not None:
+        return (
+            "pipeline_execution_failed",
+            str(exc),
+            _wrap_upstream_data(upstream_detail),
+        )
+    return "pipeline_execution_failed", str(exc), None

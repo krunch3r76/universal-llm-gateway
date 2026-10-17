@@ -12,10 +12,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-_QUOTA_MESSAGE_TOKEN_RE = re.compile(
-    r"\b(insufficient_quota|billing_hard_limit_reached)\b"
-)
-
 import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -23,6 +19,9 @@ from systems.pipeline.core.prompts import PromptBuilder
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
 
+_QUOTA_MESSAGE_TOKEN_RE = re.compile(
+    r"\b(insufficient_quota|billing_hard_limit_reached)\b"
+)
 _EXCERPT_MAX = 1200
 _EXCERPT_SUFFIX = " [truncated]"
 _FENCE_TAG = re.compile(

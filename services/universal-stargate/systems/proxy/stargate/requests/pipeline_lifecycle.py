@@ -422,16 +422,7 @@ def _pipeline_execution_error_detail(
         "pipeline_id": str(context.selected_model),
     }
     if isinstance(data, dict):
-        upstream = data.get("upstream")
-        if isinstance(upstream, dict):
-            error_detail["upstream"] = upstream
-        else:
-            extras = {
-                k: v
-                for k, v in data.items()
-                if k not in ("code", "message", "retryable", "error_type")
-            }
-            error_detail.update(extras)
+        error_detail.update(data)
     return error_detail
 
 
