@@ -158,7 +158,7 @@ async def dispatch_admit_and_post_route(
 async def dispatch_terminate_route(
     thread_id: str, body: DispatchTerminate
 ) -> ThreadDetail:
-    """Mark dispatch link terminal_status (completed or failed).
+    """Mark dispatch link terminal_status (completed, failed, or cancelled).
 
     An ``execution_id`` fans the stamp out to every null link with that id.
     ``maybe_auto_close_after_dispatch_terminate`` stays on this thread only.

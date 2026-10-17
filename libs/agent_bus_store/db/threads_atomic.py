@@ -519,9 +519,10 @@ def terminate_dispatch(
     When ``execution_id`` is set and ``fan_out`` is true, every null link with
     that execution_id is stamped, on this thread and on others. ``fan_out``
     defaults false so the update stays ``thread_id AND execution_id``. Callers
-    pass true only for a terminal that ends the execution. A
-    ``park_for_restart`` cancel is not that terminal: the resume child keeps
-    the execution_id, and stamping every link would close the live child.
+    pass true only for a terminal that ends the execution. ``cancel_discard``
+    is that terminal and stamps ``cancelled``. A ``park_for_restart`` cancel
+    is not: the resume child keeps the execution_id, and stamping every link
+    would close the live child.
 
     When ``execution_id`` is omitted, updates the sole non-terminal link only if
     the thread has exactly one link. ``fan_out`` does not widen that branch.
@@ -531,9 +532,10 @@ def terminate_dispatch(
     ``chat_url`` refreshes the link projection at terminal when provided.
     Returns the argument thread and does not transition any other thread.
     """
-    if terminal_status not in ("completed", "failed"):
+    if terminal_status not in ("completed", "failed", "cancelled"):
         raise ValueError(
-            f"terminal_status must be 'completed' or 'failed', got {terminal_status!r}"
+            "terminal_status must be 'completed', 'failed', or 'cancelled', "
+            f"got {terminal_status!r}"
         )
 
     ts = now()

@@ -726,7 +726,7 @@ class DispatchAdmit(BaseModel):
 class DispatchTerminate(BaseModel):
     """Payload for POST /threads/{id}/dispatch-terminate."""
 
-    terminal_status: Literal["completed", "failed"]
+    terminal_status: Literal["completed", "failed", "cancelled"]
     execution_id: str | None = None
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
     archive_uri: str | None = None
