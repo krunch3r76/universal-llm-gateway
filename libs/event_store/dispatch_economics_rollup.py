@@ -208,6 +208,16 @@ async def _resolve_window(
     since_ts = _coerce_since_ts(params.get("since_ts"))
     until_ts = _coerce_since_ts(params.get("until_ts"))
     minutes = _coerce_minutes(params.get("minutes"))
+    if params.get("window") == "anthropic_cycle":
+        from anthropic_credit.config import load_credit_config
+        from anthropic_credit.cycle_window import meter_window
+
+        cfg = load_credit_config()
+        now = datetime.now(tz=UTC)
+        start, reset_at = meter_window(now, cfg)
+        since_ts = int(start.timestamp() * 1000)
+        until_ts = int(reset_at.timestamp() * 1000)
+        return since_ts, until_ts, minutes
     if since_ts is None:
         if minutes is not None:
             since_ts = int(datetime.now(tz=UTC).timestamp() * 1000) - minutes * 60_000
