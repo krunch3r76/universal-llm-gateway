@@ -60,12 +60,23 @@ def _make_adapter(
     return AnthropicAdapter(config=config, client=client), counts
 
 
-def _committed_for_last_request() -> Decimal:
+def _committed_usd_for_request(request_id: str) -> Decimal:
+    st = get_policy().status()
+    entries = st.get("entries") or st.get("last_entries") or []
+    commit = next(
+        e
+        for e in entries
+        if e.get("kind") == "commit" and e.get("request_id") == request_id
+    )
+    return Decimal(str(commit["usd"]))
+
+
+def _committed_usd_for_sole_ledger_commit() -> Decimal:
     st = get_policy().status()
     entries = st.get("entries") or st.get("last_entries") or []
     commits = [e for e in entries if e.get("kind") == "commit"]
-    assert commits, "expected a commit ledger entry"
-    return Decimal(str(commits[-1]["usd"]))
+    assert len(commits) == 1, f"expected one commit, got {len(commits)}"
+    return _committed_usd_for_request(str(commits[0]["request_id"]))
 
 
 @pytest.mark.asyncio
@@ -79,7 +90,7 @@ async def test_non_stream_full_breakdown_exact_usd() -> None:
             "messages": [{"role": "user", "content": "hi"}],
         }
     )
-    assert _committed_for_last_request() == Decimal("0.00717")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.00717")
 
 
 @pytest.mark.asyncio
@@ -93,7 +104,7 @@ async def test_non_stream_no_breakdown_prices_cache_creation_at_2x() -> None:
             "messages": [{"role": "user", "content": "hi"}],
         }
     )
-    assert _committed_for_last_request() == Decimal("0.005")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.005")
 
 
 @pytest.mark.asyncio
@@ -110,7 +121,7 @@ async def test_stream_message_start_and_delta_exact_usd() -> None:
     ):
         chunks.append(chunk)
     assert chunks
-    assert _committed_for_last_request() == Decimal("0.00717")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.00717")
 
 
 @pytest.mark.asyncio
@@ -125,7 +136,7 @@ async def test_stream_delta_overrides_start_usage_no_double_count() -> None:
         }
     ):
         pass
-    assert _committed_for_last_request() == Decimal("0.00737")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.00737")
 
 
 @pytest.mark.asyncio
@@ -229,7 +240,7 @@ models:
             "messages": [{"role": "user", "content": "hi"}],
         }
     )
-    assert _committed_for_last_request() == Decimal("0.0115")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.0115")
 
 
 def _partial_stream_sse() -> str:
@@ -379,7 +390,7 @@ async def test_stream_web_search_usage_commits_token_plus_fee(method_name: str) 
     }
     async for _chunk in getattr(adapter, method_name)(body):
         pass
-    assert _committed_for_last_request() == Decimal("0.107")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.107")
 
 
 @pytest.mark.parametrize(
@@ -502,7 +513,475 @@ async def test_forward_chat_stream_normal_end_commits_tapped_usage() -> None:
         }
     ):
         pass
-    assert _committed_for_last_request() == Decimal("0.00717")
+    assert _committed_usd_for_sole_ledger_commit() == Decimal("0.00717")
+
+
+def _stream_tap_from_lines(*lines: str):
+    from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+        StreamUsageTap,
+    )
+
+    tap = StreamUsageTap()
+    for line in lines:
+        tap.feed_line(line)
+    return tap
+
+
+def _admit_claude_sonnet_5(request_id: str) -> Admit:
+    from anthropic_credit.policy import admit
+
+    result = admit(
+        request_id,
+        "anthropic/claude-sonnet-5",
+        {
+            "model": "claude-sonnet-5",
+            "max_tokens": 400,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        token_count=1000,
+    )
+    assert isinstance(result, Admit)
+    return result
+
+
+def test_stream_output_tokens_details_exact_commit_no_floored_emit() -> None:
+    """T1: output_tokens_details on final delta must not floor a normal stream."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t1-output-details"
+        reservation = _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":1,'
+            '"cache_creation":{"ephemeral_5m_input_tokens":0}}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            '"output_tokens_details":{"thinking_tokens":0}}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        st = get_policy().status()
+        entries = st.get("entries") or []
+        reserve = next(e for e in entries if e.get("kind") == "reserve")
+        last_commit = next(e for e in entries if e.get("kind") == "commit")
+        computed = Decimal("0.00024")
+        assert Decimal(str(last_commit["usd"])) == computed
+        assert Decimal(str(last_commit["usd"])) != Decimal(str(reserve["usd"]))
+        assert Decimal(str(last_commit["usd"])) != reservation.reservation_usd
+        assert not any(name == "anthropic.credit.stream.floored" for name, _ in emitted)
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_unknown_dict_usage_key_floors_and_emits() -> None:
+    """T2: unknown dict keys still fail-closed with stream.floored."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t2-foo-details"
+        _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            '"foo_details":{}}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        st = get_policy().status()
+        reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+        commit = next(e for e in st["entries"] if e["kind"] == "commit")
+        assert Decimal(str(commit["usd"])) == Decimal(str(reserve["usd"]))
+        floored = [p for n, p in emitted if n == "anthropic.credit.stream.floored"]
+        assert len(floored) == 1
+        assert floored[0]["reason"] == "unknown_dict_usage"
+        assert floored[0]["unknown_usage_keys"] == ["foo_details"]
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_output_details_subcount_over_output_tokens_floors() -> None:
+    """T3: thinking_tokens above billing output_tokens must floor."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t3-over-subcount"
+        _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            '"output_tokens_details":{"thinking_tokens":5}}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        st = get_policy().status()
+        reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+        commit = next(e for e in st["entries"] if e["kind"] == "commit")
+        assert Decimal(str(commit["usd"])) == Decimal(str(reserve["usd"]))
+        floored = [p for n, p in emitted if n == "anthropic.credit.stream.floored"]
+        assert len(floored) == 1
+        assert floored[0]["reason"] == "output_details_undercount_risk"
+    finally:
+        set_event_emitter(None)
+
+
+@pytest.mark.parametrize(
+    ("details_fragment", "request_id"),
+    [
+        ('"output_tokens_details":{"thinking_tokens":"3"}', "t3b-thinking-str"),
+        ('"output_tokens_details":{"thinking_tokens":true}', "t3b-thinking-bool"),
+        ('"output_tokens_details":{"thinking_tokens":-1}', "t3b-thinking-neg"),
+        ('"output_tokens_details":{"thinking_tokens":null}', "t3b-thinking-null"),
+        ('"output_tokens_details":[1]', "t3b-details-list"),
+    ],
+)
+def test_stream_output_details_invalid_subvalues_floor(
+    details_fragment: str, request_id: str
+) -> None:
+    """T3b: non-int or non-dict output_tokens_details must floor."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        _admit_claude_sonnet_5(request_id)
+        delta_data = (
+            '{"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            + details_fragment
+            + "}}"
+        )
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+            "event: message_delta",
+            "data: " + delta_data,
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        st = get_policy().status()
+        reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+        commit = next(e for e in st["entries"] if e["kind"] == "commit")
+        assert Decimal(str(commit["usd"])) == Decimal(str(reserve["usd"]))
+        floored = [p for n, p in emitted if n == "anthropic.credit.stream.floored"]
+        assert len(floored) == 1
+        assert floored[0]["reason"] == "output_details_undercount_risk"
+    finally:
+        set_event_emitter(None)
+
+
+def test_non_stream_output_tokens_details_parity_with_plain_usage() -> None:
+    """T4: non-stream path ignores output_tokens_details (unchanged F3)."""
+    from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+        finalize_non_stream_credit,
+    )
+
+    base_usage = {
+        "input_tokens": 100,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 4,
+    }
+    expected = Decimal("0.00024")
+
+    plain_rid = "t4-plain"
+    details_rid = "t4-details"
+    _admit_claude_sonnet_5(plain_rid)
+    resp_plain = httpx.Response(200, json={"id": "m1", "usage": base_usage})
+    finalize_non_stream_credit(plain_rid, response=resp_plain)
+    plain_commit = _committed_usd_for_request(plain_rid)
+
+    _admit_claude_sonnet_5(details_rid)
+    usage_with = {
+        **base_usage,
+        "output_tokens_details": {"thinking_tokens": 0},
+    }
+    resp_details = httpx.Response(200, json={"id": "m2", "usage": usage_with})
+    finalize_non_stream_credit(details_rid, response=resp_details)
+    details_commit = _committed_usd_for_request(details_rid)
+
+    assert plain_commit == expected
+    assert details_commit == expected
+    assert details_commit == plain_commit == expected
+
+
+def test_stream_details_first_key_on_final_delta_exact_commit() -> None:
+    """Frame order: output_tokens_details first in final message_delta usage dict."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t-frame-final-details-first"
+        _admit_claude_sonnet_5(request_id)
+        delta_data = (
+            '{"type":"message_delta","usage":{'
+            '"output_tokens_details":{"thinking_tokens":3},'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}'
+        )
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":1}}}',
+            "",
+            "event: message_delta",
+            "data: " + delta_data,
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        assert _committed_usd_for_request(request_id) == Decimal("0.00024")
+        assert not any(name == "anthropic.credit.stream.floored" for name, _ in emitted)
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_details_on_early_delta_final_output_tokens_exact_commit() -> None:
+    """Frame order: details on earlier delta, billing output_tokens on later delta."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t-frame-split-deltas"
+        _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":1}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":1,'
+            '"output_tokens_details":{"thinking_tokens":3}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        assert _committed_usd_for_request(request_id) == Decimal("0.00024")
+        assert not any(name == "anthropic.credit.stream.floored" for name, _ in emitted)
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_floored_no_emit_when_commit_raises() -> None:
+    """Emit runs only after commit; commit failure must not publish stream.floored."""
+    from anthropic_credit.ledger import LedgerUnavailable
+    from anthropic_credit.policy import release, set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t-commit-fail-no-emit"
+        _admit_claude_sonnet_5(request_id)
+        release(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            '"foo_details":{}}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        with pytest.raises(LedgerUnavailable):
+            finalize_stream_credit(request_id, tap, normal_end=True)
+        assert not any(name == "anthropic.credit.stream.floored" for name, _ in emitted)
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_abnormal_end_floors_and_emits() -> None:
+    """T5: fallthrough path emits stream_abnormal_end after floor commit."""
+    from anthropic_credit.policy import set_event_emitter
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(name: str, payload: dict) -> None:
+        emitted.append((name, dict(payload)))
+
+    set_event_emitter(_capture)
+    try:
+        request_id = "t5-abnormal"
+        _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=False)
+        st = get_policy().status()
+        reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+        commit = next(e for e in st["entries"] if e["kind"] == "commit")
+        assert Decimal(str(commit["usd"])) == Decimal(str(reserve["usd"]))
+        floored = [p for n, p in emitted if n == "anthropic.credit.stream.floored"]
+        assert len(floored) == 1
+        assert floored[0]["reason"] == "stream_abnormal_end"
+    finally:
+        set_event_emitter(None)
+
+
+def test_stream_floored_emit_failure_still_commits_floor() -> None:
+    """T8: emit errors must not block reservation floor commit."""
+    from anthropic_credit.policy import set_event_emitter
+
+    def _raising_emit(_name: str, _payload: dict) -> None:
+        raise RuntimeError("emit down")
+
+    set_event_emitter(_raising_emit)
+    try:
+        request_id = "t8-emit-fail"
+        _admit_claude_sonnet_5(request_id)
+        tap = _stream_tap_from_lines(
+            "event: message_start",
+            'data: {"type":"message_start","message":{"usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4}}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","usage":{'
+            '"input_tokens":100,"cache_creation_input_tokens":0,'
+            '"cache_read_input_tokens":0,"output_tokens":4,'
+            '"foo_details":{}}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        )
+        from services.universal_cloud_proxy.adapters.anthropic_credit_gate import (
+            finalize_stream_credit,
+        )
+
+        finalize_stream_credit(request_id, tap, normal_end=True)
+        st = get_policy().status()
+        reserve = next(e for e in st["entries"] if e["kind"] == "reserve")
+        commit = next(e for e in st["entries"] if e["kind"] == "commit")
+        assert Decimal(str(commit["usd"])) == Decimal(str(reserve["usd"]))
+    finally:
+        set_event_emitter(None)
 
 
 @pytest.mark.asyncio

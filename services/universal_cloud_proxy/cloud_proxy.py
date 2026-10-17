@@ -57,6 +57,7 @@ from .config import load_config
 from .events import (
     AnthropicCreditLoopRefused,
     AnthropicCreditOverrun,
+    AnthropicCreditStreamFloored,
     AnthropicCreditUsagePartial,
     CloudProxyBrowserCatalogRefreshed,
     CloudProxyBrowserCatalogRefreshFailed,
@@ -92,6 +93,7 @@ _CREDIT_EVENT_FACTORIES: dict[str, Any] = {
     "anthropic.credit.usage_partial": AnthropicCreditUsagePartial,
     "anthropic.credit.overrun": AnthropicCreditOverrun,
     "anthropic.credit.loop_refused": AnthropicCreditLoopRefused,
+    "anthropic.credit.stream.floored": AnthropicCreditStreamFloored,
 }
 
 

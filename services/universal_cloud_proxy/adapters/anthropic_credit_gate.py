@@ -15,6 +15,7 @@ from anthropic_credit.policy import (
     admit,
     commit,
     commit_full,
+    emit,
     latch,
     release,
 )
@@ -182,8 +183,15 @@ class StreamUsageTap:
     _usage: dict[str, Any] = field(default_factory=dict)
     _parse_error: bool = False
     _unknown_dict_usage: bool = False
+    _unknown_usage_key_names: list[str] = field(default_factory=list)
+    _output_details: dict[str, int] = field(default_factory=dict)
+    _output_details_invalid: bool = False
     _current_event: str = ""
     _delta_usage_seen: bool = False
+
+    def _note_unknown_dict_key(self, key: str) -> None:
+        if key not in self._unknown_usage_key_names:
+            self._unknown_usage_key_names.append(key)
 
     def feed_line(self, line: str) -> None:
         stripped = line.strip()
@@ -225,6 +233,18 @@ class StreamUsageTap:
                     existing = {}
                 existing.update(val)
                 self._usage["cache_creation"] = existing
+            elif key == "output_tokens_details" and isinstance(val, dict):
+                for sub_key, sub_val in val.items():
+                    if (
+                        isinstance(sub_val, int)
+                        and not isinstance(sub_val, bool)
+                        and sub_val >= 0
+                    ):
+                        self._output_details[sub_key] = sub_val
+                    else:
+                        self._output_details_invalid = True
+            elif key == "output_tokens_details":
+                self._output_details_invalid = True
             elif key == "server_tool_use" and isinstance(val, dict):
                 existing = self._usage.get("server_tool_use")
                 if not isinstance(existing, dict):
@@ -234,9 +254,11 @@ class StreamUsageTap:
                         existing[sub_key] = sub_val
                     else:
                         self._unknown_dict_usage = True
+                        self._note_unknown_dict_key("server_tool_use")
                 self._usage["server_tool_use"] = existing
             elif isinstance(val, dict):
                 self._unknown_dict_usage = True
+                self._note_unknown_dict_key(key)
             elif isinstance(val, int) and val >= 0:
                 self._usage[key] = val
 
@@ -255,6 +277,41 @@ class StreamUsageTap:
     @property
     def unknown_dict_usage(self) -> bool:
         return self._unknown_dict_usage
+
+    @property
+    def unknown_usage_keys(self) -> list[str]:
+        return list(self._unknown_usage_key_names)
+
+    @property
+    def output_details_undercount_risk(self) -> bool:
+        if self._output_details_invalid:
+            return True
+        billing_output = self._usage.get("output_tokens", -1)
+        for sub_count in self._output_details.values():
+            if sub_count > billing_output:
+                return True
+        return False
+
+
+def _emit_stream_credit_floored(
+    request_id: str,
+    *,
+    reason: str,
+    tap: StreamUsageTap,
+    model: str | None = None,
+) -> None:
+    try:
+        emit(
+            "anthropic.credit.stream.floored",
+            {
+                "request_id": request_id,
+                "model": model,
+                "reason": reason,
+                "unknown_usage_keys": tap.unknown_usage_keys,
+            },
+        )
+    except Exception:
+        logger.debug("anthropic.credit.stream.floored emit failed", exc_info=True)
 
 
 def _stream_usage_complete(usage: dict[str, Any]) -> bool:
@@ -289,12 +346,22 @@ def finalize_stream_credit(
         and tap.delta_usage_seen
         and _stream_usage_complete(usage)
     ):
-        commit(request_id, usage, floor=tap.unknown_dict_usage)
+        floor = tap.unknown_dict_usage or tap.output_details_undercount_risk
+        commit(request_id, usage, floor=floor)
+        if floor:
+            floor_reason = (
+                "unknown_dict_usage"
+                if tap.unknown_dict_usage
+                else "output_details_undercount_risk"
+            )
+            _emit_stream_credit_floored(
+                request_id, reason=floor_reason, tap=tap, model=None
+            )
         return
     reason = "stream_cancelled" if cancelled else "stream_abnormal_end"
     if tap.parse_error:
         reason = "stream_unparseable_frame"
     if exc is not None:
         reason = f"stream_error:{type(exc).__name__}"
-    _ = reason
     commit(request_id, tap.usage, floor=True)
+    _emit_stream_credit_floored(request_id, reason=reason, tap=tap, model=None)
