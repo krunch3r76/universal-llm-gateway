@@ -184,13 +184,60 @@ def fleet_liveness_snapshot(
     return _manage(manage_call, "fleet_liveness", params, sock_path)
 
 
+def _container_started_at(row: dict[str, Any]) -> str | None:
+    marker = row.get("load_marker")
+    if not isinstance(marker, dict):
+        return None
+    if marker.get("kind") != "container_started_at":
+        return None
+    if marker.get("error") is not None:
+        return None
+    value = marker.get("value_utc")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def fleet_child_pids(manage_call: ManageCall, sock_path: str | None) -> dict[str, Any]:
     snap = fleet_liveness_snapshot(manage_call, sock_path)
     rows = snap.get("services") if isinstance(snap.get("services"), list) else []
-    by_service = {
-        str(row.get("service")): row.get("pid") for row in rows if isinstance(row, dict)
+    by_service: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("service") is not None:
+            by_service[str(row.get("service"))] = row
+    return {
+        name: {
+            "pid": (by_service.get(name) or {}).get("pid"),
+            "marker": _container_started_at(by_service.get(name) or {}),
+        }
+        for name in RECYCLE_FLEET_SERVICES
     }
-    return {name: by_service.get(name) for name in RECYCLE_FLEET_SERVICES}
+
+
+def _child_record(child: dict[str, Any], name: str) -> dict[str, Any]:
+    raw = child.get(name) if isinstance(child, dict) else None
+    if isinstance(raw, dict):
+        return {"pid": raw.get("pid"), "marker": raw.get("marker")}
+    return {"pid": None, "marker": None}
+
+
+def _usable_marker(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _marker_compare_line(service: str, before: str | None, after: str | None) -> str:
+    if before is not None and after is not None:
+        relation = "unchanged" if before == after else "changed"
+    else:
+        relation = "missing"
+    before_token = before if before is not None else "missing"
+    after_token = after if after is not None else "missing"
+    return (
+        f"marker_compare: {service} container_started_at "
+        f"{before_token} -> {after_token} {relation}"
+    )
 
 
 def evaluate_r3_pass_verdict(
@@ -222,12 +269,44 @@ def evaluate_r3_pass_verdict(
     }
     if result_status != "proof-satisfied":
         return "FAIL", extra
-    if child_before != child_after:
+    unverifiable: list[str] = []
+    marker_lines: list[str] = []
+    saw_fail = False
+    saw_indeterminate = False
+    for name in RECYCLE_FLEET_SERVICES:
+        before = _child_record(child_before, name)
+        after = _child_record(child_after, name)
+        pid_before = before["pid"]
+        pid_after = after["pid"]
+        if pid_before is not None and pid_after is not None:
+            if pid_before != pid_after:
+                saw_fail = True
+            continue
+        if pid_before is not None or pid_after is not None:
+            saw_fail = True
+            continue
+        mark_before = _usable_marker(before["marker"])
+        mark_after = _usable_marker(after["marker"])
+        marker_lines.append(_marker_compare_line(name, mark_before, mark_after))
+        if mark_before is not None and mark_after is not None:
+            if mark_before == mark_after:
+                unverifiable.append(name)
+            else:
+                saw_fail = True
+        else:
+            saw_indeterminate = True
+    if unverifiable:
+        extra["pid_unverifiable"] = unverifiable
+    if marker_lines:
+        extra["marker_compare"] = marker_lines
+    if saw_fail:
         return "FAIL", extra
     if head_sha != target_ref:
         return "FAIL", extra
     if mcp_auth != "process_start_code_version":
         return "FAIL", extra
+    if saw_indeterminate:
+        return "INDETERMINATE", extra
     return "PASS", extra
 
 
@@ -259,6 +338,13 @@ def post_maestro_reply(
             body_lines.append(body_extra["probe_39439"])
         if body_extra.get("line_39455"):
             body_lines.append(body_extra["line_39455"])
+        unverifiable = body_extra.get("pid_unverifiable") or []
+        if unverifiable:
+            body_lines.append(
+                "pid_unverifiable: " + ", ".join(str(name) for name in unverifiable)
+            )
+        for line in body_extra.get("marker_compare") or []:
+            body_lines.append(str(line))
     body = "\n".join(body_lines)
     subject = f"DONE|decision:manage-recycle-39439-39455-r3b VERDICT: {verdict}"
     if reply_fn is not None:

@@ -264,6 +264,9 @@ def _compact_service_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if "version_evidence" in row:
         compact["version_evidence"] = row["version_evidence"]
+    marker = row.get("load_marker")
+    if isinstance(marker, dict):
+        compact["load_marker"] = dict(marker)
     return compact
 
 
