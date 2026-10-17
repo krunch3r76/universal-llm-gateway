@@ -24,6 +24,7 @@ from services.rag.chroma_writer import (
 )
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.extraction.oversize_skip import (
+    all_non_oversize_failures_backend_unavailable,
     classify_iteration_results,
     hint_error_by_index,
     is_prompt_too_large,
@@ -311,6 +312,11 @@ async def _handle_failed_poll(
         )
 
     if has_non_oversize:
+        burn_attempt = True
+        if iteration_results and all_non_oversize_failures_backend_unavailable(
+            iteration_results
+        ):
+            burn_attempt = False
         return await _finalize_claim(
             source=source,
             ext_ids=ext_ids,
@@ -319,7 +325,7 @@ async def _handle_failed_poll(
             skipped_indexes=oversize_failed,
             duration=duration,
             timing=timing,
-            increment_attempt=True,
+            increment_attempt=burn_attempt,
         )
 
     resubmit_indexes = sorted(completed)

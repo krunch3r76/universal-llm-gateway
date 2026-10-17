@@ -29,6 +29,10 @@ _MAP_FAILED_ERR = RuntimeError(
 )
 
 
+def _probe_ok_patch():
+    return patch.object(worker_loop, "probe_stargate_models", AsyncMock(return_value=True))
+
+
 def test_is_map_iteration_timeout_error_positive() -> None:
     assert is_map_iteration_timeout_error(_MAP_TIMEOUT_ERR)
 
@@ -122,6 +126,7 @@ async def test_worker_loop_map_timeout_increments_attempt() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
         patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_timeout)),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
     ):
@@ -164,9 +169,259 @@ async def test_worker_loop_httpx_timeout_still_capacity_class() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
         patch.object(
             worker_loop, "extract_source", AsyncMock(side_effect=_raise_httpx_timeout)
         ),
+        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+    ):
+        await run_extraction_worker(
+            config=config,
+            collection_fn=lambda: MagicMock(),
+            property_index=property_index,
+            event_bus=None,
+            shutdown_event=shutdown,
+        )
+
+    _args, kwargs = property_index.fail_extraction.await_args
+    assert kwargs["increment_attempt"] is False
+    assert kwargs["failure_category"] == "capacity"
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_probe_failure_skips_dequeue() -> None:
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock()
+    shutdown = asyncio.Event()
+
+    async def _stop_after_sleep(*_a: object, **_k: object) -> None:
+        shutdown.set()
+
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge")
+    config.knowledge_extraction = ke
+
+    with (
+        patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+        patch.object(worker_loop, "configure_timeouts"),
+        patch.object(worker_loop, "probe_stargate_models", AsyncMock(return_value=False)),
+        patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock(side_effect=_stop_after_sleep)),
+    ):
+        await run_extraction_worker(
+            config=config,
+            collection_fn=lambda: MagicMock(),
+            property_index=property_index,
+            event_bus=None,
+            shutdown_event=shutdown,
+        )
+
+    property_index.dequeue_extraction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_connect_error_probe_down_burns_only_claimed_source(
+    tmp_path: Path,
+) -> None:
+    idx = await _property_index(tmp_path)
+    try:
+        await idx.enqueue_extraction("/a.json")
+        await idx.enqueue_extraction("/b.json")
+        await idx.enqueue_extraction("/c.json")
+        shutdown = asyncio.Event()
+
+        async def _raise_connect(*_a: object, **_k: object) -> None:
+            shutdown.set()
+            raise httpx.ConnectError("connection refused")
+
+        config = MagicMock()
+        ke = MagicMock(pipeline="rag-extract-knowledge")
+        config.knowledge_extraction = ke
+
+        with (
+            patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+            patch.object(worker_loop, "configure_timeouts"),
+            patch.object(
+                worker_loop,
+                "probe_stargate_models",
+                AsyncMock(side_effect=[True, False]),
+            ),
+            patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
+            patch.object(
+                worker_loop, "extract_source", AsyncMock(side_effect=_raise_connect)
+            ),
+            patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+        ):
+            await run_extraction_worker(
+                config=config,
+                collection_fn=lambda: MagicMock(),
+                property_index=idx,
+                event_bus=None,
+                shutdown_event=shutdown,
+            )
+
+        rows = {r.source: r.attempts for r in idx.list_extraction_queue_rows(max_attempts=5)}
+        claimed = sum(1 for a in rows.values() if a > 0)
+        assert claimed == 1
+        assert rows["/a.json"] == 1 or rows["/b.json"] == 1 or rows["/c.json"] == 1
+        assert sum(1 for a in rows.values() if a == 0) == 2
+    finally:
+        await idx.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_read_error_probe_down_exhausts_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    idx = await _property_index(tmp_path)
+    try:
+        await idx.enqueue_extraction("/s.json")
+        shutdown = asyncio.Event()
+        failures = 0
+        probe_calls = 0
+
+        async def _probe_alternate() -> bool:
+            nonlocal probe_calls
+            probe_calls += 1
+            return probe_calls % 2 == 1
+
+        async def _raise_read(*_a: object, **_k: object) -> None:
+            nonlocal failures
+            failures += 1
+            if failures >= _MAX_QUEUE_ATTEMPTS:
+                shutdown.set()
+            raise httpx.ReadError("broken pipe")
+
+        async def _sleep_and_age_backoff(*_a: object, **_k: object) -> None:
+            if failures < _MAX_QUEUE_ATTEMPTS:
+                conn = idx._ensure_conn()
+                conn.execute(
+                    "UPDATE extraction_queue SET"
+                    " last_attempt_at = datetime('now', '-3 minutes'),"
+                    " last_failure_at = datetime('now', '-2 minutes')"
+                    " WHERE source = ?",
+                    ("/s.json",),
+                )
+                conn.commit()
+            rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
+            if rows and rows[0].attempts >= _MAX_QUEUE_ATTEMPTS:
+                shutdown.set()
+            elif failures >= _MAX_QUEUE_ATTEMPTS:
+                shutdown.set()
+
+        config = MagicMock()
+        ke = MagicMock(pipeline="rag-extract-knowledge")
+        config.knowledge_extraction = ke
+
+        with (
+            patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+            patch.object(worker_loop, "configure_timeouts"),
+            patch.object(
+                worker_loop, "probe_stargate_models", AsyncMock(side_effect=_probe_alternate)
+            ),
+            patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
+            patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_read)),
+            patch.object(
+                worker_loop, "_sleep_or_shutdown", AsyncMock(side_effect=_sleep_and_age_backoff)
+            ),
+        ):
+            await run_extraction_worker(
+                config=config,
+                collection_fn=lambda: MagicMock(),
+                property_index=idx,
+                event_bus=None,
+                shutdown_event=shutdown,
+            )
+
+        exhausted = await idx.dequeue_extraction(limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS)
+        assert exhausted == []
+        rows = idx.list_extraction_queue_rows(max_attempts=_MAX_QUEUE_ATTEMPTS)
+        assert len(rows) == 1
+        assert rows[0].state == "exhausted"
+        assert rows[0].attempts == _MAX_QUEUE_ATTEMPTS
+    finally:
+        await idx.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_transport_errors_respect_probe_success() -> None:
+    claim = ExtractionQueueClaim(
+        source="/s.json",
+        attempts=0,
+        queued_at="t",
+        claimed_at="t",
+    )
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+    property_index.fail_extraction = AsyncMock()
+    shutdown = asyncio.Event()
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge")
+    config.knowledge_extraction = ke
+
+    async def _run_once(exc: BaseException) -> None:
+        property_index.fail_extraction.reset_mock()
+        shutdown.clear()
+        property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+
+        async def _raise(*_a: object, **_k: object) -> None:
+            shutdown.set()
+            raise exc
+
+        with (
+            patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+            patch.object(worker_loop, "configure_timeouts"),
+            _probe_ok_patch(),
+            patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
+            patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise)),
+            patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
+        ):
+            await run_extraction_worker(
+                config=config,
+                collection_fn=lambda: MagicMock(),
+                property_index=property_index,
+                event_bus=None,
+                shutdown_event=shutdown,
+            )
+
+    await _run_once(httpx.ReadError("broken pipe"))
+    _args, kwargs = property_index.fail_extraction.await_args
+    assert kwargs["increment_attempt"] is True
+
+    await _run_once(httpx.ConnectError("refused"))
+    _args, kwargs = property_index.fail_extraction.await_args
+    assert kwargs["increment_attempt"] is False
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_http_429_still_capacity_class() -> None:
+    claim = ExtractionQueueClaim(
+        source="/s.json",
+        attempts=0,
+        queued_at="t",
+        claimed_at="t",
+    )
+    property_index = AsyncMock()
+    property_index.dequeue_extraction = AsyncMock(side_effect=[[claim], []])
+    property_index.fail_extraction = AsyncMock()
+    shutdown = asyncio.Event()
+    config = MagicMock()
+    ke = MagicMock(pipeline="rag-extract-knowledge")
+    config.knowledge_extraction = ke
+
+    request = httpx.Request("POST", "http://localhost:9999/v1/pipelines/run")
+    response = httpx.Response(429, request=request)
+    err = httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    async def _raise_429(*_a: object, **_k: object) -> None:
+        shutdown.set()
+        raise err
+
+    with (
+        patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
+        patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
+        patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
+        patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_429)),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
     ):
         await run_extraction_worker(
@@ -326,6 +581,7 @@ async def test_worker_reclaim_before_chroma_empty_ids_early_complete() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
         patch.object(
             worker_loop, "reclaim_cancel_stored_execution", AsyncMock(side_effect=_track_reclaim)
         ),
@@ -376,6 +632,7 @@ async def test_worker_reclaim_cancels_before_extract_source() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
         patch.object(worker_loop, "reclaim_cancel_stored_execution", reclaim_mock),
         patch.object(worker_loop, "extract_source", extract_mock),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),
@@ -420,6 +677,7 @@ async def test_worker_loop_map_failed_still_increments_attempt() -> None:
     with (
         patch.object(worker_loop, "wait_until_extraction_ready", AsyncMock()),
         patch.object(worker_loop, "configure_timeouts"),
+        _probe_ok_patch(),
         patch.object(worker_loop, "reclaim_cancel_stored_execution", AsyncMock()),
         patch.object(worker_loop, "extract_source", AsyncMock(side_effect=_raise_failed)),
         patch.object(worker_loop, "_sleep_or_shutdown", AsyncMock()),

@@ -50,6 +50,43 @@ def oversize_indexes_from_message(message: str, chunk_count: int) -> set[int]:
     return set()
 
 
+def is_backend_unavailable_message(message: str | None) -> bool:
+    """True for relay-down / capacity signals that must not burn queue attempts."""
+    if not message:
+        return False
+    lowered = message.lower()
+    if "503" in message:
+        return True
+    if "model_unavailable" in lowered:
+        return True
+    if "no_feasible_gateway" in lowered:
+        return True
+    return False
+
+
+def all_non_oversize_failures_backend_unavailable(
+    iteration_results: list[dict[str, Any]],
+) -> bool:
+    """True when every failed (non-completed, non-oversize) row is backend-unavailable."""
+    saw_failure = False
+    for row in iteration_results:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") == "completed":
+            continue
+        error_message = row.get("error_message")
+        if is_prompt_too_large(
+            error_message if isinstance(error_message, str) else None
+        ):
+            continue
+        saw_failure = True
+        if not is_backend_unavailable_message(
+            error_message if isinstance(error_message, str) else None
+        ):
+            return False
+    return saw_failure
+
+
 def classify_iteration_results(
     iteration_results: list[dict[str, Any]],
 ) -> tuple[set[int], set[int], bool]:

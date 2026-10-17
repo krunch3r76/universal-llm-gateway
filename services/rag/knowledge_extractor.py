@@ -39,6 +39,20 @@ _batch_overhead_s: float = 30.0
 
 _EXTRACTION_PROBE_TIMEOUT_S = 300.0
 _EXTRACTION_PROBE_INTERVAL_S = 5.0
+_STARGATE_MODELS_PROBE_TIMEOUT_S = 5.0
+
+
+async def probe_stargate_models() -> bool:
+    """Return True when GET /v1/models succeeds within the startup probe timeout."""
+    try:
+        resp = await _client.get(
+            f"{STARGATE_URL}/v1/models",
+            timeout=_STARGATE_MODELS_PROBE_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
 
 
 async def wait_until_extraction_ready(
@@ -58,7 +72,10 @@ async def wait_until_extraction_ready(
     while True:
         attempt += 1
         try:
-            resp = await _client.get(f"{STARGATE_URL}/v1/models", timeout=5.0)
+            resp = await _client.get(
+                f"{STARGATE_URL}/v1/models",
+                timeout=_STARGATE_MODELS_PROBE_TIMEOUT_S,
+            )
             resp.raise_for_status()
             models = {m["id"] for m in resp.json().get("data", [])}
             if pipeline in models:
