@@ -333,6 +333,63 @@ def test_served_symlink_inside_root_scanned(
     assert report.keyless_receipts
 
 
+def test_served_symlink_cycle_fails_closed(fake_repo: Path) -> None:
+    dist = fake_repo / "services/web/dist"
+    a = dist / "a"
+    b = dist / "b"
+    a.mkdir()
+    b.mkdir()
+    a.rmdir()
+    b.rmdir()
+    a.symlink_to(b, target_is_directory=True)
+    b.symlink_to(a, target_is_directory=True)
+    report = scan(fake_repo)
+    assert not report.ok
+    assert any("symlink loop in served root" in e for e in report.scan_errors)
+
+
+def test_served_dir_symlink_alias_inside_root_ok(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        egress_inventory, "_SERVED_ROOT_ALLOWLIST", _fixture_allowlist()
+    )
+    nested = fake_repo / "services/web/dist/nested"
+    nested.mkdir(parents=True)
+    (nested / "a.js").write_text(_API_SNIPPET, encoding="utf-8")
+    alias = fake_repo / "services/web/dist/alias"
+    alias.symlink_to(nested, target_is_directory=True)
+    report = scan(fake_repo)
+    assert report.ok, render(report)
+    assert not report.scan_errors
+    assert any("nested/a.js" in r for r in report.keyless_receipts)
+
+
+def test_line_allowlist_miss_does_not_echo_key_literal(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rel = "services/x/adapter.py"
+    monkeypatch.setitem(
+        egress_inventory._LINE_ALLOWLIST,
+        rel,
+        (r"^SAFE_LINE$",),
+    )
+    key_literal = "sk-" + "ant-" + "A" * 24
+    adapter = fake_repo / rel
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text(
+        "SAFE_LINE\n" + f"{_API_SNIPPET} {key_literal}\n",
+        encoding="utf-8",
+    )
+    _commit_all(fake_repo, "adapter line allowlist miss")
+    report = scan(fake_repo)
+    out = render(report)
+    assert not report.ok
+    assert f"{rel}:2" in report.tracked_line_violations
+    assert key_literal not in out
+    assert all(key_literal not in v for v in report.tracked_line_violations)
+
+
 def test_served_symlink_outside_root_fails(fake_repo: Path) -> None:
     outside = fake_repo / "services/outside.js"
     outside.write_text("outside\n", encoding="utf-8")

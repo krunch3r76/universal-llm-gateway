@@ -559,67 +559,93 @@ def _collect_served_files(
     repo_root: Path, root: ServedRoot, scan_errors: list[str]
 ) -> list[tuple[str, Path]]:
     files: list[tuple[str, Path]] = []
-    root_abs = (repo_root / root.rel_dir).resolve()
+    try:
+        root_abs = (repo_root / root.rel_dir).resolve()
+    except (OSError, RuntimeError):
+        scan_errors.append(f"{root.rel_dir}: symlink loop in served root")
+        return files
     if not root_abs.is_dir():
         return files
-    seen_dir_keys: set[tuple[int, int]] = set()
+    active_dir_keys: set[tuple[int, int]] = set()
+    completed_dir_keys: set[tuple[int, int]] = set()
+
+    def _resolve_or_loop(path: Path, entry_rel: str) -> Path | None:
+        try:
+            return path.resolve()
+        except (OSError, RuntimeError):
+            scan_errors.append(f"{entry_rel}: symlink loop in served root")
+            return None
 
     def walk(dir_path: Path) -> None:
-        dir_resolved = dir_path.resolve()
+        dir_resolved = _resolve_or_loop(dir_path, _rel_posix(repo_root, dir_path))
+        if dir_resolved is None:
+            return
         try:
             st = dir_resolved.stat()
             dir_key = (st.st_dev, st.st_ino)
-            if dir_key in seen_dir_keys:
-                rel_loop = _rel_posix(repo_root, dir_path)
-                scan_errors.append(f"{rel_loop}: symlink loop in served root")
-                return
-            seen_dir_keys.add(dir_key)
         except OSError as exc:
             scan_errors.append(f"{root.rel_dir}: {exc}")
             return
-        try:
-            entries = sorted(dir_path.iterdir(), key=lambda p: p.name)
-        except OSError as exc:
-            scan_errors.append(f"{_rel_posix(repo_root, dir_path)}: {exc}")
+        if dir_key in active_dir_keys:
+            rel_loop = _rel_posix(repo_root, dir_path)
+            scan_errors.append(f"{rel_loop}: symlink loop in served root")
             return
-        for entry in entries:
+        if dir_key in completed_dir_keys:
+            return
+        active_dir_keys.add(dir_key)
+        try:
             try:
-                entry_rel = _rel_posix(repo_root, entry)
-            except ValueError:
-                scan_errors.append(f"{root.rel_dir}: path outside repository")
-                continue
-            try:
-                if entry.is_symlink():
-                    target = entry.resolve()
-                    if not _path_under_served_root(target, root_abs):
-                        scan_errors.append(
-                            f"{entry_rel}: symlink target outside served root"
-                        )
-                        continue
-                    if target.is_dir():
-                        walk(target)
-                    elif target.is_file():
-                        files.append((_rel_posix(repo_root, target), target))
-                    continue
-                mode = entry.lstat().st_mode
-                if stat.S_ISDIR(mode):
-                    resolved = entry.resolve()
-                    if not _path_under_served_root(resolved, root_abs):
-                        scan_errors.append(
-                            f"{entry_rel}: directory outside served root"
-                        )
-                        continue
-                    walk(entry)
-                elif stat.S_ISREG(mode):
-                    resolved = entry.resolve()
-                    if not _path_under_served_root(resolved, root_abs):
-                        scan_errors.append(
-                            f"{entry_rel}: file resolves outside served root"
-                        )
-                        continue
-                    files.append((entry_rel, entry))
+                entries = sorted(dir_path.iterdir(), key=lambda p: p.name)
             except OSError as exc:
-                scan_errors.append(f"{entry_rel}: {exc}")
+                scan_errors.append(f"{_rel_posix(repo_root, dir_path)}: {exc}")
+                return
+            for entry in entries:
+                try:
+                    entry_rel = _rel_posix(repo_root, entry)
+                except ValueError:
+                    scan_errors.append(f"{root.rel_dir}: path outside repository")
+                    continue
+                try:
+                    if entry.is_symlink():
+                        target = _resolve_or_loop(entry, entry_rel)
+                        if target is None:
+                            continue
+                        if not _path_under_served_root(target, root_abs):
+                            scan_errors.append(
+                                f"{entry_rel}: symlink target outside served root"
+                            )
+                            continue
+                        if target.is_dir():
+                            walk(target)
+                        elif target.is_file():
+                            files.append((_rel_posix(repo_root, target), target))
+                        continue
+                    mode = entry.lstat().st_mode
+                    if stat.S_ISDIR(mode):
+                        resolved = _resolve_or_loop(entry, entry_rel)
+                        if resolved is None:
+                            continue
+                        if not _path_under_served_root(resolved, root_abs):
+                            scan_errors.append(
+                                f"{entry_rel}: directory outside served root"
+                            )
+                            continue
+                        walk(entry)
+                    elif stat.S_ISREG(mode):
+                        resolved = _resolve_or_loop(entry, entry_rel)
+                        if resolved is None:
+                            continue
+                        if not _path_under_served_root(resolved, root_abs):
+                            scan_errors.append(
+                                f"{entry_rel}: file resolves outside served root"
+                            )
+                            continue
+                        files.append((entry_rel, entry))
+                except OSError as exc:
+                    scan_errors.append(f"{entry_rel}: {exc}")
+        finally:
+            active_dir_keys.discard(dir_key)
+            completed_dir_keys.add(dir_key)
 
     walk(root_abs)
     return files
@@ -733,9 +759,12 @@ def scan(repo_root: Path) -> Report:
                 if _API_DOMAIN_RE.search(line) and not any(
                     re.search(pat, line) for pat in allowed
                 ):
-                    report.tracked_line_violations.append(
-                        f"{rel}:{line_no}: {line.strip()}"
-                    )
+                    if _SK_ANT_KEY_RE.search(line):
+                        report.tracked_line_violations.append(f"{rel}:{line_no}")
+                    else:
+                        report.tracked_line_violations.append(
+                            f"{rel}:{line_no}: {line.strip()}"
+                        )
         elif rel not in _ALLOWLIST:
             report.tracked_whole_file_violations.append(f"{rel}: (whole-file hit)")
         else:
