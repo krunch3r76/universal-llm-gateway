@@ -15,7 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "config" / "anthropic_credit.yaml"
 
 
-class CreditConfigInvalid(ValueError):
+class CreditConfigInvalid(ValueError):  # noqa: N818
     """Raised when anthropic credit config fails validation."""
 
 
@@ -96,7 +96,9 @@ def _parse_as_of(value: Any) -> str | None:
     try:
         dt = datetime.fromisoformat(normalized)
     except ValueError as exc:
-        raise CreditConfigInvalid("available_balance.as_of must be ISO-8601 UTC") from exc
+        raise CreditConfigInvalid(
+            "available_balance.as_of must be ISO-8601 UTC"
+        ) from exc
     if dt.tzinfo is None:
         raise CreditConfigInvalid("available_balance.as_of must be ISO-8601 UTC")
     return text
@@ -156,8 +158,12 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
     if not 1 <= anchor_day_int <= 28:
         raise CreditConfigInvalid("cycle.anchor_day must be in 1–28")
 
-    early_slack = _int_nonneg(cycle_raw.get("early_slack_hours"), field="early_slack_hours")
-    late_slack = _int_nonneg(cycle_raw.get("late_slack_hours"), field="late_slack_hours")
+    early_slack = _int_nonneg(
+        cycle_raw.get("early_slack_hours"), field="early_slack_hours"
+    )
+    late_slack = _int_nonneg(
+        cycle_raw.get("late_slack_hours"), field="late_slack_hours"
+    )
 
     cycle_owner = str(cycle_raw.get("owner") or "").strip()
     if not cycle_owner:
@@ -168,7 +174,9 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
     if hard_stop_usd >= grant_usd:
         raise CreditConfigInvalid("hard_stop_usd must be < grant_usd")
 
-    mcp_stop = _decimal(payload.get("mcp_connector_stop_usd"), field="mcp_connector_stop_usd")
+    mcp_stop = _decimal(
+        payload.get("mcp_connector_stop_usd"), field="mcp_connector_stop_usd"
+    )
     if mcp_stop > hard_stop_usd:
         raise CreditConfigInvalid("mcp_connector_stop_usd must be <= hard_stop_usd")
 
@@ -233,7 +241,9 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
         ),
         probe_cap_usd=probe_cap,
         metered_models=_validate_metered_models(payload.get("metered_models")),
-        standard_models=_model_id_list(payload.get("standard_models"), field="standard_models"),
+        standard_models=_model_id_list(
+            payload.get("standard_models"), field="standard_models"
+        ),
         high_cost_models=_model_id_list(
             payload.get("high_cost_models"), field="high_cost_models"
         ),
