@@ -784,6 +784,31 @@ def test_recover_pre_q_recheck_triggers_stage_a(
     assert not any(len(c) > 4 and c[4] == "q" for c in sends)
 
 
+def test_detach_refuses_incomplete_deferred_flags() -> None:
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        del env
+        calls.append(cmd)
+        raise AssertionError("systemd-run must not run")
+
+    code = cli.main(
+        [
+            "--detach",
+            "--target-ref",
+            "abc",
+            "--parent-dispatch-id",
+            "",
+            "--report-thread",
+            "15851",
+            "--report-after-turn",
+            "1293",
+        ]
+    )
+    assert code == 2
+    assert not any(c and c[0] == "systemd-run" for c in calls)
+
+
 def test_detach_and_execute_mutually_exclusive() -> None:
     """Test 9 / AC10: --detach --execute exits 2 before subprocess."""
     code = cli.main(["--detach", "--execute", "--target-ref", "abc"])

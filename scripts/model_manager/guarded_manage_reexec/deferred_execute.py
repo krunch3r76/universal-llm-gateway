@@ -1,34 +1,32 @@
-"""Deferred manage recycle — wait, re-gate, execute."""
+"""Deferred manage recycle — wait, re-gate, execute, maestro reply."""
 
 from __future__ import annotations
 
-import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .checks import RefuseFinding, observe_manage_inflight
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+)
+
 from .client import call_manage
+from .deferred_gate import RECYCLE_FLEET_SERVICES, run_recycle_step1_per_service_gate
 from .detach import HUB_ROOT, LOG_PATH
 from .result import GuardedReexecResult
 from .runner import _write_result_file, run_guarded_reexec
 
-RECYCLE_FLEET_SERVICES = (
-    "stargate", "gateway", "rag", "agent_bus", "event_service",
-    "mcp", "git_integration_worker", "cloud_proxy", "cortex_api",
-)
-
 _STATUS_TERMINAL = frozenset({"completed", "failed", "cancelled"})
 DEFAULT_POLL_S = 2.0
 DEFAULT_WAIT_PARENT_TIMEOUT_S = 900.0
-_ACTIVE_COUNT_ONLY = re.compile(r"^active_count=\d+$")
 
 ManageCall = Callable[..., dict[str, Any]]
 DispatchStatusFn = Callable[[str], dict[str, Any] | None]
-GiwIdleFn = Callable[[], bool]
+GiwIdleProbeFn = Callable[[], tuple[bool, str | None]]
 ClockFn = Callable[[], float]
 SleepFn = Callable[[float], None]
 AgentBusReplyFn = Callable[..., None]
@@ -65,147 +63,128 @@ def dispatch_status_terminal(row: dict[str, Any] | None) -> bool:
     return str(row.get("status") or "") in _STATUS_TERMINAL
 
 
-def giw_idle_from_ledger(ledger: Any) -> bool:
-    snap = ledger.lease_snapshot()
-    if snap.get("holder_dispatch_id"):
-        return False
-    if int(snap.get("queue_depth") or 0) > 0:
-        return False
-    active = ledger.active_snapshot()
-    return int(active.get("running") or 0) == 0
-
-
-def mcp_row_matches_exception_b(row: dict[str, Any]) -> bool:
-    holder = row.get("holder")
-    if not isinstance(holder, dict):
-        return False
-    return (
-        holder.get("kind") == "mcp_life_session"
-        and holder.get("subject_preview") == "cdp_ask running=1"
-        and holder.get("dispatch_id") is None
-    )
-
-
-def stargate_row_matches_exception_c(
-    stargate_row: dict[str, Any], *, mcp_b: bool
-) -> bool:
-    if not mcp_b:
-        return False
-    if stargate_row.get("holder") is not None:
-        return False
-    if stargate_row.get("probe_error") is not None:
-        return False
-    summary = str(stargate_row.get("active_work_summary") or "")
-    return bool(_ACTIVE_COUNT_ONLY.fullmatch(summary))
-
-
-def _giw_agent_bus_harmful(row: dict[str, Any]) -> bool:
-    return bool(row.get("busy"))
-
-
-def run_recycle_step1_per_service_gate(
+def giw_idle_probe(
     manage_call: ManageCall,
+    ledger_factory: Callable[[], Any],
     *,
-    parent_dispatch_id: str,
-    sock_path: str | None = None,
-) -> RefuseFinding | None:
-    del parent_dispatch_id  # (a) inert at child gate — parent id is not a pass.
-    rows: dict[str, dict[str, Any]] = {}
-    for name in RECYCLE_FLEET_SERVICES:
-        payload = _manage(manage_call, "busy_status", {"service": name}, sock_path)
-        if payload.get("status") == "error":
-            return RefuseFinding(
-                reason="busy_status_unobservable",
-                offenders=[{"service": name, "payload": payload}],
-            )
-        rows[name] = payload
+    sock_path: str | None,
+) -> tuple[bool, str | None]:
+    """Return (idle_ok, refuse_reason). refuse_reason forces immediate fail-closed refuse."""
+    try:
+        snap = ledger_factory().lease_snapshot()
+    except Exception:
+        return False, "giw_idle_ledger_unreadable"
+    if snap.get("holder_dispatch_id"):
+        return False, None
+    if int(snap.get("queue_depth") or 0) > 0:
+        return False, None
+    row = _manage(
+        manage_call,
+        "busy_status",
+        {"service": "git_integration_worker"},
+        sock_path,
+    )
+    if row.get("status") == "error":
+        return False, "giw_idle_busy_status_unobservable"
+    if row.get("busy") or row.get("holder") is not None:
+        return False, None
+    return True, None
 
-    for name, row in rows.items():
-        if row.get("restart_intent") is not None:
-            return RefuseFinding(
-                reason="nonterminal_restart_intent",
-                offenders=[{"service": name, "service_row": row}],
-            )
-        if row.get("restart_window") is not None:
-            return RefuseFinding(
-                reason="open_restart_window",
-                offenders=[{"service": name, "service_row": row}],
-            )
-        if "process" in row:
-            finding, _, _, _ = observe_manage_inflight(row)
-            if finding is not None:
-                finding.offenders[0]["service"] = name
-                return finding
 
-    mcp_row = rows["mcp"]
-    mcp_b = mcp_row_matches_exception_b(mcp_row)
-    for name, row in rows.items():
-        if name == "mcp":
-            if row.get("busy") and not mcp_b:
-                return RefuseFinding(
-                    reason="step1_mcp_not_exception_b",
-                    offenders=[{"service": "mcp", "row": row}],
-                )
-            continue
-        if name == "stargate":
-            if row.get("busy") and not stargate_row_matches_exception_c(
-                row, mcp_b=mcp_b
-            ):
-                return RefuseFinding(
-                    reason="step1_stargate_not_exception_c",
-                    offenders=[{"service": "stargate", "row": row}],
-                )
-            continue
-        if name in ("git_integration_worker", "agent_bus"):
-            if _giw_agent_bus_harmful(row):
-                return RefuseFinding(
-                    reason="step1_giw_agent_bus_busy",
-                    offenders=[{"service": name, "row": row}],
-                )
-            continue
-        if row.get("busy") and row.get("holder") is not None:
-            return RefuseFinding(
-                reason="step1_unclassified_holder",
-                offenders=[{"service": name, "row": row}],
-            )
-    return None
+def _ledger_factory_default() -> CursorDispatchLedger:
+    return CursorDispatchLedger.instance()
 
 
 def wait_for_parent_and_giw_idle(
     *,
     parent_dispatch_id: str,
     dispatch_status_fn: DispatchStatusFn,
-    giw_idle_fn: GiwIdleFn,
+    giw_idle_probe_fn: GiwIdleProbeFn,
     timeout_s: float,
     poll_s: float,
     clock: ClockFn | None = None,
     sleep_fn: SleepFn | None = None,
-) -> bool:
+) -> tuple[bool, str | None]:
+    """Return (ready, refuse_reason). refuse_reason is fail-closed (not timeout)."""
     now = clock or time.time
     sleep = sleep_fn or time.sleep
     deadline = now() + timeout_s
     while now() < deadline:
+        idle, refuse = giw_idle_probe_fn()
+        if refuse:
+            return False, refuse
         parent_row = dispatch_status_fn(parent_dispatch_id)
-        if dispatch_status_terminal(parent_row) and giw_idle_fn():
-            return True
+        if dispatch_status_terminal(parent_row) and idle:
+            return True, None
         sleep(poll_s)
-    return False
+    return False, None
+
+
+def _fleet_liveness_snapshot(
+    manage_call: ManageCall, sock_path: str | None
+) -> dict[str, Any]:
+    return _manage(
+        manage_call,
+        "fleet_liveness",
+        {"services": list(RECYCLE_FLEET_SERVICES), "projection": "compact"},
+        sock_path,
+    )
 
 
 def _fleet_child_pids(manage_call: ManageCall, sock_path: str | None) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for name in RECYCLE_FLEET_SERVICES:
-        health = _manage(manage_call, "health", {"service": name}, sock_path)
-        out[name] = health.get("pid")
-    return out
+    snap = _fleet_liveness_snapshot(manage_call, sock_path)
+    rows = snap.get("services") if isinstance(snap.get("services"), list) else []
+    by_service = {
+        str(row.get("service")): row.get("pid")
+        for row in rows
+        if isinstance(row, dict)
+    }
+    return {name: by_service.get(name) for name in RECYCLE_FLEET_SERVICES}
 
 
-def _verdict_from_result(result: GuardedReexecResult) -> str:
-    if result.status == "proof-satisfied":
-        return "PASS"
-    if result.status in ("refused", "proof-failed", "start-failed"):
-        return "FAIL"
-    return "INDETERMINATE"
+def _mcp_authoritative_liveness(snap: dict[str, Any]) -> str | None:
+    rows = snap.get("services") if isinstance(snap.get("services"), list) else []
+    for row in rows:
+        if isinstance(row, dict) and row.get("service") == "mcp":
+            ve = row.get("version_evidence")
+            if isinstance(ve, dict):
+                return ve.get("authoritative_for_liveness")
+    return None
+
+
+def _verdict_after_execute(
+    ctx: DeferredRecycleContext,
+    result: GuardedReexecResult,
+    *,
+    manage_call: ManageCall,
+    child_before: dict[str, Any],
+    child_after: dict[str, Any],
+    sock_path: str | None,
+) -> tuple[str, dict[str, Any]]:
+    snap = _fleet_liveness_snapshot(manage_call, sock_path)
+    checkout = snap.get("checkout") if isinstance(snap.get("checkout"), dict) else {}
+    head_sha = checkout.get("head_sha")
+    mcp_auth = _mcp_authoritative_liveness(snap)
+    probe_line = (
+        'services[mcp].version_evidence.authoritative_for_liveness='
+        f"{mcp_auth!r}"
+    )
+    extra = {
+        "probe_39439": probe_line,
+        "line_39455": (
+            "39455: evidence = step 5; markers api_dispatch.py:761, restart_drain.py:707"
+        ),
+        "checkout_head_sha": head_sha,
+    }
+    if result.status != "proof-satisfied":
+        return "FAIL", extra
+    if child_before != child_after:
+        return "FAIL", extra
+    if head_sha != ctx.target_ref:
+        return "FAIL", extra
+    if mcp_auth != "process_start_code_version":
+        return "FAIL", extra
+    return "PASS", extra
 
 
 def post_maestro_reply(
@@ -218,17 +197,24 @@ def post_maestro_reply(
     child_pids_after: dict[str, Any],
     exit_code: int,
     reply_fn: AgentBusReplyFn | None = None,
+    body_extra: dict[str, Any] | None = None,
 ) -> None:
     body_lines = [
         f"VERDICT: {verdict}",
         f"manage_pid: {manage_before.get('pid')} -> {(manage_after or {}).get('pid')}",
-        f"code_version: {manage_before.get('code_version')} -> {(manage_after or {}).get('code_version')}",
+        f"code_version: {manage_before.get('code_version')} -> "
+        f"{(manage_after or {}).get('code_version')}",
         f"child_pids_before: {child_pids_before}",
         f"child_pids_after: {child_pids_after}",
         f"exit_code: {exit_code}",
         f"log_path: {LOG_PATH}",
         f"result_path: {ctx.result_path}",
     ]
+    if body_extra:
+        if body_extra.get("probe_39439"):
+            body_lines.append(body_extra["probe_39439"])
+        if body_extra.get("line_39455"):
+            body_lines.append(body_extra["line_39455"])
     body = "\n".join(body_lines)
     subject = f"DONE|decision:manage-recycle-39439-39455-r3b VERDICT: {verdict}"
     if reply_fn is not None:
@@ -241,8 +227,9 @@ def post_maestro_reply(
         )
         return
     script = ctx.repo_root / "scripts" / "agent-bus"
-    subprocess.run(
+    proc = subprocess.run(
         [
+            sys.executable,
             str(script),
             "reply",
             "--thread",
@@ -257,15 +244,42 @@ def post_maestro_reply(
             str(ctx.report_after_turn),
         ],
         check=False,
+        capture_output=True,
+        text=True,
+    )
+    print(
+        f"agent-bus reply exit={proc.returncode}",
+        file=sys.stderr,
+        flush=True,
     )
 
 
-def _ledger_factory_default() -> Any:
-    from services.git_integration_worker.cursor_dispatch_ledger import (
-        CursorDispatchLedger,
+def report_deferred_crash(
+    ctx: DeferredRecycleContext,
+    exc: BaseException,
+    tb: str,
+    *,
+    reply_fn: AgentBusReplyFn | None = None,
+) -> None:
+    crashed = GuardedReexecResult(
+        status="crashed",
+        reason=str(exc),
+        dry_run=False,
+        target_ref=ctx.target_ref,
+        executed=False,
+        traceback=tb,
     )
-
-    return CursorDispatchLedger.instance()
+    _write_result_file(ctx.result_path, crashed)
+    post_maestro_reply(
+        ctx,
+        verdict="FAIL",
+        manage_before={},
+        manage_after=None,
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=1,
+        reply_fn=reply_fn,
+    )
 
 
 def _refused_exit(
@@ -293,7 +307,7 @@ def _refused_exit(
         manage_before=manage_before,
         manage_after=None,
         child_pids_before=child_before,
-        child_pids_after=child_before,
+        child_pids_after={},
         exit_code=2,
         reply_fn=reply_fn,
     )
@@ -305,42 +319,50 @@ def run_deferred_recycle(
     *,
     manage_call: ManageCall | None = None,
     dispatch_status_fn: DispatchStatusFn | None = None,
-    giw_idle_fn: GiwIdleFn | None = None,
     ledger_factory: Callable[[], Any] | None = None,
+    giw_idle_probe_fn: GiwIdleProbeFn | None = None,
     reply_fn: AgentBusReplyFn | None = None,
     clock: ClockFn | None = None,
     sleep_fn: SleepFn | None = None,
 ) -> tuple[int, GuardedReexecResult]:
     manage = manage_call or call_manage
     sock = ctx.sock_path
-
-    manage_before = _manage(manage, "whoami", {}, sock)
-    child_before = _fleet_child_pids(manage, sock)
-
     factory = ledger_factory or _ledger_factory_default
+
     if dispatch_status_fn is None:
         dispatch_status_fn = lambda did: factory().dispatch_status_by_id(  # noqa: E731
             dispatch_id=did
         )
-    if giw_idle_fn is None:
-        giw_idle_fn = lambda: giw_idle_from_ledger(factory())  # noqa: E731
 
-    ready = wait_for_parent_and_giw_idle(
+    giw_probe = giw_idle_probe_fn or (
+        lambda: giw_idle_probe(manage, factory, sock_path=sock)  # noqa: E731
+    )
+
+    ready, refuse_reason = wait_for_parent_and_giw_idle(
         parent_dispatch_id=ctx.parent_dispatch_id,
         dispatch_status_fn=dispatch_status_fn,
-        giw_idle_fn=giw_idle_fn,
+        giw_idle_probe_fn=giw_probe,
         timeout_s=ctx.wait_timeout_s,
         poll_s=ctx.poll_s,
         clock=clock,
         sleep_fn=sleep_fn,
     )
 
+    if refuse_reason:
+        return _refused_exit(
+            ctx,
+            reason=refuse_reason,
+            manage_before={},
+            child_before={},
+            reply_fn=reply_fn,
+        )
+
     if not ready:
         return _refused_exit(
             ctx,
             reason="parent_wait_timeout",
-            manage_before=manage_before,
-            child_before=child_before,
+            manage_before={},
+            child_before={},
             reply_fn=reply_fn,
         )
 
@@ -353,11 +375,14 @@ def run_deferred_recycle(
         return _refused_exit(
             ctx,
             reason=gate.reason,
-            manage_before=manage_before,
-            child_before=child_before,
+            manage_before={},
+            child_before={},
             reply_fn=reply_fn,
             checks={"findings": [{"reason": gate.reason, "offenders": gate.offenders}]},
         )
+
+    manage_before = _manage(manage, "whoami", {}, sock)
+    child_before = _fleet_child_pids(manage, sock)
 
     reexec_kwargs: dict[str, Any] = {
         "target_ref": ctx.target_ref,
@@ -373,7 +398,15 @@ def run_deferred_recycle(
     result = run_guarded_reexec(**reexec_kwargs)
     manage_after = _manage(manage, "whoami", {}, sock)
     child_after = _fleet_child_pids(manage, sock)
-    exit_code = 0 if result.status == "proof-satisfied" else 2
+    verdict, body_extra = _verdict_after_execute(
+        ctx,
+        result,
+        manage_call=manage,
+        child_before=child_before,
+        child_after=child_after,
+        sock_path=sock,
+    )
+    exit_code = 0 if verdict == "PASS" else 2
     if result.status == "crashed":
         exit_code = 1
     elif result.status == "proof-failed":
@@ -382,12 +415,13 @@ def run_deferred_recycle(
         exit_code = 4
     post_maestro_reply(
         ctx,
-        verdict=_verdict_from_result(result),
+        verdict=verdict,
         manage_before=manage_before,
         manage_after=manage_after,
         child_pids_before=child_before,
         child_pids_after=child_after,
         exit_code=exit_code,
         reply_fn=reply_fn,
+        body_extra=body_extra,
     )
     return exit_code, result

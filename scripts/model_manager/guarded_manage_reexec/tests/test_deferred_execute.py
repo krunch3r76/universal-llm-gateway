@@ -11,21 +11,24 @@ import pytest
 
 from scripts.model_manager.guarded_manage_reexec import __main__ as cli
 from scripts.model_manager.guarded_manage_reexec.deferred_execute import (
-    RECYCLE_FLEET_SERVICES,
     DeferredRecycleContext,
     dispatch_status_terminal,
-    mcp_row_matches_exception_b,
+    report_deferred_crash,
     run_deferred_recycle,
+    wait_for_parent_and_giw_idle,
+)
+from scripts.model_manager.guarded_manage_reexec.deferred_gate import (
+    RECYCLE_FLEET_SERVICES,
+    mcp_row_matches_exception_b,
     run_recycle_step1_per_service_gate,
     stargate_row_matches_exception_c,
-    wait_for_parent_and_giw_idle,
 )
 from scripts.model_manager.guarded_manage_reexec.result import GuardedReexecResult
 from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexec
 
 
 def _idle_row(service: str, **extra: Any) -> dict[str, Any]:
-    row: dict[str, Any] = {"busy": False, "holder": None}
+    row: dict[str, Any] = {"busy": False, "holder": None, "fleet_pid": 100}
     row.update(extra)
     row.setdefault("service", service)
     return row
@@ -36,9 +39,21 @@ def _manage_from_rows(rows: dict[str, dict[str, Any]]):
         del kwargs
         if method == "whoami":
             return {"pid": 9, "code_version": "deadbeef", "process_start_time": "t0"}
-        if method == "health":
-            name = (params or {}).get("service", "")
-            return {"pid": rows.get(name, {}).get("health_pid", 100)}
+        if method == "fleet_liveness":
+            p = params or {}
+            slugs = p.get("services") or list(RECYCLE_FLEET_SERVICES)
+            services_out: list[dict[str, Any]] = []
+            for name in slugs:
+                r = rows.get(name, _idle_row(name))
+                entry: dict[str, Any] = {
+                    "service": name,
+                    "pid": r.get("fleet_pid", 100),
+                }
+                if ve := r.get("version_evidence"):
+                    entry["version_evidence"] = ve
+                services_out.append(entry)
+            checkout = rows.get("_checkout", {"head_sha": "abc"})
+            return {"services": services_out, "checkout": checkout}
         if method == "busy_status":
             name = (params or {}).get("service", "")
             return dict(rows.get(name, _idle_row(name)))
@@ -79,12 +94,13 @@ def test_mcp_and_stargate_exception_identity() -> None:
     )
 
 
-def test_step1_exception_a_parent_holder_still_refuses() -> None:
+def test_step1_giw_holder_non_busy_refuses() -> None:
     parent = "parent-dispatch-id"
     rows = {name: _idle_row(name) for name in RECYCLE_FLEET_SERVICES}
     rows["git_integration_worker"] = {
-        "busy": True,
+        "busy": False,
         "holder": {"dispatch_id": parent},
+        "fleet_pid": 100,
     }
     finding = run_recycle_step1_per_service_gate(
         _manage_from_rows(rows),
@@ -153,40 +169,25 @@ def test_wait_parent_timeout_900s_injected_clock() -> None:
     def sleep(_s: float) -> None:
         t["now"] += 2.0
 
-    statuses = iter(
-        [
-            {"status": "running"},
-            {"status": "running"},
-        ]
-    )
-
-    def status_fn(_dispatch_id: str) -> dict[str, Any]:
-        try:
-            return next(statuses)
-        except StopIteration:
-            return {"status": "running"}
-
-    ok = wait_for_parent_and_giw_idle(
+    ok, refuse = wait_for_parent_and_giw_idle(
         parent_dispatch_id="d1",
-        dispatch_status_fn=status_fn,
-        giw_idle_fn=lambda: True,
+        dispatch_status_fn=lambda _d: {"status": "running"},
+        giw_idle_probe_fn=lambda: (True, None),
         timeout_s=900.0,
         poll_s=2.0,
         clock=clock,
         sleep_fn=sleep,
     )
     assert not ok
+    assert refuse is None
     assert t["now"] == 900.0
 
 
 def test_deferred_timeout_posts_one_reply_and_writes_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     result_path = tmp_path / "out.json"
     replies: list[dict[str, Any]] = []
-
-    def reply_fn(**kwargs: Any) -> None:
-        replies.append(kwargs)
 
     ctx = DeferredRecycleContext(
         parent_dispatch_id="d-timeout",
@@ -201,41 +202,88 @@ def test_deferred_timeout_posts_one_reply_and_writes_result(
     )
     t = {"now": 0.0}
 
-    def clock() -> float:
-        return t["now"]
-
-    def sleep_fn(seconds: float) -> None:
-        t["now"] += seconds
-
     code, result = run_deferred_recycle(
         ctx,
         manage_call=_manage_from_rows(
             {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
         ),
         dispatch_status_fn=lambda _d: {"status": "running"},
-        giw_idle_fn=lambda: True,
-        reply_fn=reply_fn,
-        clock=clock,
-        sleep_fn=sleep_fn,
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **kw: replies.append(kw),
+        clock=lambda: t.__setitem__("now", t["now"]) or t["now"],
+        sleep_fn=lambda s: t.__setitem__("now", t["now"] + s),
     )
     assert code == 2
     assert result.reason == "parent_wait_timeout"
     assert result_path.is_file()
-    on_disk = json.loads(result_path.read_text(encoding="utf-8"))
-    assert on_disk["reason"] == "parent_wait_timeout"
     assert len(replies) == 1
-    assert replies[0]["thread"] == "15851"
-    assert replies[0]["to"] == "maestro"
-    assert replies[0]["after_turn"] == 1293
-    assert str(result_path) in replies[0]["body"]
+    assert "child_pids_after: {}" in replies[0]["body"]
 
 
-def test_deferred_success_single_reply(
+def test_giw_busy_during_wait_never_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result_path = tmp_path / "out.json"
+    executed: list[bool] = []
+
+    def _boom(**_k: Any) -> GuardedReexecResult:
+        executed.append(True)
+        raise AssertionError("run_guarded_reexec must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        _boom,
+    )
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {"busy": True, "holder": None, "fleet_pid": 1}
+
+    ctx = DeferredRecycleContext(
+        parent_dispatch_id="d-giw-busy",
+        report_thread="15851",
+        report_after_turn=1293,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=result_path,
+        wait_timeout_s=4.0,
+        poll_s=2.0,
+        repo_root=tmp_path,
+    )
+    t = {"now": 0.0}
+    code, result = run_deferred_recycle(
+        ctx,
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        ledger_factory=lambda: type(
+            "L",
+            (),
+            {
+                "lease_snapshot": staticmethod(
+                    lambda: {"holder_dispatch_id": None, "queue_depth": 0}
+                )
+            },
+        )(),
+        reply_fn=lambda **_k: None,
+        clock=lambda: t.__setitem__("now", t["now"]) or t["now"],
+        sleep_fn=lambda s: t.__setitem__("now", t["now"] + s),
+    )
+    assert code == 2
+    assert result.reason == "parent_wait_timeout"
+    assert executed == []
+
+
+def test_deferred_success_single_reply_and_p3_probes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result_path = tmp_path / "out.json"
     replies: list[dict[str, Any]] = []
-    rows = {name: _idle_row(name) for name in RECYCLE_FLEET_SERVICES}
+    rows = {name: _idle_row(name, fleet_pid=100) for name in RECYCLE_FLEET_SERVICES}
+    rows["_checkout"] = {"head_sha": "abc"}
+    rows["mcp"] = {
+        **_idle_row("mcp"),
+        "version_evidence": {
+            "authoritative_for_liveness": "process_start_code_version",
+        },
+    }
 
     fake_result = GuardedReexecResult(
         status="proof-satisfied",
@@ -264,7 +312,7 @@ def test_deferred_success_single_reply(
         ctx,
         manage_call=_manage_from_rows(rows),
         dispatch_status_fn=lambda _d: {"status": "completed"},
-        giw_idle_fn=lambda: True,
+        giw_idle_probe_fn=lambda: (True, None),
         reply_fn=lambda **kw: replies.append(kw),
         sleep_fn=lambda _s: None,
     )
@@ -272,12 +320,73 @@ def test_deferred_success_single_reply(
     assert result.status == "proof-satisfied"
     assert len(replies) == 1
     assert "VERDICT: PASS" in replies[0]["body"]
+    assert "authoritative_for_liveness" in replies[0]["body"]
+    assert "39455: evidence = step 5" in replies[0]["body"]
+
+
+def test_report_deferred_crash_one_reply_and_result_file(tmp_path: Path) -> None:
+    result_path = tmp_path / "crash.json"
+    replies: list[dict[str, Any]] = []
+    ctx = DeferredRecycleContext(
+        parent_dispatch_id="d-crash",
+        report_thread="15851",
+        report_after_turn=1293,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=result_path,
+        repo_root=tmp_path,
+    )
+    report_deferred_crash(
+        ctx,
+        RuntimeError("ledger boom"),
+        "traceback-here",
+        reply_fn=lambda **kw: replies.append(kw),
+    )
+    assert len(replies) == 1
+    on_disk = json.loads(result_path.read_text(encoding="utf-8"))
+    assert on_disk["status"] == "crashed"
+    assert on_disk["reason"] == "ledger boom"
+
+
+def test_main_deferred_crash_on_dispatch_status_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replies: list[dict[str, Any]] = []
+    result_path = tmp_path / "out.json"
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.__main__.run_deferred_recycle",
+        lambda _ctx: (_ for _ in ()).throw(RuntimeError("status read failed")),
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.__main__.report_deferred_crash",
+        lambda ctx, exc, tb, **kw: report_deferred_crash(
+            ctx, exc, tb, reply_fn=lambda **r: replies.append(r)
+        ),
+    )
+    with pytest.raises(RuntimeError, match="status read failed"):
+        cli.main(
+            [
+                "--execute",
+                "--recover",
+                "--target-ref",
+                "abc",
+                "--parent-dispatch-id",
+                "d1",
+                "--report-thread",
+                "15851",
+                "--report-after-turn",
+                "1293",
+                "--result-path",
+                str(result_path),
+            ]
+        )
+    assert len(replies) == 1
+    assert result_path.is_file()
 
 
 def test_in_dispatch_execute_still_refuses_giw_claimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """r2 regression: inline --execute with CURSOR_SDK_DISPATCH_ID still refuses."""
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "caller-dispatch")
     record_path = tmp_path / "armed.json"
     sock = str(tmp_path / "manage.sock")

@@ -29,6 +29,7 @@ from pathlib import Path
 from .deferred_execute import (
     DEFAULT_WAIT_PARENT_TIMEOUT_S,
     DeferredRecycleContext,
+    report_deferred_crash,
     run_deferred_recycle,
 )
 from .detach import RESULT_PATH, launch_detach
@@ -168,6 +169,26 @@ def main(argv: list[str] | None = None) -> int:
     target_ref = _resolve_target_ref(args.target_ref, repo_root)
 
     if args.detach:
+        deferred = (
+            args.parent_dispatch_id,
+            args.report_thread,
+            args.report_after_turn,
+        )
+        present = [
+            v not in (None, "") for v in deferred[:2]
+        ] + [args.report_after_turn is not None]
+        if any(present) and not all(present):
+            _emit_json(
+                json.dumps(
+                    {
+                        "status": "refused",
+                        "reason": "deferred_recycle_incomplete_flags",
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         code, payload = launch_detach(
             target_ref=target_ref,
             tmux_target=args.tmux_target,
@@ -229,7 +250,11 @@ def main(argv: list[str] | None = None) -> int:
             wait_timeout_s=float(args.wait_parent_timeout_s),
             repo_root=repo_root,
         )
-        exit_code, result = run_deferred_recycle(ctx)
+        try:
+            exit_code, result = run_deferred_recycle(ctx)
+        except Exception as exc:
+            report_deferred_crash(ctx, exc, traceback.format_exc())
+            raise
         _emit_json(json.dumps(result.as_dict(), indent=2, sort_keys=True))
         return exit_code
 
