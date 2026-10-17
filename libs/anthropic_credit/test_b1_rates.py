@@ -43,6 +43,20 @@ def test_resolve_rate_haiku_5_5_standard_tier() -> None:
     assert row.long_output_rate_per_m == 2.50
 
 
+def test_haiku_5_5_exactly_100k_prompt_is_standard_tier() -> None:
+    row = resolve_pinned_rate("anthropic/claude-haiku-5-5")
+    assert row is not None
+    usage = {
+        "input_tokens": 100_000,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 0,
+    }
+    cost, missing, _unknown = usage_cost_usd(usage, row)
+    assert missing == ()
+    assert cost == Decimal("0.010000")
+
+
 @pytest.mark.parametrize(
     ("prompt_tokens", "input_rate"),
     [
@@ -108,3 +122,19 @@ def test_credit_gate_admits_metered_sonnet_and_haiku(tmp_path: Path) -> None:
         res = policy.admit(f"req-{model}", model, body, token_count=500, now=_T0)
         assert isinstance(res, Admit), getattr(res, "detail", res)
         assert res.reservation_usd is not None
+
+
+def test_shipped_anthropic_credit_yaml_lists_sonnet_and_haiku_5_5() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    cfg_path = (
+        Path(__file__).resolve().parents[2] / "config" / "anthropic_credit.yaml"
+    )
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    metered = set(data.get("metered_models") or [])
+    standard = set(data.get("standard_models") or [])
+    for model in ("anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5"):
+        assert model in metered
+        assert model in standard

@@ -110,8 +110,10 @@ def test_connect_closes_connection_on_schema_mismatch(
 
     mock_conn = MagicMock()
     mock_conn.row_factory = sqlite3.Row
+    _execute_calls: list[str] = []
 
     def _execute(sql: str, *_params: object) -> MagicMock:
+        _execute_calls.append(sql)
         result = MagicMock()
         if "schema_version" in sql:
             result.fetchone.return_value = ("1",)
@@ -131,6 +133,95 @@ def test_connect_closes_connection_on_schema_mismatch(
     with pytest.raises(LedgerUnavailable, match="schema_mismatch"):
         ledger._connect()
     mock_conn.close.assert_called_once()
+    assert not any("CREATE INDEX" in sql for sql in _execute_calls)
+
+
+def test_compute_spend_since_as_of_open_reserve_before_as_of(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+
+    def _seed(conn: sqlite3.Connection) -> None:
+        _insert_row(
+            conn,
+            kind="reserve",
+            request_id="open-old",
+            usd="2.000000",
+            created_at="2026-09-19T12:00:00+00:00",
+        )
+
+    ledger.run_immediate(_seed)
+    spend = ledger.run_immediate(
+        lambda conn: CreditLedger.compute_spend_since_as_of(conn, as_of=_AS_OF)
+    )
+    assert spend == Decimal("2")
+
+
+def test_compute_spend_since_as_of_straddle_commit_not_double_counted(
+    tmp_path: Path,
+) -> None:
+    cfg = _make_cfg(tmp_path)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+
+    def _seed(conn: sqlite3.Connection) -> None:
+        _insert_row(
+            conn,
+            kind="reserve",
+            request_id="straddle-open",
+            usd="1.000000",
+            created_at="2026-09-19T12:00:00+00:00",
+        )
+        _insert_row(
+            conn,
+            kind="commit",
+            request_id="straddle-open",
+            usd="1.000000",
+            created_at="2026-09-25T12:00:00+00:00",
+        )
+
+    ledger.run_immediate(_seed)
+    spend = ledger.run_immediate(
+        lambda conn: CreditLedger.compute_spend_since_as_of(conn, as_of=_AS_OF)
+    )
+    assert spend == Decimal("1")
+
+
+def test_ledger_writes_created_at_utc_plus00_suffix(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    policy = CreditPolicy(cfg)
+    t0 = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
+    assert isinstance(
+        policy.admit(
+            "ts-fmt",
+            "anthropic/claude-sonnet-5",
+            _body_1_usd_on_sonnet(),
+            token_count=0,
+            now=t0,
+        ),
+        Admit,
+    )
+    for entry in policy.status(now=t0)["entries"]:
+        created = entry["created_at"]
+        assert isinstance(created, str)
+        assert created.endswith("+00:00")
+
+
+def test_compute_spend_since_as_of_uses_created_at_index(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path)
+    ledger = CreditLedger(cfg.ledger_path, create_if_missing=False)
+
+    def _plan(conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT id FROM entries WHERE created_at >= ?
+            """,
+            (_AS_OF.isoformat(),),
+        ).fetchall()
+        return [str(row[3]) for row in rows]
+
+    plan = ledger.run_immediate(_plan)
+    plan_text = " ".join(plan).lower()
+    assert "idx_entries_created_at" in plan_text or "using index" in plan_text
 
 
 def test_gate_extract_credit_tag_refuses_ttl_expired_string() -> None:

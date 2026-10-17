@@ -139,6 +139,7 @@ def test_spend_since_as_of_balance_cap_uses_post_as_of_spend_only(tmp_path: Path
         now=t_now,
     )
     assert not isinstance(second, Admit)
+    assert second.code == "anthropic_cycle_budget_exhausted"
 
 
 def test_ledger_schema_mismatch_refused(tmp_path: Path) -> None:

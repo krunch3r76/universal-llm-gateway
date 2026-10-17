@@ -466,6 +466,23 @@ class CreditLedger:
             if _row_at_or_after_as_of(r_row):
                 spend += _parse_usd(r_row)
 
+        open_before_as_of = conn.execute(
+            """
+            SELECT r.id, r.usd, r.created_at
+            FROM entries r
+            WHERE r.kind = 'reserve'
+              AND r.created_at < ?
+              AND NOT EXISTS (
+                SELECT 1 FROM entries c
+                WHERE c.request_id = r.request_id
+                  AND c.kind IN ('commit', 'release')
+              )
+            """,
+            (as_of_iso,),
+        ).fetchall()
+        for row in open_before_as_of:
+            spend += _parse_usd(row)
+
         return spend
 
     @staticmethod

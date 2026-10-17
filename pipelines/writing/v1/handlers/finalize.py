@@ -222,6 +222,7 @@ class WritingFinalizeHandler(BaseHandler):
                 }
             )
         review = _json_of(outputs, "review")
+        held_review = bool(review) and review.get("status") == "held_reviewer_unfunded"
         review_ok = bool(review) and review.get("verdict") in {"ship", "revise"}
         revise = _json_of(outputs, "revise")
         revision_ran = revise is not None
@@ -239,7 +240,7 @@ class WritingFinalizeHandler(BaseHandler):
             and not _v2_worse(initial, final)
         ):
             selected = "draft_v2"
-        if not review_ok:
+        if held_review or not review_ok:
             passed = False
         elif selected == "draft_v2":
             passed = final == []
@@ -250,7 +251,16 @@ class WritingFinalizeHandler(BaseHandler):
         active = initial if selected == "draft_v1" else list(final or [])
         unresolved = list(active)
         review_reason = None
-        if not review_ok:
+        if held_review:
+            review_reason = (review or {}).get("reason") or "held_reviewer_unfunded"
+            unresolved.append(
+                {
+                    "type": "review_held_unfunded",
+                    "claim_id": None,
+                    "detail": review_reason,
+                }
+            )
+        elif not review_ok:
             review_reason = (
                 (review or {}).get("reason")
                 or (review or {}).get("refused")
@@ -317,7 +327,11 @@ class WritingFinalizeHandler(BaseHandler):
                 "final": final,
             },
             "review": {
-                "status": "ok" if review_ok else "failed",
+                "status": (
+                    "held_reviewer_unfunded"
+                    if held_review
+                    else ("ok" if review_ok else "failed")
+                ),
                 "reason": review_reason,
                 "writer_seat": assemble.get("writer_seat"),
                 "reviewer_seat": assemble.get("reviewer_seat"),

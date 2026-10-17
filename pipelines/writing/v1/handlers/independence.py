@@ -15,7 +15,7 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-ANTHROPIC_WRITER_REVIEWER = "openai/gpt-5"
+ANTHROPIC_WRITER_REVIEWER = "openai/gpt-5.5"
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:

@@ -15,7 +15,7 @@ from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
 from .provenance_check import WritingProvenanceCheckHandler
 from .review_local import WritingReviewLocalHandler
-from .seat_dispatch import WritingSeatDispatchHandler
+from .seat_dispatch import WritingReviewOpenaiHandler, WritingSeatDispatchHandler
 from .seat_wait import WritingSeatSelectHandler, WritingSeatWaitHandler
 
 if TYPE_CHECKING:
@@ -68,4 +68,9 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_review_local_v1",
         WritingReviewLocalHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_review_openai_v1",
+        WritingReviewOpenaiHandler,
     )

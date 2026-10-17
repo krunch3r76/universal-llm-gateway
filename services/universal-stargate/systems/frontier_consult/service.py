@@ -58,7 +58,7 @@ from .admission import (
     mcp_enabled_for_team_dispatch,
     verify_thread_writable,
 )
-from .anthropic_override_gate import enforce_anthropic_override
+from .anthropic_override_gate import credit_gate_healthy, enforce_anthropic_override
 from .corpus_inline import (
     CORPUS_BODY_BUDGET_BYTES,
     corpus_inline_gated,
@@ -507,6 +507,22 @@ async def build_dispatch_body(
         _to, _family, _platform, profile = _resolve_role_or_seat_profile(
             req.role, request_id=request_id
         )
+        credit_healthy = False
+        try:
+            from anthropic_credit.config import CreditConfigInvalid, load_credit_config
+
+            cfg = load_credit_config()
+            parsed = ModelId.parse(req.model)
+            if (
+                parsed.normalized in cfg.standard_models
+                and parsed.routing_layer is None
+                and parsed.backend_type == "cloud_api"
+            ):
+                credit_healthy = await credit_gate_healthy()
+        except (CreditConfigInvalid, ImportError):
+            credit_healthy = False
+        except Exception:
+            credit_healthy = False
         enforce_anthropic_override(
             request_id=request_id,
             model=req.model,
@@ -515,6 +531,7 @@ async def build_dispatch_body(
             cost_intent=req.cost_intent,
             cost_intent_reason=req.cost_intent_reason,
             spawn_review_provenance=req.spawn_review_provenance,
+            credit_healthy=credit_healthy,
         )
 
     inject_profile = _inject_profile_for_generate(req)

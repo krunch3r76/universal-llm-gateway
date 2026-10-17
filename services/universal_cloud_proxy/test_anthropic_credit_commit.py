@@ -394,7 +394,7 @@ async def test_stream_server_tool_mixed_types_floors_to_reservation(
     adapter, _ = _make_adapter(sse, stream=True)
     body = {
         "model": "claude-sonnet-5",
-        "max_tokens": 400,
+        "max_tokens": 20000,
         "messages": [{"role": "user", "content": "hi"}],
     }
     async for _chunk in getattr(adapter, method_name)(body):
@@ -405,7 +405,9 @@ async def test_stream_server_tool_mixed_types_floors_to_reservation(
     commit = next(e for e in entries if e.get("kind") == "commit")
     computed = Decimal("0.107000")
     reservation = Decimal(str(reserve["usd"]))
-    assert Decimal(str(commit["usd"])) == max(computed, reservation)
+    assert reservation > computed
+    assert Decimal(str(commit["usd"])) == reservation
+    assert Decimal(str(commit["usd"])) != computed
 
 
 @pytest.mark.asyncio
@@ -415,7 +417,7 @@ async def test_non_stream_server_tool_mixed_types_floors_to_reservation() -> Non
     await adapter.forward_native(
         {
             "model": "claude-sonnet-5",
-            "max_tokens": 400,
+            "max_tokens": 20000,
             "messages": [{"role": "user", "content": "hi"}],
         }
     )
@@ -425,7 +427,9 @@ async def test_non_stream_server_tool_mixed_types_floors_to_reservation() -> Non
     commit = next(e for e in entries if e.get("kind") == "commit")
     computed = Decimal("0.107")
     reservation = Decimal(str(reserve["usd"]))
-    assert Decimal(str(commit["usd"])) == max(computed, reservation)
+    assert reservation > computed
+    assert Decimal(str(commit["usd"])) == reservation
+    assert Decimal(str(commit["usd"])) != computed
 
 
 @pytest.mark.asyncio

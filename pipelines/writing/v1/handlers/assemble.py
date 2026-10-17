@@ -261,7 +261,7 @@ _REFUSED_THREAD = "12286"
 _DEFAULT_SEAT_MODELS = {
     "cdp": "cdp/opus-5.5",
     "cursor_pool1": "cursor/grok-4.7",
-    "openai": "openai/gpt-5",
+    "openai": "openai/gpt-5.5",
 }
 
 

@@ -605,6 +605,27 @@ class WritingSeatSelectHandler(BaseHandler):
         """
         role = _role(step)
         outputs = getattr(context, "outputs", {}) or {}
+        if role == "reviewer":
+            openai_review = _json_of(outputs, "review_openai")
+            if isinstance(openai_review, dict):
+                if openai_review.get("status") == "held_reviewer_unfunded":
+                    return _step(openai_review)
+                if openai_review.get("ok") is True and openai_review.get("verdict") in {
+                    "ship",
+                    "revise",
+                }:
+                    payload = dict(openai_review)
+                    if "findings_actionable" not in payload:
+                        payload["findings_actionable"] = findings_actionable(
+                            payload.get("findings")
+                        )
+                    record = payload.get("seat_record")
+                    model = (
+                        record.get("model_id")
+                        if isinstance(record, dict)
+                        else None
+                    )
+                    return _step(payload, model_id=str(model) if model else None)
         wait_name = "draft_wait" if role == "writer" else "review_wait"
         local_name = "draft_local" if role == "writer" else "review_local"
         waited = _json_of(outputs, wait_name)
