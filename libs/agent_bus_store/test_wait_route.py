@@ -737,10 +737,11 @@ def test_wait_status_done_already_met_on_generate_thread_is_complete(
 
 
 def test_wait_status_done_mixed_producer_does_not_422(tmp_path) -> None:
-    """A non-generate link posting status:done stays on the normal wait.
+    """A generate link plus another producer falls through while status:done is unmet.
 
-    The break is refusing whenever any link is cursor-sdk-generate: a second
-    producer that posts the subject prefix must get complete, not 422.
+    The break is refusing on any cursor-sdk-generate link. The GET runs before
+    a status:done subject exists, so the matcher does not return first and
+    wait=0 is a normal incomplete snapshot rather than 422.
     """
     from agent_bus_store.db import admit_dispatch
 
@@ -768,6 +769,12 @@ def test_wait_status_done_mixed_producer_does_not_422(tmp_path) -> None:
             execution_id="exec-mixed-other",
             pipeline_id="cdp-generate",
         )
+        unmet = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert unmet.status_code == 200
+        assert unmet.json()["complete"] is False
+        assert unmet.json()["status"] == "no_new_turn"
         done = client.post(
             "/turns",
             json={
@@ -790,10 +797,11 @@ def test_wait_status_done_mixed_producer_does_not_422(tmp_path) -> None:
 
 
 def test_wait_status_done_without_generate_producer_completes(tmp_path) -> None:
-    """Auto status:done still completes when no generate producer is linked.
+    """Empty links without the generate tag stay on the normal wait.
 
-    The break is treating an empty link list as pure generate: a cursor-auto
-    subject prefix with no tag and no links must stay 200 complete.
+    The break is vacuous all() on an empty link list. The GET runs before any
+    status:done subject, so the matcher does not return first and wait=0 is
+    a normal incomplete snapshot rather than 422.
     """
     with TestClient(_app(tmp_path)) as client:
         created = client.post(
@@ -808,6 +816,12 @@ def test_wait_status_done_without_generate_producer_completes(tmp_path) -> None:
         )
         assert created.status_code == 201
         thread_id = created.json()["thread"]["id"]
+        unmet = client.get(
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
+        )
+        assert unmet.status_code == 200
+        assert unmet.json()["complete"] is False
+        assert unmet.json()["status"] == "no_new_turn"
         done = client.post(
             "/turns",
             json={
