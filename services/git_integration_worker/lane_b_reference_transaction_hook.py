@@ -1,9 +1,15 @@
 """``reference-transaction`` hook logic (Lane-B forward-only git integrity).
 
-Invoked from ``hooks/reference-transaction`` during the ``prepared`` phase only.
+Invoked from ``hooks/reference-transaction`` during ``prepared`` and ``committed``.
 Always refuses non-fast-forward updates to existing ``refs/heads/*`` refs from
 any worktree (hub or linked). Ref creates (``oldrev`` all-zero) and branch
 deletes (``newrev`` all-zero) stay allowed.
+
+A fast-forward of ``refs/heads/master`` from any worktree moves the hub ref
+without updating the checked-out index (``git update-ref``). ``prepared``
+refuses that move when a landed path holds bytes that are neither the old
+nor the new blob. ``committed`` checks out the landed paths that still hold
+the pre-move blob so the hub index matches HEAD.
 """
 
 from __future__ import annotations
@@ -13,9 +19,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 _ZERO_OID = "0" * 40
 _REFS_HEADS_PREFIX = "refs/heads/"
+_MASTER_REF = "refs/heads/master"
 _HEAD_REF = "HEAD"
 _DISPATCH_ENV = "CURSOR_SDK_DISPATCH_ID"
 _GIT_TIMEOUT_S = 30.0
@@ -114,6 +122,52 @@ def refuse_reason(
     return None
 
 
+def _master_ff_updates(repo: Path, updates: list[RefUpdate]) -> list[RefUpdate]:
+    """Fast-forward moves of ``refs/heads/master`` in this transaction."""
+    found: list[RefUpdate] = []
+    for upd in updates:
+        if upd.ref_name != _MASTER_REF:
+            continue
+        if upd.oldrev == _ZERO_OID or upd.newrev == _ZERO_OID:
+            continue
+        if upd.oldrev == upd.newrev:
+            continue
+        if not is_ancestor(repo, oldrev=upd.oldrev, newrev=upd.newrev):
+            continue
+        found.append(upd)
+    return found
+
+
+def _load_hub_tree_sync() -> ModuleType:
+    """Import ``hub_tree_sync`` from the repo that contains this module.
+
+    Hook cwd is the worktree that ran git, so ``services`` resolves to that
+    tree, while the hook script's ``PYTHONPATH`` may still point at the hub
+    libs. A lane copy of this module must load the lane's repair function.
+    """
+    libs = str(Path(__file__).resolve().parents[2] / "libs")
+    if libs not in sys.path:
+        sys.path.insert(0, libs)
+    import git_integrate.hub_tree_sync as hub_tree_sync
+
+    return hub_tree_sync
+
+
+def _emit_refused(dispatch_id: str, repo: Path, ref_name: str) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_hub_checkout_refused,
+    )
+
+    try:
+        emit_sdk_lane_hub_checkout_refused(
+            dispatch_id=dispatch_id,
+            toplevel=str(repo.resolve()),
+            ref_name=ref_name,
+        )
+    except Exception:
+        pass
+
+
 def run_reference_transaction_hook(
     *,
     state: str,
@@ -122,7 +176,9 @@ def run_reference_transaction_hook(
     repo: Path | None = None,
 ) -> int:
     """Hook entry: return process exit code (0 allow, HOOK_POLICY_REFUSE_EXIT refuse)."""
-    if state != "prepared":
+    if state not in {"prepared", "committed"}:
+        return 0
+    if os.environ.get("GIW_MASTER_REF_REPAIR") == "1":
         return 0
 
     cwd = repo or Path.cwd()
@@ -131,24 +187,49 @@ def run_reference_transaction_hook(
         return 0
 
     dispatch_marker = (dispatch_id or "").strip() or "none"
-    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_marker)
-    if offending is None:
+    master_updates = _master_ff_updates(cwd, updates)
+    if state == "committed":
+        if not master_updates:
+            return 0
+        try:
+            hub_tree_sync = _load_hub_tree_sync()
+        except Exception:
+            return 0
+        for upd in master_updates:
+            try:
+                hub_tree_sync.repair_master_worktree(str(cwd), upd.oldrev, upd.newrev)
+            except Exception:
+                return 0
         return 0
 
-    from services.git_integration_worker.cursor_sdk_events import (
-        emit_sdk_lane_hub_checkout_refused,
-    )
+    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_marker)
+    if offending is not None:
+        _emit_refused(dispatch_marker, cwd, offending.ref_name)
+        return HOOK_POLICY_REFUSE_EXIT
 
+    if not master_updates:
+        return 0
     try:
-        emit_sdk_lane_hub_checkout_refused(
-            dispatch_id=dispatch_marker,
-            toplevel=str(cwd.resolve()),
-            ref_name=offending.ref_name,
-        )
+        hub_tree_sync = _load_hub_tree_sync()
     except Exception:
-        pass
+        return 0
 
-    return HOOK_POLICY_REFUSE_EXIT
+    for upd in master_updates:
+        try:
+            reason = hub_tree_sync.master_ref_move_refusal(
+                str(cwd), upd.oldrev, upd.newrev
+            )
+        except Exception:
+            return 0
+        if not reason:
+            continue
+        print(
+            f"reference-transaction: refusing {upd.ref_name} {reason}",
+            file=sys.stderr,
+        )
+        _emit_refused(dispatch_marker, cwd, upd.ref_name)
+        return HOOK_POLICY_REFUSE_EXIT
+    return 0
 
 
 def main() -> int:
