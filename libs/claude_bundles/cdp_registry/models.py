@@ -65,9 +65,7 @@ class SeatContended(RegistryError):  # noqa: N818 — spec-bound name, not an Er
         message: str,
         *,
         code: str = "seat.contended",
-        source: Literal[
-            "rpc", "stream", "engine", "gateway", "edge", "master"
-        ] = "rpc",
+        source: Literal["rpc", "stream", "engine", "gateway", "edge", "master"] = "rpc",
         retryable: bool = False,
         data: dict[str, Any] | None = None,
     ) -> None:
@@ -92,6 +90,13 @@ class RegistryExhaustedError(RegistryError):
 
 @dataclass(frozen=True)
 class Registration:
+    """One listable Chrome host projected from active.json.
+
+    Callers read this instead of the raw row. Seat-axis fields say which lane
+    the host drives, when that seat bound and closed, and which registration
+    superseded it. Absent seat fields stay None for rows minted before the axis.
+    """
+
     registration_id: str
     port: int
     profile_suffix: str
@@ -102,6 +107,13 @@ class Registration:
     display: str | None = None
     mission_kind: str | None = None
     parent_thread: str | None = None
+    started_at: float | None = None
+    execution_id: str | None = None
+    seat_lane: str | None = None
+    seat_bound_at: float | None = None
+    seat_closed_at: float | None = None
+    seat_close_reason: str | None = None
+    superseded_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +198,19 @@ def _row_to_dormant_seat(row: dict[str, Any]) -> DormantSeat:
     )
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _row_to_registration(row: dict[str, Any]) -> Registration:
     from claude_bundles import cdp_lane
 
@@ -202,4 +227,11 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         display=row.get("display"),
         mission_kind=row.get("mission_kind"),
         parent_thread=row.get("parent_thread"),
+        started_at=_optional_float(row.get("started_at")),
+        execution_id=_optional_str(row.get("execution_id")),
+        seat_lane=_optional_str(row.get("seat_lane")),
+        seat_bound_at=_optional_float(row.get("seat_bound_at")),
+        seat_closed_at=_optional_float(row.get("seat_closed_at")),
+        seat_close_reason=_optional_str(row.get("seat_close_reason")),
+        superseded_by=_optional_str(row.get("superseded_by")),
     )

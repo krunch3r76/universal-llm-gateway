@@ -129,9 +129,19 @@ def select_lane_current(
     ``current[\"evidence_class\"] == \"live_binding\"``.
 
     Returns ``(state, basis, reason, current_page)``.
+
+    Superseded registry rows stay out of ``in_flight`` and ``unknown`` unless
+    the page is also the seat holder, so a closed predecessor that is still
+    streaming cannot tie the open seat.
     """
-    in_flight = [page for page in claimed if page.get("in_flight") is True]
-    unknown = [page for page in claimed if page.get("in_flight") is None]
+    non_superseded = [
+        page
+        for page in claimed
+        if "superseded_registry_row" not in (page.get("claims") or [])
+        or "seat_holder" in (page.get("claims") or [])
+    ]
+    in_flight = [page for page in non_superseded if page.get("in_flight") is True]
+    unknown = [page for page in non_superseded if page.get("in_flight") is None]
     if len(in_flight) >= 2:
         return "ambiguous", None, "multiple_in_flight", None
     if len(in_flight) == 1 and len(unknown) > 0:
@@ -347,9 +357,17 @@ def _resolve(
     holder_url = (seat or {}).get("chat_url") or None
     holder_key = normalize_cse_url(holder_url or "")
 
-    registry_by_url: dict[str, list[str]] = {}
+    live_registry_by_url: dict[str, list[str]] = {}
+    superseded_registry_by_url: dict[str, list[str]] = {}
     # An unreadable registry is a probe failure, not an empty lane.
     active = list_active()
+    seat_rid_key = str((seat or {}).get("registration_id") or "").strip() or None
+    has_open_seat = bool(seat_rid_key) or any(
+        getattr(row, "seat_lane", None) == lane
+        and getattr(row, "seat_closed_at", None) is None
+        for row in active
+        if str(getattr(row, "parent_thread", "") or "").strip() == lane
+    )
     listable_ids = {
         str(getattr(r, "registration_id", "") or "").strip() for r in active
     } - {""}
@@ -380,9 +398,17 @@ def _resolve(
         except Exception:
             continue
         if key:
-            registry_by_url.setdefault(key, [])
-            if rid and rid not in registry_by_url[key]:
-                registry_by_url[key].append(rid)
+            live_lane_seat = getattr(reg, "seat_closed_at", None) is None and (
+                getattr(reg, "seat_lane", None) == lane
+                or rid == seat_rid_key
+                or not has_open_seat
+            )
+            target = (
+                live_registry_by_url if live_lane_seat else superseded_registry_by_url
+            )
+            target.setdefault(key, [])
+            if rid and rid not in target[key]:
+                target[key].append(rid)
 
     claimed: list[dict[str, Any]] = []
     unclaimed: list[str] = []
@@ -393,11 +419,20 @@ def _resolve(
         provenance_reason = None
         if holder_key and url == holder_key:
             claims.append("seat_holder")
-        for rid in registry_by_url.get(url, []):
+        live_rids = live_registry_by_url.get(url) or []
+        superseded_rids = superseded_registry_by_url.get(url) or []
+        if live_rids:
             if "registry_row" not in claims:
                 claims.append("registry_row")
-            if rid not in registration_ids:
-                registration_ids.append(rid)
+            for rid in live_rids:
+                if rid not in registration_ids:
+                    registration_ids.append(rid)
+        elif superseded_rids:
+            if "superseded_registry_row" not in claims:
+                claims.append("superseded_registry_row")
+            for rid in superseded_rids:
+                if rid not in registration_ids:
+                    registration_ids.append(rid)
         try:
             prov = provenance_for(url)
         except Exception:
@@ -465,7 +500,12 @@ def _resolve(
             for page in claimed:
                 if page["chat_url"] == current["chat_url"]:
                     continue
-                stale.append({**page, "stale_reason": stale_reason})
+                page_stale_reason = (
+                    "superseded_seat"
+                    if "superseded_registry_row" in (page.get("claims") or [])
+                    else stale_reason
+                )
+                stale.append({**page, "stale_reason": page_stale_reason})
     elif state == "ambiguous":
         candidates = list(claimed)
 
