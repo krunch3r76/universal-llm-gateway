@@ -17,7 +17,7 @@ Stargate map-pool pipeline for decontextualized operator injection and cross-fam
 
 ## Schemas
 
-Typed dataclasses live in `libs/divergent_ideation/schemas.py` (P, A, L, O, B-abstract, B, X, U, M).
+Schema dataclasses and validation tuples live in `libs/divergent_ideation/schemas.py` (see that package README).
 
 ## Audit assignment
 

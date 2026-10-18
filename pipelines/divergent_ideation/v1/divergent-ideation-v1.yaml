@@ -43,6 +43,7 @@ steps:
     handler_inputs:
       abstract_problem: parse_decontextualize_0.json
       domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      decontextualizer_model: decontextualize_0.model_id
 
   - name: decontextualize_1
     type: generate
@@ -70,6 +71,7 @@ steps:
     handler_inputs:
       abstract_problem: parse_decontextualize_1.json
       domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      decontextualizer_model: decontextualize_1.model_id
 
   - name: decontextualize_2
     type: generate
@@ -97,9 +99,10 @@ steps:
     handler_inputs:
       abstract_problem: parse_decontextualize_2.json
       domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      decontextualizer_model: decontextualize_2.model_id
 
   - name: leak_check_final
-    type: leak_check_final_v1
+    type: leak_check_v1
     reads_from:
       - step: leak_check_0
         fields: [json]
@@ -110,15 +113,15 @@ steps:
 
   - name: retrieve_operators
     type: rag_api_search_v1
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    condition: "leak_check_final.json.get('passed') is True"
     scope: llm_prompting
     top_k: 24
     handler_inputs:
-      query: leak_check_final.json.accepted_abstract_problem.structural_goal
+      query: leak_check_final.json.rag_query
 
   - name: operator_split
     type: operator_split_v1
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    condition: "leak_check_final.json.get('passed') is True"
     handler_inputs:
       operators: retrieve_operators.json
       pool_manifest: sourceNs.metadata.pool_manifest
@@ -127,7 +130,7 @@ steps:
   - name: map_ideate
     type: generate
     model_ref: map_static
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    condition: "leak_check_final.json.get('passed') is True"
     prompt_ref: divergent_ideation.v1.ideate
     model_pool: operator_split.json.pool_models
     selection: rotate
@@ -147,7 +150,7 @@ steps:
   - name: re_instantiate
     type: generate
     model_ref: map_static
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    condition: "leak_check_final.json.get('passed') is True"
     prompt_ref: divergent_ideation.v1.re_instantiate
     min_success_threshold: 0
     map_over:
@@ -165,7 +168,7 @@ steps:
 
   - name: audit_assign
     type: audit_assign_v1
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    condition: "leak_check_final.json.get('passed') is True"
     handler_inputs:
       briefs: re_instantiate.*
       pool_manifest: sourceNs.metadata.pool_manifest
@@ -175,7 +178,7 @@ steps:
   - name: map_audit
     type: generate
     model_ref: map_static
-    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True and audit_assign.json.get('audit_assignments')"
+    condition: "leak_check_final.json.get('passed') is True and audit_assign.json.get('audit_assignments')"
     prompt_ref: divergent_ideation.v1.audit
     min_success_threshold: 0
     map_over:

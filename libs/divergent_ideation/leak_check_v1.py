@@ -35,6 +35,17 @@ def _abstract_text(abstract: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def build_rag_query(abstract_problem: dict[str, Any]) -> str:
+    """Space-join structural_goal and constraint statements (schema A fields only)."""
+    parts: list[str] = [str(abstract_problem.get("structural_goal", "")).strip()]
+    for constraint in abstract_problem.get("constraints") or []:
+        if isinstance(constraint, dict):
+            stmt = str(constraint.get("statement", "")).strip()
+            if stmt:
+                parts.append(stmt)
+    return " ".join(p for p in parts if p)
+
+
 def check_leak(
     abstract_problem: dict[str, Any],
     domain_terms_to_strip: list[str],

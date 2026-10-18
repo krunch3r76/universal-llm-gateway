@@ -12,7 +12,11 @@ from divergent_ideation.collate_v1 import (
     compute_convergence_rate,
     map_success_fraction,
 )
-from divergent_ideation.leak_check_v1 import check_leak, finalize_leak_reports
+from divergent_ideation.leak_check_v1 import (
+    build_rag_query,
+    check_leak,
+    finalize_leak_reports,
+)
 from divergent_ideation.operator_split_v1 import split_operators
 
 
@@ -59,6 +63,13 @@ def test_operator_split_deterministic_across_processes() -> None:
     assert q1.get() == q2.get()
 
 
+def test_leak_check_stemmed_variant() -> None:
+    abstract = {"structural_goal": "computational spillover pattern", "constraints": []}
+    report = check_leak(abstract, ["computing"])
+    assert report["passed"] is False
+    assert report["hits"][0]["variant_matched"] == "comput"
+
+
 def test_leak_check_variants_and_finalize() -> None:
     abstract = {"structural_goal": "STORAGE spillover pattern", "constraints": []}
     report = check_leak(abstract, ["storage"])
@@ -71,6 +82,24 @@ def test_leak_check_variants_and_finalize() -> None:
     )
     assert final["passed"] is True
     assert accepted["structural_goal"] == "ok"
+
+
+def test_leak_finalize_attempts_count() -> None:
+    reports = [
+        {"passed": False, "hits": [{"term": "x"}], "attempts": 1},
+        {"passed": True, "hits": [], "attempts": 1},
+    ]
+    abstracts = [{"structural_goal": "a", "constraints": []}, {"structural_goal": "b", "constraints": []}]
+    final, _ = finalize_leak_reports(reports, abstracts)
+    assert final["attempts"] == 2
+
+
+def test_build_rag_query_joins_constraints() -> None:
+    abstract = {
+        "structural_goal": "goal",
+        "constraints": [{"statement": "c1"}, {"statement": "c2"}],
+    }
+    assert build_rag_query(abstract) == "goal c1 c2"
 
 
 @pytest.mark.parametrize("size", [3, 4, 5])
@@ -88,6 +117,19 @@ def test_audit_assign_cross_family_and_distinct(size: int) -> None:
         assert len(auditors) == 2
 
 
+def test_audit_assign_cross_family_before_same_family() -> None:
+    pool = [
+        {"model": "m0", "family": "f0"},
+        {"model": "m1", "family": "f0"},
+        {"model": "m2", "family": "f1"},
+        {"model": "m3", "family": "f1"},
+    ]
+    briefs = [_brief("b1", "m0", "f0")]
+    out = assign_auditors(briefs, pool, run_seed=1, min_auditors=2)
+    auditors = [x["auditor_model"] for x in out["audit_assignments"]]
+    assert auditors[0] in {"m2", "m3"}
+
+
 def test_audit_assign_pool_too_small_and_duplicate_pool() -> None:
     small = assign_auditors([_brief("b", "m0", "f0")], _pool(2), 1, min_auditors=2)
     assert small["audit_assignments"] == []
@@ -98,12 +140,48 @@ def test_audit_assign_pool_too_small_and_duplicate_pool() -> None:
     assert "pool_invalid" in dup["assignment_error"]
 
 
+def test_audit_assign_author_absent_from_pool() -> None:
+    out = assign_auditors([_brief("b", "missing", "f0")], _pool(4), 1)
+    assert out["audit_assignments"] == []
+    assert "pool_invalid" in out["assignment_error"]
+
+
+def test_audit_assign_alias_routing_key_mismatch() -> None:
+    pool = [
+        {"model": "qwen-alias", "family": "f0"},
+        {"model": "m1", "family": "f1"},
+        {"model": "m2", "family": "f2"},
+    ]
+    briefs = [_brief("b1", "qwen3-5-resolved-key", "f0")]
+    out = assign_auditors(briefs, pool, run_seed=3)
+    assert out["audit_assignments"] == []
+    assert "pool_invalid" in out["assignment_error"]
+
+
 def test_audit_assign_seed_sensitivity() -> None:
     briefs = [_brief("b1", "m0", "f0")]
     pool = _pool(4)
     a = assign_auditors(briefs, pool, run_seed=1)
     b = assign_auditors(briefs, pool, run_seed=2)
     assert a["audit_assignments"] != b["audit_assignments"]
+
+
+def test_audit_assign_deterministic_across_processes() -> None:
+    briefs = [_brief("b1", "m0", "f0")]
+    pool = _pool(4)
+
+    def worker(q: mp.Queue) -> None:
+        q.put(assign_auditors(briefs, pool, run_seed=11))
+
+    q1: mp.Queue = mp.Queue()
+    q2: mp.Queue = mp.Queue()
+    p1 = mp.Process(target=worker, args=(q1,))
+    p2 = mp.Process(target=worker, args=(q2,))
+    p1.start()
+    p2.start()
+    p1.join()
+    p2.join()
+    assert q1.get() == q2.get()
 
 
 def test_collate_convergence_and_parse_failures() -> None:
@@ -151,6 +229,7 @@ def test_collate_convergence_and_parse_failures() -> None:
     )
     assert manifest["halted_at"] == "map_ideate"
     assert manifest["halt_reason"] == "leak"
+    assert manifest["leak_report"]["hits"]
     bad = build_run_manifest(
         {
             "run_id": "r1",
@@ -172,6 +251,164 @@ def test_collate_convergence_and_parse_failures() -> None:
     assert bad["parse_failures"]
 
 
+def test_convergence_tie_assigns_each_tied_label() -> None:
+    briefs = [_brief("b1", "m0", "f0")]
+    audits = [
+        {
+            "brief_id": "b1",
+            "auditor_family": "f1",
+            "mechanism_class": "Alpha",
+            "re_instantiation_faithful": True,
+        },
+        {
+            "brief_id": "b1",
+            "auditor_family": "f2",
+            "mechanism_class": "Beta",
+            "re_instantiation_faithful": True,
+        },
+    ]
+    _, _, clusters = compute_convergence_rate(briefs, audits)
+    labels = {c["label"] for c in clusters if "b1" in c["brief_ids"]}
+    assert labels == {"alpha", "beta"}
+
+
+def test_convergence_unfaithful_excluded_from_rate() -> None:
+    briefs = [_brief("b1", "m0", "f0"), _brief("b2", "m1", "f1")]
+    audits = [
+        {
+            "brief_id": "b1",
+            "auditor_family": "f1",
+            "mechanism_class": "X",
+            "re_instantiation_faithful": False,
+        },
+        {
+            "brief_id": "b2",
+            "auditor_family": "f0",
+            "mechanism_class": "Y",
+            "re_instantiation_faithful": True,
+        },
+    ]
+    rate, _, _ = compute_convergence_rate(briefs, audits)
+    assert rate == 0.0
+
+
+def test_convergence_zero_when_no_cluster_spans_two_families() -> None:
+    briefs = [_brief("b1", "m0", "f0"), _brief("b2", "m0", "f0")]
+    audits = [
+        {
+            "brief_id": "b1",
+            "auditor_family": "f1",
+            "mechanism_class": "Same",
+            "re_instantiation_faithful": True,
+        },
+        {
+            "brief_id": "b2",
+            "auditor_family": "f1",
+            "mechanism_class": "Same",
+            "re_instantiation_faithful": True,
+        },
+    ]
+    rate, falsified, _ = compute_convergence_rate(briefs, audits)
+    assert rate == 0.0
+    assert falsified is False
+
+
+def test_collate_skipped_step_sets_halt() -> None:
+    manifest = build_run_manifest(
+        {
+            "run_id": "r1",
+            "problem_id": "p1",
+            "run_seed": 1,
+            "pool_manifest": _pool(3),
+            "leak_report": {"passed": True, "hits": [], "attempts": 1},
+            "briefs": [],
+            "audits": [],
+            "skipped_steps": {"retrieve_operators": True},
+            "assignment_error": None,
+            "map_failure": False,
+            "operator_dispersion": 0.0,
+            "operator_subsets": [],
+            "abstract_briefs": [],
+            "audit_assignments": [],
+        }
+    )
+    assert manifest["halted_at"] == "retrieve_operators"
+    assert manifest["halt_reason"] == "condition_error"
+
+
+def test_collate_list_order_binding() -> None:
+    manifest = build_run_manifest(
+        {
+            "run_id": "r1",
+            "problem_id": "p1",
+            "run_seed": 1,
+            "pool_manifest": _pool(3),
+            "leak_report": {"passed": True, "hits": [], "attempts": 1},
+            "briefs": [
+                {"brief_id": "b2", "author_model": "m0", "domain_statement": "x", "falsifier": "f", "cost_to_test": "c", "time_to_signal": "t"},
+                {"brief_id": "b1", "author_model": "m0", "domain_statement": "y", "falsifier": "f", "cost_to_test": "c", "time_to_signal": "t"},
+            ],
+            "audits": [
+                {"brief_id": "b2", "auditor_model": "a2", "mechanism_class": "m", "template_match": "novel", "re_instantiation_faithful": True},
+                {"brief_id": "b1", "auditor_model": "a1", "mechanism_class": "m", "template_match": "novel", "re_instantiation_faithful": True},
+            ],
+            "audit_assignments": [
+                {"brief_id": "b2", "auditor_model": "a2"},
+                {"brief_id": "b1", "auditor_model": "a1"},
+            ],
+            "skipped_steps": {},
+            "assignment_error": None,
+            "map_failure": False,
+            "operator_dispersion": 0.0,
+            "operator_subsets": [],
+            "abstract_briefs": [],
+        }
+    )
+    assert [b["brief_id"] for b in manifest["briefs"]] == ["b1", "b2"]
+    assert [a["brief_id"] for a in manifest["audits"]] == ["b1", "b2"]
+
+
 def test_map_success_fraction() -> None:
     assert map_success_fraction(failed=3, total=10) is False
     assert map_success_fraction(failed=6, total=10) is True
+
+
+def test_unfaithful_briefs_remain_in_manifest() -> None:
+    manifest = build_run_manifest(
+        {
+            "run_id": "r1",
+            "problem_id": "p1",
+            "run_seed": 1,
+            "pool_manifest": _pool(3),
+            "leak_report": {"passed": True, "hits": [], "attempts": 1},
+            "briefs": [
+                {
+                    "brief_id": "b1",
+                    "author_model": "m0",
+                    "author_family": "f0",
+                    "domain_statement": "d",
+                    "falsifier": "f",
+                    "cost_to_test": "c",
+                    "time_to_signal": "t",
+                }
+            ],
+            "audits": [
+                {
+                    "brief_id": "b1",
+                    "auditor_family": "f1",
+                    "mechanism_class": "Z",
+                    "re_instantiation_faithful": False,
+                    "template_match": "novel",
+                }
+            ],
+            "skipped_steps": {},
+            "assignment_error": None,
+            "map_failure": False,
+            "operator_dispersion": 0.0,
+            "operator_subsets": [],
+            "abstract_briefs": [],
+            "audit_assignments": [],
+        }
+    )
+    assert len(manifest["briefs"]) == 1
+    assert manifest["convergence_rate"] == 0.0

@@ -22,7 +22,7 @@ def compute_convergence_rate(
         audits_by_brief[str(audit.get("brief_id", ""))].append(audit)
 
     brief_labels: dict[str, list[str]] = {}
-    eligible: list[str] = []
+    eligible: set[str] = set()
     for brief in briefs:
         bid = str(brief.get("brief_id", ""))
         author_family = str(brief.get("author_family", ""))
@@ -30,18 +30,22 @@ def compute_convergence_rate(
             a
             for a in audits_by_brief.get(bid, [])
             if str(a.get("auditor_family", "")) != author_family
-            and a.get("re_instantiation_faithful") is True
         ]
-        if not cross:
+        faithful = [a for a in cross if a.get("re_instantiation_faithful") is True]
+        if not faithful:
             continue
-        labels = [_normalize_label(str(a.get("mechanism_class", ""))) for a in cross if a.get("mechanism_class")]
+        eligible.add(bid)
+        labels = [
+            _normalize_label(str(a.get("mechanism_class", "")))
+            for a in faithful
+            if a.get("mechanism_class")
+        ]
         if not labels:
             continue
         counts = Counter(labels)
         max_count = max(counts.values())
         modal = [lab for lab, c in counts.items() if c == max_count]
         brief_labels[bid] = modal
-        eligible.append(bid)
 
     label_to_briefs: dict[str, set[str]] = defaultdict(set)
     for bid, labels in brief_labels.items():
@@ -69,12 +73,12 @@ def compute_convergence_rate(
         fams = {
             str(b.get("author_family", ""))
             for b in briefs
-            if str(b.get("brief_id", "")) in bids
+            if str(b.get("brief_id", "")) in bids and str(b.get("brief_id", "")) in eligible
         }
         if len(fams) < 2:
             continue
-        best = max(best, len(bids))
-    rate = best / total_eligible
+        best = max(best, len(bids & eligible))
+    rate = best / total_eligible if total_eligible else 0.0
     return rate, rate >= 0.5, clusters
 
 
@@ -194,5 +198,14 @@ def build_run_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "falsified": falsified,
         "halted_at": halted_at,
         "halt_reason": halt_reason,
-        "parse_failures": parse_failures or None,
+        "parse_failures": parse_failures if parse_failures else None,
     }
+
+
+def merge_parse_failures(*groups: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for group in groups:
+        if group:
+            merged.extend(group)
+    return merged
+
