@@ -1,0 +1,14 @@
+[
+  {
+    "model": "qwen3-5-35b-a3b-q4km-131072",
+    "family": "qwen"
+  },
+  {
+    "model": "gemma-4-26b-a4b-it-q8-0-131072",
+    "family": "gemma"
+  },
+  {
+    "model": "openai/gpt-5.4",
+    "family": "openai"
+  }
+]

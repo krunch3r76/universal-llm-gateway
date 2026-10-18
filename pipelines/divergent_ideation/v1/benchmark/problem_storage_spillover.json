@@ -1,0 +1,17 @@
+{
+  "problem_id": "bench-storage-spillover-001",
+  "target_statement": "Find durable revenue mechanisms when intermittent storage capacity can be sold without owning the underlying hardware fleet.",
+  "hard_constraints": [
+    "Must not require upfront capex beyond operator-controlled software",
+    "Must remain legal in US jurisdictions",
+    "Must produce measurable cash within 90 days of launch"
+  ],
+  "domain_terms_to_strip": [
+    "storage",
+    "S3",
+    "datacenter",
+    "GPU"
+  ],
+  "run_seed": 18011,
+  "benchmark_tag": "divergent-ideation-benchmark"
+}

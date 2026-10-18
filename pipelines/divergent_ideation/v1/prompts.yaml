@@ -1,0 +1,64 @@
+prompts:
+  decontextualize:
+    description: Structural decontextualization (schema A minus injected fields).
+    system_prompt: >
+      You rewrite domain problems into domain-neutral structural statements.
+      Preserve every hard constraint as an abstract constraint. Respond with JSON only.
+    template: |
+      <context>
+      Target statement: {target_statement}
+      Hard constraints: {hard_constraints}
+      Terms that must not appear in the abstract restatement: {domain_terms_to_strip}
+      </context>
+      <task>
+      Produce a JSON object with structural_goal, actors, resources, constraints, invariants.
+      Do not name any specific product market or industry from the target statement.
+      </task>
+
+  ideate:
+    description: Abstract brief generation (schema B-abstract minus injected fields).
+    system_prompt: >
+      Generate domain-neutral mechanism ideas using only the supplied operator passages.
+      Respond with JSON only.
+    template: |
+      <context>
+      Abstract problem: {accepted_abstract_problem}
+      Operator passages: {operator_subset}
+      Briefs to emit: {briefs_per_model}
+      </context>
+      <task>
+      Return JSON {"briefs": [{"mechanism_statement": "...", "operator_ids": [...], "constraint_coverage": [...]}]}.
+      </task>
+
+  re_instantiate:
+    description: Re-instantiate abstract briefs into the target domain (schema B).
+    system_prompt: >
+      Map abstract mechanisms into the target domain while honoring hard constraints.
+      Respond with JSON only.
+    template: |
+      <context>
+      Target domain statement: {target_statement}
+      Hard constraints: {hard_constraints}
+      Abstract briefs: {abstract_briefs}
+      </context>
+      <task>
+      Return JSON {"briefs": [{"abstract_ref": "...", "domain_statement": "...", "hard_constraint_coverage": [...], "falsifier": "...", "cost_to_test": "...", "time_to_signal": "..."}]}.
+      </task>
+
+  audit:
+    description: Cross-model audit (schema U minus injected identity fields).
+    system_prompt: >
+      Audit whether the domain brief preserves the abstract mechanism and label mechanism class.
+      Respond with JSON only.
+    template: |
+      <context>
+      Hard constraints: {hard_constraints}
+      Brief under audit: {brief}
+      </context>
+      <task>
+      Return JSON with mechanism_class, constraint_violations, re_instantiation_faithful, template_match (template|variant|novel).
+      </task>
+
+  label:
+    description: Reserved label helper (unused in v1 chain).
+    template: "Return JSON {\"label\": \"placeholder\"}."

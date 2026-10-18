@@ -1,0 +1,211 @@
+schema_version: 6
+id: divergent-ideation-v1
+version: "1.0"
+type: divergent_ideation
+category: rag_search
+description: >
+  Map-pool clean-room ideation with decontextualization, operator RAG injection,
+  cross-family audit assignment, and collated run manifest (no winner selection).
+output: emit
+
+options:
+  timeout_seconds: 3600
+  max_leak_retries: 2
+  briefs_per_model: 3
+  min_auditors: 2
+
+steps:
+  - name: load_problem
+    type: parse_json_v1
+    handler_inputs:
+      source: sourceNs.text
+
+  - name: decontextualize_0
+    type: generate
+    model_ref: decontextualize
+    prompt_ref: divergent_ideation.v1.decontextualize
+    handler_inputs:
+      target_statement: load_problem.json.target_statement
+      hard_constraints: load_problem.json.hard_constraints
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+    generation_parameters:
+      temperature: 0.3
+      response_format:
+        type: json_object
+
+  - name: parse_decontextualize_0
+    type: parse_json_v1
+    handler_inputs:
+      source: decontextualize_0.raw
+
+  - name: leak_check_0
+    type: leak_check_v1
+    handler_inputs:
+      abstract_problem: parse_decontextualize_0.json
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+
+  - name: decontextualize_1
+    type: generate
+    model_ref: decontextualize
+    condition: "leak_check_0.json.get('leak_report', {}).get('passed') is False"
+    prompt_ref: divergent_ideation.v1.decontextualize
+    handler_inputs:
+      target_statement: load_problem.json.target_statement
+      hard_constraints: load_problem.json.hard_constraints
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+    generation_parameters:
+      temperature: 0.3
+      response_format:
+        type: json_object
+
+  - name: parse_decontextualize_1
+    type: parse_json_v1
+    condition: "decontextualize_1.json.get('_skipped') is not True"
+    handler_inputs:
+      source: decontextualize_1.raw
+
+  - name: leak_check_1
+    type: leak_check_v1
+    condition: "parse_decontextualize_1.json.get('_skipped') is not True"
+    handler_inputs:
+      abstract_problem: parse_decontextualize_1.json
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+
+  - name: decontextualize_2
+    type: generate
+    model_ref: decontextualize
+    condition: "leak_check_1.json.get('leak_report', {}).get('passed') is False"
+    prompt_ref: divergent_ideation.v1.decontextualize
+    handler_inputs:
+      target_statement: load_problem.json.target_statement
+      hard_constraints: load_problem.json.hard_constraints
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+    generation_parameters:
+      temperature: 0.3
+      response_format:
+        type: json_object
+
+  - name: parse_decontextualize_2
+    type: parse_json_v1
+    condition: "decontextualize_2.json.get('_skipped') is not True"
+    handler_inputs:
+      source: decontextualize_2.raw
+
+  - name: leak_check_2
+    type: leak_check_v1
+    condition: "parse_decontextualize_2.json.get('_skipped') is not True"
+    handler_inputs:
+      abstract_problem: parse_decontextualize_2.json
+      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+
+  - name: leak_check_final
+    type: leak_check_final_v1
+    reads_from:
+      - step: leak_check_0
+        fields: [json]
+      - step: leak_check_1
+        fields: [json]
+      - step: leak_check_2
+        fields: [json]
+
+  - name: retrieve_operators
+    type: rag_api_search_v1
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    scope: llm_prompting
+    top_k: 24
+    handler_inputs:
+      query: leak_check_final.json.accepted_abstract_problem.structural_goal
+
+  - name: operator_split
+    type: operator_split_v1
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    handler_inputs:
+      operators: retrieve_operators.json
+      pool_manifest: sourceNs.metadata.pool_manifest
+      run_seed: load_problem.json.run_seed
+
+  - name: map_ideate
+    type: generate
+    model_ref: map_static
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    prompt_ref: divergent_ideation.v1.ideate
+    model_pool: operator_split.json.pool_models
+    selection: rotate
+    min_success_threshold: 0
+    map_over:
+      subset: operator_split.json.operator_subsets
+    handler_inputs:
+      accepted_abstract_problem: leak_check_final.json.accepted_abstract_problem
+      briefs_per_model: optionsNs.briefs_per_model
+    map_inputs:
+      operator_subset: mapNs.iteration.value
+    generation_parameters:
+      temperature: 0.7
+      response_format:
+        type: json_object
+
+  - name: re_instantiate
+    type: generate
+    model_ref: map_static
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    prompt_ref: divergent_ideation.v1.re_instantiate
+    min_success_threshold: 0
+    map_over:
+      ideation: map_ideate.*
+    handler_inputs:
+      target_statement: load_problem.json.target_statement
+      hard_constraints: load_problem.json.hard_constraints
+    map_inputs:
+      model_ref: mapNs.iteration.value.model_id
+      abstract_briefs: mapNs.iteration.value.json.briefs
+    generation_parameters:
+      temperature: 0.5
+      response_format:
+        type: json_object
+
+  - name: audit_assign
+    type: audit_assign_v1
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True"
+    handler_inputs:
+      briefs: re_instantiate.*
+      pool_manifest: sourceNs.metadata.pool_manifest
+      run_seed: load_problem.json.run_seed
+      min_auditors: optionsNs.min_auditors
+
+  - name: map_audit
+    type: generate
+    model_ref: map_static
+    condition: "leak_check_final.json.get('leak_report', {}).get('passed') is True and audit_assign.json.get('audit_assignments')"
+    prompt_ref: divergent_ideation.v1.audit
+    min_success_threshold: 0
+    map_over:
+      item: audit_assign.json.audit_assignments
+    handler_inputs:
+      hard_constraints: load_problem.json.hard_constraints
+    map_inputs:
+      model_ref: mapNs.iteration.value.model_ref
+      brief: mapNs.iteration.value.brief
+    generation_parameters:
+      temperature: 0.2
+      response_format:
+        type: json_object
+
+  - name: collate
+    type: collate_v1
+    handler_inputs:
+      problem: load_problem.json
+      pool_manifest: sourceNs.metadata.pool_manifest
+      leak_report: leak_check_final.json.leak_report
+      operators: retrieve_operators.json
+      operator_subsets: operator_split.json.operator_subsets
+      operator_dispersion: operator_split.json.operator_dispersion
+      abstract_briefs: map_ideate.*
+      briefs: re_instantiate.*
+      audit_assignments: audit_assign.json.audit_assignments
+      audits: map_audit.*
+      run_id: sourceNs.metadata.run_id
+
+  - name: emit
+    type: select_output
+    candidates:
+      - collate
