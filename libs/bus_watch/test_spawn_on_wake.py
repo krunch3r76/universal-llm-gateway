@@ -1724,3 +1724,65 @@ def test_idle_checkpoint_guard_kill_switch() -> None:
     )
     assert ev["clauses"]["idle_checkpoint_clear"] is True
     assert ev["spawn"] is True
+
+
+def test_tick_spawn_overnight_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: True
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out["spawned"] is False
+    assert out["reason"] == "overnight_disabled"
+
+
+def test_tick_spawn_no_open_request_or_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    digest = _digest(attention=[], checkpoint_due=True)
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out["spawned"] is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
+def test_tick_spawn_allows_actionable_attention(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out.get("reason") != "no_open_request_or_event"
+    assert out.get("reason") != "overnight_disabled"
+
+
+def test_is_overnight_quiet_default_window() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from bus_watch.spawn_on_wake import is_overnight_quiet
+
+    la = ZoneInfo("America/Los_Angeles")
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 23, 30, tzinfo=la), policy={}
+    )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 12, 0, tzinfo=la), policy={}
+    )
+
+
+def test_attended_loop_may_wake_requires_real_event() -> None:
+    from bus_watch.spawn_on_wake import attended_loop_may_wake
+
+    quiet = _digest(attention=[], checkpoint_due=True)
+    assert attended_loop_may_wake(quiet, {}) is False
+    live = _digest(attention=[{"id": "1", "unread": 1}])
+    assert attended_loop_may_wake(live, {}) is True

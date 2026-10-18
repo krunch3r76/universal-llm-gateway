@@ -39,7 +39,6 @@ from pathlib import Path
 import bus_watch.doorbell as doorbell_module
 import httpx
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
-from bus_watch.liaison_loop_detach import clear_loop_pid_files, monitor_heartbeat_stale
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
@@ -62,6 +61,7 @@ from bus_watch.liaison_digest import (
     build_digest,
     effective_policy,
 )
+from bus_watch.liaison_loop_detach import clear_loop_pid_files, monitor_heartbeat_stale
 from bus_watch.liaison_stops import (
     OperatorGateChannelError,
     apply_policy_set,
@@ -69,7 +69,11 @@ from bus_watch.liaison_stops import (
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.now_row_bind import maybe_bind_now_row
-from bus_watch.spawn_on_wake import tick_spawn_on_wake
+from bus_watch.spawn_on_wake import (
+    attended_loop_may_wake,
+    is_overnight_quiet,
+    tick_spawn_on_wake,
+)
 from bus_watch.tick_state import (
     absorb_operator_edits,
     load_state,
@@ -177,8 +181,8 @@ def main() -> int:
     p.add_argument(
         "--heartbeat",
         type=int,
-        default=1200,
-        help="max seconds between sentinels in --loop (20 min: re-arm / watcher health)",
+        default=0,
+        help="disabled by default (0): event-only wakes; legacy idle re-arm interval if set",
     )
     p.add_argument(
         "--mark-checkpoint",
@@ -485,6 +489,10 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
             if not refresh_ticker_lease(root):
                 print(json.dumps({"loop": "ticker_lost", "root": root}), flush=True)
                 return 4
+            policy_pre = effective_policy(state)
+            if is_overnight_quiet(policy=policy_pre):
+                time.sleep(poll_s)
+                continue
             _log_steer(absorb_operator_edits(state, state_path))
             register = str(state.get("register") or register)
             try:
@@ -530,6 +538,10 @@ def _log_steer(changed: list[str]) -> None:
 
 def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
     while True:
+        policy_pre = effective_policy(state)
+        if is_overnight_quiet(policy=policy_pre):
+            time.sleep(args.poll)
+            continue
         if not refresh_fable_lock(holder, root_id=root) or read_lock(root).get(
             "preempt_by"
         ):
@@ -572,21 +584,22 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         budget_stop_new = bool(budget.get("stop_class")) and state.get(
             "budget_stop_emitted_epoch"
         ) != budget.get("epoch")
-        due = (
-            (
-                digest["changed_since_last_tick"]
-                and not is_own_digest_echo(digest, state)
-            )
-            or (now - last_emit) >= args.heartbeat
-            or budget_stop_new
+        heartbeat_due = (
+            int(args.heartbeat or 0) > 0 and (now - last_emit) >= int(args.heartbeat)
         )
+        changed_real = (
+            digest["changed_since_last_tick"]
+            and not is_own_digest_echo(digest, state)
+            and attended_loop_may_wake(digest, state, budget_stop_new=budget_stop_new)
+        )
+        due = changed_real or heartbeat_due or budget_stop_new
         if due:
             if budget_stop_new:
                 state["budget_stop_emitted_epoch"] = budget.get("epoch")
             save_state(state_path, state)
-            publish_if_enabled(root, digest, state) == "published" and save_state(
-                state_path, state
-            )
+            publish_if_enabled(
+                root, digest, state, require_change=True
+            ) == "published" and save_state(state_path, state)
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
             last_emit = now
         else:

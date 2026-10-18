@@ -7,15 +7,19 @@ without linear thread reads. Body is projected JSON capped at 4 KB.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 
 from bus_watch.digest_budget import _utcnow
+from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.lane_closeout import lane_status_query_pointer, query_lane_closeouts
 from bus_watch.liaison_digest import _bus, effective_policy
 from bus_watch.liaison_pager import page_liaison
@@ -25,8 +29,99 @@ from bus_watch.spawn_pending import row_is_terminal
 _BODY_CAP = 4096
 _LANE_CAP = 12
 _STALE_RETRY_MINUTES = 2
+DEFAULT_DIGEST_MIN_INTERVAL_S = 300
+_VOLATILE_DIGEST_KEYS = frozenset(
+    {"ts", "ticks", "est_tokens", "age_s", "elapsed", "updated_at"}
+)
 
 PublishOutcome = Literal["published", "skipped", "failed"]
+
+
+def _digest_min_interval_s(policy: dict[str, Any]) -> int:
+    raw = policy.get("digest_min_interval_seconds")
+    if raw is None:
+        env = os.environ.get("LIAISON_DIGEST_MIN_INTERVAL_S")
+        if env is not None and str(env).strip().isdigit():
+            return int(env)
+        return DEFAULT_DIGEST_MIN_INTERVAL_S
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_DIGEST_MIN_INTERVAL_S
+
+
+def _digest_stamp_path(root_id: str) -> Path:
+    return WATCH_DIR / f"liaison-{root_id}.digest-stamp.json"
+
+
+def _read_digest_stamp(root_id: str) -> dict[str, Any]:
+    path = _digest_stamp_path(root_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_digest_stamp(root_id: str, *, content_hash: str, epoch: float) -> None:
+    WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    path = _digest_stamp_path(root_id)
+    payload = {"hash": content_hash, "epoch": epoch}
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
+def digest_content_hash(digest: dict[str, Any]) -> str:
+    """Semantic fingerprint for publish dedupe (volatile counters stripped)."""
+    proj = project_digest(digest)
+
+    def _strip(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {
+                k: _strip(v)
+                for k, v in obj.items()
+                if k not in _VOLATILE_DIGEST_KEYS
+            }
+        if isinstance(obj, list):
+            return [_strip(item) for item in obj]
+        return obj
+
+    canonical = _strip(proj)
+    blob = json.dumps(canonical, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _digest_publish_blocked(
+    root_id: str,
+    state: dict[str, Any],
+    content_hash: str,
+    *,
+    min_interval_s: int,
+    now_epoch: float,
+) -> str | None:
+    if state.get("last_published_digest_hash") == content_hash:
+        return "duplicate_digest"
+    last_epoch = float(state.get("last_digest_published_epoch") or 0)
+    if min_interval_s > 0 and last_epoch and (now_epoch - last_epoch) < min_interval_s:
+        return "rate_limited"
+    stamp = _read_digest_stamp(root_id)
+    if stamp.get("hash") == content_hash:
+        return "duplicate_digest"
+    stamp_epoch = float(stamp.get("epoch") or 0)
+    if min_interval_s > 0 and stamp_epoch and (now_epoch - stamp_epoch) < min_interval_s:
+        return "rate_limited"
+    return None
+
+
+def _record_digest_publish(
+    root_id: str,
+    state: dict[str, Any],
+    content_hash: str,
+    *,
+    now_epoch: float,
+) -> None:
+    state["last_published_digest_hash"] = content_hash
+    state["last_digest_published_epoch"] = now_epoch
+    _write_digest_stamp(root_id, content_hash=content_hash, epoch=now_epoch)
 
 
 def _lane_rank(row: dict[str, Any]) -> int:
@@ -324,6 +419,11 @@ def publish_if_enabled(
     if not policy.get("post_digest"):
         _publish_skipped("post_digest_off")
         return "skipped"
+    from bus_watch.spawn_on_wake import is_overnight_quiet
+
+    if is_overnight_quiet(policy=policy):
+        _publish_skipped("overnight_disabled")
+        return "skipped"
     loop_thread = str(policy.get("loop_thread") or "").strip()
     if not loop_thread:
         _publish_skipped("loop_thread_unset")
@@ -349,6 +449,19 @@ def publish_if_enabled(
     if require_change and not changed and not force_stale and not dest_moved:
         _publish_skipped("require_change")
         return "skipped"
+    content_hash = digest_content_hash(digest)
+    min_interval_s = _digest_min_interval_s(policy)
+    now_epoch = time.time()
+    blocked = _digest_publish_blocked(
+        root_id,
+        state,
+        content_hash,
+        min_interval_s=min_interval_s,
+        now_epoch=now_epoch,
+    )
+    if blocked:
+        _publish_skipped(blocked)
+        return "skipped"
     if force_stale:
         state["last_stale_publish_attempt_at"] = _utcnow()
     published = publish_digest(root_id, digest, state, client=client)
@@ -356,6 +469,7 @@ def publish_if_enabled(
         state["digest_lanes_fp"] = _lanes_fingerprint(
             digest, ignore_turn_for=tape if tape != str(root_id) else ""
         )
+        _record_digest_publish(root_id, state, content_hash, now_epoch=now_epoch)
         return "published"
     return "failed"
 
@@ -441,7 +555,9 @@ def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
 
 
 __all__ = [
+    "DEFAULT_DIGEST_MIN_INTERVAL_S",
     "PublishOutcome",
+    "digest_content_hash",
     "is_own_digest_echo",
     "project_digest",
     "publish_digest",
