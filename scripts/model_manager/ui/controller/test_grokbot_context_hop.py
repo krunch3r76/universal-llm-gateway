@@ -399,7 +399,12 @@ def test_ac10_reply_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert built == seen[0]
 
 
-def test_ac11_event_factories() -> None:
+def test_ac11_event_factories(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.model_manager.ui.controller import grokbot_egress_watch_loop
+    from scripts.model_manager.ui.controller.grokbot_egress_watch_loop import (
+        GrokbotEgressWatchLoop,
+    )
+
     due = mcp_edge_grokbot_context_hop_due(
         names=["Impresario Alpha", "Reviewer R1 Zed"], thread_id="15851"
     )
@@ -416,3 +421,79 @@ def test_ac11_event_factories() -> None:
     assert failed.signal == "mcp.edge.grokbot.context_hop.notify_failed"
     assert "hop.observed" not in failed.signal
     assert "context.hop.observed" not in due.signal
+
+    emitted: list[tuple[str, dict[str, object], str, str]] = []
+
+    async def fake_emit(
+        signal: str,
+        payload: dict[str, object],
+        *,
+        source: str,
+        role: str,
+        scope: str,
+    ) -> None:
+        del source
+        emitted.append((signal, payload, role, scope))
+
+    async def fake_probe() -> list[dict[str, object]]:
+        return [
+            _row(agent_id="b", name="Reviewer R1 Zed"),
+            _row(agent_id="a", name="Impresario Alpha"),
+        ]
+
+    monkeypatch.setattr(grokbot_egress_watch_loop, "_emit", fake_emit)
+    monkeypatch.setattr(
+        grokbot_egress_watch_loop, "probe_grok_agent_context", fake_probe
+    )
+
+    snap = GrokbotEgressSnapshot(
+        desktop_running=True,
+        desktop_pid=1,
+        watch_connected=True,
+        watch_disconnected_s=None,
+        daemon_log_readable=True,
+        health_http_status=200,
+        tunnel_stale=False,
+        loader_stuck=False,
+        loader_stuck_s=None,
+        hm1_tools_call_ok=True,
+        undici_idle_s=0.0,
+        in_flight_gc1_mcp=False,
+        open_gc1_bus_turn=False,
+    )
+
+    async def fake_reply_fail(**kwargs: object) -> None:
+        del kwargs
+        raise RuntimeError("bus down")
+
+    monkeypatch.setattr(
+        grokbot_egress_watch_loop, "reply_context_hop", fake_reply_fail
+    )
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("."),
+        snapshot_fn=lambda: asyncio.sleep(0, result=snap),
+    )
+    asyncio.run(loop._context_hop(now=100.0, now_ms=_NOW_MS, snapshot=snap))
+    assert len(emitted) == 2
+    assert emitted[0][0] == "mcp.edge.grokbot.context_hop.due"
+    assert emitted[0][1] == {
+        "names": ["Impresario Alpha", "Reviewer R1 Zed"],
+        "thread_id": "15851",
+    }
+    assert emitted[0][2:] == ("observation", "node")
+    assert emitted[1][0] == "mcp.edge.grokbot.context_hop.notify_failed"
+    assert emitted[1][1] == {"error_class": "RuntimeError", "detail": "bus down"}
+    assert emitted[1][2:] == ("observation", "node")
+    assert loop._hop_state.cooldown_until == {}
+
+    emitted.clear()
+
+    async def fake_reply_ok(**kwargs: object) -> None:
+        del kwargs
+
+    monkeypatch.setattr(grokbot_egress_watch_loop, "reply_context_hop", fake_reply_ok)
+    asyncio.run(loop._context_hop(now=101.0, now_ms=_NOW_MS, snapshot=snap))
+    assert len(emitted) == 1
+    assert emitted[0][0] == "mcp.edge.grokbot.context_hop.due"
+    assert set(loop._hop_state.cooldown_until) == {"a", "b"}
+
