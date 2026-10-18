@@ -857,7 +857,7 @@ async def team_dispatch(
                 body=body,
                 seat=sdk_seat,
                 response=response,
-                requested_model_pin=requested_model_pin,
+                requested_model_pin=requested_model_pin,  # None preserves omit-path fence
             )
         if backend == "api_role":
             from .api_role_generate import dispatch_api_role_generate

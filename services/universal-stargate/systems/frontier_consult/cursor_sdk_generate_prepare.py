@@ -64,6 +64,8 @@ def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[st
     return tags
 
 
+_UNSET_MODEL_PIN: object = object()
+
 __all__ = [
     "PreparedCursorSdkHandle",
     "handle_from_dict",
@@ -132,7 +134,7 @@ async def prepare_cursor_sdk_generate(
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
-    requested_model_pin: str | None = None,
+    requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .generate_lane_ac_observer import (
@@ -191,11 +193,12 @@ async def prepare_cursor_sdk_generate(
     to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
+    fence_pin = model if requested_model_pin is _UNSET_MODEL_PIN else requested_model_pin
     reject_other_models_pool_generate(
         request_id=request_id,
         role=role,
         seat=None,
-        model=requested_model_pin if requested_model_pin is not None else model,
+        model=fence_pin if isinstance(fence_pin, str) else None,
         resolved_model=resolved_model,
     )
     if execution_id is None or dispatch_id is None:

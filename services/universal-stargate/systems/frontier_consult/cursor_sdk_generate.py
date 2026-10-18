@@ -9,6 +9,7 @@ from cursor_capabilities import effective_knobs
 from model_id import ModelId
 
 from .cursor_sdk_generate_prepare import (
+    _UNSET_MODEL_PIN,
     PreparedCursorSdkHandle,
     prepare_cursor_sdk_generate,
 )
@@ -361,7 +362,7 @@ async def dispatch_cursor_sdk_generate(
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
-    requested_model_pin: str | None = None,
+    requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
