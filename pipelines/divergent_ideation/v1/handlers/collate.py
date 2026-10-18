@@ -90,9 +90,9 @@ class CollateV1Handler(BaseHandler):
                 if map_ideate._output_positions is not None
                 else None
             )
-            re_outputs = re_inst.all_outputs()
+            re_aligned = re_inst.outputs_aligned()
             briefs, re_brief_failures = briefs_from_re_instantiate(
-                re_inst.outputs_aligned(),
+                re_aligned,
                 abstract_briefs,
                 pool_manifest,
                 run_id=run_id,
@@ -102,12 +102,12 @@ class CollateV1Handler(BaseHandler):
                 parse_failures,
                 re_brief_failures,
                 map_parse_failures_from_collection(
-                    re_outputs,
+                    re_aligned,
                     "re_instantiate",
                     planned,
                     re_inst.failed_iteration_hints,
                 ),
-                model_id_mismatches(re_outputs, planned, "re_instantiate"),
+                model_id_mismatches(re_aligned, planned, "re_instantiate"),
             )
 
         if isinstance(map_audit, MapOutputCollection) and assignments:
@@ -164,6 +164,7 @@ class CollateV1Handler(BaseHandler):
         if assign_out and isinstance(assign_out.json, dict):
             payload.setdefault("assignment_error", assign_out.json.get("assignment_error"))
 
+        payload["run_id"] = run_id
         manifest = build_run_manifest(payload)
         self._publish_bus_event(
             context,

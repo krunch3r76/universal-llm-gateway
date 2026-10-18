@@ -590,6 +590,43 @@ def _ideate_step_output(model_id: str) -> StepOutput:
     )
 
 
+def test_re_instantiate_model_id_mismatches_aligned_after_leading_failure() -> None:
+    """Element 0 failed; aligned zip with ideate plan yields no mismatch rows."""
+    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    planned = [str(o.model_id or "") for o in ideate_successes]
+    re_inst = MapOutputCollection(
+        [
+            StepOutput(raw="{}", model_id="m1", json={"briefs": [_domain_brief(0)]}),
+            StepOutput(raw="{}", model_id="m2", json={"briefs": [_domain_brief(0)]}),
+        ],
+        output_positions=[1, 2],
+        total_count=3,
+        failed_iteration_hints=[{"index": 0, "error_message": "failed"}],
+    )
+    assert model_id_mismatches(re_inst.outputs_aligned(), planned, "re_instantiate") == []
+
+
+def test_re_instantiate_model_id_mismatches_aligned_single_wrong_model() -> None:
+    """Element 0 failed; one later slot served the wrong model at its aligned index."""
+    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    planned = [str(o.model_id or "") for o in ideate_successes]
+    re_inst = MapOutputCollection(
+        [
+            StepOutput(raw="{}", model_id="m1", json={"briefs": [_domain_brief(0)]}),
+            StepOutput(raw="{}", model_id="m-wrong", json={"briefs": [_domain_brief(0)]}),
+        ],
+        output_positions=[1, 2],
+        total_count=3,
+        failed_iteration_hints=[{"index": 0, "error_message": "failed"}],
+    )
+    mismatches = model_id_mismatches(re_inst.outputs_aligned(), planned, "re_instantiate")
+    assert len(mismatches) == 1
+    assert mismatches[0]["iteration_index"] == 2
+    assert mismatches[0]["model"] == "m-wrong"
+    assert "m2" in mismatches[0]["error"]
+    assert "m-wrong" in mismatches[0]["error"]
+
+
 def test_re_instantiate_aligned_outputs_preserve_pool_index_after_leading_failure() -> None:
     """Element 0 failed re_instantiate; later briefs must keep surviving pool indices."""
     exec_id = "EXEC-18011"
@@ -643,6 +680,38 @@ def test_re_instantiate_aligned_outputs_preserve_pool_index_after_leading_failur
     assert not assign_out["assignment_error"]
     for row in assign_out["audit_assignments"]:
         assert row["auditor_model"] != row["author_model"]
+
+
+@pytest.mark.asyncio
+async def test_collate_handler_manifest_run_id_from_execution_id() -> None:
+    from systems.pipeline.core.handlers.protocol import PipelineContext
+    from systems.pipeline.core.schemas import PipelineOptions, PipelineSpec
+
+    from pipelines.divergent_ideation.v1.handlers.collate import CollateV1Handler
+
+    exec_id = "EXEC-COLLATE-RUN-ID"
+    step = StepConfig.model_validate({"name": "collate", "type": "collate_v1"})
+    pipeline = PipelineSpec(
+        id="divergent-ideation-v1",
+        version="1",
+        type="test",
+        category="test",
+        steps=[],
+        output="collate",
+        options=PipelineOptions(),
+        source_search_path="pipelines",
+    )
+    ctx = PipelineContext(
+        pipeline=pipeline,
+        source_text="",
+        http_request=None,  # type: ignore[arg-type]
+        execution_id=exec_id,
+    )
+    ctx.outputs["operator_split"] = StepOutput(raw="{}", json={"pool_models": []})
+
+    out = await CollateV1Handler().execute(step, ctx)
+    assert out.json is not None
+    assert out.json["run_id"] == exec_id
 
 
 def test_audit_assign_and_collate_brief_ids_share_execution_namespace() -> None:
