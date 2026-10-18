@@ -10,12 +10,24 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from transport_utils.gateway_dir import resolve_gateway_dir
 
 logger = logging.getLogger(__name__)
 
+
+def _manage_gateway_dir() -> Path:
+    """Passwd-only gateway dir; import resolver lazily for guarded-reexec subprocesses."""
+    try:
+        from transport_utils.gateway_dir import resolve_gateway_dir
+
+        return resolve_gateway_dir(env_var=None)
+    except ModuleNotFoundError:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+
+
 WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
-GATEWAY_DIR = resolve_gateway_dir(env_var=None)
+GATEWAY_DIR = _manage_gateway_dir()
 NODES_DIR = GATEWAY_DIR / "nodes"
 
 _STARGATE_CONFIG_TEMPLATE = """\

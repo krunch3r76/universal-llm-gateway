@@ -54,9 +54,14 @@ def resolve_gateway_dir(*, manage_pid: int | None = None) -> Path:
                 return Path(item.split(b"=", 1)[1].decode())
             if item.startswith(b"HOME="):
                 return Path(item.split(b"=", 1)[1].decode()) / ".gateway"
-    from transport_utils.gateway_dir import passwd_home
+    try:
+        from transport_utils.gateway_dir import passwd_home
 
-    return passwd_home() / ".gateway"
+        return passwd_home() / ".gateway"
+    except ModuleNotFoundError:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
 
 
 def default_intent_db(*, manage_pid: int | None = None) -> Path:
