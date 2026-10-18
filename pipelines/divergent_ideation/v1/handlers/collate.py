@@ -25,6 +25,18 @@ from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
 from systems.pipeline.core.schemas import StepConfig
 
 
+def _unwrap_step_json_field(
+    bound: Any, field: str, default: Any, *, skipped_default: Any | None = None
+) -> Any:
+    """Extract a sub-field from a whole-step JSON binding; honor ``_skipped`` markers."""
+    if not isinstance(bound, dict):
+        return default
+    if bound.get("_skipped"):
+        return skipped_default if skipped_default is not None else default
+    value = bound.get(field)
+    return default if value is None else value
+
+
 class CollateV1Handler(BaseHandler):
     step_type = "collate_v1"
 
@@ -46,6 +58,20 @@ class CollateV1Handler(BaseHandler):
         ):
             if key in inputs:
                 payload[key] = self._resolve_input(resolver, step, key, inputs)
+
+        split_json = payload.get("operator_subsets")
+        if "operator_subsets" in inputs or "operator_dispersion" in inputs:
+            payload["operator_subsets"] = _unwrap_step_json_field(
+                split_json, "operator_subsets", []
+            )
+            payload["operator_dispersion"] = float(
+                _unwrap_step_json_field(split_json, "operator_dispersion", 0.0)
+            )
+        assign_json = payload.get("audit_assignments")
+        if "audit_assignments" in inputs:
+            payload["audit_assignments"] = list(
+                _unwrap_step_json_field(assign_json, "audit_assignments", [])
+            )
 
         pool_manifest = list(payload.get("pool_manifest") or [])
         run_id = str(context.execution_id or "")

@@ -200,11 +200,11 @@ steps:
       pool_manifest: sourceNs.metadata.pool_manifest
       leak_report: leak_check_final.json.leak_report
       operators: retrieve_operators.json
-      operator_subsets: operator_split.json.operator_subsets
-      operator_dispersion: operator_split.json.operator_dispersion
+      operator_subsets: operator_split.json
+      operator_dispersion: operator_split.json
       abstract_briefs: map_ideate.*
       briefs: re_instantiate.*
-      audit_assignments: audit_assign.json.audit_assignments
+      audit_assignments: audit_assign.json
       audits: map_audit.*
 
   - name: emit

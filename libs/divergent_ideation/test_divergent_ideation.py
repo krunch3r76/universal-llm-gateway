@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import PropertyMock, patch
 
 import pytest
+import yaml
 from systems.pipeline.core.execution.map_reduce.collection import MapOutputCollection
 from systems.pipeline.core.handlers.step_output import StepOutput
 from systems.pipeline.core.schemas import ReadsFrom, StepConfig
@@ -712,6 +715,74 @@ async def test_collate_handler_manifest_run_id_from_execution_id() -> None:
     out = await CollateV1Handler().execute(step, ctx)
     assert out.json is not None
     assert out.json["run_id"] == exec_id
+
+
+@pytest.mark.asyncio
+async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
+    """A-2.6: collate resolves whole-step JSON bindings when gated steps are skipped."""
+    from systems.pipeline.core.handlers.protocol import PipelineContext
+    from systems.pipeline.core.schemas import PipelineOptions, PipelineSpec
+    from systems.pipeline.core.step_types import SourceInput
+
+    from pipelines.divergent_ideation.v1.handlers.collate import CollateV1Handler
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec_dict = yaml.safe_load(
+        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+    )
+    collate_dict = next(s for s in spec_dict["steps"] if s["name"] == "collate")
+    step = StepConfig.model_validate(collate_dict)
+
+    skipped = StepOutput(raw="", json={"_skipped": True})
+    leak_report = {"passed": False, "hits": [{"term": "secret"}], "attempts": 3}
+    pool = _pool(3)
+    pipeline = PipelineSpec(
+        id="divergent-ideation-v1",
+        version="1",
+        type="test",
+        category="test",
+        steps=[],
+        output="collate",
+        options=PipelineOptions(),
+        source_search_path="pipelines",
+    )
+    ctx = PipelineContext(
+        pipeline=pipeline,
+        source_text="{}",
+        http_request=None,  # type: ignore[arg-type]
+        execution_id="EXEC-LEAK-HALT",
+    )
+    ctx.outputs["load_problem"] = StepOutput(
+        raw="{}",
+        json={"problem_id": "p1", "run_seed": 1, "benchmark_tag": None},
+    )
+    ctx.outputs["leak_check_final"] = StepOutput(
+        raw="{}",
+        json={
+            "passed": False,
+            "leak_report": leak_report,
+            "accepted_abstract_problem": {},
+            "rag_query": "",
+        },
+    )
+    for name in (
+        "retrieve_operators",
+        "operator_split",
+        "map_ideate",
+        "re_instantiate",
+        "audit_assign",
+        "map_audit",
+    ):
+        ctx.outputs[name] = skipped
+
+    source = SourceInput(text="{}", metadata={"pool_manifest": pool})
+    with patch.object(type(ctx), "source", new_callable=PropertyMock, return_value=source):
+        out = await CollateV1Handler().execute(step, ctx)
+
+    assert out.json is not None
+    assert out.json["halted_at"] == "retrieve_operators"
+    assert out.json["halt_reason"] == "leak"
+    assert out.json["leak_report"]["hits"]
 
 
 def test_audit_assign_and_collate_brief_ids_share_execution_namespace() -> None:
