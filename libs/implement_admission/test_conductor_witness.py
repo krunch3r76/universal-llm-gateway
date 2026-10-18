@@ -671,6 +671,154 @@ def test_default_witness_bus_unknown_without_token(
     )
 
 
+def _bus_turns_client_factory(
+    *,
+    pages: list[dict[str, Any]],
+) -> Any:
+    """Mock sync client: ``pages[i]`` is returned for the i-th GET /turns call."""
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self._pages = list(pages)
+            self._idx = 0
+
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def get(self, path: str, *, headers: dict[str, str]) -> Any:
+            _ = headers
+            self.calls.append(path)
+            if self._idx >= len(self._pages):
+                raise AssertionError(f"unexpected GET {path}")
+            payload = self._pages[self._idx]
+            self._idx += 1
+
+            class _Resp:
+                status_code = 200
+
+                def json(self) -> dict[str, Any]:
+                    return payload
+
+            return _Resp()
+
+    return _Client()
+
+
+@pytest.mark.offline
+def test_default_witness_bus_walk_miss_then_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tip miss, walk finds SCORE_RESURFACE on page 2 with cursor advance."""
+    from urllib.parse import parse_qs, urlparse
+
+    from implement_admission.conductor_witness_defaults import DefaultWitnessBus
+
+    hit_turn = {
+        "subject": "SCORE_RESURFACE — paginated-slug G5",
+        "created_at": "2026-08-26T06:30:00Z",
+    }
+    client_holder: list[Any] = []
+
+    def _factory(*_args: object, **_kwargs: object) -> Any:
+        client = _bus_turns_client_factory(
+            pages=[
+                {"turns": [{"subject": "CHECKPOINT", "created_at": "2026-08-26T07:00:00Z"}]},
+                {
+                    "turns": [{"subject": "noise", "created_at": "2026-08-26T06:00:00Z"}],
+                    "truncated": True,
+                    "next_after_turn": 95,
+                },
+                {"turns": [hit_turn], "truncated": False},
+            ]
+        )
+        client_holder.append(client)
+        return client
+
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr("transport_utils.make_sync_client", _factory)
+    result = DefaultWitnessBus().has_score_resurface_after(
+        thread_id="16416",
+        after_written_at="2026-08-26T06:00:00Z",
+        slug="paginated-slug",
+    )
+    assert result == "found"
+    assert len(client_holder) == 1
+    calls = client_holder[0].calls
+    assert len(calls) == 3
+    tip_qs = parse_qs(urlparse(calls[0]).query)
+    assert tip_qs["thread"] == ["16416"]
+    assert tip_qs["last"] == ["80"]
+    assert "after_turn" not in tip_qs
+    assert "compact" not in tip_qs
+    walk1 = parse_qs(urlparse(calls[1]).query)
+    assert walk1["after_turn"] == ["0"]
+    walk2 = parse_qs(urlparse(calls[2]).query)
+    assert walk2["after_turn"] == ["95"]
+
+
+@pytest.mark.offline
+def test_default_witness_bus_walk_clean_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from implement_admission.conductor_witness_defaults import DefaultWitnessBus
+
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_a, **_k: _bus_turns_client_factory(
+            pages=[
+                {"turns": [{"subject": "CHECKPOINT", "created_at": "2026-08-26T07:00:00Z"}]},
+                {
+                    "turns": [{"subject": "CHECKPOINT 2", "created_at": "2026-08-26T06:00:00Z"}],
+                    "truncated": False,
+                },
+            ]
+        ),
+    )
+    assert (
+        DefaultWitnessBus().has_score_resurface_after(
+            thread_id="16416", after_written_at=None, slug="x"
+        )
+        == "not_found"
+    )
+
+
+@pytest.mark.offline
+def test_default_witness_bus_walk_truncated_cap_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from implement_admission.conductor_witness_defaults import DefaultWitnessBus
+
+    truncated_page = {
+        "turns": [{"subject": "CHECKPOINT", "created_at": "2026-08-26T06:00:00Z"}],
+        "truncated": True,
+        "next_after_turn": 80,
+    }
+    walk_only = [truncated_page] * 8
+    client = _bus_turns_client_factory(
+        pages=[
+            {"turns": [{"subject": "tip noise", "created_at": "2026-08-26T07:00:00Z"}]},
+            *walk_only,
+        ]
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_a, **_k: client,
+    )
+    assert (
+        DefaultWitnessBus().has_score_resurface_after(
+            thread_id="16416", after_written_at=None, slug="x"
+        )
+        == "unknown"
+    )
+    assert sum("after_turn=" in c for c in client.calls) == 8
+
+
 @pytest.mark.offline
 def test_nested_implement_injection_witnesses_g5(tmp_path: Path) -> None:
     """Injected nested_implement reader witnesses G5 without services import."""
