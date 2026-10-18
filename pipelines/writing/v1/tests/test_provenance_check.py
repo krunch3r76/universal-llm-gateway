@@ -527,35 +527,37 @@ def test_fixture_saturday_drop_is_drop_finding() -> None:
     )
 
 
-def test_fact_ceiling_final_handler_derives_fact_reordered() -> None:
-    v2 = (
-        "It was 213 Sunday morning. "
-        "Fill was 251 when I opened Saturday. "
-        "So two days of work and it's sitting where it started."
-    )
+class _Raw:
+    def __init__(self, text: str) -> None:
+        self.raw = text
 
-    class _Raw:
-        def __init__(self, text: str) -> None:
-            self.raw = text
 
-    class _StepFinal:
-        def __init__(self) -> None:
-            self.handler_inputs = {
-                "pin_ledger": "assemble.json.pin_ledger",
-                "draft": "prose_rhythm_pass.raw",
-                "draft_v1": "draft.json",
-            }
+class _StepFactCeilingFinal:
+    def __init__(self) -> None:
+        self.handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "prose_rhythm_pass.raw",
+            "draft_v1": "draft.json",
+        }
 
+
+def _run_fact_ceiling_final(
+    *,
+    v2_raw: str,
+    v1_draft: str,
+    v1_clauses: list[dict[str, Any]],
+    pin_ledger: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     payload = asyncio.run(
         provenance.WritingProvenanceCheckHandler().execute(
-            _StepFinal(),
+            _StepFactCeilingFinal(),
             _Ctx(
                 {
-                    "assemble": _Out({"pin_ledger": _FILL_LEDGER}),
+                    "assemble": _Out({"pin_ledger": pin_ledger}),
                     "draft": _Out(
                         {
                             "ok": True,
-                            "draft": _FILL_V1,
+                            "draft": v1_draft,
                             "selected_role": "drafter_openai",
                         }
                     ),
@@ -563,13 +565,142 @@ def test_fact_ceiling_final_handler_derives_fact_reordered() -> None:
                         {
                             "findings": [],
                             "verdict": "ship",
-                            "clauses": _FILL_V1_CLAUSES,
+                            "clauses": v1_clauses,
                         }
                     ),
-                    "prose_rhythm_pass": _Raw(v2),
+                    "prose_rhythm_pass": _Raw(v2_raw),
                 }
             ),
         )
     ).json
     assert payload is not None
-    assert "fact_reordered" in _types(payload["violations"])
+    return payload["violations"]
+
+
+def test_fact_ceiling_final_probe_a_fact_added() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning because the pump failed, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    added = [row for row in violations if row["type"] == "fact_added"]
+    assert added
+    assert added[0]["detail"] == (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning because the pump failed, "
+        "so two days of work and it's sitting where it started."
+    )
+
+
+def test_fact_ceiling_final_probe_b_fact_added() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday because the pump failed. "
+            "It was 213 Sunday morning. "
+            "So two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    added = [row for row in violations if row["type"] == "fact_added"]
+    assert added
+    assert added[0]["detail"] == (
+        "Fill was 251 when I opened Saturday because the pump failed."
+    )
+
+
+def test_fact_ceiling_final_merged_p2_before_p1_fact_reordered() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "It was 213 Sunday morning, and fill was 251 when I opened Saturday, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_section_91_merge_still_passes() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert violations == []
+
+
+_PARAPHRASE_V1 = (
+    "On Saturday morning the fill level read 251. "
+    "By Sunday it had dropped to 213. "
+    "Two days of work, and we are back where we started."
+)
+_PARAPHRASE_CLAUSES = [
+    {
+        "text": "On Saturday morning the fill level read 251.",
+        "pin_ids": ["P1"],
+        "disposition": "express",
+    },
+    {
+        "text": "By Sunday it had dropped to 213.",
+        "pin_ids": ["P2"],
+        "disposition": "express",
+    },
+    {
+        "text": "Two days of work, and we are back where we started.",
+        "pin_ids": ["P3"],
+        "disposition": "express",
+    },
+]
+_PARAPHRASE_LEDGER = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "On Saturday morning the fill level read 251",
+    },
+    {"pin_id": "P2", "attested": True, "excerpt": "By Sunday it had dropped to 213"},
+    {
+        "pin_id": "P3",
+        "attested": True,
+        "excerpt": "Two days of work, and we are back where we started",
+    },
+]
+
+
+def test_fact_ceiling_final_paraphrase_swap_fact_reordered() -> None:
+    v2 = (
+        "By Sunday it had dropped to 213. "
+        "On Saturday morning the fill level read 251. "
+        "Two days of work, and we are back where we started."
+    )
+    violations = _run_fact_ceiling_final(
+        v2_raw=v2,
+        v1_draft=_PARAPHRASE_V1,
+        v1_clauses=_PARAPHRASE_CLAUSES,
+        pin_ledger=_PARAPHRASE_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_handler_derives_fact_reordered() -> None:
+    v2 = (
+        "It was 213 Sunday morning. "
+        "Fill was 251 when I opened Saturday. "
+        "So two days of work and it's sitting where it started."
+    )
+    violations = _run_fact_ceiling_final(
+        v2_raw=v2,
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)

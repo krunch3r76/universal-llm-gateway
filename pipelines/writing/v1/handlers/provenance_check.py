@@ -253,6 +253,15 @@ def check_fact_ceiling(
             if any(phrase in lowered for phrase in _NARRATIVE_CLOSE):
                 violations.append(_violation("narrative_close", None, last[:120]))
     clauses = verifier_clauses or []
+    violations.extend(_causal_connective_violations(clauses, pin_ledger))
+    return violations
+
+
+def _causal_connective_violations(
+    clauses: list[dict[str, Any]],
+    pin_ledger: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
     for clause in clauses:
         if not isinstance(clause, dict):
             continue
@@ -324,7 +333,36 @@ def _pin_order(clauses: list[dict[str, Any]]) -> list[str]:
 
 
 def _content_anchor_tokens(text: str) -> set[str]:
-    return {token for token in _tokens(text) if token not in _FUNCTION_WORDS}
+    return {
+        token
+        for token in _tokens(text)
+        if token not in _FUNCTION_WORDS and len(token) >= 2
+    }
+
+
+def _pin_excerpt_anchor_tokens(
+    pin_id: str,
+    pin_ledger: list[dict[str, Any]] | None,
+) -> set[str]:
+    ledger = pin_ledger or []
+    pin = next((row for row in ledger if str(row.get("pin_id")) == pin_id), None)
+    if not isinstance(pin, dict):
+        return set()
+    excerpt = str(pin.get("excerpt") or "")
+    if not excerpt.strip():
+        return set()
+    return _content_anchor_tokens(excerpt)
+
+
+def _pin_clause_anchor_tokens(
+    pin_id: str,
+    v1_clauses: list[dict[str, Any]],
+) -> set[str]:
+    for clause in v1_clauses:
+        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        if pin_id in {str(item) for item in pin_ids}:
+            return _content_anchor_tokens(str(clause.get("text") or ""))
+    return set()
 
 
 def _pin_anchor_tokens(
@@ -332,17 +370,39 @@ def _pin_anchor_tokens(
     pin_ledger: list[dict[str, Any]] | None,
     v1_clauses: list[dict[str, Any]],
 ) -> set[str]:
-    ledger = pin_ledger or []
-    pin = next((row for row in ledger if str(row.get("pin_id")) == pin_id), None)
-    if isinstance(pin, dict):
-        excerpt = str(pin.get("excerpt") or "")
-        if excerpt.strip():
-            return _content_anchor_tokens(excerpt)
-    for clause in v1_clauses:
-        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
-        if pin_id in {str(item) for item in pin_ids}:
-            return _content_anchor_tokens(str(clause.get("text") or ""))
-    return set()
+    excerpt_anchors = _pin_excerpt_anchor_tokens(pin_id, pin_ledger)
+    if excerpt_anchors:
+        return excerpt_anchors
+    return _pin_clause_anchor_tokens(pin_id, v1_clauses)
+
+
+def _pin_matches_text(
+    text: str,
+    pin_id: str,
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+) -> bool:
+    sent_tokens = _tokens(text)
+    excerpt_anchors = _pin_excerpt_anchor_tokens(pin_id, pin_ledger)
+    if excerpt_anchors and excerpt_anchors <= sent_tokens:
+        return True
+    clause_anchors = _pin_clause_anchor_tokens(pin_id, v1_clauses)
+    if clause_anchors and clause_anchors <= sent_tokens:
+        return True
+    return False
+
+
+def _first_anchor_offset(text: str, pin_id: str, pin_ledger: list[dict[str, Any]] | None, v1_clauses: list[dict[str, Any]]) -> int:
+    lowered = text.lower()
+    candidates = _pin_excerpt_anchor_tokens(pin_id, pin_ledger) | _pin_clause_anchor_tokens(
+        pin_id, v1_clauses
+    )
+    best = len(text) + 1
+    for token in candidates:
+        idx = lowered.find(token)
+        if idx != -1 and idx < best:
+            best = idx
+    return best
 
 
 def _pins_for_text(
@@ -351,12 +411,16 @@ def _pins_for_text(
     pin_ledger: list[dict[str, Any]] | None,
     v1_clauses: list[dict[str, Any]],
 ) -> list[str]:
-    sent_tokens = _tokens(text)
     matched: list[str] = []
     for pin_id in ordered_pin_ids:
-        anchors = _pin_anchor_tokens(pin_id, pin_ledger, v1_clauses)
-        if anchors and anchors <= sent_tokens:
+        if _pin_matches_text(text, pin_id, pin_ledger, v1_clauses):
             matched.append(pin_id)
+    matched.sort(
+        key=lambda pin_id: (
+            _first_anchor_offset(text, pin_id, pin_ledger, v1_clauses),
+            ordered_pin_ids.index(pin_id),
+        )
+    )
     return matched
 
 
@@ -374,7 +438,7 @@ def derive_v2_clauses_from_audit(
     if len(sentences) == 1 and len(v1_clauses) > 1:
         pin_ids = _pins_for_text(draft_text, ordered_pins, pin_ledger, v1_clauses)
         if not pin_ids:
-            pin_ids = ordered_pins
+            pin_ids = []
         disposition = str(v1_clauses[0].get("disposition") or "express")
         return [
             {
@@ -431,6 +495,7 @@ def revision_delta(
     v1_clauses: list[dict[str, Any]] | None = None,
     v2_clauses: list[dict[str, Any]] | None = None,
     pin_ledger: list[dict[str, Any]] | None = None,
+    v2_clauses_from_derive: bool = False,
 ) -> list[dict[str, Any]]:
     prior = _parse_draft(draft_v1)
     current = _parse_draft(draft_v2)
@@ -487,7 +552,7 @@ def revision_delta(
         for sentence in _sentences(v2_text):
             if sentence in set(_sentences(v1_text)):
                 continue
-            if _clause_pinned(sentence, v2_clause_rows):
+            if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
             sent_new = _tokens(sentence) - v1_tokens - join_words
             if not sent_new:
@@ -580,12 +645,15 @@ class WritingProvenanceCheckHandler(BaseHandler):
         if prior is not None:
             v1_clauses = verifier_clauses
             v2_clauses: list[dict[str, Any]] | None = None
+            v2_clauses_from_derive = False
             if isinstance(v1_clauses, list) and v1_clauses and parsed is not None:
                 v2_clauses = derive_v2_clauses_from_audit(
                     parsed["draft"],
                     v1_clauses,
                     ledger,
                 )
+                v2_clauses_from_derive = True
+                violations.extend(_causal_connective_violations(v2_clauses, ledger))
             violations.extend(
                 revision_delta(
                     prior,
@@ -593,6 +661,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     v1_clauses=v1_clauses,
                     v2_clauses=v2_clauses,
                     pin_ledger=ledger,
+                    v2_clauses_from_derive=v2_clauses_from_derive,
                 )
             )
         payload = {"ok": True, "violations": violations, "pass": violations == []}
