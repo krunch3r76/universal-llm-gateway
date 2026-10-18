@@ -21,6 +21,7 @@ from implement_admission.conductor_witness_types import (
 _BUS_TIMEOUT_S = 8.0
 _CORTEX_TIMEOUT_S = 15.0
 _TURNS_PAGE = 80
+_TURNS_MAX_PAGES = 8
 
 
 class WitnessCortexUnavailable(RuntimeError):
@@ -162,6 +163,51 @@ class DefaultWitnessGit:
         return proc.returncode == 0
 
 
+def _agent_bus_turns_page(
+    client: Any,
+    *,
+    thread_id: str,
+    headers: dict[str, str],
+    after_turn: int | None,
+) -> tuple[list[dict[str, Any]], bool, int | None] | None:
+    """Fetch one ``GET /turns`` page. ``None`` on transport, HTTP, or parse failure."""
+    from urllib.parse import urlencode
+
+    import httpx
+
+    params: dict[str, str | int] = {
+        "thread": str(thread_id),
+        "last": _TURNS_PAGE,
+    }
+    if after_turn is not None:
+        params["after_turn"] = after_turn
+    qs = urlencode(params)
+    try:
+        resp = client.get(f"/turns?{qs}", headers=headers)
+        if resp.status_code >= 400:
+            return None
+        payload = resp.json()
+    except (OSError, ValueError, httpx.HTTPError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    turns = payload.get("turns")
+    if not isinstance(turns, list):
+        return None
+    normalized = [t for t in turns if isinstance(t, dict)]
+    truncated = bool(payload.get("truncated"))
+    raw_next = payload.get("next_after_turn")
+    next_after: int | None
+    if raw_next is None:
+        next_after = None
+    else:
+        try:
+            next_after = int(raw_next)
+        except (TypeError, ValueError):
+            return None
+    return normalized, truncated, next_after
+
+
 class DefaultWitnessBus:
     """Agent-bus HTTP reader for attended G5 SCORE_RESURFACE."""
 
@@ -174,36 +220,59 @@ class DefaultWitnessBus:
         exec_id: str | None = None,
         review_sha: str | None = None,
     ) -> ScoreResurfaceRead:
-        from urllib.parse import urlencode
-
         from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
         token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
         if not token:
             return "unknown"
         headers = {"Authorization": f"Bearer {token}"}
-        qs = urlencode({"thread": str(thread_id), "last": _TURNS_PAGE})
+
+        def scan(turns: list[dict[str, Any]]) -> bool:
+            return score_resurface_in_turns(
+                turns,
+                after_written_at=after_written_at,
+                slug=slug,
+                exec_id=exec_id,
+                review_sha=review_sha,
+            )
+
         try:
             with make_sync_client(
                 DEFAULT_AGENT_BUS_URL, timeout=_BUS_TIMEOUT_S
             ) as client:
-                resp = client.get(f"/turns?{qs}", headers=headers)
-                if resp.status_code >= 400:
+                tip = _agent_bus_turns_page(
+                    client,
+                    thread_id=thread_id,
+                    headers=headers,
+                    after_turn=None,
+                )
+                if tip is None:
                     return "unknown"
-                payload = resp.json()
+                tip_turns, _, _ = tip
+                if scan(tip_turns):
+                    return "found"
+
+                cursor = 0
+                for _ in range(_TURNS_MAX_PAGES):
+                    page = _agent_bus_turns_page(
+                        client,
+                        thread_id=thread_id,
+                        headers=headers,
+                        after_turn=cursor,
+                    )
+                    if page is None:
+                        return "unknown"
+                    turns, truncated, next_after = page
+                    if scan(turns):
+                        return "found"
+                    if not truncated:
+                        return "not_found"
+                    if next_after is None:
+                        return "unknown"
+                    cursor = next_after
+                return "unknown"
         except (OSError, ValueError):
             return "unknown"
-        turns = payload.get("turns") if isinstance(payload, dict) else None
-        if not isinstance(turns, list):
-            return "unknown"
-        hit = score_resurface_in_turns(
-            turns,
-            after_written_at=after_written_at,
-            slug=slug,
-            exec_id=exec_id,
-            review_sha=review_sha,
-        )
-        return "found" if hit else "not_found"
 
 
 def fold_deps_for_admit(
