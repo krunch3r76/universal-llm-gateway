@@ -60,7 +60,9 @@ def _friction_optional_args_hint() -> str:
     return (
         f"category ∈ {_friction_category_enum()}; claim aliases note; "
         "service aliases owner; protocol requires exactly one anchor "
-        f"unless actionable=false: {PROTOCOL_ANCHOR_VARIANTS}."
+        f"unless actionable=false: {PROTOCOL_ANCHOR_VARIANTS}; "
+        "related=[{assertion_id|to_node, edge_type?, strength?, context?}] "
+        "links session edges in-call (requires session_id and agent)."
     )
 
 
@@ -97,10 +99,48 @@ _CORTEX_ASSERT = PrimaryOpEntry(
     ),
     required_args=("entity_id", "claim", "confidence", "evidence"),
     optional_args_hint=(
-        "seeded_by, derivation_type, supersedes_id, dry_run, attributes; "
+        "seeded_by, derivation_type, supersedes_id, dry_run, attributes, "
+        "related=[{assertion_id|to_node, edge_type?, strength?, context?}]; "
         "confidence is an enum, not a float (confidence_score is the float)."
     ),
     keywords=frozenset({"assert", "assertion", "claim", "record", "pin", "graph"}),
+)
+
+_CORTEX_EDGE_CREATE = PrimaryOpEntry(
+    primary_tool="cortex",
+    op="edge_create",
+    purpose="Create a session-attributed reasoning edge between entities or assertions.",
+    call_shape=(
+        'cortex(tool="edge_create", arguments=\'{"session_id": "<{seat}-YYYY-MM-DD-HHMMSS-{3hex}>", '
+        '"agent": "<seat>", "from_node": "assertion:<id>", '
+        '"to_node": "assertion:<id>", "edge_type": "relates_to|same_class_as|duplicates"}\')'
+    ),
+    required_args=("session_id", "agent", "from_node", "to_node", "edge_type"),
+    optional_args_hint=(
+        "strength (0..1, default 0.8), context, prompt, seeded_by, metadata; "
+        "session_id must match cortex_brief mint grammar."
+    ),
+    keywords=frozenset(
+        {"edge", "edge_create", "link", "relates_to", "same_class_as", "duplicates", "session_id"}
+    ),
+)
+
+_CORTEX_EDGES = PrimaryOpEntry(
+    primary_tool="cortex",
+    op="edges",
+    purpose="List active session-attributed reasoning edges with endpoint or type filters.",
+    call_shape=(
+        'cortex(tool="edges", arguments=\'{"node": "assertion:<id>", '
+        '"edge_type": "same_class_as", "limit": 50}\')'
+    ),
+    required_args=(),
+    optional_args_hint=(
+        "node (either endpoint), from_node, to_node, edge_type, edge_type_exclude, "
+        "agent, session_id, include_retired, since_hours, limit; unknown filter keys return 422."
+    ),
+    keywords=frozenset(
+        {"edge", "edges", "link", "relates_to", "same_class_as", "duplicates", "session_id"}
+    ),
 )
 
 _CORTEX_ENTITY_CREATE = PrimaryOpEntry(
@@ -153,6 +193,8 @@ _FS_MD_READ = PrimaryOpEntry(
 PRIMARY_OP_INDEX: tuple[PrimaryOpEntry, ...] = (
     _CORTEX_FRICTION,
     _CORTEX_ASSERT,
+    _CORTEX_EDGE_CREATE,
+    _CORTEX_EDGES,
     _CORTEX_ENTITY_CREATE,
     _RAG_SEARCH,
     _FS_MD_READ,

@@ -434,6 +434,10 @@ tools:
         type: string
       derivation_type:
         type: string
+      related:
+        type: array
+        items:
+          type: object
     required:
     - entity_id
     - claim
@@ -1257,12 +1261,24 @@ tools:
   json_schema:
     type: object
     properties:
+      node:
+        type: string
       from_node:
         type: string
       to_node:
         type: string
       edge_type:
         type: string
+      edge_type_exclude:
+        type: string
+      agent:
+        type: string
+      session_id:
+        type: string
+      include_retired:
+        type: boolean
+      since_hours:
+        type: integer
       limit:
         type: integer
   skill_uri: rule:cortex
@@ -1426,6 +1442,10 @@ tools:
         type: string
       session_id:
         type: string
+      related:
+        type: array
+        items:
+          type: object
     required:
     - category
     - note

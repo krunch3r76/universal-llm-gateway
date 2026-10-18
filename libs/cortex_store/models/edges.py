@@ -49,7 +49,9 @@ class EdgeUpdate(BaseModel):
     """Mutable scalar fields of an active session-edge. At least one must be supplied.
 
     Identity (from_node/to_node/edge_type), provenance (session_id/agent/seeded_by),
-    and retirement (valid_until — owned by edge_retire) are NOT patchable here.
+    and retirement (valid_until — owned by edge_retire) are NOT patchable here;
+    to correct provenance, annotate with metadata then retire (edge_retire) and
+    re-seed via edge_create under the correct session.
     """
 
     strength: float | None = None

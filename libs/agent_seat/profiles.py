@@ -37,7 +37,7 @@ class CapabilityProfile:
     """
 
     family: Literal["claude", "gpt", "grok", "gemini", "subagent", "cursor"]
-    platform: Literal["api", "api-multi", "web", "cursor", "subagent", "sdk"]
+    platform: Literal["api", "api-multi", "web", "cursor", "subagent", "sdk", "bot"]
     provider: Literal["anthropic", "openai", "xai", "google", "cursor"]
     default_model: str | None
     tool_surface: Literal["mcp", "inline-only", "sdk"]

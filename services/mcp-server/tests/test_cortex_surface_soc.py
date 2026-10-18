@@ -260,3 +260,26 @@ def test_tool_search_friction_hint_matches_runtime_sot() -> None:
     parsed = {part.strip() for part in match.group(1).split(",") if part.strip()}
     assert parsed == set(_FRICTION_CATEGORIES)
     assert "unless actionable=false" in hint
+
+
+def test_edge_contract_present_within_budget() -> None:
+    """edge_create / edges / related contract is rendered within the surface byte budget (a:39610)."""
+    import tools.cortex_named_tools._surface_render as render_mod
+
+    for surface, budget in (
+        ("code", render_mod._CODE_BUDGET),
+        ("life", render_mod._LIFE_BUDGET),
+    ):
+        desc = render_cortex_tool_description(
+            surface, canonical_yaml_path=_CANONICAL
+        )
+        assert len(desc.encode("utf-8")) <= budget
+        for token in (
+            "edge_create:",
+            "same_class_as",
+            "duplicates",
+            "edges filters:",
+            "related=",
+        ):
+            assert token in desc, f"{surface} descriptor missing {token!r}"
+

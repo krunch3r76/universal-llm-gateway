@@ -23,8 +23,11 @@ from .profiles import (
     seat_to_family,
 )
 
-# Endpoint mailboxes only — sdk/subagent are capability routing, not bus addresses.
-_BUS_ADDRESS_EXCLUDED_PLATFORMS = frozenset({"sdk", "subagent"})
+# Endpoint mailboxes only — sdk/subagent are capability routing, not bus addresses;
+# bot — grok-bot IS a mailbox, but its canonical address is the seat slug itself
+# (grok-bot, grok-bot-gc1), not bot-xai; excluding it keeps
+# normalize_bus_address("grok-bot") == "grok-bot" so the mint is grok-bot-YYYY-….
+_BUS_ADDRESS_EXCLUDED_PLATFORMS = frozenset({"sdk", "subagent", "bot"})
 
 # Stage Manager standing role — distinct bus addresses, equivalent for wake/debounce.
 STAGE_MANAGER_ADDRESSES = frozenset(

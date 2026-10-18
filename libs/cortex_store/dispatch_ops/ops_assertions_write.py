@@ -27,6 +27,7 @@ from ._friction_close_impl import (
     close_friction_assertion,
     validate_resolution_kind,
 )
+from ._related_edges import prepare_related_edges, write_related_edges
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _VALID_CONFIDENCE,
@@ -119,6 +120,7 @@ def _op_assert(
     resolve_aliases: bool = True,
     raw_id: bool = False,
     session_id: str | None = None,
+    related: list[dict[str, Any]] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     missing = collect_missing_required(
@@ -170,6 +172,25 @@ def _op_assert(
             "error": f"Invalid confidence {confidence!r}. "
             f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
         }
+    prepared_related = None
+    edge_agent: str | None = None
+    if related is not None:
+        from agent_seat.session_id import agent_slug_from_session_id
+
+        edge_agent = (
+            str(seeded_by).strip()
+            if seeded_by and str(seeded_by).strip()
+            else (agent_slug_from_session_id(session_id) if session_id else None)
+        )
+        with cortex_conn() as conn:
+            prepared_related, rel_err = prepare_related_edges(
+                conn,
+                related,
+                session_id=session_id,
+                agent=edge_agent,
+            )
+        if rel_err is not None:
+            return rel_err
     body: dict[str, Any] = {
         "entity_id": entity_id,
         "claim": claim,
@@ -225,6 +246,16 @@ def _op_assert(
             result["seeded_by"] = body["seeded_by"]
             result["seeded_by_projection"] = projection_tag
         if result.get("dry_run"):
+            if prepared_related is not None:
+                result["related_preview"] = [
+                    {
+                        "to_node": p.to_node,
+                        "edge_type": p.edge_type,
+                        "strength": p.strength,
+                        "context": p.context,
+                    }
+                    for p in prepared_related
+                ]
             if write_nudge is not None:
                 attach_write_discipline(result, write_nudge)
             return result
@@ -237,6 +268,17 @@ def _op_assert(
             normalize_payload=result.get("predicate_form_normalize"),
             session_id=session_id,
         )
+        if prepared_related:
+            assert session_id is not None and edge_agent is not None
+            result.update(
+                write_related_edges(
+                    int(result["item"]["id"]),
+                    prepared_related,
+                    session_id=session_id,
+                    agent=edge_agent,
+                    seeded_by=seeded_by or edge_agent,
+                )
+            )
         if result.get("validation_warnings"):
             warnings = result["validation_warnings"]
             # category field on each warning is the canonical discriminator.

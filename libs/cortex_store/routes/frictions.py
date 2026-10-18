@@ -32,7 +32,7 @@ def list_frictions(
     include_compaction_pointers: bool = Query(False),
 ) -> dict[str, Any]:
     """List friction assertions (same shape as dispatch ``frictions`` op)."""
-    from ..dispatch_ops.ops_assertions_friction import _op_frictions
+    from ..dispatch_ops.ops_assertions_frictions_read import _op_frictions
 
     return _op_frictions(
         owner=owner,
