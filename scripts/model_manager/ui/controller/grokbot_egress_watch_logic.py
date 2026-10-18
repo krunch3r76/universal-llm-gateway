@@ -13,6 +13,18 @@ _DESKTOP_RESTART_CAP_S = 1800.0
 _DEFERRAL_CEILING_S = 600.0
 _CONNECTED_UNDICI_GAP_WARN_S = 1200.0
 
+TURN_INDEX_DUE = 25
+GC1_STEP_INDEX_DUE = 180
+HOUSE_STEP_INDEX_DUE = 160
+HOP_COOLDOWN_S = 1800.0
+HOP_DEFERRAL_CEILING_S = 600.0
+HOP_STALE_WINDOW_MS = 6 * 60 * 60 * 1000
+GC1_ROSTER_NAME = "Stage Manager (gc1)"
+HOP_THREAD_ID = "15851"
+HOP_SUBJECT_HEAD = "NUDGE|context-hop-due|"
+_HOP_NAME_PREFIXES = ("Impresario ", "Reviewer R1 ", "Operator Liaison ")
+_LAST_MESSAGE_RE = re.compile(r"^t(\d+)s(\d+)$")
+
 _WATCH_PREFIX = "[user-computer-watch]"
 _TS_RE = re.compile(
     r"\[(?:user-computer-watch|local-exec-daemon|sand-local-exec-daemon)\]\s+"
@@ -39,16 +51,12 @@ def parse_watch_log_line_ts_ms(line: str) -> int | None:
     return int(dt.timestamp() * 1000)
 
 
-def watch_connection_state(
-    log_text: str, *, now_ms: int
-) -> tuple[bool, float | None]:
+def watch_connection_state(log_text: str, *, now_ms: int) -> tuple[bool, float | None]:
     """Return ``(connected, disconnected_for_s)``.
 
     ``disconnected_for_s`` is set when the latest watch state is not connected.
     """
-    watch_lines = [
-        ln for ln in log_text.splitlines() if _WATCH_PREFIX in ln
-    ]
+    watch_lines = [ln for ln in log_text.splitlines() if _WATCH_PREFIX in ln]
     if not watch_lines:
         return False, None
 
@@ -122,9 +130,144 @@ def _should_defer_restart(snapshot: GrokbotEgressSnapshot) -> bool:
     return snapshot.in_flight_gc1_mcp or snapshot.open_gc1_bus_turn
 
 
-def _deferral_ceiling_hit(
-    now: float, state: GrokbotEgressLoopState
+def roster_name_allowed(name: str) -> bool:
+    """Exact Stage Manager (gc1), or a house prefix; a bl1 name is excluded."""
+    if "bl1" in name:
+        return False
+    if name == GC1_ROSTER_NAME:
+        return True
+    return name.startswith(_HOP_NAME_PREFIXES)
+
+
+def parse_last_message_id(last_message_id: str) -> tuple[int, int] | None:
+    """Parse ``t<N>s<M>`` into ``(turn_index, step_index)``."""
+    match = _LAST_MESSAGE_RE.fullmatch(last_message_id)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def step_index_due_threshold(name: str) -> int:
+    """gc1 step threshold is 180; every other allowed name uses 160."""
+    if name == GC1_ROSTER_NAME:
+        return GC1_STEP_INDEX_DUE
+    return HOUSE_STEP_INDEX_DUE
+
+
+def context_row_due(row: dict[str, object], *, now_ms: int) -> bool:
+    """True when an allowlisted, fresh, non-retired row meets turn or step."""
+    name = row.get("name")
+    if not isinstance(name, str) or not roster_name_allowed(name):
+        return False
+    if "(retired)" in name:
+        return False
+    updated = row.get("updated_at_ms")
+    if not isinstance(updated, int):
+        return False
+    if now_ms - updated > HOP_STALE_WINDOW_MS:
+        return False
+    raw_id = row.get("lastMessageId")
+    if not isinstance(raw_id, str):
+        return False
+    parsed = parse_last_message_id(raw_id)
+    if parsed is None:
+        return False
+    turn_index, step_index = parsed
+    if turn_index >= TURN_INDEX_DUE:
+        return True
+    return step_index >= step_index_due_threshold(name)
+
+
+def hop_subject(names: list[str]) -> str:
+    """One combined ``NUDGE|context-hop-due|`` subject, names lexicographic."""
+    ordered = sorted(names)
+    return HOP_SUBJECT_HEAD + ",".join(ordered)
+
+
+@dataclass
+class ContextHopState:
+    """In-memory cooldown and first-due stamps. Not read from the bus."""
+
+    cooldown_until: dict[str, float]
+    first_due_at: dict[str, float]
+
+    def __init__(self) -> None:
+        self.cooldown_until = {}
+        self.first_due_at = {}
+
+
+@dataclass
+class ContextHopNotice:
+    """One notice owed this tick."""
+
+    names: list[str]
+    agent_ids: list[str]
+    subject: str
+
+
+def _hop_busy(
+    *,
+    open_gc1_bus_turn: bool,
+    in_flight_gc1_mcp: bool,
+    is_running: bool,
 ) -> bool:
+    return open_gc1_bus_turn or in_flight_gc1_mcp or is_running
+
+
+def decide_context_hop(
+    *,
+    rows: list[dict[str, object]],
+    now: float,
+    now_ms: int,
+    state: ContextHopState,
+    open_gc1_bus_turn: bool,
+    in_flight_gc1_mcp: bool,
+) -> ContextHopNotice | None:
+    """Pick due agents that should be named on one notice this tick."""
+    names: list[str] = []
+    agent_ids: list[str] = []
+    for row in rows:
+        if not context_row_due(row, now_ms=now_ms):
+            continue
+        agent_id = row.get("agent_id")
+        name = row.get("name")
+        if not isinstance(agent_id, str) or not isinstance(name, str):
+            continue
+        until = state.cooldown_until.get(agent_id)
+        if until is not None and now < until:
+            continue
+        if state.first_due_at.get(agent_id) is None:
+            state.first_due_at[agent_id] = now
+        is_running = bool(row.get("is_running"))
+        elapsed = now - state.first_due_at[agent_id]
+        busy = _hop_busy(
+            open_gc1_bus_turn=open_gc1_bus_turn,
+            in_flight_gc1_mcp=in_flight_gc1_mcp,
+            is_running=is_running,
+        )
+        if busy and elapsed < HOP_DEFERRAL_CEILING_S:
+            continue
+        names.append(name)
+        agent_ids.append(agent_id)
+    if not names:
+        return None
+    return ContextHopNotice(
+        names=sorted(names),
+        agent_ids=agent_ids,
+        subject=hop_subject(names),
+    )
+
+
+def record_hop_notified(
+    state: ContextHopState, agent_ids: list[str], *, now: float
+) -> None:
+    """Start the 1800s cooldown after a successful reply."""
+    for agent_id in agent_ids:
+        state.cooldown_until[agent_id] = now + HOP_COOLDOWN_S
+        state.first_due_at.pop(agent_id, None)
+
+
+def _deferral_ceiling_hit(now: float, state: GrokbotEgressLoopState) -> bool:
     if state.deferral_started_at is None:
         return False
     return (now - state.deferral_started_at) >= _DEFERRAL_CEILING_S
@@ -217,11 +360,28 @@ def decide_grokbot_tick(
 
 
 __all__ = [
+    "ContextHopNotice",
+    "ContextHopState",
+    "GC1_ROSTER_NAME",
+    "GC1_STEP_INDEX_DUE",
     "GrokbotEgressLoopState",
     "GrokbotEgressSnapshot",
     "GrokbotTickDecision",
+    "HOP_COOLDOWN_S",
+    "HOP_DEFERRAL_CEILING_S",
+    "HOP_STALE_WINDOW_MS",
+    "HOP_THREAD_ID",
+    "HOUSE_STEP_INDEX_DUE",
+    "TURN_INDEX_DUE",
+    "context_row_due",
+    "decide_context_hop",
     "decide_grokbot_tick",
+    "hop_subject",
+    "parse_last_message_id",
     "parse_watch_log_line_ts_ms",
+    "record_hop_notified",
+    "roster_name_allowed",
+    "step_index_due_threshold",
     "watch_connection_state",
     "_LOADER_DESKTOP_BACKSTOP_S",
     "_LOADER_STUCK_AFTER_TOOLS_LIST_S",

@@ -175,7 +175,33 @@ def mcp_edge_grokbot_watch_ok(
     )
 
 
+@event_factory
+def mcp_edge_grokbot_context_hop_due(*, names: list[str], thread_id: str) -> Event:
+    """A context-hop notice is owed to grok-bot-gc1."""
+    return Event(
+        signal="mcp.edge.grokbot.context_hop.due",
+        role="observation",
+        scope="node",
+        payload={"names": names, "thread_id": thread_id},
+    )
+
+
+@event_factory
+def mcp_edge_grokbot_context_hop_notify_failed(
+    *, error_class: str, detail: str
+) -> Event:
+    """The context-hop bus reply failed. Cooldown stays unset."""
+    return Event(
+        signal="mcp.edge.grokbot.context_hop.notify_failed",
+        role="observation",
+        scope="node",
+        payload={"error_class": error_class, "detail": detail},
+    )
+
+
 __all__ = [
+    "mcp_edge_grokbot_context_hop_due",
+    "mcp_edge_grokbot_context_hop_notify_failed",
     "mcp_edge_grokbot_loader_stuck",
     "mcp_edge_grokbot_probe_failed",
     "mcp_edge_grokbot_tunnel_stale",
