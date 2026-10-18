@@ -649,7 +649,13 @@ def test_select_drops_conceded_findings_keeps_the_rest() -> None:
     payload = asyncio.run(
         seat_wait.WritingSeatSelectHandler().execute(
             _Step("review"),
-            _Ctx({"review_local": _Out({"findings": findings, "verdict": "revise"})}),
+            _Ctx(
+                {
+                    "review_local": _Out(
+                        {"findings": findings, "verdict": "revise", "clauses": []}
+                    )
+                }
+            ),
         )
     ).json
     refs = [row["ref"] for row in payload["findings_actionable"]]
@@ -664,7 +670,9 @@ def test_select_refuses_invalid_local_review_before_revise() -> None:
         {
             "findings": [{"ref": "s", "type": "not_a_type", "fix": "x"}],
             "verdict": "revise",
+            "clauses": [],
         },
+        {"findings": [], "verdict": "revise"},
         {"findings": []},
     ]
     for raw in cases:
@@ -709,7 +717,13 @@ def test_concession_consistent_with_drops_a_real_finding() -> None:
     payload = asyncio.run(
         seat_wait.WritingSeatSelectHandler().execute(
             _Step("review"),
-            _Ctx({"review_local": _Out({"findings": findings, "verdict": "revise"})}),
+            _Ctx(
+                {
+                    "review_local": _Out(
+                        {"findings": findings, "verdict": "revise", "clauses": []}
+                    )
+                }
+            ),
         )
     ).json
     assert payload["findings_actionable"] == []
@@ -720,6 +734,7 @@ def test_select_copies_local_review_usage() -> None:
         {
             "findings": [],
             "verdict": "ship",
+            "clauses": [],
         },
         model_id="qwen3-14b-q4-k-m-40960",
         prompt_tokens=12,

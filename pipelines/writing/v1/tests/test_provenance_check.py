@@ -5,10 +5,12 @@ The pure checker is the subject. No client, network, or model is constructed.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -409,3 +411,65 @@ def test_fact_ceiling_final_detects_mutations(v2: str, kind: str) -> None:
         )
     )
     assert kind in kinds
+
+
+class _Out:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.json = payload
+
+
+class _Ctx:
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self.outputs = outputs
+
+
+class _Step:
+    def __init__(self) -> None:
+        self.handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "draft.json",
+        }
+
+
+def test_provenance_check_unknown_pin_from_fact_ceiling_audit_clauses() -> None:
+    draft = _draft(
+        "Backed.",
+        [
+            {
+                "claim_id": "c1",
+                "text": "Backed.",
+                "pin_ids": ["P1"],
+                "disposition": "express",
+                "state": "backed",
+            }
+        ],
+    )
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _Step(),
+            _Ctx(
+                {
+                    "assemble": _Out({"pin_ledger": _LEDGER}),
+                    "draft": _Out(draft),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": [
+                                {
+                                    "text": "Unknown cite.",
+                                    "pin_ids": ["P9"],
+                                    "disposition": "express",
+                                }
+                            ],
+                        }
+                    ),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    kinds = _types(payload["violations"])
+    assert "unknown_pin" in kinds
+    row = next(item for item in payload["violations"] if item["type"] == "unknown_pin")
+    assert row["detail"] == "P9"

@@ -45,6 +45,7 @@ def _clear_openai_posted() -> None:
 _REVIEW_JSON = {
     "verdict": "ship",
     "findings": [],
+    "clauses": [],
 }
 
 

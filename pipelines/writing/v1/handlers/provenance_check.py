@@ -118,6 +118,7 @@ def classify_sentence_modality(
 def check_provenance(
     pin_ledger: list[dict[str, Any]] | None,
     draft_json: Any,
+    verifier_clauses: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     parsed = _parse_draft(draft_json)
     if parsed is None:
@@ -183,7 +184,7 @@ def check_provenance(
         check_fact_ceiling(
             ledger,
             draft_text,
-            None,
+            verifier_clauses,
             max_chars=None,
             channel=None,
             include_claim_loop=False,
@@ -472,18 +473,31 @@ class WritingProvenanceCheckHandler(BaseHandler):
         if isinstance(assemble_json, dict):
             max_chars = assemble_json.get("max_chars")
             channel = assemble_json.get("channel")
+        outputs = getattr(context, "outputs", {}) or {}
+        verifier_clauses: list[dict[str, Any]] | None = None
+        audit_out = outputs.get("fact_ceiling_audit")
+        audit_json: Any = None
+        if isinstance(audit_out, dict):
+            audit_json = audit_out.get("json")
+        elif audit_out is not None:
+            audit_json = getattr(audit_out, "json", None)
+        if isinstance(audit_json, dict):
+            raw_clauses = audit_json.get("clauses")
+            if isinstance(raw_clauses, list):
+                verifier_clauses = raw_clauses
+
         parsed = _parse_draft(draft)
         violations: list[dict[str, Any]] = []
         if parsed is None:
             violations = [_violation("draft_unparseable", None, "malformed")]
         else:
-            violations = check_provenance(ledger, parsed)
+            violations = check_provenance(ledger, parsed, verifier_clauses)
             if max_chars is not None or channel is not None:
                 violations.extend(
                     check_fact_ceiling(
                         ledger,
                         parsed["draft"],
-                        None,
+                        verifier_clauses,
                         max_chars=max_chars,
                         channel=channel,
                     )
