@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import yaml
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+from transport_utils.gateway_dir import resolve_gateway_dir
 from universal_logging import get_logger
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
@@ -17,7 +18,7 @@ CONSUMERS: tuple[str, ...] = ("mcp",)
 
 logger = get_logger(__name__)
 
-_STARGATE_CONFIG_PATH = Path.home() / ".gateway" / "stargate.yaml"
+_STARGATE_CONFIG_PATH = resolve_gateway_dir() / "stargate.yaml"
 _CORTEX_PROBE_TIMEOUT = 2.0
 DispatchFn = Callable[[str, dict[str, Any]], dict[str, Any]]
 

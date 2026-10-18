@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import yaml
 from transport_utils import MANAGE_SOCKET
+from transport_utils.gateway_dir import resolve_gateway_dir
 
 from scripts.model_manager.ui.model.service_state import (
     ServiceInfo,
@@ -21,7 +22,7 @@ from scripts.model_manager.ui.model.service_state import (
 
 logger = logging.getLogger(__name__)
 
-_GATEWAY_DIR = Path.home() / ".gateway"
+_GATEWAY_DIR = resolve_gateway_dir(env_var=None)
 _CONFIG_FILE = _GATEWAY_DIR / "stargate.yaml"
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 TOPOLOGY_FILE = _GATEWAY_DIR / "topology.yaml"

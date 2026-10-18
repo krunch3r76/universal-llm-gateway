@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from transport_utils.gateway_dir import resolve_gateway_dir
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _mcp_config_path() -> Path:
     configured = os.environ.get("MCP_CONFIG_PATH", "").strip()
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".gateway" / "mcp.yaml"
+    return resolve_gateway_dir() / "mcp.yaml"
 
 
 def _load_mcp_yaml_raw() -> dict[str, Any]:

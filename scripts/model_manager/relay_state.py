@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from transport_utils.gateway_dir import resolve_gateway_dir
+
 DesiredState = Literal["managed_up", "managed_down", "unmanaged"]
 
-_GATEWAY_DIR = Path.home() / ".gateway"
+_GATEWAY_DIR = resolve_gateway_dir(env_var=None)
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 _DEFAULT_STATE: DesiredState = "managed_up"
 

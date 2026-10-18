@@ -5,9 +5,10 @@ Schema version 3 adds workflow-summary rows for token-locality baseline campaign
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
+
+from transport_utils.gateway_dir import resolve_gateway_data_dir
 
 _TOKEN_LOCALITY_COLUMN_DEFS: tuple[tuple[str, str], ...] = (
     ("guidance_resource_key", "TEXT"),
@@ -385,7 +386,7 @@ def _migrate_artifact_extension_columns(db: sqlite3.Connection) -> None:
 
 def delivery_audit_db_path() -> Path:
     """Return the B3 delivery-audit sibling database path."""
-    data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    data_dir = resolve_gateway_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "delivery-audit.db"
 

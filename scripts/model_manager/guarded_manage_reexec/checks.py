@@ -54,7 +54,9 @@ def resolve_gateway_dir(*, manage_pid: int | None = None) -> Path:
                 return Path(item.split(b"=", 1)[1].decode())
             if item.startswith(b"HOME="):
                 return Path(item.split(b"=", 1)[1].decode()) / ".gateway"
-    return Path.home() / ".gateway"
+    from transport_utils.gateway_dir import passwd_home
+
+    return passwd_home() / ".gateway"
 
 
 def default_intent_db(*, manage_pid: int | None = None) -> Path:

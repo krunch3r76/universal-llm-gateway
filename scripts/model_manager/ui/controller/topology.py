@@ -23,6 +23,7 @@ from deploy_identity.source_sync_stamp import (
     STAMP_BASENAME,
     plan_source_sync_stamp,
 )
+from transport_utils.gateway_dir import resolve_gateway_dir
 
 from scripts.model_manager.observation_event import (
     emit_build_image_completed,
@@ -48,7 +49,7 @@ _BUILD_MISMATCH_LABEL_KEYS: tuple[str, ...] = (
     "vllm.enabled",
 )
 
-_GATEWAY_DIR = Path.home() / ".gateway"
+_GATEWAY_DIR = resolve_gateway_dir(env_var=None)
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 _MASTER_CONFIG = _GATEWAY_DIR / "stargate.yaml"
 # Reserved for rsync filter exceptions where .gitignore root-anchoring is insufficient.
