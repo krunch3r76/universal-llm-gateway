@@ -16,6 +16,15 @@ _CLAIM_STATES = ("claimed", "unknown")
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
 
 
+def _mailbox_agent_sql(left: str, right: str) -> str:
+    """SQL fragment: same agent row or both Stage Manager mailbox aliases."""
+    return (
+        f"({left}.agent={right}.agent OR "
+        f"(lower(trim({left}.agent)) IN ({_STAGE_MANAGER_SQL}) "
+        f"AND lower(trim({right}.agent)) IN ({_STAGE_MANAGER_SQL})))"
+    )
+
+
 class WakeConflictError(Exception):
     """CAS or result update lost the race."""
 
@@ -135,6 +144,7 @@ def claim_due_wakes(
             "WHERE state='claimed' AND claimed_at<=?",
             (ttl_before,),
         )
+        mb = _mailbox_agent_sql
         group = conn.execute(
             f"""
             SELECT agent, thread_id FROM endpoint_wake_ledger p
@@ -142,12 +152,11 @@ def claim_due_wakes(
               AND (p.finished_at IS NULL OR p.finished_at<=?)
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger d
-                WHERE d.agent=p.agent AND d.thread_id=p.thread_id
+                WHERE {mb("d", "p")} AND d.thread_id=p.thread_id
                   AND d.state='delivered' AND d.finished_at>?
                   AND NOT EXISTS (
                     SELECT 1 FROM turns t
-                    WHERE t.thread=p.thread_id
-                      AND datetime(t.created_at) > datetime(d.finished_at)
+                    WHERE datetime(t.created_at) > datetime(d.finished_at)
                       AND (
                         lower(trim(t.from_agent))=lower(trim(p.agent))
                         OR (
@@ -160,15 +169,19 @@ def claim_due_wakes(
                         )
                       )
                   )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turns tr
+                    WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                  )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger u
-                WHERE u.agent=p.agent AND u.thread_id=p.thread_id
+                WHERE {mb("u", "p")} AND u.thread_id=p.thread_id
                   AND u.state='unknown' AND u.claimed_at>?
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger c
-                WHERE c.agent=p.agent AND c.thread_id=p.thread_id
+                WHERE {mb("c", "p")} AND c.thread_id=p.thread_id
                   AND c.state='claimed' AND c.claimed_at>?
               )
             GROUP BY agent, thread_id
@@ -178,12 +191,27 @@ def claim_due_wakes(
         ).fetchone()
         if group is None:
             return {"wake_id": None, "rows": []}
-        rows = conn.execute(
-            "SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? "
-            "AND state='pending' AND (finished_at IS NULL OR finished_at<=?) "
-            "ORDER BY turn_id",
-            (group["agent"], group["thread_id"], retry_before),
-        ).fetchall()
+        group_agent = str(group["agent"])
+        if normalize_bus_address(group_agent) in STAGE_MANAGER_ADDRESSES:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM endpoint_wake_ledger WHERE thread_id=?
+                  AND state='pending' AND (finished_at IS NULL OR finished_at<=?)
+                  AND (
+                    agent=?
+                    OR lower(trim(agent)) IN ({_STAGE_MANAGER_SQL})
+                  )
+                ORDER BY turn_id
+                """,
+                (group["thread_id"], retry_before, group_agent),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? "
+                "AND state='pending' AND (finished_at IS NULL OR finished_at<=?) "
+                "ORDER BY turn_id",
+                (group_agent, group["thread_id"], retry_before),
+            ).fetchall()
         skipped: list[dict[str, Any]] = []
         claimable: list[sqlite3.Row] = []
         for row in rows:

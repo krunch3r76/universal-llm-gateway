@@ -276,7 +276,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
 
 
 def _display_post(
-    row: dict[str, Any], sub: dict[str, Any], turn_number: int
+    row: dict[str, Any], sub: dict[str, Any], turn: int | str
 ) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
@@ -285,7 +285,7 @@ def _display_post(
         "title": sub.get("title"),
         "agent_id": sub.get("agent_id"),
         "select": True,
-        "turn": turn_number,
+        "turn": turn,
     }
     body = {
         "model": "display-chat-wake",
@@ -464,8 +464,11 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             cse_registration_id=reg,
         )
         return claimed
-    lowest = min(int(r["turn_number"]) for r in rows)
-    state, reason = _display_post(rows[0], sub, lowest)
+    turn_numbers = sorted({int(r["turn_number"]) for r in rows})
+    turn_arg: int | str = (
+        turn_numbers[0] if len(turn_numbers) == 1 else ",".join(str(n) for n in turn_numbers)
+    )
+    state, reason = _display_post(rows[0], sub, turn_arg)
     store.result(
         wake_id=wake_id,
         outcome=state,

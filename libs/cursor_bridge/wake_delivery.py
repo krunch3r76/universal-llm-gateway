@@ -44,7 +44,7 @@ def _composer_focus_js(selector: str) -> str:
     return (
         f"(()=>{{const el=document.querySelector({sel});"
         "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
-        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(draft);"
+        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
         "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
         "el.focus();const sel=window.getSelection();"
         "if(sel){const range=document.createRange();range.selectNodeContents(el);"
@@ -82,14 +82,29 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     return {"ok": True, "display": disp, "app": name, "origin": origin}
 
 
-def _turn(value: object) -> int | None:
+def _turn(value: object) -> int | str | list[int] | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int) and value >= 1:
         return value
-    if isinstance(value, str) and value.strip().isdigit():
-        number = int(value.strip())
-        return number if number >= 1 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            number = int(text)
+            return number if number >= 1 else None
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        if parts and all(p.isdigit() and int(p) >= 1 for p in parts):
+            return sorted({int(p) for p in parts})
+        return None
+    if isinstance(value, (list, tuple)):
+        numbers: list[int] = []
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                return None
+            numbers.append(item)
+        return sorted(set(numbers)) if numbers else None
     return None
 
 
@@ -108,7 +123,7 @@ def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
     return usable[0] if len(usable) == 1 else None
 
 
-_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+$")
+_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
 
 
 def _is_stale_wake_draft(draft: str) -> bool:
@@ -134,7 +149,7 @@ def _send_fallback_js(line: str) -> str:
         "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
         "if(!el)return{ok:true,send_fallback_clicked:false};"
         f"const text=(el.innerText||'').trim(),line={lj};"
-        "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+$/.test(text)))"
+        "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:true,send_fallback_clicked:false};"
         f"const btn=document.querySelector('{sel}');"
         "if(!btn)return{ok:true,send_fallback_clicked:false};btn.click();"

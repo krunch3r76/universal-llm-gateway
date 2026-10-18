@@ -12,6 +12,7 @@ import pytest
 
 from cursor_bridge import wake_delivery as wd
 from cursor_bridge.chat_surface import classify_surface
+from cursor_bridge.chat_target import wake_line
 from cursor_bridge.composer_witness import composer_witness_expression
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
@@ -99,6 +100,18 @@ def test_human_draft_still_blocks(draft: str) -> None:
 
 def test_stale_wake_draft_recognized_and_allowed() -> None:
     stale = "BRIDGE_WAKE thread=15851 turn=289"
+    assert _is_stale_wake_draft(stale)
+    assert _busy_or_draft_reason({"composer_draft": stale}) is None
+
+
+def test_wake_line_single_and_multi_turn() -> None:
+    assert wake_line("15851", 1647) == "BRIDGE_WAKE thread=15851 turn=1647"
+    assert wake_line("15851", "1647,1648,1649") == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+    assert wake_line("15851", [1649, 1647, 1648]) == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+
+
+def test_stale_wake_draft_multi_turn() -> None:
+    stale = "BRIDGE_WAKE thread=15851 turn=1647,1648"
     assert _is_stale_wake_draft(stale)
     assert _busy_or_draft_reason({"composer_draft": stale}) is None
 
