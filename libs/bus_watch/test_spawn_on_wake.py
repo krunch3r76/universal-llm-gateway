@@ -1777,6 +1777,81 @@ def test_is_overnight_quiet_default_window() -> None:
     assert not is_overnight_quiet(
         now=datetime(2026, 10, 18, 12, 0, tzinfo=la), policy={}
     )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 22, 59, tzinfo=la), policy={}
+    )
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 23, 0, tzinfo=la), policy={}
+    )
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 6, 59, tzinfo=la), policy={}
+    )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 7, 0, tzinfo=la), policy={}
+    )
+
+
+def test_tick_spawn_consumed_handoff_and_checkpoint_due_does_not_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    state = {"handoff": {"seq": 1}, "handoff_spawned_seq": 1}
+    digest = _digest(attention=[], checkpoint_due=True)
+    digest["policy"]["ready"] = True
+    out = tick_spawn_on_wake(digest, state, "10479", dry_run=True)
+    assert out.get("spawned") is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
+def test_tick_spawn_stale_failed_or_hold_merge_lane_with_zero_unread_does_not_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    for lane in (
+        {
+            "id": "10999",
+            "unread": 0,
+            "turns": 4,
+            "status": "closed",
+            "lifecycle": "failed",
+            "last_subject": "FAILED dispatch",
+        },
+        {
+            "id": "11000",
+            "unread": 0,
+            "turns": 3,
+            "status": "closed",
+            "lifecycle": "completed",
+            "last_subject": "HOLD_MERGE on row",
+        },
+    ):
+        digest = _digest(attention=[], checkpoint_due=True)
+        digest["lanes"] = [lane]
+        digest["policy"]["ready"] = True
+        out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+        assert out.get("spawned") is False
+        assert out["reason"] == "no_open_request_or_event"
+
+
+def test_attended_loop_ignores_positive_heartbeat_without_real_event() -> None:
+    from bus_watch.spawn_on_wake import attended_tick_due
+
+    quiet = _digest(attention=[], checkpoint_due=True)
+    quiet["changed_since_last_tick"] = True
+    assert (
+        attended_tick_due(
+            changed_since_last_tick=True,
+            digest=quiet,
+            state={},
+            budget_stop_new=False,
+            digest_is_own_echo=False,
+        )
+        is False
+    )
 
 
 def test_attended_loop_may_wake_requires_real_event() -> None:

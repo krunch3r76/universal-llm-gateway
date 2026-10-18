@@ -71,17 +71,31 @@ def is_overnight_quiet(
     return start_h <= hour < end_h
 
 
+def _lane_row_is_blocker(item: dict[str, Any]) -> bool:
+    if str(item.get("lifecycle") or "").lower() == "failed":
+        return True
+    subject = str(item.get("last_subject") or "")
+    return bool(_BLOCKER_MARKERS.search(subject))
+
+
 def _digest_has_blocker(digest: dict[str, Any]) -> bool:
-    for bucket in (digest.get("attention") or [], digest.get("lanes") or []):
-        if not isinstance(bucket, list):
-            continue
-        for item in bucket:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("lifecycle") or "").lower() == "failed":
+    budget = digest.get("budget") or {}
+    stop_class = str(budget.get("stop_class") or "")
+    if stop_class and _BLOCKER_MARKERS.search(stop_class):
+        return True
+    attention = digest.get("attention") or []
+    if isinstance(attention, list):
+        for item in attention:
+            if isinstance(item, dict) and _lane_row_is_blocker(item):
                 return True
-            subject = str(item.get("last_subject") or "")
-            if _BLOCKER_MARKERS.search(subject):
+    lanes = digest.get("lanes") or []
+    if isinstance(lanes, list):
+        for row in lanes:
+            if not isinstance(row, dict):
+                continue
+            if int(row.get("unread") or 0) <= 0:
+                continue
+            if _lane_row_is_blocker(row):
                 return True
     return False
 
@@ -146,6 +160,43 @@ def attended_loop_may_wake(
     return has_open_request_or_event(digest, state)
 
 
+def attended_tick_due(
+    *,
+    changed_since_last_tick: bool,
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    budget_stop_new: bool,
+    digest_is_own_echo: bool,
+) -> bool:
+    """Whether attended ``--loop`` may emit ``AGENT_LOOP_TICK_liaison`` (never idle heartbeat)."""
+    changed_real = (
+        changed_since_last_tick
+        and not digest_is_own_echo
+        and attended_loop_may_wake(digest, state, budget_stop_new=budget_stop_new)
+    )
+    return changed_real or budget_stop_new
+
+
+def _event_only_spawn_gate_hold(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    root_id: str,
+) -> dict[str, Any] | None:
+    from bus_watch.fable_lock import read_lock
+    from bus_watch.spawn_pending import handoff_wake
+
+    if handoff_wake(state):
+        return None
+    lock = read_lock(root_id)
+    if has_open_request_or_event(digest, state, lock=lock):
+        return None
+    return {
+        "spawned": False,
+        "action": "hold",
+        "reason": "no_open_request_or_event",
+    }
+
+
 def tick_spawn_on_wake(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -156,20 +207,16 @@ def tick_spawn_on_wake(
     policy = digest.get("policy") or {}
     if is_overnight_quiet(policy=policy):
         return {"spawned": False, "action": "hold", "reason": "overnight_disabled"}
-    housekeeping = bool(state.get("pending_spawn")) or bool(
-        (state.get("handoff") or {}).get("seq")
-    )
-    if not housekeeping:
-        from bus_watch.fable_lock import read_lock
-
-        lock = read_lock(root_id)
-        if not has_open_request_or_event(digest, state, lock=lock):
-            return {
-                "spawned": False,
-                "action": "hold",
-                "reason": "no_open_request_or_event",
-            }
-    return _tick_spawn_on_wake_impl(digest, state, root_id, **kwargs)
+    had_pending = bool(state.get("pending_spawn"))
+    if not had_pending:
+        if hold := _event_only_spawn_gate_hold(digest, state, root_id):
+            return hold
+    result = _tick_spawn_on_wake_impl(digest, state, root_id, **kwargs)
+    if hold := _event_only_spawn_gate_hold(digest, state, root_id):
+        evaluation = result.get("evaluation") or {}
+        if result.get("action") in ("spawned", "would_spawn") or evaluation.get("spawn"):
+            return {**hold, "evaluation": evaluation}
+    return result
 
 
 from bus_watch.spawn_wake import (  # noqa: E402 — re-exports after gate API
@@ -189,6 +236,7 @@ __all__ = [
     "_WORK_KEY_IN_FLIGHT",
     "_wire_submit_body",
     "attended_loop_may_wake",
+    "attended_tick_due",
     "build_dispatch_body",
     "build_successor_message",
     "evaluate_spawn_predicate",

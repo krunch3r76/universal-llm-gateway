@@ -33,7 +33,7 @@ root=""
 register="attended"
 holder=""
 poll=60
-heartbeat=1200
+heartbeat=0
 take_over=0
 
 usage() {

@@ -70,7 +70,7 @@ from bus_watch.liaison_stops import (
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.now_row_bind import maybe_bind_now_row
 from bus_watch.spawn_on_wake import (
-    attended_loop_may_wake,
+    attended_tick_due,
     is_overnight_quiet,
     tick_spawn_on_wake,
 )
@@ -437,7 +437,6 @@ def main() -> int:
             flush=True,
         )
         return 3
-    last_emit = 0.0
     print(
         json.dumps(
             {
@@ -453,7 +452,7 @@ def main() -> int:
     )
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
-        return _loop(args, root, state, state_path, register, holder, last_emit)
+        return _loop(args, root, state, state_path, register, holder)
     finally:
         release_fable_lock(holder, root_id=root)
         clear_loop_pid_files()
@@ -536,7 +535,7 @@ def _log_steer(changed: list[str]) -> None:
         )
 
 
-def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
+def _loop(args, root, state, state_path, register, holder):  # noqa: ANN001, ANN202
     while True:
         policy_pre = effective_policy(state)
         if is_overnight_quiet(policy=policy_pre):
@@ -576,7 +575,6 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             )
             time.sleep(args.poll)
             continue
-        now = time.monotonic()
         budget = digest.get("budget") or {}
         # CONTEXT_BUDGET wakes the seat once per window epoch (tab transcript or
         # sdk stream); re-waking every poll would spam the tab it is telling to
@@ -584,15 +582,13 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         budget_stop_new = bool(budget.get("stop_class")) and state.get(
             "budget_stop_emitted_epoch"
         ) != budget.get("epoch")
-        heartbeat_due = (
-            int(args.heartbeat or 0) > 0 and (now - last_emit) >= int(args.heartbeat)
+        due = attended_tick_due(
+            changed_since_last_tick=bool(digest["changed_since_last_tick"]),
+            digest=digest,
+            state=state,
+            budget_stop_new=budget_stop_new,
+            digest_is_own_echo=is_own_digest_echo(digest, state),
         )
-        changed_real = (
-            digest["changed_since_last_tick"]
-            and not is_own_digest_echo(digest, state)
-            and attended_loop_may_wake(digest, state, budget_stop_new=budget_stop_new)
-        )
-        due = changed_real or heartbeat_due or budget_stop_new
         if due:
             if budget_stop_new:
                 state["budget_stop_emitted_epoch"] = budget.get("epoch")
@@ -601,7 +597,6 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
                 root, digest, state, require_change=True
             ) == "published" and save_state(state_path, state)
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
-            last_emit = now
         else:
             state["ticks"] = int(state["ticks"]) - 1
             state["est_tokens"] = (
