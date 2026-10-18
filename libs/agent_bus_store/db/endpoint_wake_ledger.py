@@ -151,6 +151,11 @@ def resolve_subscription_for_thread(
             """
             SELECT s.* FROM agent_endpoint_subscriptions s
             WHERE s.agent = ?
+              AND s.id IN (
+                SELECT MAX(id) FROM agent_endpoint_subscriptions
+                WHERE agent = ?
+                GROUP BY thread_scope
+              )
               AND s.state = 'subscribed'
               AND (
                 s.thread_scope = '*'
@@ -167,6 +172,7 @@ def resolve_subscription_for_thread(
             LIMIT 1
             """,
             (
+                agent,
                 agent,
                 thread_id,
                 parent_thread,

@@ -522,3 +522,35 @@ def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) 
     assert claimed["wake_id"] is not None
     assert claimed["rows"][0]["thread_id"] == child_id
 
+
+def test_parent_scope_unsubscribe_tombstone_honored(db: TestClient) -> None:
+    """Unsubscribing parent scope must not match a stale subscribed journal row."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_subscription_for_thread
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    parent = create_thread(thread_id=None, slug="root-unsub")
+    child = create_thread(thread_id=None, slug="lane-unsub")
+    assert parent is not None and child is not None
+    parent_id, child_id = str(parent["id"]), str(child["id"])
+    associate_lane(
+        thread_id=child_id,
+        parent_thread_id=parent_id,
+        lane_role="sub_mission",
+        bound_by="test",
+    )
+    subscribe_endpoint(
+        agent="impresario",
+        thread_scope=parent_id,
+        surface="cursor",
+        display="8",
+        title=f"{parent_id} continuity",
+        agent_id="glass-agent-1",
+    )
+    assert resolve_subscription_for_thread("impresario", child_id) is not None
+    unsubscribe_endpoint(agent="impresario", thread_scope=parent_id)
+    assert resolve_subscription_for_thread("impresario", child_id) is None
+

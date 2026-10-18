@@ -796,7 +796,11 @@ def fire_ide_hop(
         if landed_id is None:
             if hop_record is not None:
                 hop_record = mark_expired(hop_record)
-            toplevels = remote_toplevels(gui_host)
+            toplevels = (
+                []
+                if is_cursor_xvfb_host(gui_host)
+                else remote_toplevels(gui_host)
+            )
             cursor_windows = (
                 [row for row in toplevels if row.get("app_id") == "cursor"]
                 if isinstance(toplevels, list)
