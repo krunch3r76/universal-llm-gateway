@@ -27,7 +27,10 @@ async def run_harvest_adapter(
         return refuse(exc.code, str(exc))
     if raw is None:
         return refuse("source.missing", f"normalized capture {norm_ref} absent")
-    text = raw.decode("utf-8")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return refuse("pour.schema", str(exc))
     bus_identity = str(options.get("bus_identity") or "") or None
     body, err = run_adapter_twice(
         text,

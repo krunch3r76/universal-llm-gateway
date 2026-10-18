@@ -76,7 +76,7 @@ steps:
 
   - name: post
     type: grokbot_checkpoint_post_v1
-    condition: "options.get('mode') in ('seal', 'harvest_seal') and options.get('root_thread') and seal.json.get('session_id') and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped')"
+    condition: "options.get('mode') in ('seal', 'harvest_seal') and options.get('root_thread') and seal.json.get('session_id') and seal.json.get('refused') is None and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped')"
     reads_from:
       - step: seal
         fields: [json]
@@ -85,7 +85,7 @@ steps:
 
   - name: fact
     type: grokbot_checkpoint_fact_v1
-    condition: "(options.get('mode') == 'light' and card.json.get('written_sha256') and not card.json.get('_skipped')) or (options.get('mode') in ('seal', 'harvest_seal') and seal.json.get('session_id') and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped'))"
+    condition: "(options.get('mode') == 'light' and card.json.get('written_sha256') and not card.json.get('_skipped')) or (options.get('mode') in ('seal', 'harvest_seal') and seal.json.get('session_id') and seal.json.get('refused') is None and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped'))"
     reads_from:
       - step: seal
         fields: [json]
@@ -103,7 +103,7 @@ steps:
 
   - name: verify_resume
     type: grokbot_checkpoint_verify_resume_v1
-    condition: "(options.get('mode') == 'verify_resume' and admit.json.get('refused') is None) or (options.get('mode') == 'harvest_seal' and seal.json.get('session_id') and fact.json.get('turn') and seal.json.get('refused') is None and not seal.json.get('_skipped') and not fact.json.get('_skipped'))"
+    condition: "(options.get('mode') == 'verify_resume' and admit.json.get('refused') is None) or (options.get('mode') == 'harvest_seal' and seal.json.get('session_id') and fact.json.get('turn') and seal.json.get('refused') is None and not seal.json.get('_skipped') and not fact.json.get('_skipped') and (post.get('_skipped') == True or post.get('refused') is None))"
 
   - name: result
     type: grokbot_checkpoint_result_v1

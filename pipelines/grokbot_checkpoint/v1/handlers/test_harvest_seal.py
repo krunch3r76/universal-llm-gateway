@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 from continuity_tape.normalize_grokbot_l0_pages import normalized_capture_ref
+from systems.pipeline.core.conditions import evaluate_condition, extract_condition_deps
 
 from ._clients import file_sha256
+from ._harvest import run_adapter_twice
 from .admit import run_admit
 from .conftest import MemFs
 from .harvest_adapter import run_harvest_adapter
@@ -130,10 +133,19 @@ async def test_harvest_pour_prefix_refuse(fs: MemFs) -> None:
     first = await run_harvest_pour(options, adapter, fs)
     assert first.get("refused") is None
     tampered = json.loads(json.dumps(adapter["envelope"]))
-    tampered["messages"] = tampered["messages"][:-1]
+    old_msgs = tampered["messages"]
+    tampered["messages"] = [{"role": "user", "content": "prefix-break"}] + old_msgs
+    assert len(tampered["messages"]) >= len(old_msgs)
+    fake_msha = "b" * 64
+    tampered.setdefault("meta", {})["messages_sha256"] = fake_msha
+    assert fake_msha != adapter["stats"]["messages_sha256"]
     bad = await run_harvest_pour(
         options,
-        {**adapter, "envelope": tampered},
+        {
+            **adapter,
+            "envelope": tampered,
+            "stats": {**adapter["stats"], "messages_sha256": fake_msha},
+        },
         fs,
     )
     assert (bad.get("refused") or {}).get("code") == "envelope.not_prefix"
@@ -175,6 +187,59 @@ def test_harvest_seal_envelope_condition() -> None:
     assert "harvest_pour" in envelope["condition"]
 
 
+def test_verify_resume_condition_depends_on_post() -> None:
+    spec = yaml.safe_load(_YAML.read_text())
+    verify_resume = next(s for s in spec["steps"] if s["name"] == "verify_resume")
+    deps = extract_condition_deps(verify_resume["condition"])
+    assert "post" in deps
+
+
+def test_harvest_adapter_refusal_skips_downstream() -> None:
+    spec = yaml.safe_load(_YAML.read_text())
+    pour_step = next(s for s in spec["steps"] if s["name"] == "harvest_pour")
+    envelope = next(s for s in spec["steps"] if s["name"] == "envelope")
+    options = {"mode": "harvest_seal"}
+    refused_adapter = {
+        "harvest_normalise": SimpleNamespace(
+            json={"refused": None, "_skipped": False}
+        ),
+        "harvest_adapter": SimpleNamespace(
+            json={"refused": {"code": "pour.schema"}, "_skipped": False}
+        ),
+    }
+    assert not evaluate_condition(pour_step["condition"], refused_adapter, options)
+    skipped_pour = {
+        **refused_adapter,
+        "harvest_pour": SimpleNamespace(json={"_skipped": True}),
+    }
+    assert not evaluate_condition(envelope["condition"], skipped_pour, options)
+
+
+@pytest.mark.asyncio
+async def test_run_adapter_twice_rejects_mismatched_capture_sha256(fs: MemFs) -> None:
+    l0_ref, _ = _l0_paths(fs)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None
+    raw = fs.files[str(norm["normalized_ref"])]
+    text = raw.decode("utf-8")
+    _, err = run_adapter_twice(
+        text,
+        agent_id=_AGENT,
+        capture_ref=str(norm["normalized_ref"]),
+        capture_sha256="a" * 64,
+        bus_identity=None,
+    )
+    assert err is not None
+    assert err["refused"]["code"] == "source.sha_mismatch"
+
+
 @pytest.mark.asyncio
 async def test_harvest_record_line(fs: MemFs) -> None:
     l0_ref, l0_sha = _l0_paths(fs)
@@ -201,4 +266,8 @@ async def test_harvest_record_line(fs: MemFs) -> None:
     line = result["harvest_record"]
     assert line.startswith(f"L0 {l0_ref}@{l0_sha}")
     assert "coverage=full" in line
-    assert "capture:dom_harvest@" in line
+    cap_sha = pour["envelope"]["meta"]["capture"]["sha256"]
+    cap_tok = f"capture:dom_harvest@{cap_sha[:12]}~pseudo"
+    assert cap_tok in line
+    assert cap_sha[:12] == norm["normalized_sha256"][:12]
+    assert cap_sha[:12] != l0_sha[:12]

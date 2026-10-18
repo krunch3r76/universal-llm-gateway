@@ -60,6 +60,15 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
     harvest_record = None
     if options.get("mode") == "harvest_seal" and not refused:
         if harvest_normalise.get("l0_ref") and source.get("ref"):
+            cap = source.get("capture")
+            capture_sha256 = ""
+            if isinstance(cap, dict):
+                capture_sha256 = str(cap.get("sha256") or "")
+            if not capture_sha256:
+                capture_sha256 = str(harvest_normalise.get("normalized_sha256") or "")
+            verify_ok = None
+            if verify_resume and not verify_resume.get("_skipped"):
+                verify_ok = verify_resume.get("refused") is None
             harvest_record = format_harvest_record(
                 l0_ref=str(harvest_normalise.get("l0_ref")),
                 l0_sha256=str(harvest_normalise.get("l0_sha256")),
@@ -75,6 +84,11 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
                     or harvest_adapter.get("stats", {}).get("adapter_read_sha256")
                     or ""
                 ),
+                capture_sha256=capture_sha256,
+                session_id=str(seal.get("session_id") or "") or None,
+                cp_turn=post.get("turn"),
+                fact_turn=fact.get("turn"),
+                verify_resume_ok=verify_ok,
             )
     return {
         "house": options.get("house"),

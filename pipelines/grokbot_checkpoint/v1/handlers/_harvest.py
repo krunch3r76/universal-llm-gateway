@@ -41,9 +41,20 @@ def run_adapter_twice(
     if bus_identity:
         kwargs["bus_identity"] = bus_identity
     try:
+        actual_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    except (ValueError, UnicodeDecodeError) as exc:
+        return None, refuse("pour.schema", str(exc))
+    if capture_sha256 != actual_text_sha256:
+        return None, refuse(
+            "source.sha_mismatch",
+            f"capture_sha256 {capture_sha256} != normalized {actual_text_sha256}",
+        )
+    try:
         first = extract_grokbot_transcript(text, observed_at="harvest-run-1", **kwargs)
         second = extract_grokbot_transcript(text, observed_at="harvest-run-2", **kwargs)
     except TranscriptPageError as exc:
+        return None, refuse("pour.schema", str(exc))
+    except (ValueError, UnicodeDecodeError) as exc:
         return None, refuse("pour.schema", str(exc))
     m1 = first.meta.messages_sha256
     m2 = second.meta.messages_sha256
@@ -59,10 +70,10 @@ def run_adapter_twice(
         return None, refuse("pour.window", f"window lo={lo} hi={hi} total={total}")
     cap = first.meta.capture
     cap_sha = cap.sha256 if cap is not None else None
-    if cap_sha != capture_sha256:
+    if cap_sha != actual_text_sha256:
         return None, refuse(
-            "capture.sha_mismatch",
-            f"capture.sha256 {cap_sha} != normalized {capture_sha256}",
+            "source.sha_mismatch",
+            f"capture.sha256 {cap_sha} != normalized {actual_text_sha256}",
         )
     payload = envelope_wire_dict(first)
     try:
@@ -179,9 +190,14 @@ def format_harvest_record(
     messages_sha256: str,
     source_sha256: str,
     adapter_read_sha256: str,
+    capture_sha256: str,
+    session_id: str | None = None,
+    cp_turn: Any = None,
+    fact_turn: Any = None,
+    verify_resume_ok: bool | None = None,
 ) -> str:
-    cap12 = l0_sha256[:12]
-    return (
+    cap12 = capture_sha256[:12]
+    line = (
         f"L0 {l0_ref}@{l0_sha256} pages={pages} bytes={l0_bytes} "
         f"truncated_parts={truncated_parts} · "
         f"L1 {l1_ref}@{l1_sha256} messages_sha256={messages_sha256} "
@@ -189,6 +205,13 @@ def format_harvest_record(
         f"adapter {adapter_read_sha256} · "
         f"capture:dom_harvest@{cap12}~pseudo"
     )
+    if session_id:
+        vr = verify_resume_ok if verify_resume_ok is not None else False
+        line += (
+            f" · seal {session_id} cp_turn={cp_turn} fact_turn={fact_turn} "
+            f"verify_resume={vr}"
+        )
+    return line
 
 
 __all__ = [
