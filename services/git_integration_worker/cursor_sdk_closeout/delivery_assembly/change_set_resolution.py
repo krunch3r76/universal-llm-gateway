@@ -123,6 +123,7 @@ def resolve_closeout_change_set(
     list[Path] | None,
     str,
     Path,
+    str | None,
     str,
     int,
     list[str],
@@ -143,7 +144,9 @@ def resolve_closeout_change_set(
     write_tree, receipt_tree, mount = _capture_trees(source_repo, binding)
     repo_roots = list(binding.repo_roots) if binding is not None else None
     text = full_result_text(outcome.body, degraded_reason)
-    sidecar_path = write_repo_sidecar(receipt_tree, dispatch_id, text)
+    sidecar_path, archived_closeout_body = write_repo_sidecar(
+        receipt_tree, dispatch_id, text
+    )
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(text.encode("utf-8"))
     files_expected = (
@@ -252,6 +255,7 @@ def resolve_closeout_change_set(
         repo_roots,
         text,
         sidecar_path,
+        archived_closeout_body,
         sidecar_ref,
         result_bytes,
         files_expected,

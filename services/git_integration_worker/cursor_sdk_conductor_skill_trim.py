@@ -56,6 +56,7 @@ CONDUCTOR_SKILL_KEEP: frozenset[str] = frozenset(
         "interagent-posture",
         "judgment-escalation-ladder",
         "lane-act-gates",
+        "lean-dispatch",
         "lead-agent-git-integration",
         "ide-continuity",
         "life-operator-do-chain",

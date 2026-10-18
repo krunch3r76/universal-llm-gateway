@@ -21,6 +21,7 @@ _TAIL_MARKERS = (
     "\n## effects_manifest",
     "\n## structured_closeout_full",
 )
+_CLOSEOUT_BODY_MARKER = "\n## closeout_body\n"
 _STATUS_RE = re.compile(
     r"(?im)^(?:\*\*)?(?:status_claim|status)(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
 )
@@ -278,8 +279,27 @@ def build_ac_verdict_cell(
     return cap(combined, provenance) if cap is not None else combined
 
 
+def _author_prose_after_effects_manifest(text: str) -> str | None:
+    """Return ``## closeout_body`` prose when it follows ``## effects_manifest``."""
+    manifest_idx = text.find(_TAIL_MARKERS[0])
+    if manifest_idx < 0:
+        return None
+    after_manifest = text[manifest_idx + len(_TAIL_MARKERS[0]) :]
+    body_idx = after_manifest.find(_CLOSEOUT_BODY_MARKER)
+    if body_idx < 0:
+        return None
+    section = after_manifest[body_idx + len(_CLOSEOUT_BODY_MARKER) :]
+    structured_idx = section.find(_TAIL_MARKERS[1])
+    if structured_idx != -1:
+        section = section[:structured_idx]
+    return section.strip() or None
+
+
 def strip_machine_tail(text: str) -> str:
     """Drop appended GIW machine sections from a repo sidecar body."""
+    archived = _author_prose_after_effects_manifest(text)
+    if archived is not None:
+        return archived
     cut = len(text)
     for marker in _TAIL_MARKERS:
         idx = text.find(marker)

@@ -55,6 +55,9 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _REJECTED_REVIEW_STATUS = "rejected"
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ROOT_SKILLS: tuple[str, ...] = ("lean-dispatch",)
+
 _STANDING_RULES_STEP = (
     "Load mission.standing_rules (verbatim rows and resolved claims) "
     "before any other action"
@@ -551,21 +554,22 @@ def build_mission_block(
         if row:
             supersedes_num = int(row["turn_number"])
 
-    skills = extract_card_skills(card_text or "")
+    card_skills = extract_card_skills(card_text or "")
+    standing_rules = build_standing_rules(card_text)
+    card_has_directives = bool(standing_rules) or bool(card_skills)
+    skills = list(dict.fromkeys([*DEFAULT_ROOT_SKILLS, *card_skills]))
     skills_to_use = [
         {"slug": slug, "use_line": f"Use the `{slug}` skill"} for slug in skills
     ]
-    standing_rules = build_standing_rules(card_text)
 
     steps: list[str] = []
     if standing_rules:
         steps.append(_STANDING_RULES_STEP)
     steps.append("continuity(op=resume) was first hop")
-    if skills_to_use:
-        steps.append(
-            "Use each mission.skills_to_use slug now — before orientation "
-            "and before any act the slug governs"
-        )
+    steps.append(
+        "Use each mission.skills_to_use slug now — before orientation "
+        "and before any act the slug governs"
+    )
     if thread_slug:
         steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
     if tip_sketchboard:
@@ -656,6 +660,7 @@ def build_mission_block(
         "resume_open": _extract_resume_open(card_text),
         "pools_row": pools_row,
         "skills_to_use": skills_to_use,
+        "card_has_directives": card_has_directives,
         "standing_rules": standing_rules,
         "fence_id": fence_id,
         "residue": residue or None,

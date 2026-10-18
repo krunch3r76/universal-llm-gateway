@@ -457,6 +457,8 @@ def setup_cursor_dispatch_home(
     real_home: Path | str | None = None,
     root: Path | None = None,
     bare: bool = False,
+    delegation_tier: str = "A",
+    lane: str | None = None,
 ) -> Path:
     """Create dispatch HOME and seed cursor credentials by copy (never symlink).
 
@@ -526,7 +528,11 @@ def setup_cursor_dispatch_home(
         )
         # Plugin parity with the IDE is wrong for the human-facing operator register:
         # a headless seat has no human reader. Swap it for the interagent counterpart.
-        apply_cursor_sdk_seat_overlay(cursor_dir)
+        apply_cursor_sdk_seat_overlay(
+            cursor_dir,
+            delegation_tier=delegation_tier,
+            lane=lane,
+        )
     _install_steer_native_hook(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)

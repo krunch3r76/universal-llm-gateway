@@ -289,7 +289,11 @@ def assemble_resume_fence_in_txn(
     poured_payload: dict[str, Any] = {
         "bundle_bytes": bundle_bytes,
         "mission_bytes": mission_bytes,
-        "card_inlined": bool(standing_rules) or bool(skills_to_use),
+        "card_inlined": (
+            bool(mission.get("card_has_directives"))
+            if "card_has_directives" in mission
+            else (bool(standing_rules) or bool(skills_to_use))
+        ),
         "bundle_version": _BUNDLE_VERSION,
         "skills_to_use_count": len(skills_to_use),
         "readable_counts": {

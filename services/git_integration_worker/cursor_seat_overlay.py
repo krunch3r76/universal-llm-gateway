@@ -94,7 +94,20 @@ LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "expand-growth-loop_ulg.mdc",
     Path("rules") / "claude-ai-cdp-navigation_ulg.mdc",
     Path("rules") / "pager-notify_ulg.mdc",
+    Path("rules") / "resume-fence_ulg.mdc",
+    Path("rules") / "dispatch-wake-continue_ulg.mdc",
 )
+
+TIER_B_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (Path("skills") / "lean-dispatch",)
+TIER_C_LEAF_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
+    Path("skills") / "lean-dispatch",
+    Path("rules") / "dispatch-kernel_ulg.mdc",
+)
+UNMERGED_LANE_B_LEAF_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
+    Path("rules") / "restart-drain-discipline_ulg.mdc",
+)
+
+_RESTART_DRAIN_OVERLAY_RULE = Path("rules") / "restart-drain-discipline_ulg.mdc"
 # 2026-09-01: dispatch-in-flight-supremacy / session-abort-authorization merged into
 # in-flight-work-guard_ulg.mdc; bind-then-compose-dispatch / anthropic-substrate merged
 # into dispatch-kernel_ulg.mdc. Neither merged file is listed here: the seat acts on the
@@ -117,6 +130,34 @@ def seat_overlay_root(*, override: str | None = None) -> Path:
         os.environ.get("GIT_INTEGRATION_SOURCE_REPO", _DEFAULT_SOURCE_REPO)
     ).expanduser()
     return repo / _OVERLAY_RELPATH
+
+
+def resolve_seat_overlay_pruned_paths(
+    *,
+    delegation_tier: str = "A",
+    lane: str | None = None,
+) -> tuple[Path, ...]:
+    """Union of global, lead-only, and tier/lane prune paths for one dispatch HOME."""
+    tier = (delegation_tier or "A").strip().upper()
+    lane_key = (lane or "").strip().upper()
+    paths: list[Path] = [
+        *PRUNED_PLUGIN_PATHS,
+        *LEAD_ONLY_PLUGIN_PATHS,
+    ]
+    if tier == "B":
+        paths.extend(TIER_B_PRUNED_PLUGIN_PATHS)
+    elif tier == "C":
+        paths.extend(TIER_C_LEAF_PRUNED_PLUGIN_PATHS)
+        if lane_key == "B":
+            paths.extend(UNMERGED_LANE_B_LEAF_PRUNED_PLUGIN_PATHS)
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for relpath in paths:
+        if relpath in seen:
+            continue
+        seen.add(relpath)
+        ordered.append(relpath)
+    return tuple(ordered)
 
 
 def _graft_entries(overlay_root: Path) -> list[tuple[Path, Path]]:
@@ -143,6 +184,8 @@ def apply_cursor_sdk_seat_overlay(
     cursor_dir: Path,
     *,
     overlay_root: Path | str | None = None,
+    delegation_tier: str = "A",
+    lane: str | None = None,
 ) -> tuple[list[Path], list[Path]]:
     """Prune the human register and lead-only rules from *cursor_dir*, graft the overlay.
 
@@ -166,9 +209,17 @@ def apply_cursor_sdk_seat_overlay(
         )
 
     graft_pairs = _graft_entries(root)
+    prune_paths = resolve_seat_overlay_pruned_paths(
+        delegation_tier=delegation_tier,
+        lane=lane,
+    )
+    skip_restart_drain_graft = (
+        delegation_tier.strip().upper() == "C"
+        and (lane or "").strip().upper() == "B"
+    )
 
     pruned: list[Path] = []
-    for relpath in (*PRUNED_PLUGIN_PATHS, *LEAD_ONLY_PLUGIN_PATHS):
+    for relpath in prune_paths:
         target = plugin_root / relpath
         if target.is_dir():
             shutil.rmtree(target)
@@ -182,6 +233,8 @@ def apply_cursor_sdk_seat_overlay(
 
     grafted: list[Path] = []
     for src, relpath in graft_pairs:
+        if skip_restart_drain_graft and relpath == _RESTART_DRAIN_OVERLAY_RULE:
+            continue
         dst = plugin_root / relpath
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.is_dir():

@@ -23,11 +23,13 @@ CDP_PURPOSE_PROFILES: dict[str, tuple[str, ...]] = {
     "produce": ("reasoning-posture",),
     "mission": (
         "cdp-operator-proxy",
+        "lean-dispatch",
         "reasoning-posture",
         "hypothesize-simulate",
     ),
     "operator-proxy": (
         "cdp-operator-proxy",
+        "lean-dispatch",
         "reasoning-posture",
         "hypothesize-simulate",
     ),

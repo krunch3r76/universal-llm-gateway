@@ -1,7 +1,7 @@
 ---
 name: lean-dispatch
 description: "Parent keeps diagnosis and land, and does not implement or sweep. Packet in, envelope out. A red closeout goes one tier up."
-alwaysApply: false
+alwaysApply: true
 trigger_match_terms:
   - lean-dispatch
   - lean context
@@ -18,6 +18,22 @@ related_skills:
 ---
 
 # Lean dispatch (shared SoT)
+
+## Role & Tier Gate
+
+- **Tier A** (orchestrator / `conductor`): hold diagnosis and land only; formulate packets; forbid implement, sweep, and in-seat service mutations.
+- **Tier B** (judgment / recon / review): scoped recon until judgment closes; then split mechanical remainders via `nest_under` or return — no in-seat implement.
+- **Tier C** (leaf implement / mechanical): skill pruned from dispatch HOME; execute the commissioned packet; no conductor spawn or CDP consult.
+
+## Closeout envelope
+
+Harvest child closeouts with a bounded read, not the full sidecar:
+
+`fs(op="read", path="workspaces://universal-llm-gateway/tmp/reviews/closeouts/<dispatch_id>.md", offset=0, limit=60)`
+
+The prose before `## effects_manifest` is the executive envelope (≤60 lines). When the worker wrote a long multi-heading closeout, the full raw body lives under `## closeout_body` after `## effects_manifest` and before `## structured_closeout_full`.
+
+## Stance
 
 Parent seat holds **diagnosis** and **land**. Everything else leaves.
 

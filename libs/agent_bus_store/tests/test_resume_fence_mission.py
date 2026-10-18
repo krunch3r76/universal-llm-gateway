@@ -249,7 +249,9 @@ def test_mission_marker_preview_is_subset(bus_db) -> None:
     preview = mission_marker_preview(mission)
     assert preview["highlight"] == "hi"
     assert preview["clone_mode"] == "B"
-    assert preview["skills_to_use"] == []
+    assert preview["skills_to_use"] == [
+        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"}
+    ]
     assert "handoff" not in preview
     assert "residue" not in preview
 
@@ -278,6 +280,10 @@ def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
         thread_slug="continuity",
     )
     assert mission["skills_to_use"] == [
+        {
+            "slug": "lean-dispatch",
+            "use_line": "Use the `lean-dispatch` skill",
+        },
         {
             "slug": "outbound-voice-spec",
             "use_line": "Use the `outbound-voice-spec` skill",
@@ -413,8 +419,11 @@ def test_mission_no_skills_section_empty_list_no_step(bus_db) -> None:
         open_line=None,
         fence_id="rf-noskills",
     )
-    assert mission["skills_to_use"] == []
-    assert not any("skills_to_use" in step for step in mission["handoff"]["steps"])
+    assert mission["skills_to_use"] == [
+        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"}
+    ]
+    assert mission["card_has_directives"] is False
+    assert any("skills_to_use" in step for step in mission["handoff"]["steps"])
 
 
 def _assertion_db(rows: list[tuple]) -> sqlite3.Connection:

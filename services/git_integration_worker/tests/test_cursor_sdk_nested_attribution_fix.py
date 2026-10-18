@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_manifest import (
 )
 from services.git_integration_worker.cursor_sdk_nested_attribution import (
     _child_manifest_from_sidecar,
+    _raw_effects_manifest_from_sidecar,
     fold_nested_boundary_effects,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
@@ -126,6 +127,19 @@ def test_ac9k_sidecar_appendix_always_emitted() -> None:
     assert len(appendix) == 1
     parsed = json.loads(appendix[0])
     assert parsed["surfaces"]["cortex"]["entries"][0]["identity"] == "assertion:4242"
+
+
+def test_effects_manifest_parse_with_closeout_body_json_after_manifest() -> None:
+    appendix = json.dumps({"schema_version": 1, "surfaces": {}}, indent=2)
+    sidecar_text = (
+        "status: complete\n\n"
+        f"## effects_manifest\n\n{appendix}\n\n"
+        "## closeout_body\n\n"
+        '{"note": "stray brace object must not break manifest parse"}\n'
+    )
+    raw = _raw_effects_manifest_from_sidecar(sidecar_text)
+    assert raw is not None
+    assert "schema_version" in raw
 
 
 def test_ac9k_production_markdown_sidecar_manifest_parse(tmp_path: Path) -> None:

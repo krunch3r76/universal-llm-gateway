@@ -60,8 +60,11 @@ def _sidecar_author_text(dispatch_id: str) -> str:
         raw = path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    prose, _, _rest = raw.partition("\n## effects_manifest")
-    return prose.strip()
+    from services.git_integration_worker.relay.closeout_relay_common import (
+        strip_machine_tail,
+    )
+
+    return strip_machine_tail(raw).strip()
 
 
 def _worker_base_url() -> str:

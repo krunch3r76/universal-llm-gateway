@@ -8,6 +8,7 @@ Cortex is not consulted. ``density_triage=mechanical`` is not a job id.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 _GENERATE = "generate"
 _TO_THREAD = "to_thread"
@@ -38,6 +39,7 @@ class JobRecord:
     posture_skip: bool
     hypothesize_on: bool
     harness_stack_skip: bool
+    delegation_tier: Literal["A", "B", "C"]
 
     @property
     def registry_ref(self) -> str:
@@ -70,6 +72,7 @@ def _inline(
     posture_skip: bool = False,
     hypothesize_on: bool = False,
     harness_stack_skip: bool = False,
+    delegation_tier: Literal["A", "B", "C"] = "B",
 ) -> JobRecord:
     return JobRecord(
         name=name,
@@ -88,6 +91,7 @@ def _inline(
         posture_skip=posture_skip,
         hypothesize_on=hypothesize_on,
         harness_stack_skip=harness_stack_skip,
+        delegation_tier=delegation_tier,
     )
 
 
@@ -97,6 +101,7 @@ def _source_ref(
     *,
     posture_skip: bool = False,
     hypothesize_on: bool = False,
+    delegation_tier: Literal["A", "B", "C"] = "B",
 ) -> JobRecord:
     return JobRecord(
         name=name,
@@ -115,6 +120,7 @@ def _source_ref(
         posture_skip=posture_skip,
         hypothesize_on=hypothesize_on,
         harness_stack_skip=False,
+        delegation_tier=delegation_tier,
     )
 
 
@@ -140,6 +146,7 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         recon_owed=True,
         hypothesize_on=True,
         harness_stack_skip=True,
+        delegation_tier="B",
     ),
     _inline(
         "bare",
@@ -149,6 +156,7 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         posture_skip=True,
         hypothesize_on=False,
         harness_stack_skip=False,
+        delegation_tier="C",
     ),
     _inline(
         "mechanical",
@@ -156,22 +164,25 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         stop_after_allowed=True,
         cost_risk_warn=True,
         posture_skip=True,
+        delegation_tier="C",
     ),
-    _source_ref("sketch", _ALL_WIRE, hypothesize_on=True),
-    _source_ref("implement", _ALL_WIRE, posture_skip=True),
-    _source_ref("wrap", _G_AUTO),
-    _source_ref("conductor", _G_AUTO, hypothesize_on=True),
+    _source_ref("sketch", _ALL_WIRE, hypothesize_on=True, delegation_tier="B"),
+    _source_ref("implement", _ALL_WIRE, posture_skip=True, delegation_tier="C"),
+    _source_ref("wrap", _G_AUTO, delegation_tier="C"),
+    _source_ref("conductor", _G_AUTO, hypothesize_on=True, delegation_tier="A"),
     _inline(
         "code-review",
         _G,
         stop_after_allowed=False,
         recon_owed=True,
+        delegation_tier="B",
     ),
     _inline(
         "delivery-review",
         _G,
         stop_after_allowed=False,
         recon_owed=True,
+        delegation_tier="B",
     ),
     _inline(
         "check-review",
@@ -179,16 +190,53 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         stop_after_allowed=False,
         recon_owed=True,
         role_turn=True,
+        delegation_tier="B",
     ),
-    _inline("confer", _G_HAND_AUTO, stop_after_allowed=True, hypothesize_on=True),
-    _inline("investigate", _G_AUTO, stop_after_allowed=True, recon_owed=True),
-    _inline("answer", _AUTO, stop_after_allowed=True, posture_skip=True),
-    _inline("ask", _AUTO, stop_after_allowed=True, posture_skip=True),
-    _inline("verify", _AUTO, stop_after_allowed=True),
-    _inline("execute", _AUTO, stop_after_allowed=True, posture_skip=True),
-    _inline("propagate", _AUTO, stop_after_allowed=True, posture_skip=True),
-    _inline("seed", _AUTO, stop_after_allowed=True),
-    _inline("recon", _AUTO, stop_after_allowed=True),
+    _inline(
+        "confer",
+        _G_HAND_AUTO,
+        stop_after_allowed=True,
+        hypothesize_on=True,
+        delegation_tier="B",
+    ),
+    _inline(
+        "investigate",
+        _G_AUTO,
+        stop_after_allowed=True,
+        recon_owed=True,
+        delegation_tier="B",
+    ),
+    _inline(
+        "answer",
+        _AUTO,
+        stop_after_allowed=True,
+        posture_skip=True,
+        delegation_tier="B",
+    ),
+    _inline(
+        "ask",
+        _AUTO,
+        stop_after_allowed=True,
+        posture_skip=True,
+        delegation_tier="B",
+    ),
+    _inline("verify", _AUTO, stop_after_allowed=True, delegation_tier="B"),
+    _inline(
+        "execute",
+        _AUTO,
+        stop_after_allowed=True,
+        posture_skip=True,
+        delegation_tier="C",
+    ),
+    _inline(
+        "propagate",
+        _AUTO,
+        stop_after_allowed=True,
+        posture_skip=True,
+        delegation_tier="C",
+    ),
+    _inline("seed", _AUTO, stop_after_allowed=True, delegation_tier="B"),
+    _inline("recon", _AUTO, stop_after_allowed=True, delegation_tier="B"),
 )
 
 BY_NAME: dict[str, JobRecord] = {record.name: record for record in JOB_RECORDS}
@@ -274,6 +322,49 @@ assert HYPOTHESIZE_ON_JOBS == _HYPOTHESIZE_LITERAL
 assert HARNESS_STACK_SKIP_JOBS == _HARNESS_STACK_SKIP_LITERAL
 assert ROLE_TURN_JOBS == _ROLE_TURN_LITERAL
 assert INLINE_ONLY_JOBS.isdisjoint(SOURCE_REF_JOBS)
+
+TIER_A_ORCHESTRATOR_JOBS = frozenset({"conductor"})
+TIER_B_JUDGMENT_RECON_JOBS = frozenset(
+    {
+        "freeform",
+        "sketch",
+        "confer",
+        "investigate",
+        "code-review",
+        "delivery-review",
+        "check-review",
+        "answer",
+        "ask",
+        "verify",
+        "seed",
+        "recon",
+    }
+)
+TIER_C_LEAF_JOBS = frozenset(
+    {"bare", "mechanical", "implement", "wrap", "execute", "propagate"}
+)
+
+assert TIER_A_ORCHESTRATOR_JOBS.isdisjoint(TIER_B_JUDGMENT_RECON_JOBS)
+assert TIER_A_ORCHESTRATOR_JOBS.isdisjoint(TIER_C_LEAF_JOBS)
+assert TIER_B_JUDGMENT_RECON_JOBS.isdisjoint(TIER_C_LEAF_JOBS)
+assert (
+    TIER_A_ORCHESTRATOR_JOBS | TIER_B_JUDGMENT_RECON_JOBS | TIER_C_LEAF_JOBS
+) == frozenset(BY_NAME)
+assert all(
+    record.delegation_tier == "A"
+    for name, record in BY_NAME.items()
+    if name in TIER_A_ORCHESTRATOR_JOBS
+)
+assert all(
+    record.delegation_tier == "B"
+    for name, record in BY_NAME.items()
+    if name in TIER_B_JUDGMENT_RECON_JOBS
+)
+assert all(
+    record.delegation_tier == "C"
+    for name, record in BY_NAME.items()
+    if name in TIER_C_LEAF_JOBS
+)
 
 
 def job_record(name: str) -> JobRecord | None:

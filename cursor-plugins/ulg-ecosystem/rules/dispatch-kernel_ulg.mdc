@@ -7,8 +7,9 @@ apply_tier: required_gate
 # Dispatch kernel
 
 **Invariant:** `lean_context ⇒ dispatch(heavy read | author | implement) off-seat; lead orchestrates`.
-Before non-trivial implement or breadth investigation ask "can this be a dispatch?" — default **yes**;
-stay in-seat only for trivial/local touches or tight-loop debugging.
+**Tier A** (`conductor`): ≤2 targeted reads to packetize; 0 in-seat repo edits, ssh/host ops, or pytest; continuity hop ≤35–40 turns or 2–3 milestones.
+**Tier B** (investigate/confer/sketch/review): scoped recon/Explore when ≥3 unknown loci until judgment closes; 0 implement writes or service mutations; split mechanical remainder via `nest_under` or parent return.
+**Tier C** leaf homes omit this rule.
 
 ## Read side — Explore-first
 

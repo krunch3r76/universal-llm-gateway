@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_seat_overlay import (
     PRUNED_PLUGIN_PATHS,
     SeatOverlayConfigError,
     apply_cursor_sdk_seat_overlay,
+    resolve_seat_overlay_pruned_paths,
     seat_overlay_root,
 )
 
@@ -49,6 +50,13 @@ def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
     (plugin_root / "skills" / "reasoning-posture").mkdir(parents=True)
     (plugin_root / "skills" / "reasoning-posture" / "SKILL.md").write_text(
         "skill body\n", encoding="utf-8"
+    )
+    (plugin_root / "skills" / "lean-dispatch").mkdir(parents=True)
+    (plugin_root / "skills" / "lean-dispatch" / "SKILL.md").write_text(
+        "lean dispatch\n", encoding="utf-8"
+    )
+    (plugin_root / "rules" / "dispatch-kernel_ulg.mdc").write_text(
+        "dispatch kernel\n", encoding="utf-8"
     )
     return tmp_path / ".cursor"
 
@@ -191,6 +199,47 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     assert 'HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"' in surface
     assert "dispatch_home_host_guard" in surface
     assert "Reload Window" not in surface.split("## Invariant", 1)[1]
+
+
+def test_tier_a_overlay_keeps_lean_dispatch_and_dispatch_kernel(tmp_path: Path) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=_fake_overlay(tmp_path), delegation_tier="A", lane="A"
+    )
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    assert (plugin_root / "skills" / "lean-dispatch" / "SKILL.md").is_file()
+    assert (plugin_root / "rules" / "dispatch-kernel_ulg.mdc").is_file()
+    assert (plugin_root / "rules" / "restart-drain-discipline_ulg.mdc").is_file()
+
+
+def test_tier_b_overlay_prunes_lean_dispatch_keeps_dispatch_kernel(
+    tmp_path: Path,
+) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=_fake_overlay(tmp_path), delegation_tier="B", lane="B"
+    )
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    assert not (plugin_root / "skills" / "lean-dispatch").exists()
+    assert (plugin_root / "rules" / "dispatch-kernel_ulg.mdc").is_file()
+
+
+def test_tier_c_lane_b_overlay_prunes_lean_dispatch_kernel_and_restart_drain(
+    tmp_path: Path,
+) -> None:
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=_fake_overlay(tmp_path), delegation_tier="C", lane="B"
+    )
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    assert not (plugin_root / "skills" / "lean-dispatch").exists()
+    assert not (plugin_root / "rules" / "dispatch-kernel_ulg.mdc").exists()
+    drain = plugin_root / "rules" / "restart-drain-discipline_ulg.mdc"
+    assert not drain.exists() or "landed is not live" not in drain.read_text(
+        encoding="utf-8"
+    )
+    pruned = resolve_seat_overlay_pruned_paths(delegation_tier="C", lane="B")
+    assert Path("rules") / "restart-drain-discipline_ulg.mdc" in pruned
 
 
 def test_merged_kernels_stay_resident_no_seat_variant() -> None:
