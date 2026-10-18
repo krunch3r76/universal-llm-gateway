@@ -207,11 +207,14 @@ def tick_spawn_on_wake(
     policy = digest.get("policy") or {}
     if is_overnight_quiet(policy=policy):
         return {"spawned": False, "action": "hold", "reason": "overnight_disabled"}
+    gate_hold = _event_only_spawn_gate_hold(digest, state, root_id)
     had_pending = bool(state.get("pending_spawn"))
-    if not had_pending:
-        if hold := _event_only_spawn_gate_hold(digest, state, root_id):
-            return hold
-    result = _tick_spawn_on_wake_impl(digest, state, root_id, **kwargs)
+    if gate_hold is not None and not had_pending:
+        return gate_hold
+    impl_kwargs = kwargs
+    if gate_hold is not None and had_pending:
+        impl_kwargs = {**kwargs, "dry_run": True}
+    result = _tick_spawn_on_wake_impl(digest, state, root_id, **impl_kwargs)
     if hold := _event_only_spawn_gate_hold(digest, state, root_id):
         evaluation = result.get("evaluation") or {}
         if result.get("action") in ("spawned", "would_spawn") or evaluation.get("spawn"):

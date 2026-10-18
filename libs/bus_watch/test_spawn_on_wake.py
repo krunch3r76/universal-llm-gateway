@@ -1805,6 +1805,72 @@ def test_tick_spawn_consumed_handoff_and_checkpoint_due_does_not_spawn(
     assert out["reason"] == "no_open_request_or_event"
 
 
+def test_tick_spawn_post_reap_live_dry_run_false_does_not_call_fire_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    release_events: list[dict] = []
+    fire_spawn_calls: list[tuple] = []
+
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.emit_pending_spawn_released",
+        lambda **kw: release_events.append(kw),
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.release_fable_lock", lambda *_a, **_k: {"ok": True}
+    )
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.close_unharvested_quiet_lanes_on_bus",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.fetch_held_execution_ids", lambda: None
+    )
+
+    class _FakeLedger:
+        def unstarted_claims(self) -> list:
+            return []
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger._instance",
+        _FakeLedger(),
+    )
+
+    def _track_fire_spawn(*args, **kwargs):  # noqa: ANN002, ANN003
+        fire_spawn_calls.append((args, kwargs))
+        return {"status_code": 200}
+
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.fire_spawn", _track_fire_spawn)
+
+    state = {
+        "handoff": {"seq": 1},
+        "handoff_spawned_seq": 1,
+        "pending_spawn": {"execution_id": "e1", "thread_id": "t1"},
+    }
+    digest = _digest(attention=[], checkpoint_due=True)
+    digest["policy"]["ready"] = True
+    out = tick_spawn_on_wake(
+        digest,
+        state,
+        "10479",
+        dry_run=False,
+        is_terminal=lambda _p: True,
+    )
+    assert "pending_spawn" not in state
+    assert len(release_events) == 1
+    assert len(fire_spawn_calls) == 0
+    assert out["spawned"] is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
 def test_tick_spawn_stale_failed_or_hold_merge_lane_with_zero_unread_does_not_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
