@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 import stat
 import subprocess
@@ -140,6 +141,41 @@ class _DerivationError(Exception):
         self.site = site
         self.message = message
         super().__init__(f"{site}: {message}")
+
+
+_GIT_SCRUB_ENV_VARS = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_INTERNAL_SUPER_PREFIX",
+    }
+)
+
+
+def _git_subprocess_env() -> dict[str, str]:
+    """Copy of os.environ with repo-locating GIT_* vars removed for ``git -C`` calls."""
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _GIT_SCRUB_ENV_VARS:
+            continue
+        if key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            continue
+        env[key] = value
+    return env
 
 
 def _rel_posix(repo_root: Path, path: Path) -> str:
@@ -391,6 +427,7 @@ def _collect_all_staticfiles_calls(
                 ["git", "-C", str(repo_root), "ls-files", "--error-unmatch", rel],
                 capture_output=True,
                 check=False,
+                env=_git_subprocess_env(),
             )
             if tracked.returncode != 0:
                 continue
@@ -510,6 +547,7 @@ def _git_tracked_scan_files(repo_root: Path) -> list[str]:
         ["git", "-C", str(repo_root), "ls-files", "-z", "--", *_SCAN_GIT_PATHS],
         capture_output=True,
         check=False,
+        env=_git_subprocess_env(),
     )
     if proc.returncode != 0:
         raise OSError(
@@ -521,7 +559,12 @@ def _git_tracked_scan_files(repo_root: Path) -> list[str]:
     for entry in raw:
         if not entry:
             continue
-        rel = entry.decode("utf-8")
+        try:
+            rel = entry.decode("utf-8")
+        except UnicodeDecodeError:
+            raise OSError(
+                f"{repo_root}:git-ls-files: non-utf8 tracked path: {entry!r}"
+            ) from None
         if Path(rel).suffix not in _EXTENSIONS:
             continue
         if _is_test_or_fixture_path(rel):
@@ -694,8 +737,8 @@ def scan(repo_root: Path) -> Report:
         path = repo_root / rel
         try:
             file_text[rel] = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        except OSError as exc:
+            report.scan_errors.append(f"{rel}: unreadable ({type(exc).__name__})")
 
     for root in served_roots:
         if not root.present:
@@ -707,8 +750,8 @@ def scan(repo_root: Path) -> Report:
                 continue
             try:
                 file_text[rel] = file_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
+            except OSError as exc:
+                report.scan_errors.append(f"{rel}: unreadable ({type(exc).__name__})")
 
     hits: dict[str, list[str]] = {}
     for rel, text in file_text.items():
