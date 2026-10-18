@@ -197,6 +197,20 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
 
+  grok/bot:
+    # Grok Bot seats (Stage Manager gc1, houses): grok.com tabs driven over CDP that reach
+    # cortex through the io relay on /mcp/code. Boot/mint only — not a team_dispatch target.
+    # Bus address stays `grok-bot` (excluded from the {platform}-{provider} fold in registry.py).
+    provider: xai
+    default_model: null
+    tool_surface: mcp
+    mcp_surface: code
+    delivery: manual
+    include_deadlines: false
+    include_review_queue: false
+    confirm_and_proceed: false
+    addenda: []
+
   gemini/api:
     # CANDIDATE SEAT — declared tool_surface=mcp. MCP tool loop verified by
     # smoke (catalog=15, cortex round-trip) but seat-attributed wiring not

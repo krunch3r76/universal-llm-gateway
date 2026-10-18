@@ -421,6 +421,10 @@ async def run_cdp_worker(
     )
 
     to_agent = caller_agent or "dispatch"
+    from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
+
+    reroute = resolve_cdp_reroute(model_id)
+    admit_substrate = REROUTE_ADMIT_SUBSTRATE if reroute is not None else None
     publish_cdp_kwargs(
         CdpGenerateAdmitted,
         request_id=request_id,
@@ -428,6 +432,7 @@ async def run_cdp_worker(
         model=model_id,
         thread_id=thread_id,
         topic=topic,
+        substrate=admit_substrate,
     )
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
     loop = asyncio.get_running_loop()
@@ -508,12 +513,9 @@ async def run_cdp_worker(
             contract=contract,
             model_id=model_id,
         )
-        from .cdp_cursor_reroute import (
-            resolve_cdp_reroute,
-            run_cdp_reroute_via_cursor_sdk,
-        )
+        from .cdp_cursor_reroute import run_cdp_reroute_via_cursor_sdk
 
-        if resolve_cdp_reroute(model_id) is not None:
+        if reroute is not None:
             result = await run_cdp_reroute_via_cursor_sdk(
                 execution_id=execution_id,
                 prompt_uri=prompt_uri,

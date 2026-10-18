@@ -138,6 +138,7 @@ def create_edge(body: EdgeCreate) -> EdgeItem:
 
 @router.get("", response_model=EdgeList, openapi_extra=x_mcp("edges"))
 def list_edges(
+    node: str | None = None,
     from_node: str | None = None,
     to_node: str | None = None,
     edge_type: str | None = None,
@@ -151,12 +152,16 @@ def list_edges(
     """List edges with optional filters and active-only default behavior.
 
     Args:
+        node: Match edges where either `from_node` or `to_node` equals this node ID.
         edge_type_exclude: Comma-separated edge types to exclude.
         since_hours: Only return edges created within this many hours.
     """
     conn = cortex_conn()
     clauses: list[str] = []
     params: list[str | int] = []
+    if node:
+        clauses.append("(from_node = ? OR to_node = ?)")
+        params.extend((node, node))
     for col, val in (
         ("from_node", from_node),
         ("to_node", to_node),

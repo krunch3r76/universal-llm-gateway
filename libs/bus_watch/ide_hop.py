@@ -35,6 +35,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from cursor_bridge.cursor_agents_hop import (
+    is_cursor_xvfb_host,
+    launch_cursor_agents_tab,
+)
 from durable_io.atomic import durable_write_text
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
@@ -530,6 +534,8 @@ def remote_toplevels(gui_host: str) -> list[dict[str, Any]] | str:
 def session_unreachable(gui_host: str) -> dict[str, Any] | None:
     """Refusal payload when the GUI session cannot receive keys; ``None`` when it can.
 
+    Xvfb ``:8`` Cursor Agents hops use CDP locally and never hit a COSMIC lock screen.
+
     A COSMIC lock screen is invisible to every cheap probe: ``loginctl`` reports
     ``LockedHint=no`` (jupiter session 4, 2026-09-15 05:20Z) and the lock surface
     is not a toplevel, so the window list looks normal and ``activate`` on a
@@ -545,6 +551,8 @@ def session_unreachable(gui_host: str) -> dict[str, Any] | None:
     A probe that cannot reach the host is not a refusal — SSH failure is handled
     downstream with its own phase, so an unreadable list returns ``None``.
     """
+    if is_cursor_xvfb_host(gui_host):
+        return None
     toplevels = remote_toplevels(gui_host)
     if not isinstance(toplevels, list) or not toplevels:
         return None
@@ -700,39 +708,44 @@ def fire_ide_hop(
     fired_at = time.time()
     hop_record: dict[str, Any] | None = None
     try:
-        try:
-            proc = subprocess.run(
-                [
-                    "ssh",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=20",
-                    gui_host,
-                    cmd,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "phase": "ssh_timeout", **result}
-        if proc.returncode != 0:
-            return {
-                "ok": False,
-                "phase": "keystroke",
-                "returncode": proc.returncode,
-                "stderr": proc.stderr[-1000:],
-                "stdout": proc.stdout[-1000:],
-                **result,
-            }
-        # The remote prints ``json.dumps(out, indent=2)``, so the last stdout line is
-        # a bare ``}`` — parsing only that line silently discarded the activate proof
-        # on every hop and left ``raw_stdout`` as the sole telemetry (hop 2026-09-15
-        # 05:12Z: diagnosis of a not_landed needed the focused handle and could not
-        # read it). Parse the whole payload; fall back to the last line for a remote
-        # that ever emits single-line JSON.
-        keystroke = _parse_keystroke_stdout(proc.stdout)
+        if is_cursor_xvfb_host(gui_host):
+            keystroke = launch_cursor_agents_tab(message)
+            if not keystroke.get("ok"):
+                return {"ok": False, "phase": "keystroke", "keystroke": keystroke, **result}
+        else:
+            try:
+                proc = subprocess.run(
+                    [
+                        "ssh",
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "ConnectTimeout=20",
+                        gui_host,
+                        cmd,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "phase": "ssh_timeout", **result}
+            if proc.returncode != 0:
+                return {
+                    "ok": False,
+                    "phase": "keystroke",
+                    "returncode": proc.returncode,
+                    "stderr": proc.stderr[-1000:],
+                    "stdout": proc.stdout[-1000:],
+                    **result,
+                }
+            # The remote prints ``json.dumps(out, indent=2)``, so the last stdout line is
+            # a bare ``}`` — parsing only that line silently discarded the activate proof
+            # on every hop and left ``raw_stdout`` as the sole telemetry (hop 2026-09-15
+            # 05:12Z: diagnosis of a not_landed needed the focused handle and could not
+            # read it). Parse the whole payload; fall back to the last line for a remote
+            # that ever emits single-line JSON.
+            keystroke = _parse_keystroke_stdout(proc.stdout)
         hop_record = mark_fired(
             root=root_id,
             tip_cp=tip_cp,
@@ -783,7 +796,11 @@ def fire_ide_hop(
         if landed_id is None:
             if hop_record is not None:
                 hop_record = mark_expired(hop_record)
-            toplevels = remote_toplevels(gui_host)
+            toplevels = (
+                []
+                if is_cursor_xvfb_host(gui_host)
+                else remote_toplevels(gui_host)
+            )
             cursor_windows = (
                 [row for row in toplevels if row.get("app_id") == "cursor"]
                 if isinstance(toplevels, list)

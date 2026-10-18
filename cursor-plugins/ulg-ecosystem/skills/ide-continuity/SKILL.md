@@ -57,7 +57,7 @@ played(row) ∧ landed(master) ⇒ todo-close ≺ add_next_ungated ∧ play
 register=attended ∨ autonomous ⇒ land_on_green; HOLD_MERGE ⇔ operator_explicit_hold
 go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left) ⇒ ide-hop (¬go_under)
 ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
-below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (¬cursor/claude-*; ¬anthropic/*)
+below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (anthropic/* API admitted when credit-healthy, not the first wire)
 same_fix_failed_twice ⇒ REPEATED_FAILURE ∧ ¬third_variant
 ```
 
@@ -223,7 +223,7 @@ Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout 
 
 Reasoning strength low→high: `cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`, `cdp/fable-5`. Walk `high` → `extra` → `max` inside a rung before next wire.
 
-Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. Never `anthropic/*`. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
+Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. `anthropic/*` API is admitted when the credit gate is healthy (prohibition retired 2026-10-18); it is not the default judgment wire. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
 
 ## Economy gears
 

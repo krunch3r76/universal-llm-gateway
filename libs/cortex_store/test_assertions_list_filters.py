@@ -55,7 +55,7 @@ def test_op_frictions_defaults(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     result = _op_frictions(category="tool_error", seeded_by="claude-web")
@@ -77,8 +77,12 @@ def test_op_frictions_scoped_service(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
     _op_frictions(service="mcp-server")
     assert captured["entity_id"] == "service:mcp-server"
@@ -107,7 +111,7 @@ def test_op_frictions_owner_type_narrow(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     _op_frictions(owner_type="agent_skill")

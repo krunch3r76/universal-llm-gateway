@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -34,6 +36,7 @@ class FrictionCreateRequest(BaseModel):
     defer_enqueue: bool | None = None
     confidence: str | None = None
     confidence_score: float | None = None
+    related: list[dict[str, Any]] | None = None
 
 
 class FrictionCloseRequest(BaseModel):

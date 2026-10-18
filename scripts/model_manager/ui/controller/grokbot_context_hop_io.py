@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 _ROW_KEYS = ("agent_id", "name", "lastMessageId", "is_running", "updated_at_ms")
+DEFAULT_CDP_PORTS: tuple[int, ...] = (9340, 9339)
 HOP_THREAD = "15851"
 HOP_TO_AGENT = "grok-bot-gc1"
 HOP_FROM_AGENT = "manage"
@@ -41,7 +43,7 @@ _CONTEXT_JS = """(() => {
     name: r.name,
     lastMessageId: r.lastMessageId,
     is_running: Boolean(r.isRunning),
-    updated_at_ms: r.updatedAtMs,
+    updated_at_ms: (typeof r.updatedAt === "number" ? r.updatedAt : (typeof r.lastActivityAt === "number" ? r.lastActivityAt : (typeof r.updatedAtMs === "number" ? r.updatedAtMs : null))),
   }));
 })()"""
 
@@ -62,20 +64,51 @@ def _normalize_rows(raw: object) -> list[dict[str, object]]:
     return rows
 
 
+def _merge_rows_by_agent_id(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    by_agent: dict[str, dict[str, object]] = {}
+    for row in rows:
+        aid = row.get("agent_id")
+        if not isinstance(aid, str):
+            continue
+        existing = by_agent.get(aid)
+        if existing is None:
+            by_agent[aid] = row
+            continue
+        new_ts = row.get("updated_at_ms")
+        old_ts = existing.get("updated_at_ms")
+        if isinstance(new_ts, int) and (
+            not isinstance(old_ts, int) or new_ts > old_ts
+        ):
+            by_agent[aid] = row
+    return list(by_agent.values())
+
+
 async def probe_grok_agent_context(
     *,
     evaluate: Callable[[str], Awaitable[Any]] | None = None,
-    cdp_port: int = 9339,
+    cdp_port: int | None = None,
+    cdp_ports: Sequence[int] = DEFAULT_CDP_PORTS,
 ) -> list[dict[str, object]]:
     """Return roster rows from a read-only CDP expression. No model call."""
-    if evaluate is None:
-        from cursor_bridge.grok_computer import _cdp_eval, _resolve_ws_url
-
-        ws_url = _resolve_ws_url(cdp_port, timeout_s=5.0)
-        raw = await _cdp_eval(ws_url, _CONTEXT_JS, await_promise=False)
-    else:
+    if evaluate is not None:
         raw = await evaluate(_CONTEXT_JS)
-    return _normalize_rows(raw)
+        return _normalize_rows(raw)
+
+    from cursor_bridge.grok_computer import _cdp_eval, _resolve_ws_url
+
+    ports = (cdp_port,) if cdp_port is not None else tuple(cdp_ports)
+    merged: list[dict[str, object]] = []
+    for port in ports:
+        try:
+            ws_url = _resolve_ws_url(port, timeout_s=5.0)
+            raw = await _cdp_eval(ws_url, _CONTEXT_JS, await_promise=False)
+        except (URLError, OSError, ConnectionError, TimeoutError, RuntimeError):
+            continue
+        merged.extend(_normalize_rows(raw))
+    return _merge_rows_by_agent_id(merged)
+
+
+probe_ports = probe_grok_agent_context
 
 
 def _run_reply(argv: list[str]) -> subprocess.CompletedProcess[str]:

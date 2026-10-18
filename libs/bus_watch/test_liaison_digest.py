@@ -14,6 +14,7 @@ from bus_watch.liaison_digest import (
     _merge_observe_lanes,
     build_digest,
     effective_policy,
+    filter_conductor_routine_attention,
     is_life_root,
 )
 
@@ -229,6 +230,32 @@ def test_attention_excludes_terminal_without_unread(
     ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
     assert "10493" not in ids
     assert "10496" in ids
+
+
+def test_conductor_routine_hop_unread_dropped_from_attention() -> None:
+    routine = {
+        "id": "18134",
+        "unread": 3,
+        "contract": "conductor",
+        "status": "active",
+        "lifecycle": "admitted",
+        "last_subject": "cursor-sdk generate — 150cfca0",
+    }
+    filtered = filter_conductor_routine_attention([routine])
+    assert filtered == []
+
+
+def test_conductor_verdict_unread_kept_in_attention() -> None:
+    verdict = {
+        "id": "18135",
+        "unread": 1,
+        "contract": "conductor",
+        "status": "active",
+        "lifecycle": "admitted",
+        "last_subject": "VERDICT — G4 skeptic",
+    }
+    filtered = filter_conductor_routine_attention([verdict])
+    assert filtered == [verdict]
 
 
 def test_checkpoint_observed_event_signal() -> None:

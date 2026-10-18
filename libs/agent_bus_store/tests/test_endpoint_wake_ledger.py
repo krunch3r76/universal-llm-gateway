@@ -267,3 +267,290 @@ def test_stage_manager_equivalence_already_answered_and_debounce(
     w4 = claim_due_wakes(now="2020-01-01 10:01:40")
     assert w4["wake_id"] is not None
 
+
+def test_stage_manager_alias_rows_coalesce_in_one_claim(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="sm-coalesce")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|a",
+        body="b",
+    )
+    t2_id, _ts2, t2_n, _c2 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="REQUEST|b",
+        body="b2",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t2_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            },
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": t2_id,
+                "turn_number": t2_n,
+            },
+        ],
+        now="2020-01-01 11:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 11:00:01")
+    assert claimed["wake_id"] is not None
+    turn_ids = sorted(r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed")
+    assert turn_ids == [t1_id, t2_id]
+
+
+def test_debounce_clears_on_cross_thread_reply(db: TestClient) -> None:
+    bus = create_thread(thread_id=None, slug="debounce-xthread")
+    house = create_thread(thread_id=None, slug="debounce-house")
+    assert bus is not None and house is not None
+    bus_thread = str(bus["id"])
+    house_thread = str(house["id"])
+    a_id, _, a_n, _ = insert_turn(
+        thread=bus_thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        a_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": bus_thread,
+                "turn_id": a_id,
+                "turn_number": a_n,
+            }
+        ],
+        now="2020-01-01 12:00:00",
+    )
+    w1 = claim_due_wakes(now="2020-01-01 12:00:01")
+    record_wake_result(
+        w1["wake_id"],
+        "delivered",
+        "ok",
+        "wildcard",
+        1,
+        None,
+        now="2020-01-01 12:00:02",
+    )
+    b_id, _, b_n, _ = insert_turn(
+        thread=bus_thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|y",
+        body="b2",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        a_id,
+        b_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": bus_thread,
+                "turn_id": b_id,
+                "turn_number": b_n,
+            }
+        ],
+        now="2020-01-01 12:00:10",
+    )
+    assert claim_due_wakes(now="2020-01-01 12:00:20")["wake_id"] is None
+    reply_id, _, _, _ = insert_turn(
+        thread=house_thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="FACT|house",
+        body="house",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01T12:00:30Z", reply_id),
+        )
+    w2 = claim_due_wakes(now="2020-01-01 12:00:35")
+    assert w2["wake_id"] is not None
+    assert [r["turn_id"] for r in w2["rows"] if r.get("state") == "claimed"] == [b_id]
+
+
+def test_debounce_clears_when_delivered_turn_marked_read(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="debounce-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    a_id, _, a_n, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        a_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": a_id,
+                "turn_number": a_n,
+            }
+        ],
+        now="2020-01-01 13:00:00",
+    )
+    w1 = claim_due_wakes(now="2020-01-01 13:00:01")
+    record_wake_result(
+        w1["wake_id"],
+        "delivered",
+        "ok",
+        "wildcard",
+        1,
+        None,
+        now="2020-01-01 13:00:02",
+    )
+    b_id, _, b_n, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="REQUEST|y",
+        body="b2",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        a_id,
+        b_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": b_id,
+                "turn_number": b_n,
+            }
+        ],
+        now="2020-01-01 13:00:10",
+    )
+    assert claim_due_wakes(now="2020-01-01 13:00:20")["wake_id"] is None
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 13:00:25", a_id),
+        )
+    w2 = claim_due_wakes(now="2020-01-01 13:00:30")
+    assert w2["wake_id"] is not None
+    assert [r["turn_id"] for r in w2["rows"] if r.get("state") == "claimed"] == [b_id]
+
+
+def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) -> None:
+    """Parent-scoped Impresario subscription must cover child-lane CLOSEOUT turns."""
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_subscription_for_thread
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    parent = create_thread(thread_id=None, slug="root-xvfb")
+    child = create_thread(thread_id=None, slug="lane-sdk")
+    assert parent is not None and child is not None
+    parent_id, child_id = str(parent["id"]), str(child["id"])
+    associate_lane(
+        thread_id=child_id,
+        parent_thread_id=parent_id,
+        lane_role="sub_mission",
+        bound_by="test",
+    )
+    subscribe_endpoint(
+        agent="impresario",
+        thread_scope=parent_id,
+        surface="cursor",
+        display="8",
+        title=f"{parent_id} continuity",
+        agent_id="glass-agent-1",
+    )
+    resolved = resolve_subscription_for_thread("impresario", child_id)
+    assert resolved is not None
+    route, row = resolved
+    assert route == "parent"
+    assert row["thread_scope"] == parent_id
+
+    turn_id, _, turn_number, _ = insert_turn(
+        thread=child_id,
+        from_agent="cursor-sdk",
+        to_agent="impresario",
+        subject="CLOSEOUT — lane complete",
+        body="TYPE: CLOSEOUT\nstatus: complete\n",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "impresario",
+                "thread_id": child_id,
+                "turn_id": turn_id,
+                "turn_number": turn_number,
+            }
+        ],
+        now="2020-01-01 14:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 14:00:01")
+    assert claimed["wake_id"] is not None
+    assert claimed["rows"][0]["thread_id"] == child_id
+
+
+def test_parent_scope_unsubscribe_tombstone_honored(db: TestClient) -> None:
+    """Unsubscribing parent scope must not match a stale subscribed journal row."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_subscription_for_thread
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    parent = create_thread(thread_id=None, slug="root-unsub")
+    child = create_thread(thread_id=None, slug="lane-unsub")
+    assert parent is not None and child is not None
+    parent_id, child_id = str(parent["id"]), str(child["id"])
+    associate_lane(
+        thread_id=child_id,
+        parent_thread_id=parent_id,
+        lane_role="sub_mission",
+        bound_by="test",
+    )
+    subscribe_endpoint(
+        agent="impresario",
+        thread_scope=parent_id,
+        surface="cursor",
+        display="8",
+        title=f"{parent_id} continuity",
+        agent_id="glass-agent-1",
+    )
+    assert resolve_subscription_for_thread("impresario", child_id) is not None
+    unsubscribe_endpoint(agent="impresario", thread_scope=parent_id)
+    assert resolve_subscription_for_thread("impresario", child_id) is None
+

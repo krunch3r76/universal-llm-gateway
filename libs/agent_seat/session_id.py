@@ -16,6 +16,7 @@ _AGENT_SLUG_FROM_SESSION_RE = re.compile(
 SESSION_ID_EXAMPLES = (
     "cursor-2026-05-17-045830-abc",
     "web-anthropic-2026-05-17-045830-1a2",
+    "grok-bot-2026-10-18-032900-b48",
     "inspect-web-anthropic-2026-05-17-045830-f00",
 )
 

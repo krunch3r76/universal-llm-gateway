@@ -65,14 +65,10 @@ def list_subscriptions(
 
 
 def resolve_endpoint(agent: str, thread_id: str) -> tuple[str, dict[str, Any]] | None:
-    """Exact subscribed row, else a grok wildcard. One route or none."""
-    exact = current_subscription(agent, thread_id)
-    if exact is not None and exact["state"] == "subscribed":
-        return "exact", exact
-    wild = current_subscription(agent, "*")
-    if wild is not None and wild["state"] == "subscribed":
-        return "wildcard", wild
-    return None
+    """Exact scope, parent-thread scope, then grok wildcard."""
+    from .endpoint_wake_ledger import resolve_subscription_for_thread
+
+    return resolve_subscription_for_thread(agent, thread_id)
 
 
 def _same(current: dict[str, Any], nxt: dict[str, Any]) -> bool:

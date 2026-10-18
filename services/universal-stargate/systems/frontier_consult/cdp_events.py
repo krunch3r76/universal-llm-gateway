@@ -49,6 +49,7 @@ def CdpGenerateAdmitted(  # noqa: N802
     model: str,
     thread_id: str,
     topic: str | None = None,
+    substrate: str | None = None,
 ) -> Event:
     """CDP generate admitted; worker task spawned."""
     payload: dict[str, Any] = {
@@ -59,6 +60,8 @@ def CdpGenerateAdmitted(  # noqa: N802
     }
     if topic:
         payload["topic"] = topic
+    if substrate:
+        payload["substrate"] = substrate
     return Event(
         signal="cdp.generate.admitted",
         payload=payload,

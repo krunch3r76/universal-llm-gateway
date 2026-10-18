@@ -16,6 +16,7 @@ cdp-operator-proxy_ulg
 consultation-workflow_ulg
 dispatch-kernel_ulg
 dispatch-wake-continue_ulg
+event-only-seat-wake_ulg
 expand-growth-loop_ulg
 in-flight-work-guard_ulg
 jupiter-converse-batching_ulg

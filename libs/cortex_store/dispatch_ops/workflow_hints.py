@@ -52,6 +52,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "write_discipline nudge (advisory) flags similar claims + hub bloat. "
         "next: relationship_create if this claim connects two entities; "
         "entity_get to verify the assertion appears on the entity. "
+        "link same-class/duplicate frictions in-call with related=[{assertion_id, edge_type: same_class_as|duplicates|relates_to}] "
+        "or later with edge_create(from_node='assertion:<id>', …). "
         "If validation_warnings present, the handler sets a per-call _next "
         "hint identifying which warning categories fired (staging vs auditor) "
         "and what to do."
@@ -109,7 +111,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
     "edge_create": (
         "next: entity_get with include_edges=true on from_node or to_node "
-        "to verify the edge is visible in the reasoning graph"
+        "to verify the edge is visible in the reasoning graph. "
+        "session_id must be the cortex_brief mint for YOUR seat (grok-bot seats: cortex_brief(seat='grok-bot'))."
     ),
     "entity_get": (
         "tip: pass include_edges=true to also see reasoning edges "
@@ -194,6 +197,8 @@ _FRICTION_HINT = (
     "If this failure was unexpected, log friction: "
     'cortex(tool="friction", arguments=\'{"service": "...", '
     '"category": "tool_error", "note": "...", "agent": "..."}\'). '
+    "link same-class/duplicate frictions in-call with related=[{assertion_id, edge_type: same_class_as|duplicates|relates_to}] "
+    "or later with edge_create(from_node='assertion:<id>', …). "
     "Review open tickets: frictions (cross-service) or assertions on service:{name} "
     'with filter="tool_error"; bus queue: agent_bus list_threads tags=[type:bug]. '
     + _FRICTION_TICKET_NEXT

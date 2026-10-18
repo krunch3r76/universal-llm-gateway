@@ -71,6 +71,10 @@ with the same AC; it is not retried at the same tier.
 If this surface has no dispatch primitive, do the leg yourself and say so in one
 line; the ladder still names the default reviewer duty.
 
+## Cursor IDE tabs — `team_dispatch` (`seat=cursor-sdk`), not native `Task` subagents
+
+In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and have gaps (cold start without GIW worktree isolation, `resolve_prompt_preamble` harness injection, or closeout sidecars) that a proper `team_dispatch` does not; transitively, `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`, `cursor/muse-wonder-1.0`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
+
 ## Grok Bot seats
 
 Lean context binds Grok Bot seats as it binds Cursor agents (Kaywan
@@ -121,6 +125,7 @@ Do not paste this table into system prompts or Grok Bot profile descriptions.
 ## Constraints (last)
 
 - Parent does not implement and does not sweep. Those legs leave as packets.
+- In a Cursor IDE tab, dispatch via `team_dispatch` (`seat=cursor-sdk` / `cdp/*`), not native Cursor `Task` subagents (`explore`, `generalPurpose`).
 - Wires stay; spoken duty labels are Set D as bound.
 - No collision with musical-arts spoken set: Sketch, Scoring, Conductor, maestro, ear, music makers (lexicon rejects: bare Composer as duty, Score Composer, Orchestrate).
 - No Huxley Alpha→Epsilon speech in new prompts once migration lands.

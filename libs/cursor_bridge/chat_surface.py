@@ -59,12 +59,34 @@ _PROBE_JS = r"""
     return !!el.querySelector('[aria-current="page"], [aria-selected="true"], [data-active="true"]');
   };
   const items = [];
-  for (const el of document.querySelectorAll('[role=listitem], [role=treeitem], [role=option]')) {
-    if ((el.className || '').includes('mention-menu-item')) continue;
-    const line = rowTitle(el);
-    if (!line || line.length > 120) continue;
-    items.push({text: line, selected: rowSelected(el), agent_id: rowAgentId(el)});
-    if (items.length >= 40) break;
+  const glassRows = Array.from(document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]'));
+  if (glassRows.length > 0) {
+    for (const el of glassRows) {
+      const trig = el.querySelector('.ui-sidebar-menu-button-trigger[role="button"]');
+      const line = trig
+        ? (trig.textContent || '').replace(/\s+/g, ' ').trim()
+        : rowTitle(el);
+      if (!line || line.length > 120) continue;
+      const aid = (
+        el.getAttribute('data-sidebar-file-drop-agent-id')
+        || el.getAttribute('data-agent-id')
+        || ''
+      ).trim();
+      const sel =
+        el.getAttribute('data-active') === 'true'
+        || !!(trig && trig.getAttribute('aria-current') === 'page')
+        || rowSelected(el);
+      items.push({text: line, selected: sel, agent_id: aid});
+      if (items.length >= 40) break;
+    }
+  } else {
+    for (const el of document.querySelectorAll('[role=listitem], [role=treeitem], [role=option]')) {
+      if ((el.className || '').includes('mention-menu-item')) continue;
+      const line = rowTitle(el);
+      if (!line || line.length > 120) continue;
+      items.push({text: line, selected: rowSelected(el), agent_id: rowAgentId(el)});
+      if (items.length >= 40) break;
+    }
   }
   const promptEl = document.querySelector('[aria-label="Prompt"][contenteditable="true"]');
   const composerDraft = promptEl ? (promptEl.innerText || '').trim() : '';
@@ -114,7 +136,7 @@ def classify_surface(
         if item.get("selected") and active is None:
             active = text
             active_agent_id = aid
-    signed_out = any(label.strip().lower() == "sign in" for label in labels)
+    signed_out = any(label.strip().lower() in {"sign in", "log in"} for label in labels)
     if signed_out and not titles:
         state = "signed_out"
         active = None
@@ -292,20 +314,40 @@ async def select_sidebar_target(
       const text = (titled.textContent || '').replace(/\s+/g, ' ').trim();
       if (text) return text;
     }
+    const glassTrig = el.querySelector('.ui-sidebar-menu-button-trigger[role="button"]');
+    if (glassTrig) {
+      const text = (glassTrig.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text) return text;
+    }
     const raw = (el.innerText || '').trim();
     return raw.split('\n')[0].trim();
   };
+  const rowNodes = () =>
+    document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]').length > 0
+      ? document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]')
+      : document.querySelectorAll('[role=listitem], [role=treeitem]');
+  const rowClickTarget = (el) =>
+    el.querySelector('.ui-sidebar-menu-button-trigger[role="button"]')
+    || el.querySelector('button[data-agent-id]')
+    || el.querySelector('button, a, [role=button]')
+    || el;
+  const rowAgentId = (el, btn) =>
+    (el.getAttribute && (
+      el.getAttribute('data-sidebar-file-drop-agent-id')
+      || el.getAttribute('data-agent-id')
+    ) || '').trim()
+    || (btn.getAttribute && btn.getAttribute('data-agent-id') || '').trim();
   let titleMatches = 0;
-  for (const el of document.querySelectorAll('[role=listitem], [role=treeitem]')) {
+  for (const el of rowNodes()) {
     const title = rowTitle(el);
     if (targetTitle && title === targetTitle) titleMatches += 1;
   }
   if (targetTitle && titleMatches > 1) {
     return {clicked: false, reason: 'ambiguous_title'};
   }
-  for (const el of document.querySelectorAll('[role=listitem], [role=treeitem]')) {
-    const btn = el.querySelector('button[data-agent-id]') || el.querySelector('button, a, [role=button]') || el;
-    const aid = (btn.getAttribute && btn.getAttribute('data-agent-id') || '').trim();
+  for (const el of rowNodes()) {
+    const btn = rowClickTarget(el);
+    const aid = rowAgentId(el, btn);
     const title = rowTitle(el);
     if (targetId && aid === targetId) {
       btn.click();
@@ -317,9 +359,9 @@ async def select_sidebar_target(
     }
   }
   if (targetId && targetTitle) {
-    for (const el of document.querySelectorAll('[role=listitem], [role=treeitem]')) {
-      const btn = el.querySelector('button[data-agent-id]') || el.querySelector('button, a, [role=button]') || el;
-      const aid = (btn.getAttribute && btn.getAttribute('data-agent-id') || '').trim();
+    for (const el of rowNodes()) {
+      const btn = rowClickTarget(el);
+      const aid = rowAgentId(el, btn);
       const title = rowTitle(el);
       if (title === targetTitle) {
         btn.click();

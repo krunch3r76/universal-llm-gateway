@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,11 @@ from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
 
 _REPO = Path(__file__).resolve().parents[2]
 _CANONICAL = _REPO / "config" / "mcp" / "canonical.yaml"
+
+
+@contextmanager
+def _fake_cortex_conn(*, read_only: bool = False):
+    yield object()
 
 
 def test_canonical_friction_category_enum_matches_runtime() -> None:
@@ -66,8 +72,12 @@ def test_op_frictions_accepts_qualified_service(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_friction._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
     _op_frictions(service="service:mcp-server")
     assert captured["entity_id"] == "service:mcp-server"
@@ -288,6 +298,10 @@ def test_op_friction_agent_skill_owner(monkeypatch) -> None:
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.cortex_conn",
+        _fake_cortex_conn,
+    )
+    monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
         lambda conn, eid, **kw: _Resolved(),
     )
@@ -317,6 +331,10 @@ def test_op_friction_missing_agent_skill_owner_no_write(monkeypatch) -> None:
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.cortex_conn",
+        _fake_cortex_conn,
     )
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
@@ -615,6 +633,10 @@ def test_op_friction_ambiguous_alias_not_rewritten_as_404(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.cortex_conn",
+        _fake_cortex_conn,
+    )
+    monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
         fake_resolve,
     )
@@ -657,7 +679,7 @@ def test_op_frictions_resolves_underscore_owner(migrated_db_path, monkeypatch) -
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_friction._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     result = _op_frictions(owner="service:agent_bus")

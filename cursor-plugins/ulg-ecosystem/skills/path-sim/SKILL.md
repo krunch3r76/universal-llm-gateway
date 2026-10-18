@@ -93,7 +93,7 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 ## Substrate house rules (one line each — tables in annex C)
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
-- **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
+- **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): standing `anthropic/*` prohibition retired 2026-10-18 (credits funded). Standard API models admit when the credit gate is healthy; high-cost Opus/Fable API needs `cost_intent=deliberate_high_cost` plus a reason. Wide consult / R-admit default remains **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed.
 - **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=freeform`**; bundled-arc **Q** defaults to ACTIVE. `contract=freeform, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.

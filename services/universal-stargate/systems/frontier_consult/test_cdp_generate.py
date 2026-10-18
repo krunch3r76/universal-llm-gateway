@@ -2202,6 +2202,131 @@ async def test_staged_prompt_digest_on_freeform_admit(
     assert result["staged_prompt_sha256"] == hashlib.sha256(raw).hexdigest()
 
 
+@pytest.mark.asyncio
+async def test_cdp_generate_admit_receipt_names_reroute_substrate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """202 and cdp.generate.admitted name cursor-sdk-reroute when resolve matches.
+
+    Breaks when admit fires before resolve, when 202 still says web-anthropic-cdp
+    under reroute, or when admitted substrate diverges from the 202 receipt.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    import yaml
+    from claude_bundles.cdp_model_endpoint import CDP_SUBSTRATE
+    from fastapi import Response
+
+    from systems.frontier_consult import cdp_generate_worker
+    from systems.frontier_consult.cdp_events import CdpGenerateAdmitted
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    future = (
+        (datetime.now(UTC) + timedelta(days=7))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    policy_path = tmp_path / "route_policy.yaml"
+    policy_path.write_text(
+        yaml.safe_dump(
+            {
+                "cdp_reroute": {
+                    "enabled": True,
+                    "expires_at": future,
+                    "target_model": "cursor/gemini-4-argon",
+                    "match_prefixes": ["cdp/opus", "cdp/fable"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_cursor_reroute.load_route_policy",
+        lambda path=None: yaml.safe_load(policy_path.read_text(encoding="utf-8")),
+    )
+
+    published: list[tuple[Any, dict[str, Any]]] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> bool:
+        published.append((factory, kwargs))
+        return True
+
+    monkeypatch.setattr(cdp_generate_worker, "publish_cdp_kwargs", _capture)
+
+    cortex = tmp_path / "cortex"
+    _stub_cdp_generate_after_gate(monkeypatch, cortex)
+
+    from systems.frontier_consult import cdp_generate as gen_mod
+    from systems.frontier_consult import cdp_generate_worker as worker_mod
+
+    async def _real_worker(**kwargs: Any) -> None:
+        await worker_mod.run_cdp_worker(**kwargs)
+
+    monkeypatch.setattr(gen_mod, "run_cdp_worker", _real_worker)
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        AsyncMock(),
+    )
+    reroute_result = CdpGenerateResult(
+        ok=True,
+        body="VERDICT: ship",
+        execution_id="exec-reroute-admit",
+        satellite_execution_id="sdk-admit",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="gemini-4-argon",
+        substrate="cursor-sdk-reroute",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_cursor_reroute.run_cdp_reroute_via_cursor_sdk",
+        AsyncMock(return_value=reroute_result),
+    )
+
+    worker_tasks: list[asyncio.Task[None]] = []
+    orig_create_task = asyncio.create_task
+
+    def _track_task(coro: Any, **kw: Any) -> asyncio.Task[None]:
+        task = orig_create_task(coro, **kw)
+        worker_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", _track_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="18026",
+        prompt="reroute admit substrate check\n",
+    )
+    response = Response()
+    result = await dispatch_cdp_generate(
+        request_id="req-reroute-admit-substrate",
+        body=body,
+        response=response,
+    )
+    for task in worker_tasks:
+        await task
+
+    assert response.status_code == 202
+    assert result["substrate"] == "cursor-sdk-reroute"
+    assert result["result_handle"]["substrate"] == "cursor-sdk-reroute"
+    assert result["capabilities"]["substrate"] == "cursor-sdk-reroute"
+    assert result["capabilities"]["tool_surface"] == "cdp"
+    assert result["resolved_model"] == "cdp/opus-5.5"
+    assert CDP_SUBSTRATE == "web-anthropic-cdp"
+
+    admitted = [kw for fac, kw in published if fac is CdpGenerateAdmitted]
+    assert len(admitted) == 1
+    assert admitted[0]["substrate"] == "cursor-sdk-reroute"
+
+
 def _utf8_body_of_byte_length(target: int, *, seed: str = "R") -> str:
     body = seed
     while len(body.encode("utf-8")) < target:

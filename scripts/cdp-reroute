@@ -4,34 +4,78 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 _REPO = Path(__file__).resolve().parent.parent
-_POLICY_PATH = _REPO / "config" / "routing" / "route_policy.yaml"
+_DEFAULT_POLICY_PATH = _REPO / "config" / "routing" / "route_policy.yaml"
 _ENABLED_RE = re.compile(
     r"(^cdp_reroute:\n(?:  .+\n)*?  enabled:\s*)(true|false)",
     re.MULTILINE,
 )
+_EXPIRES_AT_RE = re.compile(
+    r"(^cdp_reroute:\n(?:  .+\n)*?  expires_at:\s*).+",
+    re.MULTILINE,
+)
+_EXPIRES_AT_INSERT_RE = re.compile(
+    r"(^cdp_reroute:\n(?:  .+\n)*?  enabled:\s*(?:true|false)\n)",
+    re.MULTILINE,
+)
+
+
+def _policy_path() -> Path:
+    override = os.environ.get("CDP_REROUTE_POLICY_PATH", "").strip()
+    if override:
+        return Path(override)
+    return _DEFAULT_POLICY_PATH
 
 
 def _load_block() -> dict[str, Any]:
-    data = yaml.safe_load(_POLICY_PATH.read_text(encoding="utf-8"))
+    path = _policy_path()
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise SystemExit(f"invalid policy file: {_POLICY_PATH}")
+        raise SystemExit(f"invalid policy file: {path}")
     block = data.get("cdp_reroute")
     if not isinstance(block, dict):
         raise SystemExit("cdp_reroute block missing from route_policy.yaml")
     return block
 
 
+def _parse_expires_at_utc(raw: str) -> datetime:
+    text = raw.strip()
+    if not text:
+        raise SystemExit("expires_at must be non-empty ISO-8601 UTC")
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise SystemExit(f"expires_at unparseable: {raw!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _require_future_expires_at(expires_at: str) -> str:
+    expires = _parse_expires_at_utc(expires_at)
+    now = datetime.now(UTC)
+    if expires <= now:
+        raise SystemExit(
+            f"expires_at must be strictly future UTC (got {expires.isoformat()})"
+        )
+    return expires.isoformat().replace("+00:00", "Z")
+
+
 def cmd_status() -> int:
     block = _load_block()
     print(f"cdp_reroute.enabled={block.get('enabled')!r}")
+    print(f"expires_at={block.get('expires_at')!r}")
     print(f"target_model={block.get('target_model')!r}")
     print(f"effort={block.get('effort')!r}")
     print(f"match_prefixes={block.get('match_prefixes')!r}")
@@ -39,30 +83,65 @@ def cmd_status() -> int:
 
 
 def _set_enabled(enabled: bool) -> None:
-    text = _POLICY_PATH.read_text(encoding="utf-8")
+    path = _policy_path()
+    text = path.read_text(encoding="utf-8")
     if "cdp_reroute:" not in text:
         raise SystemExit("cdp_reroute block missing from route_policy.yaml")
     repl = rf"\g<1>{'true' if enabled else 'false'}"
     updated, count = _ENABLED_RE.subn(repl, text, count=1)
     if count != 1:
         raise SystemExit("could not locate cdp_reroute.enabled in route_policy.yaml")
-    _POLICY_PATH.write_text(updated, encoding="utf-8")
+    path.write_text(updated, encoding="utf-8")
 
 
-def cmd_set(enabled: bool) -> int:
-    _set_enabled(enabled)
-    print(f"cdp_reroute.enabled={enabled}")
+def _set_expires_at(iso: str) -> None:
+    path = _policy_path()
+    text = path.read_text(encoding="utf-8")
+    if "cdp_reroute:" not in text:
+        raise SystemExit("cdp_reroute block missing from route_policy.yaml")
+    repl = rf"\g<1>{iso}"
+    updated, count = _EXPIRES_AT_RE.subn(repl, text, count=1)
+    if count != 1:
+
+        def _insert(m: re.Match[str]) -> str:
+            return f"{m.group(1)}  expires_at: {iso}\n"
+
+        updated, count = _EXPIRES_AT_INSERT_RE.subn(_insert, text, count=1)
+        if count != 1:
+            raise SystemExit(
+                "could not locate cdp_reroute.enabled to insert expires_at"
+            )
+    path.write_text(updated, encoding="utf-8")
+
+
+def cmd_set(enabled: bool, *, expires_at: str | None = None) -> int:
+    if enabled:
+        if not expires_at:
+            raise SystemExit("on requires --expires-at (strictly future ISO-8601 UTC)")
+        iso = _require_future_expires_at(expires_at)
+        _set_enabled(True)
+        _set_expires_at(iso)
+        print("cdp_reroute.enabled=True")
+        print(f"expires_at={iso!r}")
+        return 0
+    _set_enabled(False)
+    print("cdp_reroute.enabled=False")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="CDP global reroute toggle")
     parser.add_argument("command", choices=["status", "on", "off"])
+    parser.add_argument(
+        "--expires-at",
+        dest="expires_at",
+        help="ISO-8601 UTC expiry (required for on)",
+    )
     args = parser.parse_args()
     if args.command == "status":
         return cmd_status()
     if args.command == "on":
-        return cmd_set(True)
+        return cmd_set(True, expires_at=args.expires_at)
     return cmd_set(False)
 
 

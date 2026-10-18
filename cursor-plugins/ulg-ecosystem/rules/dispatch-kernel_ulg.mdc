@@ -11,10 +11,9 @@ apply_tier: required_gate
 **Tier B** (investigate/confer/sketch/review): scoped recon/Explore when ≥3 unknown loci until judgment closes; 0 implement writes or service mutations; split mechanical remainder via `nest_under` or parent return.
 **Tier C** leaf homes omit this rule.
 
-## Read side — Explore-first
+## Read side — `team_dispatch` over `Task`
 
-`loci_unknown ∨ ≥3_files ∨ 2nd_speculative_grep ⇒ Task(subagent_type="explore")` (parallel when ≥2
-independent questions). Explore ≡ Cursor subagent; in-seat Grep/Read is not Explore. Omit `model=`.
+`loci_unknown ∨ ≥3_files ∨ 2nd_speculative_grep ⇒ team_dispatch(op="generate", seat="cursor-sdk", lane="B")`. Per `lean-dispatch`, use `team_dispatch` (`seat=cursor-sdk`, `cdp/*`, `cursor/*`), ¬ Cursor `Task` subagents (noisy, costly, cold gaps; `team_dispatch` expands pool).
 Sparse work item (`density_triage` unset or `recon_pending`) ⇒ recon front-half before **implement**
 (`require_implement_ready` guards implement, not conductor spawn). Exempt: `mechanical`/`trivial`, or dense
 spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ service sweep (`[quality:bug-class-sweep]`).
@@ -30,7 +29,7 @@ detail: skill `consult-routing` § Dispatch kernel — relocated prose.
 
 ## Hard walls
 
-- `anthropic/*` **PROHIBITED**. Operator-named availability wins (`consult-routing` § Cursor-sdk generate shape).
+- `anthropic/*` API admitted when credit-healthy (prohibition retired 2026-10-18). Detail: `consult-routing` § Anthropic-family substrate.
 - Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
 - Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.

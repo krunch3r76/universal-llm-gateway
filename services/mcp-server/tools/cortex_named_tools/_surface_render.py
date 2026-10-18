@@ -91,6 +91,19 @@ def hidden_enum_call_contract() -> str:
     )
 
 
+def edge_call_contract() -> str:
+    """Return the seat-facing contract string for `edge_create`, `edges` filters, and `related`."""
+    return (
+        "edge_create: session_id ('{seat}-YYYY-MM-DD-HHMMSS-{3hex}' from "
+        "cortex_brief(seat=…)), agent, from_node, to_node ('assertion:N' | "
+        "'type:slug'), edge_type (see edge_types; incl. relates_to, "
+        "same_class_as, duplicates); optional strength 0..1, context. "
+        "edges filters: node|from_node|to_node|edge_type|edge_type_exclude|"
+        "agent|session_id|include_retired|since_hours|limit (unknown key → 422). "
+        "friction/assert accept related=[{assertion_id|to_node, edge_type?}]."
+    )
+
+
 def _tier1_block(spec: CortexSurfaceSpec) -> str:
     lines = ["Write/session Tier-1 cores (reconciled fol_descriptor):"]
     for op in sorted(spec.tier1_rows):
@@ -125,6 +138,7 @@ def render_cortex_tool_description(
         _CONSTANT_CORE.rstrip(),
         friction_category_call_contract(),
         hidden_enum_call_contract(),
+        edge_call_contract(),
     ]
     if surface == "life":
         parts.append(_tier1_block(spec))

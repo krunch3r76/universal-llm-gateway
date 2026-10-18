@@ -22,7 +22,7 @@ from systems.frontier_consult.cursor_sdk_lane_gate import (
     require_cursor_sdk_checkout_lane,
 )
 
-from cortex_store.dispatch_ops.ops_assertions_friction import _op_frictions
+from cortex_store.dispatch_ops.ops_assertions_frictions_read import _op_frictions
 from cortex_store.dispatch_ops.workflow_hints import _WORKFLOW_HINTS
 
 _DISPATCH = re.compile(r"team_dispatch\(([^)]+)\)")
@@ -104,7 +104,7 @@ def test_op_frictions_dispatched_next_uses_contract_not_job(monkeypatch) -> None
         }
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_friction._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     summary = _op_frictions(category="tool_error")

@@ -7,11 +7,12 @@ category: grokbot_checkpoint
 description: >
   Admit, snapshot, succession-seal, card row, CHECKPOINT, FACT, and verify
   poll for one house checkpoint. Seal reads transcribed_ref plus
-  transcribed_sha256 and/or raw_ref plus raw_sha256. verify_resume is read-only.
-  Call shape: MCP pipeline with model grokbot-checkpoint-v1 and
-  options.pipeline_options plus a top-level options.dispatch_thread_id
-  (flat option keys are also accepted). Omitting dispatch_thread_id refuses
-  admit.dispatch_thread_missing. Procedure: CALLER.md.
+  transcribed_sha256 and/or raw_ref plus raw_sha256. harvest_seal ingests
+  staged L0 pages, normalises, adapts, stages L1, then runs the seal graph.
+  verify_resume is read-only. Call shape: MCP pipeline with model
+  grokbot-checkpoint-v1 and options.pipeline_options plus a top-level
+  options.dispatch_thread_id (flat option keys are also accepted). Omitting
+  dispatch_thread_id refuses admit.dispatch_thread_missing. Procedure: CALLER.md.
 output: result
 
 # Serializes per dispatch thread, the same convention as continuity-checkpoint-v1.
@@ -32,27 +33,41 @@ steps:
   - name: admit
     type: grokbot_checkpoint_admit_v1
 
+  - name: harvest_normalise
+    type: grokbot_checkpoint_harvest_normalise_v1
+    condition: "options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped')"
+
+  - name: harvest_adapter
+    type: grokbot_checkpoint_harvest_adapter_v1
+    condition: "options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped')"
+
+  - name: harvest_pour
+    type: grokbot_checkpoint_harvest_pour_v1
+    condition: "options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped')"
+
   - name: source
     type: grokbot_checkpoint_source_v1
     condition: "options.get('mode') == 'seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped')"
 
   - name: envelope
     type: grokbot_checkpoint_envelope_v1
-    condition: "options.get('mode') == 'seal' and source.json.get('messages_sha256') and source.json.get('refused') is None and not source.json.get('_skipped')"
+    condition: "(options.get('mode') == 'seal' and source.json.get('messages_sha256') and source.json.get('refused') is None and not source.json.get('_skipped')) or (options.get('mode') == 'harvest_seal' and harvest_pour.json.get('messages_sha256') and harvest_pour.json.get('refused') is None and not harvest_pour.json.get('_skipped'))"
     reads_from:
       - step: source
+        fields: [json]
+      - step: harvest_pour
         fields: [json]
 
   - name: seal
     type: grokbot_checkpoint_seal_v1
-    condition: "options.get('mode') == 'seal' and envelope.json.get('snapshot_uri') and envelope.json.get('refused') is None and not envelope.json.get('_skipped')"
+    condition: "(options.get('mode') in ('seal', 'harvest_seal')) and envelope.json.get('snapshot_uri') and envelope.json.get('refused') is None and not envelope.json.get('_skipped')"
     reads_from:
       - step: envelope
         fields: [json]
 
   - name: card
     type: grokbot_checkpoint_card_v1
-    condition: "(options.get('mode') == 'light' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped')) or (options.get('mode') == 'seal' and seal.json.get('session_id') and not seal.json.get('_skipped') and seal.json.get('refused') is None)"
+    condition: "(options.get('mode') == 'light' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped')) or (options.get('mode') in ('seal', 'harvest_seal') and seal.json.get('session_id') and not seal.json.get('_skipped') and seal.json.get('refused') is None)"
     reads_from:
       - step: seal
         fields: [json]
@@ -61,7 +76,7 @@ steps:
 
   - name: post
     type: grokbot_checkpoint_post_v1
-    condition: "options.get('mode') == 'seal' and options.get('root_thread') and seal.json.get('session_id') and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped')"
+    condition: "options.get('mode') in ('seal', 'harvest_seal') and options.get('root_thread') and seal.json.get('session_id') and seal.json.get('refused') is None and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped')"
     reads_from:
       - step: seal
         fields: [json]
@@ -70,7 +85,7 @@ steps:
 
   - name: fact
     type: grokbot_checkpoint_fact_v1
-    condition: "(options.get('mode') == 'light' and card.json.get('written_sha256') and not card.json.get('_skipped')) or (options.get('mode') == 'seal' and seal.json.get('session_id') and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped'))"
+    condition: "(options.get('mode') == 'light' and card.json.get('written_sha256') and not card.json.get('_skipped')) or (options.get('mode') in ('seal', 'harvest_seal') and seal.json.get('session_id') and seal.json.get('refused') is None and card.json.get('written_sha256') and not seal.json.get('_skipped') and not card.json.get('_skipped'))"
     reads_from:
       - step: seal
         fields: [json]
@@ -79,7 +94,7 @@ steps:
 
   - name: await_verify
     type: grokbot_checkpoint_await_verify_v1
-    condition: "(options.get('mode') == 'light' and fact.json.get('turn') and not fact.json.get('_skipped')) or (options.get('mode') == 'seal' and seal.json.get('session_id') and fact.json.get('turn') and not seal.json.get('_skipped') and not fact.json.get('_skipped'))"
+    condition: "(options.get('mode') == 'light' and fact.json.get('turn') and not fact.json.get('_skipped')) or (options.get('mode') in ('seal', 'harvest_seal') and seal.json.get('session_id') and fact.json.get('turn') and not seal.json.get('_skipped') and not fact.json.get('_skipped'))"
     reads_from:
       - step: seal
         fields: [json]
@@ -88,12 +103,18 @@ steps:
 
   - name: verify_resume
     type: grokbot_checkpoint_verify_resume_v1
-    condition: "options.get('mode') == 'verify_resume' and admit.json.get('refused') is None"
+    condition: "(options.get('mode') == 'verify_resume' and admit.json.get('refused') is None) or (options.get('mode') == 'harvest_seal' and seal.json.get('session_id') and fact.json.get('turn') and seal.json.get('refused') is None and not seal.json.get('_skipped') and not fact.json.get('_skipped') and (post.get('_skipped') == True or post.get('refused') is None))"
 
   - name: result
     type: grokbot_checkpoint_result_v1
     reads_from:
       - step: admit
+        fields: [json]
+      - step: harvest_normalise
+        fields: [json]
+      - step: harvest_adapter
+        fields: [json]
+      - step: harvest_pour
         fields: [json]
       - step: source
         fields: [json]

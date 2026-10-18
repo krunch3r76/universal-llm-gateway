@@ -23,14 +23,11 @@ from ._friction_charter_attrs import (
     _charter_variant_complete,
     _continuity_variant_complete,
     _friction_anchor_view,
-    _friction_charter_filters,
-    _project_friction_full_items,
-    _project_friction_summary_items,
     _validate_anchor_completeness,
 )
+from ._related_edges import prepare_related_edges, write_related_edges
 from ._shared import (
     _FRICTION_CATEGORIES,
-    _FRICTION_OWNER_TYPES,
     _VALID_CONFIDENCE,
     owner_entity_id,
     owner_type_of,
@@ -43,7 +40,6 @@ from ._write_validation import (
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
-from .workflow_hints import _WORKFLOW_HINTS
 
 # Historical friction default when confidence is omitted or hypothesized.
 # Distinct from CONFIDENCE_WEIGHT["hypothesized"] (0.20) — keep 0.5 so
@@ -237,6 +233,7 @@ def _op_friction(
     defer_enqueue: bool | None = None,
     confidence: str | None = None,
     confidence_score: float | None = None,
+    related: list[dict[str, Any]] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Log a friction assertion; protocol category requires a complete anchor."""
@@ -335,6 +332,17 @@ def _op_friction(
     if isinstance(resolved_owner, dict):
         return resolved_owner
     entity_id = resolved_owner
+    prepared_related = None
+    if related is not None:
+        with cortex_conn() as conn:
+            prepared_related, rel_err = prepare_related_edges(
+                conn,
+                related,
+                session_id=session_id,
+                agent=agent,
+            )
+        if rel_err is not None:
+            return rel_err
     provenance_attrs, prov_err = _build_friction_provenance_attrs(
         charter_root=charter_root,
         window_index=window_index,
@@ -391,6 +399,17 @@ def _op_friction(
             agent=agent,
             anchor_kind=anchor_kind,
         )
+        if prepared_related:
+            assert session_id is not None and agent is not None
+            result.update(
+                write_related_edges(
+                    int(result["item"]["id"]),
+                    prepared_related,
+                    session_id=session_id,
+                    agent=agent,
+                    seeded_by=agent,
+                )
+            )
     return result
 
 
@@ -404,140 +423,11 @@ _op_friction.__doc__ = (
     "Bare seat addresses (web-anthropic, claude-web, claude.ai, cursor, "
     "cursor-sdk) resolve to ai_agent: when that entity exists; a miss names "
     "real service:/agent_skill: owners and does not ask the caller to mint "
-    "a service for the seat."
+    "a service for the seat. "
+    "related=[{assertion_id|to_node, edge_type?, strength?, context?}] creates "
+    "session edges from the new assertion in the same call; requires session_id "
+    "(cortex_brief) and agent."
 )
 
 
-def _anchor_filters_active(
-    *,
-    charter_root: str | None,
-    window_index: int | None,
-    actionable: bool | None,
-    since: str | None,
-    anchor_kind: str | None,
-    anchor_root: str | None,
-    anchor_seq: int | None,
-) -> bool:
-    return any(
-        v is not None
-        for v in (
-            charter_root,
-            window_index,
-            actionable,
-            since,
-            anchor_kind,
-            anchor_root,
-            anchor_seq,
-        )
-    )
-
-
-def _op_frictions(
-    owner: str | None = None,
-    owner_type: str | None = None,
-    service: str | None = None,
-    category: str | None = None,
-    seeded_by: str | None = None,
-    charter_root: str | None = None,
-    window_index: int | None = None,
-    anchor_kind: str | None = None,
-    anchor_root: str | None = None,
-    anchor_seq: int | None = None,
-    actionable: bool | None = None,
-    since: str | None = None,
-    superseded: bool | None = None,
-    limit: int | None = None,
-    intent: str | None = None,
-    include_compaction_pointers: bool = False,
-    **_: object,
-) -> dict[str, Any]:
-    """List open friction assertions across friction-owning entities
-    (service:/agent_skill:/ai_agent:), bracketed [category] claims."""
-    resolved_intent = intent if intent in ("summary", "full") else "summary"
-    if owner_type is not None and owner_type not in _FRICTION_OWNER_TYPES:
-        return {
-            "error": f"Invalid owner_type {owner_type!r}. Must be one of: {list(_FRICTION_OWNER_TYPES)}"
-        }
-    owner_arg = owner if owner is not None else service
-    entity_id = owner_entity_id(owner_arg) if owner_arg else None
-    # Same resolve as _op_friction so list(owner=service:agent_bus) finds rows
-    # written after underscore→hyphen alias (a:37201 review A3). On miss keep
-    # the raw id (empty list) rather than erroring the list path.
-    if entity_id is not None:
-        resolved = _resolve_friction_owner_entity_id(entity_id)
-        if not isinstance(resolved, dict):
-            entity_id = resolved
-    entity_type = owner_type if (owner_type and entity_id is None) else None
-    entity_type_in = (
-        list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
-    )
-    claim_filter = f"[{category}]" if category else None
-    filters_active = _anchor_filters_active(
-        charter_root=charter_root,
-        window_index=window_index,
-        actionable=actionable,
-        since=since,
-        anchor_kind=anchor_kind,
-        anchor_root=anchor_root,
-        anchor_seq=anchor_seq,
-    )
-    fetch_intent = "full" if filters_active else resolved_intent
-    fetch_limit = limit or (50 if fetch_intent == "full" else 7)
-    result = _list_assertions_impl(
-        entity_id=entity_id,
-        entity_id_prefix=None,
-        entity_type=entity_type,
-        entity_type_in=entity_type_in,
-        claim_filter=claim_filter,
-        seeded_by=seeded_by,
-        superseded=False if superseded is None else superseded,
-        limit=fetch_limit,
-        intent=fetch_intent,
-        include_compaction_pointers=include_compaction_pointers,
-    )
-    if result.get("error"):
-        return result
-
-    raw_items: list[dict[str, Any]] = []
-    for item in result.get("items") or []:
-        if isinstance(item, dict):
-            raw_items.append(item)
-        elif hasattr(item, "model_dump"):
-            raw_items.append(item.model_dump(mode="json"))
-
-    if filters_active:
-        filtered = _friction_charter_filters(
-            raw_items,
-            charter_root=charter_root,
-            window_index=window_index,
-            actionable=actionable,
-            since=since,
-            anchor_kind=anchor_kind,
-            anchor_root=anchor_root,
-            anchor_seq=anchor_seq,
-        )
-        if resolved_intent == "summary":
-            result["items"] = _project_friction_summary_items(filtered[: (limit or 7)])
-        else:
-            result["items"] = _project_friction_full_items(filtered[: (limit or 50)])
-        result["intent"] = resolved_intent
-    elif resolved_intent == "summary":
-        pass
-    elif resolved_intent == "full":
-        result["items"] = _project_friction_full_items(raw_items[: (limit or 50)])
-    if not result.get("error"):
-        # Handler-set _next shadows _WORKFLOW_HINTS["frictions"] (dispatch
-        # __init__). Emit the static hint (ticket cycle + friction_close), not a
-        # second inline copy that vocabulary sweeps can miss (a:37439).
-        frictions_next = _WORKFLOW_HINTS["frictions"]
-        if resolved_intent == "summary":
-            result["_next"] = (
-                "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
-                "Full rows: re-call with intent=full. " + frictions_next
-            )
-        else:
-            result["_next"] = frictions_next
-    return result
-
-
-__all__ = ["_op_friction", "_op_frictions"]
+__all__ = ["_list_assertions_impl", "_op_friction"]

@@ -24,7 +24,8 @@ from ..routes.assertions import (
 )
 from ..routes.graph import activate, analyze_impact_semantic
 from ._shared import _VALID_CONFIDENCE
-from .ops_assertions_friction import _op_friction, _op_frictions
+from .ops_assertions_friction import _op_friction
+from .ops_assertions_frictions_read import _op_frictions
 from .ops_assertions_review_queue import _op_review_queue
 from .ops_assertions_update import (
     _op_assertion_get,

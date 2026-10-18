@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "c9229962612d8cb8646e5ac7e01789a2d28fcfc33d60ef894d29a09909527896"
+OPENAPI_SHA256 = "2af6b5da257ffc117f1dda7431b280a1880e53c5cb7a79404f75ababb70c88f1"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -372,7 +372,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "d6fc3800298a31db1502f81aaba5696c6632efd46d4ad20d7b220884bf575957",
+    "@components": "c58ebb370e54d70e93d21b49925a8e9872ccaf1f1b0d3ce6329e28924cc03c4c",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

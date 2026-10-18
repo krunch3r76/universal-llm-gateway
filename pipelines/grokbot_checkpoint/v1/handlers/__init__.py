@@ -9,6 +9,9 @@ from .await_verify import GrokbotCheckpointAwaitVerifyHandler
 from .card import GrokbotCheckpointCardHandler
 from .envelope import GrokbotCheckpointEnvelopeHandler
 from .fact import GrokbotCheckpointFactHandler
+from .harvest_adapter import GrokbotCheckpointHarvestAdapterHandler
+from .harvest_normalise import GrokbotCheckpointHarvestNormaliseHandler
+from .harvest_pour import GrokbotCheckpointHarvestPourHandler
 from .post import GrokbotCheckpointPostHandler
 from .result import GrokbotCheckpointResultHandler
 from .seal import GrokbotCheckpointSealHandler
@@ -24,6 +27,9 @@ _DOMAIN = "grokbot_checkpoint"
 def register_handlers(router: DomainRouter) -> None:
     pairs = (
         ("grokbot_checkpoint_admit_v1", GrokbotCheckpointAdmitHandler),
+        ("grokbot_checkpoint_harvest_normalise_v1", GrokbotCheckpointHarvestNormaliseHandler),
+        ("grokbot_checkpoint_harvest_adapter_v1", GrokbotCheckpointHarvestAdapterHandler),
+        ("grokbot_checkpoint_harvest_pour_v1", GrokbotCheckpointHarvestPourHandler),
         ("grokbot_checkpoint_source_v1", GrokbotCheckpointSourceHandler),
         ("grokbot_checkpoint_envelope_v1", GrokbotCheckpointEnvelopeHandler),
         ("grokbot_checkpoint_seal_v1", GrokbotCheckpointSealHandler),

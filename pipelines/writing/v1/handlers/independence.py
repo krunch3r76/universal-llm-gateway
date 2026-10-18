@@ -32,6 +32,10 @@ def model_family(model_id: str) -> str | None:
     text = (model_id or "").lower()
     if text.startswith("anthropic/"):
         return "anthropic"
+    if text.startswith("google/") or "gemini" in text:
+        return "google"
+    if "ernie" in text:
+        return "ernie"
     if text.startswith("openai/gpt-5"):
         return "openai"
     if text.startswith("cdp/") or "claude" in text:
@@ -109,12 +113,21 @@ class WritingIndependenceHandler(BaseHandler):
         raw_overrides = options.get("model_ref_overrides")
         overrides = raw_overrides if isinstance(raw_overrides, dict) else {}
         models = load_writing_models()
-        draft_step = outputs.get("draft")
+        draft_step = outputs.get("draft") or outputs.get("draft_selector")
         draft_model = None
+        draft_json = None
         if isinstance(draft_step, dict):
             draft_model = draft_step.get("model_id")
+            draft_json = draft_step.get("json")
         elif draft_step is not None:
             draft_model = getattr(draft_step, "model_id", None)
+            draft_json = getattr(draft_step, "json", None)
+        if isinstance(draft_json, dict) and draft_json.get("selected_step"):
+            sel = outputs.get(draft_json["selected_step"])
+            if isinstance(sel, dict):
+                draft_model = sel.get("model_id") or draft_model
+            elif sel is not None:
+                draft_model = getattr(sel, "model_id", None) or draft_model
         writer = (
             self._writer_model
             or (str(draft_model) if draft_model else None)
@@ -155,11 +168,27 @@ class WritingIndependenceHandler(BaseHandler):
             or (str(cdp_model) if reviewer_seat == "cdp" and cdp_model else None)
             or overrides.get("review")
             or overrides.get("reviewer")
+            or overrides.get("verifier")
+            or models.get("verifier")
             or models.get("reviewer")
             or ""
         )
         writer_family = model_family(writer)
         reviewer_family = model_family(reviewer)
+        if str(reviewer).lower().startswith("anthropic/"):
+            independence = None
+            refused = "independence_violation"
+            return _step(
+                {
+                    "ok": False,
+                    "refused": refused,
+                    "independence": independence,
+                    "writer_model": writer,
+                    "reviewer_model": reviewer,
+                    "writer_family": writer_family,
+                    "reviewer_family": reviewer_family,
+                }
+            )
         if writer_family and reviewer_family and writer_family != reviewer_family:
             independence: str | None = "full"
             refused = None

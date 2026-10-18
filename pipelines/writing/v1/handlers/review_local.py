@@ -102,4 +102,7 @@ class WritingReviewLocalHandler(BaseHandler):
             return _step({"ok": False})
         if not isinstance(parsed, dict):
             return _step({"ok": False})
+        if "clauses" not in parsed:
+            parsed = dict(parsed)
+            parsed["clauses"] = []
         return _step(parsed)

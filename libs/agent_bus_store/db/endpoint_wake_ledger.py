@@ -10,10 +10,16 @@ from typing import Any
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 
 from .connection import connect, write_connect
+from .lane_associations import get_current_lane
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
+
+
+def _mailbox_agent_sql(left: str, right: str) -> str:
+    sm = _STAGE_MANAGER_SQL
+    return f"({left}.agent={right}.agent OR (lower(trim({left}.agent)) IN ({sm}) AND lower(trim({right}.agent)) IN ({sm})))"
 
 
 class WakeConflictError(Exception):
@@ -29,12 +35,6 @@ def _now(now: str | None) -> str:
 def _shift(stamp: str, seconds: int) -> str:
     base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    return {k: row[k] for k in row.keys()}
 
 
 def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str, Any]:
@@ -117,6 +117,82 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     return None
 
 
+def _group_pending_rows(
+    conn: sqlite3.Connection, group: sqlite3.Row, retry_before: str
+) -> list[sqlite3.Row]:
+    ga, tid = str(group["agent"]), group["thread_id"]
+    filt = "AND state='pending' AND (finished_at IS NULL OR finished_at<=?)"
+    if normalize_bus_address(ga) in STAGE_MANAGER_ADDRESSES:
+        q = (
+            f"SELECT * FROM endpoint_wake_ledger WHERE thread_id=? {filt} "
+            f"AND (agent=? OR lower(trim(agent)) IN ({_STAGE_MANAGER_SQL})) "
+            "ORDER BY turn_id"
+        )
+        return conn.execute(q, (tid, retry_before, ga)).fetchall()
+    q = (
+        f"SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? {filt} "
+        "ORDER BY turn_id"
+    )
+    return conn.execute(q, (ga, tid, retry_before)).fetchall()
+
+
+def resolve_subscription_for_thread(
+    agent: str, thread_id: str
+) -> tuple[str, dict[str, Any]] | None:
+    """Best subscribed row for ``thread_id``, including parent-thread scope."""
+    parent_thread: str | None = None
+    try:
+        lane = get_current_lane(thread_id=thread_id)
+        parent_thread = lane.get("parent_thread")
+    except LookupError:
+        parent_thread = None
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.* FROM agent_endpoint_subscriptions s
+            WHERE s.agent = ?
+              AND s.id IN (
+                SELECT MAX(id) FROM agent_endpoint_subscriptions
+                WHERE agent = ?
+                GROUP BY thread_scope
+              )
+              AND s.state = 'subscribed'
+              AND (
+                s.thread_scope = '*'
+                OR s.thread_scope = ?
+                OR (? IS NOT NULL AND s.thread_scope = ?)
+              )
+            ORDER BY
+              CASE
+                WHEN s.thread_scope = ? THEN 0
+                WHEN s.thread_scope = '*' THEN 2
+                ELSE 1
+              END,
+              s.id DESC
+            LIMIT 1
+            """,
+            (
+                agent,
+                agent,
+                thread_id,
+                parent_thread,
+                parent_thread,
+                thread_id,
+            ),
+        ).fetchall()
+    if not rows:
+        return None
+    row = dict(rows[0])
+    scope = str(row.get("thread_scope") or "")
+    if scope == thread_id:
+        route = "exact"
+    elif scope == "*":
+        route = "wildcard"
+    else:
+        route = "parent"
+    return route, row
+
+
 def claim_due_wakes(
     debounce_s: int = 600,
     claim_ttl_s: int = 300,
@@ -142,12 +218,11 @@ def claim_due_wakes(
               AND (p.finished_at IS NULL OR p.finished_at<=?)
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger d
-                WHERE d.agent=p.agent AND d.thread_id=p.thread_id
+                WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
                   AND d.state='delivered' AND d.finished_at>?
                   AND NOT EXISTS (
                     SELECT 1 FROM turns t
-                    WHERE t.thread=p.thread_id
-                      AND datetime(t.created_at) > datetime(d.finished_at)
+                    WHERE datetime(t.created_at) > datetime(d.finished_at)
                       AND (
                         lower(trim(t.from_agent))=lower(trim(p.agent))
                         OR (
@@ -160,15 +235,19 @@ def claim_due_wakes(
                         )
                       )
                   )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turns tr
+                    WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                  )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger u
-                WHERE u.agent=p.agent AND u.thread_id=p.thread_id
+                WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
                   AND u.state='unknown' AND u.claimed_at>?
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger c
-                WHERE c.agent=p.agent AND c.thread_id=p.thread_id
+                WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
                   AND c.state='claimed' AND c.claimed_at>?
               )
             GROUP BY agent, thread_id
@@ -178,12 +257,7 @@ def claim_due_wakes(
         ).fetchone()
         if group is None:
             return {"wake_id": None, "rows": []}
-        rows = conn.execute(
-            "SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? "
-            "AND state='pending' AND (finished_at IS NULL OR finished_at<=?) "
-            "ORDER BY turn_id",
-            (group["agent"], group["thread_id"], retry_before),
-        ).fetchall()
+        rows = _group_pending_rows(conn, group, retry_before)
         skipped: list[dict[str, Any]] = []
         claimable: list[sqlite3.Row] = []
         for row in rows:

@@ -7,6 +7,7 @@ import asyncio
 import sqlite3
 import subprocess
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 from deploy_identity.mcp_edge_events import (
@@ -16,8 +17,10 @@ from deploy_identity.mcp_edge_events import (
 )
 
 from scripts.model_manager.ui.controller.grokbot_context_hop_io import (
+    DEFAULT_CDP_PORTS,
     hop_reply_argv,
     probe_grok_agent_context,
+    probe_ports,
     reply_context_hop,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
@@ -80,6 +83,150 @@ def test_ac1_probe_returns_row_keys() -> None:
         "updated_at_ms",
     }
     assert rows[0]["lastMessageId"] == "t3s4"
+
+
+def test_ac1b_context_js_updated_at_fallback_chain() -> None:
+    io_path = Path(__file__).with_name("grokbot_context_hop_io.py")
+    text = io_path.read_text(encoding="utf-8")
+    assert "r.updatedAt" in text
+    assert "r.lastActivityAt" in text
+    assert "r.updatedAtMs" in text
+
+
+def test_ac1c_probe_default_multi_port_dedupe_and_tolerate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ports_probed: list[int] = []
+
+    def fake_resolve(cdp_port: int, *, timeout_s: float) -> str:
+        del timeout_s
+        ports_probed.append(cdp_port)
+        if cdp_port == 9339:
+            raise URLError("offline")
+        return f"ws://127.0.0.1:{cdp_port}"
+
+    async def fake_eval(
+        ws_url: str,
+        expression: str,
+        *,
+        await_promise: bool = True,
+        timeout_s: float = 30.0,
+    ) -> list[dict[str, object]]:
+        del expression, await_promise, timeout_s
+        if ws_url.endswith(":9340"):
+            return [
+                {
+                    "agent_id": "dup",
+                    "name": "low-ts",
+                    "lastMessageId": "t1s1",
+                    "is_running": False,
+                    "updated_at_ms": 50,
+                },
+                {
+                    "agent_id": "only-9340",
+                    "name": "gc1",
+                    "lastMessageId": "t2s2",
+                    "is_running": True,
+                    "updated_at_ms": 500,
+                },
+            ]
+        return []
+
+    monkeypatch.setattr("cursor_bridge.grok_computer._resolve_ws_url", fake_resolve)
+    monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
+
+    rows = asyncio.run(probe_grok_agent_context())
+    assert DEFAULT_CDP_PORTS == (9340, 9339)
+    assert ports_probed == [9340, 9339]
+    by_id = {str(r["agent_id"]): r for r in rows}
+    assert by_id["only-9340"]["updated_at_ms"] == 500
+    assert by_id["dup"]["updated_at_ms"] == 50
+
+
+def test_probe_ports_skips_runtime_error_and_falls_back_to_9339(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probed_ports: list[int] = []
+
+    def fake_resolve(cdp_port: int, *, timeout_s: float) -> str:
+        del timeout_s
+        probed_ports.append(cdp_port)
+        return f"ws://127.0.0.1:{cdp_port}"
+
+    async def fake_eval(
+        ws_url: str,
+        expression: str,
+        *,
+        await_promise: bool = True,
+        timeout_s: float = 30.0,
+    ) -> list[dict[str, object]]:
+        del expression, await_promise, timeout_s
+        if ws_url.endswith(":9340"):
+            raise RuntimeError(
+                "grok-bot-cdp list-agents failed on port 9340 (rc=1)"
+            )
+        return [
+            {
+                "agent_id": "gc1",
+                "name": "Stage Manager",
+                "lastMessageId": "t4s1",
+                "is_running": False,
+                "updated_at_ms": _FRESH,
+                "loaded_entry_count": 2,
+            }
+        ]
+
+    monkeypatch.setattr("cursor_bridge.grok_computer._resolve_ws_url", fake_resolve)
+    monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
+
+    rows = asyncio.run(probe_ports())
+    assert probed_ports == [9340, 9339]
+    assert len(rows) == 1
+    assert rows[0]["agent_id"] == "gc1"
+
+
+def test_ac1d_probe_dedup_keeps_highest_updated_at_ms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_resolve(cdp_port: int, *, timeout_s: float) -> str:
+        del timeout_s
+        return f"ws://127.0.0.1:{cdp_port}"
+
+    async def fake_eval(
+        ws_url: str,
+        expression: str,
+        *,
+        await_promise: bool = True,
+        timeout_s: float = 30.0,
+    ) -> list[dict[str, object]]:
+        del expression, await_promise, timeout_s
+        if ws_url.endswith(":9340"):
+            return [
+                {
+                    "agent_id": "dup",
+                    "name": "low-ts",
+                    "lastMessageId": "t1s1",
+                    "is_running": False,
+                    "updated_at_ms": 50,
+                }
+            ]
+        return [
+            {
+                "agent_id": "dup",
+                "name": "high-ts",
+                "lastMessageId": "t9s9",
+                "is_running": True,
+                "updated_at_ms": 200,
+            }
+        ]
+
+    monkeypatch.setattr("cursor_bridge.grok_computer._resolve_ws_url", fake_resolve)
+    monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
+
+    rows = asyncio.run(probe_grok_agent_context())
+    assert len(rows) == 1
+    assert rows[0]["updated_at_ms"] == 200
+    assert rows[0]["name"] == "high-ts"
 
 
 def test_ac2_thresholds_retired_stale_and_loaded_count() -> None:
