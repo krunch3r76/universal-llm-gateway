@@ -463,3 +463,62 @@ def test_debounce_clears_when_delivered_turn_marked_read(db: TestClient) -> None
     assert w2["wake_id"] is not None
     assert [r["turn_id"] for r in w2["rows"] if r.get("state") == "claimed"] == [b_id]
 
+
+def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) -> None:
+    """Parent-scoped Impresario subscription must cover child-lane CLOSEOUT turns."""
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_subscription_for_thread
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    parent = create_thread(thread_id=None, slug="root-xvfb")
+    child = create_thread(thread_id=None, slug="lane-sdk")
+    assert parent is not None and child is not None
+    parent_id, child_id = str(parent["id"]), str(child["id"])
+    associate_lane(
+        thread_id=child_id,
+        parent_thread_id=parent_id,
+        lane_role="sub_mission",
+        bound_by="test",
+    )
+    subscribe_endpoint(
+        agent="impresario",
+        thread_scope=parent_id,
+        surface="cursor",
+        display="8",
+        title=f"{parent_id} continuity",
+        agent_id="glass-agent-1",
+    )
+    resolved = resolve_subscription_for_thread("impresario", child_id)
+    assert resolved is not None
+    route, row = resolved
+    assert route == "parent"
+    assert row["thread_scope"] == parent_id
+
+    turn_id, _, turn_number, _ = insert_turn(
+        thread=child_id,
+        from_agent="cursor-sdk",
+        to_agent="impresario",
+        subject="CLOSEOUT — lane complete",
+        body="TYPE: CLOSEOUT\nstatus: complete\n",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "impresario",
+                "thread_id": child_id,
+                "turn_id": turn_id,
+                "turn_number": turn_number,
+            }
+        ],
+        now="2020-01-01 14:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 14:00:01")
+    assert claimed["wake_id"] is not None
+    assert claimed["rows"][0]["thread_id"] == child_id
+

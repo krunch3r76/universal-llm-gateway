@@ -24,6 +24,8 @@ _GIW_USAGE_LIVE = os.environ.get(
 )
 _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
+_IDE_BUDGET_RATIO_THRESHOLD = 0.55
+_IDE_TOOL_CALLS_THRESHOLD = 35
 
 # Gear-3 preset successors allowed to spawn without an operator --set override.
 # 10534 blocked implicit *premium* models. Grok 4.7 high / non-fast is the
@@ -342,14 +344,20 @@ def build_budget_block(
     reader can audit the number.
     """
     ratio = used_tokens / window_limit_tokens if window_limit_tokens else 0.0
+    tool_calls = int(basis.get("tool_calls") or 0)
     # resume_match_count rides in basis for audit only; seat_lock is the stop gate.
     ide_bound = source != "ide.transcript" or basis.get("holder_basis") == "seat_lock"
+    ratio_threshold = (
+        _IDE_BUDGET_RATIO_THRESHOLD if source == "ide.transcript" else _BUDGET_RATIO_THRESHOLD
+    )
+    over_ratio = ratio >= ratio_threshold
+    over_tools = source == "ide.transcript" and tool_calls >= _IDE_TOOL_CALLS_THRESHOLD
     stop_class = (
         "CONTEXT_BUDGET"
         if window_limit_tokens
         and source in _SEAT_SCOPED_SOURCES
         and ide_bound
-        and ratio >= _BUDGET_RATIO_THRESHOLD
+        and (over_ratio or over_tools)
         else None
     )
     return {

@@ -10,6 +10,7 @@ from typing import Any
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 
 from .connection import connect, write_connect
+from .lane_associations import get_current_lane
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
@@ -133,6 +134,57 @@ def _group_pending_rows(
         "ORDER BY turn_id"
     )
     return conn.execute(q, (ga, tid, retry_before)).fetchall()
+
+
+def resolve_subscription_for_thread(
+    agent: str, thread_id: str
+) -> tuple[str, dict[str, Any]] | None:
+    """Best subscribed row for ``thread_id``, including parent-thread scope."""
+    parent_thread: str | None = None
+    try:
+        lane = get_current_lane(thread_id=thread_id)
+        parent_thread = lane.get("parent_thread")
+    except LookupError:
+        parent_thread = None
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.* FROM agent_endpoint_subscriptions s
+            WHERE s.agent = ?
+              AND s.state = 'subscribed'
+              AND (
+                s.thread_scope = '*'
+                OR s.thread_scope = ?
+                OR (? IS NOT NULL AND s.thread_scope = ?)
+              )
+            ORDER BY
+              CASE
+                WHEN s.thread_scope = ? THEN 0
+                WHEN s.thread_scope = '*' THEN 2
+                ELSE 1
+              END,
+              s.id DESC
+            LIMIT 1
+            """,
+            (
+                agent,
+                thread_id,
+                parent_thread,
+                parent_thread,
+                thread_id,
+            ),
+        ).fetchall()
+    if not rows:
+        return None
+    row = dict(rows[0])
+    scope = str(row.get("thread_scope") or "")
+    if scope == thread_id:
+        route = "exact"
+    elif scope == "*":
+        route = "wildcard"
+    else:
+        route = "parent"
+    return route, row
 
 
 def claim_due_wakes(

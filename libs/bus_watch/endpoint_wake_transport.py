@@ -129,10 +129,38 @@ class StoreClient:
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
-        exact = next((r for r in rows if r.get("thread_scope") == thread_id), None)
-        if exact:
-            return "exact", exact
-        wild = next((r for r in rows if r.get("thread_scope") == "*"), None)
-        if wild:
-            return "wildcard", wild
-        return None
+        parent_thread: str | None = None
+        try:
+            payload_lane = self._bus("GET", f"/threads/{thread_id}/lane-current")
+            if isinstance(payload_lane, dict):
+                parent_thread = payload_lane.get("parent_thread")
+        except Exception:
+            parent_thread = None
+
+        def _rank(scope: str) -> int:
+            if scope == thread_id:
+                return 0
+            if scope == "*":
+                return 2
+            if parent_thread and scope == parent_thread:
+                return 1
+            return 99
+
+        subscribed = [r for r in rows if r.get("state") == "subscribed"]
+        candidates = [
+            r
+            for r in subscribed
+            if r.get("thread_scope") in {thread_id, "*"}
+            or (parent_thread and r.get("thread_scope") == parent_thread)
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda r: (_rank(str(r.get("thread_scope") or "")), -int(r.get("id") or 0)))
+        scope = str(best.get("thread_scope") or "")
+        if scope == thread_id:
+            kind = "exact"
+        elif scope == "*":
+            kind = "wildcard"
+        else:
+            kind = "parent"
+        return kind, best
