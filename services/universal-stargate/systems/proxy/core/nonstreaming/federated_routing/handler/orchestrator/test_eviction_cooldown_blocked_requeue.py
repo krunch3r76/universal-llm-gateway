@@ -43,6 +43,7 @@ from systems.proxy.core.nonstreaming.federated_routing.wait_logic import (  # no
 from systems.routing.selection.decision.eviction_cooldown_policy import (  # noqa: E402
     CooldownOverrideKey,
     clear_cooldown_override_tracker,
+    oscillation_blocks_override,
     oscillation_hold_remaining_s,
     record_cooldown_override,
 )
@@ -56,6 +57,8 @@ from systems.routing.selection.types import Gateway  # noqa: E402
 
 GEMMA = ModelId.parse("gemma-3-27b-q4-0-8192")
 TARGET = ModelId.parse("qwen3-32b-awq-16384")
+MODEL_A = ModelId.parse("hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid")
+MODEL_B = ModelId.parse("ernie-4-5-21b-a3b-pt-q8-0-65536")
 
 
 @dataclass
@@ -785,3 +788,170 @@ async def test_config_blocked_does_not_requeue(
     wait_mock.assert_not_awaited()
     assert load_orchestrator.load_calls == []
     assert exc_info.value.detail["data"]["reason"] == "missing_federation_forwarder"
+
+
+@pytest.mark.asyncio
+async def test_abab_swap_inside_120s_holds_then_proceeds_without_early_sticky(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A→B→A→B oscillation within 120s waits out holds under 300s, depth stays <3."""
+    clock = {"t": 5_000.0}
+
+    def _mono() -> float:
+        return clock["t"]
+
+    monkeypatch.setattr(time, "monotonic", _mono)
+    monkeypatch.setattr(
+        "systems.routing.selection.decision.eviction_cooldown_policy.time.monotonic",
+        _mono,
+    )
+
+    unload_calls: list[Any] = []
+    forwarder = _FakeForwarder()
+
+    async def _unload(**kwargs: Any) -> dict[str, str]:
+        unload_calls.append(kwargs)
+        return {"status": "ok"}
+
+    forwarder.forward_model_unload_request = _unload  # type: ignore[method-assign]
+
+    load_orchestrator = _FakeLoadOrchestrator()
+    manager = _FakeFederatedManager(
+        [
+            SimpleNamespace(
+                gateway_id="edge-jupiter-gateway",
+                dispatchable=True,
+                available_models=frozenset({MODEL_A, MODEL_B, GEMMA}),
+            )
+        ]
+    )
+
+    swap_sequence = [
+        (MODEL_B, MODEL_A),
+        (MODEL_A, MODEL_B),
+        (MODEL_B, MODEL_A),
+        (MODEL_A, MODEL_B),
+    ]
+    exec_log: list[tuple[str, str]] = []
+
+    def _trace_for(target: ModelId, victim: ModelId) -> DecisionTrace:
+        return DecisionTrace(
+            model_id=str(target),
+            original_model_id=None,
+            request_id="req-abab",
+            candidates=(
+                GatewayCandidate(
+                    gateway=_gateway(loaded=frozenset({victim})),
+                    tier=FeasibilityTier.T2_FEASIBLE_EVICT,
+                    eviction_plan=EvictionPlanSummary(
+                        models_to_evict=frozenset({victim}),
+                        freed_vram_mb=12_000,
+                        freed_ram_mb=0,
+                        estimated_cost=-50.0,
+                        cooldown_override_pending=True,
+                        cooldown_override_victim_id=str(victim),
+                        cooldown_override_remaining_s=30.0,
+                        trigger_model_id=str(target),
+                    ),
+                ),
+            ),
+            selection_tier=FeasibilityTier.T2_FEASIBLE_EVICT,
+            selection_reason="test-abab",
+        )
+
+    async def _exec_realistic(**kwargs: Any) -> Any:
+        trace = kwargs["trace"]
+        target = ModelId.parse(trace.model_id)
+        victim = next(iter(trace.candidates[0].eviction_plan.models_to_evict))
+        exec_log.append((str(target), str(victim)))
+        key = CooldownOverrideKey(
+            gateway_id="edge-jupiter-gateway",
+            victim_model_id=str(victim),
+        )
+        if oscillation_blocks_override(
+            key, window_s=120.0, now=clock["t"]
+        ):
+            remaining = oscillation_hold_remaining_s(key, now=clock["t"])
+            return eviction_mod.MasterEvictionResult(
+                outcome=eviction_mod.MasterEvictionOutcome.BLOCKED,
+                reason="cooldown_oscillation_breaker",
+                retry_after_s=max(1.0, remaining),
+                verdict_class="insufficient_transient",
+                gateway_id="edge-jupiter-gateway",
+                victim_model_id=str(victim),
+                requester="req-abab",
+            )
+        record_cooldown_override(key, now=clock["t"])
+        return eviction_mod.MasterEvictionResult(
+            outcome=eviction_mod.MasterEvictionOutcome.EVICTED,
+            gateway_id="edge-jupiter-gateway",
+            requester="req-abab",
+        )
+
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        _exec_realistic,
+    )
+
+    reselected = _gateway(loaded=frozenset())
+
+    async def _wait_advance_hold(**kwargs: Any) -> Any:
+        hold_key = kwargs.get("cooldown_hold_key")
+        if hold_key is not None:
+            hold_s = oscillation_hold_remaining_s(hold_key, now=clock["t"])
+            if hold_s > 0.0:
+                before = len(unload_calls)
+                clock["t"] += hold_s
+                assert len(unload_calls) == before, "evict during positive hold"
+        waited_ms = int(max(0.0, clock["t"] - 5_000.0) * 1000)
+        return reselected, _trace_for(MODEL_B, MODEL_A), waited_ms
+
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", _wait_advance_hold)
+    monkeypatch.setattr(
+        admission_mod, "acquire_admission_token", AsyncMock(return_value=reselected)
+    )
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [reselected],
+    )
+
+    depth_samples: list[int] = []
+
+    for target, victim in swap_sequence:
+        context = SimpleNamespace(
+            request_id="req-abab",
+            selected_model=target,
+            model_sticky=False,
+            capacity_token=_FakeToken("edge-jupiter-gateway"),
+            selected_gateway=None,
+            excluded_gateway_ids=set(),
+            _capacity_deadline_mono=clock["t"] + 300.0,
+            _eviction_requeue_depth=0,
+        )
+        selected = _gateway(loaded=frozenset({victim}))
+        depth_samples.append(
+            int(getattr(context, "_eviction_requeue_depth", 0) or 0)
+        )
+        await load_mod.finalize_selection_and_load(
+            context=context,
+            selected_gateway=selected,
+            trace=_trace_for(target, victim),
+            event_bus=_FakeEventBus(),
+            federated_manager=manager,
+            federated_load_orchestrator=load_orchestrator,
+            federation_forwarder=forwarder,
+            routing_config={"eviction_wait_timeout_s": 300.0},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=target),
+            stability_tracker=SimpleNamespace(get_current_best=lambda _m: None),
+            routing_start_time=time.time(),
+            eviction_cooldown_s=120.0,
+            capacity_pool=_FakeCapacityPool(),
+        )
+        depth_samples.append(
+            int(getattr(context, "_eviction_requeue_depth", 0) or 0)
+        )
+
+    assert clock["t"] - 5_000.0 < 300.0
+    assert all(d < 3 for d in depth_samples)
+    assert len(load_orchestrator.load_calls) == len(swap_sequence)

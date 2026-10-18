@@ -103,8 +103,12 @@ def test_model_family_table(model_id: str, family: str | None) -> None:
 
 def test_shipped_models_are_full_independence() -> None:
     models = independence.load_writing_models()
+    assert models["writer"] == "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+    assert models["reviser"] == "ernie-4-5-21b-a3b-pt-q8-0-65536"
+    assert models["reviewer"] == "qwen3-14b-q4-k-m-40960"
     assert independence.model_family(models["writer"]) == "llama"
     assert independence.model_family(models["reviewer"]) == "qwen"
+    assert independence.model_family(models["reviser"]) is None
     payload = asyncio.run(
         independence.WritingIndependenceHandler().execute(None, _Ctx())
     ).json

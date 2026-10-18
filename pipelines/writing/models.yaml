@@ -1,9 +1,10 @@
 models:
   writer:
-    # Local writer and automatic fallback (Llama family). Same live binding as writing_exemplar rewrite.
+    # G3 bound: Hermes hybrid — model_family(writer) == llama (closed G2 role split).
     model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
   reviser:
-    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    # G3 bound: Ernie 65536 — reviser is not mapped onto qwen or llama families.
+    model: ernie-4-5-21b-a3b-pt-q8-0-65536
   reviewer:
-    # Qwen family: differs from the Llama-family local writer (originator != verifier).
+    # G3 bound: Qwen 40960 — model_family(reviewer) == qwen (originator != verifier).
     model: qwen3-14b-q4-k-m-40960

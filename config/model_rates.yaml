@@ -243,6 +243,16 @@ models:
     output_rate_per_m: 0.0
     source: manual_seed_local
     pinned: true
+  - model_id: ernie-4-5-21b-a3b-pt-q8-0-65536
+    input_rate_per_m: 0.0
+    output_rate_per_m: 0.0
+    source: manual_seed_local
+    pinned: true
+  - model_id: gemma-4-26b-a4b-it-q4-k-m-65536
+    input_rate_per_m: 0.0
+    output_rate_per_m: 0.0
+    source: manual_seed_local
+    pinned: true
   - model_id: local/zero-cost
     input_rate_per_m: 0.0
     output_rate_per_m: 0.0
