@@ -238,13 +238,61 @@ def _agent_bus_db_path() -> Path:
     return _gateway_home() / ".agent-bus" / "messages.db"
 
 
+def _append_subscription_identity(
+    *,
+    agent: str,
+    thread_scope: str,
+    surface: str,
+    display: str,
+    title: str | None,
+    agent_id: str | None,
+    bound_by: str,
+    evidence: str,
+) -> bool:
+    """Append a row under the exact ``agent`` key (mailbox aliases keep their row)."""
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        current = conn.execute(
+            "SELECT state, surface, display, title, agent_id "
+            "FROM agent_endpoint_subscriptions "
+            "WHERE agent=? AND thread_scope=? ORDER BY id DESC LIMIT 1",
+            (agent, thread_scope),
+        ).fetchone()
+        if current is not None and current["state"] == "subscribed":
+            if (
+                str(current["surface"]) == surface
+                and str(current["display"]) == display
+                and (current["title"] or None) == (title or None)
+                and (current["agent_id"] or None) == (agent_id or None)
+            ):
+                return False
+        conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                agent,
+                thread_scope,
+                "subscribed",
+                surface,
+                display,
+                title,
+                agent_id,
+                bound_by,
+                evidence,
+            ),
+        )
+    return True
+
+
 def sync_endpoint_subscriptions(*, updated_by: str | None = None) -> dict[str, Any]:
     """Append subscription rows so DB display matches live grok window routing."""
     from agent_bus_store.db.endpoint_subscriptions import (
         list_subscriptions,
         subscribe_endpoint,
     )
-    from agent_seat.registry import STAGE_MANAGER_ADDRESSES
+    from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 
     state = load_routing()
     config = load_config()
@@ -273,18 +321,34 @@ def sync_endpoint_subscriptions(*, updated_by: str | None = None) -> dict[str, A
                 title = row.get("title") or "insyncerator"
             else:
                 continue
+            scope = str(row["thread_scope"])
+            surface = str(row["surface"])
+            agent_id = row.get("agent_id")
+            if _norm(normalize_bus_address(agent)) != key:
+                if _append_subscription_identity(
+                    agent=agent,
+                    thread_scope=scope,
+                    surface=surface,
+                    display=display,
+                    title=title,
+                    agent_id=agent_id,
+                    bound_by=bound_by,
+                    evidence=evidence,
+                ):
+                    updated.append(f"{agent}:{scope}")
+                continue
             result = subscribe_endpoint(
                 agent=agent,
-                thread_scope=str(row["thread_scope"]),
-                surface=str(row["surface"]),
+                thread_scope=scope,
+                surface=surface,
                 display=display,
                 title=title,
-                agent_id=row.get("agent_id"),
+                agent_id=agent_id,
                 bound_by=bound_by,
                 evidence=evidence,
             )
             if result.get("appended"):
-                updated.append(f"{agent}:{row['thread_scope']}")
+                updated.append(f"{agent}:{scope}")
     finally:
         if prev_db is None:
             os.environ.pop("AGENT_BUS_DB_PATH", None)
