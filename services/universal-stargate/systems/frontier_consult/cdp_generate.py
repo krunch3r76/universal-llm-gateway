@@ -38,7 +38,7 @@ from job_vocab import job_record
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
-from .cdp_cursor_reroute import resolve_cdp_reroute
+from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
     publish_cdp_packet_enriched,
@@ -603,6 +603,9 @@ async def dispatch_cdp_generate(
     )
     declared_parent = parent_thread
     cdp_reroute_active = resolve_cdp_reroute(model) is not None
+    admit_substrate = (
+        REROUTE_ADMIT_SUBSTRATE if cdp_reroute_active else CDP_SUBSTRATE
+    )
     if is_operator_proxy_mission_purpose(purpose):
         parent_thread, mission_kind = default_operator_seat_binding(
             purpose=purpose,
@@ -864,7 +867,7 @@ async def dispatch_cdp_generate(
         "registry_ref": (
             f"job_vocab:{contract}" if contract else "job_vocab:unresolved"
         ),
-        "substrate": CDP_SUBSTRATE,
+        "substrate": admit_substrate,
         "cost_source": "unavailable",
         "prompt_uri": staged.prompt_uri,
         "handoff_status": handoff_fields["handoff_status"],
@@ -873,14 +876,14 @@ async def dispatch_cdp_generate(
             "kind": "dual",
             "execution_id": execution_id,
             "thread_id": str(thread_id),
-            "substrate": CDP_SUBSTRATE,
+            "substrate": admit_substrate,
             "durable": False,
         },
         "capabilities": {
             "role": CDP_REPLY_FROM,
             "resolved_model": model,
             "tool_surface": "cdp",
-            "substrate": CDP_SUBSTRATE,
+            "substrate": admit_substrate,
             # inline_only describes Stargate's relay (sealed prompt, no client-side
             # tool loop) and does not bound the endpoint. The claude.ai session owns
             # its own connectors, so tool access is always true for CDP models.

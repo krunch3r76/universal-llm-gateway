@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,8 +18,18 @@ from systems.frontier_consult.cdp_cursor_reroute import (
 
 pytestmark = pytest.mark.offline
 
+def _future_expires_at(*, days: int = 30) -> str:
+    return (
+        (datetime.now(UTC) + timedelta(days=days))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 _ENABLED_REROUTE_POLICY = {
     "enabled": True,
+    "expires_at": _future_expires_at(),
     "target_model": "cursor/gemini-4-argon",
     "match_prefixes": ["cdp/opus", "cdp/fable"],
 }
@@ -57,11 +68,47 @@ def test_resolve_cdp_reroute_respects_disabled(
         tmp_path,
         {
             "enabled": False,
+            "expires_at": _future_expires_at(),
             "target_model": "cursor/gemini-4-argon",
             "match_prefixes": ["cdp/opus"],
         },
     )
     assert resolve_cdp_reroute("cdp/opus-5") is None
+
+
+def test_resolve_cdp_reroute_requires_future_expires_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Breaks when enabled+prefix match without a future expires_at still reroutes."""
+    base = {
+        "enabled": True,
+        "target_model": "cursor/gemini-4-argon",
+        "match_prefixes": ["cdp/opus"],
+    }
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, base)
+    assert resolve_cdp_reroute("cdp/opus-5") is None
+
+    past = datetime(2020, 1, 1, tzinfo=UTC)
+    _patch_cdp_reroute_route_policy(
+        monkeypatch,
+        tmp_path,
+        {**base, "expires_at": "2019-12-31T23:59:59Z"},
+    )
+    assert resolve_cdp_reroute("cdp/opus-5", now=past) is None
+
+    _patch_cdp_reroute_route_policy(
+        monkeypatch,
+        tmp_path,
+        {**base, "expires_at": "not-an-instant"},
+    )
+    assert resolve_cdp_reroute("cdp/opus-5") is None
+
+    _patch_cdp_reroute_route_policy(
+        monkeypatch,
+        tmp_path,
+        {**base, "expires_at": _future_expires_at()},
+    )
+    assert resolve_cdp_reroute("cdp/opus-5") is not None
 
 
 @pytest.mark.asyncio

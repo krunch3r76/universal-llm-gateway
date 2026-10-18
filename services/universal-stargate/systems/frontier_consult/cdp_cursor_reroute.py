@@ -7,6 +7,7 @@ import hashlib
 import os
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,8 @@ from .cursor_sdk_worker_dispatch import worker_base_url
 
 logger = get_logger(__name__)
 
-_REROUTE_SUBSTRATE = "cursor-sdk-reroute"
+REROUTE_ADMIT_SUBSTRATE = "cursor-sdk-reroute"
+_REROUTE_SUBSTRATE = REROUTE_ADMIT_SUBSTRATE
 _POLL_INTERVAL_S = 3.0
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 _STRUCTURED_CLOSEOUT_MARKER = "### Structured Closeout"
@@ -40,10 +42,35 @@ def load_cdp_reroute_config() -> dict[str, Any]:
     return block if isinstance(block, dict) else {}
 
 
-def resolve_cdp_reroute(model_id: str) -> dict[str, Any] | None:
+def _parse_expires_at_utc(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def resolve_cdp_reroute(
+    model_id: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
     """Return reroute target when policy matches ``model_id``, else ``None``."""
     cfg = load_cdp_reroute_config()
     if cfg.get("enabled") is not True:
+        return None
+    expires = _parse_expires_at_utc(cfg.get("expires_at"))
+    if expires is None:
+        return None
+    clock = (now or datetime.now(UTC)).astimezone(UTC)
+    if clock >= expires:
         return None
     prefixes = cfg.get("match_prefixes") or ["cdp/opus", "cdp/fable"]
     model = (model_id or "").strip()
@@ -296,6 +323,7 @@ async def run_cdp_reroute_via_cursor_sdk(
 
 
 __all__ = [
+    "REROUTE_ADMIT_SUBSTRATE",
     "load_cdp_reroute_config",
     "resolve_cdp_reroute",
     "run_cdp_reroute_via_cursor_sdk",
