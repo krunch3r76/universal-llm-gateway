@@ -250,7 +250,7 @@ def test_ac_p2_5_journal_stops_block_reason(tmp_path: Path) -> None:
     )
     fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=True)
     assert fold is not None
-    assert fold.row_status["G4"] == "CLAIMED"
+    assert fold.row_status["G4"] == "DONE"
     journal = load_journal(slug, files_root=files_root)
     fold_records = [r for r in journal if r.get("reason") == "witness_fold"]
     assert fold_records
@@ -299,6 +299,69 @@ def test_charter_locus_round_trip_recovers_from_journal(tmp_path: Path) -> None:
     assert recovered is not None
     assert recovered[1] == mutated.tip_sha
     assert "**DONE — LANDED + LIVE**" in recovered[0]
+
+
+def test_forward_mutate_tip_rejects_stale_expected_prior_tip_sha(
+    tmp_path: Path,
+) -> None:
+    files_root = tmp_path
+    slug = "tip-cas"
+    birth_scoreboard(slug, scoreboard_body=_sparse_body(), files_root=files_root)
+    prior = read_tip(slug, files_root=files_root)
+    assert prior is not None
+    stale_sha = "0" * 64
+    result = forward_mutate_tip(
+        slug,
+        next_body=_g1_done_body(),
+        seat="fold",
+        dispatch_id=None,
+        reason="witness_fold",
+        rows=("G1",),
+        delta="G1 OPEN→DONE",
+        files_root=files_root,
+        expected_prior_tip_sha=stale_sha,
+    )
+    assert result.rejected_reason == "tip_cas_mismatch"
+    tip = read_tip(slug, files_root=files_root)
+    assert tip is not None
+    assert tip[1] == prior[1]
+
+
+def test_witnessed_done_journal_union_survives_fold(tmp_path: Path) -> None:
+    """Rewind guard uses journal union, not only the current fold witnesses."""
+    files_root = tmp_path
+    slug = "witnessed-union"
+    birth_scoreboard(slug, scoreboard_body=_g1_done_body(), files_root=files_root)
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=read_tip(slug, files_root=files_root)[1],
+            tip_sha=tip_sha256(_g1_done_body()),
+            tip_body=_g1_done_body(),
+            seat="fold",
+            dispatch_id=None,
+            reason="witness_fold",
+            rows=("G1",),
+            delta="G1 witnessed",
+            written_at="2026-10-18T00:00:00+00:00",
+            witnessed_done=("G1",),
+        ),
+        files_root=files_root,
+    )
+    next_body = _g1_done_body().replace("DONE", "CLAIMED")
+    result = forward_mutate_tip(
+        slug,
+        next_body=next_body,
+        seat="fold",
+        dispatch_id=None,
+        reason="witness_fold",
+        rows=("G1",),
+        delta="attempt demote",
+        files_root=files_root,
+        prior_witnessed_done=frozenset({"G1"}),
+    )
+    assert result.rejected_reason is not None
+    assert "rewind" in (result.rejected_reason or "").lower()
 
 
 def test_charter_locus_does_not_reject_bolded_status(tmp_path: Path) -> None:

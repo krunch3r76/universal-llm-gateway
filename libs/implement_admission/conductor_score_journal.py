@@ -329,6 +329,8 @@ def forward_mutate_tip(
     delta: str,
     files_root: Path | None = None,
     prior_witnessed_done: frozenset[str] | None = None,
+    expected_prior_tip_sha: str | None = None,
+    witnessed_done: frozenset[str] | None = None,
 ) -> JournalAppendResult:
     """Forward-only journal-then-tip mutation for a work-item slug."""
     return forward_mutate_tip_at(
@@ -340,7 +342,43 @@ def forward_mutate_tip(
         rows=rows,
         delta=delta,
         prior_witnessed_done=prior_witnessed_done,
+        expected_prior_tip_sha=expected_prior_tip_sha,
+        witnessed_done=witnessed_done,
     )
+
+
+def witnessed_done_from_journal(
+    records: list[dict[str, Any]],
+) -> frozenset[str]:
+    """Union ``witnessed_done`` from post-upgrade witness folds, minus retracts."""
+    done: set[str] = set()
+    retracted: set[str] = set()
+    for record in records:
+        reason = str(record.get("reason") or "")
+        if reason == "witness_retract":
+            for row in record.get("rows") or []:
+                retracted.add(str(row).strip().upper())
+            continue
+        if reason != "witness_fold":
+            continue
+        raw = record.get("witnessed_done")
+        if isinstance(raw, list):
+            done.update(str(row).strip().upper() for row in raw if str(row).strip())
+    done.difference_update(retracted)
+    return frozenset(done)
+
+
+def retracted_rows_from_journal(
+    records: list[dict[str, Any]],
+) -> frozenset[str]:
+    """Row ids demoted by explicit ``witness_retract`` journal records."""
+    retracted: set[str] = set()
+    for record in records:
+        if str(record.get("reason") or "") != "witness_retract":
+            continue
+        for row in record.get("rows") or []:
+            retracted.add(str(row).strip().upper())
+    return frozenset(retracted)
 
 
 def walk_journal_to_tip(

@@ -31,6 +31,7 @@ class JournalRecord:
     rows: tuple[str, ...]
     delta: str
     written_at: str
+    witnessed_done: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,8 @@ def _record_to_json(record: JournalRecord) -> str:
         "written_at": record.written_at,
         "written_by": _WRITER_ID,
     }
+    if record.witnessed_done:
+        payload["witnessed_done"] = list(record.witnessed_done)
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
@@ -202,6 +205,8 @@ def forward_mutate_tip_at(
     rows: tuple[str, ...],
     delta: str,
     prior_witnessed_done: frozenset[str] | None = None,
+    expected_prior_tip_sha: str | None = None,
+    witnessed_done: frozenset[str] | None = None,
 ) -> JournalAppendResult:
     """Forward-only journal-then-tip mutation at ``locus``.
 
@@ -211,6 +216,14 @@ def forward_mutate_tip_at(
     recover_tip_from_journal_at(locus)
     prior = read_tip_at(locus)
     prior_sha = prior[1] if prior else None
+    if expected_prior_tip_sha is not None:
+        expected = expected_prior_tip_sha.strip().lower()
+        if prior_sha is None or prior_sha.lower() != expected:
+            return JournalAppendResult(
+                tip_sha=prior_sha or "",
+                record_count=len(load_journal_at(locus)),
+                rejected_reason="tip_cas_mismatch",
+            )
     if prior is not None and locus.rewind_guard is not None:
         reject = locus.rewind_guard(
             prior_body=prior[0],
@@ -224,6 +237,9 @@ def forward_mutate_tip_at(
                 rejected_reason=reject,
             )
     new_sha = tip_sha256(next_body)
+    witnessed_tuple = (
+        tuple(sorted(witnessed_done)) if witnessed_done is not None else ()
+    )
     append_journal_record_at(
         locus,
         JournalRecord(
@@ -236,6 +252,7 @@ def forward_mutate_tip_at(
             rows=rows,
             delta=delta,
             written_at=datetime.now(UTC).isoformat(),
+            witnessed_done=witnessed_tuple,
         ),
     )
     locus.tip_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +263,39 @@ def forward_mutate_tip_at(
         tip_sha=new_sha,
         reason=reason,
     )
+    if reason == "witness_retract":
+        _emit_impresario_witness_retracted(locus, rows)
     return JournalAppendResult(
         tip_sha=new_sha,
         record_count=len(load_journal_at(locus)),
     )
+
+
+def _work_key_from_locus(locus: ScoreboardLocus) -> str:
+    name = locus.tip_path.name
+    if name.endswith("-scoreboard.md"):
+        return f"todo:{name.removesuffix('-scoreboard.md')}"
+    return ""
+
+
+def _emit_impresario_witness_retracted(
+    locus: ScoreboardLocus, rows: tuple[str, ...]
+) -> None:
+    import logging
+
+    from implement_admission.impresario_events import ImpresarioWitnessRetracted
+
+    logger = logging.getLogger(__name__)
+    work_key = _work_key_from_locus(locus)
+    for row_id in rows:
+        try:
+            from scripts.model_manager.observation_event import _emit_sync
+
+            event = ImpresarioWitnessRetracted(work_key=work_key, row=row_id)
+            _emit_sync(
+                event.signal,
+                dict(event.payload),
+                source="implement_admission",
+            )
+        except Exception:  # noqa: BLE001 — observation must not fail the mutate
+            logger.debug("impresario.witness.retracted emit skipped", exc_info=True)

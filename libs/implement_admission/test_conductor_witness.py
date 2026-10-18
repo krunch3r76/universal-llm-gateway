@@ -163,10 +163,11 @@ def test_fold_live_fixture_entry_gate_and_claimed(
     assert fold.row_status["G1"] == "CLAIMED"
     assert fold.row_status["G2"] == "DONE"
     assert fold.row_status["G3"] == "DONE"
-    assert fold.row_status["G4"] == "CLAIMED"
-    assert fold.row_status["G5"] == "CLAIMED"
-    # Legacy 6-row tip had G6=land DONE without R1 review; 7-row fold reclassifies.
-    assert fold.row_status["G6"] == "CLAIMED"
+    assert fold.row_status["G4"] == "DONE"
+    assert fold.row_status["G5"] == "DONE"
+    # Legacy self-authored DONE without witness stays DONE; not witnessed_done (P3).
+    assert fold.row_status["G6"] == "DONE"
+    assert "G6" not in fold.witnessed_done
     journal = load_journal(_SLUG, files_root=files_root)
     assert any(r.get("reason") == "witness_fold" for r in journal)
 
@@ -194,8 +195,8 @@ def test_materialize_lists_missing_witnesses(
     )
     assert "Entry gate: G1" in mp.text
     assert "G1 CLAIMED:" in mp.text
-    assert "G4 CLAIMED:" in mp.text
-    assert "G5 CLAIMED:" in mp.text
+    assert "G4 DONE:" in mp.text or "G4 CLAIMED:" in mp.text
+    assert "G5 DONE:" in mp.text or "G5 CLAIMED:" in mp.text
     assert "attach witnesses, do not re-derive" in mp.text
     assert "DONE is rendered from witnesses" in mp.text
     assert (
@@ -1211,7 +1212,33 @@ def _reroute_deps(tmp_path: Path) -> FoldDeps:
     )
 
 
-def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -> None:
+@pytest.fixture
+def critic_reroute_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from implement_admission import impresario_policy
+
+    policy = impresario_policy.load_impresario_policy()
+    monkeypatch.setattr(
+        impresario_policy,
+        "load_impresario_policy",
+        lambda *args, **kwargs: impresario_policy.ImpresarioPolicy(
+            pattern=policy.pattern,
+            pattern_version=policy.pattern_version,
+            under_substrate=policy.under_substrate,
+            allowed_under_substrates=policy.allowed_under_substrates,
+            driver=policy.driver,
+            mechanical=policy.mechanical,
+            critic=policy.critic,
+            critic_roles=policy.critic_roles,
+            allowed_critics=policy.allowed_critics,
+            cdp_reroute_for_critic=True,
+            policy_sha256=policy.policy_sha256,
+        ),
+    )
+
+
+def test_g6_reroute_prefers_stamped_route_and_journal_names_it(
+    tmp_path: Path, critic_reroute_enabled: None
+) -> None:
     """Two G6 artifacts: the Stops route wins, and the journal delta names it.
 
     The operator artifact is listed first so document order cannot govern.
@@ -1243,9 +1270,8 @@ def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -
     assert fold is not None
     assert fold.witnesses["G6"] is not None
     assert fold.witnesses["G6"].detail == nested_uri
-    assert (
-        fold.witnesses["G6"].source
-        == "witness:BIND:G6-REVIEW-nested-grok:route=nested-grok"
+    assert fold.witnesses["G6"].source.startswith(
+        "witness:BIND:G6-REVIEW-nested-grok:route=nested-grok:rerouted=True"
     )
     journal = load_journal(slug, files_root=files_root)
     fold_records = [row for row in journal if row.get("reason") == "witness_fold"]
@@ -1253,7 +1279,9 @@ def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -
     assert "G6 OPEN→DONE [route=nested-grok]" in str(fold_records[-1].get("delta"))
 
 
-def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> None:
+def test_g6_fold_keeps_route_while_second_artifact_is_posted(
+    tmp_path: Path, critic_reroute_enabled: None
+) -> None:
     """Fold, then a conductor posts a late G6 artifact, then fold again.
 
     Interleaving: the first fold sees only the stamped route's artifact. The
@@ -1328,8 +1356,8 @@ def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> 
     assert third is not None
     assert third.witnesses["G6"] is not None
     assert third.witnesses["G6"].detail == operator_uri
-    assert (
-        third.witnesses["G6"].source == "witness:BIND:G6-REVIEW-operator:route=operator"
+    assert third.witnesses["G6"].source.startswith(
+        "witness:BIND:G6-REVIEW-operator:route=operator:rerouted=True"
     )
 
 
