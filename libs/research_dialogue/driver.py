@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import pwd
 import sys
 import time
 from datetime import UTC, datetime
@@ -18,7 +20,23 @@ from research_dialogue.session import run_close, run_turn
 OUR_MODEL = normalize_ledger_model("claude-opus-5-5")
 _OPEN_WAIT_POLL_S = 30
 _OPEN_WAIT_MAX_S = 600
-_CLOUD_PROXY_PIDFILE = Path.home() / ".gateway" / "cloud-proxy.pid"
+
+
+def resolve_gateway_dir(override: str | Path | None = None) -> Path:
+    if override is not None:
+        if isinstance(override, Path):
+            if str(override):
+                return override
+        elif str(override).strip():
+            return Path(str(override).strip())
+    env = os.environ.get("RESEARCH_DIALOGUE_GATEWAY_DIR")
+    if env and env.strip():
+        return Path(env.strip())
+    return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+
+
+def cloud_proxy_pidfile_path(gateway_dir: str | Path | None = None) -> Path:
+    return resolve_gateway_dir(gateway_dir) / "cloud-proxy.pid"
 
 
 def _now_iso() -> str:
@@ -31,6 +49,7 @@ def probe_pids(
     expect_cloud_proxy_pid: str,
     ss_output: str | None = None,
     pidfile_text: str | None = None,
+    gateway_dir: str | Path | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     import subprocess
 
@@ -44,13 +63,19 @@ def probe_pids(
     stargate_pid = None
     if "pid=" in ss_output:
         stargate_pid = ss_output.split("pid=")[1].split(",")[0]
+    pids: dict[str, Any] = {"stargate_9999": stargate_pid}
     if pidfile_text is None:
+        pidfile_path = cloud_proxy_pidfile_path(gateway_dir)
+        pids["cloud_proxy_pidfile_path"] = str(pidfile_path)
         try:
-            pidfile_text = _CLOUD_PROXY_PIDFILE.read_text(encoding="utf-8").strip()
-        except OSError:
+            pidfile_text = pidfile_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            pids["cloud_proxy_pidfile_error"] = f"{type(exc).__name__}: {pidfile_path}"
             pidfile_text = None
+    else:
+        pids["cloud_proxy_pidfile_path"] = "<injected>"
     cloud_pid = pidfile_text
-    pids = {"stargate_9999": stargate_pid, "cloud_proxy_pidfile": cloud_pid}
+    pids["cloud_proxy_pidfile"] = cloud_pid
     ok = stargate_pid == str(expect_stargate_pid) and cloud_pid == str(expect_cloud_proxy_pid)
     return ok, pids
 
@@ -85,6 +110,23 @@ def wait_open_clear(
     return st, waits
 
 
+def _pid_mismatch_abort_detail(
+    pids: dict[str, Any],
+    *,
+    expect_stargate_pid: str,
+    expect_cloud_proxy_pid: str,
+) -> str:
+    path = pids.get("cloud_proxy_pidfile_path", "<unknown>")
+    cloud = pids.get("cloud_proxy_pidfile")
+    cloud_display = cloud if cloud is not None else "<missing>"
+    stargate_obs = pids.get("stargate_9999")
+    return (
+        f"pidfile={path}; read cloud-proxy pid={cloud_display}; "
+        f"expected stargate pid={expect_stargate_pid} cloud-proxy pid={expect_cloud_proxy_pid}; "
+        f"observed stargate_9999={stargate_obs}"
+    )
+
+
 def preflight_guard(
     *,
     expect_stargate_pid: str,
@@ -92,6 +134,7 @@ def preflight_guard(
     read_fn: Callable[[], Snapshot],
     ss_output: str | None = None,
     pidfile_text: str | None = None,
+    gateway_dir: str | Path | None = None,
     open_wait_max_s: int = _OPEN_WAIT_MAX_S,
 ) -> tuple[int, dict[str, Any]]:
     rec: dict[str, Any] = {"t_start": _now_iso()}
@@ -100,10 +143,16 @@ def preflight_guard(
         expect_cloud_proxy_pid=expect_cloud_proxy_pid,
         ss_output=ss_output,
         pidfile_text=pidfile_text,
+        gateway_dir=gateway_dir,
     )
     rec["pids"] = pids
     if not ok:
         rec["abort"] = "pid_changed_or_restart"
+        rec["abort_detail"] = _pid_mismatch_abort_detail(
+            pids,
+            expect_stargate_pid=expect_stargate_pid,
+            expect_cloud_proxy_pid=expect_cloud_proxy_pid,
+        )
         return 5, rec
     st = read_fn()
     st, open_waits = wait_open_clear(st, read_fn=read_fn, max_wait_s=open_wait_max_s)
@@ -188,6 +237,7 @@ def run_driver(
     read_fn: Callable[[], Snapshot] | None = None,
     ss_output: str | None = None,
     pidfile_text: str | None = None,
+    gateway_dir: str | Path | None = None,
     sleep_after: Callable[[float], None] = time.sleep,
     open_wait_max_s: int = _OPEN_WAIT_MAX_S,
     stream: bool = False,
@@ -200,6 +250,7 @@ def run_driver(
         read_fn=read_fn,
         ss_output=ss_output,
         pidfile_text=pidfile_text,
+        gateway_dir=gateway_dir,
         open_wait_max_s=open_wait_max_s,
     )
     rec.update(guard)
@@ -326,6 +377,7 @@ def _add_session_args(sp: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Use SSE streaming (S1 deviation; floors at gate until FLOOR-FIX F1).",
     )
+    sp.add_argument("--gateway-dir", default=None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -350,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
         stop_reason=stop_reason,
         challenge_file=getattr(args, "challenge_file", None),
         stream=bool(getattr(args, "stream", False)),
+        gateway_dir=getattr(args, "gateway_dir", None),
     )
     print(json.dumps(summary, default=str))
     return code

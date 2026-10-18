@@ -17,6 +17,7 @@ def _add_pid_args(sp: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Use SSE streaming (S1 deviation; floors at gate until FLOOR-FIX F1).",
     )
+    sp.add_argument("--gateway-dir", default=None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_stargate_pid=args.expect_stargate_pid,
             expect_cloud_proxy_pid=args.expect_cloud_proxy_pid,
             read_fn=__import__("research_dialogue.ledger_read", fromlist=["read_status"]).read_status,
+            gateway_dir=args.gateway_dir,
         )
         if code != 0:
             print(json.dumps(rec, default=str))
@@ -65,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_cloud_proxy_pid=args.expect_cloud_proxy_pid,
             challenge_file=args.challenge_file,
             stream=bool(args.stream),
+            gateway_dir=args.gateway_dir,
         )
         print(json.dumps(summary, default=str))
         return code
@@ -73,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_stargate_pid=args.expect_stargate_pid,
             expect_cloud_proxy_pid=args.expect_cloud_proxy_pid,
             read_fn=__import__("research_dialogue.ledger_read", fromlist=["read_status"]).read_status,
+            gateway_dir=args.gateway_dir,
         )
         if code != 0:
             print(json.dumps(rec, default=str))
@@ -88,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_cloud_proxy_pid=args.expect_cloud_proxy_pid,
             stop_reason=args.stop_reason,
             stream=bool(args.stream),
+            gateway_dir=args.gateway_dir,
         )
         print(json.dumps(summary, default=str))
         return code
