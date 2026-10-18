@@ -31,6 +31,7 @@ from cursor_bridge.chat_target import wake_line
 _TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
     ("grok", "9"): "http://127.0.0.1:9339",
+    ("grok", "10"): "http://127.0.0.1:9340",
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
 _DISPLAY_LOCKS: dict[str, asyncio.Lock] = {}
