@@ -587,3 +587,100 @@ async def test_tool_run_zero_slash_id_uses_pipeline_run() -> None:
     pipeline_run.assert_called_once()
     assert pipeline_run.call_args.args[0] == "jobs"
     assert pipeline_run.call_args.args[1] == messages
+
+
+def test_writing_slash_without_messages_posts_local_model() -> None:
+    """writing/writer-specialist-v1 is a local pipeline, not a satellite relay."""
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async("writing/writer-specialist-v1", None)
+    body = client.post.call_args.kwargs["json"]
+    assert body["model"] == "writer-specialist-v1"
+    assert body["messages"] == []
+    assert "args" not in body
+    assert client.post.call_args.args[0] == (
+        "/api/v1/capabilities/writing/writer-specialist-v1"
+    )
+
+
+def test_writing_slash_model_normalizes_to_bare_member() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {"model": "writing/writer-specialist-v1"},
+        )
+    assert client.post.call_args.kwargs["json"]["model"] == "writer-specialist-v1"
+
+
+@pytest.mark.asyncio
+async def test_tool_run_forwards_messages_on_slash_id() -> None:
+    mcp = FastMCP("cap-run-slash-messages")
+    messages = [{"role": "user", "content": "draft"}]
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline._capability_async", return_value={"run_id": "r"}) as cap:
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "pipeline",
+                {
+                    "op": "run",
+                    "pipeline_id": "writing/writer-specialist-v1",
+                    "messages": messages,
+                },
+            )
+    cap.assert_called_once()
+    assert cap.call_args.args[0] == "writing/writer-specialist-v1"
+    assert cap.call_args.args[2] == messages
+
+
+@pytest.mark.asyncio
+async def test_tool_async_accepts_pipeline_alias() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client_http = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    mcp = FastMCP("pipeline-alias")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client", return_value=client_http):
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "pipeline",
+                {
+                    "op": "async",
+                    "pipeline": "writing/writer-specialist-v1",
+                },
+            )
+    body = client_http.post.call_args.kwargs["json"]
+    assert body["model"] == "writer-specialist-v1"
+    assert client_http.post.call_args.args[0] == (
+        "/api/v1/capabilities/writing/writer-specialist-v1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_rejects_conflicting_pipeline_alias() -> None:
+    mcp = FastMCP("pipeline-alias-conflict")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "pipeline",
+            {
+                "op": "async",
+                "pipeline_id": "writer-specialist-v1",
+                "pipeline": "writing/writer-specialist-v1",
+            },
+        )
+    body = result.structured_content
+    assert body["error"]["code"] == "conflicting_pipeline_id"

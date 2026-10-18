@@ -51,6 +51,71 @@ from .workflow_hints import _WORKFLOW_HINTS
 _FRICTION_DEFAULT_CONFIDENCE = "hypothesized"
 _FRICTION_DEFAULT_SCORE = 0.5
 
+# Bus/endpoint addresses callers paste as ``owner``. They are not service
+# slugs. ``ai_agent:web-anthropic`` is the live seat entity; ``claude-web``
+# and ``claude.ai`` are aliases of that endpoint. ``cursor`` / ``cursor-sdk``
+# have no ai_agent row — the miss steers to a real service or skill owner
+# instead of inviting a minted ``service:cursor``.
+_SEAT_ENDPOINT_OWNER: dict[str, str] = {
+    "web-anthropic": "ai_agent:web-anthropic",
+    "claude-web": "ai_agent:web-anthropic",
+    "claude.ai": "ai_agent:web-anthropic",
+    "cursor": "ai_agent:cursor",
+    "cursor-sdk": "ai_agent:cursor-sdk",
+}
+_FRICTION_OWNER_EXAMPLES = (
+    "service:mcp-server, service:universal-stargate, "
+    "service:agent-bus, service:cortex-api, or agent_skill:<slug>"
+)
+
+
+def _seat_endpoint_owner(entity_id: str) -> str | None:
+    """Map a bare or prefixed seat address to its canonical ai_agent id."""
+    slug = entity_id
+    for prefix in ("service:", "ai_agent:", "agent_skill:"):
+        if entity_id.startswith(prefix):
+            slug = entity_id.removeprefix(prefix)
+            break
+    return _SEAT_ENDPOINT_OWNER.get(slug)
+
+
+def _seat_owner_not_found(given: str, canonical: str) -> dict[str, Any]:
+    """404 that names real friction owners and refuses a minted service slug."""
+    return {
+        "error": (
+            f"owner {given!r} is a seat/endpoint address, not a service slug. "
+            f"Do not mint {given!r}. "
+            f"Seat observations belong on {canonical!r} when that entity exists; "
+            "otherwise file against the owning service or skill "
+            f"({_FRICTION_OWNER_EXAMPLES})."
+        ),
+        "status_code": 404,
+    }
+
+
+def _retry_seat_endpoint_owner(
+    conn: Any,
+    entity_id: str,
+) -> str | dict[str, Any] | None:
+    """Resolve a known seat alias, or None when *entity_id* is not one.
+
+    A hit returns the live ``ai_agent:`` id. A miss returns the steer payload.
+    Non-404 resolve errors pass through with their status code.
+    """
+    target = _seat_endpoint_owner(entity_id)
+    if target is None:
+        return None
+    if target != entity_id:
+        try:
+            return resolve_entity_reference(conn, target, label="owner").entity_id
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                return {
+                    "error": f"owner {entity_id}: {exc.detail}",
+                    "status_code": exc.status_code,
+                }
+    return _seat_owner_not_found(entity_id, target)
+
 
 def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
     """Resolve friction owner to a live entity id, or an error payload.
@@ -60,6 +125,10 @@ def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
     entity is ``service:agent-bus`` (friction a:37201). Soft ``_``→``-`` retry
     only after an exact **404** miss so underscore-canonical services stay
     exact-first and ambiguous-alias 400s are not rewritten as not-found.
+    Known seat addresses (``web-anthropic``, ``claude-web``, ``claude.ai``,
+    ``cursor``, ``cursor-sdk``) retry their ``ai_agent:`` owner after a
+    service-slug miss. When that row is absent the error names real
+    ``service:`` / ``agent_skill:`` owners and does not say to mint the seat.
     """
     with cortex_conn() as conn:
         try:
@@ -91,6 +160,10 @@ def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
                             "error": f"owner {entity_id}: {alt_exc.detail}",
                             "status_code": alt_exc.status_code,
                         }
+            if exc.status_code == 404:
+                seat_resolved = _retry_seat_endpoint_owner(conn, entity_id)
+                if seat_resolved is not None:
+                    return seat_resolved
             if exc.status_code == 404:
                 return {
                     "error": (
@@ -327,7 +400,11 @@ _op_friction.__doc__ = (
     "protocol requires exactly one anchor unless actionable=false. "
     f"Anchor variants: {PROTOCOL_ANCHOR_VARIANTS}. "
     "``confidence`` is honoured when supplied; omitted → hypothesized/0.5. "
-    "Invalid values are rejected — never silently downgraded."
+    "Invalid values are rejected — never silently downgraded. "
+    "Bare seat addresses (web-anthropic, claude-web, claude.ai, cursor, "
+    "cursor-sdk) resolve to ai_agent: when that entity exists; a miss names "
+    "real service:/agent_skill: owners and does not ask the caller to mint "
+    "a service for the seat."
 )
 
 

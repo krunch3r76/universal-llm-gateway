@@ -16,11 +16,11 @@ from cortex_store.dispatch_ops._shared import (
     owner_type_of,
     service_entity_id,
 )
+from cortex_store.dispatch_ops.ops_assertions import _op_frictions
+from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
 
 _REPO = Path(__file__).resolve().parents[2]
 _CANONICAL = _REPO / "config" / "mcp" / "canonical.yaml"
-from cortex_store.dispatch_ops.ops_assertions import _op_frictions
-from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
 
 
 def test_canonical_friction_category_enum_matches_runtime() -> None:
@@ -663,3 +663,91 @@ def test_op_frictions_resolves_underscore_owner(migrated_db_path, monkeypatch) -
     result = _op_frictions(owner="service:agent_bus")
     assert "error" not in result, result
     assert captured["entity_id"] == "service:agent-bus"
+
+
+def _bind_owner(monkeypatch, migrated_db_path, entity_id: str, entity_type: str) -> None:
+    from cortex_store import db as cortex_db
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities (id, type, name, lifecycle) VALUES (?, ?, ?, ?)",
+            (entity_id, entity_type, entity_id, "active"),
+        )
+        conn.commit()
+
+
+def _patch_friction_write(monkeypatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.clear()
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
+        lambda *a, **k: None,
+    )
+    return captured
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "web-anthropic",
+        "service:web-anthropic",
+        "claude-web",
+        "claude.ai",
+        "ai_agent:web-anthropic",
+        "ai_agent:claude-web",
+    ],
+)
+def test_op_friction_seat_alias_resolves_to_ai_agent(
+    migrated_db_path, monkeypatch, owner: str
+) -> None:
+    """friction:39588 call 3 — seat addresses are not service:web-anthropic."""
+    _bind_owner(monkeypatch, migrated_db_path, "ai_agent:web-anthropic", "ai_agent")
+    captured = _patch_friction_write(monkeypatch)
+
+    result = _op_friction(
+        owner=owner,
+        category="tool_error",
+        note="seat owner probe",
+        agent="pytest",
+    )
+    assert "error" not in result, result
+    assert captured["entity_id"] == "ai_agent:web-anthropic"
+
+
+@pytest.mark.parametrize("owner", ["cursor", "cursor-sdk", "service:cursor"])
+def test_op_friction_missing_seat_steers_not_mint(
+    migrated_db_path, monkeypatch, owner: str
+) -> None:
+    """A missing seat entity must not invite minting service:<seat>."""
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    create_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        lambda body: create_calls.append(body) or {"item": {"id": 1}},
+    )
+
+    result = _op_friction(
+        owner=owner,
+        category="tool_error",
+        note="missing seat probe",
+        agent="pytest",
+    )
+    assert result["status_code"] == 404
+    assert "Create the entity" not in result["error"]
+    assert "Do not mint" in result["error"]
+    assert "service:mcp-server" in result["error"]
+    assert "service:agent-bus" in result["error"]
+    assert create_calls == []

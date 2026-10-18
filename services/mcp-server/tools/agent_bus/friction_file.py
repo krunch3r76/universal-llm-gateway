@@ -30,14 +30,19 @@ def _friction_file_dispatch(
     evidence_uris: list[str] | str | None = None,
     confidence: str | None = None,
     agent: str | None = None,
+    actionable: bool | None = None,
+    actionable_false_reason: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.substrate_friction_file``.
 
     Requires ``owner`` (or ``service`` alias) and ``note`` (or ``claim``
-    alias); POSTs cortex ``friction`` via the shared
-    ``substrate_friction_file`` lib. Does not mint owners on 404 or enqueue
-    bus turns. Hop/request envelope fields are rejected by the dispatch
-    unknown-argument gate (not in this signature).
+    alias). Omitted ``category`` is filled by the lib (``tool_error``).
+    ``actionable`` and ``actionable_false_reason`` forward; unanchored
+    ``protocol`` is filed not-actionable because this verb has no charter
+    or continuity anchor parameters. POSTs cortex ``friction`` via the
+    shared ``substrate_friction_file`` lib. Does not mint owners on 404 or
+    enqueue bus turns. Hop/request envelope fields are rejected by the
+    dispatch unknown-argument gate (not in this signature).
     """
     resolved_owner = (owner or service or "").strip()
     resolved_note, alias_err = resolve_friction_note(note=note, claim=claim)
@@ -62,6 +67,8 @@ def _friction_file_dispatch(
         evidence_uris=evidence_uris,
         confidence=confidence,
         agent=agent,
+        actionable=actionable,
+        actionable_false_reason=actionable_false_reason,
         seat="mcp",
         caller="mcp-server",
         surface="code",
