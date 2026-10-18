@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from datetime import UTC, datetime
@@ -13,17 +14,33 @@ from typing import Any
 import yaml
 
 _REPO = Path(__file__).resolve().parent.parent
-_POLICY_PATH = _REPO / "config" / "routing" / "route_policy.yaml"
+_DEFAULT_POLICY_PATH = _REPO / "config" / "routing" / "route_policy.yaml"
 _ENABLED_RE = re.compile(
     r"(^cdp_reroute:\n(?:  .+\n)*?  enabled:\s*)(true|false)",
     re.MULTILINE,
 )
+_EXPIRES_AT_RE = re.compile(
+    r"(^cdp_reroute:\n(?:  .+\n)*?  expires_at:\s*).+",
+    re.MULTILINE,
+)
+_EXPIRES_AT_INSERT_RE = re.compile(
+    r"(^cdp_reroute:\n(?:  .+\n)*?  enabled:\s*(?:true|false)\n)",
+    re.MULTILINE,
+)
+
+
+def _policy_path() -> Path:
+    override = os.environ.get("CDP_REROUTE_POLICY_PATH", "").strip()
+    if override:
+        return Path(override)
+    return _DEFAULT_POLICY_PATH
 
 
 def _load_block() -> dict[str, Any]:
-    data = yaml.safe_load(_POLICY_PATH.read_text(encoding="utf-8"))
+    path = _policy_path()
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise SystemExit(f"invalid policy file: {_POLICY_PATH}")
+        raise SystemExit(f"invalid policy file: {path}")
     block = data.get("cdp_reroute")
     if not isinstance(block, dict):
         raise SystemExit("cdp_reroute block missing from route_policy.yaml")
@@ -66,31 +83,35 @@ def cmd_status() -> int:
 
 
 def _set_enabled(enabled: bool) -> None:
-    text = _POLICY_PATH.read_text(encoding="utf-8")
+    path = _policy_path()
+    text = path.read_text(encoding="utf-8")
     if "cdp_reroute:" not in text:
         raise SystemExit("cdp_reroute block missing from route_policy.yaml")
     repl = rf"\g<1>{'true' if enabled else 'false'}"
     updated, count = _ENABLED_RE.subn(repl, text, count=1)
     if count != 1:
         raise SystemExit("could not locate cdp_reroute.enabled in route_policy.yaml")
-    _POLICY_PATH.write_text(updated, encoding="utf-8")
+    path.write_text(updated, encoding="utf-8")
 
 
-def _write_cdp_reroute_block(*, enabled: bool, expires_at: str | None) -> None:
-    data = yaml.safe_load(_POLICY_PATH.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise SystemExit(f"invalid policy file: {_POLICY_PATH}")
-    block = data.get("cdp_reroute")
-    if not isinstance(block, dict):
+def _set_expires_at(iso: str) -> None:
+    path = _policy_path()
+    text = path.read_text(encoding="utf-8")
+    if "cdp_reroute:" not in text:
         raise SystemExit("cdp_reroute block missing from route_policy.yaml")
-    block["enabled"] = enabled
-    if expires_at is not None:
-        block["expires_at"] = expires_at
-    data["cdp_reroute"] = block
-    _POLICY_PATH.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    repl = rf"\g<1>{iso}"
+    updated, count = _EXPIRES_AT_RE.subn(repl, text, count=1)
+    if count != 1:
+
+        def _insert(m: re.Match[str]) -> str:
+            return f"{m.group(1)}  expires_at: {iso}\n"
+
+        updated, count = _EXPIRES_AT_INSERT_RE.subn(_insert, text, count=1)
+        if count != 1:
+            raise SystemExit(
+                "could not locate cdp_reroute.enabled to insert expires_at"
+            )
+    path.write_text(updated, encoding="utf-8")
 
 
 def cmd_set(enabled: bool, *, expires_at: str | None = None) -> int:
@@ -98,8 +119,9 @@ def cmd_set(enabled: bool, *, expires_at: str | None = None) -> int:
         if not expires_at:
             raise SystemExit("on requires --expires-at (strictly future ISO-8601 UTC)")
         iso = _require_future_expires_at(expires_at)
-        _write_cdp_reroute_block(enabled=True, expires_at=iso)
-        print(f"cdp_reroute.enabled=True")
+        _set_enabled(True)
+        _set_expires_at(iso)
+        print("cdp_reroute.enabled=True")
         print(f"expires_at={iso!r}")
         return 0
     _set_enabled(False)
