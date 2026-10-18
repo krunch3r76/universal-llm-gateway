@@ -7,6 +7,10 @@
 #   wake_armed   = this-chat background Shell running ``tail --label L``.
 #   watcher armed ⇔ poller_armed ∧ wake_armed.
 #   poller_armed ⇏ wake_armed. prior_tab_poller ⇏ this_tab_wake (a:38172).
+# ``start`` spawns the poller detached: stdin from ``/dev/null`` and inherited
+# fds >2 closed so the child never holds Cursor Shell pipes open after this
+# script exits (a:39593 / todo:watch-supervise-start-sync-exit-no-double-wake).
+#
 # Attended wake: the IDE Shell that runs ``tail`` exits on complete. That
 # completion is the one harvest turn. Do not also set notify_on_output
 # (friction 37400; runbook:bus-consult-watcher + terminal-harness).
@@ -37,6 +41,19 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WATCH_DIR="${WATCH_DIR:-$REPO/tmp/watchers}"
 UNIVERSAL_PYTHON="${HOME}/.venvs/universal/bin/python"
 mkdir -p "$WATCH_DIR"
+
+# Close fds >2 in this shell before fork so the detached poller cannot inherit
+# Cursor agent-Shell pipes/sockets (start must return before poller closeout).
+_close_inherited_fds() {
+  local fd
+  for fd in /proc/$$/fd/*; do
+    [[ -e "$fd" ]] || continue
+    fd="${fd##*/}"
+    [[ "$fd" =~ ^[0-9]+$ ]] || continue
+    (( fd > 2 )) || continue
+    eval "exec ${fd}>&-" 2>/dev/null || true
+  done
+}
 
 usage() {
   sed -n '2,30p' "$0"
@@ -178,7 +195,8 @@ cmd_start() {
   fi
   (
     cd "$REPO"
-    setsid nohup "${argv[@]}" >>"$log_file" 2>&1 &
+    _close_inherited_fds
+    setsid nohup "${argv[@]}" >>"$log_file" 2>&1 </dev/null &
     echo $! >"$pid_file"
   )
   local new_pid waited

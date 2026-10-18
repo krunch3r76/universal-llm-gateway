@@ -11,6 +11,10 @@ The message the new tab receives is ``resume <R>`` plus NOW row and one ARM tail
 line per live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` explicitly);
 the successor attaches ``tail --label``, harvests, and plans. ``ok`` then retires this
 tab's ``--loop``, ``watch-supervise`` tails, and ``ide:`` lock (``bus_watch.ide_hop_retire``).
+Pollers arm via ``scripts/watch-supervise.sh start`` — that spawn closes stdin and fds >2
+so ``start`` returns before poller closeout (a:39593). On land, prefix this tab title with
+``. `` (``rename_chat``) before ``RETIRED → <transcript_id>`` — same convention as
+checkpoint tabs (``operator-posture``).
 UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
@@ -46,6 +50,7 @@ from bus_watch.ide_hop import (
 )
 from bus_watch.ide_hop_retire import (
     GOAL_RELEASE,
+    RETIRED_TAB_PREFIX,
     quiesce_departing_tab,
     retire_departing_tab,
 )
@@ -305,6 +310,7 @@ def main() -> int:
     out["row_source"] = row_source
     if out.get("ok"):
         out["goal_release"] = GOAL_RELEASE
+        out["retire_tab_prefix"] = RETIRED_TAB_PREFIX
         if args.dry_run:
             out["retire"] = {"ok": True, "skipped": "dry_run"}
         else:

@@ -11,10 +11,12 @@ import pytest
 
 from bus_watch.ide_hop_retire import (
     GOAL_RELEASE,
+    RETIRED_TAB_PREFIX,
     _is_supervise_tail,
     _label_from_argv,
     departing_tail_pids,
     departing_watcher_labels,
+    prefix_retired_tab_title,
     quiesce_departing_tab,
     retire_departing_tab,
     stop_departing_tails,
@@ -45,6 +47,19 @@ def test_departing_labels_include_terminal_stems(tmp_path: Path) -> None:
         "11912-r1-closeout",
         "foreign",
     ]
+
+
+def test_prefix_retired_tab_title_adds_dot_prefix() -> None:
+    assert prefix_retired_tab_title("10479 liaison-night") == (
+        f"{RETIRED_TAB_PREFIX}10479 liaison-night"
+    )
+    assert prefix_retired_tab_title(". 10479 liaison-night") == ". 10479 liaison-night"
+    assert prefix_retired_tab_title("") == "."
+
+
+def test_goal_release_documents_retired_tab_prefix() -> None:
+    assert "'. '" in GOAL_RELEASE
+    assert "rename_chat" in GOAL_RELEASE
 
 
 def test_supervise_tail_match_skips_forever() -> None:

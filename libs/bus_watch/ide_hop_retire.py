@@ -27,10 +27,25 @@ from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR, release_fable_lo
 from bus_watch.go_under import stop_attended_loops
 from bus_watch.ide_budget_exclude import pin_retired_resume_transcript
 
+RETIRED_TAB_PREFIX = ". "
+
+
+def prefix_retired_tab_title(title: str) -> str:
+    """Prefix a departing tab title so it reads as retired (checkpoint-style ``.``)."""
+    stripped = (title or "").strip()
+    if not stripped:
+        return RETIRED_TAB_PREFIX.rstrip()
+    if stripped.startswith("."):
+        return stripped
+    return f"{RETIRED_TAB_PREFIX}{stripped}"
+
+
 GOAL_RELEASE = (
-    "LIAISON_HOP_TAB_GOAL_RELEASE: If a native Cursor goal is active on this tab, "
+    "LIAISON_HOP_TAB_GOAL_RELEASE: Prefix this tab title with '. ' via rename_chat "
+    f"(target example: {RETIRED_TAB_PREFIX!r}{{existing title}}) before UpdateGoal and "
+    "before the RETIRED line. If a native Cursor goal is active on this tab, "
     'CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"}) '
-    "after liaison-ide-hop.py ok, before the RETIRED line — leftover continuation-wake only "
+    "after liaison-ide-hop.py ok — leftover continuation-wake only "
     "(11912 / 12088). Successor skips CreateGoal; attaches `tail --label` per ARM label + "
     "`liaison-arm-loop.sh` then `liaison-monitor-loop.sh` (`--heartbeat 1200`) — "
     "agent Shell must not be the --loop PID (a:38446)."
@@ -239,6 +254,8 @@ def retire_departing_tab(
 
 __all__ = [
     "GOAL_RELEASE",
+    "RETIRED_TAB_PREFIX",
+    "prefix_retired_tab_title",
     "departing_tail_pids",
     "departing_watcher_labels",
     "quiesce_departing_tab",
