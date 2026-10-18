@@ -222,6 +222,26 @@ def test_trio_sketch_paused_opus_holds() -> None:
     assert is_valid_work_key_scheme(trio)
 
 
+def test_trio_sketch_paused_opus_falls_back_to_confer() -> None:
+    body = build_trio_sketch_body(
+        "17934",
+        {
+            "max_hop_minutes": 60,
+            "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
+            "confer_model": "cursor/gemini-4-argon",
+            "confer_model_knobs": {"effort": "high", "fast": "false"},
+        },
+        {
+            "id": "a:36249",
+            "category": "tool_error",
+            "owner": "service:cdp-ask",
+            "note": "stall",
+        },
+    )
+    assert body["model"] == "cursor/gemini-4-argon"
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
+
+
 def test_trio_sketch_honours_trio_sketch_model() -> None:
     body = build_trio_sketch_body(
         "11960",

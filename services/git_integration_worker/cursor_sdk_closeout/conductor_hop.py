@@ -1443,6 +1443,28 @@ def _merge_conductor_closeout_hop_authority(
     mark_todo_done_on_mission_close(row, closeout_tokens=tokens)
 
 
+def _summoning_house_model_fields(summoning_thread_id: str) -> dict[str, Any]:
+    """Live tick policy for play conductor hops (Pattern B house pivot)."""
+    from bus_watch.digest_budget import effective_policy
+    from bus_watch.fable_lock import WATCH_DIR
+    from bus_watch.spawn_wake.packet import (
+        play_conductor_model_fields,
+        successor_model_fields,
+    )
+    from bus_watch.tick_state import load_state
+
+    path = WATCH_DIR / f"liaison-{summoning_thread_id}.tick.json"
+    state = load_state(path)
+    if not state:
+        return {}
+    policy = effective_policy(state)
+    if str(policy.get("play_conductor_model") or "").strip():
+        return play_conductor_model_fields(policy)
+    if policy.get("successor_model_source") == "override":
+        return successor_model_fields(policy)
+    return {}
+
+
 def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
     """Stable team-dispatch idempotency key for one predecessor hop.
 
@@ -1527,6 +1549,14 @@ def build_hop_team_dispatch_body(
         body["dispatch_thread_id"] = summoning_thread_id
     if rec.get("model_knobs"):
         body["model_knobs"] = rec.get("model_knobs")
+    if summoning_thread_id:
+        live = _summoning_house_model_fields(summoning_thread_id)
+        if live.get("model"):
+            body["model"] = live["model"]
+            if live.get("model_knobs"):
+                body["model_knobs"] = live["model_knobs"]
+            elif "model_knobs" in body and "model_knobs" not in live:
+                body.pop("model_knobs", None)
     wake_lane = row.get("wake_lane") or rec.get("wake_lane")
     if wake_lane:
         body["wake_lane"] = wake_lane

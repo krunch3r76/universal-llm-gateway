@@ -63,6 +63,9 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "max_conductors": 2,
     # Closed-park re-admits per row. Gear presets do not override this.
     "max_readmits": 2,
+    # Pattern A: grok (or argon) under confers with argon when cdp/opus-5.5 is paused.
+    "confer_model": "cursor/gemini-4-argon",
+    "confer_model_knobs": {"effort": "high", "fast": "false"},
 }
 # Gear name kept so a stored policy fails closed instead of falling through
 # to POLICY_DEFAULTS (that fall-through would silently spawn grok).

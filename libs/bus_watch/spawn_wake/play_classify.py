@@ -27,7 +27,7 @@ import re
 from typing import Any
 
 from bus_watch.now_row import resolve_now_row
-from bus_watch.spawn_wake.packet import successor_model_fields
+from bus_watch.spawn_wake.packet import play_conductor_model_fields
 
 LEFTOVER_HOLD = "hold"
 LEFTOVER_PLAY = "play"
@@ -715,7 +715,7 @@ def build_play_dispatch_body(
         "subject": f"conductor todo:{todo_slug}",
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
-        **successor_model_fields(policy),
+        **play_conductor_model_fields(policy),
     }
     if roster_row_id:
         body["_roster_row_id"] = str(roster_row_id)

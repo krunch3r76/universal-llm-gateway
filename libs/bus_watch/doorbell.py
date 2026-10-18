@@ -438,13 +438,22 @@ def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
     return merged
 
 
+def _confer_model_if_live(policy: dict | None) -> str | None:
+    confer = str((policy or {}).get("confer_model") or "").strip()
+    if confer and not model_paused(policy, confer):
+        return confer
+    return None
+
+
 def _judgment_consult(policy: dict | None, successor_model: str | None) -> str:
     """Who a below-Opus hop asks before it binds.
 
-    When ``cdp/opus-5.5`` is paused, name the house successor. The wake must not
-    tell that hop to open Opus.
+    When ``cdp/opus-5.5`` is paused, prefer ``confer_model`` when unpaused, else
+    the house successor. The wake must not tell that hop to open Opus.
     """
     if model_paused(policy, "cdp/opus-5.5"):
+        if named := _confer_model_if_live(policy):
+            return named
         named = str(successor_model or "").strip() or "the house successor"
         return named
     return "cdp/opus-5.5"
