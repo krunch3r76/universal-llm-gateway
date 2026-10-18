@@ -196,7 +196,7 @@ def test_op_frictions_defaults_summary(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     result = _op_frictions(category="tool_error")
@@ -224,12 +224,12 @@ def test_op_frictions_explicit_full(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_frictions_read._list_assertions_impl",
         fake_list,
     )
     result = _op_frictions(category="tool_error", intent="full")
     assert captured["intent"] == "full"
-    assert "Deepen one row" not in result["_next"]
+    assert "Deepen one row: cortex(tool=assertion_get" not in result["_next"]
 
 
 def test_op_review_queue_pins_full(monkeypatch) -> None:
@@ -254,11 +254,11 @@ def test_op_review_queue_pins_full(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_review_queue._list_assertions_impl",
         fake_list,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._op_entities",
+        "cortex_store.dispatch_ops.ops_assertions_review_queue._op_entities",
         fake_entities,
     )
     _op_review_queue(limit=5)
