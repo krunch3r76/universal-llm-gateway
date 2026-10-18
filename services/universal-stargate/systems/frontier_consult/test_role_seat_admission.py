@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
-
 from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
 from .admission import (
@@ -14,7 +12,9 @@ from .admission import (
     reject_role_cursor_sdk_on_generate,
 )
 
-enforce_generate_role_seat_exclusive = admit_pipeline.enforce_generate_role_seat_exclusive
+enforce_generate_role_seat_exclusive = (
+    admit_pipeline.enforce_generate_role_seat_exclusive
+)
 resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
 is_cursor_sdk_generate_admission = admit_pipeline.is_cursor_sdk_generate_admission
 

@@ -199,7 +199,9 @@ def run_team_dispatch_admit_sync(
             reason=str(plan.get("reason") or "admitted"),
             status_code=int(plan.get("status_code") or 422),
             code=str(plan.get("code") or "admit_rejected"),
-            details=plan.get("details") if isinstance(plan.get("details"), dict) else None,
+            details=(
+                plan.get("details") if isinstance(plan.get("details"), dict) else None
+            ),
         )
     return plan
 

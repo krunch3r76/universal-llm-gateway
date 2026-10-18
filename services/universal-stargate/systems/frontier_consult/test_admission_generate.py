@@ -6,28 +6,29 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import Response
-from fastapi.responses import JSONResponse
 from agent_seat import AgentMeta, HydrationBundle
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
+from fastapi import Response
+from fastapi.responses import JSONResponse
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import load_auto_judgment_default_model
-
 from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
+from . import cursor_sdk_generate_prepare as prepare_mod
 from .admission import (
     FrontierEndpointError,
     enforce_team_dispatch_generate_admit,
     is_chat_completions_only,
     reject_role_cursor_sdk_on_generate,
 )
-
-enforce_generate_role_seat_exclusive = admit_pipeline.enforce_generate_role_seat_exclusive
-is_auto_seat_generate_admission = admit_pipeline.is_auto_seat_generate_admission
-resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
-from . import cursor_sdk_generate_prepare as prepare_mod
 from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
 from .service import FrontierGenerateRequest, build_dispatch_body
+
+enforce_generate_role_seat_exclusive = (
+    admit_pipeline.enforce_generate_role_seat_exclusive
+)
+is_auto_seat_generate_admission = admit_pipeline.is_auto_seat_generate_admission
+resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
 
 _DISPATCH_THREAD = "test-dispatch-thread"
 

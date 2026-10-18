@@ -10,7 +10,6 @@ from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
-from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
@@ -809,9 +808,9 @@ async def team_dispatch(
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     if body.op in ("generate", "to_thread"):
-        from .team_dispatch_admit_client import run_team_dispatch_admit
-
         from systems.proxy.dependencies import get_proxy
+
+        from .team_dispatch_admit_client import run_team_dispatch_admit
 
         _proxy = get_proxy()
         _event_bus = getattr(_proxy, "event_bus", None)
@@ -834,9 +833,12 @@ async def team_dispatch(
         seat = plan.get("seat")
         model = plan.get("model")
         requested_model_pin = body.model
-        body.role = role
-        body.seat = seat
-        body.model = model
+        if role is not None and hasattr(body, "role"):
+            body.role = role
+        if seat is not None and hasattr(body, "seat"):
+            body.seat = seat
+        if model is not None and hasattr(body, "model"):
+            body.model = model
 
         if body.op == "to_thread":
             source_text = await resolve_generate_prompt_body(
@@ -871,7 +873,7 @@ async def team_dispatch(
                 body=body,
                 seat=sdk_seat,
                 response=response,
-                requested_model_pin=requested_model_pin,  # None preserves omit-path fence
+                requested_model_pin=requested_model_pin,
             )
         if backend == "api_role":
             from .api_role_generate import dispatch_api_role_generate

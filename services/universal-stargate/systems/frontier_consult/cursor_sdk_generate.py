@@ -364,7 +364,7 @@ async def dispatch_cursor_sdk_generate(
     prompt_sha256: str | None = None,
     requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
 ) -> dict[str, Any]:
-    """Cursor-sdk generate with to_thread default delivery (or reuse ``prepared_handle``)."""
+    """Cursor-sdk generate with to_thread delivery (or reuse ``prepared_handle``)."""
     if prepared_handle is not None:
         return await dispatch_prepared_cursor_sdk(
             prepared_handle, transcript_id=transcript_id

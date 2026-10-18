@@ -9,7 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from systems.frontier_consult.admission import FrontierEndpointError
-from systems.frontier_consult.team_dispatch_admit_client import run_team_dispatch_admit_sync
+from systems.frontier_consult.team_dispatch_admit_client import (
+    run_team_dispatch_admit_sync,
+)
 
 
 def _body(**fields: object) -> SimpleNamespace:

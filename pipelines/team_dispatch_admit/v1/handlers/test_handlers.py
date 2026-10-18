@@ -8,12 +8,12 @@ from implement_admission.workflow_registry import (
     CHECK_REVIEW_WORKFLOW,
     load_workflow_registry,
 )
-
 from systems.frontier_consult.admission import FrontierEndpointError
 
 from .assemble import evaluate_assemble
 from .defaults import evaluate_defaults
-from .defaults_split import _resolve_auto_seat_profile, _sdk_admission as sdk_admission
+from .defaults_split import _resolve_auto_seat_profile
+from .defaults_split import _sdk_admission as sdk_admission
 from .validate import evaluate_validate
 
 

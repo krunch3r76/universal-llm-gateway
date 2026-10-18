@@ -12,7 +12,9 @@ from systems.frontier_consult.skill_suggest_dispatch_config import (
 )
 
 
-def offline_skill_suggest_dispatch_config(**overrides: float) -> SkillSuggestDispatchConfig:
+def offline_skill_suggest_dispatch_config(
+    **overrides: float,
+) -> SkillSuggestDispatchConfig:
     base = {
         "idle_timeout_seconds": 120.0,
         "ack_window_seconds": 3.0,
@@ -32,7 +34,9 @@ def offline_skill_suggest_dispatch_config(**overrides: float) -> SkillSuggestDis
 
 
 def dispatch_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
-    from systems.frontier_consult.cursor_sdk_generate import dispatch_cursor_sdk_generate
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_cursor_sdk_generate,
+    )
 
     kwargs.pop("autospec", None)
     return create_autospec(dispatch_cursor_sdk_generate, **kwargs)
