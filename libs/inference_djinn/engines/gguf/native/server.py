@@ -6,7 +6,9 @@ and graceful shutdown. Configuration lives in config.py.
 """
 
 import asyncio
+import errno
 import os
+import socket
 import subprocess
 import time
 from enum import StrEnum
@@ -21,6 +23,44 @@ from .binary import find_llama_server
 from .config import ServerConfig
 
 logger = get_logger(__name__)
+
+_STALE_SOCKET_PROBE_TIMEOUT_S = 0.5
+
+
+def prepare_unix_socket_for_bind(
+    socket_path: str,
+    *,
+    connect_timeout: float = _STALE_SOCKET_PROBE_TIMEOUT_S,
+) -> None:
+    """
+    Remove a stale Unix socket file before bind(), or fail if a live server owns it.
+
+    connect(2) success ⇒ live server; ECONNREFUSED/ENOENT ⇒ stale (unlink).
+    """
+    stale = Path(socket_path)
+    if not stale.exists():
+        return
+
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(connect_timeout)
+    try:
+        probe.connect(str(stale))
+    except OSError as exc:
+        if exc.errno in (errno.ECONNREFUSED, errno.ENOENT):
+            stale.unlink()
+            logger.warning(
+                f"🧹 [llama-server] Removed stale socket: {socket_path}"
+            )
+            return
+        raise RuntimeError(
+            f"Cannot probe Unix socket {socket_path}: {exc}"
+        ) from exc
+    else:
+        raise RuntimeError(
+            f"Unix socket already in use by a live server: {socket_path}"
+        )
+    finally:
+        probe.close()
 
 
 class ServerStatus(StrEnum):
@@ -130,12 +170,7 @@ class LlamaServerManager:
 
         # Remove stale socket from previous crash (bind() fails if file exists)
         if self.config.socket_path:
-            stale = Path(self.config.socket_path)
-            if stale.exists():
-                stale.unlink()
-                logger.warning(
-                    f"🧹 [llama-server] Removed stale socket: {self.config.socket_path}"
-                )
+            prepare_unix_socket_for_bind(self.config.socket_path)
 
         # Start process
         self.status = ServerStatus.STARTING
