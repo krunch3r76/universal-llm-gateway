@@ -33,6 +33,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     decide_context_hop,
     hop_subject,
     parse_last_message_id,
+    rebuild_hop_state,
     record_hop_notified,
     roster_name_allowed,
 )
@@ -323,6 +324,31 @@ def test_ac5_allowlist() -> None:
     assert roster_name_allowed("Impresario Backlog (bl1)") is False
     assert roster_name_allowed("Stage Manager extra") is False
     assert roster_name_allowed("other gc1") is False
+
+
+def test_journal_cooldown_rebuild_skips_due_agent() -> None:
+    future_until = 9_999_999_999.0
+    state = rebuild_hop_state([{"agent_id": "a1", "cooldown_until": future_until}])
+    assert state.first_due_at == {}
+    notice = decide_context_hop(
+        rows=[_row(agent_id="a1")],
+        now=100.0,
+        now_ms=_NOW_MS,
+        state=state,
+        open_gc1_bus_turn=False,
+        in_flight_gc1_mcp=False,
+    )
+    assert notice is None
+    cleared = rebuild_hop_state([{"agent_id": "a1", "cooldown_until": 1.0}])
+    after = decide_context_hop(
+        rows=[_row(agent_id="a1")],
+        now=100.0,
+        now_ms=_NOW_MS,
+        state=cleared,
+        open_gc1_bus_turn=False,
+        in_flight_gc1_mcp=False,
+    )
+    assert after is not None
 
 
 def test_ac6_cooldown_successor_and_failed_reply() -> None:
@@ -640,7 +666,16 @@ def test_ac11_event_factories(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(grokbot_egress_watch_loop, "reply_context_hop", fake_reply_ok)
     asyncio.run(loop._context_hop(now=101.0, now_ms=_NOW_MS, snapshot=snap))
-    assert len(emitted) == 1
+    assert len(emitted) == 2
     assert emitted[0][0] == "mcp.edge.grokbot.context_hop.due"
+    assert emitted[1][0] == "impresario.hop.noticed"
+    assert emitted[1][1] == {
+        "house_root": "15851",
+        "hop_name": "NUDGE|context-hop-due|Impresario Alpha,Reviewer R1 Zed",
+        "detail": {
+            "names": ["Impresario Alpha", "Reviewer R1 Zed"],
+            "agent_ids": ["b", "a"],
+        },
+    }
     assert set(loop._hop_state.cooldown_until) == {"a", "b"}
 
