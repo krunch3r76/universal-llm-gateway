@@ -427,6 +427,82 @@ def test_fire_holders_exception_records_unknown_and_does_not_propagate(db: None)
     assert row["reason"] == "ConnectError"
 
 
+def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(db: None) -> None:
+    """Mailbox canonical agent in ledger must still resolve grok-bot-gc2 subscriptions."""
+    from unittest.mock import patch
+
+    detail = create_thread(thread_id=None, slug="gc2-mailbox")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="grok-bot-gc2",
+        subject="SYNC-PLAN|gc1->insyncerator|step 1",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "insyncerator",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert claimed["wake_id"]
+    posts: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "insyncerator":
+                return None
+            if agent == "grok-bot-gc2":
+                return (
+                    "wildcard",
+                    {
+                        "id": 24,
+                        "surface": "grok",
+                        "display": "10",
+                        "title": "insyncerator",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+        def result(self, **payload: object) -> int:
+            posts.append(dict(payload))
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("delivered", "match"),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert posts[0]["outcome"] == "delivered"
+    assert posts[0]["route"] == "wildcard"
+    assert posts[0]["subscription_id"] == 24
+
+
 def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> None:
     assert qualifies(
         {"to_agent": "insyncerator", "from_agent": "grok-bot", "subject": "WAKE|inbox"},
@@ -461,7 +537,7 @@ def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> N
             ]
 
         def subscription(self, agent: str, thread: str):
-            raise AssertionError("window binding should answer before a DB subscription")
+            return None
 
         def scan(self, high: int, new_hw: int, pending: list) -> None:
             self.pending = pending

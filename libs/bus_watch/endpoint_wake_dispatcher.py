@@ -186,6 +186,30 @@ def _pending_item(turn: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_delivery_route(
+    store: StoreClient, agent: str, thread: str, *, raw_to: str | None = None
+) -> tuple[str, dict[str, Any]] | None:
+    """Subscription row, else legacy alias, else synthetic grok window binding."""
+    resolved = store.subscription(agent, thread)
+    if resolved is not None:
+        return resolved
+    from cursor_bridge.grok_window_bindings import mailbox_members
+
+    for member in mailbox_members(agent):
+        if member == agent:
+            continue
+        resolved = store.subscription(member, thread)
+        if resolved is not None:
+            return resolved
+    for candidate in (raw_to, agent):
+        if not candidate:
+            continue
+        bound = _window_binding_route(str(candidate))
+        if bound is not None:
+            return bound
+    return None
+
+
 def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) -> None:
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
@@ -204,8 +228,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             resolved = None
             cse = True
         else:
-            bound = _window_binding_route(raw_to)
-            resolved = bound if bound is not None else store.subscription(agent, thread)
+            resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             )
@@ -363,7 +386,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             cse_registration_id=reg,
         )
         return claimed
-    resolved = store.subscription(agent, thread)
+    resolved = _resolve_delivery_route(store, agent, thread)
     if resolved is None:
         store.result(
             wake_id=wake_id,
