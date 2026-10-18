@@ -21,7 +21,7 @@ Copy this — do not re-derive routing each time:
 
 **Transport (pinned — code lane):**
 `team_dispatch(op=generate, model=cdp/fable, contract=freeform, effort=low)`
-— ¬ `xai/grok-*` (checkout present), ¬ `anthropic/*` API (§ substrate house rules).
+— ¬ `xai/grok-*` (checkout present). This pin stays CDP; `anthropic/*` API is admitted when the credit gate is healthy (§ substrate), not this transport.
 
 **Substrate preflight (before firing):** confirm the delivery chain is up
 (`manage(busy_status)` — `agent_bus` + `stargate`); a partial/aborted fleet state
@@ -186,7 +186,7 @@ Same R semantics live in the parent skill. `/work-item-review` owns after-ship t
 
 **Pairing invariant (P1):** path-sim always runs **Q∧A as a coupled unit** — never A without a Q sidecar/verdict, never Q without a following A. The operator frame is **input to Q**, never a substitute for Q (P2 rejected — destroys the falsifier).
 
-**Default executor for path-sim Q is the conductor width seat** (`team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)`; CLI `--model` is ACTIVE.model without the `cdp/` prefix — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). MCP `project_ask` is removed. **A = Composer enumerate → `cdp/fable` bind** (¬ Composer ranks). R-admit stays its own Opus CDP pin. When ACTIVE's usage channel is Opus, Q and R-admit share that wire; `ACTIVE = RESTORE` returns the cross-family split. Do **¬** default Q to a seat other than ACTIVE on the bundled arc — closed-detent / explicit-skip carve-outs only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
+**Default executor for path-sim Q is the conductor width seat** (`team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)`; CLI `--model` is ACTIVE.model without the `cdp/` prefix — Use the `claude-ai-cdp-navigation` skill; this pin stays CDP, and `anthropic/*` API is a separate admitted path when the credit gate is healthy). MCP `project_ask` is removed. **A = Composer enumerate → `cdp/fable` bind** (¬ Composer ranks). R-admit stays its own Opus CDP pin. When ACTIVE's usage channel is Opus, Q and R-admit share that wire; `ACTIVE = RESTORE` returns the cross-family split. Do **¬** default Q to a seat other than ACTIVE on the bundled arc — closed-detent / explicit-skip carve-outs only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
 
 Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
 
@@ -300,7 +300,7 @@ L0 draft (ranked table) → [escalate-fable] → lead CDP (ACTIVE, same pin)
 |---|---|
 | Default | Lead CDP ACTIVE Q — already on; no escalate needed |
 | Recovery trigger | Worker `Q-CASCADE: escalate-fable` (self-decided) — lead honors; lead may also force on explicit operator ask |
-| Transport | ACTIVE ⇒ **web-anthropic-cdp** `team_dispatch` of `conductor_width_seat.ACTIVE` / CLI `claude-ai-sync-jupiter project-ask` (Use the `claude-ai-cdp-navigation` skill); ¬ `anthropic/*` API; MCP `project_ask` is removed |
+| Transport | ACTIVE ⇒ **web-anthropic-cdp** `team_dispatch` of `conductor_width_seat.ACTIVE` / CLI `claude-ai-sync-jupiter project-ask` (Use the `claude-ai-cdp-navigation` skill); this pin stays CDP (`anthropic/*` API is admitted on its own gate, not this row); MCP `project_ask` is removed |
 | Input (recovery) | Prior sidecar = ranked tables (not discarded); width-seat output = revised ask-now + killed rows + one tightened Question set |
 | Sidecar | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` (default) or `…-fable-l0-qsharpen.md` (recovery); A consumes that Question set |
 | Skip escalate | Default ACTIVE Q, or `sufficient` ⇒ A dispatch consumes that Question set |

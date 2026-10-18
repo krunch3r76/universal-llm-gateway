@@ -261,13 +261,13 @@ Gap closed 2026-07-31 — IDE warm paste via `cse_session(op=followup)`; CLI = e
 
 **Tier-vocab Max == picker Max** — not Extra (24727).
 
-`Fable ⇒ CDP picker ∨ web-anthropic` — ¬ API `team_dispatch(… anthropic/claude-fable-5)`.
+`Fable` default consult is the CDP picker or web-anthropic. `anthropic/claude-fable-5-1` is the high-cost API path (credit gate + `deliberate_high_cost`), not a prohibited wire.
 
 **Anthropic-family substrate (`decision:anthropic-family-dispatch-substrate`):**
 
 | Path | Default |
 |---|---|
-| Stargate `anthropic/*` API | **PROHIBITED** |
+| Stargate `anthropic/*` API | **Admitted** when the credit gate is healthy (prohibition retired 2026-10-18). CDP stays the default consult wire. |
 | `cursor/*` (cursor-sdk) | **OK** except **Fable** |
 | Opus / Sonnet / web consults | **CDP preferred** — cortex-packaged corpus |
 | Live checkout navigation | **`cursor/claude-opus-*`** acceptable |

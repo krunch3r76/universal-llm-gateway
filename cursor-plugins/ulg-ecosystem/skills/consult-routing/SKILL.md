@@ -329,7 +329,7 @@ Rationale for the independence axis (weight class vs family, self-review definit
 
 | Path | Default |
 |---|---|
-| `anthropic/*` on `team_dispatch` | **PROHIBITED** |
+| `anthropic/*` on `team_dispatch` | **Admitted** when the credit gate is healthy. Standard: `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5`. High-cost: `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1` need `cost_intent=deliberate_high_cost` plus a reason. Standing prohibition retired 2026-10-18. |
 | `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when operator-named (§ Cursor-sdk generate shape). |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
 | IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy, contract=freeform)`. Warm paste: `cse_session(op=followup)` |
