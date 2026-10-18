@@ -87,6 +87,8 @@ def _parse_line(raw: str) -> dict[str, Any] | None:
         parsed["paths"] = paths
     if last_hire:
         parsed["last_hire_dispatch_id"] = last_hire
+    if "lease_epoch" in row:
+        parsed["lease_epoch"] = int(row.get("lease_epoch") or 0)
     if "readmit_count" in row:
         parsed["readmit_count"] = int(row.get("readmit_count") or 0)
     if "readmit_from" in row:
@@ -151,6 +153,37 @@ def append_row(path: Path, row: dict[str, Any]) -> None:
         fh.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+_LIVE_HOLDER_STATUSES = frozenset(
+    {"acting", "admitted", "running", "queued", "claimed", "parked", "parked_waiting"}
+)
+
+
+def _holder_counts_live(holder: dict[str, Any]) -> bool:
+    contract = str(holder.get("contract") or "").strip().lower()
+    if contract != "conductor":
+        return False
+    status = str(holder.get("status") or holder.get("state") or "").strip().lower()
+    if status in ("parked", "parked_waiting"):
+        return True
+    if status in ("acting", "admitted", "running", "queued", "claimed"):
+        return True
+    return status in _LIVE_HOLDER_STATUSES
+
+
+def _holders_from_active_work(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("holders")
+    if isinstance(raw, list):
+        return [h for h in raw if isinstance(h, dict)]
+    out: list[dict[str, Any]] = []
+    for op in payload.get("active_ops") or []:
+        if isinstance(op, dict):
+            out.append(op)
+    for row in (payload.get("write_lease") or {}).get("active_holders") or []:
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
 def fetch_giw_live_work_keys() -> dict[str, bool] | None:
     """Map ``work_key`` → live conductor on GIW. ``None`` when unreachable."""
     try:
@@ -165,22 +198,13 @@ def fetch_giw_live_work_keys() -> dict[str, bool] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    holders = (payload.get("sdk_gate") or {}).get("holders")
-    if not isinstance(holders, list):
-        holders = []
     live: dict[str, bool] = {}
-    for holder in holders:
-        if not isinstance(holder, dict):
-            continue
+    for holder in _holders_from_active_work(payload):
         wk = str(holder.get("work_key") or holder.get("source_ref") or "").strip()
         if not wk:
             continue
-        contract = str(holder.get("contract") or "").strip().lower()
-        if contract == "conductor" or wk.startswith("todo:"):
+        if _holder_counts_live(holder):
             live[wk.lower()] = True
-    cursor = payload.get("cursor_dispatches") or {}
-    for dispatch_id in cursor.get("dispatch_ids") or []:
-        del dispatch_id  # occupancy only; work_key lives in holders when present
     return live
 
 
@@ -278,9 +302,18 @@ def fold_roster(
             append_row(path, seed)
             journal = [seed]
     merged = merge_by_row_id(journal)
+    giw_unreachable = False
     if giw_live is ...:
-        giw_live = fetch_giw_live_work_keys()
-    giw_map = giw_live if isinstance(giw_live, dict) else None
+        fetched = fetch_giw_live_work_keys()
+        if fetched is None:
+            giw_unreachable = True
+            giw_map: dict[str, bool] | None = None
+        else:
+            giw_map = fetched
+    else:
+        giw_map = giw_live if isinstance(giw_live, dict) else None
+    if giw_unreachable:
+        digest["giw_live_unreachable"] = True
     return [enrich_row_liveness(row, digest, giw_map) for row in merged]
 
 
@@ -366,6 +399,7 @@ def record_row_hire(
     *,
     readmit_from: str | None = None,
     closed_lane_ids: list[str] | None = None,
+    lease_epoch: int | None = None,
 ) -> None:
     """Append a journal line latching ``last_hire_dispatch_id`` for crash re-admit.
 
@@ -379,6 +413,10 @@ def record_row_hire(
     base = next((r for r in journal if r.get("row_id") == row_id), None)
     if not base:
         return
+    if lease_epoch is not None:
+        prior_epoch = base.get("lease_epoch")
+        if prior_epoch is not None and int(lease_epoch) < int(prior_epoch):
+            return
     prior_count = int(base.get("readmit_count") or 0)
     prior_from = base.get("readmit_from")
     prior_closed = [
@@ -401,6 +439,8 @@ def record_row_hire(
         "readmit_from": from_id,
         "closed_lanes_before_latch": closed,
     }
+    if lease_epoch is not None:
+        updated["lease_epoch"] = int(lease_epoch)
     append_row(path, updated)
 
 
@@ -419,6 +459,12 @@ def classify_row(
     scheduled_plays: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Per-row play / hold / unsure — holds only this row, not siblings."""
+    if digest.get("giw_live_unreachable"):
+        return {
+            "decision": DECISION_HOLD,
+            "reason": "unsure_live",
+            "row_id": row.get("row_id"),
+        }
     hire = str(row.get("hire") or HIRE_AUTO).strip().lower()
     work_key = str(row.get("work_key") or "").lower()
     policy = digest.get("policy") or {}

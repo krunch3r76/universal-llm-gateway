@@ -50,6 +50,7 @@ from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
 from bus_watch.quiet_reason import usable_holder_id
 from bus_watch.roster import fold_roster
+from bus_watch.roster_promote import maybe_promote_roster, maybe_surface_contention
 from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,
@@ -291,6 +292,17 @@ def build_digest(
     )
     digest["summary_row"] = state.get("summary_row")
     digest["roster"] = fold_roster(root_id, policy, digest)
+    maybe_promote_roster(root_id, policy, digest, state)
+    contention = maybe_surface_contention(
+        digest,
+        ticker_holder=str((lock_now or {}).get("holder") or ""),
+        house_holder_agent=str(state.get("house_holder_agent") or ""),
+    )
+    if contention:
+        digest.setdefault("attention", []).append(contention)
+    reflection = state.get("last_harvest_reflection")
+    if reflection and not state.get("reflection_acknowledged"):
+        digest["unacknowledged_reflection"] = reflection
     digest["induction"] = build_wake_induction(
         digest,
         surface="cse" if register == "cse" else "ide",
@@ -308,6 +320,44 @@ def build_digest(
     return digest
 
 
+def liaison_loop_due(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    changed_not_echo: bool,
+    heartbeat_due: bool,
+    budget_stop_new: bool,
+) -> bool:
+    """Attended ``--loop`` due predicate (amendment 3)."""
+    if heartbeat_due or budget_stop_new:
+        return True
+    policy = digest.get("policy") or {}
+    if policy.get("wake_on_attention_only"):
+        if digest.get("watchers_complete_unrelayed"):
+            return True
+        root = digest.get("root") or {}
+        if (root.get("unread_turns") or 0) > 0:
+            return True
+        for item in digest.get("attention") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") == "budget_estimate":
+                continue
+            return True
+        roster = digest.get("roster") or []
+        any_live = any(r.get("live") is True for r in roster if isinstance(r, dict))
+        if not any_live:
+            for row in roster:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("hire") or "auto").lower() != "auto":
+                    continue
+                if not str(row.get("last_hire_dispatch_id") or "").strip():
+                    return True
+        return False
+    return changed_not_echo
+
+
 __all__ = [
     "GEAR_PRESETS",
     "POLICY_DEFAULTS",
@@ -315,4 +365,5 @@ __all__ = [
     "build_digest",
     "effective_policy",
     "is_life_root",
+    "liaison_loop_due",
 ]

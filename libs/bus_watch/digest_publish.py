@@ -440,9 +440,13 @@ def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
     )
 
 
+lanes_fingerprint = _lanes_fingerprint
+
+
 __all__ = [
     "PublishOutcome",
     "is_own_digest_echo",
+    "lanes_fingerprint",
     "project_digest",
     "publish_digest",
     "publish_if_enabled",

@@ -736,12 +736,18 @@ def _post_roster_hires(
             dropped.append("posted_unlatched")
             continue
         readmit_from = release_lane if release_reason == "closed_park" else None
+        lease_epoch = payload.get("lease_epoch")
+        if lease_epoch is None and isinstance(payload.get("impresario"), dict):
+            lease_epoch = payload["impresario"].get("lease_epoch")
+        if isinstance(lease_epoch, bool):
+            lease_epoch = None
         record_row_hire(
             root_id,
             str(row.get("row_id") or ""),
             dispatch_id,
             readmit_from=readmit_from,
             closed_lane_ids=closed_unharvested_lane_ids(digest, slug),
+            lease_epoch=int(lease_epoch) if lease_epoch is not None else None,
         )
         merged_count = int(row.get("readmit_count") or 0)
         if readmit_from:
@@ -897,13 +903,17 @@ def tick_spawn_on_wake(
                 "body": body,
             }
         _emit_roster_classify_refuses(root_id, digest, state)
-        return _post_roster_hires(
+        result = _post_roster_hires(
             digest,
             state,
             root_id,
             evaluation,
             submit=submit,
         )
+        from bus_watch.roster_promote import maybe_promote_roster
+
+        maybe_promote_roster(root_id, policy, digest, state)
+        return result
     if not dry_run:
         _emit_roster_classify_refuses(root_id, digest, state)
     if leftover.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(

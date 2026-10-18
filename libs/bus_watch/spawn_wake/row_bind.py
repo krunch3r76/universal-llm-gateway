@@ -89,7 +89,7 @@ def trio_sketch_model(policy: dict[str, Any]) -> str | None:
     """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5.5``.
 
     When the default is paused and ``trio_sketch_model`` is not overridden,
-    fall back to ``confer_model`` if unpaused. Otherwise a paused model yields
+    fall back to ``critic_model`` if unpaused. Otherwise a paused model yields
     None and the caller holds.
     """
     raw = str(policy.get("trio_sketch_model") or "").strip()
@@ -97,9 +97,9 @@ def trio_sketch_model(policy: dict[str, Any]) -> str | None:
     model = raw if overridden else "cdp/opus-5.5"
     if model_paused(policy, model):
         if not overridden:
-            confer = str(policy.get("confer_model") or "").strip()
-            if confer and not model_paused(policy, confer):
-                return confer
+            critic = str(policy.get("critic_model") or "").strip()
+            if critic and not model_paused(policy, critic):
+                return critic
         return None
     return model
 
@@ -117,9 +117,9 @@ def _row_bind_model_knobs(policy: dict[str, Any], model: str) -> dict[str, str] 
     knobs = policy.get("row_bind_model_knobs")
     if isinstance(knobs, dict):
         return {str(k): str(v) for k, v in knobs.items()}
-    confer = str(policy.get("confer_model") or "").strip()
-    if confer and model == confer:
-        ck = policy.get("confer_model_knobs")
+    critic = str(policy.get("critic_model") or "").strip()
+    if critic and model == critic:
+        ck = policy.get("critic_model_knobs")
         if isinstance(ck, dict):
             return {str(k): str(v) for k, v in ck.items()}
     bare = model.rsplit("/", 1)[-1] if model else ""
