@@ -915,16 +915,17 @@ def _resolve_prompt(
 
         lane_branch = lane_branch_name(req.thread_id)
     lane_worktree_str = str(lane_worktree.resolve()) if lane_worktree else None
-    delegation_tier = None
-    if ctx is not None:
-        from reasoning_posture_contracts import resolve_delegation_tier
+    from reasoning_posture_contracts import resolve_delegation_tier
 
-        delegation_tier = resolve_delegation_tier(
-            ctx.handoff_contract,
-            model=req.model,
-            nest_under=ctx.nest_under,
-            lane=ctx.lane,
-        )
+    handoff_contract = (
+        ctx.handoff_contract if ctx is not None else req.handoff_contract
+    )
+    delegation_tier = resolve_delegation_tier(
+        handoff_contract,
+        model=req.model,
+        nest_under=req.nest_under,
+        lane=ctx.lane if ctx is not None else lane,
+    )
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
@@ -943,7 +944,7 @@ def _resolve_prompt(
         skills=req.skills,
         lane_worktree=lane_worktree_str,
         resolved_model=req.model,
-        nest_under=ctx.nest_under if ctx is not None else req.nest_under,
+        nest_under=req.nest_under,
         delegation_tier=delegation_tier,
     )
     return f"{preamble}{packet_text}"
@@ -1848,7 +1849,6 @@ async def _start_promoted_dispatch(
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
         sdk_mode=promoted_mode,
-        nest_under=req.nest_under,
     )
     # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
     # (post slot acquisition) — also fixes misattribution where a queued
@@ -2853,7 +2853,7 @@ async def _run_sdk_dispatch_gated(
     delegation_tier = resolve_delegation_tier(
         ctx.handoff_contract,
         model=req.model,
-        nest_under=ctx.nest_under,
+        nest_under=req.nest_under,
         lane=ctx.lane,
     )
     live_counter = _LiveToolCallCounter()
@@ -4120,7 +4120,6 @@ async def admit_cursor_dispatch(
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
         sdk_mode=resolved_sdk_mode,
-        nest_under=req.nest_under,
     )
     gate_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,

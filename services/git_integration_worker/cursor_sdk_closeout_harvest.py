@@ -199,6 +199,9 @@ def _replace_exact_line(section: str, old: str, new: str) -> str:
 
 
 def _clip_harvest_section(section: str) -> str:
+    lines = section.splitlines(keepends=True)
+    if len(lines) > _HARVEST_PREAMBLE_MAX_LINES:
+        section = "".join(lines[:_HARVEST_PREAMBLE_MAX_LINES])
     if len(section) <= _HARVEST_SECTION_CAP:
         return section
     clipped = section[: _HARVEST_SECTION_CAP - 1]
@@ -257,7 +260,18 @@ def _non_fenced_summary_lines(body: str, *, max_lines: int) -> list[str]:
             continue
         if in_fence:
             continue
-        out.append(line)
+        stripped = line.strip()
+        if _ATX_HEADING_RE.match(line):
+            continue
+        if _STATUS_LINE_RE.match(line) or _VERDICT_LINE_RE.match(line):
+            continue
+        if _RESIDUE_LINE_RE.match(line):
+            continue
+        if not stripped:
+            if out and out[-1].strip():
+                out.append(line)
+        else:
+            out.append(line)
         if len(out) >= max_lines:
             break
     return out

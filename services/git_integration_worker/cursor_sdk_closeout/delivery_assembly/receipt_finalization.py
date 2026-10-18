@@ -27,6 +27,9 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_relocated,
 )
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    _CLOSEOUT_BODY_HEADING,
+)
 from services.git_integration_worker.cursor_sdk_usage_sidecar import (
     render_usage_sidecar_section,
 )
@@ -50,6 +53,7 @@ def finalize_closeout_receipt(
     resolved_model: str | None,
     sidecar_appendix: list[str],
     sidecar_path: Path,
+    archived_closeout_body: str | None = None,
     result_bytes: int,
     body: str,
     sidecar_ref: str,
@@ -102,6 +106,10 @@ def finalize_closeout_receipt(
         )
     if usage_section:
         sidecar_suffix_parts.append("\n\n" + usage_section)
+    if archived_closeout_body is not None:
+        sidecar_suffix_parts.append(
+            f"\n\n{_CLOSEOUT_BODY_HEADING}\n\n{archived_closeout_body}"
+        )
     if sidecar_suffix_parts:
         sidecar_path.write_text(
             sidecar_path.read_text(encoding="utf-8") + "".join(sidecar_suffix_parts),

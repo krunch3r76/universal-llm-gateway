@@ -18,7 +18,6 @@ from implement_admission.conductor_no_restart import (
     NO_RESTART_LINE,
 )
 from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
-from job_vocab import job_record
 from reasoning_posture_contracts import (
     DelegationTier,
     HYPOTHESIZE_ON_JOBS,
@@ -820,6 +819,7 @@ def resolve_prompt_preamble(
             has_packet_path=has_packet_path,
         )
         _append_bare_refusal_line(parts_bare, existing_text=existing_text)
+        parts_bare = _tier_prefix() + parts_bare
         if not parts_bare:
             return ""
         return "\n\n".join(parts_bare) + "\n\n"
@@ -843,6 +843,11 @@ def resolve_prompt_preamble(
         parts = _prefix_reasoning_posture(
             contract, parts, prompt_preamble, existing_text
         )
+        tier_blocks = _tier_prefix()
+        if tier == "B":
+            parts = parts + tier_blocks
+        else:
+            parts = tier_blocks + parts
         _append_lane_b_worktree(
             parts,
             lane=lane,
@@ -863,9 +868,7 @@ def resolve_prompt_preamble(
 
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _TRANSCRIPT_READ_PREAMBLE]
     if tier != "C":
-        record = job_record(contract)
-        if record is None or record.recon_owed:
-            parts.append(_BREADTH_RECON_PREAMBLE)
+        parts.append(_BREADTH_RECON_PREAMBLE)
     parts = _tier_prefix() + parts
     resume_root = extract_resume_root_from_packet(existing_text or "")
     if resume_root and contract in {"recon", "consult", "none"}:

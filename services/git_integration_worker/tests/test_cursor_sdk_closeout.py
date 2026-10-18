@@ -1165,14 +1165,15 @@ def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_sectio
     emitted = (
         f"{preamble}\nstatus: complete\nVERDICT: approve-harvest\nresidue: lane-b\n"
     )
-    written = write_repo_sidecar(tmp_path, "disp-preamble", emitted)
+    written, archived = write_repo_sidecar(tmp_path, "disp-preamble", emitted)
     text = written.read_text(encoding="utf-8")
     first = _closeout_first_section(text)
     assert len(first) <= 4500
     assert "status: complete" in first.splitlines()
     assert "VERDICT: approve-harvest" in first.splitlines()
     assert "residue: lane-b" in first.splitlines()
-    assert preamble in text
+    assert archived is not None
+    assert preamble in archived
 
     silent = prepare_closeout_delivery(
         source_repo=tmp_path,
@@ -1205,7 +1206,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     """
     fenced = ("q" * 5000) + "\nVERDICT: APPROVE\n\n```\nVERDICT: REQUEST_CHANGES\n```\n"
     fenced_first = _closeout_first_section(
-        write_repo_sidecar(tmp_path, "disp-verdict-fence", fenced).read_text(
+        write_repo_sidecar(tmp_path, "disp-verdict-fence", fenced)[0].read_text(
             encoding="utf-8"
         )
     )
@@ -1216,7 +1217,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
         "q" * 5000
     ) + "\nVERDICT: APPROVE\n\nReviewed artifact:\nVERDICT: REQUEST_CHANGES\n"
     disagree_first = _closeout_first_section(
-        write_repo_sidecar(tmp_path, "disp-verdict-disagree", disagree).read_text(
+        write_repo_sidecar(tmp_path, "disp-verdict-disagree", disagree)[0].read_text(
             encoding="utf-8"
         )
     )
@@ -1224,7 +1225,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
 
     code_status = ("p" * 5000) + "\nstatus: ExecutionStatus\n"
     code_first = _closeout_first_section(
-        write_repo_sidecar(tmp_path, "disp-code-status", code_status).read_text(
+        write_repo_sidecar(tmp_path, "disp-code-status", code_status)[0].read_text(
             encoding="utf-8"
         )
     )
@@ -1235,7 +1236,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     leading_first = _closeout_first_section(
         write_repo_sidecar(
             tmp_path, "disp-leading-code-status", leading_code
-        ).read_text(encoding="utf-8")
+        )[0].read_text(encoding="utf-8")
     )
     assert "status: unstated" in leading_first.splitlines()
     assert "status: ExecutionStatus" not in leading_first.splitlines()
@@ -1244,14 +1245,14 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     short_first = _closeout_first_section(
         write_repo_sidecar(
             tmp_path, "disp-leading-code-status-short", short_code
-        ).read_text(encoding="utf-8")
+        )[0].read_text(encoding="utf-8")
     )
     assert short_first.splitlines()[0] == "status: unstated"
     assert "status: ExecutionStatus" not in short_first.splitlines()
 
     kept = "status: complete\nresidue: none\n"
     kept_first = _closeout_first_section(
-        write_repo_sidecar(tmp_path, "disp-leading-complete", kept).read_text(
+        write_repo_sidecar(tmp_path, "disp-leading-complete", kept)[0].read_text(
             encoding="utf-8"
         )
     )
@@ -4407,3 +4408,98 @@ async def test_closeout_role_turn_follows_cursor_sdk_reply(
     await _run("none", _CONFORMING_ROLE_BODY)
     assert [sender for sender, _body in replies] == ["cursor-sdk"]
     assert posts == []
+
+
+def test_multi_heading_closeout_executive_envelope_before_effects_manifest(
+    tmp_path: Path,
+) -> None:
+    """AC4: long multi-heading closeout splits before ## effects_manifest."""
+    _init_git_repo(tmp_path)
+    prose = "\n".join(f"detail line {index}" for index in range(240))
+    agent_body = (
+        f"status: complete\nresidue: none\n\n{prose}\n\n"
+        "## Section 1\n\none\n\n## Section 2\n\ntwo\n"
+    )
+    outcome = SdkRunOutcome(
+        body=agent_body,
+        status="finished",
+        duration_ms=50,
+        tool_call_count=0,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-executive",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-exec",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    pre_manifest = sidecar_text.split("## effects_manifest", maxsplit=1)[0]
+    assert len(pre_manifest.splitlines()) <= 60
+    assert "## closeout_body" in sidecar_text
+    assert agent_body in sidecar_text
+    manifest_idx = sidecar_text.index("## effects_manifest")
+    body_idx = sidecar_text.index("## closeout_body")
+    structured_idx = sidecar_text.index("## structured_closeout_full")
+    assert manifest_idx < body_idx < structured_idx
+
+
+def test_short_closeout_not_split_with_closeout_body_section(tmp_path: Path) -> None:
+    """AC4: ≤60-line closeouts stay intact without ## closeout_body."""
+    _init_git_repo(tmp_path)
+    agent_body = "status: complete\nresidue: none\nShort closeout.\n"
+    outcome = SdkRunOutcome(
+        body=agent_body,
+        status="finished",
+        duration_ms=10,
+        tool_call_count=0,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-short",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-short",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert "## closeout_body" not in sidecar_text
+    assert "Short closeout." in sidecar_text.split("## effects_manifest", maxsplit=1)[0]
+
+
+def test_tier_preambles_in_resolve_prompt_preamble() -> None:
+    from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+
+    tier_a = resolve_prompt_preamble(
+        handoff_contract="conductor",
+        prompt_preamble=None,
+        inferred_contract=None,
+        dispatch_id="cond-1",
+        has_packet_path=True,
+        existing_text="Use the conductor skill.\n",
+    )
+    assert "Use the lean-dispatch skill" in tier_a
+
+    tier_b = resolve_prompt_preamble(
+        handoff_contract="investigate",
+        prompt_preamble=None,
+        inferred_contract=None,
+        resolved_model="cursor/grok-4.7",
+    )
+    assert "TIER-B RECON / JUDGMENT INVARIANT" in tier_b
+    assert "BREADTH RECON — EXPLORE DEFAULT" in tier_b
+
+    tier_c = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_worktree="/tmp/lane-wt",
+        resolved_model="cursor/composer-2.5",
+    )
+    assert "LEAF EXECUTION INVARIANT" in tier_c
+    assert "BREADTH RECON — EXPLORE DEFAULT" not in tier_c
+    assert "propagation_residue" in tier_c

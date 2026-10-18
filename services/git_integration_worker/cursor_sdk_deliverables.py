@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_sdk_closeout_artifacts import (
 )
 from services.git_integration_worker.cursor_sdk_closeout_harvest import (
     bound_closeout_harvest_preamble,
+    partition_closeout_executive_envelope,
     stamp_harvest_status_from_structured,
 )
 
@@ -78,11 +79,15 @@ def full_result_text(body: str, degraded_reason: str | None) -> str:
     return body
 
 
-def write_repo_sidecar(source_repo: Path, dispatch_id: str, content: str) -> Path:
+def write_repo_sidecar(
+    source_repo: Path, dispatch_id: str, content: str
+) -> tuple[Path, str | None]:
+    """Write the closeout sidecar prose; return path and optional archived raw body."""
     path = source_repo / _sidecar_rel_path(dispatch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(bound_closeout_harvest_preamble(content), encoding="utf-8")
-    return path
+    executive, archived = partition_closeout_executive_envelope(content)
+    path.write_text(executive, encoding="utf-8")
+    return path, archived
 
 
 def normalize_cortex_rel(raw: str) -> str | None:

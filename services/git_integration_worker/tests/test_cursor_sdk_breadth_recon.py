@@ -24,15 +24,25 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
 
 def test_packet_preamble_includes_breadth_recon_block() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="implement",
+        handoff_contract="investigate",
         prompt_preamble=None,
         inferred_contract=None,
     )
     assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
     assert 'Task(subagent_type="explore"' in preamble
     assert "recon_method:" in preamble
-    assert "reasoning-posture" not in preamble
-    assert "ulg-for-llms" not in preamble
+
+
+def test_packet_preamble_implement_omits_breadth_recon_block() -> None:
+    preamble = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        resolved_model="cursor/composer-2.5",
+        lane="B",
+    )
+    assert "BREADTH RECON — EXPLORE DEFAULT" not in preamble
+    assert "LEAF EXECUTION INVARIANT" in preamble
 
 
 def test_packet_preamble_none_is_freeform() -> None:

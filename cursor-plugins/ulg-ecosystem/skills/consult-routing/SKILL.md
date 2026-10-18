@@ -184,7 +184,7 @@ team_dispatch(
 `executor_override` naming Opus for mechanical work · `density_triage=judgment_required` with
 write step remaining.
 
-**Exempt:** bind-only consult (no writes) · trivial in-seat touch · dense packet already
+**Exempt:** bind-only consult (no writes) · dense packet already
 authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 **Anti-patterns:**
@@ -278,6 +278,12 @@ re-trigger. Hard server admit stays nested-CDP / operator_packet only.
 ## Dispatch kernel — relocated prose
 
 Moved from `dispatch-kernel_ulg.mdc` — read with the rule. The rule keeps the imperatives; this section holds the ladder table, autonomy column, and doctrine list.
+
+| Tier | Tripwire (orchestrator / judgment / leaf) |
+|---|---|
+| **Tier A** (`conductor`, attended IDE) | ≤2 targeted file reads in-seat solely to formulate a packet; 0 in-seat repo implementation edits; 0 in-seat `ssh`/host mutations; 0 in-seat `pytest` runs; continuity hop ≤35–40 turns or 2–3 completed milestones |
+| **Tier B** (judgment / recon / review) | Scoped recon reads and Explore subagents when ≥3 files or loci are unknown until judgment closes; 0 implementation writes; 0 service mutations; `judgment_closed ∧ mechanical_remainder ⇒ split` to `cursor/composer-2.5` via `nest_under` or parent return |
+| **Tier C** (leaf `cursor-sdk` homes) | Do not load `dispatch-kernel_ulg.mdc` on leaf dispatch HOME — execute the commissioned packet; no conductor spawn or CDP consult from the leaf seat |
 
 | Need | Path | Autonomy |
 |---|---|---|
