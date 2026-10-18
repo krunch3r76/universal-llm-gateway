@@ -44,8 +44,6 @@ def _score_draft(draft_text: str, attested_pins: list[dict[str, Any]]) -> int:
         anchors = _pin_tokens(pin)
         if anchors and anchors <= draft_tokens:
             score += 1
-        elif anchors & draft_tokens:
-            score += 1
     return score
 
 

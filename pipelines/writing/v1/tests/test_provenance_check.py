@@ -473,3 +473,103 @@ def test_provenance_check_unknown_pin_from_fact_ceiling_audit_clauses() -> None:
     assert "unknown_pin" in kinds
     row = next(item for item in payload["violations"] if item["type"] == "unknown_pin")
     assert row["detail"] == "P9"
+
+
+_FILL_LEDGER = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "Fill was 251 when I opened Saturday",
+    },
+    {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
+    {
+        "pin_id": "P3",
+        "attested": True,
+        "excerpt": "So two days of work and it's sitting where it started",
+    },
+]
+_FILL_V1 = (
+    "Fill was 251 when I opened Saturday. "
+    "It was 213 Sunday morning. "
+    "So two days of work and it's sitting where it started."
+)
+_FILL_V1_CLAUSES = [
+    {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"], "disposition": "express"},
+    {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"], "disposition": "express"},
+    {
+        "text": "So two days of work and it's sitting where it started.",
+        "pin_ids": ["P3"],
+        "disposition": "express",
+    },
+]
+
+
+def test_fixture_saturday_drop_is_drop_finding() -> None:
+    v2 = (
+        "Fill was 251 when I opened. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v2_clauses = provenance.derive_v2_clauses_from_audit(
+        v2, _FILL_V1_CLAUSES, _FILL_LEDGER
+    )
+    violations = provenance.revision_delta(
+        {"draft": _FILL_V1, "claims": _FILL_V1_CLAUSES},
+        {"draft": v2, "claims": v2_clauses},
+        v1_clauses=_FILL_V1_CLAUSES,
+        v2_clauses=v2_clauses,
+        pin_ledger=_FILL_LEDGER,
+    )
+    kinds = _types(violations)
+    assert "fact_dropped" in kinds
+    assert any(
+        row["type"] == "fact_dropped" and row["detail"] == "Saturday" for row in violations
+    )
+
+
+def test_fact_ceiling_final_handler_derives_fact_reordered() -> None:
+    v2 = (
+        "It was 213 Sunday morning. "
+        "Fill was 251 when I opened Saturday. "
+        "So two days of work and it's sitting where it started."
+    )
+
+    class _Raw:
+        def __init__(self, text: str) -> None:
+            self.raw = text
+
+    class _StepFinal:
+        def __init__(self) -> None:
+            self.handler_inputs = {
+                "pin_ledger": "assemble.json.pin_ledger",
+                "draft": "prose_rhythm_pass.raw",
+                "draft_v1": "draft.json",
+            }
+
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _StepFinal(),
+            _Ctx(
+                {
+                    "assemble": _Out({"pin_ledger": _FILL_LEDGER}),
+                    "draft": _Out(
+                        {
+                            "ok": True,
+                            "draft": _FILL_V1,
+                            "selected_role": "drafter_openai",
+                        }
+                    ),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": _FILL_V1_CLAUSES,
+                        }
+                    ),
+                    "prose_rhythm_pass": _Raw(v2),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    assert "fact_reordered" in _types(payload["violations"])

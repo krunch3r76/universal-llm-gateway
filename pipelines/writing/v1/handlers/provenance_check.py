@@ -42,11 +42,27 @@ _NAME_STOP = frozenset(
         "And",
         "But",
         "So",
-        "Fill",
         "It",
         "When",
-        "Sunday",
-        "Saturday",
+    }
+)
+_FUNCTION_WORDS = frozenset(
+    {
+        "and",
+        "when",
+        "the",
+        "a",
+        "it",
+        "is",
+        "was",
+        "where",
+        "of",
+        "i",
+        "its",
+        "that",
+        "in",
+        "on",
+        "so",
     }
 )
 _CLAUSE_DETAIL_MAX = 160
@@ -254,8 +270,6 @@ def check_fact_ceiling(
                 violations.append(_violation("unattested_pin", None, pin_id))
         for match in _CAUSAL_CONNECTIVES_RE.finditer(text):
             connective = match.group(0).strip().lower()
-            if connective == "since" and "sunday" in text.lower():
-                continue
             backed = False
             for pin_id in pin_ids:
                 pin = next(
@@ -269,7 +283,7 @@ def check_fact_ceiling(
                 if pin and connective in str(pin.get("excerpt") or "").lower():
                     backed = True
                     break
-            if not backed and connective not in {"since"}:
+            if not backed:
                 violations.append(
                     _violation("unbacked_causal_claim", None, match.group(0).strip())
                 )
@@ -307,6 +321,89 @@ def _pin_order(clauses: list[dict[str, Any]]) -> list[str]:
             if key not in order:
                 order.append(key)
     return order
+
+
+def _content_anchor_tokens(text: str) -> set[str]:
+    return {token for token in _tokens(text) if token not in _FUNCTION_WORDS}
+
+
+def _pin_anchor_tokens(
+    pin_id: str,
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+) -> set[str]:
+    ledger = pin_ledger or []
+    pin = next((row for row in ledger if str(row.get("pin_id")) == pin_id), None)
+    if isinstance(pin, dict):
+        excerpt = str(pin.get("excerpt") or "")
+        if excerpt.strip():
+            return _content_anchor_tokens(excerpt)
+    for clause in v1_clauses:
+        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        if pin_id in {str(item) for item in pin_ids}:
+            return _content_anchor_tokens(str(clause.get("text") or ""))
+    return set()
+
+
+def _pins_for_text(
+    text: str,
+    ordered_pin_ids: list[str],
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+) -> list[str]:
+    sent_tokens = _tokens(text)
+    matched: list[str] = []
+    for pin_id in ordered_pin_ids:
+        anchors = _pin_anchor_tokens(pin_id, pin_ledger, v1_clauses)
+        if anchors and anchors <= sent_tokens:
+            matched.append(pin_id)
+    return matched
+
+
+def derive_v2_clauses_from_audit(
+    draft_text: str,
+    v1_clauses: list[dict[str, Any]],
+    pin_ledger: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Map v2 prose sentences to pin ids using the audit clause pin order."""
+    ordered_pins = _pin_order(v1_clauses)
+    sentences = _sentences(draft_text)
+    if not sentences:
+        return []
+
+    if len(sentences) == 1 and len(v1_clauses) > 1:
+        pin_ids = _pins_for_text(draft_text, ordered_pins, pin_ledger, v1_clauses)
+        if not pin_ids:
+            pin_ids = ordered_pins
+        disposition = str(v1_clauses[0].get("disposition") or "express")
+        return [
+            {
+                "claim_id": "s1",
+                "text": draft_text,
+                "pin_ids": pin_ids,
+                "disposition": disposition,
+            }
+        ]
+
+    rows: list[dict[str, Any]] = []
+    for index, sentence in enumerate(sentences, start=1):
+        pin_ids = _pins_for_text(sentence, ordered_pins, pin_ledger, v1_clauses)
+        disposition = "express"
+        pin_id_set = {str(item) for item in pin_ids}
+        for clause in v1_clauses:
+            clause_pins = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+            if pin_id_set & {str(item) for item in clause_pins}:
+                disposition = str(clause.get("disposition") or disposition)
+                break
+        rows.append(
+            {
+                "claim_id": f"s{index}",
+                "text": sentence,
+                "pin_ids": pin_ids,
+                "disposition": disposition,
+            }
+        )
+    return rows
 
 
 def _extract_clauses(draft: dict[str, Any]) -> list[dict[str, Any]]:
@@ -350,29 +447,7 @@ def revision_delta(
 
     v1_order = _pin_order(v1_clause_rows)
     v2_order = _pin_order(v2_clause_rows)
-    join_words = {
-        "and",
-        "when",
-        "the",
-        "a",
-        "it",
-        "is",
-        "was",
-        "where",
-        "of",
-        "i",
-        "opened",
-        "morning",
-        "two",
-        "days",
-        "work",
-        "its",
-        "sitting",
-        "started",
-        "that",
-        "in",
-        "on",
-    }
+    join_words = set(_FUNCTION_WORDS)
     if (
         v1_order
         and v2_order
@@ -503,6 +578,22 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     )
                 )
         if prior is not None:
-            violations.extend(revision_delta(prior, draft, pin_ledger=ledger))
+            v1_clauses = verifier_clauses
+            v2_clauses: list[dict[str, Any]] | None = None
+            if isinstance(v1_clauses, list) and v1_clauses and parsed is not None:
+                v2_clauses = derive_v2_clauses_from_audit(
+                    parsed["draft"],
+                    v1_clauses,
+                    ledger,
+                )
+            violations.extend(
+                revision_delta(
+                    prior,
+                    draft,
+                    v1_clauses=v1_clauses,
+                    v2_clauses=v2_clauses,
+                    pin_ledger=ledger,
+                )
+            )
         payload = {"ok": True, "violations": violations, "pass": violations == []}
         return _step(payload)

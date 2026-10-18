@@ -56,7 +56,13 @@ prompts:
       <documents>
       {documents}
       </documents>
-      Apply prose-rhythm steps 1-5 and Orwell Rule 3. Preserve every fact and pin-backed token.
+      Revise the draft using these prose-rhythm steps (plain text only; preserve every attested fact and pin-backed token):
+      (1) Mark each sentence length as long, medium, or short.
+      (2) Find runs of three or more consecutive sentences in the same length bucket.
+      (3) In each flat run, let one context or sequence sentence take a subordinate clause so the run breaks up.
+      (4) Place the shortest sentence on the load-bearing number, date, or consequence.
+      (5) End paragraphs on concrete nouns or facts; strip trailing qualifiers, thank-yous, nominalizations, and any narrative arc or earned close on transactional channels.
+      Orwell Rule 3 cut test: if a word can be cut without changing a fact, cut it.
       No narrative arc or earned close on transactional messages. Output the revised plain-text body only.
   reviser:
     description: Legacy alias for rhythm pass template fields.
