@@ -49,51 +49,6 @@ def _generate_teaching_data(expected_axis: str) -> dict[str, Any]:
     }
 
 
-def enforce_generate_role_seat_exclusive(
-    role: str | None,
-    seat: str | None,
-    *,
-    request_id: str,
-    model: str | None = None,
-) -> None:
-    """Exactly-one FOL for ``role`` vs ``seat`` on generate/to_thread.
-
-    Exception: ``model=cursor/…`` alone is admitted (model-only peer of
-    ``model=cdp/…``) — seat defaults to ``cursor-sdk`` at the dispatch branch.
-    """
-    has_role = bool(role and str(role).strip())
-    has_seat = bool(seat and str(seat).strip())
-    if not has_role and not has_seat:
-        if _is_cursor_substrate_model(model):
-            return
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="role",
-            reason="generate requires exactly one of role or seat",
-            status_code=422,
-            code="role_or_seat_required",
-            details=_generate_teaching_data("role|seat"),
-        )
-    if has_role and has_seat:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="role",
-            reason="role and seat are mutually exclusive on generate/to_thread",
-            status_code=422,
-            code="role_seat_exclusive",
-            details=_generate_teaching_data("role|seat"),
-        )
-
-
-def _is_cursor_substrate_model(model: str | None) -> bool:
-    if not model or not str(model).strip():
-        return False
-    try:
-        return ModelId.parse(model).backend_type == "cursor_sdk"
-    except (TypeError, ValueError):
-        return False
-
-
 def reject_role_cursor_sdk_on_generate(
     role: str,
     *,
@@ -521,35 +476,6 @@ def resolve_handoff_target(
     return to_agent, family, platform, to_agent
 
 
-def _cursor_sdk_omit_model(*, request_id: str, job: str | None = None) -> str:
-    """Resolve omit-model for ``seat=cursor-sdk`` from the workflow registry."""
-    from implement_admission.routing import load_route_policy
-    from implement_admission.workflow_registry import (
-        MECHANICAL_WORKFLOW,
-        load_auto_judgment_default_model,
-        load_workflow_registry,
-    )
-
-    try:
-        key = (job or "").strip().lower()
-        if key in {"implement", "mechanical"}:
-            binding = load_workflow_registry().workflows.get(MECHANICAL_WORKFLOW)
-            if binding is None or not binding.model:
-                raise ValueError(
-                    f"workflows.{MECHANICAL_WORKFLOW}.model must be a non-empty string"
-                )
-            return binding.model
-        return load_auto_judgment_default_model(load_route_policy())
-    except ValueError as exc:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason=str(exc),
-            status_code=422,
-            code="sdk_generate_model_invalid",
-        ) from exc
-
-
 def resolve_handoff_seat(
     *,
     seat: str,
@@ -618,7 +544,10 @@ def resolve_cursor_sdk_handoff_seat(
             status_code=422,
             code="handoff_seat_invalid",
         )
-    default_model = _cursor_sdk_omit_model(request_id=request_id)
+    from implement_admission.routing import load_route_policy
+    from implement_admission.workflow_registry import load_auto_judgment_default_model
+
+    default_model = load_auto_judgment_default_model(load_route_policy())
     return "cursor-sdk", "cursor", "sdk", default_model
 
 
@@ -684,126 +613,6 @@ def _resolve_auto_seat_profile(
     return to_agent, family, platform, profile
 
 
-def resolve_auto_seat_generate_target(
-    seat: str,
-    *,
-    model: str | None,
-    request_id: str,
-    packet_kind: str | None = None,
-    job: str | None = None,
-) -> tuple[str, str, str, str]:
-    """Resolve auto-dispatch seat generate target (``seat=cursor-sdk``, …).
-
-    Admission predicate (FOL):
-      admit(seat, model) ⟺ profile.auto_dispatchable
-
-    Returns ``(to_agent, family, platform, resolved_model)``.
-    """
-    to_agent, family, platform, profile = _resolve_auto_seat_profile(
-        seat, request_id=request_id
-    )
-    if profile.manual_handoff:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="seat",
-            reason=f"seat {seat!r} requires op=handoff, not generate",
-            status_code=422,
-            code="seat_not_auto_dispatchable",
-            details=_generate_teaching_data("seat"),
-        )
-    if not is_sdk_substrate_profile(profile):
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="seat",
-            reason=(
-                f"seat {seat!r} resolved to ({family!r}, {platform!r}) which is "
-                f"not an SDK auto-dispatch substrate"
-            ),
-            status_code=422,
-            code="sdk_substrate_required",
-        )
-    resolved_model = model or _cursor_sdk_omit_model(request_id=request_id, job=job)
-    # Bare ``auto`` is the Cursor product name; the card id is ``cursor/auto``.
-    # Breaks when a non-sdk seat reaches this rewrite (this function already
-    # required an SDK substrate above).
-    if resolved_model == "auto":
-        resolved_model = "cursor/auto"
-    if not resolved_model:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason=(
-                "cursor-sdk requires explicit model= or workflows.auto_judgment.model"
-            ),
-            status_code=422,
-            code="sdk_generate_model_invalid",
-        )
-    if not resolved_model.startswith("cursor/"):
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason=f"SDK substrate requires cursor/* model ids, got {resolved_model!r}",
-            status_code=422,
-            code="sdk_generate_model_invalid",
-        )
-    from cursor_capabilities import is_cursor_model_denied
-
-    if profile.family == "cursor" and profile.platform == "sdk":
-        if is_cursor_model_denied(resolved_model):
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="model",
-                reason=f"model {resolved_model!r} is denied for cursor/sdk substrate",
-                status_code=422,
-                code="sdk_generate_model_invalid",
-            )
-    elif profile.allowed_models and resolved_model not in profile.allowed_models:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason=(
-                f"model {resolved_model!r} not in allowed_models: "
-                f"{sorted(profile.allowed_models)}"
-            ),
-            status_code=422,
-            code="sdk_generate_model_invalid",
-        )
-    return to_agent, family, platform, resolved_model
-
-
-def resolve_cursor_sdk_generate_target(
-    role: str,
-    *,
-    model: str | None,
-    request_id: str,
-    packet_kind: str | None = None,
-    job: str | None = None,
-) -> tuple[str, str, str, str]:
-    """Backward-compat wrapper — use resolve_auto_seat_generate_target(seat=…)."""
-    return resolve_auto_seat_generate_target(
-        role, model=model, request_id=request_id, job=job
-    )
-
-
-def is_auto_seat_generate_admission(
-    *,
-    seat: str | None = None,
-    role: str | None = None,
-    model: str | None,
-    request_id: str,
-) -> bool:
-    """True when ``op=generate`` should enter the auto-seat SDK handler branch."""
-    if seat is not None and str(seat).strip():
-        try:
-            _resolve_auto_seat_profile(seat, request_id=request_id)
-        except FrontierEndpointError:
-            return False
-        return True
-    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
-        return False
-    return False
-
-
 def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
     """True when seat slug resolves to cursor/sdk auto_dispatchable profile."""
     try:
@@ -811,29 +620,6 @@ def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
     except FrontierEndpointError:
         return False
     return is_sdk_substrate_profile(get_profile("cursor", "sdk"))
-
-
-def is_cursor_sdk_generate_admission(
-    role: str | None = None,
-    *,
-    seat: str | None = None,
-    model: str | None = None,
-    request_id: str,
-) -> bool:
-    """True when ``op=generate`` should enter the cursor-sdk handler branch.
-
-    Admits ``seat=cursor-sdk`` (explicit) or ``model=cursor/…`` alone
-    (model-only peer of ``model=cdp/…``).
-    """
-    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
-        return False
-    if seat is not None and str(seat).strip():
-        return is_auto_seat_generate_admission(
-            seat=seat, role=None, model=None, request_id=request_id
-        )
-    if _is_cursor_substrate_model(model):
-        return True
-    return False
 
 
 async def verify_thread_writable(

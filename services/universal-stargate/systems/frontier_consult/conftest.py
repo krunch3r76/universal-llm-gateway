@@ -90,3 +90,48 @@ def _reset_drift_gate_state():
                 os.environ.pop(k, None)
         os.environ.update(saved)
         clear_gate_state_cache()
+
+
+@pytest.fixture(autouse=True)
+def _stub_team_dispatch_admit_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route tests use in-process admit handlers instead of loopback HTTP."""
+
+    async def _run_team_dispatch_admit(
+        *,
+        body: object,
+        request_id: str,
+        execution_id: str = "",
+        **_: object,
+    ) -> dict[str, object]:
+        from pipelines.team_dispatch_admit.v1.handlers.test_handlers import (
+            run_full_admit,
+        )
+        from systems.frontier_consult.admission import FrontierEndpointError
+
+        opts = {
+            "op": getattr(body, "op", None),
+            "role": getattr(body, "role", None),
+            "seat": getattr(body, "seat", None),
+            "model": getattr(body, "model", None),
+            "job": getattr(body, "job", None),
+            "dispatch_id": getattr(body, "dispatch_id", None),
+            "request_id": request_id,
+        }
+        plan = run_full_admit(opts)
+        if plan.get("admitted") is False:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field=str(plan.get("field") or "admit"),
+                reason=str(plan.get("reason") or "rejected"),
+                status_code=int(plan.get("status_code") or 422),
+                code=str(plan.get("code") or "admit_rejected"),
+                details=plan.get("details")
+                if isinstance(plan.get("details"), dict)
+                else None,
+            )
+        return plan
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
+        _run_team_dispatch_admit,
+    )

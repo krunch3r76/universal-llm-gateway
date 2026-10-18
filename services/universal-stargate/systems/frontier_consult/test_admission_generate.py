@@ -10,15 +10,18 @@ from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import load_auto_judgment_default_model
 
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
+
 from .admission import (
     FrontierEndpointError,
-    enforce_generate_role_seat_exclusive,
     enforce_team_dispatch_generate_admit,
-    is_auto_seat_generate_admission,
     is_chat_completions_only,
     reject_role_cursor_sdk_on_generate,
-    resolve_auto_seat_generate_target,
 )
+
+enforce_generate_role_seat_exclusive = admit_pipeline.enforce_generate_role_seat_exclusive
+is_auto_seat_generate_admission = admit_pipeline.is_auto_seat_generate_admission
+resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
 from .service import FrontierGenerateRequest, build_dispatch_body
 
 _DISPATCH_THREAD = "test-dispatch-thread"

@@ -3277,9 +3277,9 @@ def test_t4_cursor_sdk_role_rejected_on_generate() -> None:
 
 
 def test_t4b_resolve_auto_seat_generate_target_default_model() -> None:
-    from .admission import resolve_auto_seat_generate_target
+    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
-    to_agent, family, platform, model = resolve_auto_seat_generate_target(
+    to_agent, family, platform, model = admit_pipeline.resolve_auto_seat_generate_target(
         "cursor-sdk", model=None, request_id="req-t4b"
     )
     assert to_agent == "cursor-sdk"
@@ -3294,9 +3294,9 @@ def test_t4c2_bare_auto_resolves_to_cursor_auto() -> None:
     Breaks when a caller sends ``auto`` and admission still demands a
     ``cursor/`` prefix (sdk_generate_model_invalid).
     """
-    from .admission import resolve_auto_seat_generate_target
+    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
-    _to, _f, _p, model = resolve_auto_seat_generate_target(
+    _to, _f, _p, model = admit_pipeline.resolve_auto_seat_generate_target(
         "cursor-sdk",
         model="auto",
         request_id="req-t4c2",
@@ -3305,9 +3305,9 @@ def test_t4c2_bare_auto_resolves_to_cursor_auto() -> None:
 
 
 def test_t4c_resolve_auto_seat_generate_target_explicit_model() -> None:
-    from .admission import resolve_auto_seat_generate_target
+    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
-    _to, _f, _p, model = resolve_auto_seat_generate_target(
+    _to, _f, _p, model = admit_pipeline.resolve_auto_seat_generate_target(
         "cursor-sdk",
         model="cursor/claude-opus-4-8",
         request_id="req-t4c",

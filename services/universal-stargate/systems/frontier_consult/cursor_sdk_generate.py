@@ -361,6 +361,7 @@ async def dispatch_cursor_sdk_generate(
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
+    requested_model_pin: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -421,5 +422,6 @@ async def dispatch_cursor_sdk_generate(
         bus_body=bus_body,
         off_bus_ref=off_bus_ref,
         prompt_sha256=prompt_sha256,
+        requested_model_pin=requested_model_pin,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

@@ -13,16 +13,6 @@ from systems.frontier_consult.admission import FrontierEndpointError
 
 def _patch_prepare_for_worker_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec",
-            "cursor",
-            "sdk",
-            "composer-2.5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -81,7 +71,7 @@ async def test_worker_409_raises_no_envelope(monkeypatch: pytest.MonkeyPatch) ->
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-409",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject="s",
             caller_agent="dispatch",
             contract="implement",
@@ -121,7 +111,7 @@ async def test_worker_dispatched_stamps_both_ids(
     await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-dual-stamp",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="implement",
@@ -168,7 +158,7 @@ async def test_worker_202_returns_queued_envelope(
     result = await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-202",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="implement",
@@ -199,7 +189,7 @@ async def test_worker_timeout_hard_error(monkeypatch: pytest.MonkeyPatch) -> Non
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-timeout",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject="s",
             caller_agent="dispatch",
             contract="implement",

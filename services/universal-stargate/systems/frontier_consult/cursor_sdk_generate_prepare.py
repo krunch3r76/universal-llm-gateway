@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .admission import resolve_cursor_sdk_generate_target
 from .cursor_sdk_alignment import align_cursor_knobs
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_signals import (
@@ -133,6 +132,7 @@ async def prepare_cursor_sdk_generate(
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
+    requested_model_pin: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .generate_lane_ac_observer import (
@@ -177,19 +177,25 @@ async def prepare_cursor_sdk_generate(
     effective_contract = (contract or "").strip().lower() or None
     if early_packet_text and not effective_contract:
         effective_contract = extract_contract_from_body(early_packet_text)
-    to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
-        role,
-        model=model,
-        request_id=request_id,
-        job=contract,
-    )
+    if not model or not str(model).strip():
+        from .admission import FrontierEndpointError
+
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor-sdk generate requires model from admit plan",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    resolved_model = str(model).strip()
+    to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
     reject_other_models_pool_generate(
         request_id=request_id,
         role=role,
         seat=None,
-        model=model,
+        model=requested_model_pin if requested_model_pin is not None else model,
         resolved_model=resolved_model,
     )
     if execution_id is None or dispatch_id is None:

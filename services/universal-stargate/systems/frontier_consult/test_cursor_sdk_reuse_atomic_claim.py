@@ -16,16 +16,6 @@ from systems.frontier_consult.handoff import (
 
 def _patch_generate_deps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-fixture",
-            "cursor",
-            "sdk",
-            "composer-2.5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -124,7 +114,7 @@ async def test_auto_consolidation_uses_atomic_claim(
     result = await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-auto",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="implement",
         caller_agent="dispatch",
         contract="pure-mechanical",
@@ -159,7 +149,7 @@ async def test_explicit_reuse_bypasses_atomic_claim(
     result = await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-explicit",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="implement",
         caller_agent="dispatch",
         contract="pure-mechanical",
@@ -194,7 +184,7 @@ async def test_contention_falls_back_to_create_thread(
     result = await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-fallback",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="implement",
         caller_agent="dispatch",
         contract="pure-mechanical",

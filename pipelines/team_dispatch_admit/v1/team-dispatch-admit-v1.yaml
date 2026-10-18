@@ -1,0 +1,34 @@
+# team-dispatch-admit — synchronous admission pipeline for team_dispatch generate/to_thread.
+#
+# Invocation (route client):
+#   POST /v1/chat/completions
+#   model: team-dispatch-admit
+#   pipeline_options: { op, role, seat, model, job, dispatch_id, request_id, ... }
+
+schema_version: 6
+id: team-dispatch-admit
+version: "1.0"
+type: team_dispatch_admit
+category: team_dispatch_admit
+description: >
+  Validate, default-select, and assemble an AdmitPlan for team_dispatch
+  op=generate and op=to_thread. No model calls.
+output: assemble
+
+options:
+  timeout_seconds: 30
+
+steps:
+  - name: validate
+    type: team_dispatch_admit_validate_v1
+
+  - name: defaults
+    type: team_dispatch_admit_defaults_v1
+    handler_inputs:
+      validate: validate.json
+
+  - name: assemble
+    type: team_dispatch_admit_assemble_v1
+    handler_inputs:
+      validate: validate.json
+      defaults: defaults.json

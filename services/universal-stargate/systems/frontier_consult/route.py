@@ -28,19 +28,11 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import (
-    enforce_generate_role_seat_exclusive,
     enforce_handoff_seat_not_auto,
-    is_cursor_sdk_generate_admission,
-    reject_role_cursor_sdk_on_generate,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
-from .cdp_generate import (
-    dispatch_cdp_generate,
-    is_cdp_model,
-    reject_cursor_sdk_seat_with_cdp,
-    reject_role_with_substrate_model,
-)
+from .cdp_generate import dispatch_cdp_generate
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
 from .cursor_sdk_steer_dispatch import (
@@ -816,117 +808,83 @@ async def team_dispatch(
             await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    # job=wrap on an explicit non-sdk role must refuse before check-review
-    # coercion rewrites reviewer/skeptic into seat=cursor-sdk. role=cursor-sdk
-    # stays on the later role_is_not_a_seat teaching path.
-    if (
-        body.op == "generate"
-        and getattr(body, "job", None) == "wrap"
-        and isinstance(role, str)
-        and role.strip()
-        and normalize_agent_slug(role) != "cursor-sdk"
-        and not is_cursor_sdk_generate_admission(
-            role=role, seat=seat, model=model, request_id=request_id
-        )
-    ):
-        return JSONResponse(
-            status_code=422,
-            content=FrontierEndpointError(
-                request_id=request_id,
-                field="role",
-                reason=(
-                    "contract=wrap is only admitted on the cursor-sdk generate branch"
-                ),
-                status_code=422,
-                code="wrap_role_not_admitted",
-            ).to_dict(),
-        )
-    if body.op == "generate":
-        from implement_admission.check_review_substrate import (
-            coerce_check_review_omit_to_cursor_seat,
-        )
-
-        role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
-            role, seat, model
-        )
-        if coerced:
-            body.role = role
-            body.seat = seat
-            body.model = model
-    if body.op == "generate" and getattr(body, "dispatch_id", None):
-        from ._frontier_intake import reject_dispatch_id_off_sdk
+    if body.op in ("generate", "to_thread"):
+        from .team_dispatch_admit_client import run_team_dispatch_admit
 
         try:
-            reject_dispatch_id_off_sdk(
+            plan = await run_team_dispatch_admit(body=body, request_id=request_id)
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+        role = plan.get("role")
+        seat = plan.get("seat")
+        model = plan.get("model")
+        requested_model_pin = body.model
+        body.role = role
+        body.seat = seat
+        body.model = model
+
+        if body.op == "to_thread":
+            source_text = await resolve_generate_prompt_body(
                 request_id=request_id,
-                dispatch_id=body.dispatch_id,
-                sdk_admission=is_cursor_sdk_generate_admission(
-                    role=role, seat=seat, model=model, request_id=request_id
-                ),
+                role=role or "synthesizer",
+                dispatch_thread_id=body.dispatch_thread_id,
+                prompt=getattr(body, "prompt", None),
+                sidecar_ref=getattr(body, "sidecar_ref", None),
             )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op == "generate" and is_cdp_model(model):
-        try:
-            reject_cursor_sdk_seat_with_cdp(
-                seat=seat, model=model, request_id=request_id
+            req = FrontierGenerateRequest(
+                **_normalize_op_body(body, source_text=source_text)
             )
-            reject_role_with_substrate_model(
-                role=role, model=model, request_id=request_id
-            )
-            result = await dispatch_cdp_generate(
-                request_id=request_id,
-                body=body,
-                response=response,
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if isinstance(result, dict):
-            response.status_code = 202
-        return result
-    if body.op == "generate":
-        try:
-            enforce_generate_role_seat_exclusive(
-                role, seat, request_id=request_id, model=model
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if role is not None:
+            return await _dispatch(req, response)
+
+        backend = plan.get("backend")
+        if backend == "cdp":
             try:
-                reject_role_cursor_sdk_on_generate(role, request_id=request_id)
+                result = await dispatch_cdp_generate(
+                    request_id=request_id,
+                    body=body,
+                    response=response,
+                )
             except FrontierEndpointError as exc:
                 return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op == "generate" and is_cursor_sdk_generate_admission(
-        role=role, seat=seat, model=model, request_id=request_id
-    ):
-        try:
-            reject_role_with_substrate_model(
-                role=role, model=model, request_id=request_id
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        sdk_seat = seat or "cursor-sdk"
-        return await dispatch_cursor_sdk_generate_route(
-            request_id=request_id,
-            body=body,
-            seat=sdk_seat,
-            response=response,
-        )
-
-    if body.op == "generate" and role is not None:
-        from .api_role_generate import dispatch_api_role_generate
-
-        try:
-            result = await dispatch_api_role_generate(
+            if isinstance(result, dict):
+                response.status_code = 202
+            return result
+        if backend == "cursor_sdk":
+            sdk_seat = str(plan.get("seat") or "cursor-sdk")
+            return await dispatch_cursor_sdk_generate_route(
                 request_id=request_id,
                 body=body,
+                seat=sdk_seat,
                 response=response,
+                requested_model_pin=requested_model_pin,
             )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if isinstance(result, dict):
-            response.status_code = 202
-        return result
+        if backend == "api_role":
+            from .api_role_generate import dispatch_api_role_generate
+
+            try:
+                result = await dispatch_api_role_generate(
+                    request_id=request_id,
+                    body=body,
+                    response=response,
+                )
+            except FrontierEndpointError as exc:
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+            if isinstance(result, dict):
+                response.status_code = 202
+            return result
+
+        source_text = await resolve_generate_prompt_body(
+            request_id=request_id,
+            role=role or "synthesizer",
+            dispatch_thread_id=body.dispatch_thread_id,
+            prompt=getattr(body, "prompt", None),
+            sidecar_ref=getattr(body, "sidecar_ref", None),
+        )
+        req = FrontierGenerateRequest(
+            **_normalize_op_body(body, source_text=source_text)
+        )
+        return await _dispatch(req, response)
 
     source_text = await resolve_generate_prompt_body(
         request_id=request_id,

@@ -6,7 +6,11 @@ import pytest
 from fastapi import Response
 from pydantic import ValidationError
 
-from .admission import FrontierEndpointError, resolve_cursor_sdk_generate_target
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
+
+from .admission import FrontierEndpointError
+
+resolve_cursor_sdk_generate_target = admit_pipeline.resolve_cursor_sdk_generate_target
 from .conftest import dispatch_cursor_sdk_generate_mock
 from .route import TeamDispatchGenerateBody, team_dispatch
 
