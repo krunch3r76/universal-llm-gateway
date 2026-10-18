@@ -224,11 +224,7 @@ def prepare_implement_packet(
 
 
 async def dispatch_cursor_sdk_generate_route(
-    *,
-    request_id: str,
-    body: TeamDispatchGenerateBody,
-    seat: str,
-    response: Response,
+    *, request_id: str, body: TeamDispatchGenerateBody, seat: str, response: Response,
     requested_model_pin: str | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
@@ -484,8 +480,7 @@ async def dispatch_cursor_sdk_generate_route(
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
-            model=getattr(body, "model", None),
-            requested_model_pin=requested_model_pin,
+            model=getattr(body, "model", None), requested_model_pin=requested_model_pin,
             subject=None,
             caller_agent=body.caller_agent,
             contract=body.job,

@@ -1,16 +1,9 @@
-"""Determinism fixtures for the implement_admission unit suite.
-
-implement_admission.drift_gates.gate_state is a process-global cache; tests mutate
-it (and UA_DRIFT_GATE_* env). This autouse fixture clears the cache before and after
-every test so on-seat order is irrelevant (the MCP quality gate runs them in one
-process). Snapshot/restore env rather than hard-delete so intentional per-test
-patch.dict usage is untouched.
-"""
+"""Determinism fixtures for implement_admission + frontier_consult tests."""
 
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 
@@ -19,44 +12,33 @@ from systems.frontier_consult.skill_suggest_dispatch_config import (
 )
 
 
-def offline_skill_suggest_dispatch_config(
-    **overrides: float,
-) -> SkillSuggestDispatchConfig:
-    """Hermetic timeouts when skill-suggest-rank pipeline YAML is archived."""
-    base = dict(
-        idle_timeout_seconds=120.0,
-        ack_window_seconds=3.0,
-        idle_poll_interval_seconds=0.01,
-        cortex_timeout_seconds=30.0,
-        mcp_relay_timeout_seconds=330.0,
-        agent_bus_wait_chunk_seconds=60.0,
-        agent_bus_client_timeout_seconds=70.0,
-        agent_bus_max_wait_seconds=60.0,
-        worker_probe_timeout_seconds=10.0,
-        worker_dispatch_http_timeout_seconds=10.0,
-        wait_retry_backoff_seconds=1.0,
-        worker_outer_timeout_seconds=1920.0,
-    )
+def offline_skill_suggest_dispatch_config(**overrides: float) -> SkillSuggestDispatchConfig:
+    base = {
+        "idle_timeout_seconds": 120.0,
+        "ack_window_seconds": 3.0,
+        "idle_poll_interval_seconds": 0.01,
+        "cortex_timeout_seconds": 30.0,
+        "mcp_relay_timeout_seconds": 330.0,
+        "agent_bus_wait_chunk_seconds": 60.0,
+        "agent_bus_client_timeout_seconds": 70.0,
+        "agent_bus_max_wait_seconds": 60.0,
+        "worker_probe_timeout_seconds": 10.0,
+        "worker_dispatch_http_timeout_seconds": 10.0,
+        "wait_retry_backoff_seconds": 1.0,
+        "worker_outer_timeout_seconds": 1920.0,
+    }
     base.update(overrides)
     return SkillSuggestDispatchConfig(**base)
 
 
 def dispatch_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
-    from unittest.mock import create_autospec
+    from systems.frontier_consult.cursor_sdk_generate import dispatch_cursor_sdk_generate
 
-    from systems.frontier_consult.cursor_sdk_generate import (
-        dispatch_cursor_sdk_generate,
-    )
-
-    # Callers pass autospec=True so the test file names the constraint.
-    # create_autospec is what actually binds the real signature (contract=).
     kwargs.pop("autospec", None)
     return create_autospec(dispatch_cursor_sdk_generate, **kwargs)
 
 
 def prepare_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
-    from unittest.mock import create_autospec
-
     from systems.frontier_consult.cursor_sdk_generate_prepare import (
         prepare_cursor_sdk_generate,
     )
@@ -94,44 +76,11 @@ def _reset_drift_gate_state():
 
 @pytest.fixture(autouse=True)
 def _stub_team_dispatch_admit_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Route tests use in-process admit handlers instead of loopback HTTP."""
-
-    async def _run_team_dispatch_admit(
-        *,
-        body: object,
-        request_id: str,
-        execution_id: str = "",
-        **_: object,
-    ) -> dict[str, object]:
-        from pipelines.team_dispatch_admit.v1.handlers.test_handlers import (
-            run_full_admit,
-        )
-        from systems.frontier_consult.admission import FrontierEndpointError
-
-        opts = {
-            "op": getattr(body, "op", None),
-            "role": getattr(body, "role", None),
-            "seat": getattr(body, "seat", None),
-            "model": getattr(body, "model", None),
-            "job": getattr(body, "job", None),
-            "dispatch_id": getattr(body, "dispatch_id", None),
-            "request_id": request_id,
-        }
-        plan = run_full_admit(opts)
-        if plan.get("admitted") is False:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field=str(plan.get("field") or "admit"),
-                reason=str(plan.get("reason") or "rejected"),
-                status_code=int(plan.get("status_code") or 422),
-                code=str(plan.get("code") or "admit_rejected"),
-                details=plan.get("details")
-                if isinstance(plan.get("details"), dict)
-                else None,
-            )
-        return plan
+    from pipelines.team_dispatch_admit.v1.handlers.test_handlers import (
+        run_team_dispatch_admit_for_route_tests,
+    )
 
     monkeypatch.setattr(
         "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
-        _run_team_dispatch_admit,
+        run_team_dispatch_admit_for_route_tests,
     )

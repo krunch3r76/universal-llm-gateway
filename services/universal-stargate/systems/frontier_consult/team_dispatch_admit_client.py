@@ -123,6 +123,13 @@ def run_team_dispatch_admit_sync(
             resp = client.post("/v1/chat/completions", json=payload)
             if resp.status_code >= 500 or resp.status_code == 503:
                 cause = "unreachable"
+                _emit_unavailable(
+                    request_id=request_id,
+                    execution_id=execution_id,
+                    fallback_model=getattr(body, "model", None),
+                    cause=cause,
+                    publisher=event_publisher,
+                )
                 raise FrontierEndpointError(
                     request_id=request_id,
                     field="admit",

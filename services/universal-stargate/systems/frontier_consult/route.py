@@ -811,8 +811,22 @@ async def team_dispatch(
     if body.op in ("generate", "to_thread"):
         from .team_dispatch_admit_client import run_team_dispatch_admit
 
+        from systems.proxy.dependencies import get_proxy
+
+        _proxy = get_proxy()
+        _event_bus = getattr(_proxy, "event_bus", None)
+
+        def _publish_admit_event(event: Any) -> None:
+            if _event_bus is None:
+                return
+            _event_bus.publish_from_sync(event)
+
         try:
-            plan = await run_team_dispatch_admit(body=body, request_id=request_id)
+            plan = await run_team_dispatch_admit(
+                body=body,
+                request_id=request_id,
+                event_publisher=_publish_admit_event,
+            )
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 

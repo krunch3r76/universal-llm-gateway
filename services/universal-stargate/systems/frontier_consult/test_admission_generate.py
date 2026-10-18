@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import Response
+from fastapi.responses import JSONResponse
 from agent_seat import AgentMeta, HydrationBundle
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
 from implement_admission.routing import load_route_policy
@@ -22,9 +25,17 @@ from .admission import (
 enforce_generate_role_seat_exclusive = admit_pipeline.enforce_generate_role_seat_exclusive
 is_auto_seat_generate_admission = admit_pipeline.is_auto_seat_generate_admission
 resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
+from . import cursor_sdk_generate_prepare as prepare_mod
+from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
 from .service import FrontierGenerateRequest, build_dispatch_body
 
 _DISPATCH_THREAD = "test-dispatch-thread"
+
+
+def _mock_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy = MagicMock()
+    proxy.event_bus = None
+    monkeypatch.setattr("systems.proxy.dependencies.get_proxy", lambda: proxy)
 
 
 def test_g1_claude_web_seat_rejected() -> None:
@@ -244,3 +255,150 @@ def test_openrouter_model_is_chat_completions_only() -> None:
 
 def test_native_openai_model_not_chat_completions_only() -> None:
     assert is_chat_completions_only("openai/gpt-5.5") is False
+
+
+@pytest.mark.asyncio
+async def test_route_gatherer_cursor_model_role_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_proxy(monkeypatch)
+    create = AsyncMock()
+    admit = AsyncMock()
+    monkeypatch.setattr(prepare_mod, "create_handoff_thread", create)
+    monkeypatch.setattr(prepare_mod, "admit_handoff_dispatch", admit)
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="gatherer",
+        model="cursor/claude-opus-5",
+        dispatch_thread_id="todo:arc",
+        job="freeform",
+    )
+    result = await team_dispatch(body, Response())
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 422
+    payload = result.body.decode()
+    assert "substrate_model_role_conflict" in payload
+    assert '"field":"role"' in payload.replace(" ", "")
+    create.assert_not_awaited()
+    admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_claude_web_seat_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_proxy(monkeypatch)
+    create = AsyncMock()
+    admit = AsyncMock()
+    monkeypatch.setattr(prepare_mod, "create_handoff_thread", create)
+    monkeypatch.setattr(prepare_mod, "admit_handoff_dispatch", admit)
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        seat="claude-web",
+        dispatch_thread_id="todo:arc",
+        job="freeform",
+    )
+    result = await team_dispatch(body, Response())
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 422
+    assert "seat_unknown" in result.body.decode()
+    create.assert_not_awaited()
+    admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_cdp_model_only_admits_without_role_seat_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_proxy(monkeypatch)
+    cdp = AsyncMock(return_value={"execution_id": "e1", "thread_id": "t1"})
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cdp_generate",
+        cdp,
+    )
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        model="cdp/opus-5",
+        dispatch_thread_id="todo:arc",
+        job="freeform",
+        packet_path="tmp/reviews/packet.md",
+    )
+    result = await team_dispatch(body, Response())
+    assert result == {"execution_id": "e1", "thread_id": "t1"}
+    cdp.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_route_to_thread_omit_role_frontier_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_proxy(monkeypatch)
+    dispatch = AsyncMock(return_value={"execution_id": "exec-frontier"})
+    monkeypatch.setattr("systems.frontier_consult.route._dispatch", dispatch)
+    body = TeamDispatchToThreadBody.model_construct(
+        op="to_thread",
+        thread="agent-bus:1",
+        dispatch_thread_id="todo:arc",
+        role="",
+        prompt="hello",
+        job="freeform",
+    )
+    await team_dispatch(body, Response())
+    dispatch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_route_admit_unavailable_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import team_dispatch_admit_client as admit_client
+
+    _mock_proxy(monkeypatch)
+    create = AsyncMock()
+    admit = AsyncMock()
+    monkeypatch.setattr(prepare_mod, "create_handoff_thread", create)
+    monkeypatch.setattr(prepare_mod, "admit_handoff_dispatch", admit)
+
+    resp = MagicMock()
+    resp.status_code = 502
+    client = MagicMock()
+    client.post.return_value = resp
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+
+    async def _sync_admit(**kwargs: object) -> dict[str, object]:
+        import asyncio
+
+        body = kwargs["body"]
+        request_id = str(kwargs["request_id"])
+        publisher = kwargs.get("event_publisher")
+        return await asyncio.to_thread(
+            admit_client.run_team_dispatch_admit_sync,
+            body=body,
+            request_id=request_id,
+            event_publisher=publisher,
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
+        _sync_admit,
+    )
+    with patch(
+        "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+        return_value=client,
+    ):
+        body = TeamDispatchGenerateBody(
+            op="generate",
+            seat="cursor-sdk",
+            model="cursor/grok-4.7",
+            dispatch_thread_id="todo:arc",
+            job="freeform",
+            lane="B",
+            packet_path="tmp/reviews/packet.md",
+        )
+        result = await team_dispatch(body, Response())
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 503
+    assert "team_dispatch_admit_unavailable" in result.body.decode()
+    create.assert_not_awaited()
+    admit.assert_not_awaited()
