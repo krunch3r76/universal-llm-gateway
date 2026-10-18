@@ -108,7 +108,7 @@ def test_shipped_models_are_full_independence() -> None:
     assert models["reviewer"] == "qwen3-14b-q4-k-m-40960"
     assert independence.model_family(models["writer"]) == "llama"
     assert independence.model_family(models["reviewer"]) == "qwen"
-    assert independence.model_family(models["reviser"]) is None
+    assert independence.model_family(models["reviser"]) == "ernie"
     payload = asyncio.run(
         independence.WritingIndependenceHandler().execute(None, _Ctx())
     ).json

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -71,7 +72,7 @@ def validate_intake_payload(
             "error": "messages/prompt prohibited; pass structured intake fields",
         }
     raw = dict(options.get("intake") or {})
-    if not raw:
+    if not raw and "verbatim_notes" in options:
         for key in (
             "verbatim_notes",
             "recipient",
@@ -86,12 +87,8 @@ def validate_intake_payload(
         ):
             if key in options:
                 raw[key] = options[key]
-    if not raw:
-        return None, {
-            "ok": False,
-            "refused": "intake_invalid",
-            "error": "missing structured intake fields",
-        }
+    if "verbatim_notes" not in raw:
+        return None, None
     try:
         intake = OutboundWriteIntake.model_validate(raw)
     except Exception as exc:  # noqa: BLE001 — surface validation to caller

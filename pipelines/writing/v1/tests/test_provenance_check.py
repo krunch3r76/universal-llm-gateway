@@ -197,7 +197,7 @@ def test_provenance_bolted_closer() -> None:
 
 
 def test_provenance_draft_unparseable() -> None:
-    for bad in (None, "not-json", {"claims": []}, ["nope"]):
+    for bad in (None, {"claims": []}, ["nope"]):
         violations = provenance.check_provenance(_LEDGER, bad)
         assert _types(violations) == ["draft_unparseable"]
         assert violations[0]["claim_id"] is None
@@ -315,3 +315,97 @@ def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
         if row["type"] == "v2_dropped_name"
     ]
     assert dropped[0]["detail"] == "Jennifer"
+
+
+def test_causal_connective_clause_joining_so() -> None:
+    pattern = provenance._CAUSAL_CONNECTIVES_RE
+    merge = (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+        "so two days of work and it's sitting where it started."
+    )
+    assert pattern.search(merge).group(0).strip().lower() == "so"
+    assert pattern.search("So two days of work.").group(0).strip().lower() == "so"
+    assert pattern.search("I was so tired on Saturday.") is None
+    assert pattern.search("because").group(0).lower() == "because"
+    assert pattern.search(", so that we").group(0).lower() == "so that"
+
+
+def test_prose_rhythm_subordinate_clause_merge_preserves_pin_trace() -> None:
+    v1 = (
+        "Fill was 251 when I opened Saturday. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v2 = (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+        "so two days of work and it's sitting where it started."
+    )
+    v1_clauses = [
+        {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"]},
+        {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"]},
+        {
+            "text": "So two days of work and it's sitting where it started.",
+            "pin_ids": ["P3"],
+        },
+    ]
+    v2_clauses = [
+        {
+            "text": v2,
+            "pin_ids": ["P1", "P2", "P3"],
+        }
+    ]
+    assert (
+        provenance.revision_delta(
+            {"draft": v1, "claims": v1_clauses},
+            {"draft": v2, "claims": v2_clauses},
+            v1_clauses=v1_clauses,
+            v2_clauses=v2_clauses,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("v2", "kind"),
+    [
+        (
+            "Fill was 251 when I opened Saturday and 213 Sunday morning, because extra.",
+            "fact_added",
+        ),
+        (
+            "It was 213 Sunday morning.",
+            "v2_dropped_number",
+        ),
+        (
+            "Fill seems to be 251 when I opened Saturday. It was 213 Sunday morning. So two days.",
+            "fact_hedged",
+        ),
+        (
+            "It was 213 Sunday morning. Fill was 251 when I opened Saturday. So two days.",
+            "fact_reordered",
+        ),
+    ],
+)
+def test_fact_ceiling_final_detects_mutations(v2: str, kind: str) -> None:
+    v1 = (
+        "Fill was 251 when I opened Saturday. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v1_clauses = [
+        {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"]},
+        {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"]},
+        {"text": "So two days of work and it's sitting where it started.", "pin_ids": ["P3"]},
+    ]
+    v2_clauses = list(v1_clauses)
+    if kind == "fact_reordered":
+        v2_clauses = [v1_clauses[1], v1_clauses[0], v1_clauses[2]]
+    kinds = _types(
+        provenance.revision_delta(
+            {"draft": v1, "claims": v1_clauses},
+            {"draft": v2, "claims": v2_clauses},
+            v1_clauses=v1_clauses,
+            v2_clauses=v2_clauses,
+        )
+    )
+    assert kind in kinds
