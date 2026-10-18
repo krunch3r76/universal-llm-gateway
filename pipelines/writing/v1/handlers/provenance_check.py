@@ -392,15 +392,50 @@ def _pin_matches_text(
     return False
 
 
-def _first_anchor_offset(text: str, pin_id: str, pin_ledger: list[dict[str, Any]] | None, v1_clauses: list[dict[str, Any]]) -> int:
+def _token_start_offsets(text: str) -> dict[str, int]:
     lowered = text.lower()
-    candidates = _pin_excerpt_anchor_tokens(pin_id, pin_ledger) | _pin_clause_anchor_tokens(
-        pin_id, v1_clauses
-    )
+    offsets: dict[str, int] = {}
+    for match in _TOKEN.finditer(lowered):
+        token = match.group(0)
+        if token not in offsets:
+            offsets[token] = match.start()
+    return offsets
+
+
+def _pin_ranking_anchors(
+    pin_id: str,
+    matched_pin_ids: list[str],
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+) -> set[str]:
+    anchors = _pin_anchor_tokens(pin_id, pin_ledger, v1_clauses)
+    if len(matched_pin_ids) <= 1:
+        return anchors
+    shared: set[str] = set()
+    for other_id in matched_pin_ids:
+        if other_id == pin_id:
+            continue
+        shared |= _pin_anchor_tokens(other_id, pin_ledger, v1_clauses)
+    unique = anchors - shared
+    return unique if unique else anchors
+
+
+def _first_anchor_offset(
+    text: str,
+    pin_id: str,
+    matched_pin_ids: list[str],
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+) -> int:
+    token_offsets = _token_start_offsets(text)
+    candidates = _pin_ranking_anchors(pin_id, matched_pin_ids, pin_ledger, v1_clauses)
+    numeric = {token for token in candidates if token.isdigit()}
+    if numeric:
+        candidates = numeric
     best = len(text) + 1
     for token in candidates:
-        idx = lowered.find(token)
-        if idx != -1 and idx < best:
+        idx = token_offsets.get(token)
+        if idx is not None and idx < best:
             best = idx
     return best
 
@@ -415,9 +450,10 @@ def _pins_for_text(
     for pin_id in ordered_pin_ids:
         if _pin_matches_text(text, pin_id, pin_ledger, v1_clauses):
             matched.append(pin_id)
+    matched_for_rank = list(matched)
     matched.sort(
         key=lambda pin_id: (
-            _first_anchor_offset(text, pin_id, pin_ledger, v1_clauses),
+            _first_anchor_offset(text, pin_id, matched_for_rank, pin_ledger, v1_clauses),
             ordered_pin_ids.index(pin_id),
         )
     )
@@ -513,8 +549,23 @@ def revision_delta(
     v1_order = _pin_order(v1_clause_rows)
     v2_order = _pin_order(v2_clause_rows)
     join_words = set(_FUNCTION_WORDS)
+    v1_sentence_set = set(_sentences(v1_text))
+    derived_unpinned_new = False
+    if v2_clauses_from_derive:
+        for row in v2_clause_rows:
+            if not isinstance(row, dict):
+                continue
+            sentence = str(row.get("text") or "").strip()
+            if not sentence or sentence in v1_sentence_set:
+                continue
+            pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
+            if not pin_ids:
+                derived_unpinned_new = True
+                break
+
     if (
-        v1_order
+        not derived_unpinned_new
+        and v1_order
         and v2_order
         and v1_order == v2_order
         and v2_tokens <= (v1_tokens | join_words)
@@ -547,13 +598,40 @@ def revision_delta(
             violations.append(_violation("v2_dropped_number", None, number))
             violations.append(_violation("fact_dropped", None, number))
 
+    if v2_clauses_from_derive:
+        for row in v2_clause_rows:
+            if not isinstance(row, dict):
+                continue
+            sentence = str(row.get("text") or "").strip()
+            if not sentence or sentence in v1_sentence_set:
+                continue
+            pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
+            if pin_ids:
+                continue
+            detail = sentence
+            if len(detail) > _CLAUSE_DETAIL_MAX:
+                detail = detail[:_CLAUSE_DETAIL_MAX]
+            violations.append(_violation("v2_new_unpinned_clause", None, detail))
+            violations.append(_violation("fact_added", None, detail))
+
     new_tokens = v2_tokens - v1_tokens - join_words
     if new_tokens:
         for sentence in _sentences(v2_text):
-            if sentence in set(_sentences(v1_text)):
+            if sentence in v1_sentence_set:
                 continue
             if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
+            if v2_clauses_from_derive:
+                row_pins: list[Any] = []
+                for row in v2_clause_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if str(row.get("text") or "").strip() == sentence.strip():
+                        raw_pins = row.get("pin_ids")
+                        row_pins = raw_pins if isinstance(raw_pins, list) else []
+                        break
+                if not row_pins:
+                    continue
             sent_new = _tokens(sentence) - v1_tokens - join_words
             if not sent_new:
                 continue

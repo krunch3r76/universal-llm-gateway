@@ -616,12 +616,33 @@ def test_fact_ceiling_final_probe_b_fact_added() -> None:
 def test_fact_ceiling_final_merged_p2_before_p1_fact_reordered() -> None:
     violations = _run_fact_ceiling_final(
         v2_raw=(
-            "It was 213 Sunday morning, and fill was 251 when I opened Saturday, "
+            "Fill was 213 Sunday morning, and fill was 251 when I opened Saturday, "
             "so two days of work and it's sitting where it started."
         ),
         v1_draft=_FILL_V1,
         v1_clauses=_FILL_V1_CLAUSES,
         pin_ledger=_FILL_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+_RENT_V1 = "Rent is 1200. Rent goes up to 1350 in March."
+_RENT_V1_CLAUSES = [
+    {"text": "Rent is 1200.", "pin_ids": ["P1"], "disposition": "express"},
+    {"text": "Rent goes up to 1350 in March.", "pin_ids": ["P2"], "disposition": "express"},
+]
+_RENT_LEDGER = [
+    {"pin_id": "P1", "attested": True, "excerpt": "Rent is 1200"},
+    {"pin_id": "P2", "attested": True, "excerpt": "Rent goes up to 1350 in March"},
+]
+
+
+def test_fact_ceiling_final_rent_merge_p2_before_p1_fact_reordered() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw="Rent goes up to 1350 in March and rent is 1200.",
+        v1_draft=_RENT_V1,
+        v1_clauses=_RENT_V1_CLAUSES,
+        pin_ledger=_RENT_LEDGER,
     )
     assert "fact_reordered" in _types(violations)
 
@@ -665,13 +686,13 @@ _PARAPHRASE_LEDGER = [
     {
         "pin_id": "P1",
         "attested": True,
-        "excerpt": "On Saturday morning the fill level read 251",
+        "excerpt": "Fill was 251 when I opened Saturday",
     },
-    {"pin_id": "P2", "attested": True, "excerpt": "By Sunday it had dropped to 213"},
+    {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
     {
         "pin_id": "P3",
         "attested": True,
-        "excerpt": "Two days of work, and we are back where we started",
+        "excerpt": "So two days of work and it's sitting where it started",
     },
 ]
 
@@ -691,16 +712,29 @@ def test_fact_ceiling_final_paraphrase_swap_fact_reordered() -> None:
     assert "fact_reordered" in _types(violations)
 
 
-def test_fact_ceiling_final_handler_derives_fact_reordered() -> None:
-    v2 = (
-        "It was 213 Sunday morning. "
-        "Fill was 251 when I opened Saturday. "
-        "So two days of work and it's sitting where it started."
-    )
+def test_fact_ceiling_final_r2_probe_merged_fact_reordered() -> None:
     violations = _run_fact_ceiling_final(
-        v2_raw=v2,
+        v2_raw=(
+            "It was 213 Sunday morning, and fill was 251 when I opened Saturday, "
+            "so two days of work and it's sitting where it started."
+        ),
         v1_draft=_FILL_V1,
         v1_clauses=_FILL_V1_CLAUSES,
         pin_ledger=_FILL_LEDGER,
     )
     assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_derived_unpinned_new_sentence() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning. "
+            "It was 251 when I opened Sunday. "
+            "So two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert violations
+    assert "v2_new_unpinned_clause" in _types(violations)
