@@ -12,11 +12,12 @@ from ._clients import bus_get, fs_of, refuse, rel_path_ok, step_output_json
 from ._handoff import normalize_handoff, validate_handoff
 from .card import _last_row_n
 
-_MODES = frozenset({"light", "seal", "verify_resume"})
+_MODES = frozenset({"light", "seal", "verify_resume", "harvest_seal"})
 _PATH_KEYS = (
     "card_uri",
     "transcribed_ref",
     "raw_ref",
+    "l0_ref",
     "snapshot_uri",
 )
 
@@ -46,7 +47,10 @@ async def run_admit(
 ) -> dict[str, Any]:
     mode = str(options.get("mode") or "")
     if mode not in _MODES:
-        return refuse("admit.mode", f"mode {mode!r} not in light|seal|verify_resume")
+        return refuse(
+            "admit.mode",
+            f"mode {mode!r} not in light|seal|verify_resume|harvest_seal",
+        )
     house = str(options.get("house") or "").strip()
     if not house:
         return refuse("admit.house", "house required")
@@ -56,11 +60,13 @@ async def run_admit(
     for path in _paths(options):
         if not rel_path_ok(path):
             return refuse("admit.path_escape", f"refused path {path}")
-    if mode == "seal" and not str(options.get("agent_id") or "").strip():
+    if mode in ("seal", "harvest_seal") and not str(options.get("agent_id") or "").strip():
         return refuse("admit.agent_id", "agent_id required in seal mode")
+    if mode == "harvest_seal" and not str(options.get("l0_ref") or "").strip():
+        return refuse("source.no_pour", "harvest_seal requires l0_ref")
     root_thread = str(options.get("root_thread") or "").strip()
     agent_id = str(options.get("agent_id") or "").strip()
-    if mode == "seal" and root_thread and agent_id:
+    if mode in ("seal", "harvest_seal") and root_thread and agent_id:
         try:
             if str(uuid.UUID(agent_id)) != agent_id:
                 return refuse(
@@ -77,7 +83,7 @@ async def run_admit(
         return refuse("admit.residue", "residue exceeds 800 chars")
     normalized_fields: list[str] = []
     if "handoff" in options and options.get("handoff") is not None:
-        if mode != "seal":
+        if mode not in ("seal", "harvest_seal"):
             return refuse("admit.handoff_mode", "handoff is only admitted in seal mode")
         raw_letter = options.get("handoff")
         normalized, normalized_fields = (

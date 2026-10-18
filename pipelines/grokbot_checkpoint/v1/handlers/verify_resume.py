@@ -247,6 +247,21 @@ class GrokbotCheckpointVerifyResumeHandler(BaseHandler):
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
-        seal_step = step_output_json(getattr(context, "outputs", {}) or {}, "seal")
+        outputs = getattr(context, "outputs", {}) or {}
+        seal_step = step_output_json(outputs, "seal")
+        if options.get("mode") == "harvest_seal":
+            envelope = step_output_json(outputs, "envelope")
+            post = step_output_json(outputs, "post")
+            fact = step_output_json(outputs, "fact")
+            merged = dict(options)
+            if envelope.get("snapshot_uri") and not merged.get("snapshot_uri"):
+                merged["snapshot_uri"] = envelope["snapshot_uri"]
+            if envelope.get("sha256") and not merged.get("snapshot_sha256"):
+                merged["snapshot_sha256"] = envelope["sha256"]
+            if post.get("turn") is not None:
+                merged.setdefault("cp_turn_hint", post["turn"])
+            if fact.get("turn") is not None:
+                merged["fact_turn"] = fact["turn"]
+            options = merged
         payload = await run_verify_resume(options, fs_of(context), seal_step=seal_step)
         return StepOutput(raw="", json=payload)

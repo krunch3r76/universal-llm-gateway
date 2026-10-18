@@ -10,6 +10,8 @@ Purpose: one procedure for a checkpoint cycle on pipeline `grokbot-checkpoint-v1
 mode
 house
 n
+l0_ref
+l0_sha256
 agent_id
 root_thread
 card_uri

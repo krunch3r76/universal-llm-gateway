@@ -9,11 +9,15 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import step_output_json
+from ._harvest import format_harvest_record
 
 
 def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
     steps = (
         "admit",
+        "harvest_normalise",
+        "harvest_adapter",
+        "harvest_pour",
         "source",
         "envelope",
         "seal",
@@ -35,6 +39,10 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             break
     admit = step_output_json(outputs, "admit")
     source = step_output_json(outputs, "source")
+    if (not source or source.get("_skipped")) and options.get("mode") == "harvest_seal":
+        source = step_output_json(outputs, "harvest_pour")
+    harvest_normalise = step_output_json(outputs, "harvest_normalise")
+    harvest_adapter = step_output_json(outputs, "harvest_adapter")
     envelope = step_output_json(outputs, "envelope")
     seal = step_output_json(outputs, "seal")
     card = step_output_json(outputs, "card")
@@ -49,6 +57,25 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
     )
     warnings = list(card.get("warnings") or [])
     notices = list(card.get("notices") or [])
+    harvest_record = None
+    if options.get("mode") == "harvest_seal" and not refused:
+        if harvest_normalise.get("l0_ref") and source.get("ref"):
+            harvest_record = format_harvest_record(
+                l0_ref=str(harvest_normalise.get("l0_ref")),
+                l0_sha256=str(harvest_normalise.get("l0_sha256")),
+                pages=int(harvest_normalise.get("pages") or 0),
+                l0_bytes=int(harvest_normalise.get("l0_bytes") or 0),
+                truncated_parts=int(source.get("truncated_parts") or 0),
+                l1_ref=str(source.get("ref")),
+                l1_sha256=str(source.get("sha256")),
+                messages_sha256=str(source.get("messages_sha256")),
+                source_sha256=str(source.get("source_sha256")),
+                adapter_read_sha256=str(
+                    source.get("adapter_read_sha256")
+                    or harvest_adapter.get("stats", {}).get("adapter_read_sha256")
+                    or ""
+                ),
+            )
     return {
         "house": options.get("house"),
         "n": options.get("n"),
@@ -95,6 +122,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "proposals": seal.get("proposals") or [],
         "warnings": warnings,
         "notices": notices,
+        "harvest_record": harvest_record,
     }
 
 

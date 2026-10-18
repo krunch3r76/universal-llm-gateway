@@ -1,0 +1,204 @@
+"""harvest_seal mode: normalise, adapter, pour, and idempotent refusals."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+import yaml
+from continuity_tape.normalize_grokbot_l0_pages import normalized_capture_ref
+
+from ._clients import file_sha256
+from .admit import run_admit
+from .conftest import MemFs
+from .harvest_adapter import run_harvest_adapter
+from .harvest_normalise import run_harvest_normalise
+from .harvest_pour import run_harvest_pour
+from .result import assemble
+
+pytestmark = pytest.mark.offline
+
+_AGENT = "68757fe5-d68e-43f6-8708-6abd160bf205"
+_FIXTURES = Path(__file__).parent / "fixtures"
+_YAML = Path(__file__).resolve().parents[1] / "grokbot-checkpoint-v1.yaml"
+_GOLDEN_MSHA = "7037ed6807fe6d29978c86b93c3e46a05ac40179433f3649e8e5483cda6edcbc"
+_SPECIMEN = Path(
+    "/mnt/torus/mcp-data/files/notes/system/tape/captures/grok/"
+    "85dcee4a-0b20-4a86-95ae-01a529464072/20261017T203227.pages.txt"
+)
+
+
+def _l0_paths(fs: MemFs, *, ts: str = "20261017T2101Z") -> tuple[str, str]:
+    raw = (_FIXTURES / "bl1_drift.pages.txt").read_bytes()
+    l0 = f"notes/system/tape/captures/grok/{_AGENT}/{ts}.pages.txt"
+    fs.files[l0] = raw
+    return l0, file_sha256(raw)
+
+
+@pytest.mark.asyncio
+async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
+    l0_ref, l0_sha = _l0_paths(fs)
+
+    async def get(path, params=None):
+        return {"turns": []}, 200
+
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+        "l0_sha256": l0_sha,
+        "bus_identity": "grok-bot",
+    }
+    admitted = await run_admit(options, {}, fs=fs, get=get)
+    assert admitted.get("refused") is None
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter.get("refused") is None
+    assert adapter["stats"]["messages_sha256"]
+    assert adapter["stats"]["coverage"] == "full"
+    pour = await run_harvest_pour(options, adapter, fs)
+    assert pour.get("refused") is None
+    assert pour["coverage"] == "full"
+    assert pour["provenance"] == "raw"
+
+
+@pytest.mark.asyncio
+async def test_harvest_idempotent_second_run(fs: MemFs) -> None:
+    l0_ref, l0_sha = _l0_paths(fs)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+        "l0_sha256": l0_sha,
+    }
+    norm1 = await run_harvest_normalise(options, fs)
+    adapter1 = await run_harvest_adapter(options, norm1, fs)
+    pour1 = await run_harvest_pour(options, adapter1, fs)
+    writes_after_first = list(fs.writes)
+    norm2 = await run_harvest_normalise(options, fs)
+    adapter2 = await run_harvest_adapter(options, norm2, fs)
+    pour2 = await run_harvest_pour(options, adapter2, fs)
+    assert norm2.get("refused") is None
+    assert adapter2["stats"]["messages_sha256"] == adapter1["stats"]["messages_sha256"]
+    assert pour2["sha256"] == pour1["sha256"]
+    assert normalized_capture_ref(l0_ref) not in fs.writes[len(writes_after_first) :]
+
+
+@pytest.mark.asyncio
+async def test_harvest_falsifier_refuses_before_seal(fs: MemFs) -> None:
+    l0_ref, _ = _l0_paths(fs)
+    fs.files[l0_ref] = b"not a transcript\n"
+    options = {
+        "mode": "harvest_seal",
+        "house": "bad",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is not None
+    result = assemble(
+        options,
+        {
+            "admit": {"json": {"refused": None}},
+            "harvest_normalise": {"json": norm},
+        },
+    )
+    assert result["refused"] is not None
+    assert result.get("harvest_record") is None
+
+
+@pytest.mark.asyncio
+async def test_harvest_pour_prefix_refuse(fs: MemFs) -> None:
+    l0_ref, l0_sha = _l0_paths(fs)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+        "l0_sha256": l0_sha,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    first = await run_harvest_pour(options, adapter, fs)
+    assert first.get("refused") is None
+    tampered = json.loads(json.dumps(adapter["envelope"]))
+    tampered["messages"] = tampered["messages"][:-1]
+    bad = await run_harvest_pour(
+        options,
+        {**adapter, "envelope": tampered},
+        fs,
+    )
+    assert (bad.get("refused") or {}).get("code") == "envelope.not_prefix"
+
+
+@pytest.mark.skipif(not _SPECIMEN.is_file(), reason="gc1 specimen not on disk")
+@pytest.mark.asyncio
+async def test_specimen_messages_sha256(fs: MemFs) -> None:
+    agent = "85dcee4a-0b20-4a86-95ae-01a529464072"
+    raw = _SPECIMEN.read_bytes()
+    l0_ref = f"notes/system/tape/captures/grok/{agent}/20261017T203227.pages.txt"
+    fs.files[l0_ref] = raw
+    options = {
+        "mode": "harvest_seal",
+        "house": "gc1",
+        "n": 6,
+        "agent_id": agent,
+        "l0_ref": l0_ref,
+        "l0_sha256": file_sha256(raw),
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter["stats"]["messages_sha256"] == _GOLDEN_MSHA
+    assert adapter["stats"]["coverage"] == "full"
+
+
+def test_yaml_harvest_steps_registered() -> None:
+    spec = yaml.safe_load(_YAML.read_text())
+    names = [step["name"] for step in spec["steps"]]
+    assert "harvest_normalise" in names
+    assert "harvest_adapter" in names
+    assert "harvest_pour" in names
+
+
+def test_harvest_seal_envelope_condition() -> None:
+    spec = yaml.safe_load(_YAML.read_text())
+    envelope = next(s for s in spec["steps"] if s["name"] == "envelope")
+    assert "harvest_seal" in envelope["condition"]
+    assert "harvest_pour" in envelope["condition"]
+
+
+@pytest.mark.asyncio
+async def test_harvest_record_line(fs: MemFs) -> None:
+    l0_ref, l0_sha = _l0_paths(fs)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0_ref,
+        "l0_sha256": l0_sha,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    pour = await run_harvest_pour(options, adapter, fs)
+    result = assemble(
+        options,
+        {
+            "admit": {"json": {"refused": None}},
+            "harvest_normalise": {"json": norm},
+            "harvest_adapter": {"json": adapter},
+            "harvest_pour": {"json": pour},
+        },
+    )
+    line = result["harvest_record"]
+    assert line.startswith(f"L0 {l0_ref}@{l0_sha}")
+    assert "coverage=full" in line
+    assert "capture:dom_harvest@" in line
