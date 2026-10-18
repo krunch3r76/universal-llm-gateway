@@ -1,0 +1,17 @@
+{
+  "problem_id": "bench-bandwidth-mesh-003",
+  "target_statement": "Design settlement flows when heterogeneous nodes relay work and only partial observability of counterpart performance exists.",
+  "hard_constraints": [
+    "Counterparties may exit without notice",
+    "Settlement latency under one hour",
+    "No single centralized escrow account"
+  ],
+  "domain_terms_to_strip": [
+    "bandwidth",
+    "CDN",
+    "peer",
+    "crypto"
+  ],
+  "run_seed": 18011,
+  "benchmark_tag": "divergent-ideation-benchmark"
+}
