@@ -231,17 +231,25 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
     return _first_open_row_in_scoreboard(scoreboard_body)
 
 
+_SCOREBOARD_INFLIGHT_EXEC_RE = re.compile(
+    r"(?im)^\s*(G\d+)\s+execution_id\s+`?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{12}-[0-9a-f]{8})`?[^\n]*\bstate=in_flight\b"
+)
+
+
 def _scoreboard_next_admit_guard_snippet(
     row: dict[str, Any], scoreboard_body: str
 ) -> str | None:
     """Recency-scoped scoreboard NEXT_ADMIT when closeout did not name one."""
-    admit = last_next_admit_payload(scoreboard_body)
-    if not admit or not next_admit_payload_blocks_hop(admit):
-        return None
     entry_gate = _live_entry_gate_for_row(row, scoreboard_body)
-    if not next_admit_payload_matches_entry_gate(admit, entry_gate):
-        return None
-    return f"NEXT_ADMIT: {admit}"
+    admit = last_next_admit_payload(scoreboard_body)
+    if admit and next_admit_payload_blocks_hop(admit):
+        if next_admit_payload_matches_entry_gate(admit, entry_gate):
+            return f"NEXT_ADMIT: {admit}"
+    for match in _SCOREBOARD_INFLIGHT_EXEC_RE.finditer(scoreboard_body or ""):
+        gate_tok, exec_id = match.group(1).upper(), match.group(2)
+        if entry_gate is None or gate_tok == entry_gate.upper():
+            return f"NEXT_ADMIT: {gate_tok} harvest {exec_id}"
+    return None
 
 
 def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:

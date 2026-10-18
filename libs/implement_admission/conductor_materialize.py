@@ -358,12 +358,12 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         f"- {NO_RESTART_LINE}",
         f"- {G7_RESTART_OWED_RULE}",
         (
-            "- Before you author any `prompt=` or packet body a nested seat will act "
-            "on (investigate/confer legs, CDP ask/review gates), Use the "
-            "retrieval-before-authoring skill — one `rag` search per scope, yields "
-            "and nulls in the leg's report. prompt-expand does not run on this "
-            "contract; materialized `source_ref` legs carry no authored prose and "
-            "are exempt."
+            "- Before authoring the FIRST nested CDP width prompt (G1/G2/G4/G6) when no "
+            "mission retrieval report exists yet, Use the retrieval-before-authoring "
+            "skill once (`target: todo:<slug>` in the report sidecar) and reuse that "
+            "`retrieval_report: cortex://…` URI across later G4/G6 gates without "
+            "re-running `rag` searches. Do not run `rag` for G3/G5 cursor-sdk legs or "
+            "when a retrieval report URI is already recorded on the scoreboard/thread."
         ),
         "- Forward-only score mutation; journal every tip write.",
         '- lane="B" — pass explicitly on nested mechanical legs.',
@@ -463,8 +463,10 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             "does not search the repo for that contract. G5 ratify stays the "
             "session=ask sentence above. "
             "3. Stamp and park while live. After G6 admit, write poll_hint and "
-            "execution_id into the CHECKPOINT, add NEXT_ADMIT: harvest "
-            "<execution_id>. Optional wait_seconds=0 snapshot may copy status; "
+            "execution_id into the CHECKPOINT, and write `NEXT_ADMIT: harvest "
+            "<execution_id>` on its own line in BOTH the CHECKPOINT and your "
+            "closeout prose (outside code fences) before `stop: PARKED_TRANSPORT`. "
+            "Optional wait_seconds=0 snapshot may copy status; "
             "it is not a harvest. If that snapshot is already complete, harvest "
             "in this dispatch. If the execution_id is still live, stop: "
             "PARKED_TRANSPORT (not ROW_HOP) with the stamped poll_hint. Do not "

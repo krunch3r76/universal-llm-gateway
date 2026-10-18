@@ -40,6 +40,7 @@ _SERIES_CAP = 200
 _DEFAULT_VISIBLE_FRACTION = 0.30
 _IGNORED_STEER_TOOL_CALLS = 8
 _CHARS_PER_TOKEN_DIVISOR = 4
+_MAX_METERED_TOOL_RESULT_BYTES = 16_000
 
 ClaimOutcome = Literal["claimed", "latched", "below_threshold", "missing"]
 
@@ -516,7 +517,8 @@ class DensityHarnessStreamHook:
         if status not in {"completed", "error"}:
             return
         self._ensure_call_open()
-        self._stream_tokens += estimate_tokens_from_chars(arg_bytes + result_bytes)
+        metered_result = min(max(int(result_bytes), 0), _MAX_METERED_TOOL_RESULT_BYTES)
+        self._stream_tokens += estimate_tokens_from_chars(arg_bytes + metered_result)
         self._tools_since_prose += 1
         self._stream_tool_call_count += 1
         self._dirty_trajectory = True
