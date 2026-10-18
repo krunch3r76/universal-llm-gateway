@@ -41,6 +41,7 @@ def _raw_effects_manifest_from_sidecar(sidecar_text: str) -> dict[str, Any] | No
     if marker_idx < 0:
         return None
     tail = sidecar_text[marker_idx + len(_EFFECTS_MANIFEST_HEADING) :].strip()
+    tail, _, _ = tail.partition("\n## ")
     match = _JSON_OBJECT_TAIL_RE.search(tail)
     if match is None:
         return None

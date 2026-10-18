@@ -18,11 +18,14 @@ from implement_admission.conductor_no_restart import (
     NO_RESTART_LINE,
 )
 from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
+from job_vocab import job_record
 from reasoning_posture_contracts import (
+    DelegationTier,
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,
     contract_is_freeform,
     reasoning_posture_invoke_parts,
+    resolve_delegation_tier,
     reasoning_posture_warrants_injection,
 )
 from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
@@ -76,6 +79,31 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     'artifact, fs(op="read") first and pass expected_sha256=<read_sha256 from the '
     "read response> on overwrite/replace/append — stale or partial reads fail closed "
     "instead of silently truncating durable binds."
+)
+
+_LEAN_DISPATCH_PREAMBLE = (
+    "Use the lean-dispatch skill: hold diagnosis and land only; ≤2 targeted reads "
+    "to formulate a packet; 0 in-seat ssh/host mutations or pytest runs; read "
+    "closeout sidecars with offset=0, limit=60."
+)
+
+_TIER_B_SPLIT_PREAMBLE = (
+    "TIER-B RECON / JUDGMENT INVARIANT: Scoped recon reads in-seat are permitted "
+    "until judgment closes. Do not hand-implement mechanical remainders on this "
+    "seat — once judgment closes (judgment_closed ∧ mechanical_remainder ⇒ split), "
+    "return the bound spec/closeout or split to cursor/composer-2.5 via nest_under."
+)
+
+_TIER_C_LEAF_PREAMBLE = (
+    "LEAF EXECUTION INVARIANT: Execute the commissioned packet directly in this "
+    "worktree; run narrow verification on touched tests; do NOT spawn conductors, "
+    "team_dispatch legs, or CDP consults."
+)
+
+_TIER_C_LANE_B_NO_RESTART = (
+    "Do NOT call manage sync_restart/restart/stop/start from an unmerged Lane B "
+    "worktree; record any required service restarts in residue: / "
+    "propagation_residue so the parent/conductor restarts after hub master land."
 )
 
 _BREADTH_RECON_PREAMBLE = (
@@ -690,6 +718,9 @@ def resolve_prompt_preamble(
     continuity_root_thread_id: str | None = None,
     skills: Sequence[str] | None = None,
     lane_worktree: str | None = None,
+    resolved_model: str | None = None,
+    nest_under: str | None = None,
+    delegation_tier: DelegationTier | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -736,6 +767,26 @@ def resolve_prompt_preamble(
     of an in-flight execution). Caller ``skills=`` invokes still prepend.
     """
     contract = sdk_contract_or_missing(handoff_contract, inferred_contract)
+    tier = delegation_tier or resolve_delegation_tier(
+        contract,
+        model=resolved_model,
+        nest_under=nest_under,
+        lane=lane,
+    )
+
+    def _tier_prefix() -> list[str]:
+        blocks: list[str] = []
+        if tier == "A":
+            blocks.append(_LEAN_DISPATCH_PREAMBLE)
+        elif tier == "B":
+            blocks.append(_TIER_B_SPLIT_PREAMBLE)
+        else:
+            blocks.append(_TIER_C_LEAF_PREAMBLE)
+            if lane == "B":
+                blocks.append(NO_RESTART_LINE)
+                blocks.append(_TIER_C_LANE_B_NO_RESTART)
+        return blocks
+
     if prompt_preamble:
         preamble = prompt_preamble.strip()
     elif contract == "implement":
@@ -810,11 +861,12 @@ def resolve_prompt_preamble(
             return ""
         return "\n\n".join(parts) + "\n\n"
 
-    parts = [
-        _DELIVERABLE_ROUTING_PREAMBLE,
-        _TRANSCRIPT_READ_PREAMBLE,
-        _BREADTH_RECON_PREAMBLE,
-    ]
+    parts = [_DELIVERABLE_ROUTING_PREAMBLE, _TRANSCRIPT_READ_PREAMBLE]
+    if tier != "C":
+        record = job_record(contract)
+        if record is None or record.recon_owed:
+            parts.append(_BREADTH_RECON_PREAMBLE)
+    parts = _tier_prefix() + parts
     resume_root = extract_resume_root_from_packet(existing_text or "")
     if resume_root and contract in {"recon", "consult", "none"}:
         fence_block = _fetch_resume_fence_preamble(resume_root)

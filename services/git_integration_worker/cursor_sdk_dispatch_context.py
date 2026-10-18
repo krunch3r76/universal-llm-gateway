@@ -48,6 +48,7 @@ class SdkDispatchContext:
     dispatch_workspace: Path
     capture_binding: CaptureBinding
     sdk_mode: Literal["agent", "plan"] = "agent"
+    nest_under: str | None = None
 
     @property
     def workspace_root(self) -> Path:

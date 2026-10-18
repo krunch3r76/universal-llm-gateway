@@ -10,10 +10,17 @@ the Cursor skill-fire cue that seat reliably honors.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from job_vocab import HARNESS_STACK_SKIP_JOBS
 from job_vocab import HYPOTHESIZE_ON_JOBS as _VOCAB_HYPOTHESIZE_ON_JOBS
 from job_vocab import POSTURE_SKIP_JOBS as _VOCAB_POSTURE_SKIP_JOBS
+from job_vocab.records import BY_NAME
+
+DelegationTier = Literal["A", "B", "C"]
+
+_CDP_ORCHESTRATOR_PURPOSES = frozenset({"operator-proxy", "mission"})
+_COMPOSER_LEAF_MODEL = "cursor/composer-2.5"
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
@@ -72,7 +79,33 @@ def contract_is_freeform(contract: str | None) -> bool:
     return (contract or "").strip().lower() in FREEFORM_CONTRACTS
 
 
+def resolve_delegation_tier(
+    contract: str | None,
+    *,
+    model: str | None = None,
+    nest_under: str | None = None,
+    purpose: str | None = None,
+    lane: str | None = None,
+) -> DelegationTier:
+    """Map admit contract + overrides to delegation tier A/B/C (lane does not change tier)."""
+    _ = lane
+    if (purpose or "").strip().lower() in _CDP_ORCHESTRATOR_PURPOSES:
+        return "A"
+    c = (contract or "").strip().lower()
+    m = (model or "").strip().lower()
+    nested = bool((nest_under or "").strip())
+    if c == "freeform" and (m == _COMPOSER_LEAF_MODEL or nested):
+        return "C"
+    record = BY_NAME.get(c)
+    if record is not None:
+        return record.delegation_tier
+    if m == _COMPOSER_LEAF_MODEL or nested:
+        return "C"
+    return "B"
+
+
 __all__ = [
+    "DelegationTier",
     "FREEFORM_CONTRACTS",
     "HYPOTHESIZE_ON_JOBS",
     "HYPOTHESIZE_SIMULATE_CONTRACTS",
@@ -83,4 +116,5 @@ __all__ = [
     "contract_is_freeform",
     "reasoning_posture_invoke_parts",
     "reasoning_posture_warrants_injection",
+    "resolve_delegation_tier",
 ]

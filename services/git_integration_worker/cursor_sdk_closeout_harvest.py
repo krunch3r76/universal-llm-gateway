@@ -16,6 +16,7 @@ import re
 # structured_closeout_full). A verbatim model body can hide those fields past
 # that window — specimen closeout d40fa4c3b9c3-8dcc4e70.md, 153153-char preamble.
 _HARVEST_SECTION_CAP = 4500
+_HARVEST_PREAMBLE_MAX_LINES = 60
 _CLOSEOUT_BODY_HEADING = "## closeout_body"
 _UNSTATED_STATUS_LINE = "status: unstated"
 _EMPTY_RESIDUE_LINE = "residue: none"
@@ -244,3 +245,60 @@ def stamp_harvest_status_from_structured(existing: str, full_body: str) -> str:
     if residue_line and _EMPTY_RESIDUE_LINE in section.splitlines():
         section = _replace_exact_line(section, _EMPTY_RESIDUE_LINE, residue_line)
     return _clip_harvest_section(section) + rest
+
+
+def _non_fenced_summary_lines(body: str, *, max_lines: int) -> list[str]:
+    lines = body.splitlines()
+    out: list[str] = []
+    in_fence = False
+    for line in lines:
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        out.append(line)
+        if len(out) >= max_lines:
+            break
+    return out
+
+
+def partition_closeout_executive_envelope(
+    body: str,
+    *,
+    status_fallback: str | None = None,
+    residue_fallback: str | None = None,
+) -> tuple[str, str | None]:
+    """Split oversize closeout prose into an executive header and optional archive body."""
+    content = body or ""
+    status, verdict, residue = _harvest_field_lines(content)
+    if status_fallback and status == _UNSTATED_STATUS_LINE:
+        status = status_fallback
+    if residue_fallback and residue == _EMPTY_RESIDUE_LINE:
+        residue = residue_fallback
+    heading_at = _first_atx_offset(content)
+    raw_section = content if heading_at is None else content[:heading_at]
+    line_count = len(content.splitlines())
+    fits = (
+        line_count <= _HARVEST_PREAMBLE_MAX_LINES
+        and len(content) <= _HARVEST_SECTION_CAP
+        and len(raw_section) <= _HARVEST_SECTION_CAP
+    )
+    if fits:
+        bounded = bound_closeout_harvest_preamble(content)
+        return bounded, None
+    header_lines = [status]
+    if verdict:
+        header_lines.append(verdict)
+    header_lines.append(residue)
+    header_lines.append("")
+    header_lines.extend(_non_fenced_summary_lines(content, max_lines=54))
+    header = "\n".join(header_lines).strip()
+    header_line_count = len(header.splitlines())
+    if header_line_count > 58:
+        header = "\n".join(header.splitlines()[:58])
+    if len(header) > _HARVEST_SECTION_CAP:
+        header = header[: _HARVEST_SECTION_CAP - 1] + "\n"
+    if not header.endswith("\n"):
+        header = header + "\n"
+    return header, content

@@ -902,6 +902,7 @@ def _resolve_prompt(
     source_repo: Path,
     *,
     lane_worktree: Path | None = None,
+    ctx: SdkDispatchContext | None = None,
 ) -> str:
     packet_text = _read_packet_text(req, source_repo)
     inferred_contract = None if req.message else infer_contract_from_text(packet_text)
@@ -914,6 +915,16 @@ def _resolve_prompt(
 
         lane_branch = lane_branch_name(req.thread_id)
     lane_worktree_str = str(lane_worktree.resolve()) if lane_worktree else None
+    delegation_tier = None
+    if ctx is not None:
+        from reasoning_posture_contracts import resolve_delegation_tier
+
+        delegation_tier = resolve_delegation_tier(
+            ctx.handoff_contract,
+            model=req.model,
+            nest_under=ctx.nest_under,
+            lane=ctx.lane,
+        )
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
@@ -931,6 +942,9 @@ def _resolve_prompt(
         continuity_root_thread_id=req.continuity_root_thread_id,
         skills=req.skills,
         lane_worktree=lane_worktree_str,
+        resolved_model=req.model,
+        nest_under=ctx.nest_under if ctx is not None else req.nest_under,
+        delegation_tier=delegation_tier,
     )
     return f"{preamble}{packet_text}"
 
@@ -1167,6 +1181,7 @@ def _run_sdk_sync(
     gate_loop: asyncio.AbstractEventLoop,
     live_counter: _LiveToolCallCounter | None = None,
     skills: list[str] | None = None,
+    delegation_tier: str = "A",
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
@@ -1185,7 +1200,11 @@ def _run_sdk_sync(
         dispatch_home = dispatch_home_path(store_bearing_id)
         if not dispatch_home.is_dir():
             dispatch_home = setup_cursor_dispatch_home(
-                store_bearing_id, real_home=real_home, bare=is_bare
+                store_bearing_id,
+                real_home=real_home,
+                bare=is_bare,
+                delegation_tier=delegation_tier,
+                lane=ctx.lane,
             )
         parent = load_parent_row(
             CursorDispatchLedger.instance(), parent_id=resume_ctx.resume_of
@@ -1198,7 +1217,11 @@ def _run_sdk_sync(
         bridge_state = Path(store_path or resume_ctx.state_root)
     else:
         dispatch_home = setup_cursor_dispatch_home(
-            ctx.dispatch_id, real_home=real_home, bare=is_bare
+            ctx.dispatch_id,
+            real_home=real_home,
+            bare=is_bare,
+            delegation_tier=delegation_tier,
+            lane=ctx.lane,
         )
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
@@ -1825,6 +1848,7 @@ async def _start_promoted_dispatch(
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
         sdk_mode=promoted_mode,
+        nest_under=req.nest_under,
     )
     # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
     # (post slot acquisition) — also fixes misattribution where a queued
@@ -2763,6 +2787,7 @@ async def _run_sdk_dispatch_gated(
         lane_worktree=(
             ctx.dispatch_workspace if wire_lane_explicit(req) == "B" else None
         ),
+        ctx=ctx,
     )
     from services.git_integration_worker.cursor_sdk_gate import (
         release_sdk_dispatch_slot,
@@ -2823,6 +2848,14 @@ async def _run_sdk_dispatch_gated(
         getattr(req, "operator_contract", None),
     )
 
+    from reasoning_posture_contracts import resolve_delegation_tier
+
+    delegation_tier = resolve_delegation_tier(
+        ctx.handoff_contract,
+        model=req.model,
+        nest_under=ctx.nest_under,
+        lane=ctx.lane,
+    )
     live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
         asyncio.to_thread(
@@ -2836,6 +2869,7 @@ async def _run_sdk_dispatch_gated(
             gate_loop=gate_loop,
             live_counter=live_counter,
             skills=req.skills,
+            delegation_tier=delegation_tier,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )
@@ -4086,6 +4120,7 @@ async def admit_cursor_dispatch(
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
         sdk_mode=resolved_sdk_mode,
+        nest_under=req.nest_under,
     )
     gate_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,
