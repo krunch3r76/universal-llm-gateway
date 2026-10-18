@@ -88,7 +88,11 @@ ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
 _ROUTE_CONTROL_TYPE = "TYPE: ROUTE/CONTROL"
 _INTERMEDIATE_SUBJECT_RE = re.compile(
     r"(?i)(?:^|\b|\|)(?:pickup|cc\s+pickup|house-cp|checkpoint|in-flight|in_flight|"
-    r"admitted|progress|score_resurface|park-harvest|hop-[a-z0-9]+)(?:\b|\||$)"
+    r"admitted|progress|park-harvest wake|hop-[a-z0-9]+)(?:\b|\||$)"
+)
+_CURSOR_GATE_WAKE_RE = re.compile(
+    r"(?i)(?:VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
+    r"BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _PEER_WAKE_FROM = frozenset(
@@ -118,11 +122,18 @@ def peer_operator_wake_from(from_agent: str) -> bool:
     return False
 
 
-def subject_allowed(subject: str | None, *, cse: bool) -> bool:
+def subject_allowed(
+    subject: str | None, *, cse: bool, to_agent: str | None = None
+) -> bool:
     """Wake envelope: CSE or Grok allowlist, plus TYPE relays."""
     text = subject or ""
+    agent = normalize_bus_address(str(to_agent or ""))
     if _INTERMEDIATE_SUBJECT_RE.search(text):
+        if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
+            return True
         return False
+    if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
+        return True
     if text.startswith("TYPE: DIRECTIVE"):
         return True
     if not cse and text.startswith(_ROUTE_CONTROL_TYPE):
@@ -153,7 +164,9 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
         return False
-    if not peer_operator_wake_from(from_agent) and not subject_allowed(subject, cse=cse):
+    if not peer_operator_wake_from(from_agent) and not subject_allowed(
+        subject, cse=cse, to_agent=to_agent
+    ):
         return False
     return True
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from bus_watch.digest_budget import (
@@ -54,6 +55,7 @@ from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,
     observe_terminal_lane_closeouts,
+    row_is_terminal,
 )
 from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
@@ -102,6 +104,56 @@ def apply_projection_holder_ids(
             lane["execution_id"] = execution_id
 
 
+_CONDUCTOR_ATTENTION_WAKE_RE = re.compile(
+    r"(?i)(?:VERDICT|SCORE_RESURFACE|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
+    r"\bFAILED\b|UNVERIFIED|escalation|"
+    r"\bDONE\b|\bG7\b|LANDED|land_disposition:\s*landed|"
+    r"park-harvest escalation|conductor-hop escalation)"
+)
+_ROUTINE_CONDUCTOR_HOP_RE = re.compile(
+    r"(?i)^(?:cursor-sdk generate(?:\s+admitted|\s+—)|"
+    r"CHECKPOINT — hop\b|park-harvest wake —|cursor-sdk CLOSEOUT\b)"
+)
+
+
+def _lane_is_conductor_contract(lane: dict[str, Any]) -> bool:
+    contract = str(lane.get("contract") or "").strip().lower()
+    if contract == "conductor":
+        return True
+    for tag in lane.get("tags") or []:
+        token = str(tag).strip().lower()
+        if token == "contract:conductor":
+            return True
+        if token.startswith("contract:") and token.split(":", 1)[1].strip() == "conductor":
+            return True
+    return False
+
+
+def _conductor_lane_enters_attention(lane: dict[str, Any]) -> bool:
+    """Conductor child lanes wake the IDE only on terminal/unharvested/gate signals."""
+    if str(lane.get("quiet_reason") or "") == "closeout_unharvested":
+        return True
+    if row_is_terminal(lane) and int(lane.get("unread") or 0) > 0:
+        return True
+    subject = str(lane.get("last_subject") or "")
+    if _CONDUCTOR_ATTENTION_WAKE_RE.search(subject):
+        return True
+    if _ROUTINE_CONDUCTOR_HOP_RE.search(subject):
+        return False
+    return False
+
+
+def filter_conductor_routine_attention(attention: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop unread conductor lanes whose last turn is routine hop telemetry."""
+    out: list[dict[str, Any]] = []
+    for lane in attention:
+        if not isinstance(lane, dict):
+            continue
+        if not _lane_is_conductor_contract(lane) or _conductor_lane_enters_attention(lane):
+            out.append(lane)
+    return out
+
+
 def is_life_root(root: dict[str, Any]) -> bool:
     tags = root.get("tags")
     if isinstance(tags, str):
@@ -126,11 +178,13 @@ def build_digest(
         )
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
-        attention = build_attention_lanes(
-            lanes,
-            fetch_unread_turns=lambda tid: (
-                _get(client, "/turns", thread=tid, unread=True, last=25) or {}
-            ).get("turns"),
+        attention = filter_conductor_routine_attention(
+            build_attention_lanes(
+                lanes,
+                fetch_unread_turns=lambda tid: (
+                    _get(client, "/turns", thread=tid, unread=True, last=25) or {}
+                ).get("turns"),
+            )
         )  # noqa: E501
         observe_terminal_lane_closeouts(
             root_id,
