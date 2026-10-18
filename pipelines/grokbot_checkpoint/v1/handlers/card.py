@@ -210,9 +210,12 @@ class GrokbotCheckpointCardHandler(BaseHandler):
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
         outputs = getattr(context, "outputs", {}) or {}
+        source = step_output_json(outputs, "source")
+        if (not source or source.get("_skipped")) and options.get("mode") == "harvest_seal":
+            source = step_output_json(outputs, "harvest_pour")
         payload = await run_card(
             options,
-            step_output_json(outputs, "source"),
+            source,
             step_output_json(outputs, "envelope"),
             fs_of(context),
             execution_id=str(getattr(context, "execution_id", "") or ""),

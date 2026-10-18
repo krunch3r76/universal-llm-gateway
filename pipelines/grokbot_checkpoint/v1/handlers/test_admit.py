@@ -28,7 +28,7 @@ def test_register_handlers_covers_steps() -> None:
     assert {domain for domain, _ in router.rows} == {"grokbot_checkpoint"}
     assert "grokbot_checkpoint_source_v1" in types
     assert "grokbot_checkpoint_verify_resume_v1" in types
-    assert len(types) == 10
+    assert len(types) == 13
 
 
 @pytest.mark.asyncio

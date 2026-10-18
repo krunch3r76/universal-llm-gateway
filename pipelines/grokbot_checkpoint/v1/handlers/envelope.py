@@ -287,6 +287,9 @@ class GrokbotCheckpointEnvelopeHandler(BaseHandler):
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
-        source = step_output_json(getattr(context, "outputs", {}) or {}, "source")
+        outputs = getattr(context, "outputs", {}) or {}
+        source = step_output_json(outputs, "source")
+        if (not source or source.get("_skipped")) and options.get("mode") == "harvest_seal":
+            source = step_output_json(outputs, "harvest_pour")
         payload = await run_envelope(options, source, fs_of(context))
         return StepOutput(raw="", json=payload)
