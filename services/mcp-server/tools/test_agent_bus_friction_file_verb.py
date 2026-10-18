@@ -63,6 +63,8 @@ def test_friction_file_accepts_service_and_claim_aliases() -> None:
         evidence_uris=None,
         confidence=None,
         agent=None,
+        actionable=None,
+        actionable_false_reason=None,
         seat="mcp",
         caller="mcp-server",
         surface="code",
@@ -98,3 +100,19 @@ def test_friction_file_does_not_mint_on_404() -> None:
     assert result["status_code"] == 404
     assert "error" in result
     assert "mint" not in str(result).lower()
+
+
+def test_friction_file_forwards_protocol_actionable() -> None:
+    with patch(
+        "tools.agent_bus.friction_file.file_friction",
+        return_value={"item": {"id": 9}},
+    ) as filed:
+        _friction_file_dispatch(
+            owner="service:mcp-server",
+            note="unanchored protocol",
+            category="protocol",
+            actionable=False,
+            actionable_false_reason="filed via unanchored substrate_friction_file",
+        )
+    assert filed.call_args.kwargs["category"] == "protocol"
+    assert filed.call_args.kwargs["actionable"] is False

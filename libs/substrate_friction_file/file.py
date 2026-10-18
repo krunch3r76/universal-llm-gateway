@@ -16,6 +16,11 @@ from ulg_routing_headers.client import internal_dispatch_headers
 
 _TIMEOUT = 30.0
 
+# Omitted category used to 422 at cortex (`category` is required there) while
+# the MCP harness advertised owner+note only (friction:39588 call 1).
+_DEFAULT_FRICTION_CATEGORY = "tool_error"
+_UNANCHORED_PROTOCOL_REASON = "filed via unanchored substrate_friction_file"
+
 
 def resolve_friction_note(*, note: str = "", claim: str = "") -> tuple[str | None, str | None]:
     """Resolve note/claim aliases; reject when both are non-empty and differ."""
@@ -39,21 +44,34 @@ def file_friction(
     evidence_uris: list[str] | str | None = None,
     confidence: str | None = None,
     agent: str | None = None,
+    actionable: bool | None = None,
+    actionable_false_reason: str | None = None,
     seat: str = "cursor-sdk",
     caller: str = "substrate_friction_file",
     surface: str = "code",
 ) -> dict[str, Any]:
     """File *note* against *owner* via cortex-api ``/dispatch`` tool=friction.
 
-    Does not mint missing owners — Cortex 404 passes through. Side effect is
-    the HTTP POST only; no bus turn is enqueued.
+    Omitted ``category`` becomes ``tool_error`` so a harness call that only
+    has owner and note still reaches the assertion write. ``protocol`` with
+    ``actionable`` unset is stored not-actionable: this verb has no charter
+    or continuity anchor fields, and cortex rejects unanchored protocol when
+    actionable is not false. Explicit ``actionable`` is forwarded unchanged.
+    Does not mint missing owners — Cortex 404 passes through. A 200 body
+    that carries ``error`` and no ``status_code`` is stamped 422 so callers
+    do not log a validation rejection as status null. Side effect is the
+    HTTP POST only; no bus turn is enqueued.
     """
+    resolved_category = (category or "").strip() or _DEFAULT_FRICTION_CATEGORY
+    if resolved_category == "protocol" and actionable is None:
+        actionable = False
+        if not (actionable_false_reason or "").strip():
+            actionable_false_reason = _UNANCHORED_PROTOCOL_REASON
     arguments: dict[str, Any] = {
         "owner": owner.strip(),
         "note": note.strip(),
+        "category": resolved_category,
     }
-    if category:
-        arguments["category"] = category
     if suggestion:
         arguments["suggestion"] = suggestion
     if evidence_uris:
@@ -62,6 +80,11 @@ def file_friction(
         arguments["confidence"] = confidence
     if agent:
         arguments["agent"] = agent
+    if actionable is not None:
+        arguments["actionable"] = actionable
+    reason = (actionable_false_reason or "").strip()
+    if reason:
+        arguments["actionable_false_reason"] = reason
     headers = internal_dispatch_headers(surface=surface, seat=seat, caller=caller)
     body = {
         "tool": "friction",
@@ -88,4 +111,7 @@ def file_friction(
         }
     if not isinstance(parsed, dict):
         return {"error": f"cortex-api returned {type(parsed).__name__}", "status_code": None}
+    if "error" in parsed and "status_code" not in parsed:
+        parsed = dict(parsed)
+        parsed["status_code"] = 422
     return parsed

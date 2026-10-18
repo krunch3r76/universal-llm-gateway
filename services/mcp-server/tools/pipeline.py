@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote
 
@@ -367,6 +368,71 @@ def _path_has_dotdot(value: str) -> bool:
 
 
 _CAPABILITY_VOCAB_PREFIX = "capability:"
+# config/capabilities.yaml satellite categories. A slash id outside this set
+# is a local pipeline (writing/writer-specialist-v1), not a satellite relay.
+_SATELLITE_CATEGORY_FALLBACK = frozenset({"observability", "jobs", "web_fetcher"})
+_satellite_category_names: frozenset[str] | None = None
+
+
+def _load_satellite_category_names() -> frozenset[str]:
+    """Return satellite category names from config/capabilities.yaml.
+
+    A missing or unreadable file falls back to the three checked-in
+    satellite categories so a local pipeline slash id is not posted as a
+    relay body that Stargate then rejects for a missing ``model``.
+    """
+    global _satellite_category_names
+    if _satellite_category_names is not None:
+        return _satellite_category_names
+    path = Path(__file__).resolve().parents[3] / "config" / "capabilities.yaml"
+    try:
+        import yaml
+    except ImportError:
+        _satellite_category_names = _SATELLITE_CATEGORY_FALLBACK
+        return _satellite_category_names
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        _satellite_category_names = _SATELLITE_CATEGORY_FALLBACK
+        return _satellite_category_names
+    categories = raw.get("categories") if isinstance(raw, dict) else None
+    names = {
+        name
+        for name, spec in (categories or {}).items()
+        if isinstance(spec, dict) and spec.get("implementation") == "satellite"
+    }
+    _satellite_category_names = frozenset(names) or _SATELLITE_CATEGORY_FALLBACK
+    return _satellite_category_names
+
+
+def _is_satellite_category(category: str) -> bool:
+    """True when *category* is a satellite relay, not a local pipeline category."""
+    return category in _load_satellite_category_names()
+
+
+def _resolve_pipeline_id(
+    pipeline_id: str | None,
+    pipeline: str | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Accept ``pipeline`` as an alias of ``pipeline_id``.
+
+    Callers that send ``pipeline=writing/writer-specialist-v1`` used to miss
+    the required slot and 422. Differing values in both names are rejected
+    rather than silently picking one.
+    """
+    primary = pipeline_id.strip() if isinstance(pipeline_id, str) else ""
+    alias = pipeline.strip() if isinstance(pipeline, str) else ""
+    if primary and alias and primary != alias:
+        return None, {
+            "error": {
+                "code": "conflicting_pipeline_id",
+                "message": (
+                    "pipeline_id and pipeline name the same slot; "
+                    "pass one, or the same value in both"
+                ),
+            }
+        }
+    return (primary or alias or None), None
 
 
 def _strip_capability_vocab_prefix(pipeline_id: str | None) -> str | None:
@@ -414,6 +480,8 @@ def _capability_async(
     The bare id (e.g. ``writer-specialist-v1``) is an alias.
     A top-level ``dispatch_thread_id`` is forwarded on both paths; on the local path a flat one also stays in pipeline_options.
     """
+    category, separator, member = member_path.partition("/")
+    satellite = separator == "/" and _is_satellite_category(category)
     opts = options or {}
     flat = any(
         key
@@ -427,14 +495,20 @@ def _capability_async(
         for key in opts
     )
     model = opts.get("model")
-    local = (
+    if isinstance(model, str) and model.strip() in {member_path, f"{category}/{member}"}:
+        model = member
+    heuristic_local = (
         (isinstance(model, str) and bool(model.strip()))
         or isinstance(opts.get("pipeline_options"), dict)
         or (isinstance(messages, list) and len(messages) > 0)
         or flat
     )
+    # Non-satellite slash ids (writing/writer-specialist-v1) are local
+    # pipelines. Posting the satellite {args, output_contract} body 422s
+    # because DispatchRequest requires model.
+    local = heuristic_local or not satellite
     if local:
-        member = member_path.split("/")[-1]
+        member = member or member_path.split("/")[-1]
         args = opts.get("args") if isinstance(opts.get("args"), dict) else {}
         if isinstance(opts.get("pipeline_options"), dict):
             pipeline_options = {**args, **opts["pipeline_options"]}
@@ -452,7 +526,7 @@ def _capability_async(
             }
             pipeline_options = {**args, **flat}
         body: dict[str, Any] = {
-            "model": opts.get("model") or member,
+            "model": model or member,
             "messages": messages or [],
             "pipeline_options": pipeline_options,
             "output_contract": opts.get("output_contract", "inline"),
@@ -690,6 +764,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
     def pipeline(
         op: Literal["run", "async", "result", "validate", "stats", "cancel", "list"],
         pipeline_id: str | None = None,
+        pipeline: str | None = None,
         messages: list[dict[str, str]] | None = None,
         execution_id: str | None = None,
         options: dict[str, Any] | None = None,
@@ -707,12 +782,16 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           ``{content, model, duration_s, execution_id?, usage?, pipeline?}``.
           ``pipeline`` mirrors Stargate when present (e.g. ``retrieval`` when
           ``options.include_retrieval_metadata`` is set). Required:
-          ``pipeline_id``, ``messages``. Optional: ``options``, ``timeout``
-          (auto-detected from pipeline config when omitted). Hot-reload:
+          ``pipeline_id`` (``pipeline`` is the same slot), ``messages``.
+          Optional: ``options``, ``timeout`` (auto-detected from pipeline
+          config when omitted). A slash id outside the satellite categories
+          (``writing/writer-specialist-v1``) dispatches as that local pipeline
+          with ``model`` equal to the bare member. Hot-reload:
           YAML/prompts/models reload on file change.
 
         - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
-          Required: ``pipeline_id``, ``messages``. Optional: ``options``,
+          Required: ``pipeline_id`` (``pipeline`` is the same slot), ``messages``
+          for a bare id. Optional: ``options``,
           ``result_delivery`` (``{bus_thread, bus_from_agent, bus_to_agent,
           bus_subject[, bus_brief_summary, bus_lifecycle]}`` — posts a
           pointer envelope at completion; receive then call ``op="result"``).
@@ -726,8 +805,13 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           A ``pipeline_id`` of the form ``<category>/<member>`` for a satellite
           category (e.g. ``jobs/bus-reply-watch``) POSTs ``{args, output_contract}``
           taken from ``options`` to ``/api/v1/capabilities/{category}/{member}``.
-          ``messages`` is not required. The result is the relay body plus
-          ``href`` (the run href). Error bodies carry ``status_code``.
+          ``messages`` is not required on that satellite path. A non-satellite
+          slash id (``writing/writer-specialist-v1``, bare alias
+          ``writer-specialist-v1``) always POSTs the local dispatch body with
+          ``model`` set to the bare member, including when ``messages`` is
+          omitted, so Stargate does not 422 on a missing ``model``. The result
+          is the relay body plus ``href`` (the run href). Error bodies carry
+          ``status_code``.
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline
           result. Returns tracker shape: ``{execution_id, pipeline, status,
@@ -754,13 +838,16 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         ``quality_gate(files=[...])`` → ``op="run"`` or ``op="async"`` →
         ``observability(operation="pipeline-trace", params={"execution_id": "..."})``.
         """
+        pipeline_id, alias_err = _resolve_pipeline_id(pipeline_id, pipeline)
+        if alias_err is not None:
+            return alias_err
         if op == "run":
             cap_id = _strip_capability_vocab_prefix(pipeline_id)
             if cap_id and "/" in cap_id:
                 invalid = _capability_id_shape_error(cap_id)
                 if invalid is not None:
                     return invalid
-                return _capability_async(cap_id, options, None)
+                return _capability_async(cap_id, options, messages)
             if not pipeline_id or messages is None:
                 return {
                     "error": {

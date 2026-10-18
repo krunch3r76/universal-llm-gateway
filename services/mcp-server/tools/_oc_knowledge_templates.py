@@ -73,8 +73,8 @@ A retired executor role name is not a bus address. Address cursor work to `curso
 `agent_bus(tool="substrate_graph_write", arguments='{{"entity_id": "todo:slug", "claim": "…"}}')`
 — `entity_id` + `claim` required. Wraps cortex `assert`; ¬ mint on 404; ¬ a `contract` value.
 **Substrate friction file → `substrate_friction_file`, ¬ bus-prose for the operator to carry:**
-`agent_bus(tool="substrate_friction_file", arguments='{{"owner": "service:slug", "note": "…"}}')`
-— `owner` (or `service`) + `note` (or `claim`) required. Wraps cortex `friction`; ¬ mint on 404; ¬ a `contract` value.
+`agent_bus(tool="substrate_friction_file", arguments='{{"owner": "service:mcp-server", "note": "…", "category": "tool_error"}}')`
+— `owner` (or `service`) + `note` (or `claim`) required. `category` defaults to `tool_error` when omitted. `protocol` without a charter or continuity anchor is stored `actionable=false`. Seat addresses (`web-anthropic`, `claude-web`, `claude.ai`) are not service slugs — pass `ai_agent:web-anthropic` or a real `service:` / `agent_skill:` owner. Wraps cortex `friction`; ¬ mint on 404; ¬ a `contract` value.
 **Substrate entity mint → `substrate_entity_mint`, ¬ round-trip a code seat to mint an entity/owner:**
 `agent_bus(tool="substrate_entity_mint", arguments='{{"id": "service:slug", "type": "service", "name": "…"}}')`
 — `id` + `type` + `name` required. Wraps cortex `entity_create`; 409 on collision; ¬ rich-seed; ¬ a `contract` value.

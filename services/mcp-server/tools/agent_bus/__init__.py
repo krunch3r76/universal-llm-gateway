@@ -215,7 +215,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         **substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
 
-        **substrate_friction_file:** (`owner`|`service`) + (`note`|`claim`) or **422 `friction_file_owner_required`|`friction_file_note_required`**.
+        **substrate_friction_file:** (`owner`|`service`) + (`note`|`claim`). `category` defaults to `tool_error` when omitted (accepted: `tool_error`, `tool_mismatch`, `tool_absent`, `schema_gap`, `boot_drift`, `lesson_gap`, `lesson_conflict`, `stale_context`, `doc_drift`, `protocol`, `regression`, `feature`). Unanchored `protocol` is filed `actionable=false` (`actionable` and `actionable_false_reason` forward when set). Seat addresses (`web-anthropic`, `claude-web`, `claude.ai`) resolve to `ai_agent:web-anthropic` when that entity exists — they are not `service:` slugs. Missing owner/note → **422 `friction_file_owner_required`|`friction_file_note_required`**.
 
         **substrate_entity_mint:** (`id`|`entity_id`) + (`type`|`entity_type`) + (`name`|`title`).
 
