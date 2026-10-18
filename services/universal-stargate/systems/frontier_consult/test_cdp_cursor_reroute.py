@@ -17,8 +17,31 @@ from systems.frontier_consult.cdp_cursor_reroute import (
 
 pytestmark = pytest.mark.offline
 
+_ENABLED_REROUTE_POLICY = {
+    "enabled": True,
+    "target_model": "cursor/gemini-4-argon",
+    "match_prefixes": ["cdp/opus", "cdp/fable"],
+}
 
-def test_resolve_cdp_reroute_matches_opus_and_fable() -> None:
+
+def _patch_cdp_reroute_route_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cdp_reroute: dict
+) -> None:
+    policy_path = tmp_path / "route_policy.yaml"
+    policy_path.write_text(
+        yaml.safe_dump({"cdp_reroute": cdp_reroute}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_cursor_reroute.load_route_policy",
+        lambda path=None: yaml.safe_load(policy_path.read_text()),
+    )
+
+
+def test_resolve_cdp_reroute_matches_opus_and_fable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, _ENABLED_REROUTE_POLICY)
     cfg = load_cdp_reroute_config()
     assert cfg.get("enabled") is True
     assert resolve_cdp_reroute("cdp/opus-5.5-high") is not None
@@ -29,22 +52,14 @@ def test_resolve_cdp_reroute_matches_opus_and_fable() -> None:
 def test_resolve_cdp_reroute_respects_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    policy_path = tmp_path / "route_policy.yaml"
-    policy_path.write_text(
-        yaml.safe_dump(
-            {
-                "cdp_reroute": {
-                    "enabled": False,
-                    "target_model": "cursor/gemini-4-argon",
-                    "match_prefixes": ["cdp/opus"],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "systems.frontier_consult.cdp_cursor_reroute.load_route_policy",
-        lambda path=None: yaml.safe_load(policy_path.read_text()),
+    _patch_cdp_reroute_route_policy(
+        monkeypatch,
+        tmp_path,
+        {
+            "enabled": False,
+            "target_model": "cursor/gemini-4-argon",
+            "match_prefixes": ["cdp/opus"],
+        },
     )
     assert resolve_cdp_reroute("cdp/opus-5") is None
 
@@ -66,6 +81,7 @@ async def test_run_cdp_reroute_harvests_and_archives(
     ws_repo = workspaces / "universal-llm-gateway"
     ws_repo.mkdir(parents=True)
     monkeypatch.setenv("WORKSPACES_ROOT", str(workspaces))
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, _ENABLED_REROUTE_POLICY)
 
     dispatch_id = "auto-reroute-test"
     sidecar = ws_repo / "tmp/reviews/closeouts" / f"{dispatch_id}.md"
@@ -116,9 +132,12 @@ async def test_run_cdp_reroute_harvests_and_archives(
 
 @pytest.mark.asyncio
 async def test_run_cdp_worker_uses_reroute_not_cdp_generate(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from systems.frontier_consult import cdp_generate_worker as worker
+
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, _ENABLED_REROUTE_POLICY)
 
     finalize = AsyncMock()
     monkeypatch.setattr(
