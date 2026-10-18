@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from collections.abc import Awaitable, Callable, Sequence
-from urllib.error import URLError
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 _ROW_KEYS = ("agent_id", "name", "lastMessageId", "is_running", "updated_at_ms")
 DEFAULT_CDP_PORTS: tuple[int, ...] = (9340, 9339)
