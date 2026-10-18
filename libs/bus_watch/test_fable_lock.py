@@ -24,6 +24,73 @@ def test_fable_lock_path() -> None:
     assert fl.fable_lock_path("10534").name == "liaison-fable-10534.lock"
 
 
+def test_loop_flock_path() -> None:
+    assert fl.loop_flock_path("10534").name == "liaison-loop-10534.flock"
+
+
+def test_acquire_root_loop_flock_single_instance(watch_dir: Path) -> None:
+    ok1, fd1, meta1 = fl.acquire_root_loop_flock("10534")
+    assert ok1 is True
+    assert fd1 is not None
+    assert meta1["root"] == "10534"
+    assert meta1["pid"] == os.getpid()
+
+    ok2, fd2, meta2 = fl.acquire_root_loop_flock("10534")
+    assert ok2 is False
+    assert fd2 is None
+    assert meta2.get("pid") == os.getpid()
+
+    ok3, fd3, _meta3 = fl.acquire_root_loop_flock("10534")
+    assert ok3 is False
+    assert fd3 is None
+
+    fl.release_root_loop_flock(fd1)
+    ok4, fd4, meta4 = fl.acquire_root_loop_flock("10534")
+    assert ok4 is True
+    assert fd4 is not None
+    assert meta4["pid"] == os.getpid()
+    fl.release_root_loop_flock(fd4)
+
+
+def test_acquire_root_loop_flock_subprocess_refusal(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import sys
+
+    ok, fd, _ = fl.acquire_root_loop_flock("10534")
+    assert ok is True
+    try:
+        libs = Path(fl.__file__).resolve().parents[1]
+        wd = str(watch_dir)
+        script = (
+            f"import sys; from pathlib import Path; from bus_watch import fable_lock as fl; "
+            f"fl.WATCH_DIR = Path({wd!r}); "
+            "ok, fd, meta = fl.acquire_root_loop_flock('10534'); "
+            "sys.exit(0 if not ok else 1)"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(fl.__file__).resolve().parents[2]),
+            env={**os.environ, "PYTHONPATH": str(libs)},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert proc.returncode == 0, proc.stderr
+    finally:
+        fl.release_root_loop_flock(fd)
+
+
+def test_refresh_fable_lock_require_pid(watch_dir: Path) -> None:
+    fl.claim_fable_lock("ide:tab", hop=False, root_id="10479")
+    lock = fl.read_lock("10479")
+    assert lock["holder_pid"] == os.getpid()
+    assert fl.refresh_fable_lock("ide:tab", root_id="10479", require_pid=os.getpid())
+    assert fl.refresh_fable_lock("ide:tab", root_id="10479", require_pid=os.getpid() + 1) is False
+    assert fl.refresh_fable_lock("ide:tab", root_id="10479") is True
+
+
 def test_ticker_lock_path() -> None:
     assert fl.ticker_lock_path("10534").name == "liaison-ticker-10534.lock"
 

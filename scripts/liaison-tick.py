@@ -43,12 +43,14 @@ from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
 from bus_watch.fable_lock import (
+    acquire_root_loop_flock,
     claim_fable_lock,
     claim_ticker_lease,
     read_lock,
     refresh_fable_lock,
     refresh_ticker_lease,
     release_fable_lock,
+    release_root_loop_flock,
     release_ticker_lease,
 )
 from bus_watch.friction_rows import mark_friction, parse_mark
@@ -424,8 +426,22 @@ def main() -> int:
         return _spawn_loop(args, root, state, state_path, register)
 
     holder = args.holder or f"ide:{root}"
+    flock_ok, flock_fd, flock_meta = acquire_root_loop_flock(root)
+    if not flock_ok:
+        print(
+            json.dumps(
+                {
+                    "loop": "refused",
+                    "reason": "loop_flock_held",
+                    "flock": flock_meta,
+                }
+            ),
+            flush=True,
+        )
+        return 3
     claim = claim_fable_lock(holder, hop=False, root_id=root, take_over=args.take_over)
     if not claim.get("ok"):
+        release_root_loop_flock(flock_fd)
         print(
             json.dumps(
                 {
@@ -454,13 +470,28 @@ def main() -> int:
     try:
         return _loop(args, root, state, state_path, register, holder)
     finally:
+        release_root_loop_flock(flock_fd)
         release_fable_lock(holder, root_id=root)
         clear_loop_pid_files()
 
 
 def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
+    flock_ok, flock_fd, flock_meta = acquire_root_loop_flock(root)
+    if not flock_ok:
+        print(
+            json.dumps(
+                {
+                    "loop": "refused",
+                    "reason": "loop_flock_held",
+                    "flock": flock_meta,
+                }
+            ),
+            flush=True,
+        )
+        return 3
     claim = claim_ticker_lease(root)
     if not claim.get("ok"):
+        release_root_loop_flock(flock_fd)
         print(
             json.dumps(
                 {"loop": "refused", "reason": "ticker_held", "lock": claim.get("lock")}
@@ -524,6 +555,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 return 0
             time.sleep(poll_s)
     finally:
+        release_root_loop_flock(flock_fd)
         release_ticker_lease(root)
 
 
@@ -541,8 +573,9 @@ def _loop(args, root, state, state_path, register, holder):  # noqa: ANN001, ANN
         if is_overnight_quiet(policy=policy_pre):
             time.sleep(args.poll)
             continue
-        if not refresh_fable_lock(holder, root_id=root) or read_lock(root).get(
-            "preempt_by"
+        if (
+            not refresh_fable_lock(holder, root_id=root, require_pid=os.getpid())
+            or read_lock(root).get("preempt_by")
         ):
             print(
                 json.dumps(
