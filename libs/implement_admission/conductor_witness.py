@@ -404,7 +404,9 @@ def fold_scoreboard(
             source = sources.get(row_id) or ""
             marker = ":route="
             if marker in source:
-                part = f"{part} [route={source.rsplit(marker, 1)[1]}]"
+                route_tail = source.rsplit(marker, 1)[1]
+                route_only = route_tail.split(":rerouted", 1)[0]
+                part = f"{part} [route={route_only}]"
             delta_parts.append(part)
         delta = " ".join(delta_parts) or "witness fold render"
         result = forward_mutate_tip(

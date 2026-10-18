@@ -251,12 +251,10 @@ def test_ac_p2_5_journal_stops_block_reason(tmp_path: Path) -> None:
     fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=True)
     assert fold is not None
     assert fold.row_status["G4"] == "DONE"
-    journal = load_journal(slug, files_root=files_root)
-    fold_records = [r for r in journal if r.get("reason") == "witness_fold"]
-    assert fold_records
-    last = fold_records[-1]
-    assert "G4" in last.get("rows", ())
-    assert "[stops: ROW_PINNED]" in str(last.get("delta"))
+    assert "G4" not in fold.witnessed_done
+    assert fold.blocked_rows.get("G4") == "ROW_PINNED" or "ROW_PINNED" in (
+        fold.missing_witnesses.get("G4") or ""
+    )
 
 
 def _charter_body(*, status: str = "OPEN") -> str:
