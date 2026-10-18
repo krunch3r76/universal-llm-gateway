@@ -90,7 +90,32 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
     r"(?i)(?:^|\b|\|)(?:pickup|cc\s+pickup|house-cp|checkpoint|in-flight|in_flight|"
     r"admitted|progress|score_resurface|park-harvest|hop-[a-z0-9]+)(?:\b|\||$)"
 )
+_ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
+_PEER_WAKE_FROM = frozenset(
+    {
+        "grok-bot",
+        "insyncerator",
+        "syncerator",
+        "impresario",
+        "web-anthropic",
+        "maestro",
+        "cursor",
+    }
+)
 _POLL_S = 2.0
+
+
+def peer_operator_wake_from(from_agent: str) -> bool:
+    """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not."""
+    if from_agent in _ROUTINE_DISPATCH_FROM:
+        return False
+    if from_agent in _PEER_WAKE_FROM:
+        return True
+    if from_agent.startswith("grok-bot-"):
+        return True
+    if from_agent.endswith("-impresario"):
+        return True
+    return False
 
 
 def subject_allowed(subject: str | None, *, cse: bool) -> bool:
@@ -128,7 +153,7 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
         return False
-    if not subject_allowed(subject, cse=cse):
+    if not peer_operator_wake_from(from_agent) and not subject_allowed(subject, cse=cse):
         return False
     return True
 

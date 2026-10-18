@@ -43,17 +43,17 @@ def test_cse_allowlist_not_display(db: None) -> None:
     assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "NUDGE|16934#11 ASK"}, cse=True)
     assert qualifies({"to_agent": "maestro", "from_agent": "web-drive-impresario", "subject": "PLAN r2|web-drive-impresario"}, cse=True)
     assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "AMEND #712|Composio mail scope"}, cse=True)
-    assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT_REPLY|x"}, cse=True)
-    assert not qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"}, cse=True)
-    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"}, cse=True)
+    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT_REPLY|x"}, cse=True)
+    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"}, cse=True)
     assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"}, cse=True)
-    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"}, cse=True)
-    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"}, cse=True)
+    assert qualifies({"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=True)
     assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "CLOSEOUT|x"}, cse=True)
     assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "DONE #359 RAG without pipe"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "TYPE: DIRECTIVE — go"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"}, cse=True)
-    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "FACT|x"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "RULING|x"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-aab1", "from_agent": "grok-bot-gc1", "subject": "RELAY|maestro ACK"}, cse=False)
@@ -61,10 +61,18 @@ def test_cse_allowlist_not_display(db: None) -> None:
     assert qualifies({"to_agent": "grok-bot-r1", "from_agent": "web-drive-impresario", "subject": "REVIEW-REQUEST|R1"}, cse=False)
     assert subject_allowed("TYPE: ROUTE/CONTROL", cse=False)
     assert not subject_allowed("TYPE: ROUTE/CONTROL", cse=True)
-    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=False)
-    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"}, cse=False)
-    assert not qualifies(
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"}, cse=False)
+    assert qualifies(
         {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "cursor-sdk generate admitted"},
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-gc2",
+            "from_agent": "grok-bot-gc1",
+            "subject": "HELLO|gc1->insyncerator|sync + Stage Manager setup",
+        },
         cse=False,
     )
     assert CSE_WAKE_SUBJECT_HEADS == {
@@ -131,7 +139,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
     }
     assert not qualifies({"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
     assert not qualifies({"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
-    # Intermediate impresario/conductor telemetry must not wake Maestro or Grok-Bot
+    # Intermediate impresario telemetry still wakes peer Grok/Maestro seats; cursor-sdk stays filtered.
     for intermediate_subj in (
         "PICKUP|work-1",
         "UPDATE|work-1",
@@ -143,13 +151,17 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "SCORE_RESURFACE — slug G5",
         "park-harvest wake — 17899",
     ):
-        assert not qualifies(
+        assert qualifies(
             {"to_agent": "maestro", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
             cse=True,
         )
-        assert not qualifies(
+        assert qualifies(
             {"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
             cse=False,
+        )
+        assert not qualifies(
+            {"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": intermediate_subj},
+            cse=True,
         )
     # ACK/ROUTE receipts to grok-bot-gc1 or maestro do not wake them, while ACK to an impresario house still wakes it
     assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": "ACK|work-1"}, cse=False)
