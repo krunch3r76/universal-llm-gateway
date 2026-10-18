@@ -44,6 +44,17 @@ from .validation import (
 logger = get_logger(__name__)
 
 
+def gguf_backend_tag(n_gpu_layers: int) -> str:
+    """Backend tag for Unix socket keying (cpu vs gpu variant of same gguf)."""
+    return "cpu" if n_gpu_layers == 0 else "gpu"
+
+
+def gguf_unix_socket_key(model_path: str, n_gpu_layers: int) -> str:
+    """Stable 12-char socket key from model path and backend tag."""
+    material = f"{model_path}|{gguf_backend_tag(n_gpu_layers)}"
+    return hashlib.sha256(material.encode()).hexdigest()[:12]
+
+
 def _emit_embedding_engine_debug(
     step: str,
     correlation_id: str | None,
@@ -221,10 +232,10 @@ class NativeGGUFEngine(BaseEngine):
             f"ctx_size={ctx_size} for model: {model_path or models_dir}"
         )
 
-        # Generate unique Unix socket path from model_path to avoid port conflicts
+        # Unique Unix socket path per model path + backend (GPU vs CPU share no path)
         socket_path: str | None = None
         if use_unix_socket and model_path:
-            model_hash = hashlib.sha256(model_path.encode()).hexdigest()[:12]
+            model_hash = gguf_unix_socket_key(model_path, n_gpu_layers)
             socket_path = f"{socket_dir}/{model_hash}.sock"
             os.makedirs(socket_dir, exist_ok=True)
 
