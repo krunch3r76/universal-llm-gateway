@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from deploy_identity.mcp_edge_events import (
+    mcp_edge_grokbot_context_hop_due,
+    mcp_edge_grokbot_context_hop_notify_failed,
     mcp_edge_grokbot_loader_stuck,
     mcp_edge_grokbot_probe_failed,
     mcp_edge_grokbot_tunnel_stale,
@@ -31,11 +33,19 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     read_daemon_log,
     read_desktop_status,
 )
+from scripts.model_manager.ui.controller.grokbot_context_hop_io import (
+    probe_grok_agent_context,
+    reply_context_hop,
+)
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
+    ContextHopState,
     GrokbotEgressLoopState,
     GrokbotEgressSnapshot,
     GrokbotTickDecision,
+    HOP_THREAD_ID,
+    decide_context_hop,
     decide_grokbot_tick,
+    record_hop_notified,
 )
 from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
     fetch_health,
@@ -80,6 +90,7 @@ class GrokbotEgressWatchLoop:
         self._snapshot_fn = snapshot_fn
         self._restart_desktop_fn = restart_desktop_fn
         self._state = GrokbotEgressLoopState()
+        self._hop_state = ContextHopState()
         self._last_watch_ok_emitted_at: float | None = None
         self._health_probe_failed = False
         self._task: asyncio.Task[None] | None = None
@@ -299,6 +310,53 @@ class GrokbotEgressWatchLoop:
         await self._maybe_emit_watch_ok(
             now=now, decision=decision, snapshot=snapshot
         )
+        if snapshot.desktop_running:
+            await self._context_hop(now=now, now_ms=int(now * 1000), snapshot=snapshot)
+
+    async def _context_hop(
+        self, *, now: float, now_ms: int, snapshot: GrokbotEgressSnapshot
+    ) -> None:
+        """Roster read and one combined notice. Skipped when desktop is down."""
+        rows = await probe_grok_agent_context()
+        notice = decide_context_hop(
+            rows=rows,
+            now=now,
+            now_ms=now_ms,
+            state=self._hop_state,
+            open_gc1_bus_turn=snapshot.open_gc1_bus_turn,
+            in_flight_gc1_mcp=snapshot.in_flight_gc1_mcp,
+        )
+        if notice is None:
+            return
+        due = mcp_edge_grokbot_context_hop_due(
+            names=notice.names, thread_id=HOP_THREAD_ID
+        )
+        await _emit(
+            due.signal,
+            dict(due.payload),
+            source="manage",
+            role=due.role,
+            scope=due.scope,
+        )
+        body = "context-hop-due: " + ", ".join(notice.names)
+        try:
+            await reply_context_hop(
+                subject=notice.subject, body=body, after_turn=0
+            )
+        except Exception as exc:
+            failed = mcp_edge_grokbot_context_hop_notify_failed(
+                error_class=type(exc).__name__,
+                detail=str(exc),
+            )
+            await _emit(
+                failed.signal,
+                dict(failed.payload),
+                source="manage",
+                role=failed.role,
+                scope=failed.scope,
+            )
+            return
+        record_hop_notified(self._hop_state, notice.agent_ids, now=now)
 
 
 __all__ = ["GrokbotEgressWatchLoop"]

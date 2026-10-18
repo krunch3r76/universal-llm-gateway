@@ -215,7 +215,7 @@ def open_gc1_bus_turn(
         row = conn.execute(
             """
             SELECT from_agent, subject, created_at FROM turns
-            WHERE thread = ?
+            WHERE thread = ? AND from_agent != 'manage'
             ORDER BY turn_number DESC
             LIMIT 1
             """,
