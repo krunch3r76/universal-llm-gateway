@@ -508,6 +508,29 @@ async def run_cdp_worker(
             contract=contract,
             model_id=model_id,
         )
+        from .cdp_cursor_reroute import (
+            resolve_cdp_reroute,
+            run_cdp_reroute_via_cursor_sdk,
+        )
+
+        if resolve_cdp_reroute(model_id) is not None:
+            result = await run_cdp_reroute_via_cursor_sdk(
+                execution_id=execution_id,
+                prompt_uri=prompt_uri,
+                model_id=model_id,
+                thread_id=thread_id,
+                caller_agent=caller_agent,
+                max_wall_s=wall,
+            )
+            await finalize_cdp_generate(
+                result=result,
+                request_id=request_id,
+                thread_id=thread_id,
+                to_agent=to_agent,
+                pointer_turn=pointer_turn,
+                via="worker",
+            )
+            return
         result = await asyncio.to_thread(
             run_cdp_generate,
             execution_id=execution_id,

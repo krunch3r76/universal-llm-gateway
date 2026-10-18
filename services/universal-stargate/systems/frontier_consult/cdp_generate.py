@@ -38,6 +38,7 @@ from job_vocab import job_record
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .cdp_cursor_reroute import resolve_cdp_reroute
 from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
     publish_cdp_packet_enriched,
@@ -601,6 +602,7 @@ async def dispatch_cdp_generate(
         else ""
     )
     declared_parent = parent_thread
+    cdp_reroute_active = resolve_cdp_reroute(model) is not None
     if is_operator_proxy_mission_purpose(purpose):
         parent_thread, mission_kind = default_operator_seat_binding(
             purpose=purpose,
@@ -608,18 +610,19 @@ async def dispatch_cdp_generate(
             mission_kind=mission_kind,
             thread_id=provisional_thread,
         )
-        _refuse_external_gate_for_generate(
-            purpose=purpose,
-            parent_thread=parent_thread,
-            thread_id=provisional_thread,
-            request_id=request_id,
-            execution_id=execution_id,
-            mission_kind=mission_kind,
-            predecessor_registration_id=getattr(
-                body, "predecessor_registration_id", None
-            ),
-            error_field=gate_error_field,
-        )
+        if not cdp_reroute_active:
+            _refuse_external_gate_for_generate(
+                purpose=purpose,
+                parent_thread=parent_thread,
+                thread_id=provisional_thread,
+                request_id=request_id,
+                execution_id=execution_id,
+                mission_kind=mission_kind,
+                predecessor_registration_id=getattr(
+                    body, "predecessor_registration_id", None
+                ),
+                error_field=gate_error_field,
+            )
     elif (purpose or "").strip().lower() in _LANE_BIND_PURPOSES:
         parent_thread, mission_kind = default_operator_seat_binding(
             purpose=purpose,
@@ -627,18 +630,19 @@ async def dispatch_cdp_generate(
             mission_kind=mission_kind,
             thread_id=provisional_thread,
         )
-        _refuse_external_gate_for_generate(
-            purpose=purpose,
-            parent_thread=parent_thread,
-            thread_id=provisional_thread,
-            request_id=request_id,
-            execution_id=execution_id,
-            mission_kind=mission_kind,
-            predecessor_registration_id=getattr(
-                body, "predecessor_registration_id", None
-            ),
-            error_field=gate_error_field,
-        )
+        if not cdp_reroute_active:
+            _refuse_external_gate_for_generate(
+                purpose=purpose,
+                parent_thread=parent_thread,
+                thread_id=provisional_thread,
+                request_id=request_id,
+                execution_id=execution_id,
+                mission_kind=mission_kind,
+                predecessor_registration_id=getattr(
+                    body, "predecessor_registration_id", None
+                ),
+                error_field=gate_error_field,
+            )
 
     thread_subject = f"cdp generate — {request_id}"
     pointer_body = format_cdp_generate_pointer_body(

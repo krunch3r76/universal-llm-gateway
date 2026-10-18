@@ -34,7 +34,7 @@ def test_standing_default_is_judgment_grok() -> None:
     assert "cursor/gpt-5.6-terra" not in entry["model"]
 
 
-def test_cursor_check_review_allowlist_is_six_ids() -> None:
+def test_cursor_check_review_allowlist_is_seven_ids() -> None:
     assert CURSOR_CHECK_REVIEW_MODELS == frozenset(
         {
             "cursor/muse-spark-1.3",
@@ -43,6 +43,7 @@ def test_cursor_check_review_allowlist_is_six_ids() -> None:
             "cursor/gpt-5.6-sol",
             "cursor/gpt-5.6-luna",
             "cursor/grok-4.7",
+            "cursor/gemini-4-argon",
         }
     )
     for model in CURSOR_CHECK_REVIEW_MODELS:

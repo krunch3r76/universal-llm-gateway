@@ -1,40 +1,46 @@
-# Machine-readable routing policy — single source for resolver + consult-routing drift check.
 policy_source: consult-routing
-policy_version: "2026-09-30"
+policy_version: '2026-09-30'
 lead_claim_authority: server_contract_overrides_packet_prose
-
-# Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
+cdp_reroute:
+  enabled: true
+  target_model: cursor/gemini-4-argon
+  effort: high
+  match_prefixes:
+  - cdp/opus
+  - cdp/fable
 default_seat: cursor-sdk
-
-# Doc-layer dispatch_lane (advisory, not a RoleProfile or hard gate).
-# Derive code vs non-code from platform: sdk ⇒ code (checkout present);
-# API roles (reviewer/skeptic/synthesizer/artisan) ⇒ non-code.
 dispatch_lane:
   code:
     platform: sdk
     seat: cursor-sdk
-    work: [recon, review-on-source, implement, sketch, pure-mechanical]
+    work:
+    - recon
+    - review-on-source
+    - implement
+    - sketch
+    - pure-mechanical
   non_code:
     substrate: api
-    roles: [reviewer, skeptic, synthesizer, artisan]
-    work: [adversarial, life-domain, correspondence, analysis]
+    roles:
+    - reviewer
+    - skeptic
+    - synthesizer
+    - artisan
+    work:
+    - adversarial
+    - life-domain
+    - correspondence
+    - analysis
   overrides:
     code_on_api:
-      description: >-
-        API reviewer over a pasted diff or checkout-free self-contained recon;
-        advisory dispatch_lane label only — does not change role identity.
+      description: "API reviewer over a pasted diff or checkout-free self-contained\
+        \ recon; advisory dispatch_lane label only \u2014 does not change role identity."
   substrate_guard:
     rule: cursor/* models never appear under allowed_models on API roles
-    enforcement: >-
-      route ordering → is_auto_seat_generate_admission →
-      resolve_auto_seat_generate_target → sdk_substrate_required (422) when
-      seat= is absent and cursor/* is requested on an API role
-
+    enforcement: "route ordering \u2192 is_auto_seat_generate_admission \u2192 resolve_auto_seat_generate_target\
+      \ \u2192 sdk_substrate_required (422) when seat= is absent and cursor/* is requested\
+      \ on an API role"
 routes:
-  # Advisory preferred_model (doc/comment only — resolver does not enforce):
-  #   implement → cursor/composer-2.5 (seat default)
-  #   pure-mechanical inventory → Composer OK
-  #   resident task-class→model table → consult-routing § Task-class model reference
   implement:
     cursor-sdk:
       dispatch_kind: implement
@@ -75,56 +81,41 @@ routes:
       transport: team_dispatch
       autonomy: auto_executed
       operator_pickup_required: false
-
-# Workflow → {seat, model} registry (todo:model-workflow-config-first, P0).
-# Sole authority for every GIW omit-model resolution. Readers cache
-# at process start: edit here → verify_workflow_registry_conformance() →
-# `manage sync_restart git_integration_worker`. Loader rejects the file when
-# any Auto contract is unclaimed or claimed twice.
 workflows:
   mechanical_implement:
-    # Compose leg of bind-then-compose: redirect_mechanical_executor lands here
-    # whatever model the orchestrator named (unless that model is roaming).
     seat: cursor-sdk
     model: cursor/composer-2.5
-    jobs: [implement]
+    jobs:
+    - implement
   investigate:
-    # investigate omit-effort is high; seed is low; recon stays medium.
-    # Omitted knobs, including fast, follow the grok-4.7 card.
     seat: cursor-sdk
     model: cursor/grok-4.7
-    jobs: [investigate, recon, seed]
+    jobs:
+    - investigate
+    - recon
+    - seed
   auto_judgment:
-    # Judgment omit-model. Never Composer. Effort for these jobs is
-    # contract_effort (conductor low; answer/ask/confer/verify/execute/propagate high).
-    # Omitted knobs, including fast, follow the grok-4.7 card
-    # (compose_model_knobs / build_model_selection).
     seat: cursor-sdk
     model: cursor/grok-4.7
-    jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
+    jobs:
+    - answer
+    - confer
+    - ask
+    - verify
+    - execute
+    - propagate
+    - sketch
+    - none
+    - conductor
   check_review:
-    # Reviewer omit-model is judgment, so it uses the same model as
-    # workflows.auto_judgment. Second-pool ids (muse, fable, terra, sol, luna)
-    # stay explicit pins. job=freeform omit-model coerces to seat=cursor-sdk
-    # + this model. Grok's bus delivery role is skeptic.
     seat: cursor-sdk
     model: cursor/grok-4.7
     contracts: []
-
-# Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).
-# roaming: cheap enough per agent step that a contract: override may waive the
-# empty-scope refusal (dispatch_bounds.scope_waiver_allowed).
-# deprecated: true + allowed_workflows: [slug, …] → loader rejects any other
-# workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
-  composer-2.5:      {roaming: true}
-  grok-4.7:          {roaming: true}
-
-# Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
-# Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed
-# (workflows.* aggregate contracts with differing effort tiers, e.g. recon=medium vs
-# investigate=high within workflows.investigate). implement whose handoff
-# contract is none (body declares judgment) is high in wire_map, not this table.
+  composer-2.5:
+    roaming: true
+  grok-4.7:
+    roaming: true
 contract_effort:
   investigate: high
   confer: high

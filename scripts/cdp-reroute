@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Toggle global CDP → cursor-sdk reroute in route_policy.yaml."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+_REPO = Path(__file__).resolve().parent.parent
+_POLICY_PATH = _REPO / "config" / "routing" / "route_policy.yaml"
+
+
+def _load_policy() -> dict[str, Any]:
+    text = _POLICY_PATH.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise SystemExit(f"invalid policy file: {_POLICY_PATH}")
+    return data
+
+
+def _save_policy(data: dict[str, Any]) -> None:
+    _POLICY_PATH.write_text(
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+def _reroute_block(data: dict[str, Any]) -> dict[str, Any]:
+    block = data.get("cdp_reroute")
+    if not isinstance(block, dict):
+        raise SystemExit("cdp_reroute block missing from route_policy.yaml")
+    return block
+
+
+def cmd_status() -> int:
+    block = _reroute_block(_load_policy())
+    enabled = block.get("enabled")
+    target = block.get("target_model")
+    effort = block.get("effort")
+    prefixes = block.get("match_prefixes")
+    print(f"cdp_reroute.enabled={enabled!r}")
+    print(f"target_model={target!r}")
+    print(f"effort={effort!r}")
+    print(f"match_prefixes={prefixes!r}")
+    return 0
+
+
+def cmd_set(enabled: bool) -> int:
+    data = _load_policy()
+    block = _reroute_block(data)
+    block["enabled"] = enabled
+    data["cdp_reroute"] = block
+    _save_policy(data)
+    print(f"cdp_reroute.enabled={enabled}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="CDP global reroute toggle")
+    parser.add_argument("command", choices=["status", "on", "off"])
+    args = parser.parse_args()
+    if args.command == "status":
+        return cmd_status()
+    if args.command == "on":
+        return cmd_set(True)
+    return cmd_set(False)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
