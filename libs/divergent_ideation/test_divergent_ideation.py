@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from systems.pipeline.core.execution.map_reduce.collection import MapOutputCollection
+from systems.pipeline.core.handlers.step_output import StepOutput
 from systems.pipeline.core.schemas import ReadsFrom, StepConfig
 
 from divergent_ideation.audit_assign_v1 import assign_auditors
@@ -21,6 +23,7 @@ from divergent_ideation.leak_check_v1 import (
     finalize_leak_reports,
 )
 from divergent_ideation.map_enrich_v1 import (
+    abstract_briefs_from_map_ideate,
     briefs_from_re_instantiate,
     model_id_mismatches,
 )
@@ -567,6 +570,132 @@ def test_re_instantiate_planned_models_match_ideate_successes_only() -> None:
     mismatches = model_id_mismatches(re_outputs, aligned_planned, "re_instantiate")
     assert mismatches and mismatches[0]["model"] == "m2"
     assert "m1" in mismatches[0]["error"]
+
+
+def _domain_brief(abstract_index: int) -> dict[str, Any]:
+    return {
+        "abstract_index": abstract_index,
+        "domain_statement": "d",
+        "falsifier": "f",
+        "cost_to_test": "c",
+        "time_to_signal": "t",
+    }
+
+
+def _ideate_step_output(model_id: str) -> StepOutput:
+    return StepOutput(
+        raw="{}",
+        model_id=model_id,
+        json={"briefs": [{"structural_goal": "goal", "constraints": []}]},
+    )
+
+
+def test_re_instantiate_aligned_outputs_preserve_pool_index_after_leading_failure() -> None:
+    """Element 0 failed re_instantiate; later briefs must keep surviving pool indices."""
+    exec_id = "EXEC-18011"
+    pool = _pool(3)
+    pool_models = ["m0", "m1", "m2"]
+    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    map_ideate = MapOutputCollection(
+        ideate_successes,
+        output_positions=[0, 1, 2],
+        total_count=3,
+    )
+    re_successes = [
+        StepOutput(raw="{}", model_id="m1", json={"briefs": [_domain_brief(0)]}),
+        StepOutput(raw="{}", model_id="m2", json={"briefs": [_domain_brief(0)]}),
+    ]
+    re_inst = MapOutputCollection(
+        re_successes,
+        output_positions=[1, 2],
+        total_count=3,
+        failed_iteration_hints=[{"index": 0, "error_message": "failed"}],
+    )
+    ideate_positions = list(map_ideate._output_positions or ())
+    abstract_briefs = abstract_briefs_from_map_ideate(
+        map_ideate.outputs_aligned(),
+        pool_models,
+        pool,
+        exec_id,
+        briefs_per_model=1,
+    )
+    briefs, failures = briefs_from_re_instantiate(
+        re_inst.outputs_aligned(),
+        abstract_briefs,
+        pool,
+        run_id=exec_id,
+        ideate_output_positions=ideate_positions,
+    )
+    assert failures == []
+    assert [b["brief_id"] for b in briefs] == [f"{exec_id}-1-0", f"{exec_id}-2-0"]
+    assert [b["author_model"] for b in briefs] == ["m1", "m2"]
+
+    shifted, _ = briefs_from_re_instantiate(
+        re_inst.all_outputs(),
+        abstract_briefs,
+        pool,
+        run_id=exec_id,
+        ideate_output_positions=ideate_positions,
+    )
+    assert [b["brief_id"] for b in shifted] == [f"{exec_id}-0-0", f"{exec_id}-1-0"]
+
+    assign_out = assign_auditors(briefs, pool, run_seed=18011, min_auditors=2)
+    assert not assign_out["assignment_error"]
+    for row in assign_out["audit_assignments"]:
+        assert row["auditor_model"] != row["author_model"]
+
+
+def test_audit_assign_and_collate_brief_ids_share_execution_namespace() -> None:
+    """Metadata run_id META must not replace context.execution_id EXEC in brief_id."""
+    exec_id = "EXEC"
+    meta_run_id = "META"
+    pool = _pool(3)
+    pool_models = ["m0", "m1", "m2"]
+    map_ideate = MapOutputCollection(
+        [_ideate_step_output("m0")],
+        output_positions=[0],
+        total_count=1,
+    )
+    re_inst = MapOutputCollection(
+        [StepOutput(raw="{}", model_id="m0", json={"briefs": [_domain_brief(0)]})],
+        output_positions=[0],
+        total_count=1,
+    )
+    ideate_positions = list(map_ideate._output_positions or ())
+    abstract_briefs = abstract_briefs_from_map_ideate(
+        map_ideate.outputs_aligned(),
+        pool_models,
+        pool,
+        exec_id,
+        briefs_per_model=1,
+    )
+    audit_briefs, _ = briefs_from_re_instantiate(
+        re_inst.outputs_aligned(),
+        abstract_briefs,
+        pool,
+        run_id=exec_id,
+        ideate_output_positions=ideate_positions,
+    )
+    collate_briefs, _ = briefs_from_re_instantiate(
+        re_inst.outputs_aligned(),
+        abstract_briefs,
+        pool,
+        run_id=exec_id,
+        ideate_output_positions=ideate_positions,
+    )
+    assert {b["brief_id"] for b in audit_briefs} == {b["brief_id"] for b in collate_briefs}
+    assert audit_briefs[0]["brief_id"] == f"{exec_id}-0-0"
+    meta_briefs, meta_failures = briefs_from_re_instantiate(
+        re_inst.outputs_aligned(),
+        abstract_briefs,
+        pool,
+        run_id=meta_run_id,
+        ideate_output_positions=ideate_positions,
+    )
+    assert meta_briefs == []
+    assert meta_failures and "META-0-0" in meta_failures[0].get("error", "")
+    assert audit_briefs[0]["brief_id"] == f"{exec_id}-0-0"
+    assert meta_run_id != exec_id
 
 
 def test_assign_auditors_nine_engine_brief_ids() -> None:

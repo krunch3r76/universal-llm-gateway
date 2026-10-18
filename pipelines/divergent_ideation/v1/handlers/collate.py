@@ -48,7 +48,7 @@ class CollateV1Handler(BaseHandler):
                 payload[key] = self._resolve_input(resolver, step, key, inputs)
 
         pool_manifest = list(payload.get("pool_manifest") or [])
-        run_id = str(payload.get("run_id") or context.execution_id or "")
+        run_id = str(context.execution_id or "")
         briefs_per_model = int(context.options.get("briefs_per_model", 3))
         split_out = context.get_output("operator_split")
         split_json = split_out.json if split_out and isinstance(split_out.json, dict) else {}
@@ -92,7 +92,7 @@ class CollateV1Handler(BaseHandler):
             )
             re_outputs = re_inst.all_outputs()
             briefs, re_brief_failures = briefs_from_re_instantiate(
-                re_outputs,
+                re_inst.outputs_aligned(),
                 abstract_briefs,
                 pool_manifest,
                 run_id=run_id,

@@ -58,7 +58,7 @@ class AuditAssignV1Handler(BaseHandler):
                 else None
             )
             briefs, _ = briefs_from_re_instantiate(
-                re_inst.all_outputs(),
+                re_inst.outputs_aligned(),
                 abstract_briefs,
                 pool_manifest,
                 run_id=run_id,

@@ -206,7 +206,6 @@ steps:
       briefs: re_instantiate.*
       audit_assignments: audit_assign.json.audit_assignments
       audits: map_audit.*
-      run_id: sourceNs.metadata.run_id
 
   - name: emit
     type: select_output
