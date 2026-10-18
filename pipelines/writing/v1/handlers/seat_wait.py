@@ -8,6 +8,7 @@ the local generate step. Neither handler sets ``StepOutput.error``.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -23,6 +24,28 @@ from .assemble import openai_reviewer_quota_reason
 from .seat_dispatch import _held_openai_quota_step, _role, _thread_id, _timeout
 
 _WAIT_SLICE = 55.0
+
+_PREAMBLE = re.compile(
+    r"^(?:here(?:'s| is) the draft:|sure,? here(?:'s| is)(?: the message)?:)\s*",
+    re.IGNORECASE,
+)
+_FENCE_BLOCK = re.compile(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", re.MULTILINE)
+_DRAFT_TAG = re.compile(r"^<draft>\s*([\s\S]*?)\s*</draft>$", re.IGNORECASE)
+
+
+def sanitize_plain_text_draft(raw_text: str) -> str:
+    """Strip fences, draft tags, and conversational preambles."""
+    text = str(raw_text or "").strip()
+    if not text:
+        return ""
+    match = _FENCE_BLOCK.search(text)
+    if match:
+        text = match.group(1).strip()
+    tag = _DRAFT_TAG.match(text)
+    if tag:
+        text = tag.group(1).strip()
+    text = _PREAMBLE.sub("", text, count=1).strip()
+    return text
 
 
 def _step(payload: dict[str, Any], *, model_id: str | None = None) -> StepOutput:

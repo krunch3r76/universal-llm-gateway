@@ -3,7 +3,8 @@
 The same object is the ``json_schema`` on the local review model call and
 the check the select step runs before revise binds findings. It matches the
 ``review_local`` generate step at commit 4c1deffd: object, no extra keys,
-``findings`` of ``{ref, type, fix}``, ``verdict`` ``ship`` or ``revise``.
+``findings`` of ``{ref, type, fix}``, ``verdict`` ``ship`` or ``revise``,
+``clauses`` of ``{text, pin_ids, disposition}``.
 """
 
 from __future__ import annotations
@@ -38,11 +39,28 @@ REVIEW_RESULT_SCHEMA: dict[str, Any] = {
             },
         },
         "verdict": {"type": "string", "enum": ["ship", "revise"]},
+        "clauses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "text": {"type": "string"},
+                    "pin_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "disposition": {"type": "string"},
+                },
+                "required": ["text", "pin_ids", "disposition"],
+            },
+        },
     },
-    "required": ["findings", "verdict"],
+    "required": ["findings", "verdict", "clauses"],
 }
 
 _FINDING_KEYS = frozenset({"ref", "type", "fix"})
+_CLAUSE_KEYS = frozenset({"text", "pin_ids", "disposition"})
 _TYPES = frozenset(FINDING_TYPES)
 
 
@@ -50,7 +68,7 @@ def review_result_error(obj: Any) -> str | None:
     """Return a short reason when ``obj`` is not a review result, else None."""
     if not isinstance(obj, dict):
         return "not_object"
-    extra = set(obj) - {"findings", "verdict"}
+    extra = set(obj) - {"findings", "verdict", "clauses"}
     if extra:
         return "additional_properties"
     if "verdict" not in obj:
@@ -69,4 +87,23 @@ def review_result_error(obj: Any) -> str | None:
             return "finding_fields"
         if row.get("type") not in _TYPES:
             return "finding_type"
+    if "clauses" not in obj:
+        return "missing_clauses"
+    clauses = obj.get("clauses")
+    if not isinstance(clauses, list):
+        return "clauses"
+    for row in clauses:
+        if not isinstance(row, dict):
+            return "clause_not_object"
+        if set(row) - _CLAUSE_KEYS:
+            return "clause_additional_properties"
+        if not isinstance(row.get("text"), str):
+            return "clause_fields"
+        pin_ids = row.get("pin_ids")
+        if not isinstance(pin_ids, list):
+            return "clause_fields"
+        if not all(isinstance(pin_id, str) for pin_id in pin_ids):
+            return "clause_fields"
+        if not isinstance(row.get("disposition"), str):
+            return "clause_fields"
     return None

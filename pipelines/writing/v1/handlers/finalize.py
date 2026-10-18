@@ -17,9 +17,14 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from .independence import _allow_partial, load_writing_models, model_family
 
 _GENERATE_STEPS = (
-    ("draft", "writer"),
-    ("review", "reviewer"),
-    ("revise", "reviser"),
+    ("drafter_openai", "drafter_openai"),
+    ("drafter_google", "drafter_google"),
+    ("drafter_xai", "drafter_xai"),
+    ("drafter_local_hermes", "drafter_local_hermes"),
+    ("drafter_local_ernie", "drafter_local_ernie"),
+    ("drafter_anthropic", "drafter_anthropic"),
+    ("fact_ceiling_audit", "verifier"),
+    ("prose_rhythm_pass", "reviser"),
 )
 
 
@@ -221,25 +226,30 @@ class WritingFinalizeHandler(BaseHandler):
                     "provenance": {"initial": initial},
                 }
             )
-        review = _json_of(outputs, "review")
+        review = _json_of(outputs, "fact_ceiling_audit") or _json_of(outputs, "review")
         held_review = bool(review) and review.get("status") == "held_reviewer_unfunded"
         review_ok = bool(review) and review.get("verdict") in {"ship", "revise"}
-        revise = _json_of(outputs, "revise")
-        revision_ran = revise is not None
-        final_payload = _json_of(outputs, "provenance_check_final")
+        rhythm = _json_of(outputs, "prose_rhythm_pass")
+        rhythm_raw = None
+        rhythm_step = _raw_step(outputs, "prose_rhythm_pass")
+        if rhythm_step is not None:
+            rhythm_raw = (
+                rhythm_step.get("raw")
+                if isinstance(rhythm_step, dict)
+                else getattr(rhythm_step, "raw", None)
+            )
+        revision_ran = rhythm is not None or bool(rhythm_raw)
+        final_payload = _json_of(outputs, "fact_ceiling_final")
         final = (
             list(final_payload.get("violations") or [])
-            if revision_ran and final_payload is not None
+            if final_payload is not None
             else None
         )
-        selected = "draft_v1"
-        if (
-            review_ok
-            and revision_ran
-            and final is not None
-            and not _v2_worse(initial, final)
-        ):
-            selected = "draft_v2"
+        rhythm_reverted = False
+        selected = "draft_v2" if revision_ran and final == [] else "draft_v1"
+        if final and len(final) > 0:
+            selected = "draft_v1"
+            rhythm_reverted = True
         if held_review or not review_ok:
             passed = False
         elif selected == "draft_v2":
@@ -273,6 +283,8 @@ class WritingFinalizeHandler(BaseHandler):
                     "detail": review_reason,
                 }
             )
+        if rhythm_reverted:
+            unresolved.extend(list(final or []))
         if not revision_ran and review_ok and review.get("verdict") == "revise":
             unresolved.extend(list(review.get("findings") or []))
         options = getattr(context, "options", {}) or {}
@@ -280,7 +292,11 @@ class WritingFinalizeHandler(BaseHandler):
             _model_of(_raw_step(outputs, "draft")) or models.get("writer") or ""
         )
         reviewer_live = (
-            _model_of(_raw_step(outputs, "review")) or models.get("reviewer") or ""
+            _model_of(_raw_step(outputs, "fact_ceiling_audit"))
+            or _model_of(_raw_step(outputs, "review"))
+            or models.get("verifier")
+            or models.get("reviewer")
+            or ""
         )
         writer_family = model_family(str(writer_live))
         reviewer_family = model_family(str(reviewer_live))
@@ -309,11 +325,15 @@ class WritingFinalizeHandler(BaseHandler):
                 }
             )
         revision = None
-        if revision_ran and revise is not None:
+        if revision_ran:
+            draft_v2_text = rhythm_raw if isinstance(rhythm_raw, str) else None
+            if draft_v2_text is None and isinstance(rhythm, dict):
+                draft_v2_text = rhythm.get("draft")
             revision = {
-                "draft_v2": revise.get("draft"),
-                "changed_claims": list(revise.get("changed_claims") or []),
-                "dispositions": list(revise.get("dispositions") or []),
+                "draft_v2": draft_v2_text,
+                "changed_claims": [],
+                "dispositions": [],
+                "rhythm_reverted": rhythm_reverted,
             }
         usage = {
             name: _usage_of(_raw_step(outputs, name)) for name, _role in _GENERATE_STEPS
@@ -344,6 +364,7 @@ class WritingFinalizeHandler(BaseHandler):
                 "pass": passed,
                 "unresolved": unresolved,
                 "selected": selected,
+                "rhythm_reverted": rhythm_reverted,
             },
             "seats_used": {
                 "writer": _model_of(_raw_step(outputs, "draft"))
