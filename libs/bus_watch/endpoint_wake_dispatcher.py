@@ -158,11 +158,33 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
     return True
 
 
-def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
-    """Synthetic grok subscription from the runtime routing file."""
+def _grok_binding_row(agent: str) -> dict[str, Any] | None:
+    """Live window row when ``agent`` follows grok-window routing."""
     from cursor_bridge.grok_window_bindings import binding_for
 
-    row = binding_for(agent)
+    for candidate in (agent, normalize_bus_address(agent)):
+        row = binding_for(candidate)
+        if row is not None:
+            return row
+    return None
+
+
+def _apply_grok_window_overlay(
+    agent: str, resolved: tuple[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]]:
+    """Subscription DB rows can lag promote; display always follows routing file."""
+    row = _grok_binding_row(agent)
+    if row is None:
+        return resolved
+    route, sub = resolved
+    merged = dict(sub)
+    merged["display"] = row["display"]
+    return route, merged
+
+
+def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
+    """Synthetic grok subscription from the runtime routing file."""
+    row = _grok_binding_row(agent)
     if row is None:
         return None
     return (
@@ -192,7 +214,7 @@ def _resolve_delivery_route(
     """Subscription row, else legacy alias, else synthetic grok window binding."""
     resolved = store.subscription(agent, thread)
     if resolved is not None:
-        return resolved
+        return _apply_grok_window_overlay(agent, resolved)
     from cursor_bridge.grok_window_bindings import mailbox_members
 
     for member in mailbox_members(agent):
@@ -200,7 +222,7 @@ def _resolve_delivery_route(
             continue
         resolved = store.subscription(member, thread)
         if resolved is not None:
-            return resolved
+            return _apply_grok_window_overlay(agent, resolved)
     for candidate in (raw_to, agent):
         if not candidate:
             continue

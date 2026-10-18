@@ -169,7 +169,8 @@ def binding_for(agent: str) -> dict[str, Any] | None:
     state = load_routing()
     key = _norm(agent)
     ports = _window_ids(config)
-    fixed = {_norm(name): _require_window(config, disp) for name, disp in config["fixed_roles"].items()}
+    fixed_raw = config.get("fixed_roles") or {}
+    fixed = {_norm(name): _require_window(config, disp) for name, disp in fixed_raw.items()}
     sync = {_norm(name) for name in config["sync_agents"]}
     default_agents = {_norm(name) for name in config["default_agents"]}
     if key in fixed:
@@ -233,6 +234,65 @@ def write_routing(
     return state
 
 
+def _agent_bus_db_path() -> Path:
+    return _gateway_home() / ".agent-bus" / "messages.db"
+
+
+def sync_endpoint_subscriptions(*, updated_by: str | None = None) -> dict[str, Any]:
+    """Append subscription rows so DB display matches live grok window routing."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        list_subscriptions,
+        subscribe_endpoint,
+    )
+    from agent_seat.registry import STAGE_MANAGER_ADDRESSES
+
+    state = load_routing()
+    config = load_config()
+    default_home = state["default_window"]
+    insync_home = state["insyncerator_window"]
+    sync_agents = {_norm(name) for name in config["sync_agents"]}
+    stage_agents = {_norm(a) for a in STAGE_MANAGER_ADDRESSES} | {"grok-bot"}
+    evidence = f"grok-window-routing epoch={state['epoch']}"
+    bound_by = updated_by or os.environ.get("USER") or "promote"
+
+    db_path = _agent_bus_db_path()
+    prev_db = os.environ.get("AGENT_BUS_DB_PATH")
+    os.environ["AGENT_BUS_DB_PATH"] = str(db_path)
+    updated: list[str] = []
+    try:
+        for row in list_subscriptions():
+            if row.get("state") != "subscribed":
+                continue
+            agent = str(row.get("agent") or "")
+            key = _norm(agent)
+            if key in stage_agents:
+                display = default_home
+                title = "Stage Manager (gc1)"
+            elif key in sync_agents:
+                display = insync_home
+                title = row.get("title") or "insyncerator"
+            else:
+                continue
+            result = subscribe_endpoint(
+                agent=agent,
+                thread_scope=str(row["thread_scope"]),
+                surface=str(row["surface"]),
+                display=display,
+                title=title,
+                agent_id=row.get("agent_id"),
+                bound_by=bound_by,
+                evidence=evidence,
+            )
+            if result.get("appended"):
+                updated.append(f"{agent}:{row['thread_scope']}")
+    finally:
+        if prev_db is None:
+            os.environ.pop("AGENT_BUS_DB_PATH", None)
+        else:
+            os.environ["AGENT_BUS_DB_PATH"] = prev_db
+    return {"updated": updated, "default_window": default_home, "insyncerator_window": insync_home}
+
+
 def promote(display: str, *, updated_by: str | None = None) -> dict[str, Any]:
     """Make ``display`` the grok-bot home and park insyncerator on the other."""
     config = load_config()
@@ -240,12 +300,14 @@ def promote(display: str, *, updated_by: str | None = None) -> dict[str, Any]:
     ids = [key for key in _window_ids(config) if key != home]
     if len(ids) != 1:
         raise ValueError("promote expects exactly two windows")
-    return write_routing(
+    state = write_routing(
         default_window=home,
         insyncerator_window=ids[0],
         source="promote",
         updated_by=updated_by,
     )
+    sync_endpoint_subscriptions(updated_by=updated_by)
+    return state
 
 
 def status() -> dict[str, Any]:
@@ -264,5 +326,8 @@ def status() -> dict[str, Any]:
             "insyncerator": binding_for("insyncerator"),
             "grok-bot-gc1": binding_for("grok-bot-gc1"),
             "grok-bot-gc2": binding_for("grok-bot-gc2"),
+            "grok-coordinator-1": binding_for("grok-coordinator-1"),
+            "stage-manager": binding_for("stage-manager"),
+            "syncerator": binding_for("syncerator"),
         },
     }

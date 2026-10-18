@@ -427,6 +427,39 @@ def test_fire_holders_exception_records_unknown_and_does_not_propagate(db: None)
     assert row["reason"] == "ConnectError"
 
 
+def test_resolve_delivery_overlays_stale_subscription_display(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale DB display must not beat live grok-window-routing after promote."""
+    from cursor_bridge import grok_window_bindings as bindings
+
+    from bus_watch.endpoint_wake_dispatcher import _resolve_delivery_route
+
+    path = tmp_path / "grok-window-routing.json"
+    monkeypatch.setattr(bindings, "state_path", lambda: path)
+    monkeypatch.setattr(bindings, "sync_endpoint_subscriptions", lambda **_: {"updated": []})
+    bindings.promote("10", updated_by="test")
+
+    class Store:
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "grok-bot-gc1":
+                return (
+                    "wildcard",
+                    {
+                        "id": 7,
+                        "surface": "grok",
+                        "display": "9",
+                        "title": "Stage Manager (gc1)",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+    route, sub = _resolve_delivery_route(Store(), "grok-bot-gc1", "17927")  # type: ignore[arg-type]
+    assert route == "wildcard"
+    assert sub["display"] == "10"
+
+
 def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(db: None) -> None:
     """Mailbox canonical agent in ledger must still resolve grok-bot-gc2 subscriptions."""
     from unittest.mock import patch

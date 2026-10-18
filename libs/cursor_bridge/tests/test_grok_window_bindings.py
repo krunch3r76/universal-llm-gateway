@@ -23,6 +23,8 @@ def test_builtin_initial_state_when_file_missing(isolated_state) -> None:
     assert binding_for("grok-bot")["source"] == "builtin"
     assert binding_for("impresario")["display"] == "9"
     assert binding_for("grok-bot-gc1")["display"] == "9"
+    assert binding_for("grok-coordinator-1")["display"] == "9"
+    assert binding_for("stage-manager")["display"] == "9"
     assert binding_for("insyncerator")["display"] == "10"
     assert binding_for("insyncerator")["cdp_port"] == 9340
     assert binding_for("syncerator")["display"] == "10"
@@ -41,8 +43,9 @@ def test_promote_flips_default_and_parks_insyncerator(isolated_state) -> None:
     assert binding_for("grok-bot")["cdp_port"] == 9340
     assert binding_for("insyncerator")["display"] == "9"
     assert binding_for("syncerator")["cdp_port"] == 9339
-    assert binding_for("grok-bot-gc1")["display"] == "9"
-    assert binding_for("grok-bot-gc2")["display"] == "10"
+    assert binding_for("grok-bot-gc1")["display"] == "10"
+    assert binding_for("grok-coordinator-1")["display"] == "10"
+    assert binding_for("grok-bot-gc2")["display"] == "9"
     written = json.loads(isolated_state.read_text(encoding="utf-8"))
     assert written["schema_version"] == 1
     again = promote(":9", updated_by="test")

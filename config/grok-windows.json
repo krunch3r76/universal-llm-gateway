@@ -13,12 +13,15 @@
       "user_data_dir": "~/.gateway/grok-io-gc2"
     }
   },
-  "fixed_roles": {
-    "grok-bot-gc1": "9",
-    "grok-bot-gc2": "10"
-  },
-  "default_agents": ["grok-bot", "impresario"],
-  "sync_agents": ["insyncerator", "syncerator"],
+  "fixed_roles": {},
+  "default_agents": [
+    "grok-bot",
+    "grok-bot-gc1",
+    "grok-coordinator-1",
+    "stage-manager",
+    "impresario"
+  ],
+  "sync_agents": ["insyncerator", "syncerator", "grok-bot-gc2"],
   "mailbox": {
     "canonical": "insyncerator",
     "members": ["insyncerator", "grok-bot-gc2", "syncerator"]
