@@ -88,12 +88,18 @@ def friction_night_key(friction_id: str, *, role: str | None = None) -> str:
 def trio_sketch_model(policy: dict[str, Any]) -> str | None:
     """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5.5``.
 
-    A paused default or override yields None. The caller holds; it does not
-    substitute another model.
+    When the default is paused and ``trio_sketch_model`` is not overridden,
+    fall back to ``confer_model`` if unpaused. Otherwise a paused model yields
+    None and the caller holds.
     """
     raw = str(policy.get("trio_sketch_model") or "").strip()
-    model = raw if raw.startswith(("cursor/", "cdp/")) else "cdp/opus-5.5"
+    overridden = bool(raw.startswith(("cursor/", "cdp/")))
+    model = raw if overridden else "cdp/opus-5.5"
     if model_paused(policy, model):
+        if not overridden:
+            confer = str(policy.get("confer_model") or "").strip()
+            if confer and not model_paused(policy, confer):
+                return confer
         return None
     return model
 
@@ -111,6 +117,11 @@ def _row_bind_model_knobs(policy: dict[str, Any], model: str) -> dict[str, str] 
     knobs = policy.get("row_bind_model_knobs")
     if isinstance(knobs, dict):
         return {str(k): str(v) for k, v in knobs.items()}
+    confer = str(policy.get("confer_model") or "").strip()
+    if confer and model == confer:
+        ck = policy.get("confer_model_knobs")
+        if isinstance(ck, dict):
+            return {str(k): str(v) for k, v in ck.items()}
     bare = model.rsplit("/", 1)[-1] if model else ""
     if model.startswith("cursor/") and bare == "grok-4.7":
         return {"effort": "high", "fast": "false"}

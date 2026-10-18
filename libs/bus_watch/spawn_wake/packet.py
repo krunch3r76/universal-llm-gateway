@@ -74,6 +74,18 @@ def successor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
+def play_conductor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
+    """Play / ROW_HOP conductor model — ``play_conductor_model`` when set."""
+    play = str(policy.get("play_conductor_model") or "").strip()
+    if not play:
+        return successor_model_fields(policy)
+    fields: dict[str, Any] = {"model": play}
+    policy_knobs = policy.get("play_conductor_model_knobs")
+    if isinstance(policy_knobs, dict):
+        fields["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
+    return fields
+
+
 def build_dispatch_body(
     root_id: str,
     policy: dict[str, Any],

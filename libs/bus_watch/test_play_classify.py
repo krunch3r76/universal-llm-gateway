@@ -94,6 +94,21 @@ def test_play_dispatch_body_uses_successor_model() -> None:
     assert body["source_ref"] == "todo:cse-attachment-hop"
 
 
+def test_play_dispatch_body_uses_play_conductor_model() -> None:
+    body = build_play_dispatch_body(
+        "17934",
+        {
+            "successor_model": "cursor/grok-4.7",
+            "play_conductor_model": "cursor/gemini-4-argon",
+            "play_conductor_model_knobs": {"effort": "high", "fast": "false"},
+            "max_hop_minutes": 60,
+        },
+        todo_slug="house-under-grok",
+    )
+    assert body["model"] == "cursor/gemini-4-argon"
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
+
+
 def test_classify_hold_when_lanes_unobserved_and_todo_named() -> None:
     """Unsure live ⇒ hold, not play (wrong-direction: a second liaison)."""
     digest = {"policy": {"now_row": "todo:alpha"}, "lanes": None, "attention": []}
