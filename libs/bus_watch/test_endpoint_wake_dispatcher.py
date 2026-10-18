@@ -536,6 +536,82 @@ def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(db: 
     assert posts[0]["subscription_id"] == 24
 
 
+def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) -> None:
+    from unittest.mock import patch
+
+    detail = create_thread(thread_id=None, slug="multi-turn-wake")
+    assert detail is not None
+    thread = str(detail["id"])
+    pending: list[dict] = []
+    last_id = 0
+    for n in range(4):
+        turn_id, _ts, number, _c = insert_turn(
+            thread=thread,
+            from_agent="cursor",
+            to_agent="grok-bot-gc1",
+            subject=f"REQUEST|{n}",
+            body="b",
+        )
+        last_id = turn_id
+        pending.append(
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        )
+    numbers = [p["turn_number"] for p in pending]
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan("endpoint-wake-dispatcher", 0, last_id, pending, now="2020-01-01 00:00:00")
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert claimed["wake_id"]
+    turn_args: list[int | str] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "grok-bot-gc1":
+                return (
+                    "wildcard",
+                    {
+                        "id": 1,
+                        "surface": "grok",
+                        "display": "10",
+                        "title": "Stage Manager (gc1)",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    def _capture(row: dict, sub: dict, turn: int | str) -> tuple[str, str]:
+        turn_args.append(turn)
+        return ("delivered", "match")
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(turn_args) == 1
+    expected = ",".join(str(n) for n in sorted(numbers))
+    assert turn_args[0] == expected
+
+
 def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> None:
     assert qualifies(
         {"to_agent": "insyncerator", "from_agent": "grok-bot", "subject": "WAKE|inbox"},

@@ -18,7 +18,13 @@ from cursor_bridge.grok_window_bindings import (
 @pytest.fixture()
 def isolated_state(tmp_path, monkeypatch: pytest.MonkeyPatch):
     path = tmp_path / "grok-window-routing.json"
+    db_path = tmp_path / "messages.db"
     monkeypatch.setattr(bindings, "state_path", lambda: path)
+    monkeypatch.setattr(bindings, "_agent_bus_db_path", lambda: db_path)
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    from agent_bus_store.db.connection import init_db
+
+    init_db()
     return path
 
 
@@ -44,6 +50,7 @@ def test_builtin_initial_state_when_file_missing(isolated_state) -> None:
 
 
 def test_promote_flips_default_and_parks_insyncerator(isolated_state) -> None:
+    assert bindings._agent_bus_db_path().parent == isolated_state.parent
     state = promote("10", updated_by="test")
     assert state["default_window"] == "10"
     assert state["insyncerator_window"] == "9"
