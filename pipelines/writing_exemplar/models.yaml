@@ -1,15 +1,13 @@
 models:
   rewrite:
+    # G3 bound: Hermes hybrid on both 5090s (writer/rewrite stay llama family).
     # Same writer as en-en-super-romantic colloquial70 — the seat that
     # made the poetry retrieve→write path work. Not the Gemma-4 A/B
     # branch on en-fa-super-romantic-v2.
-    # 32768 is the live Jupiter placement; 16384 hit cooldown_oscillation_breaker (15420 2026-10-06).
     model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
   precise:
-    # Prefer Ernie Q8 when Jupiter has ~30GB free. a8b55981 (15420 2026-10-06)
-    # failed: need 30262MB, have 11780MB. Same live Hermes as rewrite until VRAM recovers.
-    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    # G3 bound: Ernie 65536 (distinct weight from rewrite/judge; not Hermes fallback).
+    model: ernie-4-5-21b-a3b-pt-q8-0-65536
   judge:
-    # Prefer same live Hermes as rewrite when Gemma eviction is blocked
-    # (15420 2026-10-06 cooldown_oscillation_breaker on gemma-4-26b-65536).
-    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    # G3 bound: gemma-4-26b-65536 catalog token (gemma-4-26b-a4b-it-q4-k-m-65536).
+    model: gemma-4-26b-a4b-it-q4-k-m-65536

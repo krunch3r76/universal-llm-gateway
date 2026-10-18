@@ -67,7 +67,10 @@ async def requeue_after_transient_eviction(
     max_depth = int(
         rc.get("eviction_requeue_max_depth", DEFAULT_EVICTION_REQUEUE_MAX_DEPTH)
     )
-    if depth >= max_depth:
+    # Oscillation-breaker holds sleep in _wait_and_retry_selection; they must not
+    # consume the VRAM-spin requeue budget (G3 dual-5090 writing queue-only path).
+    charge_requeue_depth = continuation_mode != "cooldown_blocked"
+    if charge_requeue_depth and depth >= max_depth:
         raise_capacity_error(
             str(context.selected_model),
             {
@@ -77,7 +80,8 @@ async def requeue_after_transient_eviction(
                 "requeue_max_depth": max_depth,
             },
         )
-    context._eviction_requeue_depth = depth + 1  # noqa: SLF001
+    if charge_requeue_depth:
+        context._eviction_requeue_depth = depth + 1  # noqa: SLF001
 
     config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
     timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
