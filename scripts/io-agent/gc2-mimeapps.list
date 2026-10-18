@@ -1,0 +1,13 @@
+[Default Applications]
+x-scheme-handler/grokbot=grok-bot-gc2.desktop
+x-scheme-handler/sand=grok-bot-gc2.desktop
+x-scheme-handler/http=gc2-browser-wrapper.desktop
+x-scheme-handler/https=gc2-browser-wrapper.desktop
+text/html=gc2-browser-wrapper.desktop
+
+[Added Associations]
+x-scheme-handler/grokbot=grok-bot-gc2.desktop;
+x-scheme-handler/sand=grok-bot-gc2.desktop;
+x-scheme-handler/http=gc2-browser-wrapper.desktop;
+x-scheme-handler/https=gc2-browser-wrapper.desktop;
+text/html=gc2-browser-wrapper.desktop;

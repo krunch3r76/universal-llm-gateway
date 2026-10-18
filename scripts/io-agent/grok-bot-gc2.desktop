@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Grok Bot (gc2 :10)
+Exec=env DISPLAY=:10 "/opt/Grok Bot/grok-bot" --user-data-dir=/home/io/.gateway/grok-io-gc2 %U
+Terminal=false
+Type=Application
+Icon=grok-bot
+StartupWMClass=grok-bot
+Comment=Grok Bot gc2 agent profile (display :10)
+MimeType=x-scheme-handler/grokbot;x-scheme-handler/sand;
+Categories=Development;

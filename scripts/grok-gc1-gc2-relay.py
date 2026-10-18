@@ -24,6 +24,11 @@ from cursor_bridge.electron_chat_relay import (
     read_endpoint_turn,
     run_one_to_one_relay,
 )
+from io_agent_gc2_browser import (
+    format_systemd_environment_block,
+    gc2_service_environment,
+    provision_gc2_browser_config,
+)
 
 _SYSTEMD_USER_DIR = Path.home() / ".config/systemd/user"
 _GC2_DATA_DIR = Path.home() / ".gateway/grok-io-gc2"
@@ -56,15 +61,17 @@ RestartSec=2
 WantedBy=default.target
 """
 
-_GROK_GC2_UNIT = """[Unit]
+def _grok_gc2_unit_body(*, home: Path) -> str:
+    env_block = format_systemd_environment_block(gc2_service_environment(home=home))
+    return f"""[Unit]
 Description=Grok Bot gc2 agent profile on display :10 (CDP 9340)
 After=io-agent-xvfb-10.service
 Requires=io-agent-xvfb-10.service
 
 [Service]
-Environment=DISPLAY=:10
-ExecStart="/opt/Grok Bot/grok-bot" --user-data-dir=/home/io/.gateway/grok-io-gc2 --remote-debugging-port=9340 --window-size=1920,1200 --window-position=0,0
-ExecStartPost=/home/io/.venvs/universal/bin/python /home/io/.config/io-agent-maximize.py :10
+{env_block}
+ExecStart="/opt/Grok Bot/grok-bot" --user-data-dir={home}/.gateway/grok-io-gc2 --remote-debugging-port=9340 --window-size=1920,1200 --window-position=0,0
+ExecStartPost={home}/.venvs/universal/bin/python {home}/.config/io-agent-maximize.py :10
 Restart=always
 RestartSec=3
 
@@ -76,10 +83,11 @@ WantedBy=default.target
 def _provision_gc2(*, start: bool) -> dict[str, object]:
     _SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
     _GC2_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    browser = provision_gc2_browser_config()
     units = {
         "io-agent-xvfb-10.service": _XVFB_10_UNIT,
         "io-agent-vnc-5910.service": _VNC_5910_UNIT,
-        "io-agent-grok-gc2.service": _GROK_GC2_UNIT,
+        "io-agent-grok-gc2.service": _grok_gc2_unit_body(home=Path.home()),
     }
     written: list[str] = []
     for name, body in units.items():
@@ -95,6 +103,7 @@ def _provision_gc2(*, start: bool) -> dict[str, object]:
     return {
         "ok": True,
         "data_dir": str(_GC2_DATA_DIR),
+        "browser_config": browser,
         "units_written": written,
         "units_started": started,
     }

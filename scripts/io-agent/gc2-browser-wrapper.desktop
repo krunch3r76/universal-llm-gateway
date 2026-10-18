@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=gc2 Chromium browser
+Exec=/home/io/.config/io-agent-gc2/bin/gc2-open-url.sh %u
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+NoDisplay=true
