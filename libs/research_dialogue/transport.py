@@ -11,7 +11,19 @@ from research_dialogue._types import SendResult
 
 ANTHROPIC_MESSAGES_PATH = "/api/v1/providers/anthropic/messages"
 _ALLOWED_PATH = ANTHROPIC_MESSAGES_PATH
-_READ_TIMEOUT_S = 900.0
+# Matches Stargate / cloud_proxy 1800 s read hops.
+_READ_TIMEOUT_S = 1800.0
+
+_PRICED_USAGE_KEYS = (
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+)
+
+
+def _is_count(v: object) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
 
 
 class _HttpClient(Protocol):
@@ -25,40 +37,50 @@ class _HttpClient(Protocol):
 
 
 def stream_usage_complete(usage: dict[str, Any]) -> bool:
-    required = (
-        "input_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-        "output_tokens",
-    )
-    return all(
-        key in usage and isinstance(usage.get(key), int) and usage[key] >= 0
-        for key in required
-    )
+    return all(key in usage and _is_count(usage.get(key)) for key in _PRICED_USAGE_KEYS)
 
 
-def merge_usage_into(target: dict[str, Any], usage: dict[str, Any]) -> list[str]:
+def merge_usage_into(
+    target: dict[str, Any],
+    usage: dict[str, Any],
+    invalid: list[str] | None = None,
+) -> list[str]:
     """Mirror anthropic_credit_gate._StreamUsageTap._merge_usage; record skipped dict keys."""
     skipped: list[str] = []
     for key, val in usage.items():
-        if key == "cache_creation" and isinstance(val, dict):
-            existing = target.get("cache_creation")
-            if not isinstance(existing, dict):
-                existing = {}
-            existing.update(val)
-            target["cache_creation"] = existing
-        elif key == "server_tool_use" and isinstance(val, dict):
-            existing = target.get("server_tool_use")
-            if not isinstance(existing, dict):
-                existing = {}
-            for sub_key, sub_val in val.items():
-                if isinstance(sub_val, int) and sub_val >= 0:
-                    existing[sub_key] = sub_val
-            target["server_tool_use"] = existing
+        if key in _PRICED_USAGE_KEYS:
+            if _is_count(val):
+                target[key] = val
+            elif invalid is not None:
+                invalid.append(key)
+        elif key == "cache_creation":
+            if isinstance(val, dict):
+                existing = target.get("cache_creation")
+                if not isinstance(existing, dict):
+                    existing = {}
+                for sub_key, sub_val in val.items():
+                    if _is_count(sub_val):
+                        existing[sub_key] = sub_val
+                    elif invalid is not None:
+                        invalid.append("cache_creation")
+                target["cache_creation"] = existing
+            elif invalid is not None:
+                invalid.append("cache_creation")
+        elif key == "server_tool_use":
+            if isinstance(val, dict):
+                existing = target.get("server_tool_use")
+                if not isinstance(existing, dict):
+                    existing = {}
+                for sub_key, sub_val in val.items():
+                    if _is_count(sub_val):
+                        existing[sub_key] = sub_val
+                target["server_tool_use"] = existing
+            elif invalid is not None:
+                invalid.append("server_tool_use")
         elif isinstance(val, dict):
             skipped.append(key)
             continue
-        elif isinstance(val, int) and val >= 0:
+        elif _is_count(val):
             target[key] = val
     return skipped
 
@@ -120,13 +142,14 @@ def _parse_non_stream_json(resp: httpx.Response) -> SendResult:
     usage_raw = payload.get("usage")
     usage: dict[str, Any] = {}
     skipped: list[str] = []
+    invalid_keys: list[str] = []
     if isinstance(usage_raw, dict):
-        skipped = merge_usage_into(usage, usage_raw)
+        skipped = merge_usage_into(usage, usage_raw, invalid=invalid_keys)
     stop = payload.get("stop_reason")
     stop_reason = stop if isinstance(stop, str) else None
     mid = payload.get("id")
     message_id = mid if isinstance(mid, str) else None
-    incomplete = not stream_usage_complete(usage) if usage else True
+    incomplete = bool(invalid_keys) or (not stream_usage_complete(usage) if usage else True)
     return SendResult(
         ok=True,
         status_code=resp.status_code,
@@ -137,6 +160,7 @@ def _parse_non_stream_json(resp: httpx.Response) -> SendResult:
         usage_incomplete=incomplete,
         delta_usage_seen=bool(usage),
         usage_skipped_dict_keys=skipped or None,
+        usage_invalid_keys=invalid_keys or None,
     )
 
 
@@ -145,6 +169,7 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
     text_parts: list[str] = []
     usage: dict[str, Any] = {}
     skipped_keys: list[str] = []
+    invalid_keys: list[str] = []
     stop_reason: str | None = None
     message_id: str | None = None
     delta_usage_seen = False
@@ -174,7 +199,7 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
                 message_id = msg.get("id") if isinstance(msg.get("id"), str) else message_id
                 u = msg.get("usage")
                 if isinstance(u, dict):
-                    skipped_keys.extend(merge_usage_into(usage, u))
+                    skipped_keys.extend(merge_usage_into(usage, u, invalid=invalid_keys))
         elif etype == "content_block_delta":
             delta = event.get("delta")
             if isinstance(delta, dict) and delta.get("type") == "text_delta":
@@ -190,12 +215,13 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
             u = event.get("usage")
             if isinstance(u, dict):
                 delta_usage_seen = True
-                skipped_keys.extend(merge_usage_into(usage, u))
+                skipped_keys.extend(merge_usage_into(usage, u, invalid=invalid_keys))
 
     usage_incomplete = (
         parse_error
         or not delta_usage_seen
         or not stream_usage_complete(usage)
+        or bool(invalid_keys)
     )
     uniq_skipped = sorted(set(skipped_keys))
     return SendResult(
@@ -209,6 +235,7 @@ def _parse_sse_stream(resp: httpx.Response) -> SendResult:
         delta_usage_seen=delta_usage_seen,
         parse_error=parse_error,
         usage_skipped_dict_keys=uniq_skipped or None,
+        usage_invalid_keys=invalid_keys or None,
     )
 
 

@@ -248,6 +248,7 @@ def run_smoke(
         "error_body": sent.error_body,
         "usage": sent.usage,
         "usage_incomplete": sent.usage_incomplete,
+        "usage_invalid_keys": sent.usage_invalid_keys,
         "billed_missing_fields": missing,
         "billed_unknown_fields": unknown,
         "post_read_failed": post_reason,
@@ -309,6 +310,7 @@ def _write_smoke_partial(session_dir: Path, *, send: SendResult, body: dict[str,
             "usage": send.usage,
             "stop_reason": send.stop_reason,
             "usage_skipped_dict_keys": send.usage_skipped_dict_keys,
+            "usage_invalid_keys": send.usage_invalid_keys,
         },
     )
 
@@ -631,6 +633,7 @@ def _write_turn_json(
         "status_code": send_result.status_code,
         "error_body": send_result.error_body,
         "usage_incomplete": send_result.usage_incomplete,
+        "usage_invalid_keys": send_result.usage_invalid_keys,
         "delta_usage_seen": send_result.delta_usage_seen,
         "parse_error": send_result.parse_error,
         "usage_skipped_dict_keys": send_result.usage_skipped_dict_keys,

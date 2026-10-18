@@ -64,3 +64,4 @@ class SendResult:
     delta_usage_seen: bool = False
     parse_error: bool = False
     usage_skipped_dict_keys: list[str] | None = None
+    usage_invalid_keys: list[str] | None = None

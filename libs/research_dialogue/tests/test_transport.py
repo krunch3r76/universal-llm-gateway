@@ -2,9 +2,58 @@ from __future__ import annotations
 
 import pytest
 
-from research_dialogue.transport import _parse_sse_stream, merge_usage_into, send_messages
+from research_dialogue.transport import (
+    _READ_TIMEOUT_S,
+    _parse_sse_stream,
+    merge_usage_into,
+    send_messages,
+)
 
 pytestmark = pytest.mark.offline
+
+
+def test_default_client_read_timeout_1800(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[float] = []
+
+    class _FakeClient:
+        def __enter__(self) -> _FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, *args: object, **kwargs: object) -> object:
+            class R:
+                status_code = 200
+
+                def json(self) -> dict:
+                    return {
+                        "content": [],
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                        },
+                    }
+
+                text = ""
+
+            return R()
+
+    def fake_make_sync_client(base: str, *, timeout: object) -> _FakeClient:
+        assert hasattr(timeout, "read")
+        captured.append(float(timeout.read))  # type: ignore[attr-defined]
+        return _FakeClient()
+
+    import research_dialogue.transport as tr
+
+    monkeypatch.setattr(tr, "make_sync_client", fake_make_sync_client)
+    send_messages(
+        {"model": "m", "messages": []},
+        stargate_base="http://127.0.0.1:9999",
+    )
+    assert captured == [_READ_TIMEOUT_S]
 
 
 def test_refused_url() -> None:
