@@ -4471,7 +4471,9 @@ def test_short_closeout_not_split_with_closeout_body_section(tmp_path: Path) -> 
 
 
 def test_tier_preambles_in_resolve_prompt_preamble() -> None:
-    from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+    from services.git_integration_worker.cursor_sdk_packet import (
+        resolve_prompt_preamble,
+    )
 
     tier_a = resolve_prompt_preamble(
         handoff_contract="conductor",

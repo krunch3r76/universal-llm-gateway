@@ -19,13 +19,13 @@ from implement_admission.conductor_no_restart import (
 )
 from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
-    DelegationTier,
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,
+    DelegationTier,
     contract_is_freeform,
     reasoning_posture_invoke_parts,
-    resolve_delegation_tier,
     reasoning_posture_warrants_injection,
+    resolve_delegation_tier,
 )
 from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
 from work_key_grammar import is_valid_work_key_scheme

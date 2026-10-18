@@ -19,7 +19,6 @@ from services.git_integration_worker.cursor_sdk_closeout_artifacts import (
     body_relocated_meta,
 )
 from services.git_integration_worker.cursor_sdk_closeout_harvest import (
-    bound_closeout_harvest_preamble,
     partition_closeout_executive_envelope,
     stamp_harvest_status_from_structured,
 )

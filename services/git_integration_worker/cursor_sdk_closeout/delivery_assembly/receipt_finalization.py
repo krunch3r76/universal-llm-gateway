@@ -19,6 +19,9 @@ from services.git_integration_worker.cursor_sdk_branch_terminal import (
     settle_lane_branch,
 )
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    _CLOSEOUT_BODY_HEADING,
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     persist_structured_closeout_full_to_repo_sidecar,
     relocate_oversize_closeout_body_async,
@@ -26,9 +29,6 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_relocated,
-)
-from services.git_integration_worker.cursor_sdk_closeout_harvest import (
-    _CLOSEOUT_BODY_HEADING,
 )
 from services.git_integration_worker.cursor_sdk_usage_sidecar import (
     render_usage_sidecar_section,
