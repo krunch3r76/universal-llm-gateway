@@ -716,6 +716,9 @@ async def run_gated(
     lifecycle: Callable[[], Awaitable[str]],
     exclude_job_id: str | None = None,
     before_release: BeforeReleaseHook | None = None,
+    force_reason: str | None = None,
+    caller_thread_id: str | None = None,
+    caller_dispatch_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
 
@@ -734,6 +737,19 @@ async def run_gated(
     """
     if not _restart_slot_required(action, service):
         return {"status": "ok", "message": await lifecycle()}
+    from .restart_drain_force_gate import enforce_force_reason_if_needed
+
+    refused = await enforce_force_reason_if_needed(
+        gate,
+        action,
+        service,
+        force=force,
+        force_reason=force_reason,
+        caller_thread_id=caller_thread_id,
+        caller_dispatch_id=caller_dispatch_id,
+    )
+    if refused is not None:
+        return refused
     outcome = await gate.evaluate(service, force=force, exclude_job_id=exclude_job_id)
     if outcome is not None:
         return outcome.to_result()
@@ -771,6 +787,9 @@ async def run_gated_deferred(
     scheduled_message: str,
     on_background_complete: BackgroundCompleteHook | None = None,
     on_background_failed: BackgroundFailedHook | None = None,
+    force_reason: str | None = None,
+    caller_thread_id: str | None = None,
+    caller_dispatch_id: str | None = None,
 ) -> dict[str, Any]:
     """Acquire the restart gate, schedule lifecycle in background, return immediately.
 
@@ -782,6 +801,19 @@ async def run_gated_deferred(
     """
     if action not in GATED_ACTIONS:
         return {"status": "ok", "message": await lifecycle()}
+    from .restart_drain_force_gate import enforce_force_reason_if_needed
+
+    refused = await enforce_force_reason_if_needed(
+        gate,
+        action,
+        service,
+        force=force,
+        force_reason=force_reason,
+        caller_thread_id=caller_thread_id,
+        caller_dispatch_id=caller_dispatch_id,
+    )
+    if refused is not None:
+        return refused
     outcome = await gate.evaluate(service, force=force)
     if outcome is not None:
         return outcome.to_result()
