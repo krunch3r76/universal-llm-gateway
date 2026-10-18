@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,53 @@ def _commits_ahead_from_text(text: str) -> int | None:
     return int(match.group(1))
 
 
+def _lane_b_terminal_subject(nest_parent_dispatch_id: str) -> str:
+    return f"cursor-sdk: lane-b terminal {nest_parent_dispatch_id}"
+
+
+def _nest_parent_lane_b_terminal_in_window(
+    source_repo: Path,
+    *,
+    admit_head: str,
+    closeout_head: str,
+    nest_parent_dispatch_id: str,
+) -> bool:
+    """True when admit..closeout contains the nest parent's lane-B terminal commit."""
+    if not admit_head or not closeout_head or admit_head == closeout_head:
+        return False
+    from services.git_integration_worker.cursor_home import dispatch_git_identity
+
+    _name, expected_email = dispatch_git_identity(nest_parent_dispatch_id)
+    expected_subject = _lane_b_terminal_subject(nest_parent_dispatch_id)
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "log",
+                f"{admit_head}..{closeout_head}",
+                "--format=%ae%x00%s",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        parts = line.split(b"\x00", 1)
+        if len(parts) != 2:
+            continue
+        email = parts[0].decode("utf-8", errors="replace").strip()
+        subject = parts[1].decode("utf-8", errors="replace").strip()
+        if email == expected_email and subject == expected_subject:
+            return True
+    return False
+
+
 def _nested_child_has_commits(
     *,
     dispatch_id: str,
@@ -55,6 +103,7 @@ def _nested_child_has_commits(
     wt_baseline: str | None,
     source_repo: str | None,
     worktree_path: str | None,
+    nest_parent_dispatch_id: str | None = None,
 ) -> bool:
     if str(contract or "") not in _IMPLEMENT_JOBS:
         return False
@@ -93,6 +142,14 @@ def _nested_child_has_commits(
         )
         if counts is not None and counts[0] > 0:
             return True
+        if nest_parent_dispatch_id and closeout_head:
+            if _nest_parent_lane_b_terminal_in_window(
+                repo_path,
+                admit_head=admit_head,
+                closeout_head=closeout_head,
+                nest_parent_dispatch_id=nest_parent_dispatch_id,
+            ):
+                return True
     if source_repo:
         sidecar = Path(source_repo) / _SIDECAR_REL.format(dispatch_id=dispatch_id)
         if sidecar.is_file():
@@ -177,7 +234,7 @@ def _ledger_for_witness() -> Any:
     return ledger
 
 
-def _row_has_commits(row: Any) -> bool:
+def _row_has_commits(row: Any, *, nest_parent_dispatch_id: str) -> bool:
     return _nested_child_has_commits(
         dispatch_id=str(row["dispatch_id"]),
         contract=row["contract"],
@@ -186,6 +243,7 @@ def _row_has_commits(row: Any) -> bool:
         wt_baseline=row["wt_baseline"],
         source_repo=row["source_repo"],
         worktree_path=None,
+        nest_parent_dispatch_id=nest_parent_dispatch_id,
     )
 
 
@@ -193,6 +251,7 @@ def _nested_descendant_has_commits(
     ledger: Any,
     *,
     parent_dispatch_id: str,
+    nest_parent_dispatch_id: str,
     seen: set[str],
     depth: int,
 ) -> bool:
@@ -212,11 +271,12 @@ def _nested_descendant_has_commits(
             ).fetchone()
             if row is None:
                 continue
-            if _row_has_commits(row):
+            if _row_has_commits(row, nest_parent_dispatch_id=nest_parent_dispatch_id):
                 return True
             if _nested_descendant_has_commits(
                 ledger,
                 parent_dispatch_id=str(row["dispatch_id"]),
+                nest_parent_dispatch_id=nest_parent_dispatch_id,
                 seen=seen,
                 depth=depth + 1,
             ):
@@ -237,7 +297,7 @@ def _resume_of_children_have_commits(ledger: Any, *, parent_dispatch_id: str) ->
     except sqlite3.OperationalError:
         return False
     for row in rows:
-        if _row_has_commits(row):
+        if _row_has_commits(row, nest_parent_dispatch_id=parent_dispatch_id):
             return True
     return False
 
@@ -246,7 +306,11 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
     """True when a terminal nested implement child authored commits (SF1)."""
     ledger = _ledger_for_witness()
     if _nested_descendant_has_commits(
-        ledger, parent_dispatch_id=nest_under_dispatch_id, seen=set(), depth=0
+        ledger,
+        parent_dispatch_id=nest_under_dispatch_id,
+        nest_parent_dispatch_id=nest_under_dispatch_id,
+        seen=set(),
+        depth=0,
     ):
         return True
     return _resume_of_children_have_commits(

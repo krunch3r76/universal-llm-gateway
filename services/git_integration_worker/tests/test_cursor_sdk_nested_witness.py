@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_nested_witness import (
     _DISPATCH_ON_THREAD_RE,
+    _lane_b_terminal_subject,
     _nested_child_has_commits,
     nested_implement_has_commits,
     nested_parent_with_commits,
@@ -63,6 +67,154 @@ def test_nested_child_has_commits_false_for_zero_commits() -> None:
             wt_baseline=json.dumps({"admit_head": "deadbeef"}),
             source_repo=None,
             worktree_path=None,
+        )
+        is False
+    )
+
+
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(
+        ["git", "init", "-b", "master", str(path)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "test"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_in_repo(
+    repo: Path,
+    rel: str,
+    *,
+    message: str,
+    dispatch_id: str | None = None,
+) -> str:
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# x\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", rel], check=True, capture_output=True
+    )
+    env = dict(os.environ)
+    cmd = ["git", "-C", str(repo), "commit", "-m", message]
+    if dispatch_id is not None:
+        name, email = dispatch_git_identity(dispatch_id)
+        cmd.extend([f"--author={name} <{email}>"])
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": name,
+                "GIT_AUTHOR_EMAIL": email,
+                "GIT_COMMITTER_NAME": name,
+                "GIT_COMMITTER_EMAIL": email,
+            }
+        )
+    subprocess.run(cmd, check=True, capture_output=True, env=env)
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_nested_child_has_commits_true_for_nest_parent_lane_b_terminal(
+    tmp_path: Path,
+) -> None:
+    parent_id = "53e7df121ead-a7d17d41"
+    child_id = "00cf8c68eee0-b368ecc6"
+    _init_git_repo(tmp_path)
+    admit_head = _commit_in_repo(tmp_path, "seed.py", message="seed")
+    terminal_subject = _lane_b_terminal_subject(parent_id)
+    _commit_in_repo(
+        tmp_path,
+        "lane.py",
+        message=terminal_subject,
+        dispatch_id=parent_id,
+    )
+    assert (
+        _nested_child_has_commits(
+            dispatch_id=child_id,
+            contract="freeform",
+            status="completed",
+            record_json=json.dumps(
+                {
+                    "closeout_body": (
+                        '{"status":"complete","commits_ahead":0,'
+                        '"commits_ahead_unfiltered":1}'
+                    )
+                }
+            ),
+            wt_baseline=json.dumps({"admit_head": admit_head}),
+            source_repo=str(tmp_path),
+            worktree_path=None,
+            nest_parent_dispatch_id=parent_id,
+        )
+        is True
+    )
+
+
+def test_nested_child_has_commits_false_for_lane_b_terminal_wrong_author(
+    tmp_path: Path,
+) -> None:
+    parent_id = "53e7df121ead-a7d17d41"
+    child_id = "00cf8c68eee0-b368ecc6"
+    other_id = "other-parent-id"
+    _init_git_repo(tmp_path)
+    admit_head = _commit_in_repo(tmp_path, "seed.py", message="seed")
+    _commit_in_repo(
+        tmp_path,
+        "lane.py",
+        message=_lane_b_terminal_subject(parent_id),
+        dispatch_id=other_id,
+    )
+    assert (
+        _nested_child_has_commits(
+            dispatch_id=child_id,
+            contract="freeform",
+            status="completed",
+            record_json=json.dumps(
+                {"closeout_body": '{"status":"complete","commits_ahead":0}'}
+            ),
+            wt_baseline=json.dumps({"admit_head": admit_head}),
+            source_repo=str(tmp_path),
+            worktree_path=None,
+            nest_parent_dispatch_id=parent_id,
+        )
+        is False
+    )
+
+
+def test_nested_child_has_commits_false_for_lane_b_terminal_wrong_subject(
+    tmp_path: Path,
+) -> None:
+    parent_id = "53e7df121ead-a7d17d41"
+    child_id = "00cf8c68eee0-b368ecc6"
+    _init_git_repo(tmp_path)
+    admit_head = _commit_in_repo(tmp_path, "seed.py", message="seed")
+    _commit_in_repo(
+        tmp_path,
+        "lane.py",
+        message="cursor-sdk: lane-b terminal wrong-subject",
+        dispatch_id=parent_id,
+    )
+    assert (
+        _nested_child_has_commits(
+            dispatch_id=child_id,
+            contract="freeform",
+            status="completed",
+            record_json=json.dumps(
+                {"closeout_body": '{"status":"complete","commits_ahead":0}'}
+            ),
+            wt_baseline=json.dumps({"admit_head": admit_head}),
+            source_repo=str(tmp_path),
+            worktree_path=None,
+            nest_parent_dispatch_id=parent_id,
         )
         is False
     )
