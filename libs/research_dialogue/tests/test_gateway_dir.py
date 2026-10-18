@@ -172,3 +172,86 @@ def test_driver_cli_forwards_gateway_dir(tmp_path: Path) -> None:
         )
     assert code == 0
     assert rd.call_args.kwargs["gateway_dir"] == str(gw)
+
+
+def test_cli_close_forwards_gateway_dir(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    gw = tmp_path / "close-gw"
+    with (
+        patch("research_dialogue.cli.preflight_guard", return_value=(0, {})) as pg,
+        patch("research_dialogue.cli.run_driver", return_value=(0, {})) as rd,
+    ):
+        code = cli_main(
+            [
+                "close",
+                "--session",
+                str(session),
+                "--stop-reason",
+                "r",
+                "--expect-stargate-pid",
+                "1",
+                "--expect-cloud-proxy-pid",
+                "2",
+                "--gateway-dir",
+                str(gw),
+            ]
+        )
+    assert code == 0
+    assert pg.call_args.kwargs["gateway_dir"] == str(gw)
+    assert rd.call_args.kwargs["gateway_dir"] == str(gw)
+
+
+def test_cli_close_no_p4_forwards_gateway_dir_to_preflight(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    gw = tmp_path / "no-p4-gw"
+    with (
+        patch("research_dialogue.cli.preflight_guard", return_value=(0, {})) as pg,
+        patch(
+            "research_dialogue.cli.run_close", return_value=(0, {"closed": True})
+        ) as rc,
+    ):
+        code = cli_main(
+            [
+                "close",
+                "--session",
+                str(session),
+                "--stop-reason",
+                "r",
+                "--no-p4",
+                "--expect-stargate-pid",
+                "1",
+                "--expect-cloud-proxy-pid",
+                "2",
+                "--gateway-dir",
+                str(gw),
+            ]
+        )
+    assert code == 0
+    assert pg.call_args.kwargs["gateway_dir"] == str(gw)
+    rc.assert_called_once_with(session, stop_reason="r", no_p4=True)
+
+
+def test_driver_cli_close_forwards_gateway_dir(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    gw = tmp_path / "driver-close-gw"
+    with patch("research_dialogue.driver.run_driver", return_value=(0, {})) as rd:
+        code = driver_main(
+            [
+                "close",
+                "--session",
+                str(session),
+                "--stop-reason",
+                "r",
+                "--expect-stargate-pid",
+                "1",
+                "--expect-cloud-proxy-pid",
+                "2",
+                "--gateway-dir",
+                str(gw),
+            ]
+        )
+    assert code == 0
+    assert rd.call_args.kwargs["gateway_dir"] == str(gw)
