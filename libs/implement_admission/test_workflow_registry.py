@@ -167,6 +167,29 @@ def test_r7_mechanical_workflow_required() -> None:
     )
 
 
+def test_hybrid_rejects_non_composer_mechanical_workflow_model() -> None:
+    policy = _base_policy()
+    policy["impresario"] = copy.deepcopy(policy["impresario"])
+    policy["impresario"]["under_substrate"] = "hybrid"
+    policy["workflows"][MECHANICAL_WORKFLOW]["model"] = "cursor/grok-4.7"
+    errors = registry_errors(policy)
+    assert errors
+    assert any("workflows.mechanical_implement.model" in e for e in errors)
+
+
+def test_hybrid_rejects_non_composer_impresario_mechanical() -> None:
+    policy = _base_policy()
+    policy["impresario"] = copy.deepcopy(policy["impresario"])
+    policy["impresario"]["under_substrate"] = "hybrid"
+    policy["impresario"]["mechanical"] = {
+        "model": "cursor/grok-4.7",
+        "effort": "medium",
+    }
+    errors = registry_errors(policy)
+    assert errors
+    assert any("impresario.mechanical" in e for e in errors)
+
+
 def test_r8_contract_effort_missing_block() -> None:
     policy = _base_policy()
     del policy["contract_effort"]

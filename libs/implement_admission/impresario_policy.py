@@ -132,12 +132,6 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     critic = _parse_seat_entry(
         critic_raw, default_model="cursor/gemini-4-argon", default_effort="high"
     )
-    if under == "hybrid":
-        mechanical = _seat(
-            _HYBRID_MECHANICAL_MODEL,
-            _HYBRID_MECHANICAL_EFFORT,
-            seat=_HYBRID_MECHANICAL_SEAT,
-        )
     allowed_raw = raw.get("allowed_critics") or []
     if not isinstance(allowed_raw, list) or not allowed_raw:
         msg = "impresario.allowed_critics must be a non-empty list"
@@ -194,9 +188,25 @@ def impresario_registry_errors(policy: dict[str, Any]) -> list[str]:
         mech = parsed.mechanical
         if mech.model != _HYBRID_MECHANICAL_MODEL or mech.seat != _HYBRID_MECHANICAL_SEAT:
             errors.append(
-                "under_substrate hybrid requires mechanical "
-                f"{_HYBRID_MECHANICAL_MODEL!r} on seat {_HYBRID_MECHANICAL_SEAT!r}"
+                "under_substrate hybrid requires impresario.mechanical "
+                f"model {_HYBRID_MECHANICAL_MODEL!r} on seat {_HYBRID_MECHANICAL_SEAT!r}"
             )
+        workflows = policy.get("workflows")
+        if isinstance(workflows, dict):
+            wf = workflows.get("mechanical_implement")
+            if isinstance(wf, dict):
+                wf_model = wf.get("model")
+                if isinstance(wf_model, str) and wf_model.strip() != _HYBRID_MECHANICAL_MODEL:
+                    errors.append(
+                        "under_substrate hybrid requires "
+                        f"workflows.mechanical_implement.model {_HYBRID_MECHANICAL_MODEL!r}"
+                    )
+                wf_seat = wf.get("seat")
+                if isinstance(wf_seat, str) and wf_seat.strip().startswith("grok-bot"):
+                    errors.append(
+                        "under_substrate hybrid forbids grok-bot seat on "
+                        "workflows.mechanical_implement"
+                    )
     for model in parsed.allowed_critics:
         if model not in parsed.allowed_critics:
             continue
