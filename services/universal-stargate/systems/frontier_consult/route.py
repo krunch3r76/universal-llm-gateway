@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import uuid
 from functools import partial
@@ -814,11 +815,33 @@ async def team_dispatch(
 
         _proxy = get_proxy()
         _event_bus = getattr(_proxy, "event_bus", None)
+        _admit_loop = asyncio.get_running_loop()
 
         def _publish_admit_event(event: Any) -> None:
             if _event_bus is None:
                 return
-            _event_bus.publish_from_sync(event)
+            try:
+                caller_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                caller_loop = None
+            if caller_loop is _admit_loop:
+                _event_bus.publish_from_sync(event)
+                return
+            done = threading.Event()
+            publish_error: list[BaseException] = []
+
+            def _publish_on_admit_loop() -> None:
+                try:
+                    _event_bus.publish_from_sync(event)
+                except BaseException as exc:
+                    publish_error.append(exc)
+                finally:
+                    done.set()
+
+            _admit_loop.call_soon_threadsafe(_publish_on_admit_loop)
+            done.wait()
+            if publish_error:
+                raise publish_error[0]
 
         try:
             plan = await run_team_dispatch_admit(

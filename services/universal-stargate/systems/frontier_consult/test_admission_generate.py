@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +25,9 @@ from .admission import (
 )
 from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
 from .service import FrontierGenerateRequest, build_dispatch_body
+from .team_dispatch_admit_client import (
+    run_team_dispatch_admit as _real_run_team_dispatch_admit,
+)
 
 enforce_generate_role_seat_exclusive = (
     admit_pipeline.enforce_generate_role_seat_exclusive
@@ -37,6 +42,45 @@ def _mock_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
     proxy = MagicMock()
     proxy.event_bus = None
     monkeypatch.setattr("systems.proxy.dependencies.get_proxy", lambda: proxy)
+
+
+def _mock_proxy_recording_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[object], list[asyncio.AbstractEventLoop]]:
+    events: list[object] = []
+    publish_loops: list[asyncio.AbstractEventLoop] = []
+    proxy = MagicMock()
+
+    def _publish_from_sync(event: object) -> None:
+        publish_loops.append(asyncio.get_running_loop())
+        events.append(event)
+
+    proxy.event_bus = MagicMock()
+    proxy.event_bus.publish_from_sync = _publish_from_sync
+    monkeypatch.setattr("systems.proxy.dependencies.get_proxy", lambda: proxy)
+    return events, publish_loops
+
+
+def _restore_real_team_dispatch_admit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
+        _real_run_team_dispatch_admit,
+    )
+
+
+def _admit_client_mock(*, status_code: int, plan: dict[str, object]) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    if status_code < 400:
+        resp.json.return_value = {
+            "choices": [{"message": {"content": json.dumps(plan)}}],
+        }
+        resp.raise_for_status = MagicMock()
+    client = MagicMock()
+    client.post.return_value = resp
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    return client
 
 
 def test_g1_claude_web_seat_rejected() -> None:
@@ -403,3 +447,122 @@ async def test_route_admit_unavailable_fail_closed(
     assert "team_dispatch_admit_unavailable" in result.body.decode()
     create.assert_not_awaited()
     admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_admit_event_published_on_loop_thread_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _restore_real_team_dispatch_admit(monkeypatch)
+    events, publish_loops = _mock_proxy_recording_publish(monkeypatch)
+    route_loop = asyncio.get_running_loop()
+    client = _admit_client_mock(status_code=502, plan={})
+
+    with patch(
+        "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+        return_value=client,
+    ):
+        body = TeamDispatchGenerateBody(
+            op="generate",
+            seat="cursor-sdk",
+            model="cursor/grok-4.7",
+            dispatch_thread_id="todo:arc",
+            job="freeform",
+            lane="B",
+            packet_path="tmp/reviews/packet.md",
+        )
+        result = await team_dispatch(body, Response())
+
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 503
+    assert "team_dispatch_admit_unavailable" in result.body.decode()
+    assert len(events) == 1
+    assert events[0].signal == "frontier.admit.unavailable"
+    assert publish_loops[0] is route_loop
+
+
+@pytest.mark.asyncio
+async def test_route_admit_event_published_on_loop_thread_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _restore_real_team_dispatch_admit(monkeypatch)
+    events, publish_loops = _mock_proxy_recording_publish(monkeypatch)
+    route_loop = asyncio.get_running_loop()
+    plan = {
+        "admitted": False,
+        "code": "role_or_seat_required",
+        "field": "role",
+        "status_code": 422,
+        "reason": "missing",
+    }
+    client = _admit_client_mock(status_code=200, plan=plan)
+
+    with patch(
+        "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+        return_value=client,
+    ):
+        body = TeamDispatchGenerateBody(
+            op="generate",
+            model="cursor/grok-4.7",
+            dispatch_thread_id="todo:arc",
+            job="freeform",
+            lane="B",
+            packet_path="tmp/reviews/packet.md",
+        )
+        result = await team_dispatch(body, Response())
+
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 422
+    assert "role_or_seat_required" in result.body.decode()
+    assert len(events) == 1
+    assert events[0].signal == "frontier.admit.rejected"
+    assert publish_loops[0] is route_loop
+
+
+@pytest.mark.asyncio
+async def test_route_admit_event_published_on_loop_thread_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _restore_real_team_dispatch_admit(monkeypatch)
+    events, publish_loops = _mock_proxy_recording_publish(monkeypatch)
+    route_loop = asyncio.get_running_loop()
+    plan = {
+        "admitted": True,
+        "backend": "cursor_sdk",
+        "seat": "cursor-sdk",
+        "model": "cursor/grok-4.7",
+    }
+    client = _admit_client_mock(status_code=200, plan=plan)
+
+    async def _stub_sdk_route(*, response: Response, **_: object) -> dict[str, str]:
+        response.status_code = 202
+        return {"dispatch_id": "d-admit-202"}
+
+    sdk_route = AsyncMock(side_effect=_stub_sdk_route)
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cursor_sdk_generate_route",
+        sdk_route,
+    )
+
+    with patch(
+        "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+        return_value=client,
+    ):
+        body = TeamDispatchGenerateBody(
+            op="generate",
+            seat="cursor-sdk",
+            model="cursor/grok-4.7",
+            dispatch_thread_id="todo:arc",
+            job="freeform",
+            lane="B",
+            packet_path="tmp/reviews/packet.md",
+        )
+        response = Response()
+        result = await team_dispatch(body, response)
+
+    assert result == {"dispatch_id": "d-admit-202"}
+    assert response.status_code == 202
+    sdk_route.assert_awaited_once()
+    assert len(events) == 1
+    assert events[0].signal == "frontier.admit.decided"
+    assert publish_loops[0] is route_loop
