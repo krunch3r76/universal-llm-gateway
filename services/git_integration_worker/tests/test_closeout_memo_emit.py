@@ -231,3 +231,29 @@ def test_classify_restart_park_and_conductor_stop() -> None:
     assert kind == "conductor_stop"
     assert status == "completed"
     assert nxt == "none"
+
+    # Intermediate conductor external-gate pauses (PARKED_TRANSPORT / live_external_gate / closeout_harvest_owed)
+    # and normal nested child completions are suppressed so Maestro/grok-bot are only woken on milestones or exceptions.
+    interm_gate = {"contract": "conductor", "wake_lane": "12286", "terminal_status": "completed"}
+    _k, _s, _n, suppress_gate = classify_memo(
+        interm_gate,
+        {
+            "hop_deferral_gate": "live_external_gate",
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "memo_closeout": {"closeout_status": "completed"},
+        },
+    )
+    assert suppress_gate == "intermediate_external_gate"
+
+    nested_ok = {
+        "contract": "implement",
+        "wake_lane": "12286",
+        "terminal_status": "completed",
+        "nest_under": "parent-conductor-1",
+    }
+    _k2, _s2, _n2, suppress_nested = classify_memo(
+        nested_ok,
+        {"memo_closeout": {"closeout_status": "completed"}},
+    )
+    assert suppress_nested == "nested_completed"
+

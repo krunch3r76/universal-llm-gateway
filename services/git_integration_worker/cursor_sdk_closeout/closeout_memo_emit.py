@@ -95,6 +95,34 @@ def classify_memo(
         "DISCARDED" in emit_tag or closeout_status == "discarded"
     ):
         return "sdk_discarded", "discarded", nxt, "operator_discard"
+    raw_tokens = rec.get("closeout_stop_tokens")
+    stop_tokens = (
+        {str(t).upper() for t in raw_tokens if t}
+        if isinstance(raw_tokens, list)
+        else set()
+    )
+    is_exception = (
+        terminal == "failed"
+        or closeout_status in ("failed", "delivery_failed", "refused", "stalled", "overdue")
+        or "DELIVERY_FAILED" in emit_tag
+        or "REFUSED" in emit_tag
+        or bool(stop_tokens & {"CONSULT_PENDING", "BLOCKED", "FAILED"})
+    )
+    if is_conductor and not is_exception:
+        if (
+            "PARKED_TRANSPORT" in stop_tokens
+            or deferral == "live_external_gate"
+            or bool(rec.get("closeout_harvest_owed"))
+            or bool(rec.get("hop_park_harvest_fired_at"))
+        ):
+            return "conductor_parked", "parked", nxt, "intermediate_external_gate"
+    if (row.get("nest_under") or rec.get("nest_under")) and not is_exception:
+        return (
+            "sdk_closeout",
+            coerce_status(closeout_status or "completed"),
+            nxt,
+            "nested_completed",
+        )
     if hop_parked or (is_conductor and closeout_status == "parked"):
         return "conductor_parked", "parked", nxt, None
     if "DISCARDED" in emit_tag or closeout_status == "discarded":

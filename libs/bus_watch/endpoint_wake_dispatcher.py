@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import httpx
-from agent_seat.registry import normalize_bus_address
+from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
@@ -41,7 +42,6 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "GATE MISS",
         "ESCALATE",
         "BLOCKED",
-        "HOP",
         "READY",
     }
 )
@@ -66,7 +66,6 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "FACT",
         "REVIEW",
         "PLAN",
-        "PICKUP",
         "LANDED",
         "VERDICT",
         "RESULT",
@@ -75,7 +74,6 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "NUDGE",
         "RELAY",
         "SEND",
-        "UPDATE",
         "PASS",
         "SYNTHESIS",
         "CORRECTION",
@@ -83,18 +81,23 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "GATE MISS",
         "ESCALATE",
         "BLOCKED",
-        "HOP",
         "READY",
     }
 )
 ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
 _ROUTE_CONTROL_TYPE = "TYPE: ROUTE/CONTROL"
+_INTERMEDIATE_SUBJECT_RE = re.compile(
+    r"(?i)(?:^|\b|\|)(?:pickup|cc\s+pickup|house-cp|checkpoint|in-flight|in_flight|"
+    r"admitted|progress|score_resurface|park-harvest|hop-[a-z0-9]+)(?:\b|\||$)"
+)
 _POLL_S = 2.0
 
 
 def subject_allowed(subject: str | None, *, cse: bool) -> bool:
     """Wake envelope: CSE or Grok allowlist, plus TYPE relays."""
     text = subject or ""
+    if _INTERMEDIATE_SUBJECT_RE.search(text):
+        return False
     if text.startswith("TYPE: DIRECTIVE"):
         return True
     if not cse and text.startswith(_ROUTE_CONTROL_TYPE):
@@ -116,7 +119,16 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
     from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
     if to_agent in {"all", "team"} or not to_agent or to_agent == from_agent:
         return False
-    if not subject_allowed(turn.get("subject"), cse=cse):
+    if to_agent in STAGE_MANAGER_ADDRESSES and from_agent in STAGE_MANAGER_ADDRESSES:
+        return False
+    subject = str(turn.get("subject") or "")
+    head = subject.split("|", 1)[0].strip().upper()
+    if (
+        to_agent in STAGE_MANAGER_ADDRESSES
+        or to_agent in {"grok-bot", "web-anthropic", "maestro"}
+    ) and head in {"ACK", "ROUTE"}:
+        return False
+    if not subject_allowed(subject, cse=cse):
         return False
     return True
 

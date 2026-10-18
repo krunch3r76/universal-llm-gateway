@@ -90,7 +90,6 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "GATE MISS",
         "ESCALATE",
         "BLOCKED",
-        "HOP",
         "READY",
     }
     assert GROK_WAKE_SUBJECT_HEADS == {
@@ -113,7 +112,6 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "FACT",
         "REVIEW",
         "PLAN",
-        "PICKUP",
         "LANDED",
         "VERDICT",
         "RESULT",
@@ -122,7 +120,6 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "NUDGE",
         "RELAY",
         "SEND",
-        "UPDATE",
         "PASS",
         "SYNTHESIS",
         "CORRECTION",
@@ -130,11 +127,33 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "GATE MISS",
         "ESCALATE",
         "BLOCKED",
-        "HOP",
         "READY",
     }
     assert not qualifies({"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
     assert not qualifies({"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
+    # Intermediate impresario/conductor telemetry must not wake Maestro or Grok-Bot
+    for intermediate_subj in (
+        "PICKUP|work-1",
+        "UPDATE|work-1",
+        "HOP|lane-1",
+        "FACT|pickup|12797|hop-B",
+        "FACT|house-cp|16934|1",
+        "FACT|friction:39330|pickup r2 by bl1",
+        "FACT|friction:39330|cc pickup #1628",
+        "SCORE_RESURFACE — slug G5",
+        "park-harvest wake — 17899",
+    ):
+        assert not qualifies(
+            {"to_agent": "maestro", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
+            cse=True,
+        )
+        assert not qualifies(
+            {"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
+            cse=False,
+        )
+    # ACK/ROUTE receipts to grok-bot-gc1 or maestro do not wake them, while ACK to an impresario house still wakes it
+    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": "ACK|work-1"}, cse=False)
+    assert qualifies({"to_agent": "grok-bot-bl1", "from_agent": "grok-bot-gc1", "subject": "ACK|work-1"}, cse=False)
 
 
 def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
