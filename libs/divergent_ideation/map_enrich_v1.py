@@ -48,33 +48,87 @@ def abstract_briefs_from_map_ideate(
     return result
 
 
+def _parse_abstract_index(brief: dict[str, Any]) -> int | None:
+    """Parse a 0-based abstract brief index from model JSON; never treat free text as an id."""
+    if "abstract_index" in brief:
+        val = brief["abstract_index"]
+        if isinstance(val, bool):
+            return None
+        if isinstance(val, int) and val >= 0:
+            return val
+        if isinstance(val, str) and val.isdigit():
+            return int(val)
+        return None
+    ref = brief.get("abstract_ref")
+    if isinstance(ref, bool):
+        return None
+    if isinstance(ref, int) and ref >= 0:
+        return ref
+    if isinstance(ref, str) and ref.isdigit():
+        return int(ref)
+    return None
+
+
+def _ideate_pool_index(compact_index: int, output_positions: list[int] | None) -> int:
+    if output_positions and compact_index < len(output_positions):
+        return int(output_positions[compact_index])
+    return compact_index
+
+
 def briefs_from_re_instantiate(
-    map_outputs: list[Any | None],
+    map_outputs: list[Any],
     abstract_briefs: list[dict[str, Any]],
     pool_manifest: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Carry brief_id and author fields from abstract briefs into domain briefs."""
+    *,
+    run_id: str,
+    ideate_output_positions: list[int] | None = None,
+    step: str = "re_instantiate",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve domain briefs to engine brief_id via abstract_index and pool position."""
     families = _family_lookup(pool_manifest)
-    abstract_by_ref = {str(b.get("brief_id", "")): b for b in abstract_briefs}
+    abstract_by_id = {str(b.get("brief_id", "")): b for b in abstract_briefs}
     result: list[dict[str, Any]] = []
-    for output in map_outputs:
+    parse_failures: list[dict[str, Any]] = []
+    for compact_index, output in enumerate(map_outputs):
         if output is None:
             continue
         author_model = str(getattr(output, "model_id", "") or "")
         author_family = families.get(author_model, "")
+        pool_index = _ideate_pool_index(compact_index, ideate_output_positions)
         payload = output.json if isinstance(getattr(output, "json", None), dict) else {}
         for brief in list(payload.get("briefs") or []):
             if not isinstance(brief, dict):
                 continue
             enriched = dict(brief)
-            ref = str(enriched.get("abstract_ref") or enriched.get("brief_id") or "")
-            abstract = abstract_by_ref.get(ref, {})
-            bid = str(abstract.get("brief_id") or ref)
+            index = _parse_abstract_index(enriched)
+            if index is None:
+                parse_failures.append(
+                    {
+                        "step": step,
+                        "iteration_index": compact_index,
+                        "model": author_model,
+                        "error": "abstract_index missing or not a non-negative integer",
+                    }
+                )
+                continue
+            bid = f"{run_id}-{pool_index}-{index}"
+            abstract = abstract_by_id.get(bid)
+            if not abstract:
+                parse_failures.append(
+                    {
+                        "step": step,
+                        "iteration_index": compact_index,
+                        "model": author_model,
+                        "error": f"abstract_index {index} did not resolve to brief_id {bid!r}",
+                    }
+                )
+                continue
             enriched["brief_id"] = bid
+            enriched["abstract_ref"] = bid
             enriched["author_model"] = str(abstract.get("author_model") or author_model)
             enriched["author_family"] = str(abstract.get("author_family") or author_family)
             result.append(enriched)
-    return result
+    return result, parse_failures
 
 
 def inject_briefs_for_assignment(briefs: list[dict[str, Any]]) -> list[dict[str, Any]]:

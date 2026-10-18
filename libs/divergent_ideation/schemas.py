@@ -96,7 +96,7 @@ class BriefB:
     brief_id: str
     author_model: str
     author_family: str
-    abstract_ref: str
+    abstract_ref: str  # engine brief_id of the source abstract brief (never model-produced)
     domain_statement: str
     hard_constraint_coverage: list[HardConstraintCoverageB]
     falsifier: str

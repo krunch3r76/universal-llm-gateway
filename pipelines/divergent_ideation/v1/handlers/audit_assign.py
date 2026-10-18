@@ -49,11 +49,20 @@ class AuditAssignV1Handler(BaseHandler):
             )
 
         briefs: list[dict[str, Any]] = []
-        if isinstance(re_inst, MapOutputCollection):
-            briefs = briefs_from_re_instantiate(
-                re_inst.outputs_aligned(),
+        if isinstance(re_inst, MapOutputCollection) and isinstance(
+            map_ideate, MapOutputCollection
+        ):
+            ideate_positions = (
+                list(map_ideate._output_positions)
+                if map_ideate._output_positions is not None
+                else None
+            )
+            briefs, _ = briefs_from_re_instantiate(
+                re_inst.all_outputs(),
                 abstract_briefs,
                 pool_manifest,
+                run_id=run_id,
+                ideate_output_positions=ideate_positions,
             )
         else:
             raw_briefs = self._resolve_input(resolver, step, "briefs", inputs)

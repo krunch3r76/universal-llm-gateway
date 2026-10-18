@@ -49,7 +49,7 @@ class LeakCheckV1Handler(BaseHandler):
         reports: list[dict[str, Any] | None] = []
         abstracts: list[dict[str, Any] | None] = []
         for entry in step.reads_from or []:
-            step_name = entry.get("step")
+            step_name = entry.step
             if not step_name:
                 continue
             out = context.get_output(step_name)

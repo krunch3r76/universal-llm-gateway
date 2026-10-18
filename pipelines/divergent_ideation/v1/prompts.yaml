@@ -42,7 +42,8 @@ prompts:
       Abstract briefs: {abstract_briefs}
       </context>
       <task>
-      Return JSON {"briefs": [{"abstract_ref": "...", "domain_statement": "...", "hard_constraint_coverage": [...], "falsifier": "...", "cost_to_test": "...", "time_to_signal": "..."}]}.
+      Return JSON {"briefs": [{"abstract_index": 0, "domain_statement": "...", "hard_constraint_coverage": [...], "falsifier": "...", "cost_to_test": "...", "time_to_signal": "..."}]}.
+      abstract_index is the 0-based index of the input abstract brief in the Abstract briefs list for this model.
       </task>
 
   audit:

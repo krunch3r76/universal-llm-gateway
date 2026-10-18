@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from systems.pipeline.core.schemas import ReadsFrom, StepConfig
 
 from divergent_ideation.audit_assign_v1 import assign_auditors
 from divergent_ideation.collate_v1 import (
@@ -16,6 +19,10 @@ from divergent_ideation.leak_check_v1 import (
     build_rag_query,
     check_leak,
     finalize_leak_reports,
+)
+from divergent_ideation.map_enrich_v1 import (
+    briefs_from_re_instantiate,
+    model_id_mismatches,
 )
 from divergent_ideation.operator_split_v1 import split_operators
 
@@ -412,3 +419,168 @@ def test_unfaithful_briefs_remain_in_manifest() -> None:
     )
     assert len(manifest["briefs"]) == 1
     assert manifest["convergence_rate"] == 0.0
+
+
+def _step_output(model_id: str, json_payload: dict[str, Any]) -> SimpleNamespace:
+    return SimpleNamespace(model_id=model_id, json=json_payload)
+
+
+def test_leak_check_final_stepconfig_reads_from_uses_step_field() -> None:
+    step_dict = {
+        "name": "leak_check_final",
+        "type": "leak_check_v1",
+        "reads_from": [
+            {"step": "leak_check_0", "fields": ["json"]},
+            {"step": "leak_check_1", "fields": ["json"]},
+            {"step": "leak_check_2", "fields": ["json"]},
+        ],
+    }
+    step = StepConfig.model_validate(step_dict)
+    names: list[str] = []
+    for entry in step.reads_from:
+        assert isinstance(entry, ReadsFrom)
+        names.append(entry.step)
+    assert names == ["leak_check_0", "leak_check_1", "leak_check_2"]
+
+
+@pytest.mark.asyncio
+async def test_leak_check_finalize_execute_reads_from_without_get() -> None:
+    from pipelines.divergent_ideation.v1.handlers.leak_check import LeakCheckV1Handler
+
+    step = StepConfig.model_validate(
+        {
+            "name": "leak_check_final",
+            "type": "leak_check_v1",
+            "reads_from": [{"step": "leak_check_0", "fields": ["json"]}],
+        }
+    )
+
+    class Ctx:
+        def get_output(self, name: str) -> SimpleNamespace:
+            return _step_output(
+                "",
+                {
+                    "leak_report": {"passed": True, "hits": [], "attempts": 1},
+                    "accepted_abstract_problem": {
+                        "structural_goal": "goal",
+                        "constraints": [],
+                    },
+                },
+            )
+
+    out = await LeakCheckV1Handler()._execute_finalize(step, Ctx())  # type: ignore[arg-type]
+    assert out.json is not None
+    assert out.json["passed"] is True
+
+
+def test_briefs_from_re_instantiate_resolves_engine_brief_id() -> None:
+    run_id = "run18011"
+    abstract_briefs = [
+        {
+            "brief_id": f"{run_id}-0-0",
+            "author_model": "m0",
+            "author_family": "f0",
+        },
+        {
+            "brief_id": f"{run_id}-2-1",
+            "author_model": "m2",
+            "author_family": "f2",
+        },
+    ]
+    outputs = [
+        _step_output(
+            "m0",
+            {
+                "briefs": [
+                    {
+                        "abstract_index": 0,
+                        "domain_statement": "d0",
+                        "falsifier": "f",
+                        "cost_to_test": "c",
+                        "time_to_signal": "t",
+                    }
+                ]
+            },
+        ),
+        _step_output(
+            "m2",
+            {
+                "briefs": [
+                    {
+                        "abstract_index": 1,
+                        "domain_statement": "d1",
+                        "falsifier": "f",
+                        "cost_to_test": "c",
+                        "time_to_signal": "t",
+                    }
+                ]
+            },
+        ),
+    ]
+    briefs, failures = briefs_from_re_instantiate(
+        outputs,
+        abstract_briefs,
+        _pool(3),
+        run_id=run_id,
+        ideate_output_positions=[0, 2],
+    )
+    assert failures == []
+    assert [b["brief_id"] for b in briefs] == [f"{run_id}-0-0", f"{run_id}-2-1"]
+
+
+def test_briefs_from_re_instantiate_unresolved_ref_is_parse_failure() -> None:
+    run_id = "run18011"
+    outputs = [
+        _step_output(
+            "m0",
+            {
+                "briefs": [
+                    {
+                        "abstract_ref": "free-text-id",
+                        "domain_statement": "d",
+                        "falsifier": "f",
+                        "cost_to_test": "c",
+                        "time_to_signal": "t",
+                    }
+                ]
+            },
+        )
+    ]
+    briefs, failures = briefs_from_re_instantiate(
+        outputs,
+        [],
+        _pool(3),
+        run_id=run_id,
+        ideate_output_positions=[0],
+    )
+    assert briefs == []
+    assert failures and "abstract_index" in failures[0]["error"]
+
+
+def test_re_instantiate_planned_models_match_ideate_successes_only() -> None:
+    """After one failed map_ideate slot, zip re outputs with all_outputs model ids."""
+    success_outputs = [_step_output("m0", {}), _step_output("m2", {})]
+    planned = [str(o.model_id) for o in success_outputs]
+    re_outputs = [_step_output("m0", {}), _step_output("m2", {})]
+    assert model_id_mismatches(re_outputs, planned, "re_instantiate") == []
+    aligned_planned = ["m0", "m1", "m2"]
+    mismatches = model_id_mismatches(re_outputs, aligned_planned, "re_instantiate")
+    assert mismatches and mismatches[0]["model"] == "m2"
+    assert "m1" in mismatches[0]["error"]
+
+
+def test_assign_auditors_nine_engine_brief_ids() -> None:
+    run_id = "run18011"
+    pool = _pool(3)
+    briefs = [
+        _brief(f"{run_id}-{i // 3}-{i % 3}", f"m{i // 3}", f"f{i // 3}")
+        for i in range(9)
+    ]
+    out = assign_auditors(briefs, pool, run_seed=18011, min_auditors=2)
+    assert not out["assignment_error"]
+    by_brief: dict[str, set[str]] = {}
+    for item in out["audit_assignments"]:
+        by_brief.setdefault(item["brief_id"], set()).add(item["auditor_model"])
+    assert len(by_brief) == 9
+    for auditors in by_brief.values():
+        assert len(auditors) == 2

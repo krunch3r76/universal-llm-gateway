@@ -80,22 +80,34 @@ class CollateV1Handler(BaseHandler):
                 model_id_mismatches(aligned, pool_models, "map_ideate"),
             )
 
-        if isinstance(re_inst, MapOutputCollection):
-            aligned = re_inst.outputs_aligned()
-            planned = [
-                str(o.model_id or "") if o else ""
-                for o in map_ideate.outputs_aligned()
-            ]
-            briefs = briefs_from_re_instantiate(aligned, abstract_briefs, pool_manifest)
+        if isinstance(re_inst, MapOutputCollection) and isinstance(
+            map_ideate, MapOutputCollection
+        ):
+            re_successes = map_ideate.all_outputs()
+            planned = [str(o.model_id or "") for o in re_successes]
+            ideate_positions = (
+                list(map_ideate._output_positions)
+                if map_ideate._output_positions is not None
+                else None
+            )
+            re_outputs = re_inst.all_outputs()
+            briefs, re_brief_failures = briefs_from_re_instantiate(
+                re_outputs,
+                abstract_briefs,
+                pool_manifest,
+                run_id=run_id,
+                ideate_output_positions=ideate_positions,
+            )
             parse_failures = merge_parse_failures(
                 parse_failures,
+                re_brief_failures,
                 map_parse_failures_from_collection(
-                    aligned,
+                    re_outputs,
                     "re_instantiate",
                     planned,
                     re_inst.failed_iteration_hints,
                 ),
-                model_id_mismatches(aligned, planned, "re_instantiate"),
+                model_id_mismatches(re_outputs, planned, "re_instantiate"),
             )
 
         if isinstance(map_audit, MapOutputCollection) and assignments:
