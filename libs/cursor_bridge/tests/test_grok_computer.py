@@ -127,19 +127,23 @@ async def test_run_grok_computer_update_store_not_durable_retry(
     async def _eval(ws_url: str, expression: str, **_kw: Any) -> Any:
         calls["n"] += 1
         if calls["n"] == 1:
-            return {"ok": True, "migration": {"phase": "failed", "detail": "store-not-durable"}}
+            return {
+                "ok": True,
+                "migration": {"phase": "failed", "detail": "store-not-durable"},
+            }
         if calls["n"] == 2:
             return {"ok": True, "migration": {"phase": "backing-up"}}
         if "getBoxMigrationStatus" in expression:
             return {"phase": "done", "operationId": "op-1"}
-        if "Close" in expression:
-            return {"closed": True}
+        if "setComputerViewOpen" in expression or "Close" in expression:
+            return {"closed": True, "close_clicks": 1, "settings_still_open": False}
         del ws_url
         return {"phase": "settled", "egress": {"state": "connected"}, "migration": {}}
 
     monkeypatch.setattr(gc, "probe_grok_computer", _probe)
     monkeypatch.setattr(gc, "_resolve_ws_url", lambda *_a, **_k: "ws://fake")
     monkeypatch.setattr(gc, "_cdp_eval", _eval)
+
     async def _settled(*_a: Any, **_k: Any) -> dict[str, str]:
         return {"phase": "following"}
 
@@ -170,12 +174,15 @@ async def test_run_grok_computer_update_post_close_wake(
             return {"ok": True, "migration": {"phase": "backing-up"}}
         if "getBoxMigrationStatus" in expression:
             return {"phase": "done"}
-        if "Close" in expression:
-            return {"closed": True}
+        if "setComputerViewOpen" in expression or "Close" in expression:
+            return {"closed": True, "close_clicks": 1, "settings_still_open": False}
         return {}
 
-    async def _wake(**_kw: Any) -> dict[str, Any]:
+    wake_kwargs: list[dict[str, Any]] = []
+
+    async def _wake(**kw: Any) -> dict[str, Any]:
         wake_calls.append("wake")
+        wake_kwargs.append(dict(kw))
         return {"x11_reset": True}
 
     monkeypatch.setattr(gc, "probe_grok_computer", _probe)
@@ -183,5 +190,97 @@ async def test_run_grok_computer_update_post_close_wake(
     monkeypatch.setattr(gc, "_cdp_eval", _eval)
     monkeypatch.setattr(gc, "wake_grok_computer", _wake)
 
-    await gc.run_grok_computer_update(poll_timeout_s=1.0)
+    out = await gc.run_grok_computer_update(poll_timeout_s=1.0)
     assert wake_calls == ["wake"]
+    assert wake_kwargs[-1].get("open_computer_view") is False
+    assert out["status"] == "up_to_date"
+    assert out["migration"]["phase"] == "unchanged"
+
+
+def test_update_scripts_use_settings_dialog_not_transcript_chip() -> None:
+    assert "span[role=button]" not in gc._UPDATE_CLICK_JS
+    assert "Grok Bot settings" in gc._UPDATE_CLICK_JS
+    assert "Open account menu" in gc._UPDATE_CLICK_JS
+    assert '[role=dialog][aria-label="Grok Bot settings"]' in gc._RETURN_TO_PORTAL_JS
+
+
+def test_resolve_grok_cdp_port_uses_window_config() -> None:
+    assert gc.resolve_grok_cdp_port("10", None) == 9340
+    assert gc.resolve_grok_cdp_port(":10", 9339) == 9340
+    assert gc.resolve_grok_cdp_port("9", 9339) == 9339
+    assert gc.resolve_grok_cdp_port("10", 9999) == 9999
+
+
+@pytest.mark.asyncio
+async def test_stale_done_migration_is_not_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    same = {"phase": "done", "operationId": {"value": "same"}}
+
+    async def _probe(**_kw: Any) -> dict[str, Any]:
+        return {
+            "running_assistants": [],
+            "migration": same,
+            "forever_box": {"imageUpdateAvailable": True},
+        }
+
+    async def _eval(_ws: str, expression: str, **_kw: Any) -> Any:
+        if "Update Bot" in expression:
+            return {"ok": True, "path": "account_settings"}
+        if "getBoxMigrationStatus" in expression:
+            return dict(same)
+        if "setComputerViewOpen" in expression:
+            return {"closed": True, "settings_still_open": False}
+        return {}
+
+    async def _wake(**_kw: Any) -> dict[str, Any]:
+        return {"x11_reset": True}
+
+    monkeypatch.setattr(gc, "probe_grok_computer", _probe)
+    monkeypatch.setattr(gc, "_resolve_ws_url", lambda *_a, **_k: "ws://fake")
+    monkeypatch.setattr(gc, "_cdp_eval", _eval)
+    monkeypatch.setattr(gc, "wake_grok_computer", _wake)
+
+    out = await gc.run_grok_computer_update(poll_timeout_s=0.4, max_update_passes=2)
+    assert out["status"] == "failed"
+    assert out["migration"]["phase"] == "unchanged"
+    assert out["close"]["settings_still_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_second_pass_clears_image_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = {"n": 0}
+    polls = {"n": 0}
+
+    async def _probe(**_kw: Any) -> dict[str, Any]:
+        probes["n"] += 1
+        return {
+            "running_assistants": [],
+            "migration": {"phase": "done", "operationId": {"value": "old"}},
+            "forever_box": {"imageUpdateAvailable": probes["n"] < 3},
+        }
+
+    async def _eval(_ws: str, expression: str, **_kw: Any) -> Any:
+        if "Update Bot" in expression:
+            return {"ok": True, "path": "account_settings"}
+        if "getBoxMigrationStatus" in expression:
+            polls["n"] += 1
+            return {"phase": "done", "operationId": {"value": f"new-{polls['n']}"}}
+        if "setComputerViewOpen" in expression:
+            return {"closed": True, "settings_still_open": False}
+        return {}
+
+    async def _wake(**_kw: Any) -> dict[str, Any]:
+        return {"x11_reset": True}
+
+    monkeypatch.setattr(gc, "probe_grok_computer", _probe)
+    monkeypatch.setattr(gc, "_resolve_ws_url", lambda *_a, **_k: "ws://fake")
+    monkeypatch.setattr(gc, "_cdp_eval", _eval)
+    monkeypatch.setattr(gc, "wake_grok_computer", _wake)
+
+    out = await gc.run_grok_computer_update(poll_timeout_s=2.0)
+    assert out["status"] == "done"
+    assert len(out["passes"]) == 2
+    assert out["probe_after"]["forever_box"]["imageUpdateAvailable"] is False

@@ -28,6 +28,7 @@ def _repo_root() -> Path:
 
 
 def config_path() -> Path:
+    """Absolute path of the tracked Grok window slot file in this repository."""
     return _repo_root() / "config" / "grok-windows.json"
 
 
@@ -48,6 +49,7 @@ def _gateway_home() -> Path:
 
 
 def state_path() -> Path:
+    """Path to the live routing file under the real ``~/.gateway`` directory."""
     return _gateway_home() / ".gateway" / "grok-window-routing.json"
 
 
@@ -56,6 +58,7 @@ def _norm(slug: str) -> str:
 
 
 def load_config() -> dict[str, Any]:
+    """Load ``grok-windows.json`` and reject a missing or wrong-schema windows map."""
     data = json.loads(config_path().read_text(encoding="utf-8"))
     if data.get("schema_version") != _SCHEMA:
         raise ValueError("grok-windows.json schema_version must be 1")
@@ -72,6 +75,22 @@ def _window_ids(config: dict[str, Any]) -> dict[str, int]:
     return out
 
 
+def cdp_port_for_display(display: str) -> int | None:
+    """Return the configured CDP port for an X11 display number.
+
+    Reads ``config/grok-windows.json``. Unknown displays and unreadable
+    config return None so callers can keep an explicit port.
+    """
+    key = str(display or "").strip().lstrip(":")
+    if not key:
+        return None
+    try:
+        ports = _window_ids(load_config())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return ports.get(key)
+
+
 def _require_window(config: dict[str, Any], value: object) -> str:
     display = str(value or "").strip().lstrip(":")
     if display not in _window_ids(config):
@@ -80,6 +99,7 @@ def _require_window(config: dict[str, Any], value: object) -> str:
 
 
 def mailbox_canonical(slug: str) -> str | None:
+    """Return the mailbox canonical slug when ``slug`` is a member, else None."""
     config = load_config()
     box = config["mailbox"]
     key = _norm(slug)
@@ -90,6 +110,7 @@ def mailbox_canonical(slug: str) -> str | None:
 
 
 def mailbox_members(slug: str) -> list[str]:
+    """Return mailbox member slugs when ``slug`` belongs to that mailbox."""
     config = load_config()
     box = config["mailbox"]
     key = _norm(slug)

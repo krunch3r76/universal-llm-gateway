@@ -4,7 +4,7 @@ policy_version: "2026-09-30"
 lead_claim_authority: server_contract_overrides_packet_prose
 
 cdp_reroute:
-  enabled: true
+  enabled: false
   target_model: cursor/gemini-4-argon
   effort: high
   match_prefixes:

@@ -1,4 +1,11 @@
-"""X11 idle reset and Grok Bot desktop.main CDP helpers for :9 / :9339."""
+"""X11 idle reset and Grok Bot desktop.main CDP helpers for configured windows.
+
+Callers are the grokbot-computer-update pipeline and seats that probe or
+wake a Grok Bot display. Display numbers map to CDP ports through
+``config/grok-windows.json``. Update clicks the Computer row inside the
+Grok Bot settings dialog, ignores a stale migration ``done``, and closes
+that dialog so the main portal is what stays on screen.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +18,41 @@ from typing import Any
 from urllib.error import URLError
 
 from cursor_bridge.cdp_pages import list_pages
+from cursor_bridge.grok_computer_page import (
+    PROBE_JS as _PROBE_JS,
+)
+from cursor_bridge.grok_computer_page import (
+    RETURN_TO_PORTAL_JS as _RETURN_TO_PORTAL_JS,
+)
+from cursor_bridge.grok_computer_page import (
+    UPDATE_CLICK_JS as _UPDATE_CLICK_JS,
+)
+from cursor_bridge.grok_computer_page import (
+    WAKE_JS as _WAKE_JS,
+)
+from cursor_bridge.grok_window_bindings import cdp_port_for_display
 
 _DEFAULT_AGENT_ID = "b5c63fe1-61b5-47d6-be6e-319ec999c383"
+_DEFAULT_CDP_PORT = 9339
 _GROK_WINDOW_TITLE = "Grok Bot"
 _STORE_NOT_DURABLE = "store-not-durable"
+_MIGRATION_GRACE_S = 8.0
+
+
+def resolve_grok_cdp_port(display: str, cdp_port: object | None = None) -> int:
+    """Pick the CDP port for a Grok Bot display.
+
+    A port listed in ``config/grok-windows.json`` replaces a missing port
+    and the pipeline default 9339 when that display is configured elsewhere.
+    Any other explicit port is left unchanged.
+    """
+    mapped = cdp_port_for_display(display)
+    if cdp_port is None:
+        return mapped if mapped is not None else _DEFAULT_CDP_PORT
+    port = int(cdp_port)
+    if mapped is not None and port == _DEFAULT_CDP_PORT and mapped != _DEFAULT_CDP_PORT:
+        return mapped
+    return port
 
 
 def _normalize_display(display: str) -> str:
@@ -106,70 +144,18 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
-_PROBE_JS = """(async () => {
-  const phase = await window.desktop.main.getBoxHostPhase();
-  const egress = await window.desktop.main.getEgressTunnelStatus();
-  const migration = await window.desktop.main.getBoxMigrationStatus();
-  const app_update = await window.desktop.main.getUpdateStatus();
-  let forever_box = null;
-  let running_assistants = [];
-  let selected_agent_id = null;
-  try {
-    const root = document.getElementById("root") || document.body.firstElementChild;
-    const fk = root ? Object.keys(root).find(k => k.startsWith("__reactContainer") || k.startsWith("__reactFiber")) : null;
-    if (fk) {
-      const stack = [root[fk]];
-      const seen = new Set();
-      let client = null;
-      while (stack.length) {
-        const node = stack.pop();
-        if (!node || seen.has(node)) continue;
-        seen.add(node);
-        if (node.memoizedProps?.value?.foreverBox) { client = node.memoizedProps.value; break; }
-        if (node.child) stack.push(node.child);
-        if (node.sibling) stack.push(node.sibling);
-      }
-      if (client) {
-        const rows = client.roster?.snapshots?.get ? (client.roster.snapshots.get()?.agents?.rows || []) : [];
-        running_assistants = rows
-          .filter(r => r.isRunning === true || r.runState?.state === "running")
-          .map(r => ({id: r.id, name: r.name, isRunning: Boolean(r.isRunning)}));
-        const sel = client.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
-        selected_agent_id = sel?.currentAgentId || rows[0]?.id || "a0a69fa2-aa00-4606-b11a-43936e5d44ba";
-        await client.foreverBox.refresh(selected_agent_id);
-        forever_box = client.foreverBox.statusSnapshotsFor(selected_agent_id).get()?.status ?? null;
-      }
-    }
-  } catch (_) {}
-  const top_bar_update_pill = Array.from(document.querySelectorAll("button")).some(
-    b => (b.innerText || "").trim() === "Update Bot's Computer" && !b.getAttribute("aria-label")
-  );
-  return {phase, egress, migration, app_update, forever_box, selected_agent_id, top_bar_update_pill, running_assistants};
-})()"""
-
-
 async def probe_grok_computer(
     cdp_port: int = 9339, display: str = ":9", *, timeout_s: float = 10.0
 ) -> dict[str, Any]:
-    """Read box phase, egress, migration, and running assistants from :9339."""
+    """Read box phase, egress, migration, and running assistants over CDP.
+
+    ``display`` is accepted for call-site symmetry and is not sent to the page.
+    The websocket is chosen from ``cdp_port``.
+    """
     del display
     ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
     payload = await _cdp_eval(ws_url, _PROBE_JS, timeout_s=timeout_s)
     return payload if isinstance(payload, dict) else {}
-
-
-_WAKE_JS = """(async (agentId) => {
-  await window.desktop.main.focusWindow();
-  await window.desktop.main.setComputerViewOpen({isOpen: true});
-  await window.desktop.main.signalBoxIntent({agentId, intent: "composer_focus"});
-  let egress = await window.desktop.main.getEgressTunnelStatus();
-  if (egress?.state === "off") {
-    await window.desktop.main.forceReconnectGateway();
-    egress = await window.desktop.main.getEgressTunnelStatus();
-  }
-  const phase = await window.desktop.main.getBoxHostPhase();
-  return {phase, egress};
-})"""
 
 
 async def wake_grok_computer(
@@ -177,51 +163,22 @@ async def wake_grok_computer(
     display: str = ":9",
     agent_id: str = _DEFAULT_AGENT_ID,
     *,
+    open_computer_view: bool = True,
     timeout_s: float = 15.0,
 ) -> dict[str, Any]:
-    """Reset X11 idle and signal presence on the Grok Bot desktop."""
+    """Reset X11 idle and signal presence on the Grok Bot desktop.
+
+    ``open_computer_view`` false closes the computer view so a post-update
+    keep-alive leaves the main portal on the display. Side effect: X11
+    screensaver reset on ``display`` and a CDP evaluate on ``cdp_port``.
+    """
     x11_reset = reset_x11_screensaver(display)
     ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
-    expr = f"({ _WAKE_JS })({json.dumps(agent_id)})"
+    expr = f"({_WAKE_JS})({json.dumps(agent_id)}, {json.dumps(open_computer_view)})"
     wake = await _cdp_eval(ws_url, expr, timeout_s=timeout_s)
     if not isinstance(wake, dict):
         wake = {}
     return {**wake, "x11_reset": x11_reset}
-
-
-_UPDATE_CLICK_JS = """(async () => {
-  let btn = document.querySelector('button[aria-label="Update Bot\\'s Computer"]');
-  if (!btn) {
-    const km = Array.from(document.querySelectorAll('button,[role=button]'))
-      .find(el => (el.getAttribute('aria-label')||'').trim() === 'KM');
-    if (km) km.click();
-    await new Promise(r => setTimeout(r, 200));
-    const settings = Array.from(document.querySelectorAll('button,[role=menuitem],[role=button]'))
-      .find(el => /^settings$/i.test((el.innerText||el.getAttribute('aria-label')||'').trim()));
-    if (settings) settings.click();
-    await new Promise(r => setTimeout(r, 300));
-    const computer = Array.from(document.querySelectorAll('button,[role=tab],[role=button]'))
-      .find(el => /^computer$/i.test((el.innerText||el.getAttribute('aria-label')||'').trim()));
-    if (computer) computer.click();
-    await new Promise(r => setTimeout(r, 300));
-    btn = document.querySelector('button[aria-label="Update Bot\\'s Computer"]');
-  }
-  if (!btn) return {ok: false, reason: "update_button_missing"};
-  btn.click();
-  await new Promise(r => setTimeout(r, 400));
-  const confirm = document.querySelector(
-    'button[data-confirming="true"][aria-label="Click Again to Confirm: Update Bot\\'s Computer"]'
-  );
-  if (confirm) confirm.click();
-  const migration = await window.desktop.main.getBoxMigrationStatus();
-  return {ok: true, migration};
-})()"""
-
-_CLOSE_SETTINGS_JS = """(() => {
-  const close = document.querySelector('button[aria-label="Close"]');
-  if (close) { close.click(); return {closed: true}; }
-  return {closed: false};
-})()"""
 
 
 async def _wait_phase_settled(
@@ -238,11 +195,47 @@ async def _wait_phase_settled(
     return None
 
 
+def _migration_operation_id(raw: object) -> str:
+    if not isinstance(raw, dict):
+        return ""
+    op = raw.get("operationId")
+    if isinstance(op, dict):
+        return str(op.get("value") or "")
+    if op is None:
+        return ""
+    return str(op)
+
+
+def _migration_moved(
+    raw: dict[str, Any], baseline_operation_id: str, saw_active: bool
+) -> bool:
+    phase = str(raw.get("phase") or "")
+    op = _migration_operation_id(raw)
+    if phase not in {"done", "failed"}:
+        return False
+    if saw_active:
+        return True
+    return bool(op) and op != baseline_operation_id
+
+
 async def _poll_migration(
-    ws_url: str, *, poll_timeout_s: float, interval_s: float = 3.0
+    ws_url: str,
+    *,
+    poll_timeout_s: float,
+    baseline_operation_id: str = "",
+    interval_s: float = 3.0,
+    grace_s: float = _MIGRATION_GRACE_S,
 ) -> dict[str, Any]:
+    """Wait until this click's migration finishes.
+
+    A ``done`` or ``failed`` row that still carries ``baseline_operation_id``
+    is the previous operation. It becomes ``unchanged`` after ``grace_s``
+    unless an in-progress phase was observed first.
+    """
     deadline = time.monotonic() + poll_timeout_s
+    started = time.monotonic()
     last: dict[str, Any] = {}
+    saw_active = False
     while time.monotonic() < deadline:
         raw = await _cdp_eval(
             ws_url,
@@ -253,10 +246,73 @@ async def _poll_migration(
         if isinstance(raw, dict):
             last = raw
             phase = str(raw.get("phase") or "")
-            if phase in {"done", "failed"}:
+            if phase not in {"done", "failed", "idle", ""}:
+                saw_active = True
+            if _migration_moved(raw, baseline_operation_id, saw_active):
                 return last
-        await asyncio.sleep(interval_s)
+            elapsed = time.monotonic() - started
+            if (
+                not saw_active
+                and _migration_operation_id(raw) == baseline_operation_id
+                and phase in {"done", "failed", "idle", ""}
+                and elapsed >= grace_s
+            ):
+                return {**last, "phase": "unchanged"}
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(interval_s, remaining))
+    if (
+        not saw_active
+        and _migration_operation_id(last) == baseline_operation_id
+        and str(last.get("phase") or "") in {"done", "failed", "idle", ""}
+    ):
+        return {**last, "phase": "unchanged"}
     return last
+
+
+def _forever_box_update_pending(probe: dict[str, Any]) -> bool:
+    forever_box = probe.get("forever_box")
+    if not isinstance(forever_box, dict):
+        return False
+    return bool(forever_box.get("imageUpdateAvailable"))
+
+
+async def _run_update_pass(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
+    pass1 = await _cdp_eval(ws_url, _UPDATE_CLICK_JS, timeout_s=max(timeout_s, 60.0))
+    mig = (pass1.get("migration") if isinstance(pass1, dict) else None) or {}
+    if (
+        isinstance(mig, dict)
+        and mig.get("phase") == "failed"
+        and mig.get("detail") == _STORE_NOT_DURABLE
+    ):
+        await _wait_phase_settled(ws_url, timeout_s=5.0)
+        pass1 = await _cdp_eval(
+            ws_url, _UPDATE_CLICK_JS, timeout_s=max(timeout_s, 60.0)
+        )
+    return pass1 if isinstance(pass1, dict) else {}
+
+
+def _update_result_status(
+    *,
+    migration: dict[str, Any],
+    passes: list[dict[str, Any]],
+    image_pending: bool,
+    image_pending_before: bool,
+) -> str:
+    phase = str(migration.get("phase") or "")
+    last_ok = bool(passes and passes[-1].get("ok"))
+    if phase == "unchanged":
+        return "up_to_date" if not image_pending else "failed"
+    if phase == "failed" or not last_ok:
+        if not last_ok and not image_pending_before and not image_pending:
+            return "up_to_date"
+        return "failed"
+    if phase == "done" and not image_pending:
+        return "done"
+    if image_pending:
+        return "failed"
+    return "done" if phase == "done" else "failed"
 
 
 async def run_grok_computer_update(
@@ -267,43 +323,89 @@ async def run_grok_computer_update(
     poll_timeout_s: float = 180.0,
     *,
     timeout_s: float = 30.0,
+    max_update_passes: int = 2,
 ) -> dict[str, Any]:
-    """Run KM Settings Computer update with busy guard and post-close keep-alive."""
-    probe = await probe_grok_computer(cdp_port=cdp_port, display=display, timeout_s=timeout_s)
+    """Run the settings Computer update and leave the main portal on screen.
+
+    ``poll_timeout_s`` is one shared budget for every pass, so a second pass
+    cannot consume the pipeline timeout before the settings dialog is closed.
+    A migration row that never leaves the pre-click operation id is
+    ``unchanged`` and is not reported as done. When the image flag stays set
+    after a real ``done``, one more pass runs.
+    """
+    probe = await probe_grok_computer(
+        cdp_port=cdp_port, display=display, timeout_s=timeout_s
+    )
     running = probe.get("running_assistants") or []
     if require_idle and running:
         return {"status": "busy_running_assistants", "running_assistants": running}
 
+    image_pending_before = _forever_box_update_pending(probe)
+    baseline = _migration_operation_id(probe.get("migration"))
     ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
-    pass1 = await _cdp_eval(ws_url, _UPDATE_CLICK_JS, timeout_s=max(timeout_s, 60.0))
-    mig = (pass1.get("migration") if isinstance(pass1, dict) else None) or {}
-    if (
-        isinstance(mig, dict)
-        and mig.get("phase") == "failed"
-        and mig.get("detail") == _STORE_NOT_DURABLE
-    ):
-        await _wait_phase_settled(ws_url, timeout_s=5.0)
-        pass1 = await _cdp_eval(ws_url, _UPDATE_CLICK_JS, timeout_s=max(timeout_s, 60.0))
+    passes: list[dict[str, Any]] = []
+    migration: dict[str, Any] = {}
+    budget_deadline = time.monotonic() + poll_timeout_s
+    for _attempt in range(max(1, max_update_passes)):
+        pass_out = await _run_update_pass(ws_url, timeout_s=timeout_s)
+        passes.append(pass_out)
+        if not pass_out.get("ok"):
+            break
+        remaining = budget_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        migration = await _poll_migration(
+            ws_url,
+            poll_timeout_s=remaining,
+            baseline_operation_id=baseline,
+        )
+        phase = str(migration.get("phase") or "")
+        if phase == "done":
+            baseline = _migration_operation_id(migration) or baseline
+        elif phase == "unchanged":
+            continue
+        else:
+            break
+        probe_after = await probe_grok_computer(
+            cdp_port=cdp_port, display=display, timeout_s=timeout_s
+        )
+        if not _forever_box_update_pending(probe_after):
+            break
 
-    migration = await _poll_migration(ws_url, poll_timeout_s=poll_timeout_s)
-    close = await _cdp_eval(ws_url, _CLOSE_SETTINGS_JS, await_promise=False, timeout_s=10.0)
+    close = await _cdp_eval(ws_url, _RETURN_TO_PORTAL_JS, timeout_s=15.0)
     keep = await wake_grok_computer(
-        cdp_port=cdp_port, display=display, agent_id=agent_id, timeout_s=timeout_s
+        cdp_port=cdp_port,
+        display=display,
+        agent_id=agent_id,
+        open_computer_view=False,
+        timeout_s=timeout_s,
     )
-    status = "done" if migration.get("phase") == "done" else "failed"
+    probe_after = await probe_grok_computer(
+        cdp_port=cdp_port, display=display, timeout_s=timeout_s
+    )
+    image_pending = _forever_box_update_pending(probe_after)
+    status = _update_result_status(
+        migration=migration,
+        passes=passes,
+        image_pending=image_pending,
+        image_pending_before=image_pending_before,
+    )
     return {
         "status": status,
         "migration": migration,
-        "pass1": pass1,
+        "passes": passes,
+        "pass1": passes[0] if passes else {},
         "close": close,
         "keep_alive": keep,
         "probe_before": probe,
+        "probe_after": probe_after,
     }
 
 
 __all__ = [
     "probe_grok_computer",
     "reset_x11_screensaver",
+    "resolve_grok_cdp_port",
     "run_grok_computer_update",
     "wake_grok_computer",
 ]

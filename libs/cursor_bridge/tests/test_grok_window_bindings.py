@@ -7,7 +7,12 @@ import json
 import pytest
 from agent_seat.registry import expand_recipient_slugs, normalize_bus_address
 from cursor_bridge import grok_window_bindings as bindings
-from cursor_bridge.grok_window_bindings import binding_for, promote, validate_state
+from cursor_bridge.grok_window_bindings import (
+    binding_for,
+    cdp_port_for_display,
+    promote,
+    validate_state,
+)
 
 
 @pytest.fixture()
@@ -15,6 +20,12 @@ def isolated_state(tmp_path, monkeypatch: pytest.MonkeyPatch):
     path = tmp_path / "grok-window-routing.json"
     monkeypatch.setattr(bindings, "state_path", lambda: path)
     return path
+
+
+def test_cdp_port_for_known_displays() -> None:
+    assert cdp_port_for_display("9") == 9339
+    assert cdp_port_for_display(":10") == 9340
+    assert cdp_port_for_display("11") is None
 
 
 def test_builtin_initial_state_when_file_missing(isolated_state) -> None:

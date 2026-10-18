@@ -1,10 +1,12 @@
-# grokbot-computer-update — status, wake, or update Grok Bot computer on :9 / :9339.
+# grokbot-computer-update — status, wake, or update a Grok Bot computer.
 #
 # Zero LLM calls. Options: action (status|wake|update), display, cdp_port, require_idle.
+# display :9 → CDP 9339 and :10 → CDP 9340 via config/grok-windows.json when
+# cdp_port is omitted or left at the default 9339. An explicit other port wins.
 #
 #   pipeline(op="run", pipeline_id="grokbot-computer-update",
-#            messages=[{"role":"user","content":"status"}],
-#            options={"action": "wake", "display": "9", "cdp_port": 9339})
+#            messages=[{"role":"user","content":"update"}],
+#            options={"action": "update", "display": "10"})
 
 schema_version: 6
 id: grokbot-computer-update
@@ -12,12 +14,13 @@ version: "1.0"
 type: grokbot_computer_update
 category: grokbot_computer_update
 description: >
-  Probe, wake, or update Grok Bot shared computer via X11 :9 and CDP :9339.
+  Probe, wake, or update a Grok Bot computer on a configured X11 display.
+  Update uses the settings Computer row, then closes that dialog.
   No model invocation.
 output: run_grokbot_computer_ctl
 
 options:
-  timeout_seconds: 240
+  timeout_seconds: 300
   action:
     type: string
     description: status, wake, or update
