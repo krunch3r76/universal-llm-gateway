@@ -415,6 +415,51 @@ def test_fire_holders_exception_records_unknown_and_does_not_propagate(db: None)
     assert row["reason"] == "ConnectError"
 
 
+def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> None:
+    assert qualifies(
+        {"to_agent": "insyncerator", "from_agent": "grok-bot", "subject": "WAKE|inbox"},
+        cse=False,
+    )
+    assert qualifies(
+        {"to_agent": "syncerator", "from_agent": "grok-bot-gc1", "subject": "REQUEST|sync"},
+        cse=False,
+    )
+    assert not qualifies(
+        {"to_agent": "insyncerator", "from_agent": "cursor-sdk", "subject": "PICKUP|x"},
+        cse=False,
+    )
+
+    class Store:
+        def __init__(self) -> None:
+            self.pending: list = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 7,
+                    "to_agent": "insyncerator",
+                    "from_agent": "grok-bot",
+                    "thread": "16416",
+                    "turn_number": 1,
+                    "subject": "WAKE|inbox",
+                }
+            ]
+
+        def subscription(self, agent: str, thread: str):
+            raise AssertionError("window binding should answer before a DB subscription")
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending[0]["agent"] == "insyncerator"
+    assert store.pending[0]["thread_id"] == "16416"
+
+
 def test_scan_holders_exception_propagates() -> None:
     class Boom:
         def cursor(self) -> dict:

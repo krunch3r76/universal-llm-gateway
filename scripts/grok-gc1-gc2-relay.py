@@ -24,6 +24,7 @@ from cursor_bridge.electron_chat_relay import (
     read_endpoint_turn,
     run_one_to_one_relay,
 )
+from cursor_bridge.grok_window_bindings import promote, status, write_routing
 from io_agent_gc2_browser import (
     format_systemd_environment_block,
     gc2_service_environment,
@@ -148,6 +149,24 @@ def _build_parser() -> argparse.ArgumentParser:
     rl.add_argument("--max-exchanges", type=int, default=10)
     rl.add_argument("--poll-interval-s", type=float, default=2.0)
     rl.add_argument("--turn-timeout-s", type=float, default=180.0)
+
+    sub.add_parser("status", help="Print window config plus live routing state")
+    sub.add_parser("show-routing", help="Print window config plus live routing state")
+
+    route = sub.add_parser(
+        "set-routing",
+        help="Set default grok-bot window and insyncerator window",
+    )
+    route.add_argument("--default", required=True, help=":9 or :10 for grok-bot / impresario")
+    route.add_argument("--insyncerator", required=True, help=":9 or :10 for insyncerator")
+    route.add_argument("--updated-by", default="", help="Seat or agent writing the state")
+
+    promo = sub.add_parser(
+        "promote",
+        help="Make a display the grok-bot home and park insyncerator on the other",
+    )
+    promo.add_argument("display", help=":9 or :10")
+    promo.add_argument("--updated-by", default="")
     return p
 
 
@@ -208,6 +227,22 @@ def main() -> int:
         )
         print(json.dumps(out, indent=2))
         return 0 if out.get("ok") else 1
+    if args.cmd in {"show-routing", "status"}:
+        print(json.dumps(status(), indent=2))
+        return 0
+    if args.cmd == "set-routing":
+        state = write_routing(
+            default_window=args.default,
+            insyncerator_window=args.insyncerator,
+            source="set-routing",
+            updated_by=args.updated_by or None,
+        )
+        print(json.dumps(state, indent=2))
+        return 0
+    if args.cmd == "promote":
+        state = promote(args.display, updated_by=args.updated_by or None)
+        print(json.dumps(state, indent=2))
+        return 0
     return 1
 
 

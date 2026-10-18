@@ -158,6 +158,11 @@ def normalize_bus_address(slug: str) -> str:
     if not isinstance(slug, str):
         slug = str(slug)
     norm = _normalize_agent_key(slug)
+    from cursor_bridge.grok_window_bindings import mailbox_canonical
+
+    mailbox = mailbox_canonical(slug)
+    if mailbox is not None:
+        return mailbox
     hit = _bus_address_aliases().get(norm)
     if hit is not None:
         return hit
@@ -236,6 +241,9 @@ def expand_recipient_slugs(slug: str) -> list[str]:
     """
     canonical = normalize_bus_address(slug)
     values: set[str] = {canonical}
+    from cursor_bridge.grok_window_bindings import mailbox_members
+
+    values.update(mailbox_members(canonical))
     raw = slug.strip()
     if raw:
         values.add(raw)

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "scope": "grok-window-slots",
+  "windows": {
+    "9": {
+      "slot": "gc1",
+      "cdp_port": 9339,
+      "user_data_dir": "~/.gateway/grok-io"
+    },
+    "10": {
+      "slot": "gc2",
+      "cdp_port": 9340,
+      "user_data_dir": "~/.gateway/grok-io-gc2"
+    }
+  },
+  "fixed_roles": {
+    "grok-bot-gc1": "9",
+    "grok-bot-gc2": "10"
+  },
+  "default_agents": ["grok-bot", "impresario"],
+  "sync_agents": ["insyncerator", "syncerator"],
+  "mailbox": {
+    "canonical": "insyncerator",
+    "members": ["insyncerator", "grok-bot-gc2", "syncerator"]
+  },
+  "initial_state": {
+    "default_window": "9",
+    "insyncerator_window": "10"
+  }
+}

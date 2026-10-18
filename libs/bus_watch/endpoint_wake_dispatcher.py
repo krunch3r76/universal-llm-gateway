@@ -133,6 +133,25 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
     return True
 
 
+def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
+    """Synthetic grok subscription from the runtime routing file."""
+    from cursor_bridge.grok_window_bindings import binding_for
+
+    row = binding_for(agent)
+    if row is None:
+        return None
+    return (
+        "window-binding",
+        {
+            "surface": "grok",
+            "display": row["display"],
+            "title": row.get("title") or "",
+            "agent_id": agent,
+            "state": "subscribed",
+        },
+    )
+
+
 def _pending_item(turn: dict[str, Any]) -> dict[str, Any]:
     return {
         "agent": normalize_bus_address(str(turn["to_agent"])),
@@ -153,13 +172,15 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         return
     pending: list[dict[str, Any]] = []
     for turn in turns:
-        agent = normalize_bus_address(str(turn.get("to_agent") or ""))
+        raw_to = str(turn.get("to_agent") or "")
+        agent = normalize_bus_address(raw_to)
         thread = str(turn["thread"])
         if agent == "web-anthropic":
             resolved = None
             cse = True
         else:
-            resolved = store.subscription(agent, thread)
+            bound = _window_binding_route(raw_to)
+            resolved = bound if bound is not None else store.subscription(agent, thread)
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             )

@@ -100,7 +100,9 @@ def subscribe_endpoint(
         surface_raw == "grok"
         and canon not in {"all", "team"}
         and (
-            _GROK_BOT.match(canon) is not None or canon == "stage-manager"
+            _GROK_BOT.match(canon) is not None
+            or canon == "stage-manager"
+            or canon == "insyncerator"
         )
     ) or (surface_raw == "cse" and canon == "maestro")
     if scope == "*" and not wildcard_ok:
