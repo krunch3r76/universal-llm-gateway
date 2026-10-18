@@ -22,6 +22,10 @@ from deploy_identity.mcp_external_probe import (
 from universal_logging import get_logger
 
 from scripts.model_manager.observation_event import _emit
+from scripts.model_manager.ui.controller.grokbot_context_hop_io import (
+    probe_grok_agent_context,
+    reply_context_hop,
+)
 from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     DEFAULT_DAEMON_LOG,
     DEFAULT_DESKTOP_BINARY,
@@ -33,16 +37,12 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     read_daemon_log,
     read_desktop_status,
 )
-from scripts.model_manager.ui.controller.grokbot_context_hop_io import (
-    probe_grok_agent_context,
-    reply_context_hop,
-)
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
+    HOP_THREAD_ID,
     ContextHopState,
     GrokbotEgressLoopState,
     GrokbotEgressSnapshot,
     GrokbotTickDecision,
-    HOP_THREAD_ID,
     decide_context_hop,
     decide_grokbot_tick,
     record_hop_notified,
@@ -307,11 +307,14 @@ class GrokbotEgressWatchLoop:
             restart = self._restart_desktop_fn or self._default_restart_desktop
             await restart()
 
-        await self._maybe_emit_watch_ok(
-            now=now, decision=decision, snapshot=snapshot
-        )
+        await self._maybe_emit_watch_ok(now=now, decision=decision, snapshot=snapshot)
         if snapshot.desktop_running:
-            await self._context_hop(now=now, now_ms=int(now * 1000), snapshot=snapshot)
+            try:
+                await self._context_hop(
+                    now=now, now_ms=int(now * 1000), snapshot=snapshot
+                )
+            except Exception:
+                logger.exception("grokbot context hop tick failed")
 
     async def _context_hop(
         self, *, now: float, now_ms: int, snapshot: GrokbotEgressSnapshot
@@ -340,9 +343,7 @@ class GrokbotEgressWatchLoop:
         )
         body = "context-hop-due: " + ", ".join(notice.names)
         try:
-            await reply_context_hop(
-                subject=notice.subject, body=body, after_turn=0
-            )
+            await reply_context_hop(subject=notice.subject, body=body, after_turn=0)
         except Exception as exc:
             failed = mcp_edge_grokbot_context_hop_notify_failed(
                 error_class=type(exc).__name__,

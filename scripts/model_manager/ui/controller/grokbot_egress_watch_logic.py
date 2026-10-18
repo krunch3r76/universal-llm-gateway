@@ -51,16 +51,12 @@ def parse_watch_log_line_ts_ms(line: str) -> int | None:
     return int(dt.timestamp() * 1000)
 
 
-def watch_connection_state(
-    log_text: str, *, now_ms: int
-) -> tuple[bool, float | None]:
+def watch_connection_state(log_text: str, *, now_ms: int) -> tuple[bool, float | None]:
     """Return ``(connected, disconnected_for_s)``.
 
     ``disconnected_for_s`` is set when the latest watch state is not connected.
     """
-    watch_lines = [
-        ln for ln in log_text.splitlines() if _WATCH_PREFIX in ln
-    ]
+    watch_lines = [ln for ln in log_text.splitlines() if _WATCH_PREFIX in ln]
     if not watch_lines:
         return False, None
 
@@ -271,9 +267,7 @@ def record_hop_notified(
         state.first_due_at.pop(agent_id, None)
 
 
-def _deferral_ceiling_hit(
-    now: float, state: GrokbotEgressLoopState
-) -> bool:
+def _deferral_ceiling_hit(now: float, state: GrokbotEgressLoopState) -> bool:
     if state.deferral_started_at is None:
         return False
     return (now - state.deferral_started_at) >= _DEFERRAL_CEILING_S
