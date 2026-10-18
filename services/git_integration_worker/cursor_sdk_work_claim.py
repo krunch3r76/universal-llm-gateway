@@ -22,6 +22,10 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     _ACTIVE_IDENTITY_STATUSES,
     CursorDispatchLedger,
+    _emit_impresario_lease_acquired,
+    _holder_surface_from_record,
+    _lease_epoch_from_row,
+    bump_lease_epoch_conn,
 )
 from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
     OPEN_RESTART_PARK_SQL,
@@ -239,13 +243,22 @@ def claim(
                 )
                 renewed = True
             else:
+                revive_epoch = bump_lease_epoch_conn(conn, work_key=work_key)
                 conn.execute(
                     "UPDATE cursor_sdk_dispatches SET status='claimed', "
                     "terminal_status=NULL, terminal_at=NULL, claim_expires_at=?, "
+                    "lease_epoch=?, "
                     "record_json=json_remove(COALESCE(record_json,'{}'), "
                     "'$.claim_release'), caller_agent=?, thread_id=?, work_key=? "
                     "WHERE dispatch_id=?",
-                    (expires, holder_agent, thread_id, work_key, claim_id),
+                    (
+                        expires,
+                        revive_epoch,
+                        holder_agent,
+                        thread_id,
+                        work_key,
+                        claim_id,
+                    ),
                 )
         elif own is not None:
             conn.execute(
@@ -267,14 +280,15 @@ def claim(
                 ),
             )
         else:
+            lease_epoch = bump_lease_epoch_conn(conn, work_key=work_key)
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, caller_agent, "
                 " resolved_model, message_present, status, record_json, "
                 " contract, read_only, queued_at, work_key, work_fingerprint, "
-                " identity_class, packet_kind, claim_expires_at) "
+                " identity_class, packet_kind, claim_expires_at, lease_epoch) "
                 "VALUES (?, ?, ?, ?, 'none', 0, 'claimed', ?, 'claim', 1, ?, ?, "
-                "NULL, 'house', 'claim', ?)",
+                "NULL, 'house', 'claim', ?, ?)",
                 (
                     claim_id,
                     claim_id,
@@ -284,6 +298,7 @@ def claim(
                     stamp,
                     work_key,
                     expires,
+                    lease_epoch,
                 ),
             )
         conn.commit()
@@ -292,6 +307,14 @@ def claim(
             (claim_id,),
         ).fetchone()
     assert row is not None
+    if not renewed and row["status"] == CLAIM_STATUS:
+        epoch = _lease_epoch_from_row(row)
+        if epoch is not None:
+            _emit_impresario_lease_acquired(
+                work_key=work_key,
+                lease_epoch=epoch,
+                dispatch_id=claim_id,
+            )
     holder = _holder_from_row(row, now=stamp)
     return {
         "claim_id": claim_id,
@@ -500,7 +523,7 @@ def _projection_holder(row: Any) -> dict[str, Any]:
     status = str(row["status"])
     kind = "claim" if status == CLAIM_STATUS else "dispatch"
     expires = row["claim_expires_at"] if status == CLAIM_STATUS else row["park_expires_at"]
-    return {
+    holder: dict[str, Any] = {
         "id": row["dispatch_id"],
         "kind": kind,
         "status": status,
@@ -509,6 +532,13 @@ def _projection_holder(row: Any) -> dict[str, Any]:
         "claimed_at": row["queued_at"] or row["started_at"],
         "expires_at": expires,
     }
+    surface = _holder_surface_from_record(row["record_json"])
+    if surface is not None:
+        holder["holder_surface"] = surface
+    epoch = _lease_epoch_from_row(row)
+    if epoch is not None:
+        holder["lease_epoch"] = epoch
+    return holder
 
 
 def occupancy(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
@@ -136,6 +136,14 @@ class CursorDispatchRequest(BaseModel):
         description=(
             "House claim id this admit is the successor of. An unexpired "
             "claimed row with this dispatch_id does not block the work_key gate."
+        ),
+    )
+    generation_options: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Stargate relay of impresario commission envelope under "
+            "generation_options.impresario when present. Omitted or null skips "
+            "the conductor envelope gate at GIW admit."
         ),
     )
     wake_lane: str | None = Field(

@@ -7,7 +7,7 @@ before the first worker admission attempt.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from .admission import resolve_cursor_sdk_generate_target
 from .cursor_sdk_alignment import align_cursor_knobs
@@ -129,6 +129,7 @@ async def prepare_cursor_sdk_generate(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     claim_id: str | None = None,
+    impresario_envelope: dict[str, Any] | None = None,
     wake_lane: str | None = None,
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
@@ -598,6 +599,7 @@ async def prepare_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
         claim_id=claim_id,
+        impresario_envelope=impresario_envelope,
         requested_model_knobs=dict(model_knobs or {}),
         wake_lane=wake_lane,
     )

@@ -40,6 +40,16 @@ def _claim_id_from_options(generation_options: dict[str, Any] | None) -> str | N
     return text or None
 
 
+def _impresario_from_options(
+    generation_options: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Extract inbound impresario envelope for GIW pass-through only."""
+    if not generation_options:
+        return None
+    imp = generation_options.get("impresario")
+    return dict(imp) if isinstance(imp, dict) else None
+
+
 if TYPE_CHECKING:
     from fastapi import Response
 
@@ -539,6 +549,9 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             ),
             claim_id=_claim_id_from_options(getattr(body, "generation_options", None)),
+            impresario_envelope=_impresario_from_options(
+                getattr(body, "generation_options", None)
+            ),
             transcript_id=getattr(body, "transcript_id", None),
             wake_lane=getattr(body, "wake_lane", None),
             bus_body=getattr(body, "bus_body", None),
