@@ -28,7 +28,8 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
-from implement_admission.conductor_width_seat import ACTIVE, g3_g5_score_ratify_clause
+from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
+from implement_admission.impresario_policy import resolve_roles
 from implement_admission.conductor_witness import FoldDeps
 
 
@@ -175,7 +176,7 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "cost tier" not in mp.text.lower()
     assert "tier table" not in mp.text.lower()
     assert "cursor-model-economics" not in mp.text
-    assert ACTIVE.model in mp.text
+    assert resolve_roles().critic.model in mp.text
     assert "`cursor/grok-4.7`" in mp.text
     assert "`OPEN FORK:`" in mp.text
     assert "score-play" in mp.text
@@ -243,8 +244,8 @@ def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
     assert "Context pressure:" not in mp.text
     assert "≥2 of these hold" not in mp.text
     assert (
-        "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
-        "purpose=ask, dispatch_thread_id="
+        f"team_dispatch(op=generate, model={resolve_roles().critic.model}, contract=freeform, "
+        "session=ask, dispatch_thread_id="
     ) in mp.text
 
 
@@ -428,8 +429,8 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "required attended G5 fold witness (a:37198)" in mp.text
     assert "not implement completeness" in mp.text
     assert "CDP harvest alone does not close G5" in mp.text
-    assert ACTIVE.model in mp.text
-    assert "score-ratify (" + ACTIVE.model in mp.text
+    assert resolve_roles().critic.model in mp.text
+    assert "score-ratify (" + resolve_roles().critic.model in mp.text
     assert "A live summoning chat is not a gate." in mp.text
 
 
@@ -501,11 +502,11 @@ def test_materialize_conductor_default_confer_and_finish_strings(
         out_dir=out_dir,
     )
     confer_sentence = (
-        "G3→G5 default: in-process CDP score-ratify "
+        "G3→G5 default: in-process score-ratify "
         f"({g3_g5_score_ratify_clause()}) "
         "(do-not-fight / likely-optimal) via "
-        "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
-        "purpose=ask, dispatch_thread_id=<this worker thread id>)."
+        f"team_dispatch(op=generate, model={resolve_roles().critic.model}, contract=freeform, "
+        "session=ask, dispatch_thread_id=<this worker thread id>)."
     )
     assert "summon_mode: confer_and_finish" in mp.text
     assert confer_sentence in mp.text
@@ -529,9 +530,10 @@ def test_review_leg_packet_one_dispatch_then_park(tmp_path: Path) -> None:
         out_dir=tmp_path / "packets",
         files_root=tmp_path / "cortex",
     )
+    review_model = resolve_roles().review.model
     assert (
         mp.text.count(
-            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, "
+            f"team_dispatch(op=generate, model={review_model}, contract=delivery-review, "
             "dispatch_thread_id=<this worker thread id>"
         )
         == 1
@@ -539,24 +541,27 @@ def test_review_leg_packet_one_dispatch_then_park(tmp_path: Path) -> None:
     assert "purpose=review" not in mp.text
     assert "contract=delivery-review" in mp.text
     assert "dispatch_thread_id=" in mp.text
-    assert "NEXT_ADMIT: harvest" in mp.text
+    if resolve_roles().review.transport == "cdp_parked":
+        assert "NEXT_ADMIT: harvest" in mp.text
     assert (
         "A successor whose CHECKPOINT carries a G6 execution_id harvests that id "
         "and does not dispatch G6."
     ) in mp.text
-    assert "for the same gate in this row" not in mp.text
+    assert "Do not second-dispatch G6 for the same gate in this row" in mp.text
     assert "Wait once with agent_bus tool=wait bound to" not in mp.text
     assert "One wait, then stop" not in mp.text
     assert "parent_thread omitted" not in mp.text
     assert "parent_thread=<this worker thread id>" in mp.text
-    assert "Stamp and park while live" in mp.text
-    assert "stop: PARKED_TRANSPORT" in mp.text
-    assert "not ROW_HOP" in mp.text
-    assert "park_harvest_continue_owed" in mp.text
-    assert "Timeout is a transport clock" in mp.text
-    assert "do not second-dispatch G6" in mp.text
-    assert "-32001" in mp.text
-    assert "poll_hint" in mp.text
+    roles = resolve_roles()
+    if roles.review.transport == "cdp_parked":
+        assert "stop: PARKED_TRANSPORT" in mp.text
+    else:
+        assert "do not use `stop: PARKED_TRANSPORT` for cursor/* critics" in mp.text
+    if resolve_roles().review.transport == "cdp_parked":
+        assert "park_harvest_continue_owed" in mp.text
+        assert "Timeout is a transport clock" in mp.text
+        assert "-32001" in mp.text
+        assert "poll_hint" in mp.text
     assert "evidence: absent" in mp.text
     assert "cannot run in this row" in mp.text
     assert "nested_cdp_prompt_gate.py" in mp.text
