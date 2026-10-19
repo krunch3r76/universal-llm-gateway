@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_bus_store.auth import require_token
+from agent_bus_store.recipients import _inbox_recipient_slugs
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
@@ -109,3 +110,101 @@ def test_maestro_mark_read_does_not_clear_cursor_or_grok_inbox(tmp_path) -> None
         t2 = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         assert t1["read_at"] is None
         assert t2["read_at"] is None
+
+
+def test_inbox_recipient_slugs_maestro_web_anthropic_symmetric() -> None:
+    maestro = set(_inbox_recipient_slugs("maestro"))
+    web = set(_inbox_recipient_slugs("web-anthropic"))
+    assert maestro == web
+    for legacy in ("claude-web", "web", "cdp", "web_anthropic"):
+        assert legacy in maestro
+
+
+def test_maestro_send_mark_read_spares_web_anthropic_memo_notes(tmp_path) -> None:
+    """Hop mark_read must not stamp read_at on alias-pair MEMO/NOTE (a:38363)."""
+    with _client(tmp_path) as client:
+        thread_id = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "l2-memo-spared",
+                "from": "cursor",
+                "to": "cursor",
+                "subject": "REQUEST|seed",
+                "body": "seed",
+            },
+        ).json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "maestro",
+                "to": "web-anthropic",
+                "subject": "MEMO|maestro to web",
+                "body": "m1",
+            },
+        )
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "web-anthropic",
+                "subject": "MEMO|web self",
+                "body": "m2",
+            },
+        )
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web-anthropic",
+                "subject": "FACT|should mark",
+                "body": "plain unread",
+            },
+        )
+        send = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "maestro",
+                "to": "cursor",
+                "subject": "CHECKPOINT|hop",
+                "body": "hop",
+                "after_turn": 0,
+                "mark_read": True,
+            },
+        )
+        assert send.status_code == 201, send.text
+        memo_maestro = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()
+        memo_web = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=3"
+        ).json()
+        fact = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=4"
+        ).json()
+        assert memo_maestro["read_at"] is None
+        assert memo_web["read_at"] is None
+        assert fact["read_at"] is not None
+
+
+def test_maestro_mark_read_does_not_stamp_to_all(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        thread_id = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "l2-all-unmarked",
+                "from": "cursor",
+                "to": "all",
+                "subject": "VERDICT|broadcast",
+                "body": "b",
+            },
+        ).json()["thread"]["id"]
+        client.patch(
+            f"/threads/{thread_id}/turns/read-state",
+            json={"through_turn": 1, "agent": "maestro"},
+        )
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
+        assert turn["read_at"] is None

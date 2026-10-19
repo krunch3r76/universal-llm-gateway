@@ -642,6 +642,47 @@ def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) 
     assert claimed["rows"][0]["thread_id"] == child_id
 
 
+def test_grok_bot_wake_skipped_already_read_when_turn_stamped(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="l20-grok-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="VERDICT|g",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:05:00",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 17:05:00", t_id),
+        )
+    skipped = claim_due_wakes(now="2020-01-01 17:05:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_read"
+
+
 def test_maestro_wake_not_skipped_already_read_when_turn_stamped(
     db: TestClient,
 ) -> None:
