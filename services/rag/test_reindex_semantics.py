@@ -183,9 +183,7 @@ def test_migrate_chroma_source_queries_by_source_path() -> None:
         "ids": ["id1"],
         "metadatas": [{"source": "/old/path.md", "source_hash": "abc"}],
     }
-    n = migrate_chroma_source(
-        collection, "abc", "/old/path.md", "/new/path.md"
-    )
+    n = migrate_chroma_source(collection, "abc", "/old/path.md", "/new/path.md")
     assert n == 1
     collection.get.assert_called_once_with(
         where={"source": "/old/path.md"},
@@ -214,8 +212,7 @@ async def test_unchanged_skip_on_source_hash_match_t2() -> None:
     prop_index.article_exists.return_value = True
     path_key = compute_path_key(source)
     existing_ids = [
-        compose_chunk_id(path_key, compute_chunk_hash(i, f"c{i}"))
-        for i in range(3)
+        compose_chunk_id(path_key, compute_chunk_hash(i, f"c{i}")) for i in range(3)
     ]
     with patch(
         "services.rag.rag_service.indexing.file_guards._enqueue_for_extraction",
