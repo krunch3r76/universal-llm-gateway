@@ -354,8 +354,8 @@ async def test_busy_status_hides_failed_intent_and_keeps_last(tmp_path: Any) -> 
     assert busy["restart_intent"] is None
     last = busy["restart_intent_last"]
     assert last["intent_id"] == intent.intent_id
-    assert last["status"] == "fired_unverified"
-    assert last["executed"] is True
+    assert last["status"] == "failed"
+    assert last["executed"] is False
     assert last["reason"] == "lifecycle_exception:RuntimeError"
     assert last["drain_begun"] is False
     assert last["armed_at"]

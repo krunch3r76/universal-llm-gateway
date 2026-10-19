@@ -100,6 +100,9 @@ def test_t4_projection_matrix() -> None:
     from scripts.model_manager.ui.controller.restart_intent_consumer import (
         project_restart_intent_last,
     )
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        STATUS_DRAINED_RESTARTING,
+    )
 
     superseded = _intent(
         status="activation_unverified",
@@ -124,7 +127,7 @@ def test_t4_projection_matrix() -> None:
     last = project_restart_intent_last(ttl)
     assert last is not None and last["status"] == "expired" and last["executed"] is False
 
-    bare = _intent(
+    no_boundary = _intent(
         status="failed",
         status_reason="epoch_check_mismatch",
         kill_boundary_at=None,
@@ -133,11 +136,45 @@ def test_t4_projection_matrix() -> None:
             {"status": "failed", "reason": "epoch_check_mismatch", "at": "t1"},
         ],
     )
-    last = project_restart_intent_last(bare)
+    last = project_restart_intent_last(no_boundary)
+    assert last is not None and last["status"] == "failed" and last["executed"] is False
+
+    with_boundary = _intent(
+        status="failed",
+        status_reason="epoch_check_mismatch",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": STATUS_DRAINED_RESTARTING, "reason": "kill_commit", "at": "t1"},
+            {"status": "failed", "reason": "epoch_check_mismatch", "at": "t2"},
+        ],
+    )
+    last = project_restart_intent_last(with_boundary)
     assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
+
+    boundary_no_drain = _intent(
+        status="failed",
+        status_reason="kill_failed",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": "failed", "reason": "kill_failed", "at": "t1"},
+        ],
+    )
+    last = project_restart_intent_last(boundary_no_drain)
+    assert last is not None and last["status"] == "failed" and last["executed"] is False
 
     empty = _intent(status="failed", status_reason="x", transitions=[])
     last = project_restart_intent_last(empty)
+    assert last is not None and last["status"] == "failed" and last["executed"] is False
+
+    empty_boundary = _intent(
+        status="failed",
+        status_reason="x",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[],
+    )
+    last = project_restart_intent_last(empty_boundary)
     assert last is not None and last["status"] == "failed" and last["executed"] is False
 
     fired = _intent(status="completed", status_reason="lifecycle_completed:ok")

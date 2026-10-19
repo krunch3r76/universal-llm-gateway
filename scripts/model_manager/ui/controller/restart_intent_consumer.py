@@ -76,9 +76,9 @@ def project_restart_intent_consumer(
 
 
 def _restart_execution_evidence(intent: Intent) -> bool:
-    """True when a kill boundary or a pre-terminal drain/verify transition exists (C6)."""
-    if intent.kill_boundary_at:
-        return True
+    """True when kill_boundary_at AND a pre-terminal drain/verify transition exist (C6)."""
+    if not intent.kill_boundary_at:
+        return False
     history = intent.transitions or []
     if len(history) < 2:
         return False

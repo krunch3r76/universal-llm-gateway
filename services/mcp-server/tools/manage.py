@@ -375,8 +375,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              cancelled project as
                                              fired_unverified when kill
                                              evidence is present
-                                             (kill_boundary_at, or
-                                             drained_restarting /
+                                             (kill_boundary_at and
+                                             drained_restarting or
                                              verifying_activation in
                                              transitions[:-1]); otherwise
                                              failed stays failed,

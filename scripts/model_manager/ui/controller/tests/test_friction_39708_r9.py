@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import pytest
 
+from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
+    cas_force_preempt,
+)
 from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
     GitWorkerDrainSupervisor,
 )
@@ -17,6 +21,8 @@ from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
     DRAIN_STATE_UNREADABLE_FINAL_CHECK,
     EPOCH_CHECK_MISMATCH,
     FORCE_START_PENDING,
+    KILL_FAILED,
+    LIFECYCLE_UNCONFIRMED,
     RESUME_GENERATION_UNBOUND,
     TARGET_GONE,
 )
@@ -233,7 +239,8 @@ def test_t1f_unreadable_releases_stored_epoch(tmp_path, monkeypatch) -> None:
     assert (got.status_reason or "").startswith(DRAIN_STATE_UNREADABLE_FINAL_CHECK)
     last = project_restart_intent_last(got)
     assert last is not None
-    assert last["executed"] is True
+    assert last["status"] == "failed"
+    assert last["executed"] is False
     assert released == [(intent.intent_id, 1)]
 
 
@@ -644,3 +651,364 @@ def test_t14d_steady_w1_idle_kills(tmp_path, monkeypatch) -> None:
     kill = _Kill()
     _run(_sup(store, _Script([w1]), kill, absent=_absent(False), idle=0.05).supervise(intent))
     assert kill.calls == 1
+
+
+async def _cancel_when(
+    sup: GitWorkerDrainSupervisor,
+    store,
+    intent,
+    predicate,
+) -> None:
+    task = asyncio.create_task(sup.supervise(intent))
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        got = store.get(intent.intent_id)
+        if predicate(got):
+            store.cancel(intent.intent_id, reason="operator")
+            break
+    else:
+        raise AssertionError("cancel predicate never matched")
+    await task
+
+
+def _assert_cancel_wins(events_log, released: list, *, kill_calls: int = 0) -> None:
+    assert sum(1 for n, _ in events_log if n == "manage.restart.cancelled") == 1
+    assert sum(1 for n, _ in events_log if n == "manage.restart.failed") == 0
+    assert len(released) == 1
+
+
+def test_t7_cancel_wins_v1_mid_await(tmp_path, events_log) -> None:
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    busy = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Worker:
+        async def drain_state(self):
+            return busy
+
+        async def begin_drain(self, body):
+            return busy
+
+    kill = _Kill()
+    sup = _sup(store, _Worker(), kill, cancel=_cancel)
+
+    def _ready(got) -> bool:
+        return got is not None and got.drain_epoch is not None
+
+    _run(_cancel_when(sup, store, intent, _ready))
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_CANCELLED
+    _assert_cancel_wins(events_log, released)
+
+
+def test_t7_cancel_wins_mismatch_path(tmp_path, events_log) -> None:
+    """Cancel before kill commit while epoch check would later mismatch."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    busy = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Worker:
+        async def drain_state(self):
+            return busy
+
+        async def begin_drain(self, body):
+            return busy
+
+    kill = _Kill()
+    sup = _sup(store, _Worker(), kill, cancel=_cancel)
+
+    def _armed(got) -> bool:
+        return got is not None and got.drain_epoch is not None
+
+    _run(_cancel_when(sup, store, intent, _armed))
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_CANCELLED
+    _assert_cancel_wins(events_log, released)
+
+
+def test_t7_cancel_wins_unreadable_reprobe(tmp_path, monkeypatch, events_log) -> None:
+    """Cancel before kill commit while final re-probe would be unreadable."""
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    busy = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Worker:
+        async def drain_state(self):
+            return busy
+
+        async def begin_drain(self, body):
+            return busy
+
+    kill = _Kill()
+    sup = _sup(store, _Worker(), kill, cancel=_cancel, absent=_absent(False))
+
+    def _armed(got) -> bool:
+        return got is not None and got.drain_epoch is not None
+
+    _run(_cancel_when(sup, store, intent, _armed))
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_CANCELLED
+    _assert_cancel_wins(events_log, released)
+    assert kill.calls == 0
+
+
+def test_t7_cancel_wins_on_idle(tmp_path, monkeypatch, events_log) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    stuck = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Worker:
+        async def drain_state(self):
+            store.cancel(intent.intent_id, reason="operator")
+            return stuck
+
+        async def begin_drain(self, body):
+            return stuck
+
+    kill = _Kill()
+    sup = _sup(
+        store, _Worker(), kill, cancel=_cancel, absent=_absent(False), idle=0.05
+    )
+
+    async def _go() -> None:
+        task = asyncio.create_task(sup.supervise(intent))
+        await asyncio.sleep(0.25)
+        await task
+
+    _run(_go())
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_CANCELLED
+    _assert_cancel_wins(events_log, released)
+    assert kill.calls == 0
+
+
+def test_t7_force_requested_no_cancel_side_effects(tmp_path, events_log) -> None:
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    stuck = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Worker:
+        async def drain_state(self):
+            return stuck
+
+        async def begin_drain(self, body):
+            return stuck
+
+    kill = _Kill()
+    sup = _sup(store, _Worker(), kill, cancel=_cancel)
+
+    async def _preempt() -> None:
+        task = asyncio.create_task(sup.supervise(intent))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            got = store.get(intent.intent_id)
+            if got is not None and got.drain_epoch is not None:
+                assert cas_force_preempt(store, intent.intent_id)
+                break
+        await task
+
+    _run(_preempt())
+    assert released == []
+    assert "manage.restart.cancelled" not in [n for n, _ in events_log]
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FORCE_REQUESTED
+
+
+def test_t9_unbound_dead_start_raises(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="k")
+    store._update(intent.intent_id, worker_started_at="not-a-date")
+    intent = store.get(intent.intent_id)
+
+    async def _boom() -> str:
+        raise RuntimeError("start failed")
+
+    kill = _Kill()
+    _run(
+        _sup(
+            store,
+            _Script([RuntimeError("down")]),
+            kill,
+            start=_boom,
+            absent=_absent(True),
+        ).supervise(intent)
+    )
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+
+
+def test_t9_no_epoch_absent_reaches_on_idle(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+
+    class _Never:
+        async def drain_state(self):
+            raise RuntimeError("down")
+
+        async def begin_drain(self, body):
+            raise RuntimeError("down")
+
+    kill = _Kill()
+    _run(
+        _sup(
+            store,
+            _Never(),
+            kill,
+            absent=_absent(True),
+        ).supervise(intent)
+    )
+    assert kill.calls == 1
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.drain_epoch is None
+    assert got.status in {
+        STATUS_VERIFYING_ACTIVATION,
+        STATUS_COMPLETED,
+        STATUS_FAILED,
+        "activation_unverified",
+    }
+
+
+def test_t11b_release_fails_twice_then_succeeds(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    import scripts.model_manager.ui.controller.git_worker_liveness as live
+
+    monkeypatch.setattr(live, "PROBE_UNREACHABLE_WINDOW_S", 0.15)
+    store = _store(tmp_path)
+    intent = _bound(store)
+    match = _snap(draining=True, epoch=1, active=0)
+    mismatch = _snap(draining=False, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    attempts: list[int] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        attempts.append(epoch)
+        if len(attempts) <= 2:
+            raise RuntimeError("release failed")
+
+    _run(_sup(store, _Script([match, mismatch]), _Kill(), cancel=_cancel, absent=_absent(False)).supervise(intent))
+    assert len(attempts) == 3
+
+
+def test_t11c_process_absent_after_write_one_release(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = _bound(store)
+    match = _snap(draining=True, epoch=1, active=0)
+    mismatch = _snap(draining=False, epoch=1, active=1, ops=[{"op_id": "o1"}])
+    attempts: list[int] = []
+    absent_flag = {"v": False}
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        attempts.append(epoch)
+        absent_flag["v"] = True
+        raise RuntimeError("release failed")
+
+    async def _absent_probe() -> bool:
+        return absent_flag["v"]
+
+    _run(
+        _sup(
+            store,
+            _Script([match, mismatch]),
+            _Kill(),
+            cancel=_cancel,
+            absent=_absent_probe,
+        ).supervise(intent)
+    )
+    assert len(attempts) == 1
+
+
+def test_t11d_drain_completed_emit_raises(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = _bound(store)
+    ok = _snap(draining=True, epoch=1, active=0)
+    calls = {"emit": 0}
+
+    async def _fake_emit(**_kw: Any) -> None:
+        calls["emit"] += 1
+        raise RuntimeError("emit boom")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.git_worker_drain_supervisor.events.emit_manage_restart_drain_completed",
+        _fake_emit,
+    )
+    kill = _Kill()
+    _run(_sup(store, _Script([ok]), kill).supervise(intent))
+    assert calls["emit"] == 1
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+
+
+def test_t11d_kill_raises(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = _bound(store)
+    ok = _snap(draining=True, epoch=1, active=0)
+
+    class _BoomKill:
+        async def __call__(self) -> str:
+            raise RuntimeError("kill boom")
+
+    _run(_sup(store, _Script([ok]), _BoomKill()).supervise(intent))
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+    assert (got.status_reason or "").startswith(KILL_FAILED)
+
+
+def test_t11d_lifecycle_uncertified(tmp_path, monkeypatch) -> None:
+    _fast(monkeypatch)
+    store = _store(tmp_path)
+    intent = _bound(store)
+    ok = _snap(draining=True, epoch=1, active=0)
+
+    class _SoftKill:
+        async def __call__(self) -> str:
+            return "git-integration-worker is already running."
+
+    _run(_sup(store, _Script([ok]), _SoftKill()).supervise(intent))
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+    assert (got.status_reason or "").startswith(LIFECYCLE_UNCONFIRMED)

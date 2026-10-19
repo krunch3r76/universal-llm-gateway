@@ -1847,6 +1847,7 @@ def test_resumed_bound_drained_restarting_same_gen_kills(
 def test_idle_gate_skips_other_generation_bound_resume(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
+    events_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
     """T14.a: w2 snapshots must not idle-escalate kill on bound drained_restarting."""
     import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
@@ -1912,3 +1913,47 @@ def test_idle_gate_skips_other_generation_bound_resume(
     assert kill.calls == 0
     got = store.get(intent.intent_id)
     assert got is not None and got.status == STATUS_DRAINED_RESTARTING
+    signals = [name for name, _ in events_log]
+    assert "manage.recycle.escalated" not in signals
+    reasons = [t.get("reason") or "" for t in got.transitions or []]
+    assert not any("begin_drain_unreachable" in r for r in reasons)
+
+    w2_idle = _snap(
+        draining=True,
+        epoch=1,
+        worker_id="w2",
+        started="t2",
+        active=0,
+    )
+
+    class _SteadyW2:
+        async def drain_state(self) -> dict[str, Any]:
+            return w2_idle
+
+        async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError("begin-drain must not run on resume completion")
+
+    steady = _SteadyW2()
+    sup_steady = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=steady.begin_drain,
+        drain_state=steady.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        idle_escalate_s=0.2,
+        park_for_restart=None,
+        process_absent=_pid_present,
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None
+    _run(sup_steady.supervise(got))
+    assert kill.calls == 0
+    final = store.get(intent.intent_id)
+    assert final is not None and final.status == STATUS_COMPLETED
+    assert (final.status_reason or "").startswith("activation_not_applicable") or (
+        "generation_gone" in (final.status_reason or "")
+        or "activation_not_applicable" in (final.status_reason or "")
+    )

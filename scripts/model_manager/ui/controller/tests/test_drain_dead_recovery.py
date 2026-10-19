@@ -784,17 +784,259 @@ def test_resumed_pending_stored_epoch_pid_absent_starts(tmp_path, monkeypatch) -
     async def _pid() -> int:
         return 4242
 
+    kill = r9._Kill()
     r9._run(
         r9._sup(
             store,
             _Begin(),
-            r9._Kill(),
+            kill,
             start=r9._start("started pid 4242", starts),
             absent=r9._absent(True),
             read_pid=_pid,
         ).supervise(intent)
     )
     assert starts == [1]
+    assert kill.calls == 0
     got = store.get(intent.intent_id)
     assert got is not None and got.kill_boundary_at
     assert got.status != "failed"
+
+
+def test_t12_stored_epoch_stop_target_gone(tmp_path, monkeypatch) -> None:
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    stop_dir = tmp_path / "stop"
+    stop_dir.mkdir()
+    store = r9._store(stop_dir)
+    intent = store.create_intent(
+        service=_SERVICE, action="stop", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    kill = r9._Kill()
+
+    class _Begin:
+        async def drain_state(self):
+            return r9._snap(draining=False, epoch=0, active=0)
+
+        async def begin_drain(self, body):
+            raise RuntimeError("absent")
+
+    r9._run(
+        r9._sup(
+            store,
+            _Begin(),
+            kill,
+            absent=r9._absent(True),
+        ).supervise(intent)
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert (got.status_reason or "").startswith("target_gone")
+    assert kill.calls == 0
+
+
+def test_t12_stored_epoch_recycle_giw_completes(tmp_path, monkeypatch) -> None:
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    recycle_dir = tmp_path / "recycle"
+    recycle_dir.mkdir()
+    store = r9._store(recycle_dir)
+    intent = r9._bound(store, action="recycle_giw")
+    w2 = r9._snap(draining=True, epoch=9, worker_id="w2", started="t2", active=0)
+    kill = r9._Kill()
+    r9._run(r9._sup(store, r9._Script([w2]), kill).supervise(intent))
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_COMPLETED
+    assert kill.calls == 0
+
+
+def test_t12_stored_epoch_already_running_force_start_pending(
+    tmp_path, monkeypatch
+) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
+        FORCE_START_PENDING,
+    )
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    already_dir = tmp_path / "already"
+    already_dir.mkdir()
+    store = r9._store(already_dir)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    released: list[tuple[str, int]] = []
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        released.append((intent_id, epoch))
+
+    class _Begin:
+        async def drain_state(self):
+            return r9._snap(draining=False, epoch=0, active=0)
+
+        async def begin_drain(self, body):
+            raise RuntimeError("absent")
+
+    r9._run(
+        r9._sup(
+            store,
+            _Begin(),
+            r9._Kill(),
+            start=r9._start("already running", []),
+            cancel=_cancel,
+            absent=r9._absent(True),
+        ).supervise(intent)
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+    assert (got.status_reason or "").startswith(FORCE_START_PENDING)
+    assert released == [(intent.intent_id, 1)]
+
+
+def test_t8_gone_then_none_arms_verify(tmp_path, monkeypatch) -> None:
+    """T8.1: generation-gone snapshot completes without kill."""
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    _patch_validate(monkeypatch)
+    store = r9._store(tmp_path)
+    intent = r9._bound(store, action="recycle_giw")
+    w2 = r9._snap(draining=True, epoch=9, worker_id="w2", started="t2", active=0)
+    kill = r9._Kill()
+    r9._run(r9._sup(store, r9._Script([w2]), kill).supervise(intent))
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_COMPLETED
+    assert kill.calls == 0
+
+
+def test_t8_none_with_pid_up_unreadable_failed(tmp_path, monkeypatch) -> None:
+    """T8.2: unreadable final re-probe with pid present → failed, executed false."""
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    store = r9._store(tmp_path)
+    intent = r9._bound(store)
+    match = r9._snap(draining=True, epoch=1, active=0)
+    kill = r9._Kill()
+    r9._run(
+        r9._sup(
+            store,
+            r9._Script([match, RuntimeError("gone")]),
+            kill,
+            absent=r9._absent(False),
+        ).supervise(intent)
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FAILED
+    assert (got.status_reason or "").startswith("drain_state_unreadable")
+    last = project_restart_intent_last(got)
+    assert last is not None and last["status"] == "failed" and last["executed"] is False
+
+
+def test_t8_cancel_mid_reprobe_no_failed(tmp_path, monkeypatch) -> None:
+    """T8.4: operator cancel during resume await → one cancel emit, no failed."""
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    events_log: list[tuple[str, dict[str, Any]]] = []
+
+    async def _fake_emit(signal: str, payload: dict[str, Any], **_kw: Any) -> None:
+        events_log.append((signal, payload))
+
+    monkeypatch.setattr("scripts.model_manager.observation_event._emit", _fake_emit)
+    r9._fast(monkeypatch)
+    store = r9._store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    busy = r9._snap(draining=True, epoch=1, active=1, ops=[{"op_id": "o1"}])
+
+    class _Worker:
+        async def drain_state(self):
+            return busy
+
+        async def begin_drain(self, body):
+            return busy
+
+    async def _cancel(intent_id: str, epoch: int) -> None:
+        return None
+
+    async def _cancel_when_armed() -> None:
+        sup = r9._sup(store, _Worker(), r9._Kill(), cancel=_cancel)
+        task = asyncio.create_task(sup.supervise(intent))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            got = store.get(intent.intent_id)
+            if got is not None and got.drain_epoch is not None:
+                store.cancel(intent.intent_id, reason="operator")
+                break
+        await task
+
+    r9._run(_cancel_when_armed())
+    assert sum(1 for n, _ in events_log if n == "manage.restart.failed") == 0
+    assert sum(1 for n, _ in events_log if n == "manage.restart.cancelled") == 1
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == "cancelled"
+
+
+def test_t8_post_arm_exception_fired_unverified_vs_failed(tmp_path) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_store import Intent
+
+    with_boundary = Intent(
+        intent_id="i1",
+        service=_SERVICE,
+        action="restart",
+        status="failed",
+        drain_epoch=1,
+        worker_id="w1",
+        worker_started_at="t1",
+        deadline_at="d",
+        last_seen_event_seq=0,
+        reason="r",
+        kill_boundary_at="2026-01-01T00:00:00+00:00",
+        created_at="t",
+        updated_at="t",
+        status_reason="supervisor_exception:RuntimeError",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": "drained_restarting", "reason": "kill", "at": "t1"},
+            {"status": "failed", "reason": "supervisor_exception", "at": "t2"},
+        ],
+    )
+    last = project_restart_intent_last(with_boundary)
+    assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
+
+    bare = Intent(
+        intent_id="i2",
+        service=_SERVICE,
+        action="restart",
+        status="failed",
+        drain_epoch=1,
+        worker_id="w1",
+        worker_started_at="t1",
+        deadline_at="d",
+        last_seen_event_seq=0,
+        reason="r",
+        kill_boundary_at=None,
+        created_at="t",
+        updated_at="t",
+        status_reason="epoch_check_mismatch",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": "failed", "reason": "epoch_check_mismatch", "at": "t1"},
+        ],
+    )
+    last2 = project_restart_intent_last(bare)
+    assert last2 is not None and last2["status"] == "failed" and last2["executed"] is False
