@@ -704,21 +704,14 @@ def test_seal_read_oserror_raises(
         ),
         encoding="utf-8",
     )
+    real_read_text = Path.read_text
 
-    real_open = Path.open
+    def _fail_read_text(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        if self == path:
+            raise OSError("simulated read failure")
+        return real_read_text(self, *args, **kwargs)
 
-    def _fail_read(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        fh = real_open(self, *args, **kwargs)
-        if self == path and "rb" in args:
-            read = fh.read
-
-            def _broken(size=-1):  # noqa: ANN001
-                raise OSError("simulated read failure")
-
-            fh.read = _broken  # type: ignore[method-assign]
-        return fh
-
-    monkeypatch.setattr(Path, "open", _fail_read)
+    monkeypatch.setattr(Path, "read_text", _fail_read_text)
     with pytest.raises(OSError, match="simulated read failure"):
         chunk_json_file(path)
 
