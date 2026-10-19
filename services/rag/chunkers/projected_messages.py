@@ -1,9 +1,10 @@
 """Sniff messages-format JSON and chunk ``project_messages`` markdown.
 
 ``.json`` files are classified by a bounded read. Transcripts go through
-``message_projection.project_messages`` and are split on ``## Turn N - ``
-headings. Tape, raw staging, fine-tune fixtures, and unstructured session
-renders return no chunks so the indexer can drop prior rows for that path.
+``message_projection.project_messages`` one turn at a time, so a heading is
+only a boundary the projector emitted. Tape, raw staging, fine-tune fixtures,
+and unstructured session renders return no chunks so the indexer can drop
+prior rows for that path.
 """
 
 from __future__ import annotations
@@ -40,7 +41,6 @@ SEAL_SCHEMA = "ulg.continuity.messages/1"
 SNIFF_BYTES = 65_536
 MAX_JSON_BYTES = 64 * 1024 * 1024
 _PART_RESERVE = 24
-_TURN_HEADING = re.compile(r"^## Turn (\d+) - .*$")
 _TAPE_KEYS = ("cells", "open_line", "index")
 
 _seen_skips: set[tuple[str, int, str]] = set()
@@ -115,7 +115,15 @@ def unstructured_session_render(path: Path, text: str) -> bool:
 
 
 def _is_raw_name(path: Path) -> bool:
-    return path.name.lower().endswith(".raw.json")
+    """True when a ``.json`` name has a ``raw`` segment before the suffix.
+
+    ``snap.raw.json``, ``h.raw.messages.json``, and ``x.raw.staging.json``
+    match. A seal named ``session.messages.json`` does not.
+    """
+    name = path.name.lower()
+    if not name.endswith(".json"):
+        return False
+    return "raw" in name.split(".")[:-1]
 
 
 def _is_raw_meta(data: object) -> bool:
@@ -212,15 +220,14 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
     if kind != "ok":
         return _skip(path, "unsupported_shape")
     messages = [row for row in rows if isinstance(row, dict)]
-    projected = project_messages(messages, meta)
-    chunks = _chunk_projected(path, projected)
+    sections = _projected_sections(messages, meta)
+    chunks = _chunk_projected(path, sections)
     if chunks is None:
         return _skip(path, "oversize_unsplittable")
     return _annotate_chunk_indices(chunks)
 
 
-def _chunk_projected(path: Path, markdown: str) -> list[Chunk] | None:
-    sections = _accepted_turns(markdown)
+def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk] | None:
     chunks: list[Chunk] = []
     for heading, body in sections:
         parts = _split_turn(heading, body)
@@ -238,27 +245,28 @@ def _chunk_projected(path: Path, markdown: str) -> list[Chunk] | None:
     return chunks
 
 
-def _accepted_turns(markdown: str) -> list[tuple[str, str]]:
-    """Keep a ``## Turn N - `` heading only when ``N`` is the next expected number."""
-    sections: list[tuple[str, list[str]]] = []
-    expected: int | None = None
-    heading = ""
-    body: list[str] = []
-    for line in markdown.split("\n"):
-        match = _TURN_HEADING.match(line)
-        if match:
-            number = int(match.group(1))
-            if expected is None or number == expected:
-                if heading or body:
-                    sections.append((heading, body))
-                heading = line
-                body = []
-                expected = number + 1
-                continue
-        body.append(line)
-    if heading or body:
-        sections.append((heading, body))
-    return [(head, "\n".join(lines).strip("\n")) for head, lines in sections]
+def _projected_sections(messages: list[dict], meta: dict) -> list[tuple[str, str]]:
+    """Return the heading and body of each turn ``project_messages`` emits.
+
+    Each row is projected by itself. A line inside a message body cannot
+    become a turn boundary, including a quoted ``## Turn N - `` line whose
+    number is the next integer.
+    """
+    sections: list[tuple[str, str]] = []
+    observed = meta if isinstance(meta, dict) else {}
+    for index, raw in enumerate(messages, start=1):
+        if not isinstance(raw, dict):
+            continue
+        row = raw
+        if not isinstance(raw.get("turn_index"), int):
+            row = dict(raw)
+            row["turn_index"] = index
+        rendered = project_messages([row], observed)
+        if not rendered:
+            continue
+        heading, sep, body = rendered.partition("\n\n")
+        sections.append((heading, body if sep else ""))
+    return sections
 
 
 def _split_turn(heading: str, body: str) -> list[str] | None:
@@ -282,8 +290,8 @@ def _split_turn(heading: str, body: str) -> list[str] | None:
 def _split_fenced(body: str, budget: int) -> list[str] | None:
     """Split a turn body on paragraphs, then lines, then a UTF-8 hard cut.
 
-    A cut that lands inside a fence closes the fence on the current piece
-    and reopens it on the next piece.
+    A cut that lands inside a fence closes that fence with the opener's
+    backtick length and reopens the same opener, info string included.
     """
     if not body:
         return [""]
@@ -299,7 +307,7 @@ def _split_fenced(body: str, budget: int) -> list[str] | None:
         text = "\n\n".join(buf)
         reopen = fence
         if fence is not None:
-            text = f"{text}\n```"
+            text = f"{text}\n{_close_for(fence)}"
         pieces.append(text)
         buf = []
         fence = None
@@ -324,35 +332,68 @@ def _split_fenced(body: str, budget: int) -> list[str] | None:
     emit()
     balanced: list[str] = []
     for piece in pieces:
-        if (
-            piece.strip() in {"", "```"}
-            or piece.strip().startswith("```")
-            and "\n" not in piece.strip()
+        stripped = piece.strip()
+        if stripped == "" or (
+            _parse_fence_line(stripped) is not None and "\n" not in stripped
         ):
             continue
-        if piece.count("```") % 2 == 1:
-            piece = f"{piece}\n```"
+        opener = _fence_after([piece])
+        if opener is not None:
+            piece = f"{piece}\n{_close_for(opener)}"
         balanced.append(piece)
     return balanced
 
 
-def _fits(buf: list[str], para: str, fence: str | None, budget: int) -> bool:
+def _fits(buf: list[str], para: str, _fence: str | None, budget: int) -> bool:
     trial = buf + [para]
     text = "\n\n".join(trial)
-    if _fence_after(trial) is not None:
-        text = f"{text}\n```"
+    opener = _fence_after(trial)
+    if opener is not None:
+        text = f"{text}\n{_close_for(opener)}"
     return len(text.encode("utf-8")) <= budget
 
 
+def _parse_fence_line(line: str) -> tuple[int, str] | None:
+    """Return backtick run length and info string for a fence line."""
+    if not line.startswith("```"):
+        return None
+    length = 0
+    for char in line:
+        if char != "`":
+            break
+        length += 1
+    if length < 3:
+        return None
+    return length, line[length:]
+
+
+def _close_for(opener: str) -> str:
+    """Closing fence using the opener's backtick length and no info string."""
+    parsed = _parse_fence_line(opener)
+    if parsed is None:
+        return "```"
+    return "`" * parsed[0]
+
+
+def _is_close(line: str, opener: str) -> bool:
+    opened = _parse_fence_line(opener)
+    parsed = _parse_fence_line(line)
+    if opened is None or parsed is None:
+        return False
+    length, info = parsed
+    return length == opened[0] and info.strip() == ""
+
+
 def _fence_after(blocks: list[str]) -> str | None:
+    """Return the open fence line, matching closes of that same run length."""
     opener: str | None = None
     for block in blocks:
         for line in block.split("\n"):
-            if not line.startswith("```"):
+            if _parse_fence_line(line) is None:
                 continue
             if opener is None:
                 opener = line
-            elif line.strip() == "```":
+            elif _is_close(line, opener):
                 opener = None
     return opener
 
@@ -370,8 +411,8 @@ def _split_paragraph(
             return
         text = "\n".join(buf)
         reopen = local_fence
-        if local_fence is not None and not text.rstrip().endswith("```"):
-            text = f"{text}\n```"
+        if local_fence is not None and not _ends_with_close(text, local_fence):
+            text = f"{text}\n{_close_for(local_fence)}"
         pieces.append(text)
         buf = []
         local_fence = None
@@ -380,36 +421,55 @@ def _split_paragraph(
             local_fence = reopen
 
     for line in lines:
-        trial = "\n".join(buf + [line])
-        close = "\n```" if _line_opens(buf + [line]) else ""
-        if len((trial + close).encode("utf-8")) <= budget:
+        if _line_fits(buf, line, budget):
             buf.append(line)
             local_fence = _fence_after(buf)
             continue
         emit_lines()
-        trial = "\n".join(buf + [line])
-        close = "\n```" if _line_opens(buf + [line]) else ""
-        if len((trial + close).encode("utf-8")) <= budget:
+        if _line_fits(buf, line, budget):
             buf.append(line)
             local_fence = _fence_after(buf)
             continue
+        carried = local_fence
         if not _hard_cut_line(line, budget, pieces, local_fence):
             return False
-        local_fence = _fence_after([pieces[-1]]) if pieces else local_fence
-        buf = [local_fence] if local_fence else []
+        if carried is not None:
+            local_fence = carried
+            buf = [carried]
+        else:
+            local_fence = _fence_after([pieces[-1]]) if pieces else None
+            buf = [local_fence] if local_fence else []
     emit_lines()
     return True
 
 
-def _line_opens(lines: list[str]) -> bool:
-    return _fence_after(lines) is not None
+def _ends_with_close(text: str, opener: str) -> bool:
+    last = text.rstrip("\n").split("\n")[-1]
+    return _is_close(last, opener)
+
+
+def _line_fits(buf: list[str], line: str, budget: int) -> bool:
+    trial_lines = buf + [line]
+    trial = "\n".join(trial_lines)
+    opener = _fence_after(trial_lines)
+    close = f"\n{_close_for(opener)}" if opener is not None else ""
+    return len((trial + close).encode("utf-8")) <= budget
+
+
+def _hard_cut_suffix(fence: str | None, line: str) -> str:
+    if fence is not None:
+        return "\n" + _close_for(fence)
+    parsed = _parse_fence_line(line)
+    if parsed is None:
+        return ""
+    return "\n" + ("`" * parsed[0])
 
 
 def _hard_cut_line(
     line: str, budget: int, pieces: list[str], fence: str | None
 ) -> bool:
     prefix = f"{fence}\n" if fence else ""
-    suffix = "\n```" if fence or line.startswith("```") else ""
+    suffix = _hard_cut_suffix(fence, line)
     room = budget - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
     if room < 1:
         return False
@@ -420,16 +480,16 @@ def _hard_cut_line(
         if not head:
             return False
         text = prefix + head.decode("utf-8")
-        if fence is not None or (first and line.startswith("```")):
-            text = f"{text}\n```"
+        if fence is not None or (first and _parse_fence_line(line) is not None):
+            text = f"{text}{suffix}"
         if len(text.encode("utf-8")) > budget:
             return False
         pieces.append(text)
         first = False
-        if fence is None and line.startswith("```"):
+        if fence is None and _parse_fence_line(line) is not None:
             fence = line.split("\n", 1)[0]
             prefix = f"{fence}\n"
-            suffix = "\n```"
+            suffix = "\n" + _close_for(fence)
             room = budget - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
             if room < 1:
                 return False

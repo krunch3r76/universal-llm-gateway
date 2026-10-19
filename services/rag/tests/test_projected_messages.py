@@ -127,6 +127,34 @@ def test_tape_raw_and_render_skip(tmp_path: Path) -> None:
     assert chunk_file(fine) == []
 
 
+def _recognized_fence_lengths(text: str) -> tuple[bool, set[int]]:
+    """Return whether fences are closed, and the run lengths that opened them.
+
+    A shorter backtick line inside a longer fence is payload, not a fence.
+    """
+    opener: int | None = None
+    lengths: set[int] = set()
+    for line in text.splitlines():
+        if not line.startswith("`"):
+            continue
+        run = 0
+        for char in line:
+            if char != "`":
+                break
+            run += 1
+        if run < 3:
+            continue
+        info = line[run:]
+        if opener is None:
+            opener = run
+            lengths.add(run)
+            continue
+        if run == opener and info.strip() == "":
+            opener = None
+            lengths.add(run)
+    return opener is None, lengths
+
+
 def test_fake_heading_stays_in_body(tmp_path: Path) -> None:
     path = tmp_path / "quoted.json"
     path.write_text(
@@ -148,6 +176,92 @@ def test_fake_heading_stays_in_body(tmp_path: Path) -> None:
     _assert_capped(chunks)
     assert not any(chunk.text.startswith("## Turn 9") for chunk in chunks)
     assert any("Turn 9 - fake" in chunk.text for chunk in chunks)
+
+
+def test_quoted_next_turn_heading_stays_in_body(tmp_path: Path) -> None:
+    path = tmp_path / "quoted-next.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "first\n\n## Turn 2 - fake - user\n\nstolen",
+                    },
+                    {"role": "assistant", "content": "real second"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    starts = [chunk.text.splitlines()[0] for chunk in chunks]
+    assert not any(start.startswith("## Turn 2 - fake") for start in starts)
+    assert any("## Turn 2 - fake - user" in chunk.text for chunk in chunks)
+    assert any(
+        "stolen" in chunk.text and "real second" not in chunk.text for chunk in chunks
+    )
+    assert any(
+        start.startswith("## Turn 2 - ") and start.endswith("assistant")
+        for start in starts
+    )
+    assert any("real second" in chunk.text for chunk in chunks)
+
+
+def test_tool_result_long_fence_stays_balanced(tmp_path: Path) -> None:
+    payload = "```python\nprint(1)\n```\n" + ("y" * 30_000)
+    path = tmp_path / "long-fence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "run"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "name": "bash",
+                                "content": payload,
+                            }
+                        ],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    assert len(chunks) > 1
+    saw_long = False
+    saw_inner = False
+    for chunk in chunks:
+        balanced, lengths = _recognized_fence_lengths(chunk.text)
+        assert balanced, chunk.text[:120]
+        assert len(lengths) <= 1
+        if 4 in lengths:
+            saw_long = True
+        if "```python" in chunk.text:
+            saw_inner = True
+    assert saw_long
+    assert saw_inner
+
+
+def test_raw_dotted_json_names_skip(tmp_path: Path) -> None:
+    payload = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "u"},
+                {"role": "assistant", "content": "a"},
+            ]
+        }
+    )
+    for name in ("h.raw.messages.json", "x.raw.staging.json"):
+        path = tmp_path / name
+        path.write_text(payload, encoding="utf-8")
+        assert chunk_file(path) == []
 
 
 def test_two_megabyte_turn_and_tool_result_stay_under_cap(tmp_path: Path) -> None:
