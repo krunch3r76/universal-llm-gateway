@@ -157,6 +157,61 @@ def _promote(
     }
 
 
+def run_promote_document(
+    path: str,
+    entity_id: str,
+    entity_description: str,
+    entity_attributes: dict[str, Any] | None = None,
+    sidecar: str = "auto",
+) -> dict[str, Any]:
+    """Run promote telemetry and ``_promote``.
+
+    ``PromoteError`` is recorded and re-raised unchanged. ``ValueError``
+    from ``_promote`` (not a file, path outside the files root) propagates
+    as ``ValueError``.
+    """
+    t0 = monotonic_now()
+    record(
+        "mcp.evidence.promote.called",
+        path=path,
+        entity_id=entity_id,
+    )
+    try:
+        result = _promote(
+            path=path,
+            entity_id=entity_id,
+            entity_description=entity_description,
+            entity_attributes=entity_attributes,
+            sidecar=sidecar,
+        )
+    except PromoteError as exc:
+        record(
+            "mcp.evidence.promote.failed",
+            path=path,
+            entity_id=entity_id,
+            code=exc.code,
+        )
+        raise
+
+    elapsed = monotonic_now() - t0
+    record(
+        "mcp.evidence.promote.completed",
+        path=path,
+        entity_id=entity_id,
+        bundle_path=result["bundle_path"],
+        entity_created=result["entity_created"],
+        duration_s=round(elapsed, 3),
+    )
+    logger.info(
+        "promote_document_to_evidence: %s → %s (entity_created=%s, %.1fs)",
+        path,
+        result["bundle_path"],
+        result["entity_created"],
+        elapsed,
+    )
+    return result
+
+
 def register_promote_document_to_evidence_tools(mcp: FastMCP) -> None:
     """Register ``promote_document_to_evidence`` on the MCP surface."""
 
@@ -199,43 +254,13 @@ def register_promote_document_to_evidence_tools(mcp: FastMCP) -> None:
             ``{entity_created, entity_id, content_hash, evidence_path,
             bundle_path, source_uri, sidecar_moved, canonical, partial}``.
         """
-        t0 = monotonic_now()
-        record(
-            "mcp.evidence.promote.called",
-            path=path,
-            entity_id=entity_id,
-        )
         try:
-            result = _promote(
-                path=path,
-                entity_id=entity_id,
-                entity_description=entity_description,
+            return run_promote_document(
+                path,
+                entity_id,
+                entity_description,
                 entity_attributes=entity_attributes,
                 sidecar=sidecar,
             )
         except PromoteError as exc:
-            record(
-                "mcp.evidence.promote.failed",
-                path=path,
-                entity_id=entity_id,
-                code=exc.code,
-            )
             raise ValueError(f"{exc.code}: {exc.message}") from exc
-
-        elapsed = monotonic_now() - t0
-        record(
-            "mcp.evidence.promote.completed",
-            path=path,
-            entity_id=entity_id,
-            bundle_path=result["bundle_path"],
-            entity_created=result["entity_created"],
-            duration_s=round(elapsed, 3),
-        )
-        logger.info(
-            "promote_document_to_evidence: %s → %s (entity_created=%s, %.1fs)",
-            path,
-            result["bundle_path"],
-            result["entity_created"],
-            elapsed,
-        )
-        return result
