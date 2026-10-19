@@ -55,9 +55,12 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "team_dispatch(seat=cursor-sdk, job=implement, lane=B)" in message
     assert "repo-write goals → cursor-auto" not in message
     assert "Skip CreateGoal" in message
-    assert "--heartbeat 1200" in message
-    assert "LOOP: rebuild" in message
-    assert "runbook:bus-consult-watcher" in message
+    assert "display-chat-wake" in message
+    assert "endpoint_wake_dispatcher" in message
+    assert "cursor_agent_stores/<uuid>/files" in message
+    assert "watch-supervise.sh tail" not in message
+    assert "--heartbeat 1200" not in message
+    assert "runbook:bus-consult-watcher" not in message
     assert message.rstrip().endswith(
         "A finished watch with no next leg is not a situation report."
     )
@@ -67,8 +70,10 @@ def test_hop_arm_line_attaches_tail() -> None:
     message = build_ide_hop_message(
         "10479", row="x", arm_labels=["10479-r1-closeout"]
     )
-    assert "ARM: tail 10479-r1-closeout" in message
-    assert "watch-supervise.sh tail --label 10479-r1-closeout" in message
+    assert "ARM: live watcher 10479-r1-closeout" in message
+    assert "push-wake only" in message
+    assert "watch-supervise.sh tail" not in message
+    assert "display-chat-wake" in message
     assert "start --label" not in message
     assert "§ Peer-house" in message
     assert "Hop after harvest is the rule" not in message

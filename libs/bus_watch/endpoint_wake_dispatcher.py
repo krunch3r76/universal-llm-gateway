@@ -91,7 +91,7 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
     r"admitted|progress|park-harvest wake|hop-[a-z0-9]+)(?:\b|\||$)"
 )
 _CURSOR_GATE_WAKE_RE = re.compile(
-    r"(?i)(?:VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
+    r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
     r"BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})

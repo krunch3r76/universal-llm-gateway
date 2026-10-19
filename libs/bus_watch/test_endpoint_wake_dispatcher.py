@@ -50,6 +50,14 @@ def test_cse_allowlist_not_display(db: None) -> None:
     assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"}, cse=True)
     assert qualifies({"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=True)
     assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "CLOSEOUT|x"}, cse=True)
+    assert qualifies(
+        {
+            "to_agent": "cursor",
+            "from_agent": "cursor-sdk",
+            "subject": "cursor-sdk CLOSEOUT a6c1430199ea-a24aece5 contract=freeform",
+        },
+        cse=False,
+    )
     assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "DONE #359 RAG without pipe"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "TYPE: DIRECTIVE — go"}, cse=True)
     assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"}, cse=True)

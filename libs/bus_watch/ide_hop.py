@@ -236,9 +236,16 @@ def build_ide_hop_message(
     tell the successor it is autonomous (bind forks itself, page only on designed
     stops, hop itself) in the first line, not leave it to a digest field it may skim.
     """
-    arm_lines = [f"ARM: {TAIL_RECIPE.format(label=label)}" for label in arm_labels] or [
-        "ARM: none live — Plan from the digest (`scripts/liaison-tick.py --root R --once`)."
-    ]
+    if arm_labels:
+        arm_lines = [
+            f"ARM: live watcher {label} (push-wake only — do not attach tail)"
+            for label in arm_labels
+        ]
+    else:
+        arm_lines = [
+            f"ARM: none live — Plan from the digest "
+            f"(`scripts/liaison-tick.py --root {root_id} --once`)."
+        ]
     tip = f" tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else ""
     lines = [
         f"resume {root_id}",
@@ -257,8 +264,7 @@ def build_ide_hop_message(
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
         "→ STAY — do not hop.",
-        "LOAD AND EXECUTE: runbook:bus-consult-watcher (legs 1-3 atomic); "
-        "runbook:liaison-operator-guide when a ruling or how-to moves; "
+        "LOAD AND EXECUTE: runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
         "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
         "cursor-sdk; life repo-write → life_dispatch; then cdp/opus-5.5 (check) → "
@@ -268,12 +274,21 @@ def build_ide_hop_message(
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,
-        LOOP_REBUILD.format(root=root_id),
-        "Then: harvest watcher wakes -> fold scoreboard -> Plan -> Dispatch "
-        "(+watcher) -> CHECKPOINT. Skip CreateGoal. Attach `tail --label` per ARM "
-        "label (pollers survive retire). "
-        "Hop only if hop_qualifies; else STAY. "
-        "STAY with no playable row and no live watcher: do not leave the loop running.",
+        "WAKE: Push-driven via endpoint_wake_dispatcher -> display-chat-wake "
+        "(BRIDGE_WAKE on house subscription + child-lane parent_thread). "
+        "Do NOT start or attach watch-supervise.sh pollers/tails and do NOT start "
+        "liaison-tick.py --loop or --heartbeat.",
+        "SEAT ID: Your tab transcript UUID is the directory name in <user_info> under "
+        "'Current agent's store: .../cursor_agent_stores/<uuid>/files'. Pass "
+        f"`--holder ide:<uuid>` to `scripts/liaison-tick.py --root {root_id} --claim "
+        "--take-over`; never query state.vscdb or run --find-transcript to discover "
+        "your own UUID.",
+        f"RENAME: Rename this chat to '{root_id} <slug>' via rename_chat immediately "
+        "after continuity(op=resume) so display-chat-wake routes wakes here.",
+        "Then: if NOW is not yet admitted, dispatch its first leg; if NOW is already "
+        "in flight, do not spawn a second dispatch or background shell watcher — "
+        "report status and end your turn immediately so this tab is idle to receive "
+        "BRIDGE_WAKE push wakes. Skip CreateGoal.",
         OPERATOR_LOOP,
     ]
     return "\n".join(lines) + "\n"
@@ -309,8 +324,8 @@ def build_hop_preamble(
     if row.strip():
         next_action = (
             "Dispatch the first leg of NOW via team_dispatch or life_dispatch per "
-            "the liaison ladder; attach tail --label for each live ARM label; stop "
-            "when the dispatch admits or the leg completes."
+            "the liaison ladder; rely on push wakes (display-chat-wake); do not attach "
+            "watch-supervise.sh tails; stop when the dispatch admits or the leg completes."
         )
     else:
         next_action = (
