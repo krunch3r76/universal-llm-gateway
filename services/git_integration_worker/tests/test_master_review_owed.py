@@ -104,9 +104,12 @@ BODY_30054_PARTIAL_CAPTURE = (
     '"head_sha":"743839e84a2fb311a67df94f205ea391a2680aae","commits_ahead":0,'
     '"landed":false,"branch":"cursor-sdk/lane-18336"}'
 )
-LINE_30054_APPROVE = (
-    f"VERDICT: APPROVE range={A035}..{TIP7438} head={TIP7438}\n"
-)
+def _line_30054_verdict(verdict: str) -> str:
+    return f"VERDICT: {verdict} range={A035}..{TIP7438} head={TIP7438}\n"
+
+
+LINE_30054_APPROVE = _line_30054_verdict("APPROVE")
+LINE_30054_REQUEST_CHANGES = _line_30054_verdict("REQUEST_CHANGES")
 CLOSEOUT_463D = (
     "VERDICT: APPROVE\n"
     "`a0354858fb998905098762a16ab1cf9038f728da.."
@@ -226,12 +229,32 @@ def test_friction_30054_k43_bind_keys_verdict_not_capture_status(
     assert bound.tip_sha == TIP7438
     assert bound.base_sha == A035
 
-    request_changes_body = "VERDICT: REQUEST_CHANGES\n" + BODY_30054_PARTIAL_CAPTURE
-    rejected = mro.bind_canonical_verdict(
+    rc_root = _pin_ledger(monkeypatch)
+    request_changes_body = LINE_30054_REQUEST_CHANGES + BODY_30054_PARTIAL_CAPTURE
+    rc_bound = mro.bind_canonical_verdict(
         request_changes_body,
         repo=REPO,
         bus_thread="15851",
         bus_turn=30055,
+        review_dispatch_id="d01894c8d31f-697a773d",
+        mounts_table=EXT4,
+    )
+    assert rc_bound.status == "bound"
+    assert rc_bound.verdict == "REQUEST_CHANGES"
+    assert rc_bound.tip_sha == TIP7438
+    assert rc_bound.base_sha == A035
+    rc_check = _check(
+        REPO, INITIAL, data_path=_empty_rows(rc_root), poster=lambda *a: None
+    )
+    assert rc_check.ok is True
+    assert TIP7438 in rc_check.fix_owed
+
+    bare_request_changes = "VERDICT: REQUEST_CHANGES\n" + BODY_30054_PARTIAL_CAPTURE
+    rejected = mro.bind_canonical_verdict(
+        bare_request_changes,
+        repo=REPO,
+        bus_thread="15851",
+        bus_turn=30056,
         review_dispatch_id="d01894c8d31f-697a773d",
         mounts_table=EXT4,
     )
@@ -241,7 +264,7 @@ def test_friction_30054_k43_bind_keys_verdict_not_capture_status(
         BODY_30054_PARTIAL_CAPTURE,
         repo=REPO,
         bus_thread="15851",
-        bus_turn=30056,
+        bus_turn=30057,
         review_dispatch_id="d01894c8d31f-697a773d",
         mounts_table=EXT4,
     )
