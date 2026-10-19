@@ -179,17 +179,43 @@ async def prepare_cursor_sdk_generate(
     effective_contract = (contract or "").strip().lower() or None
     if early_packet_text and not effective_contract:
         effective_contract = extract_contract_from_body(early_packet_text)
-    if not model or not str(model).strip():
-        from .admission import FrontierEndpointError
+    from cursor_capabilities import is_cursor_model_denied
+    from implement_admission.routing import load_route_policy
+    from implement_admission.workflow_registry import load_auto_judgment_default_model
 
+    from .admission import FrontierEndpointError
+
+    raw_model = str(model).strip() if model else ""
+    if raw_model:
+        resolved_model = raw_model
+    else:
+        resolved_model = load_auto_judgment_default_model(load_route_policy())
+    if resolved_model == "auto":
+        resolved_model = "cursor/auto"
+    if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="cursor-sdk generate requires model from admit plan",
+            reason="cursor-sdk generate requires a resolvable model",
             status_code=422,
             code="sdk_generate_model_invalid",
         )
-    resolved_model = str(model).strip()
+    if not resolved_model.startswith("cursor/"):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor-sdk generate requires a cursor/* model",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    if is_cursor_model_denied(resolved_model):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor model is denied for sdk generate",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
     to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
