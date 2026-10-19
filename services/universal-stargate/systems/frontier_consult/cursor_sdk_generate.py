@@ -8,6 +8,7 @@ from agent_seat.profiles import get_profile
 from cursor_capabilities import effective_knobs
 from model_id import ModelId
 
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_generate_prepare import (
     PreparedCursorSdkHandle,
     prepare_cursor_sdk_generate,
@@ -361,6 +362,7 @@ async def dispatch_cursor_sdk_generate(
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -421,5 +423,6 @@ async def dispatch_cursor_sdk_generate(
         bus_body=bus_body,
         off_bus_ref=off_bus_ref,
         prompt_sha256=prompt_sha256,
+        admit_provenance=admit_provenance,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

@@ -2661,6 +2661,40 @@ class CursorDispatchLedger:
             for row in rows
         ]
 
+    def sole_non_terminal_display_holder(self) -> dict[str, Any] | None:
+        """When exactly one non-terminal row exists, project it for busy_status display."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, thread_id, resolved_model, status, record_json "
+                "FROM cursor_sdk_dispatches "
+                f"WHERE status IN ({_ACTIVE_IDENTITY_STATUSES}) "
+                "ORDER BY rowid ASC LIMIT 2"
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        record_json = row["record_json"] if "record_json" in row.keys() else "{}"
+        preview = _subject_preview(record_json or "{}")
+        lane_val: str | None = None
+        try:
+            data = json.loads(record_json) if record_json else {}
+            if isinstance(data, dict):
+                raw_lane = data.get("lane")
+                if isinstance(raw_lane, str) and raw_lane.strip():
+                    lane_val = raw_lane.strip()
+        except json.JSONDecodeError:
+            lane_val = None
+        holder: dict[str, Any] = {
+            "dispatch_id": row["dispatch_id"],
+            "thread_id": row["thread_id"],
+            "model": row["resolved_model"],
+            "subject_preview": preview,
+            "status": row["status"],
+        }
+        if lane_val:
+            holder["lane"] = lane_val
+        return holder
+
     def lease_snapshot(
         self,
         *,

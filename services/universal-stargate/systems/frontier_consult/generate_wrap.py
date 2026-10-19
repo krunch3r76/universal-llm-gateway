@@ -17,6 +17,7 @@ from implement_admission.preflight import (
 )
 from implement_admission.source_ref import SourceRefError
 
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
@@ -229,6 +230,7 @@ async def dispatch_cursor_sdk_generate_route(
     body: TeamDispatchGenerateBody,
     seat: str,
     response: Response,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
@@ -544,6 +546,7 @@ async def dispatch_cursor_sdk_generate_route(
             bus_body=getattr(body, "bus_body", None),
             off_bus_ref=getattr(body, "sidecar_ref", None),
             prompt_sha256=getattr(body, "prompt_sha256", None),
+            admit_provenance=admit_provenance,
         )
         if isinstance(result, dict):
             if operator_lane_summon_warning:

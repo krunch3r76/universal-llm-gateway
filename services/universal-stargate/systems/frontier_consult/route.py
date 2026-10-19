@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field, model_validator
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
+from .admit_provenance import (
+    build_team_dispatch_admit_provenance,
+    emit_admit_provenance_missing_event,
+    finalize_team_dispatch_admit_response,
+)
 from .admission import (
     enforce_generate_role_seat_exclusive,
     enforce_handoff_seat_not_auto,
@@ -717,6 +722,11 @@ async def team_dispatch(
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    admit_provenance = build_team_dispatch_admit_provenance(
+        body, request_id=request_id
+    )
+    if admit_provenance is not None:
+        emit_admit_provenance_missing_event(admit_provenance)
     if body.op in ("claim", "claim_release", "occupancy"):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
@@ -883,7 +893,7 @@ async def team_dispatch(
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         if isinstance(result, dict):
             response.status_code = 202
-        return result
+        return finalize_team_dispatch_admit_response(result, admit_provenance)
     if body.op == "generate":
         try:
             enforce_generate_role_seat_exclusive(
@@ -906,12 +916,14 @@ async def team_dispatch(
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         sdk_seat = seat or "cursor-sdk"
-        return await dispatch_cursor_sdk_generate_route(
+        result = await dispatch_cursor_sdk_generate_route(
             request_id=request_id,
             body=body,
             seat=sdk_seat,
             response=response,
+            admit_provenance=admit_provenance,
         )
+        return finalize_team_dispatch_admit_response(result, admit_provenance)
 
     if body.op == "generate" and role is not None:
         from .api_role_generate import dispatch_api_role_generate
@@ -926,7 +938,7 @@ async def team_dispatch(
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         if isinstance(result, dict):
             response.status_code = 202
-        return result
+        return finalize_team_dispatch_admit_response(result, admit_provenance)
 
     source_text = await resolve_generate_prompt_body(
         request_id=request_id,
@@ -936,7 +948,8 @@ async def team_dispatch(
         sidecar_ref=getattr(body, "sidecar_ref", None),
     )
     req = FrontierGenerateRequest(**_normalize_op_body(body, source_text=source_text))
-    return await _dispatch(req, response)
+    result = await _dispatch(req, response)
+    return finalize_team_dispatch_admit_response(result, admit_provenance)
 
 
 @frontier_router.post("/dispatch", status_code=202, response_model=None)
