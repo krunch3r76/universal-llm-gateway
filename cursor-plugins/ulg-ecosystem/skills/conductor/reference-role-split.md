@@ -7,4 +7,5 @@
 | Nested **Composer** `job=implement` | Mechanical G-row after densify; `nest_under` when lease held |
 | Independent binder | Ladder step-2 when conductor unsure (weight/family) — ¬ self-ratify |
 | Human | Credentials, kill tabs, irreversible acts — `needs-attended` + one recommended answer. **¬** interim "continue?" or "ok to merge?" — both rubber-stamped by the admit (§ Run to completion) |
+| **Divergent ideation / Writer pipelines** | `divergent-ideation-v1` on open G2/design/retry forks (clean-room multi-family rivals); `writer-specialist-v1` on outbound/narrative synthesis |
 

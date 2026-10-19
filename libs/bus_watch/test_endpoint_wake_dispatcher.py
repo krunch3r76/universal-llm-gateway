@@ -288,6 +288,64 @@ def test_dispatch_and_conductor_hop_gate_wakes_route_to_cursor() -> None:
     assert store.pending[0]["thread_id"] == child_thread
 
 
+def test_cdp_reply_to_dispatch_on_child_lane_wakes_cursor() -> None:
+    parent_thread = "15420"
+    child_thread = "15490"
+
+    class Store:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+            self.subscription_calls: list[tuple[str, str]] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 99,
+                    "to_agent": "dispatch",
+                    "from_agent": "web-anthropic",
+                    "thread": child_thread,
+                    "turn_number": 3,
+                    "subject": "cdp reply — 8fec4c00",
+                }
+            ]
+
+        def subscription(self, agent: str, thread: str):
+            self.subscription_calls.append((agent, thread))
+            if agent == "cursor" and thread == child_thread:
+                return (
+                    "parent",
+                    {
+                        "id": 7,
+                        "surface": "cursor",
+                        "display": "1",
+                        "title": f"{parent_thread} continuity",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.subscription_calls == [("cursor", child_thread)]
+    assert len(store.pending) == 1
+    assert store.pending[0]["agent"] == "cursor"
+    assert store.pending[0]["thread_id"] == child_thread
+    assert qualifies(
+        {
+            "to_agent": "dispatch",
+            "from_agent": "web-anthropic",
+            "subject": "cdp reply — 8fec4c00",
+        },
+        cse=False,
+    )
+
+
 def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     detail = create_thread(thread_id=None, slug="retry")
     assert detail is not None

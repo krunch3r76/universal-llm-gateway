@@ -464,6 +464,49 @@ def test_debounce_clears_when_delivered_turn_marked_read(db: TestClient) -> None
     assert [r["turn_id"] for r in w2["rows"] if r.get("state") == "claimed"] == [b_id]
 
 
+def test_record_wake_result_parent_and_window_binding_routes(db: TestClient) -> None:
+    """route=parent and window-binding must not violate endpoint_wake_ledger CHECK."""
+    for slug, route in (("route-parent", "parent"), ("route-wb", "window-binding")):
+        detail = create_thread(thread_id=None, slug=slug)
+        assert detail is not None
+        thread = str(detail["id"])
+        turn_id, _, turn_number, _ = insert_turn(
+            thread=thread,
+            from_agent="cursor",
+            to_agent="grok-bot-gc1",
+            subject=f"REQUEST|{slug}",
+            body="b",
+        )
+        get_cursor()
+        with connect() as conn:
+            conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            0,
+            turn_id,
+            [
+                {
+                    "agent": "grok-bot-gc1",
+                    "thread_id": thread,
+                    "turn_id": turn_id,
+                    "turn_number": turn_number,
+                }
+            ],
+            now="2020-01-01 15:00:00",
+        )
+        claimed = claim_due_wakes(now="2020-01-01 15:00:01")
+        assert claimed["wake_id"] is not None
+        record_wake_result(
+            claimed["wake_id"],
+            "delivered",
+            "ok",
+            route,
+            1,
+            None,
+            now="2020-01-01 15:00:02",
+        )
+
+
 def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) -> None:
     """Parent-scoped Impresario subscription must cover child-lane CLOSEOUT turns."""
     from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint

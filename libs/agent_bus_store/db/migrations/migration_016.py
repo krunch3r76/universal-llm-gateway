@@ -52,7 +52,7 @@ def run(conn: sqlite3.Connection) -> None:
                 state IN ('pending','claimed','delivered','refused','skipped','unknown')
             ),
             wake_id TEXT,
-            route TEXT CHECK (route IN ('exact','wildcard','cse')),
+            route TEXT CHECK (route IN ('exact','wildcard','parent','window-binding','cse')),
             subscription_id INTEGER,
             cse_registration_id TEXT,
             reason TEXT,

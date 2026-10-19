@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 
@@ -17,6 +18,8 @@ from bus_watch.endpoint_wake_transport import (
     classify_cse,
     classify_display,
 )
+
+logger = logging.getLogger(__name__)
 
 CSE_WAKE_SUBJECT_HEADS = frozenset(
     {
@@ -92,7 +95,8 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
 )
 _CURSOR_GATE_WAKE_RE = re.compile(
     r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
-    r"PARKED_TRANSPORT|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE)"
+    r"PARKED_TRANSPORT|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
+    r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _PEER_WAKE_FROM = frozenset(
@@ -513,6 +517,9 @@ async def run_dispatcher() -> None:
     store = StoreClient()
     idle: dict[str, float] = {}
     while True:
-        await asyncio.to_thread(scan_once, store, idle_mark=idle)
-        await asyncio.to_thread(fire_due_wakes, store)
+        try:
+            await asyncio.to_thread(scan_once, store, idle_mark=idle)
+            await asyncio.to_thread(fire_due_wakes, store)
+        except Exception:
+            logger.exception("endpoint_wake_dispatcher pass failed")
         await asyncio.sleep(_POLL_S)

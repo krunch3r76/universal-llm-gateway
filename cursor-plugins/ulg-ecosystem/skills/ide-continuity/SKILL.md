@@ -59,6 +59,8 @@ go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left
 ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
 below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (anthropic/* API admitted when credit-healthy, not the first wire)
 same_fix_failed_twice ⇒ REPEATED_FAILURE ∧ ¬third_variant
+open_fork(design ∨ strategy ∨ retry_same_AC) ∧ ¬mechanical ⇒ pipeline(divergent-ideation-v1) ≺ bind
+outbound_prose(high_stakes) ⇒ outbound-voice-spec ≺ pipeline(divergent-ideation-v1) ≺ pipeline(writer-specialist-v1)
 ```
 
 ## Registers

@@ -36,6 +36,8 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    | a `todo:` arc | conductor per `runbook:maestro-loop` §5a; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject`; or run the arc yourself as a REQUEST chain when its slices are few and mechanical |
    | diff review | a fresh grok-bot per-REQUEST successor (not the author) sends `VERDICT\|<work_key>` to the Sidekick; cdp/opus-5.5 only when the REQUEST names it |
    | next REQUEST in a chain | propose it to the owning Sidekick |
+   | open design / strategy / retry(same_AC) fork (non-mechanical) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", body=...)` before binding |
+   | high-stakes outbound prose | Bind OUTBOUND SPEC (outbound-voice-spec) -> pipeline(divergent-ideation-v1) -> pipeline(writer-specialist-v1) |
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
 4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick (house-root: the commissioning operator seat, Step 2) only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.

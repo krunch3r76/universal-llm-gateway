@@ -272,6 +272,11 @@ def build_ide_hop_message(
         "¬ cursor/claude-*; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
+        "DIVERGENT / WRITING DEFAULT: On open design/architecture/strategy forks, "
+        "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
+        "pipeline_id='divergent-ideation-v1', body=...) before binding; on high-stakes "
+        "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
+        "outbound-voice-spec. Skip only on closed-spec mechanical/trivial first passes.",
         f"NOW: {row}",
         *arm_lines,
         "WAKE: Push-driven via endpoint_wake_dispatcher -> display-chat-wake "
@@ -324,7 +329,9 @@ def build_hop_preamble(
     if row.strip():
         next_action = (
             "Dispatch the first leg of NOW via team_dispatch or life_dispatch per "
-            "the liaison ladder; rely on push wakes (display-chat-wake); do not attach "
+            "the liaison ladder; on open forks/retries run divergent-ideation-v1 before "
+            "binding; on high-stakes outbound prose chain writer-specialist-v1 after "
+            "outbound-voice-spec; rely on push wakes (display-chat-wake); do not attach "
             "watch-supervise.sh tails; stop when the dispatch admits or the leg completes."
         )
     else:
