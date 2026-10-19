@@ -80,7 +80,11 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "replace": ("(path, target, content, all_occurrences?)", "replace text"),
     "insert_at_line": ("(path, content, line)", "insert at line number"),
     "list": ("(path?, max_depth?)", "list directory (max_depth default 3)"),
-    "find": ("(path?, content)", "glob filename find (workspaces only)"),
+    "find": (
+        "(path?, content, include_worktrees?)",
+        "glob filename find (workspaces only; excludes .worktrees and "
+        "ulg-arc-worktrees by default)",
+    ),
     "recent_commits": (
         "(path?, since?, limit?)",
         "oneline git subjects (no diffs); life catch-up, not a project index",
@@ -154,6 +158,7 @@ CONTRACT_PARAMS: tuple[str, ...] = (
     "position",
     "all_occurrences",
     "mode",
+    "include_worktrees",
 )
 
 # Accepted values for the search `mode` selector (empty string == "auto").
@@ -168,6 +173,9 @@ PARAM_PURPOSE: dict[str, str] = {
     "position": "placement (end|after|before) for md_insert",
     "all_occurrences": "replace-all flag for replace",
     "mode": "search routing selector (auto|content|filename) for search",
+    "include_worktrees": (
+        "when true, fs find includes .worktrees and ulg-arc-worktrees paths"
+    ),
 }
 
 # unified op -> confusable params it actually consumes
@@ -183,7 +191,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "replace": frozenset({"target", "all_occurrences"}),
     "insert_at_line": frozenset({"line"}),
     "list": frozenset(),
-    "find": frozenset(),
+    "find": frozenset({"include_worktrees"}),
     "recent_commits": frozenset(),
     "search": frozenset({"mode"}),
     "move": frozenset({"target"}),
@@ -380,6 +388,7 @@ def dispatch_workspaces_op(
     workflow_hints: dict[str, Any],
     mode: str = "",
     since: str = "",
+    include_worktrees: bool = False,
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -438,13 +447,16 @@ def dispatch_workspaces_op(
                     "path='universal-llm-gateway', content='session_handoff.py')"
                 )
             }
-        fn = overflow_registry.get("find_project_files")
-        if fn is None:
-            return {"error": "find_project_files tool not available"}
-        # max_depth is a list-oriented browse limit (default 3); a filename find
-        # must reach matches at any depth, so it is not forwarded here. find runs
-        # full-depth like search (friction 13196).
-        return fn(content, directory=path)
+        from tools.filesystem._search_helpers import find_workspaces_files
+
+        try:
+            return find_workspaces_files(
+                pattern=content,
+                directory=path,
+                include_worktrees=include_worktrees,
+            )
+        except ValueError as exc:
+            return {"error": str(exc)}
 
     if op == "search":
         if not content:

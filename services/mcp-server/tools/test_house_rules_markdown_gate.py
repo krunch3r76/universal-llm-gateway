@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -205,3 +206,88 @@ def test_markdown_dispatcher_house_rules_growth_refused(
     rejected = captured["markdown"](op=op, path=rel, sandbox="cortex", **kwargs)
     assert rejected.get("reason") == "house_rules.over_budget"
     assert (sandbox_root / rel).read_bytes() == before
+
+
+def _house_rules_near_cap(root: Path, rel: str) -> None:
+    intro = "## HOUSE RULES\n"
+    oldest = "- K1 oldest ruling row for rotation archive\n"
+    filler = "x" * (8190 - len((intro + oldest).encode("utf-8")))
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(intro + oldest + filler, encoding="utf-8")
+
+
+def test_house_rules_append_rotates_in_one_call(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    archive_rel = "notes/system/threads/12286-rulings-archive.md"
+    _house_rules_near_cap(sandbox_root, rel)
+    landed = markdown_tool._section_write_result(
+        sandbox_root / rel,
+        rel,
+        "cortex",
+        "HOUSE RULES",
+        "mcp.tool.markdown.section.appended",
+        "appended",
+        lambda t: t + "\n- K99 new ruling row\n",
+        mutation_op="md_append",
+    )
+    assert "error" not in landed
+    assert len((sandbox_root / rel).read_bytes()) <= authority.HOUSE_RULES_MAX_BYTES
+    assert landed.get("rotated_rows")
+    assert "K1 oldest" in landed["rotated_rows"][0]
+    archive_text = (sandbox_root / archive_rel).read_text(encoding="utf-8")
+    assert "K1 oldest" in archive_text
+    assert landed.get("archive_uri") == authority.RULINGS_ARCHIVE_URI
+
+
+def test_house_rules_rotation_archive_failure_leaves_file_unchanged(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    _house_rules_near_cap(sandbox_root, rel)
+    before = (sandbox_root / rel).read_bytes()
+    with patch.object(
+        authority,
+        "durable_write_text",
+        side_effect=OSError("archive write failed"),
+    ):
+        rejected = markdown_tool._section_write_result(
+            sandbox_root / rel,
+            rel,
+            "cortex",
+            "HOUSE RULES",
+            "mcp.tool.markdown.section.appended",
+            "appended",
+            lambda t: t + "\n- K99 new ruling row\n",
+            mutation_op="md_append",
+        )
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert (sandbox_root / rel).read_bytes() == before
+
+
+def test_md_read_includes_full_file_read_sha256(sandbox_root: Path) -> None:
+    rel = "notes/system/threads/sample-doc.md"
+    body = "## One\n\nalpha\n\n## Two\n\nbeta\n"
+    path = sandbox_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    class Capture:
+        def tool(self, **_kwargs):
+            def deco(fn):
+                self.fn = fn
+                return fn
+
+            return deco
+
+    cap = Capture()
+    markdown_tool.register_markdown_tools(cap)
+    out = cap.fn(op="read_section", path=rel, sandbox="cortex", section="Two")
+    assert out.get("read_sha256") == expected

@@ -10,6 +10,7 @@ from agent_bus_store.recipients import turn_mark_read_eligible
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from ._closeout_projection import project_turn_body
 from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,7 @@ def _get_impl(
     turn_number: int | str,
     mark_read: bool = False,
     reader_agent: str = "",
+    projection: str | None = None,
 ) -> dict[str, Any]:
     """Direct single-turn lookup via GET /turns/by-number."""
     qs = urlencode({"thread": thread, "turn_number": turn_number})
@@ -205,6 +207,8 @@ def _get_impl(
                 "get: mark_read skipped — turn is not addressed to the caller "
                 f"(to={to_agent!r}, reader={reader_agent!r})"
             )
+    if isinstance(result, dict):
+        result = project_turn_body(result, projection=projection)
     record(
         "mcp.agentbus.turn.detail.fetched",
         thread=thread,
@@ -329,6 +333,7 @@ def _get_dispatch(
     turn_number: int | str = 0,
     mark_read: bool = False,
     from_agent: str = "",
+    projection: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -367,5 +372,6 @@ def _get_dispatch(
         turn_number=turn_number,
         mark_read=apply_mark,
         reader_agent=reader_agent,
+        projection=projection,
     )
     return _merge_advisories(result, advisories)
