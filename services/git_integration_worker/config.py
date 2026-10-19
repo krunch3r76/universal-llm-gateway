@@ -19,9 +19,14 @@ _DIFF_SCOPED_GATE_SCRIPT = (
     "--diff-filter=ACMR -- '*.py'); "
     'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi && '
     "ruff check --select F821 services/git_integration_worker/ && "
+    # Absent file: skip. pytest would exit 4 and fail every land into a repo
+    # that does not carry this subtree. Present file: the node still runs, and
+    # a failure still fails the gate.
+    "if [ -f services/git_integration_worker/tests/test_conductor_lane_retention.py ]; then "
     "python -m pytest "
     "services/git_integration_worker/tests/test_conductor_lane_retention.py::"
-    "test_packet_reference_forbids_land_disposition_before_done -q --tb=line"
+    "test_packet_reference_forbids_land_disposition_before_done -q --tb=line; "
+    "fi"
 )
 # F821-only pass on the GIW package subtree. Whole-repo ruff is blocked by master
 # lint debt; this subtree is kept F821-clean so undefined-name defects surface at

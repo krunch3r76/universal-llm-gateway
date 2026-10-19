@@ -129,3 +129,80 @@ async def test_empty_py_changeset_passes_without_fallback(tmp_path: Path) -> Non
     )
 
     assert out["status"] == "completed", out
+
+
+_RETENTION_TEST_REL = (
+    "services/git_integration_worker/tests/test_conductor_lane_retention.py"
+)
+_RETENTION_NODE = "test_packet_reference_forbids_land_disposition_before_done"
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir()
+    _git("init", "-b", "master", cwd=path)
+    _git("config", "user.email", "t@e.com", cwd=path)
+    _git("config", "user.name", "T", cwd=path)
+
+
+def _run_gate(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _gate(), cwd=str(repo), capture_output=True, text=True, check=False
+    )
+
+
+def test_retention_clause_skipped_when_test_file_absent(tmp_path: Path) -> None:
+    """A repo without the conductor subtree must not fail the gate with pytest exit 4."""
+    repo = _source_repo_with_lint_debt(tmp_path)
+    assert not (repo / _RETENTION_TEST_REL).is_file()
+
+    proc = _run_gate(repo)
+    combined = proc.stdout + proc.stderr
+
+    assert proc.returncode == 0, combined
+    assert "file or directory not found" not in combined
+    assert f"[ -f {_RETENTION_TEST_REL} ]" in _DIFF_SCOPED_GATE_SCRIPT
+
+
+def test_retention_clause_runs_when_test_file_exists(tmp_path: Path) -> None:
+    """When the test file is present, the gate still executes that node."""
+    repo = tmp_path / "source"
+    _init_repo(repo)
+    test_path = repo / _RETENTION_TEST_REL
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "def test_packet_reference_forbids_land_disposition_before_done() -> None:\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    _git("add", _RETENTION_TEST_REL, cwd=repo)
+    _git("commit", "-m", "add retention node", cwd=repo)
+
+    proc = _run_gate(repo)
+    combined = proc.stdout + proc.stderr
+
+    assert proc.returncode == 0, combined
+    assert "1 passed" in combined
+    assert _RETENTION_NODE in _DIFF_SCOPED_GATE_SCRIPT
+
+
+def test_retention_clause_failure_fails_gate_when_test_file_exists(
+    tmp_path: Path,
+) -> None:
+    """A present file that fails still fails the gate; the guard does not skip it."""
+    repo = tmp_path / "source"
+    _init_repo(repo)
+    test_path = repo / _RETENTION_TEST_REL
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "def test_packet_reference_forbids_land_disposition_before_done() -> None:\n"
+        "    assert False, 'retention-ran'\n",
+        encoding="utf-8",
+    )
+    _git("add", _RETENTION_TEST_REL, cwd=repo)
+    _git("commit", "-m", "add failing retention node", cwd=repo)
+
+    proc = _run_gate(repo)
+    combined = proc.stdout + proc.stderr
+
+    assert proc.returncode == 1, combined
+    assert "retention-ran" in combined
