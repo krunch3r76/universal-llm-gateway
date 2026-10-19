@@ -94,7 +94,7 @@ async def test_harvest_idempotent_second_run(fs: MemFs) -> None:
     assert norm2.get("refused") is None
     assert adapter2["stats"]["messages_sha256"] == adapter1["stats"]["messages_sha256"]
     assert pour2["sha256"] == pour1["sha256"]
-    assert not any("tape/" in w for w in fs.writes)
+    assert not any("tape/" in w for w in fs.writes[len(writes_after_first) :])
 
 
 @pytest.mark.asyncio

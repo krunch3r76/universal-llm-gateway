@@ -25,9 +25,9 @@ the Cursor walker so the envelope is byte-compatible with
 
 The adapter does not write either artifact; callers do.
 
-* L0 capture: ``cortex://notes/system/tape/captures/grok/<agent_id>/<ts>.pages.txt``
-  (or the local ``/workspace/l0/<agent8>/<ts>.pages.txt``).
-* L1 pour: ``cortex://notes/system/tape/pours/grok/<agent_id>.messages.json``.
+* Raw export: ``cortex://notes/system/checkpoints/grok/<agent_id>/<n>.raw.json``.
+* Transcription: ``cortex://notes/system/checkpoints/grok/<agent_id>/<n>.messages.json``.
+  Checkpoint callers must not write ``tape/captures/grok`` or ``tape/pours/grok``.
 """
 
 from __future__ import annotations
