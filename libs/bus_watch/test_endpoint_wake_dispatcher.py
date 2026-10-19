@@ -200,6 +200,94 @@ def test_cse_allowlist_not_display(db: None) -> None:
     )
 
 
+def test_dispatch_and_conductor_hop_gate_wakes_route_to_cursor() -> None:
+    freeform_closeout = (
+        "cursor-sdk CLOSEOUT 940a9f86d053-8e0c8ad5 contract=freeform"
+    )
+    assert qualifies(
+        {
+            "to_agent": "dispatch",
+            "from_agent": "cursor-sdk",
+            "subject": freeform_closeout,
+        },
+        cse=False,
+    )
+    assert not qualifies(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": (
+                "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "
+                "contract=conductor caller=conductor-hop"
+            ),
+        },
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "cursor",
+            "from_agent": "conductor-hop",
+            "subject": "stop: PARKED_TRANSPORT",
+        },
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": "stop: PARKED_TRANSPORT",
+        },
+        cse=False,
+    )
+
+    child_thread = "18273#2"
+
+    class Store:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+            self.subscription_calls: list[tuple[str, str]] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 42,
+                    "to_agent": "dispatch",
+                    "from_agent": "cursor-sdk",
+                    "thread": child_thread,
+                    "turn_number": 2,
+                    "subject": freeform_closeout,
+                }
+            ]
+
+        def subscription(self, agent: str, thread: str):
+            self.subscription_calls.append((agent, thread))
+            if agent == "cursor" and thread == child_thread:
+                return (
+                    "parent",
+                    {
+                        "id": 3,
+                        "surface": "cursor",
+                        "display": "1",
+                        "title": "house",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.subscription_calls == [("cursor", child_thread)]
+    assert len(store.pending) == 1
+    assert store.pending[0]["agent"] == "cursor"
+    assert store.pending[0]["thread_id"] == child_thread
+
+
 def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     detail = create_thread(thread_id=None, slug="retry")
     assert detail is not None

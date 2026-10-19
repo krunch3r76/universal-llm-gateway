@@ -92,7 +92,7 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
 )
 _CURSOR_GATE_WAKE_RE = re.compile(
     r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
-    r"BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE)"
+    r"PARKED_TRANSPORT|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _PEER_WAKE_FROM = frozenset(
@@ -107,6 +107,19 @@ _PEER_WAKE_FROM = frozenset(
     }
 )
 _POLL_S = 2.0
+
+
+def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str:
+    """Route child-lane gate wakes addressed to dispatch/conductor-hop to cursor."""
+    agent = normalize_bus_address(str(to_agent or ""))
+    text = str(subject or "")
+    if agent == "dispatch" and _CURSOR_GATE_WAKE_RE.search(text):
+        return "cursor"
+    if agent == "conductor-hop" and _CURSOR_GATE_WAKE_RE.search(text):
+        if "contract=conductor" in text.lower() and "caller=conductor-hop" in text.lower():
+            return agent
+        return "cursor"
+    return agent
 
 
 def peer_operator_wake_from(from_agent: str) -> bool:
@@ -127,7 +140,7 @@ def subject_allowed(
 ) -> bool:
     """Wake envelope: CSE or Grok allowlist, plus TYPE relays."""
     text = subject or ""
-    agent = normalize_bus_address(str(to_agent or ""))
+    agent = _effective_to_agent(to_agent, text)
     if _INTERMEDIATE_SUBJECT_RE.search(text):
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
@@ -213,8 +226,9 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
 
 
 def _pending_item(turn: dict[str, Any]) -> dict[str, Any]:
+    subject = str(turn.get("subject") or "")
     return {
-        "agent": normalize_bus_address(str(turn["to_agent"])),
+        "agent": _effective_to_agent(turn.get("to_agent"), subject),
         "thread_id": str(turn["thread"]),
         "turn_id": int(turn["id"]),
         "turn_number": int(turn["turn_number"]),
@@ -257,7 +271,8 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     pending: list[dict[str, Any]] = []
     for turn in turns:
         raw_to = str(turn.get("to_agent") or "")
-        agent = normalize_bus_address(raw_to)
+        subject = str(turn.get("subject") or "")
+        agent = _effective_to_agent(raw_to, subject)
         thread = str(turn["thread"])
         if agent == "web-anthropic":
             resolved = None
