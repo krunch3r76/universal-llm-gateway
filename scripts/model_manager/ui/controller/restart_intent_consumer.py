@@ -76,7 +76,7 @@ def project_restart_intent_consumer(
 
 
 def _restart_execution_evidence(intent: Intent) -> bool:
-    """True when kill boundary or a pre-terminal drain/verify transition exists (C6)."""
+    """True when a kill boundary or a pre-terminal drain/verify transition exists (C6)."""
     if intent.kill_boundary_at:
         return True
     history = intent.transitions or []
@@ -104,7 +104,7 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     reason = intent.status_reason or ""
     if projected == "cancelled" and reason.split(":", 1)[0] == TTL_EXPIRED:
         projected = "expired"
-    executed = False
+    executed = projected == "fired"
     if projected in {"failed", "cancelled"} and _restart_execution_evidence(intent):
         projected = "fired_unverified"
         executed = True

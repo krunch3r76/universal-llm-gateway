@@ -370,14 +370,26 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              within 30 minutes, or null. Its
                                              status is projected, not the store
                                              word: completed and force_requested
-                                             → fired; failed and
-                                             activation_unverified → failed;
-                                             timeout → expired; cancelled →
-                                             cancelled, except a cancelled row
-                                             whose reason code is ttl_expired,
-                                             which projects as expired
+                                             → fired; failed,
+                                             activation_unverified, and
+                                             cancelled project as
+                                             fired_unverified when kill
+                                             evidence is present
+                                             (kill_boundary_at, or
+                                             drained_restarting /
+                                             verifying_activation in
+                                             transitions[:-1]); otherwise
+                                             failed stays failed,
+                                             activation_unverified stays
+                                             failed, and cancelled stays
+                                             cancelled. timeout → expired.
+                                             A cancelled row whose reason code
+                                             is ttl_expired projects as expired
                                              (constant
                                              TERMINAL_STATUS_PROJECTION).
+                                             executed is true for fired and
+                                             fired_unverified, and false
+                                             otherwise.
                                              Fields: intent_id, status, reason
                                              (code, optional ':' detail). A
                                              fired row is

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
     Intent,
+    RestartIntentStore,
     intent_status_view,
 )
 
@@ -94,3 +95,63 @@ def test_arm_with_boundary_lost_race_leaves_no_verify(tmp_path) -> None:
     got = store.get(intent.intent_id)
     assert got is not None and got.status == STATUS_COMPLETED
     assert got.kill_boundary_at is None
+
+
+def test_s1_refuses_cancelled_and_force(tmp_path) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        LIVE_STATUSES,
+        STATUS_CANCELLED,
+        STATUS_FAILED,
+        STATUS_FORCE_REQUESTED,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    for status in (STATUS_CANCELLED, STATUS_FORCE_REQUESTED):
+        intent = store.create_intent(
+            service="git_integration_worker",
+            action="restart",
+            deadline_at="d",
+            reason="r",
+        )
+        store.advance(intent.intent_id, status=status, reason="abort")
+        assert (
+            store.advance_if_status_in(
+                intent.intent_id,
+                from_statuses=LIVE_STATUSES,
+                to_status=STATUS_FAILED,
+                reason="nope",
+            )
+            == 0
+        )
+        got = store.get(intent.intent_id)
+        assert got is not None and got.status == status
+
+
+def test_arm_not_applicable_is_atomic(tmp_path) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        STATUS_COMPLETED,
+        STATUS_PENDING_DRAIN,
+        ArmResultKind,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="recycle_giw",
+        deadline_at="d",
+        reason="r",
+    )
+    result = store.arm_with_boundary(
+        intent.intent_id,
+        from_statuses=frozenset({STATUS_PENDING_DRAIN}),
+        kill_boundary_at="2026-01-01T00:00:00+00:00",
+        verify_arm_reason="activation_verify_armed:test",
+        completed_reason="activation_not_applicable:once",
+        arms_verify=False,
+    )
+    assert result.kind == ArmResultKind.NOT_APPLICABLE
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == STATUS_COMPLETED
+    assert got.kill_boundary_at == "2026-01-01T00:00:00+00:00"
+    assert got.status_reason == "activation_not_applicable:once"

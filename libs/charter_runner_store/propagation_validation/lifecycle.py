@@ -174,11 +174,12 @@ def repair_supersession_pairs(*, store=None, conn=None) -> None:
     Two repair halves, each reading the column its writer uses:
 
     * Pending validations whose intent is ``activation_unverified`` with a
-      ``superseded_by:`` prefix in **status_reason** (written at
-      ``advance_if_status`` via ``mint_pending_validation_for_intent``, not the
-      arm ``reason`` column).
+      ``superseded_by:`` prefix in **status_reason** (the pending half;
+      writers ``lc:109-114`` via ``av:72`` → ``store:327-352`` → ``tr:78``).
+      The arm ``reason`` column (``store:146``) is not the match key.
     * Superseded validations whose linked intent is still ``verifying_activation``
-      — reads **failure_reason** on the validation row (``lc:204-211``).
+      — the superseded half reads **failure_reason** (``lc:204-211`` and
+      ``lc:235-245``, written at ``lc:91`` / ``lc:118``).
     """
     own_conn = conn is None
     db = conn or open_ledger_db()

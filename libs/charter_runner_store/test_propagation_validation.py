@@ -294,3 +294,62 @@ def test_repair_supersession_reads_status_reason(monkeypatch, tmp_path) -> None:
     )
     repair_supersession_pairs(store=_FakeStore())
     assert get_validation(vid2).outcome == "pending"
+
+
+def test_t15_status_gate_and_superseded_loop(monkeypatch, tmp_path) -> None:
+    """T15.c–e: status gate, superseded loop, idempotent second run."""
+    from charter_runner_store.propagation_validation.lifecycle import (
+        repair_supersession_pairs,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    calls: list[tuple] = []
+
+    class _Store:
+        def __init__(self) -> None:
+            self.status = "verifying_activation"
+
+        def get(self, intent_id: str):
+            if intent_id == "stay":
+                return SimpleNamespace(
+                    intent_id="stay",
+                    status="verifying_activation",
+                    reason="arm",
+                    status_reason="superseded_by:new",
+                )
+            if intent_id == "old":
+                return SimpleNamespace(
+                    intent_id="old",
+                    status=self.status,
+                    reason="arm",
+                    status_reason="",
+                )
+            return None
+
+        def advance_if_status(self, intent_id, **kwargs):
+            calls.append((intent_id, kwargs.get("from_status"), kwargs.get("to_status"), kwargs.get("reason")))
+            self.status = kwargs.get("to_status") or self.status
+            return 1
+
+    pending = propagation_validation.record_validation(
+        service="git_integration_worker",
+        code_ref=_ROW_SHA,
+        restart_intent="stay",
+        outcome="pending",
+    )
+    superseded = propagation_validation.record_validation(
+        service="git_integration_worker",
+        code_ref=_ROW_SHA,
+        restart_intent="old",
+        outcome="superseded",
+        failure_reason="superseded_by:new",
+    )
+    store = _Store()
+    repair_supersession_pairs(store=store)
+    assert get_validation(pending).outcome == "pending"
+    assert calls == [
+        ("old", "verifying_activation", "activation_unverified", "superseded_by:new")
+    ]
+    repair_supersession_pairs(store=store)
+    assert get_validation(superseded).outcome == "superseded"
+    assert len(calls) == 1

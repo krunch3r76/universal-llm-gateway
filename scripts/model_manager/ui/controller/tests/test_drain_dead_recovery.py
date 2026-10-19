@@ -755,3 +755,46 @@ def test_predicate_requires_window_and_absent_probe() -> None:
         )
         is True
     )
+
+
+def test_resumed_pending_stored_epoch_pid_absent_starts(tmp_path, monkeypatch) -> None:
+    """T12: stored-epoch begin-drain miss with no pid starts, and does not fail."""
+    from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
+
+    r9._fast(monkeypatch)
+    store = r9._store(tmp_path)
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    starts: list[int] = []
+
+    class _Begin:
+        async def drain_state(self):
+            return r9._snap(draining=False, epoch=0, active=0)
+
+        async def begin_drain(self, body):
+            raise RuntimeError("absent")
+
+    async def _pid() -> int:
+        return 4242
+
+    r9._run(
+        r9._sup(
+            store,
+            _Begin(),
+            r9._Kill(),
+            start=r9._start("started pid 4242", starts),
+            absent=r9._absent(True),
+            read_pid=_pid,
+        ).supervise(intent)
+    )
+    assert starts == [1]
+    got = store.get(intent.intent_id)
+    assert got is not None and got.kill_boundary_at
+    assert got.status != "failed"

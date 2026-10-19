@@ -93,3 +93,53 @@ def test_cancelled_without_boundary_stays_cancelled() -> None:
     assert last is not None
     assert last["status"] == "cancelled"
     assert last.get("executed") is False
+
+
+def test_t4_projection_matrix() -> None:
+    """T4: superseded, TTL, no boundary, failed ± drained_restarting, empty history."""
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+
+    superseded = _intent(
+        status="activation_unverified",
+        status_reason="superseded_by:new",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[
+            {"status": "verifying_activation", "reason": "arm", "at": "t0"},
+            {"status": "activation_unverified", "reason": "superseded_by:new", "at": "t1"},
+        ],
+    )
+    last = project_restart_intent_last(superseded)
+    assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
+
+    ttl = _intent(
+        status="cancelled",
+        status_reason="ttl_expired",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": "cancelled", "reason": "ttl_expired", "at": "t1"},
+        ],
+    )
+    last = project_restart_intent_last(ttl)
+    assert last is not None and last["status"] == "expired" and last["executed"] is False
+
+    bare = _intent(
+        status="failed",
+        status_reason="epoch_check_mismatch",
+        kill_boundary_at=None,
+        transitions=[
+            {"status": "drained_restarting", "reason": "kill", "at": "t0"},
+            {"status": "failed", "reason": "epoch_check_mismatch", "at": "t1"},
+        ],
+    )
+    last = project_restart_intent_last(bare)
+    assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
+
+    empty = _intent(status="failed", status_reason="x", transitions=[])
+    last = project_restart_intent_last(empty)
+    assert last is not None and last["status"] == "failed" and last["executed"] is False
+
+    fired = _intent(status="completed", status_reason="lifecycle_completed:ok")
+    last = project_restart_intent_last(fired)
+    assert last is not None and last["status"] == "fired" and last["executed"] is True

@@ -485,3 +485,64 @@ def test_out_of_band_start_reconciles_pending_activation(tmp_path, monkeypatch) 
     assert other_row is not None
     assert other_row.outcome == "superseded"
     assert other_row.failure_reason == "out_of_band_start"
+
+
+def test_t15f_boot_repair_uses_status_reason(tmp_path, monkeypatch) -> None:
+    """T15.f: boot repair supersedes from status_reason and leaves the arm reason."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    from charter_runner_store.propagation_validation.lifecycle import (
+        reconcile_pending_validations_at_boot,
+    )
+    from charter_runner_store.propagation_validation.queries import get_validation
+    from charter_runner_store.propagation_validation.records import record_validation
+
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="manage restart (park_live)",
+    )
+    store.advance(intent.intent_id, status=STATUS_VERIFYING_ACTIVATION, reason="arm")
+    assert store.advance_if_status(
+        intent.intent_id,
+        from_status=STATUS_VERIFYING_ACTIVATION,
+        to_status="activation_unverified",
+        reason="superseded_by:new",
+    )
+    vid = record_validation(
+        service="git_integration_worker",
+        code_ref=_RESOLVABLE_CODE_REF,
+        restart_intent=intent.intent_id,
+        outcome="pending",
+    )
+    reconcile_pending_validations_at_boot(store=store)
+    row = get_validation(vid)
+    assert row is not None
+    assert row.outcome == "superseded"
+    assert row.failure_reason == "superseded_by:new"
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.reason == "manage restart (park_live)"
+    assert got.status == "activation_unverified"
+
+
+def test_c11_lost_race_still_sets_kill_boundary(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance(intent.intent_id, status="completed", reason="done")
+    _run(
+        record_kill_boundary_and_arm_verify(
+            store, intent, boundary_source="kill_return"
+        )
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "completed"
+    assert got.kill_boundary_at

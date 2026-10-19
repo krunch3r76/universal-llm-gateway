@@ -731,6 +731,9 @@ class GitWorkerDrainSupervisor:
                         generation_gone_streak = 0
                     if self._drain_state_matches(snapshot, intent):
                         return _AWAIT_CONVERGED, start
+                    # C20: idle escalate only on the stored generation. A w2
+                    # snapshot still counts toward generation-gone; it must not
+                    # reach _on_idle. C20 leaves _on_idle unchanged beyond C14.
                     if (
                         not self._generation_gone(snapshot, intent)
                         and await self._idle_gate_tripped(snapshot, now, start)
@@ -906,6 +909,8 @@ class GitWorkerDrainSupervisor:
 
         On a resumed ``drained_restarting`` row the kill-commit CAS is skipped;
         only ``pending_drain`` rows advance into ``drained_restarting`` here.
+        C20 leaves this method unchanged beyond that C14 skip: the idle gate
+        at the await loop is what keeps a w2 snapshot from calling ``_on_idle``.
         """
         snapshot = await self._safe_drain_state() or {}
         idle_s = float(self.idle_escalate_s or 0.0)
@@ -1263,7 +1268,7 @@ class GitWorkerDrainSupervisor:
     async def _complete_stopped_target(self, intent: Intent) -> None:
         """The target is gone and this action must not start it."""
         current = self.store.get(intent.intent_id)
-        if current is None or current.status != STATUS_PENDING_DRAIN:
+        if current is None or current.status not in LIVE_STATUSES:
             return
         self.store.advance_if_status_in(
             intent.intent_id,

@@ -1904,6 +1904,7 @@ def test_idle_gate_skips_other_generation_bound_resume(
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
         idle_escalate_s=0.2,
+        park_for_restart=None,
         process_absent=_pid_present,
     )
 
