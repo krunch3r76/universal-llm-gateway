@@ -27,7 +27,17 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 
 Gear-3 `goal_escalation` admits a conductor for repo-write and design. Life seats without `team_dispatch` stay on `cursor_request`. This seat does not follow that life rung.
 
+## Hop (:8 Xvfb)
+
+Operator `hop` / `ide-hop`, or `CONTEXT_BUDGET` (≥35 tool calls or ≥55% window): seal and
+`scripts/liaison-ide-hop.py --root <R> --row "<NOW>" --transcript-id <uuid> --gui-host :8 --force`
+when the operator asked. Default GUI = `:8` Cursor Agents (`127.0.0.1:9338`).
+
 ## Wake
+
+On every `BRIDGE_WAKE` or `liaison-tick.py --set now_row=…`, read digest/tick JSON `budget.stop_class`.
+Contradiction or open design fork ⇒ same turn: `pipeline(op=run, pipeline_id=divergent-ideation-v1)` and/or
+`cdp/opus-5.5` · `cdp/fable-5.1` · `cursor/grok-4.7`, or execute the falsifying probe — ¬ park on partial read.
 
 A watcher line `closeout turn=` is the harvest, once. `conductor_live ⇒ ¬arm(turn_watcher)`. When a conductor tail is armed, use `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and does not surface ordinary turns. Turn-by-turn watch only when the operator names that run. Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable — via `liaison-arm-loop.sh` then `liaison-monitor-loop.sh`; never as the agent Shell PID (a:38446). No playable row and no live watcher ⇒ SIGTERM this root's `--loop` (pidfile / pkill). Loop-abort system wakes: restate LOCKED harvest body or stay silent if already relayed — never loop-status-only. An `AGENT_LOOP_TICK_liaison` that only repeats this tab's CHECKPOINT is not an instruction to play.
 

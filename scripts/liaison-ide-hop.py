@@ -204,8 +204,6 @@ def main() -> int:
         print(json.dumps({"ok": tid is not None, "transcript_id": tid}))
         return 0 if tid else 2
 
-    if not args.row:
-        p.error("--row is required for a hop")
     labels = list(args.arm)
     if not args.no_auto_arm:
         labels.extend(
@@ -247,7 +245,11 @@ def main() -> int:
     raw_row, row_source = resolve_now_row(digest)
     row = format_now_line(raw_row or args.row, row_source, digest, omit_tip_prefix=True)
     if not row.strip():
-        row = args.row
+        row = (
+            (args.row or "").strip()
+            or str(policy.get("now_row") or "").strip()
+            or "operator-requested hop"
+        )
     qualify = hop_qualifies(row=row, arm_labels=labels, policy=policy)
     if not qualify["ok"] and not args.force:
         print(

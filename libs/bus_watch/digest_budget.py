@@ -53,7 +53,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "successor_seat": "cursor-sdk",
     "successor_contract": "none",
     "budget_max_age_s": 300,
-    "gui_host": None,
+    "gui_host": ":8",
     "ready": False,
     "post_digest": False,
     # Attended-tab window class. The operator picks the tab model in the picker,

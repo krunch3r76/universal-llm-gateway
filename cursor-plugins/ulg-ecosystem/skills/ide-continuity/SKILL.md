@@ -99,6 +99,10 @@ Wake source: `AGENT_LOOP_TICK_liaison <json>` from `scripts/liaison-monitor-loop
 
 **Wakes:** Native `CreateGoal` ≠ house ticker. Skip `CreateGoal` on `/liaison`, resume, hop pickup unless operator asks for a panel pin. Leftover goal still active at hop `ok` or arc close ⇒ `UpdateGoal(status=complete)`.
 
+**Operator `hop` / CONTEXT_BUDGET:** On `hop` · `ide-hop` · `hop now`, or `budget.stop_class=CONTEXT_BUDGET` (≥35 tool calls or ≥55% window), CHECKPOINT then `scripts/liaison-ide-hop.py --root <R> --row "<NOW>" --transcript-id <uuid> --gui-host :8 --force` (operator-requested ⇒ `--force`). Default interface = Xvfb `:8` (`127.0.0.1:9338`).
+
+**BRIDGE_WAKE / `--set now_row`:** Read `budget.stop_class` every push wake and every `--set`. Live probe contradicts a hypothesis or architecture forks stay open ⇒ same turn: enumerate (`hypothesize-simulate` / `pipeline(op=run, pipeline_id=divergent-ideation-v1)`) and consult `cdp/opus-5.5`, `cdp/fable-5.1`, or `cursor/grok-4.7`, or run the falsifying check — ¬ partial read, ¬ wait for nudge.
+
 House wakes, cheapest first:
 1. Finish signals (`closeout turn=` / `consult complete`) — one harvest. Conductor tail = `watch-supervise.sh tail --until-finish`. `stall-pop:` on already-relayed closeout ≠ wake (§ Seat stays)
 2. `liaison-tick.py --loop` only while finish watcher live or row playable. Tick that only repeats this tab's CHECKPOINT ≠ wake

@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import sys
 import time
@@ -108,6 +109,37 @@ def _parse_set_items(items: list[str]) -> dict[str, object]:
             raise SystemExit(f"--set expects KEY=VALUE, got {item!r}")
         out[key.strip()] = _coerce(raw.strip())
     return out
+
+
+def _operator_path_budget(root: str, state: dict, register: str) -> dict:
+    """IDE/sdk budget for --set / --mark-* early returns (push wakes, no full digest)."""
+    from bus_watch.digest_budget import (
+        _holder_dispatch_id,
+        _read_sdk_usage_live,
+        seat_budget,
+    )
+
+    policy = effective_policy(state)
+    lock = read_lock(root)
+    digest_ts = _utcnow()
+    est = int(state.get("est_tokens") or 0) + _TICK_OVERHEAD_TOKENS
+    fp = str(state.get("fingerprint") or "")
+    model = str(policy.get("successor_model") or "")
+    holder_dispatch = _holder_dispatch_id(str(lock.get("holder") or ""))
+    usage_live = _read_sdk_usage_live(holder_dispatch) if holder_dispatch else None
+    budget, _pct = seat_budget(
+        est=est,
+        successor_model=model,
+        usage_live=usage_live,
+        holder_dispatch=holder_dispatch,
+        register=register,
+        lock=lock,
+        policy=policy,
+        root_id=root,
+        digest_ts=digest_ts,
+        epoch=str(state.get("budget_epoch") or fp),
+    )
+    return budget
 
 
 def _utcnow() -> str:
@@ -400,15 +432,24 @@ def main() -> int:
             )
             save_state(state_path, state)
         if not (args.once or args.loop):
-            print(
-                json.dumps(
-                    {
-                        "ok": True,
-                        "state": str(state_path),
-                        "policy": effective_policy(state),
-                    }
+            policy_out = effective_policy(state)
+            budget = _operator_path_budget(root, state, register)
+            payload: dict = {
+                "ok": True,
+                "state": str(state_path),
+                "policy": policy_out,
+                "budget": budget,
+            }
+            if budget.get("stop_class") == "CONTEXT_BUDGET":
+                now_row = str(policy_out.get("now_row") or "hop")
+                tid = str(budget.get("transcript_id") or "")
+                payload["stop_class"] = "CONTEXT_BUDGET"
+                payload["hop_command"] = (
+                    f'"$HOME/.venvs/universal/bin/python" scripts/liaison-ide-hop.py '
+                    f"--root {root} --row {shlex.quote(now_row)} "
+                    f"--transcript-id {tid} --gui-host :8"
                 )
-            )
+            print(json.dumps(payload))
             return 0
 
     if args.lane_status:

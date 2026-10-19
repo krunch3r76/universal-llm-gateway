@@ -17,10 +17,9 @@ window (GUI on the graphical host, cursor-server on the hub). ``cursor -r
 instead of raising the remote window, so the launch pastes into the Cursor
 window that already has focus and the attended operator owns that focus.
 
-The GUI host is **policy** (``liaison-tick.py --set gui_host=<ssh host>``), never
-a constant: the operator may sit at any of several graphical hosts, each with a
-Remote-SSH window into the hub, and a wrong default lands the hop — and the next
-turn of premium spend — on a window nobody is watching (hops 1–2, 2026-09-11).
+Default GUI host is **``:8``** (Xvfb Cursor Agents at ``127.0.0.1:9338``). Override
+with ``liaison-tick.py --set gui_host=<ssh host>`` when the operator sits on a
+physical COSMIC node instead.
 """
 
 from __future__ import annotations
@@ -85,11 +84,11 @@ _CHECKPOINT_TIMEOUT_S = 15.0
 _WAIT_SLICE_S = 55.0
 
 
-def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
-    """``policy.gui_host`` from the liaison tick state; None when the operator never set it."""
+def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
+    """``policy.gui_host`` from liaison tick state; ``:8`` Xvfb when unset."""
     state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
     host = effective_policy(state).get("gui_host")
-    return str(host) if host else None
+    return str(host) if host else ":8"
 
 
 def tick_register(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
@@ -252,6 +251,14 @@ def build_ide_hop_message(
         "",
         f"Liaison IDE hop ({register} register){tip}. "
         f"LOAD the {primary_liaison_slug('ide')} skill (do not skim).",
+        (
+            "HOP: When the operator tells this tab to hop (`hop`, `ide-hop`, `hop now`) "
+            "or when budget.stop_class == 'CONTEXT_BUDGET' (tool_calls >= 35 or "
+            "used_tokens >= 55%), immediately seal and hop on this Xvfb (:8) interface "
+            f'via: "$HOME/.venvs/universal/bin/python" scripts/liaison-ide-hop.py '
+            f'--root {root_id} --row "{row}" --transcript-id <uuid> --gui-host :8 --force '
+            "(include --force when the operator explicitly requested the hop)."
+        ),
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
         "NOW non-empty ⇒ dispatch its first leg from this tab. "
@@ -591,14 +598,10 @@ def session_unreachable(gui_host: str) -> dict[str, Any] | None:
     }
 
 
-# Seats were filling an unset host from specimen tests (jupiter) while the
-# operator was on another node. The refusal text is the reminder; there is
-# no default host.
 GUI_HOST_UNSET_FIX = (
-    "Ask the operator which node they are on before any keystroke. "
-    "Do not default to jupiter or copy a specimen host. "
-    "After they name it: --set gui_host=<ssh host> on the house, "
-    "or pass --gui-host for this hop only."
+    "Hop target unset and :8 Xvfb unreachable. "
+    "Confirm Cursor Agents on :8 (127.0.0.1:9338) or "
+    "--set gui_host=<ssh host> / --gui-host for COSMIC."
 )
 
 
@@ -623,8 +626,7 @@ def fire_ide_hop(
     callers must pass ``seal`` with ``ok`` true after CHECKPOINT lands; otherwise this
     function refuses before any file write or SSH.
 
-    Refuses when ``gui_host`` is unset (no fallback host). The refusal tells
-    the seat to ask the operator which node, not to invent jupiter. The agents window
+    Defaults ``gui_host`` to ``:8`` when omitted or empty. The agents window
     (``app_id=cursor``, title ``Cursor Agents``) is focused through
     ``zcosmic_toplevel_manager_v1`` and verified activated before any key is
     sent. ``cursor --folder-uri`` / ``vscode-remote://`` is not used — Firefox
@@ -646,13 +648,7 @@ def fire_ide_hop(
             "bus_turn": seal.get("bus_turn"),
             "execution_id": seal.get("execution_id"),
         }
-    if not gui_host:
-        return {
-            "ok": False,
-            "phase": "gui_host_unset",
-            "root": root_id,
-            "fix": GUI_HOST_UNSET_FIX,
-        }
+    resolved_gui_host = str(gui_host or "").strip() or ":8"
     focus_title = None if no_raise else focus_title_for(policy_focus_title(root_id))
     resolved_model_query = (
         policy_hop_model_query(root_id) if model_query is None else model_query
@@ -672,7 +668,7 @@ def fire_ide_hop(
     result: dict[str, Any] = {
         "root": root_id,
         "message_path": str(msg_path),
-        "gui_host": gui_host,
+        "gui_host": resolved_gui_host,
         "raise_uri": None,
         "focus_title": focus_title,
         "model_query": resolved_model_query,
@@ -682,7 +678,7 @@ def fire_ide_hop(
     }
     if dry_run:
         return {"ok": True, "dry_run": True, **result}
-    locked = session_unreachable(gui_host)
+    locked = session_unreachable(resolved_gui_host)
     if locked is not None:
         return {"ok": False, "phase": "session_locked", **locked, **result}
     marker = hop_header_line(message)
@@ -719,7 +715,7 @@ def fire_ide_hop(
     if not mutex.get("ok"):
         return {"ok": False, **mutex, **result}
     window = try_acquire_window_mutex(
-        gui_host, focus_title, root_id=root_id, ttl_s=root_ttl
+        resolved_gui_host, focus_title, root_id=root_id, ttl_s=root_ttl
     )
     if not window.get("ok"):
         release_hop_mutex(root_id)
@@ -730,7 +726,7 @@ def fire_ide_hop(
     fired_at = time.time()
     hop_record: dict[str, Any] | None = None
     try:
-        if is_cursor_xvfb_host(gui_host):
+        if is_cursor_xvfb_host(resolved_gui_host):
             keystroke = launch_cursor_agents_tab(message)
             if not keystroke.get("ok"):
                 return {"ok": False, "phase": "keystroke", "keystroke": keystroke, **result}
@@ -743,7 +739,7 @@ def fire_ide_hop(
                         "BatchMode=yes",
                         "-o",
                         "ConnectTimeout=20",
-                        gui_host,
+                        resolved_gui_host,
                         cmd,
                     ],
                     capture_output=True,
@@ -820,8 +816,8 @@ def fire_ide_hop(
                 hop_record = mark_expired(hop_record)
             toplevels = (
                 []
-                if is_cursor_xvfb_host(gui_host)
-                else remote_toplevels(gui_host)
+                if is_cursor_xvfb_host(resolved_gui_host)
+                else remote_toplevels(resolved_gui_host)
             )
             cursor_windows = (
                 [row for row in toplevels if row.get("app_id") == "cursor"]
@@ -864,5 +860,5 @@ def fire_ide_hop(
             "keystroke": keystroke,
         }
     finally:
-        release_window_mutex(gui_host, focus_title)
+        release_window_mutex(resolved_gui_host, focus_title)
         release_hop_mutex(root_id)
