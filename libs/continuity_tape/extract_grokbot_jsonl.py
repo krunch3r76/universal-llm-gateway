@@ -42,7 +42,11 @@ from pathlib import Path
 from typing import Any
 
 from continuity_tape.events import continuity_messages_extracted
-from continuity_tape.extract_jsonl import _turns_to_messages, _walk_turns
+from continuity_tape.extract_jsonl import (
+    _operator_tool_body,
+    _turns_to_messages,
+    _walk_turns,
+)
 from continuity_tape.messages import (
     ContinuityMessagesEnvelope,
     EnvelopeMeta,
@@ -85,6 +89,10 @@ INJECTED_USER_RE = re.compile(
     r"^\s*(?:\[GROK_BOT_HIDDEN_PROMPT|\[SAND_HIDDEN_PROMPT|\[A background task\b"
     r"|\[event\b|<agent_profile_update>|<system_reminder>|<instructions_update>)"
 )
+BACKGROUND_TASK_LABEL_RE = re.compile(
+    r'(Background task ")(.+?)(…|\.\.\.)("(?:\s*\([^)]+\))?\s*finished:)'
+)
+_TRUNCATED_FOOTER = "[truncated]"
 
 
 class TranscriptPageError(ValueError):
@@ -500,6 +508,86 @@ def _kept_user_strings(records: list[dict[str, Any]]) -> list[str]:
     return found
 
 
+def _body_is_truncated(text: str) -> bool:
+    if text.endswith("…") or text.endswith("..."):
+        return True
+    return _ellipsis_in_middle(text) or TRUNCATION_MARKER_RE.search(text) is not None
+
+
+def _task_bodies_fifo(records: list[dict[str, Any]]) -> list[str]:
+    """Non-truncated Task tool bodies in record order (FIFO for label restore)."""
+    bodies: list[str] = []
+    for rec in records:
+        if rec.get("role") != "assistant":
+            continue
+        for block in _content(rec) or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_use" or block.get("name") != "Task":
+                continue
+            body = _operator_tool_body(block.get("input"))
+            if body and not _body_is_truncated(body):
+                bodies.append(body)
+    return bodies
+
+
+def _background_task_label_pending(text: str) -> bool:
+    return BACKGROUND_TASK_LABEL_RE.search(text) is not None
+
+
+def _replace_background_task_labels(
+    messages: list[dict[str, Any]], task_bodies: list[str]
+) -> None:
+    """Swap truncated Background-task quoted labels for full Task bodies (FIFO)."""
+    queue = list(task_bodies)
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, str) or not queue:
+            continue
+
+        def _sub(m: re.Match[str]) -> str:
+            if not queue:
+                return m.group(0)
+            full = queue.pop(0)
+            return f"{m.group(1)}{full}{m.group(4)}"
+
+        updated = BACKGROUND_TASK_LABEL_RE.sub(_sub, content)
+        if updated != content:
+            msg["content"] = updated
+
+
+def _message_needs_truncated_footer(text: str) -> bool:
+    if _background_task_label_pending(text):
+        return True
+    if TRUNCATION_MARKER_RE.search(text):
+        return True
+    if _ellipsis_in_middle(text):
+        return True
+    for part in text.split("\n\n"):
+        if _ellipsis_in_middle(part) or TRUNCATION_MARKER_RE.search(part):
+            return True
+    return False
+
+
+def _append_truncated_footer(messages: list[dict[str, Any]]) -> bool:
+    """Append ``[truncated]`` to messages that still look truncated. Returns any hit."""
+    any_hit = False
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, str):
+            continue
+        if not _message_needs_truncated_footer(content):
+            continue
+        if content.rstrip().endswith(_TRUNCATED_FOOTER):
+            any_hit = True
+            continue
+        msg["content"] = content.rstrip() + f"\n\n{_TRUNCATED_FOOTER}"
+        any_hit = True
+    return any_hit
+
+
 def _restore_unstripped_user_content(
     messages: list[dict[str, Any]],
     records: list[dict[str, Any]],
@@ -527,7 +615,14 @@ def extract_grokbot_transcript(
     capture_ref: str | None = None,
     capture_sha256: str | None = None,
 ) -> ContinuityMessagesEnvelope:
-    """ReadTranscript pages (any order) or bare JSONL -> raw L1 messages pour."""
+    """ReadTranscript pages (any order) or bare JSONL -> raw L1 messages pour.
+
+    With ``tools="marker"``, assistant ``SendToUser``, ``SendToAgent``, and ``Task``
+    tool bodies are emitted after each marker; other tools stay marker-only. User
+    lines may restore truncated ``Background task "…"`` labels from prior Task
+    bodies. Message text that still looks upstream-truncated gets a trailing
+    ``[truncated]`` paragraph and ``meta.truncated`` is set.
+    """
     if capture_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
         raise ValueError("capture_sha256 must be exactly 64 lowercase hex characters")
     raw = text.encode("utf-8")
@@ -543,13 +638,17 @@ def extract_grokbot_transcript(
     truncated_parts = _truncated_part_count(parsed)
     records, stats = adapt_records(parsed)
     truncated_parts_kept = _truncated_part_count(records)
-    turns = _walk_turns(records, tools=tools)
+    render_bodies = tools == "marker"
+    turns = _walk_turns(records, tools=tools, render_operator_tool_bodies=render_bodies)
     messages = _turns_to_messages(turns)
     _restore_unstripped_user_content(messages, records)
+    task_queue = _task_bodies_fifo(records)
+    _replace_background_task_labels(messages, task_queue)
+    footer_hit = _append_truncated_footer(messages)
     for msg in messages:
         msg["source"] = SOURCE
     reassembled = hashlib.sha256(body).hexdigest()
-    truncated = truncated_parts > 0
+    truncated = truncated_parts > 0 or footer_hit
     cap_sha = pages_sha256 if capture_sha256 is None else capture_sha256
     meta_kwargs: dict[str, Any] = {
         "surface": "grok",

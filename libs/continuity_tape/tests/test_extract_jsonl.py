@@ -42,3 +42,30 @@ def test_extract_turns_from_jsonl_marker_tools(tmp_path: Path) -> None:
     assert envelope.meta.turn_count == 1
     assert len(envelope.messages) == 2
     assert envelope.messages[1]["content"] == "Hi.\n\n[tool call: grep]"
+
+
+def test_cursor_marker_send_to_user_has_no_body(tmp_path: Path) -> None:
+    jsonl = tmp_path / "send.jsonl"
+    records = [
+        {
+            "role": "user",
+            "message": {"content": [{"type": "text", "text": "Ask."}]},
+        },
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "SendToUser",
+                        "input": {"text": "secret reply"},
+                    }
+                ]
+            },
+        },
+    ]
+    with jsonl.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+    envelope = extract_turns_from_jsonl(jsonl, tools="marker")
+    assert envelope.messages[1]["content"] == "[tool call: SendToUser]"

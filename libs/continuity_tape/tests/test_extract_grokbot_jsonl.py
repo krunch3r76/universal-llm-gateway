@@ -598,6 +598,108 @@ def test_ellipsis_near_edge_is_not_truncated() -> None:
             observed_at="t",
         )
         assert env.meta.sources[0]["truncated_parts"] == expect
+        content = env.messages[0]["content"]
+        if expect:
+            assert content.endswith("[truncated]")
+            assert env.meta.truncated is True
+        else:
+            assert "[truncated]" not in content
+
+
+def test_send_to_user_body_preserved_under_marker() -> None:
+    records = [
+        _u("ping"),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "SendToUser",
+                "input": {"text": "hello operator"},
+            }
+        ),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    body = env.messages[1]["content"]
+    assert "[tool call: SendToUser]" in body
+    assert "hello operator" in body
+
+
+def test_task_body_preserved_shell_stays_marker_only() -> None:
+    records = [
+        _u("go"),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Task",
+                "input": {"prompt": "full prompt text"},
+            },
+            {"type": "tool_use", "name": "Shell", "input": {"command": "echo hi"}},
+        ),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    body = env.messages[1]["content"]
+    assert "[tool call: Task]" in body
+    assert "full prompt text" in body
+    assert "[tool call: Shell]" in body
+    assert "echo hi" not in body
+
+
+def test_background_task_label_restored_from_task() -> None:
+    user_line = 'Background task "short label…" (executor) finished:\nDone.'
+    records = [
+        _u("start"),
+        _a(
+            {
+                "type": "tool_use",
+                "name": "Task",
+                "input": {"prompt": "full prompt text"},
+            }
+        ),
+        _u(user_line),
+        _a({"type": "text", "text": "ack"}),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    assert (
+        'Background task "full prompt text" (executor) finished:'
+        in env.messages[2]["content"]
+    )
+
+
+def test_truncated_task_leaves_label_and_marks_truncated() -> None:
+    long_prompt = _sized(4000, ellipsis=True)
+    user_line = 'Background task "short label…" (executor) finished:'
+    records = [
+        _u("start"),
+        _a({"type": "tool_use", "name": "Task", "input": {"prompt": long_prompt}}),
+        _u(user_line),
+        _a({"type": "text", "text": "visible reply"}),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    assert 'Background task "short label…"' in env.messages[2]["content"]
+    task_asst = env.messages[1]["content"]
+    assert "[tool call: Task]" in task_asst
+    assert long_prompt in task_asst
+    assert task_asst.endswith("[truncated]")
+    assert env.messages[3]["content"] == "visible reply"
+    assert env.meta.truncated is True
+
+
+def test_empty_send_to_user_input_marker_only() -> None:
+    records = [
+        _u("x"),
+        _a({"type": "tool_use", "name": "SendToUser", "input": {}}),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    assert env.messages[1]["content"] == "[tool call: SendToUser]"
 
 
 def test_memory_context_block_keeps_sibling_user_text() -> None:

@@ -18,8 +18,30 @@ from continuity_tape.messages import (
 
 _SOURCE = "cursor-jsonl"
 
+OPERATOR_TOOL_BODY_NAMES = frozenset({"SendToUser", "SendToAgent", "Task"})
 
-def _read_jsonl_bytes(raw: bytes, *, path_hint: str = "<bytes>") -> list[dict[str, Any]]:
+_OPERATOR_INPUT_KEYS = ("text", "message", "content", "body", "prompt", "description")
+
+
+def _operator_tool_body(raw: Any) -> str | None:
+    """Joined operator-tool input body, or ``None`` when no string fields match."""
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        return stripped or None
+    if isinstance(raw, dict):
+        parts = [
+            v.strip()
+            for key in _OPERATOR_INPUT_KEYS
+            if isinstance(v := raw.get(key), str) and v.strip()
+        ]
+        if parts:
+            return "\n\n".join(parts)
+    return None
+
+
+def _read_jsonl_bytes(
+    raw: bytes, *, path_hint: str = "<bytes>"
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     text = raw.decode("utf-8")
     for line_no, line in enumerate(text.splitlines(), start=1):
@@ -55,6 +77,7 @@ def _extract_assistant_blocks(
     content: list[dict[str, Any]],
     *,
     tools: Tools,
+    render_operator_tool_bodies: bool = False,
 ) -> str:
     parts: list[str] = []
     for block in content:
@@ -68,6 +91,10 @@ def _extract_assistant_blocks(
         elif btype == "tool_use" and tools == "marker":
             name = block.get("name", "<unknown>")
             parts.append(f"[tool call: {name}]")
+            if render_operator_tool_bodies and name in OPERATOR_TOOL_BODY_NAMES:
+                body = _operator_tool_body(block.get("input"))
+                if body:
+                    parts.append(body)
     return "\n\n".join(parts).strip()
 
 
@@ -75,6 +102,7 @@ def _walk_turns(
     records: list[dict[str, Any]],
     *,
     tools: Tools,
+    render_operator_tool_bodies: bool = False,
 ) -> list[dict[str, str]]:
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
@@ -99,7 +127,11 @@ def _walk_turns(
         elif role == "assistant":
             if current is None:
                 current = {"user": ["(no user message)"], "assistant": []}
-            asst = _extract_assistant_blocks(content, tools=tools)
+            asst = _extract_assistant_blocks(
+                content,
+                tools=tools,
+                render_operator_tool_bodies=render_operator_tool_bodies,
+            )
             if asst:
                 current["assistant"].append(asst)
     if current is not None:
