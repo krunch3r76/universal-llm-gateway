@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,7 +28,6 @@ from typing import Any
 from anthropic_credit.ledger import LedgerUnavailable, validate_ledger_path
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
-    _connect,
     resolve_cursor_sdk_dispatch_ledger_path,
 )
 from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
@@ -41,6 +41,9 @@ CANONICAL_VERDICT_RE = re.compile(
 )
 SCAN_CAP = 64
 MAX_RANGES_PER_RUN = 3
+_GIT_TIMEOUT_S = 10.0
+_LEDGER_CONNECT_TIMEOUT_S = 1.0
+_LEDGER_CONNECT_BUDGET_S = 2.0
 INITIAL_REVIEW_WINDOW_BASE = "cff8a035e09c1dfe6f1cd1b676ca575eb9a430c1"
 GAP_THREAD = "15851"
 GAP_TO = "grok-bot-gc1"
@@ -90,18 +93,33 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class _GitTimeoutError(RuntimeError):
+    """A git subprocess exceeded ``_GIT_TIMEOUT_S``."""
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _GitTimeoutError(args[0] if args else "git") from exc
 
 
 def head_ref_sha(repo: str | Path, ref: str = MASTER_REF) -> str | None:
-    """Resolve ``ref`` to a full sha, or None when git cannot name it."""
-    proc = _git(Path(repo), "rev-parse", "--verify", ref)
+    """Resolve ``ref`` to a full sha, or None when git cannot name it.
+
+    A timeout is None. The land call is not gated on this sha; the post-land
+    check fails closed instead of inventing a commit range.
+    """
+    try:
+        proc = _git(Path(repo), "rev-parse", "--verify", ref)
+    except _GitTimeoutError:
+        return None
     if proc.returncode != 0:
         return None
     sha = proc.stdout.strip().lower()
@@ -180,7 +198,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS master_review_owed_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             review_window_base TEXT NOT NULL,
-            verdict_scan_before_id INTEGER NOT NULL
+            verdict_scan_before_id INTEGER NOT NULL,
+            verdict_scan_after_turn INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -189,7 +208,54 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "VALUES (1, ?, 0) ON CONFLICT(id) DO NOTHING",
         (INITIAL_REVIEW_WINDOW_BASE,),
     )
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(master_review_owed_state)")
+    }
+    if "verdict_scan_after_turn" not in columns:
+        conn.execute(
+            "ALTER TABLE master_review_owed_state "
+            "ADD COLUMN verdict_scan_after_turn INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    """Open the review ledger with a short busy budget.
+
+    The dispatch-ledger helper retries 40 times at a 30s sqlite timeout. This
+    check runs on the land path, including after ``refs/heads/master`` has
+    moved, so a stuck lock is a failed check rather than that retry.
+    """
+    deadline = time.monotonic() + _LEDGER_CONNECT_BUDGET_S
+    last_err: sqlite3.OperationalError | None = None
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            conn = sqlite3.connect(
+                path, timeout=min(_LEDGER_CONNECT_TIMEOUT_S, remaining)
+            )
+        except sqlite3.OperationalError as exc:
+            last_err = exc
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
+            time.sleep(min(0.02, max(deadline - time.monotonic(), 0)))
+            continue
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            last_err = exc
+            message = str(exc).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
+            time.sleep(min(0.02, max(deadline - time.monotonic(), 0)))
+    raise sqlite3.OperationalError(str(last_err or "ledger connect budget exceeded"))
 
 
 def _open_ledger(
@@ -200,14 +266,18 @@ def _open_ledger(
         validate_ledger_path(path, mounts_table=mounts_table)
     except LedgerUnavailable:
         return None, "ledger_not_local"
-    conn = _connect(path)
+    try:
+        conn = _connect(path)
+    except sqlite3.OperationalError:
+        logger.warning("master review ledger connect failed", exc_info=True)
+        return None, "ledger_connect_failed"
     _ensure_schema(conn)
     return conn, None
 
 
 def _state(conn: sqlite3.Connection) -> sqlite3.Row:
     row = conn.execute(
-        "SELECT review_window_base, verdict_scan_before_id "
+        "SELECT review_window_base, verdict_scan_before_id, verdict_scan_after_turn "
         "FROM master_review_owed_state WHERE id = 1"
     ).fetchone()
     if row is None:
@@ -464,57 +534,66 @@ def _post_one(
     poster(subject, body, tag)
 
 
-def _mark_gap(
+def _claim_gap(
     conn: sqlite3.Connection,
     *,
     tip: str,
     base: str,
     tag: str | None,
-) -> None:
-    existing = conn.execute(
-        "SELECT verdict FROM master_review_owed WHERE tip_sha = ?", (tip,)
-    ).fetchone()
-    stamp = _now()
-    if existing is None:
-        conn.execute(
-            "INSERT INTO master_review_owed (tip_sha, base_sha, gap_posted_at, notice_tag) "
-            "VALUES (?,?,?,?)",
-            (tip, base, stamp, tag),
-        )
-    elif not existing["verdict"]:
-        conn.execute(
-            "UPDATE master_review_owed SET gap_posted_at=?, "
-            "notice_tag=COALESCE(notice_tag, ?) WHERE tip_sha=?",
-            (stamp, tag, tip),
-        )
+) -> bool:
+    """Claim ``tip`` before a notice post. False when a claim already exists."""
+    conn.execute(
+        """
+        INSERT INTO master_review_owed (tip_sha, base_sha, gap_posted_at, notice_tag)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(tip_sha) DO UPDATE SET
+            gap_posted_at = excluded.gap_posted_at,
+            notice_tag = COALESCE(master_review_owed.notice_tag, excluded.notice_tag)
+        WHERE master_review_owed.gap_posted_at IS NULL
+        """,
+        (tip, base, _now(), tag),
+    )
+    claimed = conn.execute("SELECT changes()").fetchone()[0] == 1
     conn.commit()
+    return bool(claimed)
 
 
-def _gap_already_posted(conn: sqlite3.Connection, tip: str) -> bool:
-    row = conn.execute(
-        "SELECT gap_posted_at FROM master_review_owed WHERE tip_sha = ?", (tip,)
-    ).fetchone()
-    return row is not None and bool(row["gap_posted_at"])
+def _release_gap_claim(conn: sqlite3.Connection, tip: str) -> None:
+    """Drop a claim when the notice post failed so a later run can retry."""
+    conn.execute(
+        "UPDATE master_review_owed SET gap_posted_at = NULL WHERE tip_sha = ?",
+        (tip,),
+    )
+    conn.commit()
 
 
 def _resolve_turns(
     source: TurnSource | None,
     *,
-    after_id: int,
+    after_turn: int,
 ) -> list[dict[str, Any]]:
     if source is None:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             return []
-        return _bus_verdict_turns(after_id)
+        return _bus_verdict_turns(after_turn)
     if callable(source):
         return list(source())
-    return [
-        row for row in source if int(row.get("id") or 0) > after_id or not row.get("id")
-    ]
+    selected: list[dict[str, Any]] = []
+    for row in source:
+        if row.get("turn_number") is None:
+            selected.append(row)
+            continue
+        if int(row["turn_number"]) > after_turn:
+            selected.append(row)
+    return selected
 
 
-def _bus_verdict_turns(after_id: int) -> list[dict[str, Any]]:
-    """Read thread 15851 turns newer than the watermark. Raises on transport failure."""
+def _bus_verdict_turns(after_turn: int) -> list[dict[str, Any]]:
+    """Read one oldest-first page of thread 15851 after ``after_turn``.
+
+    ``last`` without ``after_turn`` is newest-first and drops a canonical line
+    that sits behind the page. Raises on transport failure.
+    """
     import asyncio
 
     from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -526,7 +605,11 @@ def _bus_verdict_turns(after_id: int) -> list[dict[str, Any]]:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
             resp = await client.get(
                 "/turns",
-                params={"thread": GAP_THREAD, "last": SCAN_CAP},
+                params={
+                    "thread": GAP_THREAD,
+                    "after_turn": after_turn,
+                    "last": SCAN_CAP,
+                },
                 headers=headers,
             )
             if resp.status_code >= 400:
@@ -535,12 +618,11 @@ def _bus_verdict_turns(after_id: int) -> list[dict[str, Any]]:
         turns = payload.get("turns") or []
         selected: list[dict[str, Any]] = []
         for turn in turns:
-            if int(turn.get("id") or 0) <= after_id:
-                continue
-            body = str(turn.get("body") or "")
-            if "VERDICT:" not in body.upper():
+            number = int(turn.get("turn_number") or 0)
+            if number and number <= after_turn:
                 continue
             selected.append(turn)
+        selected.sort(key=lambda turn: int(turn.get("turn_number") or 0))
         return selected[:SCAN_CAP]
 
     return asyncio.run(_fetch())
@@ -551,39 +633,40 @@ def _scan_turns(
     repo: Path,
     turns: Sequence[dict[str, Any]],
 ) -> None:
-    watermark = int(_state(conn)["verdict_scan_before_id"] or 0)
+    cursor = int(_state(conn)["verdict_scan_after_turn"] or 0)
     seen = 0
-    max_id = watermark
-    for turn in turns:
+    advanced = cursor
+    ordered = sorted(turns, key=lambda turn: int(turn.get("turn_number") or 0))
+    for turn in ordered:
+        number = int(turn["turn_number"]) if turn.get("turn_number") is not None else 0
+        if number and number <= cursor:
+            continue
         body = str(turn.get("body") or "")
-        if "VERDICT:" not in body.upper():
-            continue
-        turn_id = int(turn.get("id") or 0)
-        if turn_id and turn_id <= watermark:
-            continue
-        if seen >= SCAN_CAP:
-            break
-        seen += 1
-        bind_canonical_verdict(
-            body,
-            repo=repo,
-            bus_thread=str(turn.get("thread") or turn.get("bus_thread") or "") or None,
-            bus_turn=int(turn["turn_number"])
-            if turn.get("turn_number") is not None
-            else None,
-            review_dispatch_id=(
-                str(turn["review_dispatch_id"])
-                if turn.get("review_dispatch_id")
-                else None
-            ),
-            conn=conn,
-        )
-        if turn_id:
-            max_id = max(max_id, turn_id)
-    if max_id != watermark:
+        if "VERDICT:" in body.upper():
+            if seen >= SCAN_CAP:
+                break
+            seen += 1
+            bound = bind_canonical_verdict(
+                body,
+                repo=repo,
+                bus_thread=str(turn.get("thread") or turn.get("bus_thread") or "")
+                or None,
+                bus_turn=number or None,
+                review_dispatch_id=(
+                    str(turn["review_dispatch_id"])
+                    if turn.get("review_dispatch_id")
+                    else None
+                ),
+                conn=conn,
+            )
+            if bound.status == "unresolved_sha":
+                break
+        if number:
+            advanced = number
+    if advanced != cursor:
         conn.execute(
-            "UPDATE master_review_owed_state SET verdict_scan_before_id=? WHERE id=1",
-            (max_id,),
+            "UPDATE master_review_owed_state SET verdict_scan_after_turn=? WHERE id=1",
+            (advanced,),
         )
         conn.commit()
 
@@ -622,60 +705,76 @@ def unreviewed_master_commits(
         return _fail("data_file_unreadable")
     try:
         turns = _resolve_turns(
-            verdict_turns, after_id=int(_state(conn)["verdict_scan_before_id"] or 0)
+            verdict_turns,
+            after_turn=int(_state(conn)["verdict_scan_after_turn"] or 0),
         )
         _scan_turns(conn, root, turns)
+    except _GitTimeoutError:
+        return _fail("git_timeout")
     except Exception:
         logger.warning("master review bus scan failed", exc_info=True)
         return _fail("bus_read_failed")
-    if not _is_ancestor(root, stored, MASTER_REF):
-        return _fail("rev_list_failed")
-    window = _rev_list(root, stored, MASTER_REF)
-    if window is None:
-        return _fail("rev_list_failed")
-    rows = _rows(conn)
-    covered = _covered_shas(root, rows)
-    for sha in window:
-        if sha not in covered and _clean_merge_covered(root, sha, rows):
-            covered.add(sha)
-    owed = _fix_owed(rows)
-    gaps = [sha for sha in window if sha not in covered and sha not in owed]
-    gap_set = set(gaps)
-    ranges = _group_ranges(window, gap_set)
-    send = poster or _default_poster
-    posted: list[str] = []
-    deferred: list[dict[str, Any]] = []
-    for index, group in enumerate(ranges):
-        tip = group[-1]
-        base = group[0]
-        if index >= MAX_RANGES_PER_RUN:
-            deferred.append(
-                {
-                    "tip_sha": tip,
-                    "base_sha": base,
-                    "commits": list(group),
-                    "gap_posted_at": None,
-                }
-            )
-            continue
-        if _gap_already_posted(conn, tip):
-            continue
-        try:
-            _post_one(send, tag="gap", base=base, tip=tip, commits=group)
-        except Exception:
-            logger.warning("master review gap post failed tip=%s", tip, exc_info=True)
-            continue
-        _mark_gap(conn, tip=tip, base=base, tag=None)
-        posted.append(tip)
-    _advance_floor(conn, root, window, gap_set)
-    return ReviewCheckResult(
-        ok=True,
-        reason=None,
-        commits=gaps,
-        fix_owed=tuple(owed),
-        deferred_ranges=tuple(deferred),
-        posted_tips=tuple(posted),
-    )
+    try:
+        if not _is_ancestor(root, stored, MASTER_REF):
+            return _fail("rev_list_failed")
+        window = _rev_list(root, stored, MASTER_REF)
+        if window is None:
+            return _fail("rev_list_failed")
+        rows = _rows(conn)
+        covered = _covered_shas(root, rows)
+        for sha in window:
+            if sha not in covered and _clean_merge_covered(root, sha, rows):
+                covered.add(sha)
+        owed = _fix_owed(rows)
+        gaps = [sha for sha in window if sha not in covered and sha not in owed]
+        gap_set = set(gaps)
+        ranges = _group_ranges(window, gap_set)
+        send = poster or _default_poster
+        posted: list[str] = []
+        deferred: list[dict[str, Any]] = []
+        for index, group in enumerate(ranges):
+            tip = group[-1]
+            base = group[0]
+            if index >= MAX_RANGES_PER_RUN:
+                deferred.append(
+                    {
+                        "tip_sha": tip,
+                        "base_sha": base,
+                        "commits": list(group),
+                        "gap_posted_at": None,
+                    }
+                )
+                continue
+            if not _claim_gap(conn, tip=tip, base=base, tag=None):
+                continue
+            siblings: list[str] = []
+            for sha in group:
+                if sha == tip:
+                    continue
+                if _claim_gap(conn, tip=sha, base=base, tag=None):
+                    siblings.append(sha)
+            try:
+                _post_one(send, tag="gap", base=base, tip=tip, commits=group)
+            except Exception:
+                logger.warning(
+                    "master review gap post failed tip=%s", tip, exc_info=True
+                )
+                _release_gap_claim(conn, tip)
+                for sha in siblings:
+                    _release_gap_claim(conn, sha)
+                continue
+            posted.append(tip)
+        _advance_floor(conn, root, window, gap_set)
+        return ReviewCheckResult(
+            ok=True,
+            reason=None,
+            commits=gaps,
+            fix_owed=tuple(owed),
+            deferred_ranges=tuple(deferred),
+            posted_tips=tuple(posted),
+        )
+    except _GitTimeoutError:
+        return _fail("git_timeout")
 
 
 def _advance_floor(
@@ -749,10 +848,13 @@ def _ride_along_unreviewed(
     send = poster or _default_poster
     posted = 0
     for sha in uncovered:
-        if _gap_already_posted(conn, sha):
+        if not _claim_gap(conn, tip=sha, base=old, tag="ride_along"):
             continue
-        _post_one(send, tag="ride_along", base=old, tip=sha, commits=[sha])
-        _mark_gap(conn, tip=sha, base=old, tag="ride_along")
+        try:
+            _post_one(send, tag="ride_along", base=old, tip=sha, commits=[sha])
+        except Exception:
+            _release_gap_claim(conn, sha)
+            raise
         posted += 1
     return RideAlongResult(ok=True, reason=None, commits=uncovered, posted=posted)
 
@@ -785,6 +887,8 @@ def ride_along_unreviewed(
             poster=poster,
             data_path=data_path,
         )
+    except _GitTimeoutError:
+        return RideAlongResult(ok=False, reason="git_timeout", commits=None, posted=0)
     except Exception as exc:
         logger.warning("ride_along_unreviewed failed", exc_info=True)
         return RideAlongResult(
@@ -842,6 +946,10 @@ def apply_review_obligations_after_land(
                 mounts_table=mounts_table,
                 poster=poster,
                 data_path=data_path,
+            )
+        else:
+            logger.warning(
+                "master review ride-along failed check reason=missing_master_sha"
             )
     except Exception:
         logger.warning("apply_review_obligations_after_land failed", exc_info=True)

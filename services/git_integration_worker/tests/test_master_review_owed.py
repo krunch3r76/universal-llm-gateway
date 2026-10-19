@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -136,7 +138,15 @@ def _init_repo(path: Path, n: int, prefix: str = "c") -> list[str]:
     shas: list[str] = []
     for index in range(n):
         subprocess.check_call(
-            ["git", "-C", str(path), "commit", "--allow-empty", "-m", f"{prefix}{index}"],
+            [
+                "git",
+                "-C",
+                str(path),
+                "commit",
+                "--allow-empty",
+                "-m",
+                f"{prefix}{index}",
+            ],
             stdout=subprocess.DEVNULL,
         )
         shas.append(
@@ -747,3 +757,294 @@ def test_ride_along_unreviewed_posts_once_and_poster_raise_does_not_block(
         )
 
     _caller()
+
+
+def _raise_timeout(*args: object, **kwargs: object) -> None:
+    command = args[0] if args else kwargs.get("args", ["git"])
+    raise subprocess.TimeoutExpired(cmd=command, timeout=10)
+
+
+def test_watermark_pages_oldest_first_and_binds_line_behind_the_tip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    base, tip = _init_repo(repo, 2)
+    canonical = CANON.format(base=base, tip=tip)
+    total = 130
+    canonical_turn = 10
+    store = [
+        {
+            "id": 100_000 + number,
+            "turn_number": number,
+            "thread": "15851",
+            "body": canonical if number == canonical_turn else f"note {number}",
+        }
+        for number in range(1, total + 1)
+    ]
+    seen: list[dict[str, object]] = []
+
+    class _Response:
+        def __init__(self, turns: list[dict[str, object]]) -> None:
+            self.status_code = 200
+            self._turns = turns
+
+        def json(self) -> dict[str, object]:
+            return {"turns": self._turns}
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> bool:
+            return False
+
+        async def get(
+            self,
+            path: str,
+            params: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> _Response:
+            del headers
+            assert path == "/turns"
+            assert params is not None
+            seen.append(dict(params))
+            assert params["last"] == mro.SCAN_CAP
+            assert params["thread"] == "15851"
+            after = int(params["after_turn"])  # type: ignore[arg-type]
+            page = [row for row in store if int(row["turn_number"]) > after][
+                : mro.SCAN_CAP
+            ]
+            return _Response(page)
+
+    monkeypatch.setattr(
+        "transport_utils.make_async_client", lambda *_a, **_k: _Client()
+    )
+    conn, reason = mro._open_ledger(EXT4)
+    assert conn is not None and reason is None
+    first = mro._bus_verdict_turns(0)
+    mro._scan_turns(conn, repo, first)
+    assert [int(row["turn_number"]) for row in first] == list(range(1, 65))
+    assert int(mro._state(conn)["verdict_scan_after_turn"]) == 64
+    bound = conn.execute(
+        "SELECT verdict FROM master_review_owed WHERE tip_sha = ?", (tip,)
+    ).fetchone()
+    assert bound is not None and bound["verdict"] == "APPROVE"
+    fetched = [int(row["turn_number"]) for row in first]
+    while True:
+        cursor = int(mro._state(conn)["verdict_scan_after_turn"])
+        page = mro._bus_verdict_turns(cursor)
+        if not page:
+            break
+        fetched.extend(int(row["turn_number"]) for row in page)
+        mro._scan_turns(conn, repo, page)
+    assert fetched == list(range(1, total + 1))
+    assert seen[0]["after_turn"] == 0
+    assert all("after_turn" in params for params in seen)
+
+
+def test_scan_does_not_advance_past_unresolved_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    base, tip = _init_repo(repo, 2)
+    dead = "ab" * 20
+    turns = [
+        {"turn_number": 1, "thread": "15851", "body": "no verdict here"},
+        {
+            "turn_number": 2,
+            "thread": "15851",
+            "body": CANON.format(base=dead, tip=dead),
+        },
+        {
+            "turn_number": 3,
+            "thread": "15851",
+            "body": CANON.format(base=base, tip=tip),
+        },
+    ]
+    conn, reason = mro._open_ledger(EXT4)
+    assert conn is not None and reason is None
+    mro._scan_turns(conn, repo, turns)
+    assert int(mro._state(conn)["verdict_scan_after_turn"]) == 1
+    mro._scan_turns(conn, repo, turns)
+    assert int(mro._state(conn)["verdict_scan_after_turn"]) == 1
+    later = conn.execute(
+        "SELECT verdict FROM master_review_owed WHERE tip_sha = ?", (tip,)
+    ).fetchone()
+    assert later is None
+    assert conn.execute("SELECT COUNT(*) FROM master_review_owed").fetchone()[0] == 0
+
+
+def test_git_timeout_on_review_check_is_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 2)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    monkeypatch.setattr(mro.subprocess, "run", _raise_timeout)
+    posts: list[str] = []
+    started = time.monotonic()
+    result = _check(
+        repo,
+        shas[0],
+        data_path=_empty_rows(root),
+        poster=lambda *_args: posts.append("posted"),
+    )
+    assert time.monotonic() - started < 2
+    assert result.ok is False
+    assert result.reason == "git_timeout"
+    assert result.commits is None
+    assert result.posted_tips == ()
+    assert posts == []
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    assert conn.execute("SELECT COUNT(*) FROM master_review_owed").fetchone()[0] == 0
+
+
+def test_merge_tree_timeout_is_not_treated_as_covered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    _init_repo(repo, 1)
+    subprocess.check_call(
+        ["git", "-C", str(repo), "checkout", "-b", "side"], stdout=subprocess.DEVNULL
+    )
+    subprocess.check_call(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "side"],
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.check_call(
+        ["git", "-C", str(repo), "checkout", "master"], stdout=subprocess.DEVNULL
+    )
+    subprocess.check_call(
+        ["git", "-C", str(repo), "merge", "--no-ff", "-m", "merge", "side"],
+        stdout=subprocess.DEVNULL,
+    )
+    base = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-list", "--max-parents=0", "HEAD"], text=True
+    ).strip()
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", base)
+    real_run = mro.subprocess.run
+
+    def _timeout_merge_tree(
+        *args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        command = args[0] if args else kwargs.get("args", [])
+        if isinstance(command, list) and "merge-tree" in command:
+            raise subprocess.TimeoutExpired(cmd=command, timeout=10)
+        return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(mro.subprocess, "run", _timeout_merge_tree)
+    posts: list[str] = []
+    started = time.monotonic()
+    result = _check(
+        repo,
+        base,
+        data_path=_empty_rows(root),
+        poster=lambda *_args: posts.append("posted"),
+    )
+    assert time.monotonic() - started < 2
+    assert result.ok is False
+    assert result.reason == "git_timeout"
+    assert result.commits is None
+    assert posts == []
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    assert conn.execute("SELECT COUNT(*) FROM master_review_owed").fetchone()[0] == 0
+
+
+def test_head_ref_sha_timeout_records_failed_check_without_a_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 2)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    monkeypatch.setattr(mro.subprocess, "run", _raise_timeout)
+    posts: list[str] = []
+    started = time.monotonic()
+    assert mro.head_ref_sha(repo) is None
+    mro.apply_review_obligations_after_land(
+        repo=repo,
+        live_old_sha=None,
+        live_new_sha=mro.head_ref_sha(repo),
+        triggering_land_sha=shas[1],
+        mounts_table=EXT4,
+        poster=lambda *_args: posts.append("posted"),
+        verdict_turns=[],
+        data_path=_empty_rows(root),
+    )
+    assert time.monotonic() - started < 2
+    assert posts == []
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    assert conn.execute("SELECT COUNT(*) FROM master_review_owed").fetchone()[0] == 0
+
+
+def test_gap_claim_precedes_post_and_one_tip_is_not_renoticed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 4)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    posts: list[str] = []
+
+    def _poster(subject: str, _body: str, tag: str) -> None:
+        tip = subject.rsplit("|", 1)[-1]
+        conn, _reason = mro._open_ledger(EXT4)
+        assert conn is not None
+        row = conn.execute(
+            "SELECT gap_posted_at FROM master_review_owed WHERE tip_sha = ?",
+            (tip,),
+        ).fetchone()
+        assert row is not None and row["gap_posted_at"]
+        posts.append(f"{tag}:{tip}")
+
+    result = _check(repo, shas[0], data_path=_empty_rows(root), poster=_poster)
+    assert result.posted_tips == (shas[-1],)
+    ride = mro.ride_along_unreviewed(
+        repo,
+        shas[0],
+        shas[-1],
+        shas[1],
+        mounts_table=EXT4,
+        poster=_poster,
+        data_path=_empty_rows(root),
+    )
+    assert ride.posted == 0
+    assert posts == [f"gap:{shas[-1]}"]
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    assert mro._claim_gap(conn, tip=shas[-1], base=shas[0], tag=None) is False
+
+
+def test_ledger_connect_lock_is_a_failed_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _pin_ledger(monkeypatch)
+    monkeypatch.setattr(mro, "_LEDGER_CONNECT_BUDGET_S", 0.2)
+
+    def _locked(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(mro.sqlite3, "connect", _locked)
+    posts: list[str] = []
+    started = time.monotonic()
+    result = mro.unreviewed_master_commits(
+        REPO,
+        INITIAL,
+        mounts_table=EXT4,
+        verdict_turns=[],
+        poster=lambda *_args: posts.append("posted"),
+        data_path=_empty_rows(root),
+    )
+    elapsed = time.monotonic() - started
+    assert elapsed < 2
+    assert result.ok is False
+    assert result.reason == "ledger_connect_failed"
+    assert result.commits is None
+    assert posts == []
