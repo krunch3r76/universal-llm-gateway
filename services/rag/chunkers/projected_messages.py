@@ -14,9 +14,17 @@ import logging
 import re
 from pathlib import Path
 
+from continuity_tape.messages import ContinuityMessagesEnvelope
 from message_projection.project import project_messages
+from pydantic import ValidationError
 
 from services.rag.chunkers._sizing import CHUNK_HARD_CAP_BYTES
+from services.rag.chunkers.messages_chunker import (
+    default_lane_resolver,
+    exchange_matches_case_markers,
+    scrub_chunk_text,
+    transcript_lane_excluded,
+)
 from services.rag.chunkers.paragraph_utils import (
     Chunk,
     _annotate_chunk_indices,
@@ -41,7 +49,6 @@ SEAL_SCHEMA = "ulg.continuity.messages/1"
 SNIFF_BYTES = 65_536
 MAX_JSON_BYTES = 64 * 1024 * 1024
 _PART_RESERVE = 24
-_TAPE_KEYS = ("cells", "open_line", "index")
 
 _seen_skips: set[tuple[str, int, str]] = set()
 _skip_counts: dict[str, int] = {}
@@ -87,16 +94,6 @@ def _mtime_ns(path: Path) -> int:
         return path.stat().st_mtime_ns
     except OSError:
         return 0
-
-
-def _decode_sniff_prefix(raw: bytes) -> None:
-    """Accept UTF-8 sniff bytes; ignore an incomplete code point at the tail."""
-    for trim in range(min(4, len(raw) + 1)):
-        try:
-            raw[: len(raw) - trim].decode("utf-8")
-            return
-        except UnicodeDecodeError:
-            continue
 
 
 def _skip(path: Path, reason: str) -> list[Chunk]:
@@ -154,11 +151,29 @@ def _is_seal(path: Path, data: object) -> bool:
 
 
 def _is_tape(data: object) -> bool:
+    """True for a continuity tape or seal body that is not a plain transcript.
+
+    A transcript may carry ``index`` beside ``messages``. Tape is the presence
+    of ``cells`` or ``open_line``, or the continuity schema. Seal-named files
+    are routed before this check.
+    """
     if not isinstance(data, dict):
         return False
-    if isinstance(data.get("messages"), list):
+    if "cells" in data or "open_line" in data:
+        return True
+    return data.get("schema") == SEAL_SCHEMA
+
+
+def _lane_excluded(path: Path, data: object) -> bool:
+    """Apply the seal chunker's lane exclusion when the body is an envelope."""
+    if not isinstance(data, dict):
         return False
-    return any(key in data for key in _TAPE_KEYS)
+    try:
+        envelope = ContinuityMessagesEnvelope.model_validate(data)
+    except ValidationError:
+        return False
+    lane_id, lane_tags = default_lane_resolver(envelope, path)
+    return transcript_lane_excluded(lane_id, lane_tags)
 
 
 def _message_rows(data: object) -> tuple[list[object] | None, dict]:
@@ -209,13 +224,14 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
             prefix = fh.read(min(size, SNIFF_BYTES))
     except OSError:
         return _skip(path, "parse_error")
-    _decode_sniff_prefix(prefix)
     stripped = prefix.lstrip()
     if not seal_name and not stripped.startswith((b"{", b"[")):
         return _skip(path, "unsupported_shape")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
+        if seal_name:
+            raise
         return _skip(path, "parse_error")
     if _is_seal(path, data):
         return UseSealChunker()
@@ -233,6 +249,8 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
         return _skip(path, "generic_messages_shape")
     if kind != "ok":
         return _skip(path, "unsupported_shape")
+    if _lane_excluded(path, data):
+        return []
     messages = [row for row in rows if isinstance(row, dict)]
     sections = _projected_sections(messages, meta)
     chunks = _chunk_projected(path, sections)
@@ -244,7 +262,12 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
 def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk] | None:
     chunks: list[Chunk] = []
     for heading, body in sections:
-        parts = _split_turn(heading, body)
+        if exchange_matches_case_markers(f"{heading}\n{body}"):
+            continue
+        scrubbed = scrub_chunk_text(body)
+        if body.strip() and not scrubbed.strip():
+            continue
+        parts = _split_turn(heading, scrubbed)
         if parts is None:
             return None
         for part in parts:
@@ -361,13 +384,26 @@ def _split_fenced(body: str, budget: int) -> list[str] | None:
 
 
 def _piece_has_payload(piece: str) -> bool:
-    """True when a piece contains non-structural, non-whitespace text."""
+    """True when a piece contains text other than an immediately closed fence.
+
+    `` ```tool\\n``` `` and `` ```python\\n``` `` are not payload. A fence line
+    that does not close the opener in this piece, such as `` ```python text ``,
+    is payload.
+    """
+    opener: str | None = None
     for line in piece.split("\n"):
         parsed = _parse_fence_line(line)
-        if parsed is not None and parsed[1].strip() == "":
+        if parsed is None:
+            if line.strip():
+                return True
             continue
-        if line.strip():
-            return True
+        if opener is None:
+            opener = line
+            continue
+        if _is_close(line, opener):
+            opener = None
+            continue
+        return True
     return False
 
 
@@ -408,7 +444,7 @@ def _is_close(line: str, opener: str) -> bool:
     if opened is None or parsed is None:
         return False
     length, info = parsed
-    return length == opened[0] and info.strip() == ""
+    return length >= opened[0] and info.strip() == ""
 
 
 def _fence_after(blocks: list[str]) -> str | None:

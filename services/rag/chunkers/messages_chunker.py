@@ -29,7 +29,7 @@ from services.rag.chunkers.paragraph_utils import Chunk, _annotate_chunk_indices
 logger = logging.getLogger(__name__)
 
 CHUNKER_VERSION = "conversation-messages/3"
-CHUNKER_POLICY_VERSION = "messages-projection/1"
+CHUNKER_POLICY_VERSION = "messages-projection/2"
 
 # Map-slot postcondition from Slice B acceptance: len//4 + 287 + 4096 <= 8192.
 _MAP_PREFLIGHT_OVERHEAD = 287
