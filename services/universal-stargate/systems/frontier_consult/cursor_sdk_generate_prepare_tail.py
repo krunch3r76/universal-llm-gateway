@@ -6,23 +6,11 @@ from typing import Any, Literal
 
 from universal_logging import get_logger
 
+from . import cursor_sdk_generate_prepare as _prepare
 from .admit_provenance import emit_admit_provenance_missing_event
-from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_prepare_close import complete_cursor_sdk_generate_prepare
-from .cursor_sdk_generate_signals import (
-    emit_sdk_generate_requested,
-    emit_sdk_thread_created,
-)
 from .cursor_sdk_prepared_handle import PreparedCursorSdkHandle
-from .cursor_sdk_thread_reuse import (
-    refuse_occupied_worker_thread,
-)
-from .handoff import (
-    PendingShellContention,
-    claim_and_post_pointer_turn,
-    create_handoff_thread,
-    post_pointer_turn,
-)
+from .handoff import PendingShellContention
 
 logger = get_logger(__name__)
 
@@ -104,6 +92,8 @@ async def finish_cursor_sdk_generate_prepare(
     alignment = bound["alignment"]
     aligned_knobs = bound["aligned_knobs"]
     to_agent = bound["to_agent"]
+    family = bound["family"]
+    platform = bound["platform"]
     thread_subject = bound["thread_subject"]
     resolved_model = bound.get("resolved_model")
     pointer_body = bound.get("pointer_body")
@@ -164,7 +154,7 @@ async def finish_cursor_sdk_generate_prepare(
                 prompt_turn_number=prompt_turn_number,
             )
 
-    emit_sdk_generate_requested(
+    _prepare.emit_sdk_generate_requested(
         request_id=request_id,
         role=role,
         execution_id=execution_id,
@@ -177,7 +167,7 @@ async def finish_cursor_sdk_generate_prepare(
     pointer_turn = 0
 
     if reuse_thread is not None:
-        await refuse_occupied_worker_thread(
+        await _prepare.refuse_occupied_worker_thread(
             request_id=request_id,
             reuse_thread=reuse_thread,
             nest_under=nest_under,
@@ -186,7 +176,7 @@ async def finish_cursor_sdk_generate_prepare(
         thread_id = reuse_thread
         if is_auto_consolidation:
             try:
-                pointer_turn = await claim_and_post_pointer_turn(
+                pointer_turn = await _prepare.claim_and_post_pointer_turn(
                     request_id=request_id,
                     thread_id=thread_id,
                     to_agent=to_agent,
@@ -199,14 +189,14 @@ async def finish_cursor_sdk_generate_prepare(
                     provenance_missing=provenance_missing,
                 )
                 claimed_via_atomic = True
-                emit_sdk_thread_created(
+                _prepare.emit_sdk_thread_created(
                     request_id=request_id,
                     to_agent=to_agent,
                     thread_id=thread_id,
                     reused=True,
                 )
             except PendingShellContention:
-                thread_id = await create_handoff_thread(
+                thread_id = await _prepare.create_handoff_thread(
                     request_id=request_id,
                     to_agent=to_agent,
                     tag_agent="cursor-sdk",
@@ -224,14 +214,14 @@ async def finish_cursor_sdk_generate_prepare(
                     bus_lifecycle=effective_bus_lifecycle,
                     provenance_missing=provenance_missing,
                 )
-                emit_sdk_thread_created(
+                _prepare.emit_sdk_thread_created(
                     request_id=request_id,
                     to_agent=to_agent,
                     thread_id=thread_id,
                     reused=False,
                 )
         else:
-            pointer_turn = await post_pointer_turn(
+            pointer_turn = await _prepare.post_pointer_turn(
                 request_id=request_id,
                 thread_id=thread_id,
                 to_agent=to_agent,
@@ -240,14 +230,14 @@ async def finish_cursor_sdk_generate_prepare(
                 caller_agent=caller_agent,
                 provenance_missing=provenance_missing,
             )
-            emit_sdk_thread_created(
+            _prepare.emit_sdk_thread_created(
                 request_id=request_id,
                 to_agent=to_agent,
                 thread_id=thread_id,
                 reused=True,
             )
     else:
-        thread_id = await create_handoff_thread(
+        thread_id = await _prepare.create_handoff_thread(
             request_id=request_id,
             to_agent=to_agent,
             tag_agent="cursor-sdk",
@@ -265,14 +255,14 @@ async def finish_cursor_sdk_generate_prepare(
             bus_lifecycle=effective_bus_lifecycle,
             provenance_missing=provenance_missing,
         )
-        emit_sdk_thread_created(
+        _prepare.emit_sdk_thread_created(
             request_id=request_id,
             to_agent=to_agent,
             thread_id=thread_id,
             reused=False,
         )
 
-    await post_coord_admit_pointer(
+    await _prepare.post_coord_admit_pointer(
         coord_thread_id=parent_dispatch_thread_id,
         worker_thread_id=thread_id,
         to_agent=coord_recipient,
@@ -335,4 +325,4 @@ async def finish_cursor_sdk_generate_prepare(
                 provenance_record_failed=True,
             )
 
-    return await complete_cursor_sdk_generate_prepare(locals())
+    return await complete_cursor_sdk_generate_prepare({**bound, **locals()})

@@ -4,12 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .cursor_sdk_generate_signals import emit_sdk_materialization_incomplete
+from . import cursor_sdk_generate_prepare as _prepare
 from .cursor_sdk_prepared_handle import PreparedCursorSdkHandle
-from .cursor_sdk_skills import resolve_cursor_sdk_skills
-from .cursor_sdk_thread_reuse import probe_continuity_root_thread_id, probe_thread
-from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
-from .handoff import admit_handoff_dispatch
 
 
 async def complete_cursor_sdk_generate_prepare(
@@ -95,7 +91,7 @@ async def complete_cursor_sdk_generate_prepare(
     if claimed_via_atomic:
         admitted = True
     else:
-        admitted = await admit_handoff_dispatch(
+        admitted = await _prepare.admit_handoff_dispatch(
             request_id=request_id,
             thread_id=thread_id,
             execution_id=execution_id,
@@ -127,7 +123,7 @@ async def complete_cursor_sdk_generate_prepare(
             from .admission import FrontierEndpointError
 
             probe_root = str(_workspaces_root().resolve())
-            emit_sdk_materialization_incomplete(
+            _prepare.emit_sdk_materialization_incomplete(
                 request_id=request_id,
                 packet_path=worker_packet,
                 probe_root=probe_root,
@@ -152,7 +148,7 @@ async def complete_cursor_sdk_generate_prepare(
                 packet_path=worker_packet,
                 text=packet_text,
             )
-        prompt_preamble = derive_cursor_sdk_prompt_preamble(
+        prompt_preamble = _prepare.derive_cursor_sdk_prompt_preamble(
             handoff_contract=handoff_contract,
             pointer=preamble_pointer,
             packet_text=packet_text,
@@ -163,7 +159,7 @@ async def complete_cursor_sdk_generate_prepare(
         if pointer_turn > 0:
             poll_after_turn = pointer_turn
         else:
-            probed = await probe_thread(thread_id)
+            probed = await _prepare.probe_thread(thread_id)
             count = int(probed.get("turn_count") or 0) if probed else 0
             poll_after_turn = count if count > 0 else 1
 
@@ -181,11 +177,11 @@ async def complete_cursor_sdk_generate_prepare(
         message_text=worker_message,
     )
 
-    continuity_root_thread_id = await probe_continuity_root_thread_id(
+    continuity_root_thread_id = await _prepare.probe_continuity_root_thread_id(
         parent_dispatch_thread_id
     )
 
-    resolved_skills = resolve_cursor_sdk_skills(
+    resolved_skills = _prepare.resolve_cursor_sdk_skills(
         skills,
         request_id=request_id,
         role=role,

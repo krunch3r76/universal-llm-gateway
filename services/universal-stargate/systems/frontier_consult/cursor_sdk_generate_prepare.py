@@ -15,7 +15,13 @@ from .admit_provenance import (
     AdmitProvenanceContext,
 )
 from .cursor_sdk_alignment import align_cursor_knobs
+from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_prepare_tail import finish_cursor_sdk_generate_prepare
+from .cursor_sdk_generate_signals import (
+    emit_sdk_generate_requested,
+    emit_sdk_materialization_incomplete,
+    emit_sdk_thread_created,
+)
 from .cursor_sdk_prepared_handle import (
     PreparedCursorSdkHandle,
     handle_from_dict,
@@ -24,11 +30,23 @@ from .cursor_sdk_prepared_handle import (
     mint_cursor_sdk_ids,
 )
 from .cursor_sdk_reasoning_effort_reject import reject_nonempty_reasoning_effort
+from .cursor_sdk_skills import resolve_cursor_sdk_skills
+from .cursor_sdk_thread_reuse import (
+    probe_continuity_root_thread_id,
+    probe_thread,
+    refuse_occupied_worker_thread,
+)
+from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
 from .handoff import (
+    PendingShellContention,
+    admit_handoff_dispatch,
     build_generate_dispatch_pointer,
     build_pointer_only_dispatch_pointer,
     build_pointer_only_worker_message,
+    claim_and_post_pointer_turn,
+    create_handoff_thread,
     extract_generate_pointer_summary,
+    post_pointer_turn,
 )
 
 logger = get_logger(__name__)
@@ -57,12 +75,26 @@ def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[st
 _UNSET_MODEL_PIN: object = object()
 
 __all__ = [
+    "PendingShellContention",
     "PreparedCursorSdkHandle",
+    "admit_handoff_dispatch",
+    "claim_and_post_pointer_turn",
+    "create_handoff_thread",
+    "derive_cursor_sdk_prompt_preamble",
+    "emit_sdk_generate_requested",
+    "emit_sdk_materialization_incomplete",
+    "emit_sdk_thread_created",
     "handle_from_dict",
     "handle_to_dict",
     "handle_with_thread",
     "mint_cursor_sdk_ids",
+    "post_coord_admit_pointer",
+    "post_pointer_turn",
     "prepare_cursor_sdk_generate",
+    "probe_continuity_root_thread_id",
+    "probe_thread",
+    "refuse_occupied_worker_thread",
+    "resolve_cursor_sdk_skills",
 ]
 
 
