@@ -156,6 +156,9 @@ def append_row(path: Path, row: dict[str, Any]) -> None:
 _LIVE_HOLDER_STATUSES = frozenset(
     {"acting", "admitted", "running", "queued", "claimed", "parked", "parked_waiting"}
 )
+_NON_TERMINAL_CONDUCTOR_STATUSES = frozenset(
+    {"queued", "admitted", "claimed", "running", "parked", "parked_waiting"}
+)
 
 
 def _holder_field(holder: dict[str, Any], *keys: str) -> str:
@@ -171,11 +174,7 @@ def _holder_counts_live(holder: dict[str, Any]) -> bool:
     if contract != "conductor":
         return False
     status = _holder_field(holder, "status", "state", "holder_status").lower()
-    if status in ("parked", "parked_waiting"):
-        return True
-    if status in ("acting", "admitted", "running", "queued", "claimed"):
-        return True
-    return status in _LIVE_HOLDER_STATUSES
+    return status in _NON_TERMINAL_CONDUCTOR_STATUSES or status in _LIVE_HOLDER_STATUSES
 
 
 def _holders_from_active_work(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -192,8 +191,8 @@ def _holders_from_active_work(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_giw_live_work_keys() -> dict[str, bool] | None:
-    """Map ``work_key`` → live conductor on GIW. ``None`` when unreachable."""
+def fetch_giw_active_work_payload() -> dict[str, Any] | None:
+    """Parsed ``/active-work`` body. ``None`` when GIW is unreachable."""
     try:
         response = httpx.get(_GIW_ACTIVE_WORK, timeout=3.0)
     except httpx.HTTPError:
@@ -204,10 +203,23 @@ def fetch_giw_live_work_keys() -> dict[str, bool] | None:
         payload = response.json()
     except ValueError:
         return None
-    if not isinstance(payload, dict):
-        return None
-    live: dict[str, bool] = {}
+    return payload if isinstance(payload, dict) else None
+
+
+def store_non_terminal_conductor_count(payload: dict[str, Any]) -> int:
+    lease = payload.get("write_lease")
+    if isinstance(lease, dict) and lease.get("non_terminal_conductor_count") is not None:
+        return int(lease["non_terminal_conductor_count"])
+    raw = payload.get("non_terminal_conductor_count")
+    return int(raw) if raw is not None else 0
+
+
+def keyed_conductor_work_keys(payload: dict[str, Any]) -> set[str]:
+    """Distinct ``todo:`` work keys present in active-work conductor projections."""
+    keys: set[str] = set()
     for holder in _holders_from_active_work(payload):
+        if not _holder_counts_live(holder):
+            continue
         wk = _holder_field(
             holder,
             "work_key",
@@ -215,10 +227,19 @@ def fetch_giw_live_work_keys() -> dict[str, bool] | None:
             "source_ref",
             "holder_source_ref",
         )
-        if not wk:
-            continue
-        if _holder_counts_live(holder):
-            live[wk.lower()] = True
+        if wk:
+            keys.add(wk.lower())
+    return keys
+
+
+def fetch_giw_live_work_keys() -> dict[str, bool] | None:
+    """Map ``work_key`` → live conductor on GIW. ``None`` when unreachable."""
+    payload = fetch_giw_active_work_payload()
+    if payload is None:
+        return None
+    live: dict[str, bool] = {}
+    for wk in keyed_conductor_work_keys(payload):
+        live[wk] = True
     return live
 
 
@@ -674,5 +695,8 @@ __all__ = [
     "roster_play_todo",
     "row_paths",
     "seed_row_from_now_row",
+    "fetch_giw_active_work_payload",
     "fetch_giw_live_work_keys",
+    "keyed_conductor_work_keys",
+    "store_non_terminal_conductor_count",
 ]

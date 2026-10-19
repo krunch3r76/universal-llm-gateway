@@ -21,9 +21,13 @@ from bus_watch.park_harvest import scoreboard_g_rows_done, work_item_slug
 from bus_watch.roster import (
     HIRE_AUTO,
     append_row,
+    fetch_giw_active_work_payload,
+    fetch_giw_live_work_keys,
+    keyed_conductor_work_keys,
     merge_by_row_id,
     read_journal,
     roster_path,
+    store_non_terminal_conductor_count,
 )
 
 _PINNED_STOPS = frozenset({"OPERATOR_GATE", "HOLD_MERGE"})
@@ -83,6 +87,23 @@ def _all_auto_rows_complete(roster: list[dict[str, Any]]) -> bool:
 
 def _house_has_live_conductor(roster: list[dict[str, Any]]) -> bool:
     return any(r.get("live") is True for r in roster)
+
+
+def _giw_blocks_roster_promotion(work_key: str) -> str | None:
+    """Hold promotion when GIW store/conductor projections disagree or todo is open."""
+    payload = fetch_giw_active_work_payload()
+    if payload is None:
+        return "giw_unreachable"
+    store_count = store_non_terminal_conductor_count(payload)
+    keyed = keyed_conductor_work_keys(payload)
+    if len(keyed) < store_count:
+        return "giw_conductor_count_mismatch"
+    live_map = fetch_giw_live_work_keys()
+    if live_map is not None and not live_map and store_count > 0:
+        return "giw_empty_live_map"
+    if work_key.lower() in keyed:
+        return "giw_conductor_open"
+    return None
 
 
 def _occupancy_pinned(work_key: str, *, occupancy_fn: Callable[[str], dict[str, Any]]) -> bool:
@@ -255,6 +276,9 @@ def maybe_promote_roster(
     if not next_raw:
         return {"action": "skip", "reason": "no_next_row"}
     work_key, slug = _parse_next_work_key(next_raw)
+    giw_reason = _giw_blocks_roster_promotion(work_key)
+    if giw_reason:
+        return {"action": "skip", "reason": giw_reason}
     if work_key.lower() in _work_keys_in_journal(root_id):
         return {"action": "skip", "reason": "already_rostered"}
     row_id = _deterministic_row_id(work_key)

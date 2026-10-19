@@ -56,6 +56,16 @@ _STATUS_CHECK = (
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
 _ACTIVE_IDENTITY_STATUSES = "'queued','admitted','running','parked_waiting'"
+_NON_TERMINAL_CONDUCTOR_STATUSES = (
+    "'queued','admitted','claimed','running','parked_waiting'"
+)
+_ACTIVE_WRITE_LEASE_STATUSES = "'admitted','running'"
+_CONDUCTOR_HOLDER_SELECT = (
+    "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+    "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
+    "work_key, source_ref, contract "
+    "FROM cursor_sdk_dispatches "
+)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -596,7 +606,7 @@ def _resolve_lease_key(
     return lease_key if lease_key is not None else source_repo
 
 
-def _fetch_active_holder_conn(
+def _fetch_write_lease_holder_conn(
     conn: sqlite3.Connection,
     *,
     lease_key: str | None = None,
@@ -605,51 +615,77 @@ def _fetch_active_holder_conn(
     key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
     if key:
         return conn.execute(
-            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
-            "work_key, source_ref, contract "
-            "FROM cursor_sdk_dispatches "
+            f"{_CONDUCTOR_HOLDER_SELECT}"
             "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
-            "AND status IN ('admitted','running') LIMIT 1",
+            f"AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES}) LIMIT 1",
             (key,),
         ).fetchone()
     return conn.execute(
-        "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-        "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
-        "work_key, source_ref, contract "
-        "FROM cursor_sdk_dispatches "
+        f"{_CONDUCTOR_HOLDER_SELECT}"
         "WHERE rowid IN ("
         "  SELECT rowid FROM cursor_sdk_dispatches "
-        "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+        f"  WHERE COALESCE(read_only,0)=0 AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES})"
         ") LIMIT 1"
+    ).fetchone()
+
+
+def _fetch_write_lease_holders_conn(
+    conn: sqlite3.Connection, *, lease_key: str | None = None
+) -> list[dict[str, Any]]:
+    """Live write-capable holders (``admitted`` / ``running``) for lease accounting."""
+    if lease_key:
+        rows = conn.execute(
+            f"{_CONDUCTOR_HOLDER_SELECT}"
+            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+            f"AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES}) ORDER BY rowid ASC",
+            (lease_key,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"{_CONDUCTOR_HOLDER_SELECT}"
+            "WHERE rowid IN ("
+            "  SELECT rowid FROM cursor_sdk_dispatches "
+            f"  WHERE COALESCE(read_only,0)=0 AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES})"
+            ") ORDER BY rowid ASC"
+        ).fetchall()
+    return [_holder_projection(row) for row in rows]
+
+
+def _count_non_terminal_conductors_conn(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
+        f"WHERE contract='conductor' AND status IN ({_NON_TERMINAL_CONDUCTOR_STATUSES})"
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def _fetch_active_holder_conn(
+    conn: sqlite3.Connection,
+    *,
+    lease_key: str | None = None,
+    source_repo: str | None = None,
+) -> sqlite3.Row | None:
+    """First store non-terminal conductor row (``/active-work`` / roster truth)."""
+    del lease_key, source_repo
+    return conn.execute(
+        f"{_CONDUCTOR_HOLDER_SELECT}"
+        "WHERE contract='conductor' "
+        f"AND status IN ({_NON_TERMINAL_CONDUCTOR_STATUSES}) "
+        "ORDER BY rowid ASC LIMIT 1"
     ).fetchone()
 
 
 def _fetch_active_holders_conn(
     conn: sqlite3.Connection, *, lease_key: str | None = None
 ) -> list[dict[str, Any]]:
-    """All active write-lease holders for multi-holder Lane-A projection."""
-    if lease_key:
-        rows = conn.execute(
-            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
-            "work_key, source_ref, contract "
-            "FROM cursor_sdk_dispatches "
-            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
-            "AND status IN ('admitted','running') ORDER BY rowid ASC",
-            (lease_key,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
-            "work_key, source_ref, contract "
-            "FROM cursor_sdk_dispatches "
-            "WHERE rowid IN ("
-            "  SELECT rowid FROM cursor_sdk_dispatches "
-            "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
-            ") ORDER BY rowid ASC"
-        ).fetchall()
+    """Every store non-terminal conductor for active-work / roster promotion."""
+    del lease_key
+    rows = conn.execute(
+        f"{_CONDUCTOR_HOLDER_SELECT}"
+        "WHERE contract='conductor' "
+        f"AND status IN ({_NON_TERMINAL_CONDUCTOR_STATUSES}) "
+        "ORDER BY rowid ASC"
+    ).fetchall()
     return [_holder_projection(row) for row in rows]
 
 
@@ -1623,7 +1659,7 @@ class CursorDispatchLedger:
                         worker_instance=worker_instance,
                     )
                     holder = _holder_projection(
-                        _fetch_active_holder_conn(conn, lease_key=existing_key)
+                        _fetch_write_lease_holder_conn(conn, lease_key=existing_key)
                     )
                     return _response_from_row(
                         existing,
@@ -1936,7 +1972,9 @@ class CursorDispatchLedger:
                                 holder_thread_id=caller_row["thread_id"],
                             )
                     if refuse_if_lease_held:
-                        holder = _fetch_active_holder_conn(conn, lease_key=writer_key)
+                        holder = _fetch_write_lease_holder_conn(
+                            conn, lease_key=writer_key
+                        )
                         projection = _holder_projection(holder)
                         depth_row = conn.execute(
                             "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
@@ -2123,7 +2161,7 @@ class CursorDispatchLedger:
                 ).fetchone()
                 assert row is not None
                 holder = _holder_projection(
-                    _fetch_active_holder_conn(conn, lease_key=writer_key)
+                    _fetch_write_lease_holder_conn(conn, lease_key=writer_key)
                 )
                 return _response_from_row(
                     row, admission=admission, queue_position=pos, holder=holder
@@ -2815,7 +2853,7 @@ class CursorDispatchLedger:
         """Live write-capable dispatches holding a lease for this checkout key."""
         key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
-            return len(_fetch_active_holders_conn(conn, lease_key=key))
+            return len(_fetch_write_lease_holders_conn(conn, lease_key=key))
 
     def overlapping_write_dispatches(
         self,
@@ -2896,7 +2934,7 @@ class CursorDispatchLedger:
         key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
             if key:
-                holder = _fetch_active_holder_conn(conn, lease_key=key)
+                holder = _fetch_write_lease_holder_conn(conn, lease_key=key)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE lease_key=? AND COALESCE(read_only,0)=0 AND status='queued'",
@@ -2910,7 +2948,7 @@ class CursorDispatchLedger:
                     (key,),
                 ).fetchall()
             else:
-                holder = _fetch_active_holder_conn(conn)
+                holder = _fetch_write_lease_holder_conn(conn)
                 queued = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE COALESCE(read_only,0)=0 AND status='queued'"
@@ -2921,11 +2959,8 @@ class CursorDispatchLedger:
                     "WHERE COALESCE(read_only,0)=0 AND status='queued' "
                     "ORDER BY rowid ASC"
                 ).fetchall()
-            active_holders = (
-                _fetch_active_holders_conn(conn, lease_key=key)
-                if key
-                else _fetch_active_holders_conn(conn)
-            )
+            active_holders = _fetch_active_holders_conn(conn)
+            non_terminal_conductor_count = _count_non_terminal_conductors_conn(conn)
         projection = _holder_projection(holder)
         queued_list: list[dict[str, Any]] = []
         for position, row in enumerate(queued_rows, start=1):
@@ -2945,6 +2980,7 @@ class CursorDispatchLedger:
         return {
             **projection,
             "active_holders": active_holders,
+            "non_terminal_conductor_count": non_terminal_conductor_count,
             "holder_source_repo": (
                 holder["source_repo"] if holder is not None else source_repo
             ),

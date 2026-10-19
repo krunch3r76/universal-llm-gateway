@@ -383,4 +383,6 @@ def test_multi_holder_snapshot_when_switch_on(monkeypatch: pytest.MonkeyPatch) -
         )
 
     snap = ledger.lease_snapshot(source_repo=repo)
-    assert len(snap["active_holders"]) == 2
+    assert ledger.count_active_write_leases(lease_key=repo) == 2
+    assert snap["non_terminal_conductor_count"] == 0
+    assert snap["active_holders"] == []

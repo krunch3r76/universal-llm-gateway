@@ -20,6 +20,29 @@ def watch_dir(tmp_path, monkeypatch):  # noqa: ANN001
     return d
 
 
+@pytest.fixture(autouse=True)
+def _giw_idle_active_work(monkeypatch):  # noqa: ANN001
+    """Default GIW probe: no store conductors (promotion allowed)."""
+
+    def _idle(*_a, **_k):
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {
+                    "active_ops": [],
+                    "write_lease": {
+                        "non_terminal_conductor_count": 0,
+                        "active_holders": [],
+                    },
+                }
+
+        return Resp()
+
+    monkeypatch.setattr("bus_watch.roster.httpx.get", _idle)
+
+
 def _complete_row(work_key: str, *, row_id: str = "done-row") -> dict[str, Any]:
     return {
         "row_id": row_id,
@@ -150,6 +173,107 @@ def test_fetch_giw_non_conductor_not_live(monkeypatch) -> None:
     monkeypatch.setattr("bus_watch.roster.httpx.get", lambda *a, **k: Resp())
     live = fetch_giw_live_work_keys()
     assert live == {}
+
+
+def test_k43_queued_conductor_blocks_second_promotion_for_same_todo(
+    watch_dir, monkeypatch
+) -> None:  # noqa: ANN001
+    root = "18290-promo-block"
+    path = roster_path(root)
+    append_row(path, _complete_row("todo:alpha"))
+    monkeypatch.setattr(
+        "bus_watch.roster_promote.scoreboard_g_rows_done", lambda wk: True
+    )
+
+    blocked_work_key = "todo:block-x"
+    payload = {
+        "active_ops": [],
+        "write_lease": {
+            "non_terminal_conductor_count": 1,
+            "active_holders": [
+                {
+                    "work_key": blocked_work_key,
+                    "source_ref": "agent-bus:18290#block-x",
+                    "contract": "conductor",
+                    "holder_status": "queued",
+                }
+            ],
+        },
+    }
+
+    def _payload(*_a, **_k):
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return payload
+
+        return Resp()
+
+    monkeypatch.setattr("bus_watch.roster.httpx.get", _payload)
+    digest = {"root": {"id": root}, "roster": [_complete_row("todo:alpha")]}
+    blocked = maybe_promote_roster(
+        root,
+        {"next_row": blocked_work_key},
+        digest,
+        {},
+        cortex=lambda *_a, **_k: {},
+    )
+    assert blocked.get("reason") == "giw_conductor_open"
+
+    other = maybe_promote_roster(
+        root,
+        {"next_row": "todo:other-y"},
+        digest,
+        {},
+        cortex=lambda *_a, **_k: {},
+    )
+    assert other.get("action") == "appended"
+
+
+def test_k43_promotion_holds_on_store_count_mismatch(watch_dir, monkeypatch) -> None:  # noqa: ANN001
+    root = "18290-promo-count"
+    path = roster_path(root)
+    append_row(path, _complete_row("todo:alpha"))
+    monkeypatch.setattr(
+        "bus_watch.roster_promote.scoreboard_g_rows_done", lambda wk: True
+    )
+
+    payload = {
+        "active_ops": [],
+        "write_lease": {
+            "non_terminal_conductor_count": 2,
+            "active_holders": [
+                {
+                    "work_key": "todo:only-one",
+                    "contract": "conductor",
+                    "holder_status": "queued",
+                }
+            ],
+        },
+    }
+
+    def _payload(*_a, **_k):
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return payload
+
+        return Resp()
+
+    monkeypatch.setattr("bus_watch.roster.httpx.get", _payload)
+    out = maybe_promote_roster(
+        root,
+        {"next_row": "todo:beta"},
+        {"root": {"id": root}, "roster": [_complete_row("todo:alpha")]},
+        {},
+        cortex=lambda *_a, **_k: {},
+    )
+    assert out.get("reason") == "giw_conductor_count_mismatch"
+    assert len(read_journal(path)) == 1
 
 
 def test_record_row_hire_skips_stale_lease_epoch(watch_dir) -> None:  # noqa: ANN001
