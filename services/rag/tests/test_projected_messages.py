@@ -12,7 +12,13 @@ from services.rag.chunkers import chunk_file
 from services.rag.chunkers._sizing import CHUNK_HARD_CAP_BYTES
 from services.rag.chunkers.messages_chunker import indexing_source_hash
 from services.rag.chunkers.paragraph_utils import _split_paragraphs, _word_split
-from services.rag.chunkers.projected_messages import log_skip, reset_skip_log
+from services.rag.chunkers.projected_messages import (
+    SNIFF_BYTES,
+    UseSealChunker,
+    chunk_json_file,
+    log_skip,
+    reset_skip_log,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -324,6 +330,154 @@ def test_policy_version_changes_hash(tmp_path: Path) -> None:
     other = tmp_path / "paper.pdf"
     other.write_bytes(raw)
     assert indexing_source_hash(raw, other) == plain
+
+
+def _pad_content_straddling_sniff(shift: int, data: dict) -> str:
+    emoji = "\U0001f600"
+    target = SNIFF_BYTES - (shift + 1)
+    pad_len = max(0, target - 64)
+    for _ in range(64):
+        data["messages"][0]["content"] = "a" * pad_len + emoji + "tail"
+        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        idx = raw.find(emoji.encode())
+        if idx == target:
+            return data["messages"][0]["content"]
+        if idx < 0:
+            pad_len += 128
+        else:
+            pad_len += target - idx
+    raise AssertionError("could not place emoji at sniff straddle")
+
+
+@pytest.mark.parametrize("shift", (0, 1, 2))
+def test_sniff_straddle_does_not_drop_transcript(tmp_path: Path, shift: int) -> None:
+    data = {
+        "messages": [
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": "reply"},
+        ]
+    }
+    data["messages"][0]["content"] = _pad_content_straddling_sniff(shift, data)
+    path = tmp_path / "straddle.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    raw = path.read_bytes()
+    assert len(raw) > SNIFF_BYTES
+    emoji_at = raw.index("\U0001f600".encode())
+    assert emoji_at == SNIFF_BYTES - (shift + 1)
+    routed = chunk_json_file(path)
+    assert routed != []
+    assert not isinstance(routed, UseSealChunker)
+    assert any("tail" in chunk.text for chunk in routed)
+
+
+@pytest.mark.parametrize("shift", (0, 1, 2))
+def test_sniff_straddle_seal_deferred_to_messages_chunker(
+    tmp_path: Path, shift: int
+) -> None:
+    data = {
+        "schema": "ulg.continuity.messages/1",
+        "messages": [
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": "reply"},
+        ],
+    }
+    data["messages"][0]["content"] = _pad_content_straddling_sniff(shift, data)
+    path = tmp_path / "session.messages.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    raw = path.read_bytes()
+    assert len(raw) > SNIFF_BYTES
+    emoji_at = raw.index("\U0001f600".encode())
+    assert emoji_at == SNIFF_BYTES - (shift + 1)
+    assert isinstance(chunk_json_file(path), UseSealChunker)
+
+
+def test_four_tick_fence_survives_paragraph_split(tmp_path: Path) -> None:
+    inner = ("z" * 16_000) + "\n``` not a fence closer\n"
+    body = f"````\n{inner}\n\n```python text"
+    path = tmp_path / "four-tick.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "go"},
+                    {"role": "assistant", "content": body},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        balanced, lengths = _recognized_fence_lengths(chunk.text)
+        assert balanced, chunk.text[:160]
+        assert lengths <= {4}
+    assert any("```python text" in chunk.text for chunk in chunks)
+
+
+def test_tool_result_list_split_keeps_following_prose_outside_fence(
+    tmp_path: Path,
+) -> None:
+    long_block = "y" * 16_000
+    path = tmp_path / "tool-list.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "run"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "name": "bash",
+                                "content": [
+                                    {"type": "text", "text": long_block},
+                                    {"type": "text", "text": "second block"},
+                                ],
+                            }
+                        ],
+                    },
+                    {"role": "assistant", "content": "follow-up prose"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    tool_chunks = [c for c in chunks if long_block[:80] in c.text]
+    prose_chunks = [c for c in chunks if "follow-up prose" in c.text]
+    assert tool_chunks
+    assert prose_chunks
+    for chunk in tool_chunks:
+        balanced, lengths = _recognized_fence_lengths(chunk.text)
+        assert balanced
+        assert "follow-up prose" not in chunk.text
+    for chunk in prose_chunks:
+        balanced, lengths = _recognized_fence_lengths(chunk.text)
+        assert balanced
+        assert long_block[:80] not in chunk.text
+
+
+def test_messages_with_index_is_not_tape(tmp_path: Path) -> None:
+    path = tmp_path / "indexed-transcript.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "needle-indexed"},
+                    {"role": "assistant", "content": "ok"},
+                ],
+                "index": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    assert any("needle-indexed" in chunk.text for chunk in chunks)
 
 
 def test_skip_log_dedupes(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

@@ -89,6 +89,16 @@ def _mtime_ns(path: Path) -> int:
         return 0
 
 
+def _decode_sniff_prefix(raw: bytes) -> None:
+    """Accept UTF-8 sniff bytes; ignore an incomplete code point at the tail."""
+    for trim in range(min(4, len(raw) + 1)):
+        try:
+            raw[: len(raw) - trim].decode("utf-8")
+            return
+        except UnicodeDecodeError:
+            continue
+
+
 def _skip(path: Path, reason: str) -> list[Chunk]:
     log_skip(path, _mtime_ns(path), reason)
     return []
@@ -146,6 +156,8 @@ def _is_seal(path: Path, data: object) -> bool:
 def _is_tape(data: object) -> bool:
     if not isinstance(data, dict):
         return False
+    if isinstance(data.get("messages"), list):
+        return False
     return any(key in data for key in _TAPE_KEYS)
 
 
@@ -191,13 +203,15 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
         return _skip(path, "parse_error" if size <= 0 else "oversize_unsplittable")
     if _is_raw_name(path):
         return _skip(path, "raw")
+    seal_name = path.name.lower().endswith(".messages.json")
     try:
-        prefix = path.read_bytes()[: min(size, SNIFF_BYTES)]
-        prefix.decode("utf-8")
-    except (OSError, UnicodeError):
+        with path.open("rb") as fh:
+            prefix = fh.read(min(size, SNIFF_BYTES))
+    except OSError:
         return _skip(path, "parse_error")
+    _decode_sniff_prefix(prefix)
     stripped = prefix.lstrip()
-    if not stripped.startswith((b"{", b"[")):
+    if not seal_name and not stripped.startswith((b"{", b"[")):
         return _skip(path, "unsupported_shape")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -325,9 +339,9 @@ def _split_fenced(body: str, budget: int) -> list[str] | None:
             buf.append(para)
             fence = _fence_after(buf)
             continue
-        if not _split_paragraph(para, budget, pieces, fence):
+        ok, fence = _split_paragraph(para, budget, pieces, fence)
+        if not ok:
             return None
-        fence = _fence_after(pieces[-1].split("\n")) if pieces else fence
         buf = [fence] if fence else []
     emit()
     balanced: list[str] = []
@@ -337,11 +351,24 @@ def _split_fenced(body: str, budget: int) -> list[str] | None:
             _parse_fence_line(stripped) is not None and "\n" not in stripped
         ):
             continue
+        if not _piece_has_payload(piece):
+            continue
         opener = _fence_after([piece])
         if opener is not None:
             piece = f"{piece}\n{_close_for(opener)}"
         balanced.append(piece)
     return balanced
+
+
+def _piece_has_payload(piece: str) -> bool:
+    """True when a piece contains non-structural, non-whitespace text."""
+    for line in piece.split("\n"):
+        parsed = _parse_fence_line(line)
+        if parsed is not None and parsed[1].strip() == "":
+            continue
+        if line.strip():
+            return True
+    return False
 
 
 def _fits(buf: list[str], para: str, _fence: str | None, budget: int) -> bool:
@@ -400,7 +427,7 @@ def _fence_after(blocks: list[str]) -> str | None:
 
 def _split_paragraph(
     para: str, budget: int, pieces: list[str], fence: str | None
-) -> bool:
+) -> tuple[bool, str | None]:
     lines = para.split("\n")
     buf: list[str] = [fence] if fence else []
     local_fence = fence
@@ -431,16 +458,17 @@ def _split_paragraph(
             local_fence = _fence_after(buf)
             continue
         carried = local_fence
-        if not _hard_cut_line(line, budget, pieces, local_fence):
-            return False
+        ok, open_fence = _hard_cut_line(line, budget, pieces, local_fence)
+        if not ok:
+            return False, None
         if carried is not None:
             local_fence = carried
             buf = [carried]
         else:
-            local_fence = _fence_after([pieces[-1]]) if pieces else None
-            buf = [local_fence] if local_fence else []
+            local_fence = open_fence
+            buf = [open_fence] if open_fence else []
     emit_lines()
-    return True
+    return True, local_fence
 
 
 def _ends_with_close(text: str, opener: str) -> bool:
@@ -467,23 +495,23 @@ def _hard_cut_suffix(fence: str | None, line: str) -> str:
 
 def _hard_cut_line(
     line: str, budget: int, pieces: list[str], fence: str | None
-) -> bool:
+) -> tuple[bool, str | None]:
     prefix = f"{fence}\n" if fence else ""
     suffix = _hard_cut_suffix(fence, line)
     room = budget - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
     if room < 1:
-        return False
+        return False, fence
     raw = line.encode("utf-8")
     first = True
     while raw:
         head, raw = _utf8_cut(raw, room)
         if not head:
-            return False
+            return False, fence
         text = prefix + head.decode("utf-8")
         if fence is not None or (first and _parse_fence_line(line) is not None):
             text = f"{text}{suffix}"
         if len(text.encode("utf-8")) > budget:
-            return False
+            return False, fence
         pieces.append(text)
         first = False
         if fence is None and _parse_fence_line(line) is not None:
@@ -492,5 +520,5 @@ def _hard_cut_line(
             suffix = "\n" + _close_for(fence)
             room = budget - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
             if room < 1:
-                return False
-    return True
+                return False, fence
+    return True, fence
