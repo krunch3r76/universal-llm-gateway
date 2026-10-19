@@ -172,15 +172,19 @@ def _files_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "Upstream error (503)",
         "Upstream error (429)",
         "Upstream error (500)",
+        "Upstream error (502)",
+        "Upstream error (504)",
+        "Upstream error (599)",
     ],
 )
 def test_scanned_unreachable_writes_nothing(tmp_path: Path, message: str) -> None:
     rel = _place(tmp_path, "dropbox/finance/scan.pdf", lambda p: _blank_pdf(p, 1))
     with (
         patch("ocr_core._core.call_stargate", return_value=_stargate_error(message)),
-        pytest.raises(OcrUnreachable),
+        pytest.raises(OcrUnreachable) as exc_info,
     ):
         run_extract_document(rel, dpi=72)
+    assert message in str(exc_info.value)
     assert _sidecars(tmp_path) == []
 
 
@@ -196,9 +200,10 @@ def test_scanned_provider_error_writes_nothing(tmp_path: Path, message: str) -> 
     rel = _place(tmp_path, "dropbox/finance/scan.pdf", lambda p: _blank_pdf(p, 1))
     with (
         patch("ocr_core._core.call_stargate", return_value=_stargate_error(message)),
-        pytest.raises(OcrProviderError),
+        pytest.raises(OcrProviderError) as exc_info,
     ):
         run_extract_document(rel, dpi=72)
+    assert message in str(exc_info.value)
     assert _sidecars(tmp_path) == []
 
 
@@ -225,10 +230,72 @@ def test_unreachable_wins_over_provider_error(tmp_path: Path) -> None:
     ]
     with (
         patch("ocr_core._core.call_stargate", side_effect=replies),
-        pytest.raises(OcrUnreachable),
+        pytest.raises(OcrUnreachable) as exc_info,
     ):
         run_extract_document(rel, dpi=72)
+    msg = str(exc_info.value)
+    assert "Stargate timeout" in msg
+    assert "Upstream error (400)" not in msg
     assert _sidecars(tmp_path) == []
+
+
+def test_scanned_clean_body_writes_sidecar(tmp_path: Path) -> None:
+    rel = _place(tmp_path, "dropbox/finance/scan.pdf", lambda p: _blank_pdf(p, 1))
+    with patch(
+        "ocr_core._core.call_stargate",
+        return_value=_stargate_ok("Notice 14052781"),
+    ):
+        run_extract_document(rel, dpi=72)
+    sidecars = _sidecars(tmp_path)
+    assert len(sidecars) == 1
+    body = sidecars[0].read_text(encoding="utf-8")
+    assert "Notice 14052781" in body
+    assert "[OCR error: " not in body
+
+
+class _FakeStargateResponse:
+    def __init__(self, status_code: int, text: str = "") -> None:
+        self.status_code = status_code
+        self.text = text
+
+
+class _FakeStargateClient:
+    def __init__(self, status_code: int) -> None:
+        self._status_code = status_code
+
+    def __enter__(self) -> _FakeStargateClient:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def post(self, *_args: object, **_kwargs: object) -> _FakeStargateResponse:
+        return _FakeStargateResponse(self._status_code, "bad gateway")
+
+
+def test_real_call_stargate_502_is_unreachable(tmp_path: Path) -> None:
+    rel = _place(tmp_path, "dropbox/finance/scan.pdf", lambda p: _blank_pdf(p, 1))
+
+    def _client_factory(*_args: object, **_kwargs: object) -> _FakeStargateClient:
+        return _FakeStargateClient(502)
+
+    with (
+        patch("stargate_chat.make_sync_client", side_effect=_client_factory),
+        pytest.raises(OcrUnreachable) as exc_info,
+    ):
+        run_extract_document(rel, dpi=72)
+    assert "Upstream error (502)" in str(exc_info.value)
+    assert _sidecars(tmp_path) == []
+
+
+def test_run_promote_directory_is_plain_value_error(tmp_path: Path) -> None:
+    rel = "dropbox/legal/folder"
+    dest = tmp_path / rel
+    dest.mkdir(parents=True)
+    with pytest.raises(ValueError, match=r"^Not a file: ") as exc_info:
+        run_promote_document(rel, "document:folder", "desc")
+    assert type(exc_info.value) is ValueError
+    assert not isinstance(exc_info.value, PromoteError)
 
 
 def test_text_pdf_literal_is_not_refused(tmp_path: Path) -> None:

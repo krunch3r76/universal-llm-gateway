@@ -295,6 +295,7 @@ def _collect_registered_tool_names() -> set[str]:
             "tools.promote_document_to_evidence",
             "register_promote_document_to_evidence_tools",
         ),
+        ("tools.ingest_dropbox", "register_ingest_dropbox_tools"),
         ("tools.extract_directory", "register_extract_directory_tools"),
         ("tools.pipeline", "register_pipeline_tools"),
         ("tools.pipeline_consult", "register_pipeline_consult_tools"),
