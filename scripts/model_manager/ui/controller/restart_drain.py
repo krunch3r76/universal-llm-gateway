@@ -719,6 +719,7 @@ async def run_gated(
     force_reason: str | None = None,
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
 
@@ -747,6 +748,7 @@ async def run_gated(
         force_reason=force_reason,
         caller_thread_id=caller_thread_id,
         caller_dispatch_id=caller_dispatch_id,
+        caller_requested=caller_requested,
     )
     if refused is not None:
         return refused
@@ -790,6 +792,7 @@ async def run_gated_deferred(
     force_reason: str | None = None,
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """Acquire the restart gate, schedule lifecycle in background, return immediately.
 
@@ -811,6 +814,7 @@ async def run_gated_deferred(
         force_reason=force_reason,
         caller_thread_id=caller_thread_id,
         caller_dispatch_id=caller_dispatch_id,
+        caller_requested=caller_requested,
     )
     if refused is not None:
         return refused

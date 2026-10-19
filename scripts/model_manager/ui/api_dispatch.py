@@ -659,12 +659,13 @@ def caller_thread_from_manage_request(params: dict[str, Any]) -> str | None:
     return _optional_attr_str(params, "caller_thread_id")
 
 
-def manage_force_context(params: dict[str, Any]) -> dict[str, str | None]:
+def manage_force_context(params: dict[str, Any]) -> dict[str, Any]:
     """Thread force-gate kwargs from a manage.sock params dict."""
     return {
         "force_reason": force_reason_from_manage_request(params),
         "caller_thread_id": caller_thread_from_manage_request(params),
         "caller_dispatch_id": _optional_attr_str(params, "caller_dispatch_id"),
+        "caller_requested": bool(params.get("force", False)),
     }
 
 
@@ -1361,7 +1362,7 @@ async def _mcp_deferred_sync_restart(
     no_cache: bool,
     gate_action: str | None = None,
     scheduled_message: str | None = None,
-    force_context: dict[str, str | None] | None = None,
+    force_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deferred MCP sync+restart (shared by sync_restart, rebuild, and restart alias)."""
     on_ok, on_fail = _mcp_background_hooks(event_bus, method)
@@ -1378,6 +1379,7 @@ async def _mcp_deferred_sync_restart(
         force_reason=ctx.get("force_reason"),
         caller_thread_id=ctx.get("caller_thread_id"),
         caller_dispatch_id=ctx.get("caller_dispatch_id"),
+        caller_requested=bool(ctx.get("caller_requested", False)),
     )
 
 

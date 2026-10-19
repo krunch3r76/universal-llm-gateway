@@ -7,6 +7,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from scripts.model_manager.observation_event import emit_manage_restart_force_applied
+
 from .busy_service_scope import extract_holder
 from .busy_work_summary import format_active_work_summary
 from .restart_drain import GATED_ACTIONS, RestartDrainGate
@@ -81,7 +83,9 @@ async def refuse_force_without_reason(
     )
     return {
         "status": "refused",
+        "status_code": 409,
         "reason": REFUSE_REASON,
+        "force_reason": "",
         "service": service,
         "action": action,
         "busy": bool(entry.get("busy")),
@@ -102,8 +106,6 @@ async def audit_and_notice_forced_restart(
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
 ) -> None:
-    from scripts.model_manager.observation_event import emit_manage_restart_force_applied
-
     reason = force_reason.strip()
     work = entry.get("active_work")
     active_work = work if isinstance(work, dict) else {}
@@ -150,8 +152,11 @@ async def enforce_force_reason_if_needed(
     force_reason: str | None,
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any] | None:
     """Return a refusal envelope, or None when the caller may proceed."""
+    if not caller_requested:
+        return None
     if not force or action not in GATED_ACTIONS:
         return None
     if service == "git_integration_worker":

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
+from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
+    GitWorkerDrainSupervisor,
+)
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
     RestartDrainGate,
+    StargateIdleDrainSupervisor,
     run_gated,
     run_gated_deferred,
 )
@@ -19,6 +25,10 @@ from scripts.model_manager.ui.controller.restart_drain_force_gate import (
     enforce_force_reason_if_needed,
     force_exempt_services,
     force_reason_accepted,
+)
+from scripts.model_manager.ui.controller.restart_intent_store import (
+    STATUS_FORCE_REQUESTED,
+    RestartIntentStore,
 )
 
 pytestmark = pytest.mark.offline
@@ -104,6 +114,7 @@ def test_busy_force_no_reason_refused(notices: list[dict[str, str]]) -> None:
             force=True,
             force_reason=None,
             caller_thread_id="18180",
+            caller_requested=True,
         )
     )
     assert result is not None
@@ -122,6 +133,7 @@ def test_busy_force_empty_string_reason_refused() -> None:
             "mcp",
             force=True,
             force_reason="   ",
+            caller_requested=True,
         )
     )
     assert result is not None
@@ -142,6 +154,7 @@ def test_busy_force_with_reason_proceeds_and_audits(
             force_reason="coordinator: clear stale holder",
             caller_thread_id="18180",
             caller_dispatch_id="disp-1",
+            caller_requested=True,
         )
     )
     assert result is None
@@ -160,9 +173,32 @@ def test_idle_force_proceeds_without_reason(events_log: list[tuple[str, dict[str
             "mcp",
             force=True,
             force_reason=None,
+            caller_requested=True,
         )
     )
     assert result is None
+    assert not [s for s, _ in events_log if s == "manage.restart.force_applied"]
+
+
+def test_internal_force_true_skips_gate_without_caller_requested(
+    events_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Internal run_gated(force=True) must not hit Gate 1 (busy + no reason)."""
+    gate = _busy_gate()
+    lifecycle = AsyncMock(return_value="done")
+
+    async def _run_it() -> dict[str, Any]:
+        return await run_gated(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            lifecycle=lifecycle,
+        )
+
+    result = _run(_run_it())
+    assert result["status"] == "ok"
+    lifecycle.assert_awaited_once()
     assert not [s for s, _ in events_log if s == "manage.restart.force_applied"]
 
 
@@ -182,6 +218,7 @@ def test_exempt_service_forces_without_reason(
             "cdp_ask",
             force=True,
             force_reason=None,
+            caller_requested=True,
         )
     )
     assert result is None
@@ -197,6 +234,7 @@ def test_giw_force_not_handled_here() -> None:
             "git_integration_worker",
             force=True,
             force_reason=None,
+            caller_requested=True,
         )
     )
     assert result is None
@@ -223,6 +261,7 @@ def test_probe_error_treated_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
             "mcp",
             force=True,
             force_reason=None,
+            caller_requested=True,
         )
     )
     assert result is not None
@@ -247,9 +286,33 @@ def test_notice_path_when_no_lane_known(monkeypatch: pytest.MonkeyPatch) -> None
             "mcp",
             force=True,
             force_reason=None,
+            caller_requested=True,
         )
     )
     assert posted == [""]
+
+
+def test_notice_skipped_logs_when_no_lane(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.WARNING,
+        logger="scripts.model_manager.ui.controller.restart_drain_force_notice",
+    )
+    gate = _busy_gate()
+    _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason=None,
+            caller_requested=True,
+        )
+    )
+    assert any(
+        "no dispatching lane thread" in rec.message for rec in caplog.records
+    )
 
 
 def test_run_gated_busy_force_refused_skips_lifecycle() -> None:
@@ -263,11 +326,38 @@ def test_run_gated_busy_force_refused_skips_lifecycle() -> None:
             "mcp",
             force=True,
             lifecycle=lifecycle,
+            caller_requested=True,
         )
 
     result = _run(_run_it())
     assert result["status"] == "refused"
     lifecycle.assert_not_called()
+
+
+def test_force_refused_is_409_names_force_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = _busy_gate()
+    lifecycle = AsyncMock(side_effect=AssertionError("must not run"))
+    evaluate = AsyncMock(side_effect=AssertionError("gate.evaluate must not run"))
+    monkeypatch.setattr(gate, "evaluate", evaluate)
+
+    async def _run_it() -> dict[str, Any]:
+        return await run_gated(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            lifecycle=lifecycle,
+            caller_requested=True,
+        )
+
+    result = _run(_run_it())
+    assert result["status"] == "refused"
+    assert result["status_code"] == 409
+    assert "force_reason" in json.dumps(result)
+    lifecycle.assert_not_called()
+    evaluate.assert_not_called()
 
 
 def test_run_gated_busy_force_with_reason_runs_lifecycle() -> None:
@@ -282,6 +372,7 @@ def test_run_gated_busy_force_with_reason_runs_lifecycle() -> None:
             force=True,
             force_reason="test: proceed",
             lifecycle=lifecycle,
+            caller_requested=True,
         )
 
     result = _run(_run_it())
@@ -301,11 +392,129 @@ def test_run_gated_deferred_refused_before_background() -> None:
             force=True,
             lifecycle=lifecycle,
             scheduled_message="scheduled",
+            caller_requested=True,
         )
 
     result = _run(_run_it())
     assert result["status"] == "refused"
     lifecycle.assert_not_called()
+
+
+class _StargateBusyProbe:
+    def __init__(self) -> None:
+        self.snapshot_calls = 0
+
+    async def snapshot(self) -> ActiveWork:
+        self.snapshot_calls += 1
+        return ActiveWork(
+            busy=True,
+            detail={
+                "requests_in_flight": 3,
+                "async_pipelines_running": 0,
+                "busy": True,
+            },
+        )
+
+
+def test_idle_ceiling_self_preempt_not_gated(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = RestartIntentStore(db_path=tmp_path / "ceiling-gate.db")
+    gate = RestartDrainGate(probes={"stargate": _StargateBusyProbe()})
+    lifecycle_calls = 0
+
+    async def _lifecycle() -> str:
+        nonlocal lifecycle_calls
+        lifecycle_calls += 1
+        return "ok"
+
+    async def _enforce_fail(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("enforce_force_reason_if_needed must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain_force_gate.enforce_force_reason_if_needed",
+        _enforce_fail,
+    )
+
+    supervisor = StargateIdleDrainSupervisor(
+        gate=gate,
+        store=store,
+        lifecycle=_lifecycle,
+        deadline_s=0.0,
+        poll_interval_s=0.01,
+    )
+    intent = store.create_intent(
+        service="stargate",
+        action="sync_restart",
+        deadline_at="d",
+        reason="ceiling gate test",
+    )
+    statuses: list[str] = []
+    original_cas = store.advance_if_status
+
+    def _recording_cas(intent_id: str, **kwargs: Any) -> Any:
+        status = kwargs.get("to_status")
+        if isinstance(status, str):
+            statuses.append(status)
+        return original_cas(intent_id, **kwargs)
+
+    store.advance_if_status = _recording_cas  # type: ignore[method-assign]
+    _run(supervisor.supervise(intent))
+    assert lifecycle_calls == 1
+    assert STATUS_FORCE_REQUESTED in statuses
+
+
+def test_giw_park_live_not_gated(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = RestartIntentStore(db_path=tmp_path / "park-live-gate.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="park gate test",
+        park_live=True,
+    )
+    sweep_ran = False
+    summary = {"requested": [], "refused": [], "live_after": 0}
+
+    async def _enforce_fail(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("enforce_force_reason_if_needed must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain_force_gate.enforce_force_reason_if_needed",
+        _enforce_fail,
+    )
+
+    class _Kill:
+        async def __call__(self) -> str:
+            return "stopped"
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=AsyncMock(return_value={}),
+        drain_state=AsyncMock(return_value={}),
+        subscribe_events=AsyncMock(),
+        kill=_Kill(),
+    )
+
+    async def _sweep(_self: Any, _intent: Any, *, reason: str) -> dict[str, Any]:
+        nonlocal sweep_ran
+        sweep_ran = True
+        return summary
+
+    monkeypatch.setattr(GitWorkerDrainSupervisor, "_run_park_sweep", _sweep)
+
+    async def _emit(**_kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.git_worker_drain_supervisor.events.emit_manage_restart_park_live_requested",
+        _emit,
+    )
+
+    _run(sup._park_live(intent))
+    assert sweep_ran is True
 
 
 def test_resolve_notice_thread_id_prefers_caller() -> None:
