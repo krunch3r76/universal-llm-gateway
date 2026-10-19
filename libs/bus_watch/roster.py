@@ -158,11 +158,19 @@ _LIVE_HOLDER_STATUSES = frozenset(
 )
 
 
+def _holder_field(holder: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        val = holder.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
 def _holder_counts_live(holder: dict[str, Any]) -> bool:
-    contract = str(holder.get("contract") or "").strip().lower()
+    contract = _holder_field(holder, "contract", "holder_contract").lower()
     if contract != "conductor":
         return False
-    status = str(holder.get("status") or holder.get("state") or "").strip().lower()
+    status = _holder_field(holder, "status", "state", "holder_status").lower()
     if status in ("parked", "parked_waiting"):
         return True
     if status in ("acting", "admitted", "running", "queued", "claimed"):
@@ -200,7 +208,13 @@ def fetch_giw_live_work_keys() -> dict[str, bool] | None:
         return None
     live: dict[str, bool] = {}
     for holder in _holders_from_active_work(payload):
-        wk = str(holder.get("work_key") or holder.get("source_ref") or "").strip()
+        wk = _holder_field(
+            holder,
+            "work_key",
+            "holder_work_key",
+            "source_ref",
+            "holder_source_ref",
+        )
         if not wk:
             continue
         if _holder_counts_live(holder):

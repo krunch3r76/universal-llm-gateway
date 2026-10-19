@@ -147,7 +147,7 @@ def test_foreign_holder_rearm_does_not_kill_live(watch_dir: Path) -> None:
         row = _last_json(b.stdout)
         assert row["ok"] is False
         assert row["loop"] == "refused"
-        assert row.get("reason") in {"held", "fable_lock_held"}
+        assert row.get("reason") in {"held", "fable_lock_held", "loop_flock_held"}
         assert Path(f"/proc/{pid_a}").exists()
         meta = json.loads(
             (watch_dir / f"liaison-loop-{root}.meta.json").read_text(encoding="utf-8")

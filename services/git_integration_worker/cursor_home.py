@@ -10,6 +10,7 @@ built in cursor_sdk_bridge_launch — never through os.environ.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import pwd
@@ -26,6 +27,7 @@ from services.git_integration_worker.cursor_dispatch_playwright import (
 )
 from services.git_integration_worker.cursor_seat_overlay import (
     apply_cursor_sdk_seat_overlay,
+    prune_headless_non_code_plugin_caches,
 )
 
 logger = get_logger(__name__)
@@ -43,6 +45,21 @@ DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
 # reject mcp_auth, so the copies stay discovery-red. SDK injects the same
 # code-mount via build_mcp_servers (single vortex-code server).
 _COPIED_OAUTH_MCP_SERVERS = frozenset({"vortex-code", "vortex-life"})
+
+# Headless dispatch HOME: glob-irrelevant operator user rules (IDE glob stacks).
+_HEADLESS_USER_RULE_GLOBS: tuple[str, ...] = (
+    "php-*.mdc",
+    "pwa*.mdc",
+    "javascript*.mdc",
+)
+# Duplicated by ulg-ecosystem plugin doctrine on the same HOME.
+_HEADLESS_USER_RULE_EXACT: tuple[str, ...] = (
+    "python312.mdc",
+    "quality-gates.mdc",
+    "modularization.mdc",
+    "system.mdc",
+    "event-only-seat-wake_ulg.mdc",
+)
 
 
 def _passwd_home() -> Path:
@@ -245,6 +262,37 @@ def prune_stale_dispatch_homes(
             datetime.fromtimestamp(cutoff, tz=UTC).isoformat(),
         )
     return removed
+
+
+def _should_prune_headless_user_rule(name: str) -> bool:
+    if name in _HEADLESS_USER_RULE_EXACT:
+        return True
+    return any(fnmatch.fnmatch(name, pattern) for pattern in _HEADLESS_USER_RULE_GLOBS)
+
+
+def prune_headless_dispatch_user_rules(cursor_dir: Path) -> list[str]:
+    """Drop glob-irrelevant and plugin-duplicated user rules from a dispatch HOME."""
+    rules_dir = cursor_dir / CURSOR_USER_RULES_DIRNAME
+    if not rules_dir.is_dir():
+        return []
+    removed: list[str] = []
+    for entry in sorted(rules_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if not _should_prune_headless_user_rule(entry.name):
+            continue
+        name = entry.name
+        entry.unlink()
+        removed.append(name)
+    return removed
+
+
+def prune_headless_dispatch_home_noise(cursor_dir: Path) -> dict[str, list[str]]:
+    """Economy + relevance prune on a non-bare cursor-sdk dispatch HOME."""
+    return {
+        "user_rules": prune_headless_dispatch_user_rules(cursor_dir),
+        "plugin_caches": prune_headless_non_code_plugin_caches(cursor_dir),
+    }
 
 
 def _copy_path_if_present(src: Path, dst: Path) -> None:
@@ -533,6 +581,7 @@ def setup_cursor_dispatch_home(
             delegation_tier=delegation_tier,
             lane=lane,
         )
+        prune_headless_dispatch_home_noise(cursor_dir)
     _install_steer_native_hook(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)

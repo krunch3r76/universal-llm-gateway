@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -13,6 +14,33 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+# Explicit Turn-0 inject budget for packet-named invariants (not unbounded paste).
+_DISPATCH_PREAMBLE_INJECT_BUDGET_BYTES = 16_384
+_DEFAULT_SOURCE_REPO = Path(
+    os.environ.get(
+        "GIT_INTEGRATION_SOURCE_REPO",
+        "/mnt/torus/projects/universal-llm-gateway",
+    )
+)
+
+
+def _plugin_census_mount_slugs(packet_ids: tuple[str, ...]) -> frozenset[str]:
+    """Slugs already on every non-bare dispatch HOME via the plugin census copy."""
+    from agent_seat.guidance_entity import entity_slug_from_id
+
+    plugin_skills = (
+        _DEFAULT_SOURCE_REPO.expanduser()
+        / "cursor-plugins"
+        / "ulg-ecosystem"
+        / "skills"
+    )
+    mounts: set[str] = set()
+    for entity_id in packet_ids:
+        slug = entity_slug_from_id(entity_id)
+        if (plugin_skills / slug / "SKILL.md").is_file():
+            mounts.add(slug)
+    return frozenset(mounts)
 
 
 def _worker_read_timeout_s() -> float:
@@ -150,13 +178,19 @@ def derive_cursor_sdk_prompt_preamble(
     packet_ids = parse_packet_invariant_skill_ids(packet_text)
     if not packet_ids:
         return None if is_bare else preamble
+    provider_mount_slugs = (
+        frozenset() if is_bare else _plugin_census_mount_slugs(packet_ids)
+    )
+    already_present = "\n".join(part for part in (pointer, preamble or "") if part)
     resolution = resolve_injected_bodies(
         "",
         role="cursor-sdk",
         platform="cursor",
         inject_profile="dispatch",
         packet_invariant_ids=packet_ids,
-        budget_bytes=None,
+        budget_bytes=_DISPATCH_PREAMBLE_INJECT_BUDGET_BYTES,
+        already_present=already_present,
+        provider_mount_slugs=provider_mount_slugs,
     )
     if not resolution.block_md:
         return None if is_bare else preamble

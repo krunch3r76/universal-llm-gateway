@@ -520,6 +520,38 @@ def _subject_preview(record_json: str, packet_path: str | None = None) -> str | 
     return None
 
 
+def _row_identity_fields(row: sqlite3.Row | None) -> dict[str, Any]:
+    if row is None:
+        return {"work_key": None, "source_ref": None, "contract": None}
+    keys = row.keys() if hasattr(row, "keys") else ()
+    record_json = row["record_json"] if "record_json" in keys else "{}"
+    work_key = row["work_key"] if "work_key" in keys else None
+    source_ref = row["source_ref"] if "source_ref" in keys else None
+    contract = row["contract"] if "contract" in keys else None
+    try:
+        data = json.loads(record_json) if record_json else {}
+    except json.JSONDecodeError:
+        data = {}
+    if isinstance(data, dict):
+        if not work_key:
+            wk = data.get("work_key")
+            if isinstance(wk, str) and wk.strip():
+                work_key = wk.strip()
+        if not source_ref:
+            sr = data.get("source_ref")
+            if isinstance(sr, str) and sr.strip():
+                source_ref = sr.strip()
+        if not contract:
+            raw_contract = data.get("contract") or data.get("handoff_contract")
+            if isinstance(raw_contract, str) and raw_contract.strip():
+                contract = raw_contract.strip()
+    return {
+        "work_key": work_key,
+        "source_ref": source_ref,
+        "contract": contract,
+    }
+
+
 def _holder_projection(row: sqlite3.Row | None) -> dict[str, Any]:
     if row is None:
         return {
@@ -530,9 +562,16 @@ def _holder_projection(row: sqlite3.Row | None) -> dict[str, Any]:
             "holder_status": None,
             "holder_started_at": None,
             "holder_last_heartbeat_at": None,
+            "work_key": None,
+            "source_ref": None,
+            "contract": None,
+            "holder_work_key": None,
+            "holder_source_ref": None,
+            "holder_contract": None,
         }
     record_json = row["record_json"] if "record_json" in row.keys() else "{}"
     packet_path = row["packet_path"] if "packet_path" in row.keys() else None
+    identity = _row_identity_fields(row)
     return {
         "holder_dispatch_id": row["dispatch_id"],
         "holder_thread_id": row["thread_id"],
@@ -543,6 +582,10 @@ def _holder_projection(row: sqlite3.Row | None) -> dict[str, Any]:
         "holder_last_heartbeat_at": (
             row["last_heartbeat_at"] if "last_heartbeat_at" in row.keys() else None
         ),
+        **identity,
+        "holder_work_key": identity["work_key"],
+        "holder_source_ref": identity["source_ref"],
+        "holder_contract": identity["contract"],
     }
 
 
@@ -563,7 +606,8 @@ def _fetch_active_holder_conn(
     if key:
         return conn.execute(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
+            "work_key, source_ref, contract "
             "FROM cursor_sdk_dispatches "
             "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
             "AND status IN ('admitted','running') LIMIT 1",
@@ -571,7 +615,8 @@ def _fetch_active_holder_conn(
         ).fetchone()
     return conn.execute(
         "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-        "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+        "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
+        "work_key, source_ref, contract "
         "FROM cursor_sdk_dispatches "
         "WHERE rowid IN ("
         "  SELECT rowid FROM cursor_sdk_dispatches "
@@ -587,7 +632,8 @@ def _fetch_active_holders_conn(
     if lease_key:
         rows = conn.execute(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
+            "work_key, source_ref, contract "
             "FROM cursor_sdk_dispatches "
             "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
             "AND status IN ('admitted','running') ORDER BY rowid ASC",
@@ -596,7 +642,8 @@ def _fetch_active_holders_conn(
     else:
         rows = conn.execute(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key, "
+            "work_key, source_ref, contract "
             "FROM cursor_sdk_dispatches "
             "WHERE rowid IN ("
             "  SELECT rowid FROM cursor_sdk_dispatches "
@@ -3102,7 +3149,8 @@ class CursorDispatchLedger:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
-                "last_heartbeat_at, record_json, packet_path "
+                "last_heartbeat_at, record_json, packet_path, work_key, source_ref, "
+                "contract "
                 "FROM cursor_sdk_dispatches WHERE status='running'"
             ).fetchall()
         out: list[dict[str, Any]] = []
@@ -3119,11 +3167,15 @@ class CursorDispatchLedger:
                     "route": "/api/v1/cursor/dispatch",
                     "admitted_at": holder.get("holder_started_at"),
                     "state": str(row["status"] or "running"),
+                    "status": str(row["status"] or "running"),
                     "resolved_model": holder.get("holder_resolved_model"),
                     "subject_preview": holder.get("holder_subject_preview"),
                     "thread_id": holder.get("holder_thread_id"),
                     "started_at": holder.get("holder_started_at"),
                     "last_heartbeat_at": row["last_heartbeat_at"],
+                    "work_key": holder.get("work_key"),
+                    "source_ref": holder.get("source_ref"),
+                    "contract": holder.get("contract"),
                 }
             )
         return out

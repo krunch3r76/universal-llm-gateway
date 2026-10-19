@@ -322,6 +322,24 @@ async def emit_manage_restart_drain_completed(
     )
 
 
+async def emit_manage_restart_force_applied(
+    *,
+    service: str,
+    action: str,
+    force_reason: str,
+    caller_dispatch_id: str | None = None,
+) -> None:
+    """Caller forced a lifecycle action through Gate 1 busy with an audited reason."""
+    payload: dict[str, Any] = {
+        "service": service,
+        "action": action,
+        "force_reason": force_reason,
+    }
+    if caller_dispatch_id:
+        payload["caller_dispatch_id"] = caller_dispatch_id
+    await _emit("manage.restart.force_applied", payload)
+
+
 async def emit_manage_restart_completed(
     *,
     intent_id: str,

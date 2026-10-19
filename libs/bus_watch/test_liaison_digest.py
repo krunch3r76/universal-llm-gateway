@@ -23,7 +23,11 @@ from bus_watch.liaison_digest import (
 def _no_real_ide_tab():
     """The IDE budget reads ~/.cursor transcripts; keep these digests hermetic."""
     with patch("bus_watch.liaison_digest._measure_ide_tab", return_value=None):
-        yield
+        with patch(
+            "bus_watch.lane_closeout_parse._get",
+            return_value={"turns": []},
+        ):
+            yield
 
 
 def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:

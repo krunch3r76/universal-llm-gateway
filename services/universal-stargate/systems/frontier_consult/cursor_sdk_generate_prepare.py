@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .admit_provenance import AdmitProvenanceContext
+from universal_logging import get_logger
+
+from .admit_provenance import (
+    AdmitProvenanceContext,
+    emit_admit_provenance_missing_event,
+)
 from .cursor_sdk_alignment import align_cursor_knobs
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_signals import (
@@ -43,6 +48,8 @@ from .handoff import (
     extract_generate_pointer_summary,
     post_pointer_turn,
 )
+
+logger = get_logger(__name__)
 
 
 def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[str]:
@@ -484,35 +491,49 @@ async def prepare_cursor_sdk_generate(
 
     from .generate_admission_context_store import write_admission_context
 
-    write_admission_context(
-        execution_id=execution_id,
-        auto_review_child=effective_auto_review_child,
-        op="generate",
-        role=role,
-        resolved_model=resolved_model,
-        parent_dispatch_thread_id=parent_dispatch_thread_id,
-        dispatch_thread_id=dispatch_thread_id,
-        review_surface=review_surface,
-        dispatch_lane=resolved_dispatch_lane,
-        suppress_review_spawn=suppress_review_spawn,
-        prompt_turn_number=prompt_turn_number,
-        prompt_bind_mode=prompt_bind_mode,
-        resolved_effort=consultant_rung(resolved_model, aligned_knobs),
-        caller_seat=(
-            admit_provenance.caller_seat
-            if admit_provenance is not None
-            else (
-                caller_agent.strip()
-                if caller_agent and caller_agent.strip()
-                else None
+    try:
+        write_admission_context(
+            execution_id=execution_id,
+            auto_review_child=effective_auto_review_child,
+            op="generate",
+            role=role,
+            resolved_model=resolved_model,
+            parent_dispatch_thread_id=parent_dispatch_thread_id,
+            dispatch_thread_id=dispatch_thread_id,
+            review_surface=review_surface,
+            dispatch_lane=resolved_dispatch_lane,
+            suppress_review_spawn=suppress_review_spawn,
+            prompt_turn_number=prompt_turn_number,
+            prompt_bind_mode=prompt_bind_mode,
+            resolved_effort=consultant_rung(resolved_model, aligned_knobs),
+            caller_seat=(
+                admit_provenance.caller_seat
+                if admit_provenance is not None
+                else (
+                    caller_agent.strip()
+                    if caller_agent and caller_agent.strip()
+                    else None
+                )
+            ),
+            work_key=(
+                admit_provenance.work_key
+                if admit_provenance is not None
+                else (work_key.strip() if work_key and work_key.strip() else None)
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "admission context write failed; admit continues: execution_id=%s",
+            execution_id,
+            exc_info=True,
+        )
+        if admit_provenance is not None:
+            admit_provenance.note_provenance_record_failed()
+            emit_admit_provenance_missing_event(
+                admit_provenance,
+                execution_id=execution_id,
+                provenance_record_failed=True,
             )
-        ),
-        work_key=(
-            admit_provenance.work_key
-            if admit_provenance is not None
-            else (work_key.strip() if work_key and work_key.strip() else None)
-        ),
-    )
 
     if claimed_via_atomic:
         admitted = True

@@ -38,6 +38,7 @@ from job_vocab import job_record
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .admit_provenance import AdmitProvenanceContext
 from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
@@ -466,6 +467,7 @@ async def dispatch_cdp_generate(
     body: TeamDispatchGenerateBody,
     response: Response,
     project_uuid: str | None = None,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any]:
     """Admit CDP generate: return poll_hint immediately; proof posts later."""
     model = compose_cdp_model_with_effort(
@@ -602,10 +604,23 @@ async def dispatch_cdp_generate(
         else ""
     )
     declared_parent = parent_thread
-    cdp_reroute_active = resolve_cdp_reroute(model) is not None
-    admit_substrate = (
-        REROUTE_ADMIT_SUBSTRATE if cdp_reroute_active else CDP_SUBSTRATE
+    generation_opts = getattr(body, "generation_options", None)
+    impresario_role: str | None = None
+    if isinstance(generation_opts, dict):
+        imp = generation_opts.get("impresario")
+        if isinstance(imp, dict):
+            role_raw = imp.get("role")
+            if isinstance(role_raw, str) and role_raw.strip():
+                impresario_role = role_raw.strip()
+    if impresario_role is None:
+        if contract in ("code-review", "delivery-review", "check-review"):
+            impresario_role = "critic"
+        elif contract in ("sketch", "confer"):
+            impresario_role = "sketch"
+    cdp_reroute_active = (
+        resolve_cdp_reroute(model, impresario_role=impresario_role) is not None
     )
+    admit_substrate = REROUTE_ADMIT_SUBSTRATE if cdp_reroute_active else CDP_SUBSTRATE
     if is_operator_proxy_mission_purpose(purpose):
         parent_thread, mission_kind = default_operator_seat_binding(
             purpose=purpose,
@@ -648,6 +663,9 @@ async def dispatch_cdp_generate(
             )
 
     thread_subject = f"cdp generate — {request_id}"
+    provenance_missing = (
+        admit_provenance.missing if admit_provenance is not None else ()
+    )
     pointer_body = format_cdp_generate_pointer_body(
         model=str(model),
         execution_id=execution_id,
@@ -667,6 +685,7 @@ async def dispatch_cdp_generate(
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
+                provenance_missing=provenance_missing,
             )
         except FrontierEndpointError as exc:
             if not isinstance(exc.__cause__, httpx.TimeoutException):
@@ -681,6 +700,7 @@ async def dispatch_cdp_generate(
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
+                provenance_missing=provenance_missing,
             )
     else:
         thread_id = await create_handoff_thread(
@@ -689,6 +709,7 @@ async def dispatch_cdp_generate(
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
+            provenance_missing=provenance_missing,
             tags=[
                 "agent:web-anthropic",
                 "type:generate",
@@ -752,7 +773,7 @@ async def dispatch_cdp_generate(
                 mission_kind=mission_kind,
                 synthesized=declared_parent is None,
             )
-        opts = getattr(body, "generation_options", None) or {}
+        opts = generation_opts if isinstance(generation_opts, dict) else {}
         from .cdp_dispatch_topic import extract_cdp_dispatch_topic
 
         prompt_for_topic = prompt if isinstance(prompt, str) else None
@@ -773,6 +794,8 @@ async def dispatch_cdp_generate(
         }
         if contract is not None:
             worker_kwargs["contract"] = contract
+        if impresario_role is not None:
+            worker_kwargs["impresario_role"] = impresario_role
         if isinstance(opts, dict):
             if "harvest_source" in opts:
                 worker_kwargs["harvest_source"] = opts["harvest_source"]

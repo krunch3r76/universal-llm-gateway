@@ -211,6 +211,7 @@ def test_play_hold_keeps_row_verdict_on_tick_line(monkeypatch) -> None:
     )
     rows = [_row("row-a", "a")]
     digest = _digest_with_roster(rows, lanes=[_live_lane("a")])
+    digest["attention"] = [{"id": "11800", "unread": 1}]
     verdict = classify_leftover(digest, {})
     assert verdict["reason"] == PLAY_HOLD
     assert verdict["todo"] is None
