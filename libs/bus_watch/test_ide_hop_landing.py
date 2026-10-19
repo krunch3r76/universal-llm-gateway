@@ -439,6 +439,10 @@ def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
             "bus_watch.ide_hop.mark_expired",
             return_value={"root": "15420", "state": "expired"},
         ),
+        patch(
+            "bus_watch.ide_hop.launch_cursor_agents_tab",
+            return_value={"ok": True, "transport": "cdp_cursor_agents"},
+        ) as launch_mock,
     ):
         out = fire_ide_hop(
             message,
@@ -453,6 +457,7 @@ def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
     assert out["phase"] == "expired"
     assert out["toplevels"] == []
     toplevels_mock.assert_not_called()
+    launch_mock.assert_called_once()
 
 
 def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
