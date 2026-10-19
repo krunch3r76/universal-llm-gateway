@@ -9,6 +9,9 @@ watch_directories:
       - "*.source.jsonl"
       - "*.lock.*"
       - ".lock.*"
+  - path: /mnt/torus/mcp-data/files/notes/system/transcripts
+    extensions: [.md, .json]
+    recursive: true
 
 scopes:
   conversations:

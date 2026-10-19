@@ -24,6 +24,12 @@ from services.rag.chunkers.epub_html import chunk_epub, chunk_html
 from services.rag.chunkers.markdown_pdf import chunk_markdown, chunk_pdf
 from services.rag.chunkers.messages_chunker import chunk_messages
 from services.rag.chunkers.paragraph_utils import Chunk
+from services.rag.chunkers.projected_messages import (
+    UseSealChunker,
+    chunk_json_file,
+    log_skip,
+    unstructured_session_render,
+)
 
 _DOCX_HEADING_PREFIX: dict[str, str] = {
     "Title": "# ",
@@ -145,7 +151,10 @@ def chunk_file(
     disk. Raises ``ValueError`` for unsupported extensions; format chunkers may
     raise ``RuntimeError`` or ``ValueError`` on missing deps or empty text.
     """
-    if path.name.endswith(".messages.json"):
+    if path.name.lower().endswith(".json"):
+        routed = chunk_json_file(path)
+        if not isinstance(routed, UseSealChunker):
+            return routed
         return chunk_messages(path)
 
     suffix = path.suffix.lower()
@@ -156,7 +165,15 @@ def chunk_file(
     }
 
     if suffix in {".md", ".mdc", ".txt"}:
-        return chunk_markdown(str(path), path.read_text(errors="replace"), **kwargs)
+        text = path.read_text(errors="replace")
+        if unstructured_session_render(path, text):
+            try:
+                mtime_ns = path.stat().st_mtime_ns
+            except OSError:
+                mtime_ns = 0
+            log_skip(path, mtime_ns, "raw_render")
+            return []
+        return chunk_markdown(str(path), text, **kwargs)
 
     if suffix == ".pdf":
         return chunk_pdf(str(path), **kwargs)

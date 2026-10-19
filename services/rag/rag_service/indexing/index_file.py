@@ -16,7 +16,10 @@ from uuid import uuid4
 from universal_logging import get_logger
 
 from services.rag.chunkers import chunk_file
-from services.rag.chunkers.messages_chunker import indexing_source_hash
+from services.rag.chunkers.messages_chunker import (
+    indexing_source_hash,
+    source_hash_includes_policy,
+)
 from services.rag.embeddings import require_healthy
 from services.rag.events.indexing import (
     rag_file_indexing_failed,
@@ -140,7 +143,7 @@ async def _index_file_impl(
         current_hash_for_skip: str | None = None
         if (
             cached_source is not None
-            and file_path.name.endswith(".messages.json")
+            and source_hash_includes_policy(file_path)
             and not force
             and operation != "reindex"
             and cached_source.mtime_ns == source_stat.st_mtime_ns

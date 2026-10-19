@@ -19,7 +19,11 @@ if TYPE_CHECKING:
 
 
 def _is_messages_seal_path(file_path: Path | None) -> bool:
-    return file_path is not None and file_path.name.endswith(".messages.json")
+    if file_path is None:
+        return False
+    from services.rag.chunkers.messages_chunker import source_hash_includes_policy
+
+    return source_hash_includes_policy(file_path)
 
 
 def _should_skip_cached_source(
@@ -37,10 +41,11 @@ def _should_skip_cached_source(
     With extraction decoupled, the skip check only compares file identity
     (mtime + size). Extraction staleness is handled by the extraction worker.
 
-    For ``*.messages.json`` seals, ``indexing_source_hash`` folds
-    ``CHUNKER_VERSION`` into ``indexed_sources.source_hash``. Stat match alone
-    is insufficient: skip only when ``current_source_hash`` matches the cached
-    row (caller supplies hash after reading bytes).
+    For policy paths (JSON transcripts and seal/transcript roots),
+    ``indexing_source_hash`` folds the chunker policy version into
+    ``indexed_sources.source_hash``. Stat match alone is insufficient: skip
+    only when ``current_source_hash`` matches the cached row (caller supplies
+    the hash after reading bytes).
     """
     if force or operation == "reindex" or cached_source is None:
         return False

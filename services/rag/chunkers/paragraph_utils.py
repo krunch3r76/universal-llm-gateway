@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from services.rag.chunkers._sizing import CHUNK_HARD_CAP_BYTES
+
 
 @dataclass(slots=True, kw_only=True)
 class Chunk:
@@ -18,14 +20,56 @@ class Chunk:
     metadata: dict[str, str | int | float | bool]
 
 
+def _utf8_cut(raw: bytes, max_bytes: int) -> tuple[bytes, bytes]:
+    """Split ``raw`` at a UTF-8 code-point boundary not past ``max_bytes``."""
+    if len(raw) <= max_bytes:
+        return raw, b""
+    cut = max_bytes
+    while cut > 0 and raw[cut] & 0xC0 == 0x80:
+        cut -= 1
+    if cut <= 0:
+        return b"", raw
+    return raw[:cut], raw[cut:]
+
+
+def _hard_cut_text(text: str, max_bytes: int) -> list[str]:
+    """Cut ``text`` into UTF-8 pieces of at most ``max_bytes`` each."""
+    cap = max(1, min(max_bytes, CHUNK_HARD_CAP_BYTES))
+    raw = text.encode("utf-8")
+    pieces: list[str] = []
+    while raw:
+        if len(raw) <= cap:
+            pieces.append(raw.decode("utf-8"))
+            break
+        head, raw = _utf8_cut(raw, cap)
+        if not head:
+            break
+        pieces.append(head.decode("utf-8"))
+    return pieces
+
+
 def _word_split(text: str, max_chars: int) -> list[str]:
-    """Split text at word boundaries up to max_chars per piece."""
+    """Split text at word boundaries up to max_chars per piece.
+
+    A single token longer than the budget is hard-cut on a UTF-8 boundary.
+    Leaving that token whole was the giant-token bug: one spaceless tool
+    result became one chunk.
+    """
+    cap = max(1, min(max_chars, CHUNK_HARD_CAP_BYTES))
     words = text.split()
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
     for word in words:
-        if current_len + len(word) + 1 > max_chars and current:
+        word_bytes = len(word.encode("utf-8"))
+        if word_bytes > cap or len(word) > cap:
+            if current:
+                chunks.append(" ".join(current))
+                current = []
+                current_len = 0
+            chunks.extend(_hard_cut_text(word, cap))
+            continue
+        if current_len + len(word) + 1 > cap and current:
             chunks.append(" ".join(current))
             current = []
             current_len = 0
@@ -33,9 +77,8 @@ def _word_split(text: str, max_chars: int) -> list[str]:
         current_len += len(word) + 1
     if current:
         chunks.append(" ".join(current))
-    # Hard-truncation last resort (no whitespace at all).
     if not chunks and text:
-        return [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
+        return _hard_cut_text(text, cap)
     return chunks
 
 
@@ -100,6 +143,7 @@ def _split_paragraphs(
     target_chars: int,
     pad_chars: int,
     overlap_paragraphs: int = 2,
+    max_bytes: int = CHUNK_HARD_CAP_BYTES,
 ) -> list[tuple[str, int]]:
     """Split text into chunks with soft target, pad zone, and paragraph overlap.
 
@@ -112,7 +156,7 @@ def _split_paragraphs(
     the previous chunk. overlap_prefix_len = char count of that carried-forward
     text (0 for first chunk and oversized fallback chunks).
     """
-    hard_max = target_chars + pad_chars
+    hard_max = min(target_chars + pad_chars, max(1, max_bytes))
     paragraphs = re.split(r"\n{2,}", text.strip())
     results: list[tuple[str, int]] = []
     current: list[str] = []
@@ -150,6 +194,8 @@ def _split_paragraphs(
                 current_len = _paras_len(current)
             else:
                 # Past pad zone — emit without this paragraph, then start new window.
+                # Drop carried paragraphs until carry+para fits. Keeping both
+                # used to emit a window larger than the budget.
                 results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
                 carry = (
                     current[-overlap_paragraphs:]
@@ -157,6 +203,15 @@ def _split_paragraphs(
                     else list(current)
                 )
                 current = list(carry) + [para]
+                while len(current) > 1 and _paras_len(current) > hard_max:
+                    current.pop(0)
+                if _paras_len(current) > hard_max:
+                    for piece in _split_oversized(para, hard_max):
+                        results.append((piece, 0))
+                    current = []
+                    current_len = 0
+                    carry = []
+                    continue
                 current_len = _paras_len(current)
         else:
             current.append(para)
@@ -165,7 +220,14 @@ def _split_paragraphs(
     if current:
         results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
 
-    return results
+    bounded: list[tuple[str, int]] = []
+    for text_piece, overlap in results:
+        if len(text_piece.encode("utf-8")) <= hard_max:
+            bounded.append((text_piece, overlap))
+            continue
+        for piece in _hard_cut_text(text_piece, hard_max):
+            bounded.append((piece, 0))
+    return bounded
 
 
 def _annotate_chunk_indices(chunks: list[Chunk]) -> list[Chunk]:

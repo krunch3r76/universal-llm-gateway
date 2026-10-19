@@ -110,7 +110,10 @@ async def index_directory_contents(
         Aggregate indexed/deleted chunk counts plus duplicate, unchanged and
         processed file counts for the successfully handled files.
     """
+    from services.rag.chunkers.projected_messages import emit_skip_summary, skip_counts
+
     totals = DirectoryIndexTotals()
+    counts_before = skip_counts()
 
     if not file_paths:
         return totals
@@ -167,6 +170,8 @@ async def index_directory_contents(
             totals.unchanged += 1
         totals.files += 1
 
+    if skip_counts() != counts_before:
+        emit_skip_summary()
     return totals
 
 

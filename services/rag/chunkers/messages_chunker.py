@@ -29,6 +29,7 @@ from services.rag.chunkers.paragraph_utils import Chunk, _annotate_chunk_indices
 logger = logging.getLogger(__name__)
 
 CHUNKER_VERSION = "conversation-messages/3"
+CHUNKER_POLICY_VERSION = "messages-projection/1"
 
 # Map-slot postcondition from Slice B acceptance: len//4 + 287 + 4096 <= 8192.
 _MAP_PREFLIGHT_OVERHEAD = 287
@@ -149,12 +150,38 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def source_hash_includes_policy(path: Path) -> bool:
+    """True when the chunker policy version must participate in the cache key.
+
+    JSON transcripts and files under the seal or transcript roots re-run when
+    the policy changes even if the file bytes are unchanged. Other files keep
+    a plain content hash so article joins stay stable.
+    """
+    if path.name.lower().endswith(".json"):
+        return True
+    parts = [part.lower() for part in path.parts]
+    for index in range(len(parts) - 2):
+        if parts[index] == "notes" and parts[index + 1] == "system":
+            if parts[index + 2] in {"transcripts", "seals"}:
+                return True
+    return False
+
+
 def indexing_source_hash(raw: bytes, path: Path) -> str:
-    """Source identity for RAG skip guards (includes chunker version for messages seals)."""
+    """Source identity for RAG skip guards.
+
+    Messages seals still fold ``CHUNKER_VERSION``. Policy paths also fold
+    ``CHUNKER_POLICY_VERSION`` so a skip/cap change reindexes unchanged files.
+    """
+    folded: list[str] = []
     if path.name.endswith(".messages.json"):
-        payload = raw + b"\n" + CHUNKER_VERSION.encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-    return hashlib.sha256(raw).hexdigest()
+        folded.append(CHUNKER_VERSION)
+    if source_hash_includes_policy(path):
+        folded.append(CHUNKER_POLICY_VERSION)
+    if not folded:
+        return hashlib.sha256(raw).hexdigest()
+    payload = raw + b"\n" + "\n".join(folded).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _source_sha256(envelope: ContinuityMessagesEnvelope, path: Path) -> str:

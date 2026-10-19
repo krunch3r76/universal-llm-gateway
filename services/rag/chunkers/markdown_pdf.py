@@ -14,11 +14,17 @@ from collections import Counter
 
 from markdown_sections import parse_sections
 
-from services.rag.chunkers._sizing import _CHUNK_CHARS_PAD, _CHUNK_CHARS_TARGET, _LOG
+from services.rag.chunkers._sizing import (
+    _CHUNK_CHARS_PAD,
+    _CHUNK_CHARS_TARGET,
+    _LOG,
+    CHUNK_HARD_CAP_BYTES,
+)
 from services.rag.chunkers.paragraph_utils import (
     Chunk,
     _annotate_chunk_indices,
     _char_upto_line,
+    _hard_cut_text,
     _split_paragraphs,
 )
 
@@ -43,10 +49,19 @@ def chunk_markdown(
 
     def _add_chunks_from_section(section_text: str, heading_prefix: str) -> None:
         heading_str = f"## {heading_prefix}\n\n" if heading_prefix else ""
+        if len(heading_str.encode("utf-8")) >= CHUNK_HARD_CAP_BYTES:
+            heading_str = _hard_cut_text(heading_str, CHUNK_HARD_CAP_BYTES)[0]
+        body_budget = CHUNK_HARD_CAP_BYTES - len(heading_str.encode("utf-8"))
         for text, overlap_len in _split_paragraphs(
-            section_text, target_chars, pad_chars, overlap_paragraphs
+            section_text,
+            min(target_chars, body_budget),
+            min(pad_chars, body_budget),
+            overlap_paragraphs,
+            max_bytes=body_budget,
         ):
             full_text = heading_str + text if heading_str else text
+            if len(full_text.encode("utf-8")) > CHUNK_HARD_CAP_BYTES:
+                full_text = _hard_cut_text(full_text, CHUNK_HARD_CAP_BYTES)[0]
             chunks.append(
                 Chunk(
                     text=full_text,
@@ -80,13 +95,14 @@ def chunk_markdown(
             continue
         heading_prefix = sec.path or sec.heading
         heading_str = f"## {heading_prefix}\n\n" if heading_prefix else ""
-
-        if len(body) <= target_chars:
-            full_text = (
-                f"## {heading_prefix}\n\n{body.strip()}"
-                if heading_prefix
-                else body.strip()
-            )
+        full_text = (
+            f"## {heading_prefix}\n\n{body.strip()}" if heading_prefix else body.strip()
+        )
+        if (
+            len(body) <= target_chars
+            and len(full_text.encode("utf-8")) <= CHUNK_HARD_CAP_BYTES
+            and len(full_text) <= target_chars + pad_chars
+        ):
             chunks.append(
                 Chunk(
                     text=full_text,

@@ -25,6 +25,17 @@ _CHUNK_TOKENS_EBOOK_PAD = 256
 
 _CHUNK_CHARS_TARGET = _CHUNK_TOKENS_TARGET * _TOKEN_ESTIMATE  # 4096
 _CHUNK_CHARS_PAD = _CHUNK_TOKENS_PAD * _TOKEN_ESTIMATE  # 1024
+
+# Absolute UTF-8 byte ceiling for every chunk this package writes.
+# Code-default embedder is qwen3-embedding-8b-q8-0-4096 (context 4096).
+# max_batch_tokens_for_model = int(4096 * N_CTX_HEADROOM 0.85) = 3481.
+# Embed estimator CHARS_PER_TOKEN is 3, so one chunk that fits a single
+# embed-batch item is 3481 * 3 = 10443 bytes. The live hub model suffix
+# is -8192, which is a looser batch. Retrieval default top_k is 20
+# (services/mcp-server/tools/rag.py): 20 * 10443 bytes is about 209KB,
+# the blow-up a ~100KB chunk times top_k used to produce. The cap is
+# per chunk. A chunk above it is a bug.
+CHUNK_HARD_CAP_BYTES = 3481 * 3
 _CHUNK_CHARS_CODE = _CHUNK_TOKENS_CODE * _TOKEN_ESTIMATE
 _CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE  # 4096
 _CHUNK_CHARS_EBOOK_PAD = _CHUNK_TOKENS_EBOOK_PAD * _TOKEN_ESTIMATE  # 1024
