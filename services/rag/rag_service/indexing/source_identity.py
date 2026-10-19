@@ -51,8 +51,7 @@ def _should_skip_cached_source(
         return False
     cached = cached_source
     if not (
-        cached.mtime_ns == source_mtime_ns
-        and cached.size_bytes == source_size_bytes
+        cached.mtime_ns == source_mtime_ns and cached.size_bytes == source_size_bytes
     ):
         return False
     if _is_messages_seal_path(file_path):
