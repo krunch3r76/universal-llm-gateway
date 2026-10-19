@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-
 from pipelines.cursor_paste_resolve.v1.handlers._message import cursor_sdk_dispatch_body
 
 from .admit_provenance import (
@@ -40,10 +39,16 @@ def test_missing_admit_provenance_all_three() -> None:
 
 def test_provenance_marker_and_from_agent_when_flagged() -> None:
     missing = ("caller_seat", "work_key")
-    assert provenance_missing_marker(missing) == "PROVENANCE_MISSING:caller_seat,work_key"
+    assert (
+        provenance_missing_marker(missing)
+        == "PROVENANCE_MISSING:caller_seat,work_key"
+    )
     body = append_provenance_marker("hello", missing)
     assert body.startswith("hello\nPROVENANCE_MISSING:")
-    assert admit_turn_from_agent(None, provenance_missing=missing) == MISSING_CALLER_FROM_AGENT
+    assert (
+        admit_turn_from_agent(None, provenance_missing=missing)
+        == MISSING_CALLER_FROM_AGENT
+    )
     assert admit_turn_from_agent("lead", provenance_missing=missing) == "lead"
 
 
@@ -61,7 +66,7 @@ async def test_coord_admit_missing_caller_posts_marker_not_dispatch_from(
 
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _client_ctx(post_turn),
+        lambda *a, **k: _ClientCtx(post_turn),
     )
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
     monkeypatch.setattr(
@@ -99,7 +104,7 @@ async def test_coord_admit_full_provenance_no_marker(
     post_turn = AsyncMock()
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _client_ctx(post_turn),
+        lambda *a, **k: _ClientCtx(post_turn),
     )
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
     await post_coord_admit_pointer(
@@ -169,11 +174,11 @@ def test_cursor_sdk_dispatch_body_stamps_pipeline_caller() -> None:
     assert body["caller_agent"] == "pipeline:cursor-paste-resolve"
 
 
-class _client_ctx:
+class _ClientCtx:
     def __init__(self, post_turn: AsyncMock) -> None:
         self._post_turn = post_turn
 
-    async def __aenter__(self) -> _client_ctx:
+    async def __aenter__(self) -> _ClientCtx:
         return self
 
     async def __aexit__(self, *args: object) -> None:

@@ -463,7 +463,11 @@ async def prepare_cursor_sdk_generate(
         caller_seat=(
             admit_provenance.caller_seat
             if admit_provenance is not None
-            else (caller_agent.strip() if caller_agent and caller_agent.strip() else None)
+            else (
+                caller_agent.strip()
+                if caller_agent and caller_agent.strip()
+                else None
+            )
         ),
         work_key=(
             admit_provenance.work_key

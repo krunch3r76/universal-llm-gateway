@@ -27,11 +27,6 @@ from pydantic import BaseModel, Field, model_validator
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
-from .admit_provenance import (
-    build_team_dispatch_admit_provenance,
-    emit_admit_provenance_missing_event,
-    finalize_team_dispatch_admit_response,
-)
 from .admission import (
     enforce_generate_role_seat_exclusive,
     enforce_handoff_seat_not_auto,
@@ -39,6 +34,11 @@ from .admission import (
     reject_role_cursor_sdk_on_generate,
     resolve_handoff_seat,
     resolve_handoff_target,
+)
+from .admit_provenance import (
+    build_team_dispatch_admit_provenance,
+    emit_admit_provenance_missing_event,
+    finalize_team_dispatch_admit_response,
 )
 from .cdp_generate import (
     dispatch_cdp_generate,

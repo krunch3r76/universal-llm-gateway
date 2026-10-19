@@ -881,7 +881,8 @@ async def post_pointer_turn(
             resp = await client.post("/turns", headers=headers, json=payload)
     except httpx.HTTPError as exc:
         logger.error(
-            "handoff post_pointer_turn transport error: request_id=%s thread=%s error=%s",
+            "handoff post_pointer_turn transport error: "
+            "request_id=%s thread=%s error=%s",
             request_id,
             thread_id,
             exc,

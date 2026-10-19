@@ -1,7 +1,8 @@
 """Admit provenance flags for team_dispatch generate / to_thread (friction:39669).
 
 Records missing caller seat, lane/thread, or work_key without refusing the admit.
-Downstream bus posts must not synthesize ``from=dispatch`` when the caller seat is blank.
+Downstream bus posts must not synthesize ``from=dispatch`` when the caller
+seat is blank.
 """
 
 from __future__ import annotations
