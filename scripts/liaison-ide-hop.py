@@ -212,6 +212,21 @@ def main() -> int:
             if lbl not in labels
         )
     if not args.transcript_id:
+        from bus_watch.fable_lock import read_lock
+        from bus_watch.ide_budget import (
+            AGENT_TRANSCRIPTS,
+            active_budget_excludes,
+            ide_holder_transcript,
+            newest_resume_transcript,
+        )
+
+        lock = read_lock(args.root)
+        args.transcript_id = ide_holder_transcript(lock) or newest_resume_transcript(
+            args.root,
+            AGENT_TRANSCRIPTS,
+            exclude=active_budget_excludes(args.root),
+        )
+    if not args.transcript_id:
         print(
             json.dumps(
                 {
@@ -327,11 +342,36 @@ def main() -> int:
                 transcript_id=args.transcript_id,
             )
             gui = args.gui_host or policy_gui_host(args.root)
+            landed_tid = str(out.get("landed_transcript_id") or "")
+            if is_cursor_xvfb_host(gui) and landed_tid:
+                try:
+                    with _bus() as client:
+                        sub_resp = client.post(
+                            "/endpoint-subscriptions",
+                            json={
+                                "agent": "cursor",
+                                "thread_scope": args.root,
+                                "surface": "cursor",
+                                "display": "8",
+                                "agent_id": landed_tid,
+                                "title": f"{args.root} ",
+                            },
+                        )
+                    out["subscription_update"] = {
+                        "ok": sub_resp.status_code < 400,
+                        "status_code": sub_resp.status_code,
+                        "agent_id": landed_tid,
+                    }
+                except Exception as exc:  # noqa: BLE001 — must not abort retire
+                    out["subscription_update"] = {
+                        "ok": False,
+                        "reason": f"subscription_exception:{type(exc).__name__}",
+                    }
             if is_cursor_xvfb_host(gui) and args.transcript_id:
                 try:
                     out["archived_departing_tab"] = prune_cursor_agents_predecessors(
                         args.root,
-                        active_agent_id=str(out.get("landed_transcript_id") or ""),
+                        active_agent_id=landed_tid,
                         departing_agent_id=args.transcript_id,
                         keep_recent_predecessors=1,
                     )

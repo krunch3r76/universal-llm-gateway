@@ -514,12 +514,18 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
 
 async def run_dispatcher() -> None:
     """Scan and fire until cancelled. Each pass runs on a worker thread."""
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
+
     store = StoreClient()
     idle: dict[str, float] = {}
+    hop_mark: dict[str, float] = {}
     while True:
         try:
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             await asyncio.to_thread(fire_due_wakes, store)
+            await asyncio.to_thread(
+                check_cursor_ide_context_hops, store, mark=hop_mark
+            )
         except Exception:
             logger.exception("endpoint_wake_dispatcher pass failed")
         await asyncio.sleep(_POLL_S)

@@ -164,3 +164,15 @@ class StoreClient:
         else:
             kind = "parent"
         return kind, best
+
+    def subscriptions(self, agent: str = "cursor") -> list[dict[str, Any]]:
+        payload = self._bus(
+            "GET",
+            "/endpoint-subscriptions",
+            params={"agent": agent},
+        )
+        return [
+            row
+            for row in payload.get("subscriptions") or []
+            if row.get("state") == "subscribed"
+        ]
