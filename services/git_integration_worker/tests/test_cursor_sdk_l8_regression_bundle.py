@@ -33,6 +33,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline_with_hashes,
     prepare_closeout_delivery,
 )
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    _CLOSEOUT_BODY_HEADING,
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
@@ -222,6 +225,38 @@ def test_l8_rc3_manifest_first_without_porcelain(tmp_path: Path) -> None:
     )
     assert rel in change_set.created
     assert not any(entry.path == rel for entry in ambient)
+
+
+def test_l8_review_preamble_34kb_verdict_in_executive_envelope(
+    tmp_path: Path,
+) -> None:
+    """34 KB preamble with late VERDICT must fit section 1 and archive the rest."""
+    _init_git_repo(tmp_path)
+    preamble = "x" * 34_000
+    sha = "a611edff3765" * 5 + "167c4fee"
+    agent_body = f"{preamble}\n\nVERDICT: APPROVE {sha}\n"
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-l8-review",
+        outcome=SdkRunOutcome(
+            body=agent_body,
+            status="finished",
+            duration_ms=50,
+            tool_call_count=0,
+        ),
+        degraded_reason=None,
+        thread_id="t-l8-review",
+        work_item_ref="todo:maestro-l8",
+        baseline={"codes": {}, "hashes": {}},
+    )
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    pre_manifest = sidecar_text.split("## effects_manifest", maxsplit=1)[0]
+    assert len(pre_manifest.splitlines()) <= 60
+    assert len(pre_manifest) <= 4000
+    assert any(line.startswith("VERDICT:") for line in pre_manifest.splitlines())
+    assert _CLOSEOUT_BODY_HEADING in sidecar_text
+    assert preamble in sidecar_text
+    assert agent_body in sidecar_text
 
 
 def test_l8_l6_no_propagation_from_deleted_lib() -> None:

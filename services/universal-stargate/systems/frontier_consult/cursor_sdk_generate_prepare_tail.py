@@ -110,6 +110,11 @@ async def finish_cursor_sdk_generate_prepare(
         bus_lifecycle if bus_lifecycle is not None else "ephemeral"
     )
     coord_recipient = caller_agent or "dispatch"
+    admit_work_key = (
+        admit_provenance.work_key
+        if admit_provenance is not None
+        else (work_key.strip() if work_key and work_key.strip() else None)
+    )
 
     # Wrap skips prompt resolution for packets; classify/coord share this mode.
     if packet_path is not None and not prompt_bind_mode:
@@ -187,6 +192,7 @@ async def finish_cursor_sdk_generate_prepare(
                     pipeline_id="cursor-sdk-generate",
                     parent_thread_id=parent_dispatch_thread_id,
                     provenance_missing=provenance_missing,
+                    work_key=admit_work_key,
                 )
                 claimed_via_atomic = True
                 _prepare.emit_sdk_thread_created(
@@ -213,6 +219,7 @@ async def finish_cursor_sdk_generate_prepare(
                     lifecycle_state="pending",
                     bus_lifecycle=effective_bus_lifecycle,
                     provenance_missing=provenance_missing,
+                    work_key=admit_work_key,
                 )
                 _prepare.emit_sdk_thread_created(
                     request_id=request_id,
@@ -229,6 +236,7 @@ async def finish_cursor_sdk_generate_prepare(
                 pointer_body=pointer_body,
                 caller_agent=caller_agent,
                 provenance_missing=provenance_missing,
+                work_key=admit_work_key,
             )
             _prepare.emit_sdk_thread_created(
                 request_id=request_id,
@@ -254,6 +262,7 @@ async def finish_cursor_sdk_generate_prepare(
             lifecycle_state="pending",
             bus_lifecycle=effective_bus_lifecycle,
             provenance_missing=provenance_missing,
+            work_key=admit_work_key,
         )
         _prepare.emit_sdk_thread_created(
             request_id=request_id,

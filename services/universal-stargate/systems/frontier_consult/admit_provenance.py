@@ -60,6 +60,27 @@ def append_provenance_marker(body: str, missing: tuple[str, ...]) -> str:
     return f"{body}\n{marker}"
 
 
+def format_work_key_line(work_key: str | None) -> str | None:
+    key = _strip(work_key)
+    if not key:
+        return None
+    return f"work_key: {key}"
+
+
+def stamp_admit_turn_body(
+    body: str,
+    *,
+    work_key: str | None,
+    provenance_missing: tuple[str, ...],
+) -> str:
+    """Prepend ``work_key:`` when present; append provenance markers for blanks."""
+    stamped = body
+    line = format_work_key_line(work_key)
+    if line:
+        stamped = f"{line}\n{body}" if body else line
+    return append_provenance_marker(stamped, provenance_missing)
+
+
 def admit_turn_from_agent(
     caller_agent: str | None,
     *,

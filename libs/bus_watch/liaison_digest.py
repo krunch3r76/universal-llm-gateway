@@ -44,6 +44,7 @@ from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
 from bus_watch.ide_budget import measure_ide_tab
 from bus_watch.induction import build_wake_induction
+from bus_watch.liaison_l24_l28 import extend_digest_attention_l24_l28
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
@@ -125,7 +126,10 @@ def _lane_is_conductor_contract(lane: dict[str, Any]) -> bool:
         token = str(tag).strip().lower()
         if token == "contract:conductor":
             return True
-        if token.startswith("contract:") and token.split(":", 1)[1].strip() == "conductor":
+        if (
+            token.startswith("contract:")
+            and token.split(":", 1)[1].strip() == "conductor"
+        ):
             return True
     return False
 
@@ -144,13 +148,17 @@ def _conductor_lane_enters_attention(lane: dict[str, Any]) -> bool:
     return False
 
 
-def filter_conductor_routine_attention(attention: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_conductor_routine_attention(
+    attention: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Drop unread conductor lanes whose last turn is routine hop telemetry."""
     out: list[dict[str, Any]] = []
     for lane in attention:
         if not isinstance(lane, dict):
             continue
-        if not _lane_is_conductor_contract(lane) or _conductor_lane_enters_attention(lane):
+        if not _lane_is_conductor_contract(lane) or _conductor_lane_enters_attention(
+            lane
+        ):
             out.append(lane)
     return out
 
@@ -363,6 +371,7 @@ def build_digest(
         state=state,
         lock=lock_now,
     )
+    extend_digest_attention_l24_l28(digest, state)
     state.update(
         {
             "fingerprint": fp,
