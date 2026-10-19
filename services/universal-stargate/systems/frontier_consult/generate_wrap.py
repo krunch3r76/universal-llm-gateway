@@ -74,6 +74,7 @@ class GenerateWrapResult:
     materialization_present: bool | None = None
     route_contract: dict[str, Any] | None = None
     scoreboard_uri: str | None = None
+    birth_rows: tuple[str, ...] | None = None
 
 
 def prepare_conductor_packet(
@@ -90,6 +91,7 @@ def prepare_conductor_packet(
     summoning_thread_id: str | None = None,
     summoning_turn_count: int | None = None,
     rematerialize: Any | None = None,
+    conductor_opts: dict[str, Any] | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -104,6 +106,7 @@ def prepare_conductor_packet(
         summoning_thread_id=summoning_thread_id,
         summoning_turn_count=summoning_turn_count,
         rematerialize=rematerialize,
+        conductor_opts=conductor_opts,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -137,6 +140,7 @@ def prepare_conductor_packet(
         materialization_present=bridge.materialization_present,
         route_contract=bridge.route_contract,
         scoreboard_uri=scoreboard_uri,
+        birth_rows=bridge.birth_rows,
     )
 
 
@@ -396,6 +400,11 @@ async def dispatch_cursor_sdk_generate_route(
                 ),
                 generation_options=gen_opts,
             )
+            from implement_admission.conductor_materialize import (
+                conductor_opts_from_generation_options,
+            )
+
+            conductor_opts = conductor_opts_from_generation_options(gen_opts)
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -414,6 +423,7 @@ async def dispatch_cursor_sdk_generate_route(
                     ),
                     summoning_turn_count=summoning_turn_count,
                     rematerialize=rematerialize,
+                    conductor_opts=conductor_opts or None,
                 ),
             )
         elif (
@@ -616,7 +626,11 @@ async def dispatch_cursor_sdk_generate_route(
                 result["route_contract"] = wrap.route_contract
             if wrap.scoreboard_uri is not None:
                 result["scoreboard_uri"] = wrap.scoreboard_uri
-        if isinstance(result, dict) and body.job == "conductor" and wrap.packet_markdown:
+        if (
+            isinstance(result, dict)
+            and body.job == "conductor"
+            and wrap.packet_markdown
+        ):
             dispatch_id = str(result.get("dispatch_id") or "").strip()
             if dispatch_id:
                 from .route_conductor_commit import (
@@ -626,6 +640,9 @@ async def dispatch_cursor_sdk_generate_route(
 
                 hop_seq_raw = getattr(body, "hop_seq", None)
                 hop_seq = int(hop_seq_raw) if isinstance(hop_seq_raw, int) else 0
+                from implement_admission.conductor_score_journal import G_ROWS
+
+                birth_rows = wrap.birth_rows or G_ROWS
                 commit_plan = ConductorCommitPlan(
                     source_ref=str(source_ref or getattr(body, "source_ref") or ""),
                     packet_markdown=wrap.packet_markdown,
@@ -634,6 +651,7 @@ async def dispatch_cursor_sdk_generate_route(
                     birth_scoreboard_markdown=wrap.birth_scoreboard_markdown,
                     hop_seq=hop_seq,
                     birth_seed_ignored=bool(plan.get("birth_seed_ignored")),
+                    birth_rows=birth_rows,
                 )
                 committed = commit_conductor_plan(commit_plan, dispatch_id)
                 result["packet_path"] = committed.packet_path

@@ -86,6 +86,11 @@ async def enrich_conductor_admit_plan(
         ),
         generation_options=gen_opts,
     )
+    from implement_admission.conductor_materialize import (
+        conductor_opts_from_generation_options,
+    )
+
+    conductor_opts = conductor_opts_from_generation_options(gen_opts)
     loop = asyncio.get_running_loop()
     wrap = await loop.run_in_executor(
         None,
@@ -105,6 +110,7 @@ async def enrich_conductor_admit_plan(
             ),
             summoning_turn_count=summoning_turn_count,
             rematerialize=rematerialize,
+            conductor_opts=conductor_opts or None,
         ),
     )
     markdown = wrap.packet_markdown or ""

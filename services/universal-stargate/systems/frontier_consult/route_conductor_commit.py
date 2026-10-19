@@ -11,7 +11,11 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.conductor_score_journal import birth_scoreboard, read_tip
+from implement_admission.conductor_score_journal import (
+    G_ROWS,
+    birth_scoreboard,
+    read_tip,
+)
 from implement_admission.source_ref import todo_slug_from_ref
 
 from .handoff import _workspaces_root
@@ -28,6 +32,7 @@ class ConductorCommitPlan:
     birth_scoreboard_markdown: str | None
     hop_seq: int
     birth_seed_ignored: bool = False
+    birth_rows: tuple[str, ...] = G_ROWS
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +118,7 @@ def commit_conductor_plan(
             seat="materializer",
             dispatch_id=dispatch_id,
             reason="conductor spawn birth",
-            rows=(),
+            rows=tuple(plan.birth_rows),
             delta="sparse birth",
         )
 
@@ -141,6 +146,10 @@ def plan_from_admit_dict(plan: dict[str, Any]) -> ConductorCommitPlan | None:
     birth_md = plan.get("birth_scoreboard_markdown")
     birth_body = birth_md if isinstance(birth_md, str) else None
     ignored = bool(plan.get("birth_seed_ignored"))
+    rows_raw = plan.get("birth_rows")
+    birth_rows = G_ROWS
+    if isinstance(rows_raw, list) and rows_raw:
+        birth_rows = tuple(str(r) for r in rows_raw)
     return ConductorCommitPlan(
         source_ref=source_ref,
         packet_markdown=markdown,
@@ -149,4 +158,5 @@ def plan_from_admit_dict(plan: dict[str, Any]) -> ConductorCommitPlan | None:
         birth_scoreboard_markdown=birth_body,
         hop_seq=hop_seq,
         birth_seed_ignored=ignored,
+        birth_rows=birth_rows,
     )

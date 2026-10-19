@@ -10,6 +10,7 @@ from implement_admission.conductor_policy_snapshot import (
     default_knobs_from_route_policy,
 )
 from implement_admission.conductor_score_journal import (
+    load_journal,
     read_tip,
     render_sparse_scoreboard,
 )
@@ -135,3 +136,85 @@ def test_todo_source_ref_defers_packet_render_to_enrich() -> None:
     assert plan.get("packet_sha256") == ""
     assert plan.get("packet_rel_path") == ""
     assert "test" not in (plan.get("packet_markdown") or "").lower()
+
+
+@pytest.mark.offline
+def test_birth_seed_rows_through_prepare_and_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """birth-seed-rows: generation_options.conductor survives prepare → commit."""
+    from implement_admission.conductor_materialize import (
+        load_conductor_context,
+        render_conductor_packet,
+    )
+    from implement_admission.test_conductor_materialize import _StubCortex
+    from systems.frontier_consult.route_conductor_commit import (
+        ConductorCommitPlan,
+        commit_conductor_plan,
+    )
+
+    _patch_cortex_files_root(monkeypatch, tmp_path)
+    slug = "defaults-seed-g1"
+    source_ref = f"todo:{slug}"
+    conductor_opts = {
+        "rows": ["G1"],
+        "entry_gate": "G1",
+        "stop_after": "G1",
+    }
+    validate_out = evaluate_validate(
+        {
+            "op": "generate",
+            "job": "conductor",
+            "seat": "cursor-sdk",
+            "hop_seq": 0,
+            "source_ref": source_ref,
+            "generation_options": {"conductor": conductor_opts},
+        }
+    )
+    defaults_plan = evaluate_conductor_defaults(
+        {
+            "op": "generate",
+            "job": "conductor",
+            "seat": "cursor-sdk",
+            "hop_seq": 0,
+            "source_ref": source_ref,
+            "generation_options": {"conductor": conductor_opts},
+        },
+        validate_out,
+    )
+    assert defaults_plan.get("birth_seed_ignored") is False
+
+    ctx = load_conductor_context(
+        source_ref,
+        cortex=_StubCortex({}),
+        conductor_opts=conductor_opts,
+    )
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    rendered = render_conductor_packet(
+        ctx,
+        out_dir=checkout / "tmp" / "materialized",
+        repo_root=checkout,
+        hop_seq=0,
+    )
+    assert rendered.birth_scoreboard_markdown is not None
+    assert "| G1 |" in rendered.birth_scoreboard_markdown
+    assert "| G7 |" not in rendered.birth_scoreboard_markdown
+    assert rendered.birth_rows == ("G1",)
+
+    commit_plan = ConductorCommitPlan(
+        source_ref=source_ref,
+        packet_markdown=rendered.text,
+        packet_sha256=rendered.packet_sha256,
+        packet_rel_path=rendered.packet_rel_path,
+        birth_scoreboard_markdown=rendered.birth_scoreboard_markdown,
+        hop_seq=0,
+        birth_seed_ignored=bool(defaults_plan.get("birth_seed_ignored")),
+        birth_rows=rendered.birth_rows,
+    )
+    commit_conductor_plan(commit_plan, "disp-defaults-seed", workspaces_root=checkout)
+    tip = read_tip(slug)
+    assert tip is not None
+    assert "**stop_after:** G1" in tip[0]
+    journal = load_journal(slug)
+    assert journal[0].get("rows") == ["G1"]

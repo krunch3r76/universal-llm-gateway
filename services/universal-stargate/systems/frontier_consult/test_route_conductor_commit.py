@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from implement_admission import closeout_helpers, conductor_score_locus
 from implement_admission.conductor_score_journal import (
+    load_journal,
     read_tip,
     render_sparse_scoreboard,
 )
@@ -152,3 +153,43 @@ def test_birth_tip_on_cortex_distinct_from_checkout_root(
     _seed_tip(checkout_root, decoy_slug)
     assert read_tip(decoy_slug) is None
     assert read_tip(decoy_slug, files_root=checkout_root) is not None
+
+
+@pytest.mark.offline
+def test_commit_birth_journal_records_seeded_rows(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """birth-seed-rows: commit_conductor_plan persists caller rows in journal."""
+    slug = "shape-a-birth-seed-g1"
+    source_ref = f"todo:{slug}"
+    birth_md = render_sparse_scoreboard(
+        source_ref=source_ref,
+        slug=slug,
+        entry_gate="G1",
+        stop_after="G1",
+        rows=("G1",),
+    )
+    body = f"---\nsource_ref: {source_ref}\n---\n# conductor\n"
+    import hashlib
+
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    plan = ConductorCommitPlan(
+        source_ref=source_ref,
+        packet_markdown=body,
+        packet_sha256=digest,
+        packet_rel_path=(
+            f"universal-llm-gateway/tmp/implement-admission/materialized/"
+            f"conductor-{slug}.md"
+        ),
+        birth_scoreboard_markdown=birth_md,
+        hop_seq=0,
+        birth_rows=("G1",),
+    )
+    commit_conductor_plan(plan, "disp-seed-g1", workspaces_root=tmp_path)
+    journal = load_journal(slug)
+    assert journal
+    assert journal[0].get("rows") == ["G1"]
+    tip = read_tip(slug)
+    assert tip is not None
+    assert "**stop_after:** G1" in tip[0]
+    assert "| G7 |" not in tip[0]

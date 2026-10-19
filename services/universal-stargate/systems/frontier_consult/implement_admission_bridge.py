@@ -59,6 +59,7 @@ class BridgeResult:
     packet_markdown: str | None = None
     packet_rel_path: str | None = None
     birth_scoreboard_markdown: str | None = None
+    birth_rows: tuple[str, ...] | None = None
     implement_spec_hash: str | None = None
     packet_sha256: str | None = None
     materialization_present: bool | None = None
@@ -315,6 +316,7 @@ def resolve_source_ref_to_packet(
     summoning_thread_id: str | None = None,
     summoning_turn_count: int | None = None,
     rematerialize: Any | None = None,
+    conductor_opts: dict[str, Any] | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -364,6 +366,7 @@ def resolve_source_ref_to_packet(
         hop_seq = int(getattr(rem_ctx, "hop_seq", 0) or 0) if rem_ctx else 0
         fold_entry_gate: str | None = None
         fold_missing: dict[str, str] | None = None
+        folded_tip_body: str | None = None
         slug = todo_slug_from_ref(source_ref) if source_ref else ""
         if slug and read_tip(slug) is not None:
             fold = fold_deps_for_admit(
@@ -381,6 +384,11 @@ def resolve_source_ref_to_packet(
                 if folded is not None:
                     fold_entry_gate = folded.entry_gate
                     fold_missing = folded.missing_witnesses or None
+                    folded_tip_body = folded.folded_body
+        if hop_seq >= 1 and folded_tip_body is None and slug:
+            tip_pair = read_tip(slug)
+            if tip_pair is not None:
+                folded_tip_body = tip_pair[0]
         ctx = load_conductor_context(
             source_ref,
             cortex=cortex,
@@ -392,6 +400,7 @@ def resolve_source_ref_to_packet(
             fold_missing_witnesses=fold_missing,
             summoning_thread_id=summoning_thread_id,
             rematerialize=rem_ctx,
+            conductor_opts=conductor_opts,
         )
         rendered = render_conductor_packet(
             ctx,
@@ -399,6 +408,7 @@ def resolve_source_ref_to_packet(
             repo_root=repo,
             hop_seq=hop_seq,
             write_birth_scoreboard=read_tip(slug) is None and hop_seq == 0,
+            tip_body=folded_tip_body if hop_seq >= 1 else None,
         )
         return BridgeResult(
             gated=False,
@@ -407,6 +417,7 @@ def resolve_source_ref_to_packet(
             packet_markdown=rendered.text,
             packet_rel_path=rendered.packet_rel_path,
             birth_scoreboard_markdown=rendered.birth_scoreboard_markdown,
+            birth_rows=rendered.birth_rows,
             implement_spec_hash=None,
             packet_sha256=rendered.packet_sha256,
             materialization_present=False,

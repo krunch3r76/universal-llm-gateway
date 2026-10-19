@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from implement_admission import closeout_helpers, conductor_score_locus
+from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from implement_admission.conductor_materialize import (
     RematerializeContext,
     conductor_packet_contains_use_line,
@@ -15,6 +17,7 @@ from implement_admission.conductor_materialize import (
     extract_scoreboard_uri,
     load_conductor_context,
     materialize_conductor,
+    render_conductor_packet,
     render_sparse_scoreboard,
     resolve_entry_gate,
 )
@@ -28,9 +31,8 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
-from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
-from implement_admission.impresario_policy import resolve_roles
 from implement_admission.conductor_witness import FoldDeps
+from implement_admission.impresario_policy import resolve_roles
 
 
 class _StubCortex:
@@ -698,3 +700,65 @@ def test_ac_p1_3_rematerialize_entry_gate_from_fold(
     )
     assert "Entry gate: G3" in mp.text
     assert "Resume at persisted row (entry gate G3)" in mp.text
+
+
+@pytest.mark.offline
+def test_load_conductor_context_merges_generation_options_conductor() -> None:
+    ctx = load_conductor_context(
+        "todo:seed-g1-only",
+        cortex=_StubCortex({}),
+        conductor_opts={
+            "rows": ["G1"],
+            "entry_gate": "G1",
+            "stop_after": "G1",
+        },
+    )
+    assert ctx.rows == ("G1",)
+    assert ctx.entry_gate == "G1"
+    assert ctx.stop_after == "G1"
+
+
+@pytest.mark.offline
+def test_hop_render_uses_cortex_tip_not_checkout_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3-hop-tip: hop_seq>=1 reads scoreboard from cortex_files_root, not repo_root."""
+    cortex_root = tmp_path / "cortex"
+    checkout_root = tmp_path / "checkout"
+    checkout_root.mkdir()
+    monkeypatch.setattr(closeout_helpers, "cortex_files_root", lambda: cortex_root)
+    monkeypatch.setattr(conductor_score_locus, "cortex_files_root", lambda: cortex_root)
+
+    slug = "ac3-hop-cortex-vs-checkout"
+    source_ref = f"todo:{slug}"
+    tip_body = render_sparse_scoreboard(
+        source_ref=source_ref,
+        slug=slug,
+        entry_gate="G2",
+        stop_after=None,
+        rows=("G1", "G2", "G3"),
+    )
+    tip_body = tip_body.replace(
+        "| G1 | Architecture | recon | OPEN | |",
+        "| G1 | Architecture | recon | DONE | |",
+    )
+    tip_path = (
+        cortex_root / "notes" / "system" / "scoreboards" / f"{slug}-scoreboard.md"
+    )
+    tip_path.parent.mkdir(parents=True, exist_ok=True)
+    tip_path.write_text(tip_body, encoding="utf-8")
+    assert read_tip(slug, files_root=checkout_root) is None
+
+    ctx = load_conductor_context(source_ref, cortex=_StubCortex())
+    out_dir = checkout_root / "tmp" / "materialized"
+    rendered = render_conductor_packet(
+        ctx,
+        out_dir=out_dir,
+        repo_root=checkout_root,
+        hop_seq=1,
+        write_birth_scoreboard=False,
+    )
+    assert "## Gated deliverables (open)" in rendered.text
+    assert "Do not fs-read this tip" in rendered.text
+    assert "| G1 | Architecture | recon | OPEN | |" not in rendered.text
