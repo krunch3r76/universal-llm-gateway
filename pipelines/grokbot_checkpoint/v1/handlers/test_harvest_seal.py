@@ -73,6 +73,30 @@ async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prewritten_raw_json_keeps_l0_bytes(fs: MemFs) -> None:
+    """K43 falsifier: l0_ref is already <n>.raw.json; pour must not rewrite it."""
+    raw = (_FIXTURES / "bl1_drift.pages.txt").read_bytes()
+    l0 = f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"
+    fs.files[l0] = raw
+    l0_sha = file_sha256(raw)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0,
+        "l0_sha256": l0_sha,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter.get("refused") is None
+    pour = await run_harvest_pour(options, adapter, fs)
+    assert pour.get("refused") is None
+    assert file_sha256(fs.files[l0]) == l0_sha
+
+
+@pytest.mark.asyncio
 async def test_harvest_idempotent_second_run(fs: MemFs) -> None:
     l0_ref, l0_sha = _l0_paths(fs)
     options = {

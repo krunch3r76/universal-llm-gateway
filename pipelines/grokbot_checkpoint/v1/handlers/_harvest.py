@@ -118,8 +118,9 @@ async def stage_grok_pour(
     stats: dict[str, Any],
     n: int = 1,
     raw_bytes: bytes | None = None,
+    l0_ref: str = "",
 ) -> dict[str, Any]:
-    """Write checkpoint raw bytes and the structured messages envelope."""
+    """Write the verbatim L0 bytes and the structured messages envelope."""
     from cortex_store.verbatim_succession import prefix_holds
 
     uri = grok_pour_uri(agent_id, n)
@@ -127,11 +128,15 @@ async def stage_grok_pour(
         return refuse("harvest.tape_refused", uri)
     if raw_bytes is not None:
         raw_uri = checkpoint_raw_uri(agent_id, n)
+        bare_l0 = l0_ref.removeprefix("cortex://").removeprefix("workspaces://")
         raw_written = await fs.write(raw_uri, raw_bytes, if_absent=True)
         if not raw_written.get("ok"):
             existing_raw = await fs.read(raw_uri)
-            if existing_raw is None or existing_raw != raw_bytes:
-                return refuse("harvest.tape_refused", "raw checkpoint bytes differ")
+            same = existing_raw == raw_bytes or (
+                bare_l0 == raw_uri and existing_raw is not None
+            )
+            if not same:
+                return refuse("harvest.raw_conflict", "raw checkpoint bytes differ")
     raw = dumps(envelope)
     existing = await fs.read(uri)
     if existing is None:
