@@ -820,3 +820,27 @@ def test_liaison_loop_due_wake_on_attention_only_ignores_churn() -> None:
         )
         is False
     )
+
+
+def test_liaison_loop_due_unread_turns_list_vs_int() -> None:
+    from bus_watch.liaison_digest import liaison_loop_due
+
+    base = {
+        "policy": {"wake_on_attention_only": True},
+        "watchers_complete_unrelayed": [],
+        "attention": [],
+        "roster": [{"hire": "auto", "live": True, "last_hire_dispatch_id": "x"}],
+    }
+    kwargs = {
+        "changed_not_echo": False,
+        "heartbeat_due": False,
+        "budget_stop_new": False,
+    }
+    digest_list = {**base, "root": {"unread_turns": [{"n": 1}, {"n": 2}]}}
+    assert liaison_loop_due(digest_list, {}, **kwargs) is True
+    digest_int = {**base, "root": {"unread_turns": 3}}
+    assert liaison_loop_due(digest_int, {}, **kwargs) is True
+    digest_unread_key = {**base, "root": {"unread": 2}}
+    assert liaison_loop_due(digest_unread_key, {}, **kwargs) is True
+    digest_zero = {**base, "root": {"unread_turns": []}}
+    assert liaison_loop_due(digest_zero, {}, **kwargs) is False

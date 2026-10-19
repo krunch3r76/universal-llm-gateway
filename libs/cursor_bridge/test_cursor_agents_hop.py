@@ -8,6 +8,7 @@ import pytest
 from bus_watch import ide_hop
 
 from cursor_bridge.cursor_agents_hop import (
+    archive_cursor_agents_tab,
     is_cursor_xvfb_host,
     launch_cursor_agents_tab,
 )
@@ -48,3 +49,38 @@ def test_launch_cursor_agents_tab_ok() -> None:
         out = launch_cursor_agents_tab("resume 10479")
     assert out["ok"] is True
     assert out["transport"] == "cdp_cursor_agents"
+
+
+def test_archive_cursor_agents_tab_empty_id() -> None:
+    assert archive_cursor_agents_tab("") == {"ok": False, "reason": "empty_agent_id"}
+    assert archive_cursor_agents_tab("   ") == {"ok": False, "reason": "empty_agent_id"}
+
+
+def test_archive_cursor_agents_tab_ok() -> None:
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    def _run(coro):  # type: ignore[no-untyped-def]
+        coro.close()
+        return {"ok": True, "archived": "agent-abc"}
+
+    with (
+        patch("cursor_bridge.cursor_agents_hop.list_pages", return_value=[page]),
+        patch("cursor_bridge.cursor_agents_hop.asyncio.run", side_effect=_run),
+    ):
+        out = archive_cursor_agents_tab("agent-abc")
+    assert out == {"ok": True, "archived": "agent-abc"}
+
+
+def test_archive_cursor_agents_tab_row_not_found() -> None:
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    def _run(coro):  # type: ignore[no-untyped-def]
+        coro.close()
+        return {"ok": False, "reason": "row_not_found"}
+
+    with (
+        patch("cursor_bridge.cursor_agents_hop.list_pages", return_value=[page]),
+        patch("cursor_bridge.cursor_agents_hop.asyncio.run", side_effect=_run),
+    ):
+        out = archive_cursor_agents_tab("missing-id")
+    assert out["reason"] == "row_not_found"

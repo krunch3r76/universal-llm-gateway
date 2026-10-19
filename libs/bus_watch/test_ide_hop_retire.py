@@ -11,7 +11,7 @@ import pytest
 
 from bus_watch.ide_hop_retire import (
     GOAL_RELEASE,
-    RETIRED_TAB_PREFIX,
+    RETIRED_TAB_SUFFIX,
     _is_supervise_tail,
     _label_from_argv,
     departing_tail_pids,
@@ -20,6 +20,7 @@ from bus_watch.ide_hop_retire import (
     quiesce_departing_tab,
     retire_departing_tab,
     stop_departing_tails,
+    suffix_retired_tab_title,
     tab_background_pids,
 )
 
@@ -49,17 +50,22 @@ def test_departing_labels_include_terminal_stems(tmp_path: Path) -> None:
     ]
 
 
-def test_prefix_retired_tab_title_adds_dot_prefix() -> None:
-    assert prefix_retired_tab_title("10479 liaison-night") == (
-        f"{RETIRED_TAB_PREFIX}10479 liaison-night"
+def test_suffix_retired_tab_title_appends_retired() -> None:
+    assert suffix_retired_tab_title("10479 liaison-night") == (
+        "10479 liaison-night (retired)"
     )
-    assert prefix_retired_tab_title(". 10479 liaison-night") == ". 10479 liaison-night"
-    assert prefix_retired_tab_title("") == "."
+    assert suffix_retired_tab_title("already (retired)") == "already (retired)"
+    assert suffix_retired_tab_title("") == "(retired)"
+    assert prefix_retired_tab_title("10479 liaison-night") == (
+        "10479 liaison-night (retired)"
+    )
 
 
-def test_goal_release_documents_retired_tab_prefix() -> None:
-    assert "'. '" in GOAL_RELEASE
+def test_goal_release_documents_retired_tab_suffix() -> None:
+    assert "' (retired)'" in GOAL_RELEASE
+    assert "(retired)" in GOAL_RELEASE
     assert "rename_chat" in GOAL_RELEASE
+    assert RETIRED_TAB_SUFFIX == " (retired)"
 
 
 def test_supervise_tail_match_skips_forever() -> None:

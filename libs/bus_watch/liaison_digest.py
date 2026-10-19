@@ -390,7 +390,13 @@ def liaison_loop_due(
         if digest.get("watchers_complete_unrelayed"):
             return True
         root = digest.get("root") or {}
-        if (root.get("unread_turns") or 0) > 0:
+        unread_turns = root.get("unread_turns")
+        unread_count = (
+            len(unread_turns)
+            if isinstance(unread_turns, list)
+            else int(unread_turns or root.get("unread") or 0)
+        )
+        if unread_count > 0:
             return True
         for item in digest.get("attention") or []:
             if not isinstance(item, dict):

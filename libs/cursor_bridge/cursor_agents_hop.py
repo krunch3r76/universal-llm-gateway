@@ -175,3 +175,58 @@ async def _recv_id(ws: Any, mid: int) -> dict[str, Any]:
             if msg.get("error"):
                 raise RuntimeError(msg["error"])
             return msg
+
+
+def _archive_agent_js(agent_id: str) -> str:
+    aid = json.dumps(agent_id.strip())
+    return f"""
+(() => {{
+  const target = {aid};
+  const rows = document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]');
+  for (const el of rows) {{
+    const id = el.getAttribute("data-sidebar-file-drop-agent-id")
+      || el.getAttribute("data-agent-id");
+    if (id === target) {{
+      const btn = el.querySelector('button[aria-label="Archive"]');
+      if (!btn) return {{ok: false, reason: 'no_archive_btn'}};
+      btn.click();
+      return {{ok: true, archived: target}};
+    }}
+  }}
+  return {{ok: false, reason: 'row_not_found'}};
+}})()
+"""
+
+
+def archive_cursor_agents_tab(
+    agent_id: str,
+    *,
+    debug_url: str = "http://127.0.0.1:9338",
+    timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    """Archive a retired agent row in the Cursor Agents sidebar via CDP."""
+    if not str(agent_id or "").strip():
+        return {"ok": False, "reason": "empty_agent_id"}
+    try:
+        pages = list_pages(debug_url, timeout_s=min(timeout_s, 5.0))
+    except OSError as exc:
+        return {"ok": False, "reason": "debug_unreachable", "detail": type(exc).__name__}
+    page = pick_chat_page(pages, surface="cursor")
+    if page is None:
+        return {"ok": False, "reason": "no_page", "pages": len(pages)}
+    ws_url = page["web_socket_debugger_url"]
+    return asyncio.run(
+        _archive_async(ws_url, agent_id.strip(), timeout_s=timeout_s)
+    )
+
+
+async def _archive_async(ws_url: str, agent_id: str, *, timeout_s: float) -> dict[str, Any]:
+    import websockets
+
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        result = await _eval(ws, 1, _archive_agent_js(agent_id), timeout_s)
+    if isinstance(result, dict) and result.get("ok"):
+        return result
+    if isinstance(result, dict):
+        return result
+    return {"ok": False, "reason": "archive_eval_failed", "result": result}

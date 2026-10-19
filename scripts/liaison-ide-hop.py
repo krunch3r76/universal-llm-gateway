@@ -12,9 +12,9 @@ line per live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` expl
 the successor attaches ``tail --label``, harvests, and plans. ``ok`` then retires this
 tab's ``--loop``, ``watch-supervise`` tails, and ``ide:`` lock (``bus_watch.ide_hop_retire``).
 Pollers arm via ``scripts/watch-supervise.sh start`` — that spawn closes stdin and fds >2
-so ``start`` returns before poller closeout (a:39593). On land, prefix this tab title with
-``. `` (``rename_chat``) before ``RETIRED → <transcript_id>`` — same convention as
-checkpoint tabs (``operator-posture``).
+so ``start`` returns before poller closeout (a:39593). On land, suffix this tab title with
+`` (retired)`` (``rename_chat``) before ``RETIRED → <transcript_id>``. On :8 Xvfb,
+``archive_cursor_agents_tab`` archives the sidebar row for ``--transcript-id``.
 UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
@@ -58,6 +58,10 @@ from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
+from cursor_bridge.cursor_agents_hop import (
+    archive_cursor_agents_tab,
+    is_cursor_xvfb_host,
+)
 
 
 def _jsonl_turn_count(transcript_id: str) -> int | None:
@@ -311,6 +315,7 @@ def main() -> int:
     if out.get("ok"):
         out["goal_release"] = GOAL_RELEASE
         out["retire_tab_prefix"] = RETIRED_TAB_PREFIX
+        out["retire_tab_suffix"] = " (retired)"
         if args.dry_run:
             out["retire"] = {"ok": True, "skipped": "dry_run"}
         else:
@@ -319,6 +324,17 @@ def main() -> int:
                 holder=f"ide:{args.transcript_id}",
                 transcript_id=args.transcript_id,
             )
+            gui = args.gui_host or policy_gui_host(args.root)
+            if is_cursor_xvfb_host(gui) and args.transcript_id:
+                try:
+                    out["archived_departing_tab"] = archive_cursor_agents_tab(
+                        args.transcript_id
+                    )
+                except Exception as exc:  # noqa: BLE001 — must not abort retire
+                    out["archived_departing_tab"] = {
+                        "ok": False,
+                        "reason": f"archive_exception:{type(exc).__name__}",
+                    }
     elif out.get("phase") == "expired":
         # Quiesce already ran via on_fired; never re-fire.
         out.setdefault("operator_gate", True)

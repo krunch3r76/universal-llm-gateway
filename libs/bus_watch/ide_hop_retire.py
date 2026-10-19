@@ -28,21 +28,27 @@ from bus_watch.go_under import stop_attended_loops
 from bus_watch.ide_budget_exclude import pin_retired_resume_transcript
 
 RETIRED_TAB_PREFIX = ". "
+RETIRED_TAB_SUFFIX = " (retired)"
+
+
+def suffix_retired_tab_title(title: str) -> str:
+    """Suffix a departing tab title with `` (retired)``."""
+    stripped = (title or "").strip()
+    if not stripped:
+        return RETIRED_TAB_SUFFIX.strip()
+    if stripped.endswith(RETIRED_TAB_SUFFIX):
+        return stripped
+    return f"{stripped}{RETIRED_TAB_SUFFIX}"
 
 
 def prefix_retired_tab_title(title: str) -> str:
-    """Prefix a departing tab title so it reads as retired (checkpoint-style ``.``)."""
-    stripped = (title or "").strip()
-    if not stripped:
-        return RETIRED_TAB_PREFIX.rstrip()
-    if stripped.startswith("."):
-        return stripped
-    return f"{RETIRED_TAB_PREFIX}{stripped}"
+    """Alias for ``suffix_retired_tab_title`` (legacy import name)."""
+    return suffix_retired_tab_title(title)
 
 
 GOAL_RELEASE = (
-    "LIAISON_HOP_TAB_GOAL_RELEASE: Prefix this tab title with '. ' via rename_chat "
-    f"(target example: {RETIRED_TAB_PREFIX!r}{{existing title}}) before UpdateGoal and "
+    "LIAISON_HOP_TAB_GOAL_RELEASE: Suffix this tab title with ' (retired)' via rename_chat "
+    "(target example: '{existing title} (retired)') before UpdateGoal and "
     "before the RETIRED line. If a native Cursor goal is active on this tab, "
     'CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"}) '
     "after liaison-ide-hop.py ok — leftover continuation-wake only "
@@ -255,7 +261,9 @@ def retire_departing_tab(
 __all__ = [
     "GOAL_RELEASE",
     "RETIRED_TAB_PREFIX",
+    "RETIRED_TAB_SUFFIX",
     "prefix_retired_tab_title",
+    "suffix_retired_tab_title",
     "departing_tail_pids",
     "departing_watcher_labels",
     "quiesce_departing_tab",
