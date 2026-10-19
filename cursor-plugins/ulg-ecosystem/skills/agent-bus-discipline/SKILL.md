@@ -155,6 +155,16 @@ agent_bus(tool="get", arguments='{"thread":"THREAD_ID","turn_number":"latest"}')
 
 If `fetch(last=1, compact=true)` overflows, do not skip the thread. Use `get(turn_number="latest")` or `get(turn_number=N)` to fetch one turn at a time.
 
+## Backward read (established threads)
+
+Whole-thread fetch of large threads hangs.
+
+1. `get(turn_number="latest")` — know the tip turn.
+2. `fetch(compact=true, last=…)` over ~20–30 turn windows (step backward from latest).
+3. Scan compact subjects for LANDED, VERDICT, RULING, CHECKPOINT, or closeout markers.
+4. `get` only matching turns — newest CHECKPOINT/closeout first — and follow refs it names.
+5. Step back one window only if still unanswered; stop once the question is answered.
+
 ## Standing root threads
 
 High-turn-count roots fail by many turns, not large bodies. `¬ linearly_read(root_thread) for state`.
