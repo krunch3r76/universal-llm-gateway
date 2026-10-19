@@ -62,6 +62,9 @@ class GenerateWrapResult:
     """Outcome of gate-then-materialize before a cursor-sdk generate dispatch."""
 
     packet_path: str | None
+    packet_markdown: str | None = None
+    packet_rel_path: str | None = None
+    birth_scoreboard_markdown: str | None = None
     gated: bool = False
     gated_reason: str | None = None
     materialized: bool = False
@@ -111,8 +114,11 @@ def prepare_conductor_packet(
     from implement_admission.conductor_materialize import extract_scoreboard_uri
 
     scoreboard_uri: str | None = None
+    packet_text = bridge.packet_markdown
     materialized_path = bridge.packet_path
-    if materialized_path is not None:
+    if packet_text:
+        scoreboard_uri = extract_scoreboard_uri(packet_text)
+    elif materialized_path is not None:
         materialized_file = _resolve_packet_file(
             workspaces_root.resolve(), materialized_path
         )
@@ -121,8 +127,11 @@ def prepare_conductor_packet(
                 materialized_file.read_text(encoding="utf-8", errors="replace")
             )
     return GenerateWrapResult(
-        packet_path=materialized_path,
-        materialized=True,
+        packet_path=bridge.packet_path,
+        packet_markdown=bridge.packet_markdown,
+        packet_rel_path=bridge.packet_rel_path,
+        birth_scoreboard_markdown=bridge.birth_scoreboard_markdown,
+        materialized=bool(bridge.packet_path or bridge.packet_markdown),
         warnings=list(bridge.warnings),
         packet_sha256=bridge.packet_sha256,
         materialization_present=bridge.materialization_present,
@@ -242,6 +251,7 @@ async def dispatch_cursor_sdk_generate_route(
     response: Response,
     requested_model_pin: str | None = None,
     admit_provenance: AdmitProvenanceContext | None = None,
+    admit_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
@@ -342,7 +352,17 @@ async def dispatch_cursor_sdk_generate_route(
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         source_ref = getattr(body, "source_ref", None)
-        if body.job == "conductor":
+        plan = admit_plan or {}
+        if body.job == "conductor" and plan.get("packet_markdown"):
+            wrap = GenerateWrapResult(
+                packet_path=None,
+                packet_markdown=str(plan.get("packet_markdown")),
+                packet_rel_path=str(plan.get("packet_rel_path") or ""),
+                birth_scoreboard_markdown=plan.get("birth_scoreboard_markdown"),
+                materialized=True,
+                packet_sha256=str(plan.get("packet_sha256") or ""),
+            )
+        elif body.job == "conductor":
             operator_lane_summon_warning = await refuse_conductor_operator_lane_summon(
                 request_id=request_id,
                 contract=body.job,
@@ -471,6 +491,11 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             wrap = GenerateWrapResult(packet_path=packet_path)
         has_packet = wrap.packet_path is not None
+        conductor_message = (
+            wrap.packet_markdown
+            if body.job == "conductor" and wrap.packet_markdown
+            else None
+        )
         prompt_resolution = None
         if body.job == "implement" or has_packet:
             source_text = ""
@@ -501,7 +526,7 @@ async def dispatch_cursor_sdk_generate_route(
             caller_agent=body.caller_agent,
             contract=body.job,
             packet_path=wrap.packet_path,
-            message_text=source_text,
+            message_text=conductor_message or source_text,
             reuse_thread=reuse_thread,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
             parent_dispatch_thread_id=parent_dispatch_thread_id,
@@ -591,6 +616,30 @@ async def dispatch_cursor_sdk_generate_route(
                 result["route_contract"] = wrap.route_contract
             if wrap.scoreboard_uri is not None:
                 result["scoreboard_uri"] = wrap.scoreboard_uri
+        if isinstance(result, dict) and body.job == "conductor" and wrap.packet_markdown:
+            dispatch_id = str(result.get("dispatch_id") or "").strip()
+            if dispatch_id:
+                from .route_conductor_commit import (
+                    ConductorCommitPlan,
+                    commit_conductor_plan,
+                )
+
+                hop_seq_raw = getattr(body, "hop_seq", None)
+                hop_seq = int(hop_seq_raw) if isinstance(hop_seq_raw, int) else 0
+                commit_plan = ConductorCommitPlan(
+                    source_ref=str(source_ref or getattr(body, "source_ref") or ""),
+                    packet_markdown=wrap.packet_markdown,
+                    packet_sha256=str(wrap.packet_sha256 or ""),
+                    packet_rel_path=str(wrap.packet_rel_path or ""),
+                    birth_scoreboard_markdown=wrap.birth_scoreboard_markdown,
+                    hop_seq=hop_seq,
+                    birth_seed_ignored=bool(plan.get("birth_seed_ignored")),
+                )
+                committed = commit_conductor_plan(commit_plan, dispatch_id)
+                result["packet_path"] = committed.packet_path
+                result["packet_sha256"] = committed.packet_sha256
+                if committed.birth_seed_ignored:
+                    result["birth_seed_ignored"] = True
     except RouteContractContradictionError as exc:
         return JSONResponse(
             status_code=422,

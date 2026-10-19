@@ -572,6 +572,55 @@ def extract_scoreboard_uri(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+@dataclass(frozen=True, slots=True)
+class RenderedConductorPacket:
+    """Pure render product — no disk writes."""
+
+    text: str
+    packet_sha256: str
+    birth_scoreboard_markdown: str | None
+    packet_rel_path: str
+
+
+def render_conductor_packet(
+    ctx: ConductorMaterializeContext,
+    *,
+    out_dir: Path,
+    repo_root: Path | None = None,
+    hop_seq: int = 0,
+    write_birth_scoreboard: bool = True,
+) -> RenderedConductorPacket:
+    """Render six-block conductor packet bytes without writing disk."""
+    pending = _render_packet(ctx)
+    digest = compute_packet_sha256(pending)
+    text = replace_frontmatter_value(pending, "packet_sha256", digest)
+    rel_name = f"conductor-{ctx.slug}.md"
+    rel = rel_name
+    if repo_root is not None:
+        try:
+            rel = (out_dir / rel_name).resolve().relative_to(repo_root.resolve()).as_posix()
+            if repo_root.name == "universal-llm-gateway":
+                rel = f"universal-llm-gateway/{rel}"
+        except ValueError:
+            rel = f"universal-llm-gateway/tmp/implement-admission/materialized/{rel_name}"
+    birth_body: str | None = None
+    if write_birth_scoreboard and hop_seq == 0:
+        birth_body = render_sparse_scoreboard(
+            source_ref=ctx.source_ref,
+            slug=ctx.slug,
+            entry_gate=ctx.entry_gate,
+            stop_after=ctx.stop_after,
+            rows=ctx.rows,
+            row_labels=ctx.row_labels,
+        )
+    return RenderedConductorPacket(
+        text=text,
+        packet_sha256=digest,
+        birth_scoreboard_markdown=birth_body,
+        packet_rel_path=rel,
+    )
+
+
 def materialize_conductor(
     source_ref: str,
     *,
@@ -638,26 +687,22 @@ def materialize_conductor(
         summoning_thread_id_unresolved=summoning_unresolved,
         rematerialize=rematerialize,
     )
+    repo = files_root
+    rendered = render_conductor_packet(
+        ctx,
+        out_dir=out_dir,
+        repo_root=repo,
+        hop_seq=int(rematerialize.hop_seq or 0) if rematerialize else 0,
+        write_birth_scoreboard=write_scoreboard and read_tip(slug, files_root=files_root) is None,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"conductor-{slug}.md"
+    out_path.write_text(rendered.text, encoding="utf-8")
 
-    pending = _render_packet(ctx)
-    digest = compute_packet_sha256(pending)
-    text = replace_frontmatter_value(pending, "packet_sha256", digest)
-    out_path.write_text(text, encoding="utf-8")
-
-    if write_scoreboard and read_tip(slug, files_root=files_root) is None:
-        scoreboard_body = render_sparse_scoreboard(
-            source_ref=ctx.source_ref,
-            slug=ctx.slug,
-            entry_gate=ctx.entry_gate,
-            stop_after=ctx.stop_after,
-            rows=ctx.rows,
-            row_labels=ctx.row_labels,
-        )
+    if write_scoreboard and read_tip(slug, files_root=files_root) is None and rendered.birth_scoreboard_markdown:
         birth_scoreboard(
             slug,
-            scoreboard_body=scoreboard_body,
+            scoreboard_body=rendered.birth_scoreboard_markdown,
             seat="materializer",
             dispatch_id=None,
             reason="conductor spawn birth",
@@ -666,4 +711,4 @@ def materialize_conductor(
             files_root=files_root,
         )
 
-    return MaterializedPacket(path=str(out_path), packet_sha256=digest, text=text)
+    return MaterializedPacket(path=str(out_path), packet_sha256=rendered.packet_sha256, text=rendered.text)

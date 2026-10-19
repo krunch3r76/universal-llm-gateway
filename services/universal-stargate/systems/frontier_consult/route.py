@@ -901,6 +901,21 @@ async def team_dispatch(
             return finalize_team_dispatch_admit_response(result, admit_provenance)
         if backend == "cursor_sdk":
             sdk_seat = str(plan.get("seat") or "cursor-sdk")
+            if str(getattr(body, "job", "") or "").strip().lower() == "conductor":
+                from .conductor_admit_enrich import enrich_conductor_admit_plan
+
+                from .admission import FrontierEndpointError as _FrontierEndpointError
+
+                try:
+                    plan = await enrich_conductor_admit_plan(
+                        body=body,
+                        plan=plan,
+                        request_id=request_id,
+                    )
+                except _FrontierEndpointError as exc:
+                    return JSONResponse(
+                        status_code=exc.status_code, content=exc.to_dict()
+                    )
             result = await dispatch_cursor_sdk_generate_route(
                 request_id=request_id,
                 body=body,
@@ -908,6 +923,7 @@ async def team_dispatch(
                 response=response,
                 requested_model_pin=requested_model_pin,
                 admit_provenance=admit_provenance,
+                admit_plan=plan,
             )
             return finalize_team_dispatch_admit_response(result, admit_provenance)
         if backend == "api_role":

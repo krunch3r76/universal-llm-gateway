@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from admission_common.tree_probe import probe_working_tree
-from implement_admission.conductor_materialize import materialize_conductor
+from implement_admission.conductor_materialize import (
+    load_conductor_context,
+    render_conductor_packet,
+)
 from implement_admission.drift_gates import (
     DriftGateState,
     check_packet_hash_drift,
@@ -29,6 +32,7 @@ from implement_admission.source_ref import (
     MATERIALIZE_KIND_SKETCH,
     parse_source_ref,
     resolve_materialize_kind,
+    todo_slug_from_ref,
 )
 from implement_admission.spec import ReadinessState, SourceKind, implement_spec_hash
 
@@ -52,6 +56,9 @@ class BridgeResult:
     gated_reason: str | None = None
     source_ref: str | None = None
     packet_path: str | None = None
+    packet_markdown: str | None = None
+    packet_rel_path: str | None = None
+    birth_scoreboard_markdown: str | None = None
     implement_spec_hash: str | None = None
     packet_sha256: str | None = None
     materialization_present: bool | None = None
@@ -341,51 +348,69 @@ def resolve_source_ref_to_packet(
         )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
         from implement_admission.conductor_witness_defaults import fold_deps_for_admit
+        from implement_admission.conductor_score_journal import read_tip
         from services.git_integration_worker.cursor_sdk_nested_witness import (
             LedgerNestedImplementWitness,
         )
 
         out_dir = _materialized_out_dir(root)
         repo = _repo_base(root)
-        mp = materialize_conductor(
-            source_ref,
-            cortex=cortex,
-            out_dir=out_dir,
-            caller_agent=caller_agent,
-            summon_text=summon_text,
-            summon_mode=summon_mode,
-            summoning_turn_count=summoning_turn_count,
-            fold_deps=fold_deps_for_admit(
+        rem_ctx = (
+            rematerialize
+            if rematerialize is not None
+            and hasattr(rematerialize, "hop_seq")
+            else None
+        )
+        hop_seq = int(getattr(rem_ctx, "hop_seq", 0) or 0) if rem_ctx else 0
+        fold_entry_gate: str | None = None
+        fold_missing: dict[str, str] | None = None
+        slug = todo_slug_from_ref(source_ref) if source_ref else ""
+        if slug and read_tip(slug, files_root=repo) is not None:
+            fold = fold_deps_for_admit(
                 source_ref,
                 cortex=cortex,
                 repo=repo,
                 summon_mode=summon_mode,
                 summoning_thread_id=summoning_thread_id,
                 nested_implement=LedgerNestedImplementWitness(),
-            ),
-            summoning_thread_id=summoning_thread_id,
-            rematerialize=rematerialize,
-        )
-        rel_path = _path_relative_to_workspaces(Path(mp.path), root)
-        probe_root = _executor_probe_root(root)
-        present = probe_packet_presence(
-            rel_path, workspaces_root=root, probe_root=probe_root
-        )
-        warnings: list[str] = []
-        if not present:
-            warnings.append(
-                "materialization.executor_absent: "
-                f"{rel_path} not visible at executor root {probe_root}; "
-                "use source_ref fallback"
             )
+            if fold is not None:
+                from implement_admission.conductor_witness import fold_scoreboard
+
+                folded = fold_scoreboard(slug, deps=fold, files_root=repo)
+                if folded is not None:
+                    fold_entry_gate = folded.entry_gate
+                    fold_missing = folded.missing_witnesses or None
+        ctx = load_conductor_context(
+            source_ref,
+            cortex=cortex,
+            summon_mode=summon_mode,
+            caller_agent=caller_agent,
+            summon_text=summon_text,
+            summoning_turn_count=summoning_turn_count,
+            fold_entry_gate=fold_entry_gate,
+            fold_missing_witnesses=fold_missing,
+            summoning_thread_id=summoning_thread_id,
+            rematerialize=rem_ctx,
+        )
+        rendered = render_conductor_packet(
+            ctx,
+            out_dir=out_dir,
+            repo_root=repo,
+            hop_seq=hop_seq,
+            write_birth_scoreboard=read_tip(slug, files_root=repo) is None and hop_seq == 0,
+        )
         return BridgeResult(
             gated=False,
             source_ref=source_ref,
-            packet_path=rel_path,
+            packet_path=None,
+            packet_markdown=rendered.text,
+            packet_rel_path=rendered.packet_rel_path,
+            birth_scoreboard_markdown=rendered.birth_scoreboard_markdown,
             implement_spec_hash=None,
-            packet_sha256=mp.packet_sha256,
-            materialization_present=present,
-            warnings=warnings,
+            packet_sha256=rendered.packet_sha256,
+            materialization_present=False,
+            warnings=[],
             route_contract={"job": "conductor", "lane": "B"},
         )
     dirty_tree_risk = _resolve_dirty_tree_risk(
