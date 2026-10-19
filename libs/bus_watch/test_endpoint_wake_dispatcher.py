@@ -455,7 +455,10 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
     )
     early = claim_due_wakes(now="2020-01-01 10:00:40")
     assert early["wake_id"]
-    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [c_id]
+    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [
+        b_id,
+        c_id,
+    ]
 
 
 def test_cse_route_debounce_cleared_by_web_anthropic_reply(db: None) -> None:

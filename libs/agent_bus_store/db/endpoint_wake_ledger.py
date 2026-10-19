@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -100,6 +101,24 @@ def _same_wake_agent(left: str, right: str) -> bool:
     return a in STAGE_MANAGER_ADDRESSES and b in STAGE_MANAGER_ADDRESSES
 
 
+def _references_wake_turn(
+    nxt: sqlite3.Row,
+    *,
+    thread_id: str,
+    turn_id: int,
+    turn_number: int,
+) -> bool:
+    if nxt["supersedes_turn"] is not None and int(nxt["supersedes_turn"]) == turn_id:
+        return True
+    text = f"{nxt['subject'] or ''}\n{nxt['body'] or ''}"
+    pattern = (
+        rf"(?i)(?:(?:^|(?<![\w#])){re.escape(thread_id)}#{turn_number}\b"
+        rf"|(?<![\w\d])#{turn_number}\b"
+        rf"|\bturn(?:_number)?[\s:=]+#?{turn_number}\b)"
+    )
+    return re.search(pattern, text) is not None
+
+
 def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     turn = conn.execute(
         "SELECT read_at, thread FROM turns WHERE id=?", (row["turn_id"],)
@@ -107,12 +126,21 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     if turn is not None and turn["read_at"]:
         return "already_read"
     later = conn.execute(
-        "SELECT from_agent FROM turns WHERE thread=? AND id>?",
+        "SELECT from_agent, subject, body, supersedes_turn FROM turns "
+        "WHERE thread=? AND id>?",
         (row["thread_id"], row["turn_id"]),
     ).fetchall()
     agent = str(row["agent"])
+    wake_turn_id = int(row["turn_id"])
+    wake_turn_number = int(row["turn_number"])
+    thread_id = str(row["thread_id"])
     for nxt in later:
-        if _same_wake_agent(str(nxt["from_agent"] or ""), agent):
+        if _same_wake_agent(str(nxt["from_agent"] or ""), agent) and _references_wake_turn(
+            nxt,
+            thread_id=thread_id,
+            turn_id=wake_turn_id,
+            turn_number=wake_turn_number,
+        ):
             return "already_answered"
     return None
 

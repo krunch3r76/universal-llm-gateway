@@ -160,7 +160,7 @@ def test_stage_manager_equivalence_already_answered_and_debounce(
         thread=thread,
         from_agent="grok-bot-gc1",
         to_agent="cursor",
-        subject="ACK|x",
+        subject=f"ACK|x (re #{t1_n})",
         body="ack",
     )
     with write_connect() as conn:
@@ -266,6 +266,67 @@ def test_stage_manager_equivalence_already_answered_and_debounce(
     )
     w4 = claim_due_wakes(now="2020-01-01 10:01:40")
     assert w4["wake_id"] is not None
+
+
+def test_unrelated_same_seat_post_on_shared_root_does_not_skip_pending_wake(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="unrelated-seat")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="grok-bot-cc1",
+        subject="ACK|gwdir-class",
+        body="class",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 16:00:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-cc1",
+        to_agent="maestro",
+        subject="PLAN|other",
+        body=f"re #1934\nsee 99999#{t1_n} for context",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 16:00:01")
+    assert claimed["wake_id"] is not None
+    assert [r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed"] == [
+        t1_id,
+    ]
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='pending', wake_id=NULL, "
+            "claimed_at=NULL, reason=NULL, finished_at=NULL WHERE turn_id=?",
+            (t1_id,),
+        )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-cc1",
+        to_agent="maestro",
+        subject=f"ACK|re #{t1_n}",
+        body="done",
+    )
+    skipped = claim_due_wakes(now="2020-01-01 16:00:02")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_answered"
 
 
 def test_stage_manager_alias_rows_coalesce_in_one_claim(db: TestClient) -> None:
