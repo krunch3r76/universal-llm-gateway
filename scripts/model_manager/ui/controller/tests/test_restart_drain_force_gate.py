@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,10 +17,14 @@ from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
 )
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
+    DrainOutcome,
     RestartDrainGate,
     StargateIdleDrainSupervisor,
+    resume_drain_supervision,
     run_gated,
     run_gated_deferred,
+    run_gated_drain_supervised_blocking,
+    run_gated_stargate_idle_drain_supervised,
 )
 from scripts.model_manager.ui.controller.restart_drain_force_gate import (
     REFUSE_REASON,
@@ -76,9 +82,7 @@ def notices(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
     posted: list[dict[str, str]] = []
 
     def _schedule(*, thread_id: str | None, subject: str, body: str) -> None:
-        posted.append(
-            {"thread_id": thread_id or "", "subject": subject, "body": body}
-        )
+        posted.append({"thread_id": thread_id or "", "subject": subject, "body": body})
 
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.restart_drain_force_gate.schedule_force_gate_notice",
@@ -164,7 +168,9 @@ def test_busy_force_with_reason_proceeds_and_audits(
     assert notices and "applied" in notices[0]["body"]
 
 
-def test_idle_force_proceeds_without_reason(events_log: list[tuple[str, dict[str, Any]]]) -> None:
+def test_idle_force_proceeds_without_reason(
+    events_log: list[tuple[str, dict[str, Any]]],
+) -> None:
     gate = _idle_gate()
     result = _run(
         enforce_force_reason_if_needed(
@@ -310,9 +316,7 @@ def test_notice_skipped_logs_when_no_lane(
             caller_requested=True,
         )
     )
-    assert any(
-        "no dispatching lane thread" in rec.message for rec in caplog.records
-    )
+    assert any("no dispatching lane thread" in rec.message for rec in caplog.records)
 
 
 def test_run_gated_busy_force_refused_skips_lifecycle() -> None:
@@ -545,3 +549,224 @@ def test_resolve_notice_thread_id_falls_back_to_holder() -> None:
         )
         == "9999"
     )
+
+
+def test_stargate_health_auto_restart_not_caller_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Health-loop force restart skips Gate 1 while stargate is busy.
+
+    Breaks when ``_force_restart_stargate`` passes ``caller_requested``: a
+    busy probe with no ``force_reason`` returns 409 and the lifecycle does
+    not run.
+    """
+    gate = RestartDrainGate()
+    gate._probes["stargate"] = _StaticProbe(  # noqa: SLF001
+        ActiveWork(busy=True, detail={"busy": True, "requests_in_flight": 4})
+    )
+    controller = MagicMock()
+    controller.restart_gate = gate
+
+    async def _window(*_args: Any, **_kwargs: Any) -> str:
+        return "restarted"
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.api_dispatch._lifecycle_with_restart_window",
+        _window,
+    )
+    from scripts.model_manager.ui.controller.stargate_health_restart import (
+        _force_restart_stargate,
+    )
+
+    result = _run(_force_restart_stargate(controller))
+    assert result["status"] == "ok"
+    assert result["message"] == "restarted"
+    assert result.get("reason") != REFUSE_REASON
+
+
+def test_stargate_econnrefused_force_stays_caller_requested_false(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Down-stargate immediate start calls ``run_gated(force=True)`` unguarded.
+
+    Breaks when that call sets ``caller_requested``: Gate 1 runs on an
+    internal skip of the idle-drain arm.
+    """
+    import httpx
+
+    request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
+    exc = httpx.ConnectError("Connection refused", request=request)
+    exc.__cause__ = OSError(errno.ECONNREFUSED, "Connection refused")
+
+    class _RaisingProbe:
+        async def snapshot(self) -> ActiveWork:
+            raise exc
+
+    store = RestartIntentStore(db_path=tmp_path / "econn-force-gate.db")
+    gate = RestartDrainGate(probes={"stargate": _RaisingProbe()})
+    seen: list[bool] = []
+
+    async def _record(*_args: Any, **kwargs: Any) -> None:
+        seen.append(bool(kwargs.get("caller_requested")))
+        return None
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain_force_gate.enforce_force_reason_if_needed",
+        _record,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.stargate_inflight_witness.stargate_down_witness_agrees",
+        lambda: True,
+    )
+
+    async def _lifecycle() -> str:
+        return "started"
+
+    supervisor = StargateIdleDrainSupervisor(
+        gate=gate,
+        store=store,
+        lifecycle=_lifecycle,
+    )
+    result = _run(
+        run_gated_stargate_idle_drain_supervised(
+            gate,
+            "sync_restart",
+            store=store,
+            supervisor=supervisor,
+            reason="down stargate immediate start",
+        )
+    )
+    assert result["status"] == "ok"
+    assert seen == [False]
+
+
+def test_tui_force_arm_does_not_set_caller_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TUI Force toggle sets ``force`` and leaves ``caller_requested`` false.
+
+    Breaks when the services screen forwards the arm as a manage force
+    request: a busy service with no reason field would 409.
+    """
+    captured: dict[str, Any] = {}
+
+    async def _run_gated(*_args: Any, **kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"status": "ok", "message": "stopped"}
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.view.screens.services.run_gated",
+        _run_gated,
+    )
+    from scripts.model_manager.ui.view.screens.services import ServicesScreen
+
+    async def _window(*_args: Any, **_kwargs: Any) -> str:
+        return "stopped"
+
+    screen = SimpleNamespace(
+        _force_armed=True,
+        app=SimpleNamespace(service_controller=SimpleNamespace(restart_gate=object())),
+        query_one=lambda *_a, **_k: SimpleNamespace(write_line=lambda _m: None),
+        _consume_force=lambda: None,
+        _tui_lifecycle_with_window=_window,
+    )
+    result = _run(
+        ServicesScreen._run_gated_action(
+            screen,  # type: ignore[arg-type]
+            "stop",
+            "mcp",
+            AsyncMock(return_value="stopped"),
+        )
+    )
+    assert result is True
+    assert captured["force"] is True
+    assert captured.get("caller_requested", False) is False
+
+
+def test_manage_sock_force_forward_is_caller_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator-proxy ``force=True`` is a manage request, so Gate 1 binds.
+
+    Breaks when ``sync_restart_service`` drops the flag or
+    ``manage_force_context`` stops treating params force as caller-requested:
+    a busy mcp/cdp_ask force would skip the reason requirement.
+    """
+    from scripts.model_manager.ui.api_dispatch import manage_force_context
+    from services.git_integration_worker.relay.manage_sock import sync_restart_service
+
+    captured: dict[str, Any] = {}
+
+    def _call(
+        method: str, params: dict[str, Any] | None = None, *, timeout: float = 0.0
+    ) -> dict[str, str]:
+        captured["method"] = method
+        captured["params"] = params or {}
+        return {"status": "ok"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.relay.manage_sock.call_manage",
+        _call,
+    )
+    sync_restart_service("cdp_ask", force=True)
+    assert captured["method"] == "sync_restart"
+    assert captured["params"]["force"] is True
+    assert manage_force_context(captured["params"])["caller_requested"] is True
+
+
+def test_supervised_evaluate_force_does_not_enter_reason_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocking fleet drain and intent resume take the slot with force.
+
+    They call ``gate.evaluate(force=True, supervised_drain=True)`` and must
+    not enter ``enforce_force_reason_if_needed``. Breaks when either path is
+    routed through the caller-requested reason gate.
+    """
+    calls: list[tuple[str, bool, bool]] = []
+
+    class _Gate:
+        async def evaluate(
+            self,
+            service: str,
+            *,
+            force: bool,
+            supervised_drain: bool = False,
+            exclude_job_id: str | None = None,
+        ) -> DrainOutcome:
+            del exclude_job_id
+            calls.append((service, force, supervised_drain))
+            return DrainOutcome(state="busy", service=service, reason="held")
+
+    async def _enforce(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("enforce_force_reason_if_needed must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain_force_gate.enforce_force_reason_if_needed",
+        _enforce,
+    )
+    store = MagicMock()
+    store.active_for_service.return_value = None
+    supervisor = SimpleNamespace(deadline_s=1.0)
+    result = _run(
+        run_gated_drain_supervised_blocking(
+            _Gate(),  # type: ignore[arg-type]
+            "restart",
+            "git_integration_worker",
+            store=store,
+            supervisor=supervisor,
+            reason="fleet drain",
+        )
+    )
+    assert result["status"] == "deferred"
+    assert calls == [("git_integration_worker", True, True)]
+    calls.clear()
+    _run(
+        resume_drain_supervision(
+            _Gate(),  # type: ignore[arg-type]
+            "stargate",
+            supervisor=supervisor,
+            intent=object(),
+        )
+    )
+    assert calls == [("stargate", True, True)]
