@@ -73,6 +73,44 @@ def _lines_cap(text: str, max_lines: int, max_bytes: int) -> str:
     return "\n".join(kept)
 
 
+def _minimal_compact_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "projection": "compact_executive",
+        "status": envelope.get("status"),
+        "landed": envelope.get("landed"),
+        "head_sha": envelope.get("head_sha"),
+    }
+
+
+def _hard_cap_json_envelope(envelope: dict[str, Any]) -> str:
+    """Last-resort UTF-8 cap preserving valid JSON under *_COMPACT_MAX_BYTES*."""
+    env = dict(envelope)
+    for key in ("work_outcome", "source_ref"):
+        value = env.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        text = value
+        while text and _body_bytes(json.dumps(env, indent=2, sort_keys=True)) >= _COMPACT_MAX_BYTES:
+            next_len = len(text) // 2
+            if next_len >= len(text):
+                env.pop(key, None)
+                break
+            text = text[:next_len].rstrip()
+            if text:
+                env[key] = text
+            else:
+                env.pop(key, None)
+                break
+    out = json.dumps(env, indent=2, sort_keys=True)
+    if _body_bytes(out) < _COMPACT_MAX_BYTES:
+        return out
+    minimal = _minimal_compact_envelope(env)
+    out = json.dumps(minimal, indent=2, sort_keys=True)
+    if _body_bytes(out) < _COMPACT_MAX_BYTES:
+        return out
+    return json.dumps(minimal, sort_keys=True)
+
+
 def _fit_json_envelope(envelope: dict[str, Any]) -> str:
     """Serialize *envelope* with field truncation until UTF-8 size is under budget."""
     summary_key = "summary_excerpt"
@@ -81,11 +119,12 @@ def _fit_json_envelope(envelope: dict[str, Any]) -> str:
         out = json.dumps(envelope, indent=2, sort_keys=True)
         if _body_bytes(out) < _COMPACT_MAX_BYTES:
             return out
-        if excerpt:
+        if excerpt and len(excerpt) > 80:
             cut = max(80, len(excerpt) // 2)
-            excerpt = excerpt[:cut].rstrip()
-            envelope[summary_key] = excerpt
-            continue
+            if cut < len(excerpt):
+                excerpt = excerpt[:cut].rstrip()
+                envelope[summary_key] = excerpt
+                continue
         envelope.pop("verification", None)
         if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
             return json.dumps(envelope, indent=2, sort_keys=True)
@@ -93,7 +132,9 @@ def _fit_json_envelope(envelope: dict[str, Any]) -> str:
         if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
             return json.dumps(envelope, indent=2, sort_keys=True)
         envelope.pop(summary_key, None)
-        return json.dumps(envelope, indent=2, sort_keys=True)
+        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+            return json.dumps(envelope, indent=2, sort_keys=True)
+        return _hard_cap_json_envelope(envelope)
 
 
 def _compact_json_closeout(body: str) -> str:

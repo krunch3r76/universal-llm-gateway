@@ -786,11 +786,13 @@ def test_digest_attention_includes_ready_row_class(
 @patch("bus_watch.liaison_digest._child_lanes", return_value=[])
 @patch("bus_watch.liaison_digest._get")
 @patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_l24_l28.read_lock", return_value={})
 @patch("bus_watch.liaison_digest.read_lock", return_value={})
 @patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
 def test_build_digest_l28_sibling_maestro_dead_letter(
     _usage: object,
     _lock: object,
+    _l28_lock: object,
     mock_bus: object,
     mock_get: object,
     _child: object,

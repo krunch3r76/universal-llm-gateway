@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
+from build_identity import register_build_identity
 from dual_endpoint_http import build_dual_endpoint_app
 from edge_telemetry_middleware import EdgeTelemetryMiddleware
 from endpoint_surface import (
@@ -30,6 +31,8 @@ from endpoint_surface import (
     filter_overflow_metadata_for_surface,
 )
 from fastmcp import FastMCP
+from fs_description import build_fs_tool_description
+from fs_impl import fs_impl
 from mcp_events import flush, record
 from mcp_request_middleware import McpRequestEventsMiddleware
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
@@ -44,21 +47,17 @@ from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
-from build_identity import register_build_identity
 from response_size_guard import register_response_guard
 from schema_compact import register_compact_schema_transform
 from starlette.middleware.gzip import GZipMiddleware
 from surface_enum import register_surface_enum_transform
 from surface_registration import register_tools_for_surface
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-from fs_description import build_fs_tool_description
-from fs_impl import fs_impl
 from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_tools import JsonArgStr
 from tools._overflow_dispatch import call_overflow_tool
 from tools.cursor_bridge import register_cursor_bridge_tools
-from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from universal_logging import get_logger
 
 if TYPE_CHECKING:

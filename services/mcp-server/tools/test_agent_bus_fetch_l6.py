@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from unittest.mock import patch
 
+from tools.agent_bus._closeout_projection import project_turn_body
 from tools.agent_bus.fetch import _get_dispatch
 
 
@@ -87,3 +89,63 @@ def test_get_full_cdp_reply_unchanged(relay) -> None:
     relay.return_value = turn
     out = _get_dispatch(thread="1", turn_number=3, projection="full")
     assert out["turn"]["body"] == turn["body"]
+
+
+def _verification_blob() -> list[dict]:
+    return [
+        {
+            "command": f"pytest services/mcp-server/tools/test_agent_bus_fetch_l6.py -q chunk-{i}",
+            "exit_code": 0,
+            "stdout": "1 passed" * 55,
+            "stderr": "",
+        }
+        for i in range(4)
+    ]
+
+
+def test_project_turn_body_short_summary_verification_list_no_infinite_loop() -> None:
+    body = {
+        "schema_version": 1,
+        "status": "complete",
+        "work_outcome": "shipped",
+        "summary": "short summary within seventy characters for envelope fit",
+        "source_ref": "todo:18426",
+        "verification": _verification_blob(),
+    }
+    raw = json.dumps(body)
+    assert len(raw.encode("utf-8")) > 2000
+    turn = {
+        "subject": "cursor-sdk CLOSEOUT dispatch-18426",
+        "body": raw,
+        "thread": "18426",
+        "turn_number": 2,
+    }
+    started = time.monotonic()
+    projected = project_turn_body(turn, projection="compact")
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0
+    body_text = projected["body"]
+    assert len(body_text.encode("utf-8")) < 1500
+    json.loads(body_text)
+
+
+def test_project_turn_body_huge_work_outcome_hard_byte_cap() -> None:
+    body = {
+        "schema_version": 1,
+        "status": "complete",
+        "work_outcome": "W" * 2500,
+        "summary": "tiny",
+        "source_ref": "todo:hard-cap",
+    }
+    raw = json.dumps(body)
+    turn = {
+        "subject": "cursor-sdk CLOSEOUT dispatch-cap",
+        "body": raw,
+        "thread": "1",
+        "turn_number": 1,
+    }
+    projected = project_turn_body(turn, projection="compact")
+    body_text = projected["body"]
+    assert len(body_text.encode("utf-8")) < 1500
+    parsed = json.loads(body_text)
+    assert parsed.get("status") == "complete"

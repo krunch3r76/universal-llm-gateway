@@ -211,11 +211,16 @@ def test_markdown_dispatcher_house_rules_growth_refused(
 
 def _house_rules_near_cap(root: Path, rel: str) -> None:
     intro = "## HOUSE RULES\n"
-    oldest = "- K1 oldest ruling row for rotation archive\n"
-    filler = "x" * (8190 - len((intro + oldest).encode("utf-8")))
+    oldest = (
+        "- K1 oldest ruling row for rotation archive "
+        + ("x" * 85)
+        + "\n"
+    )
+    second = "- K2 second oldest ruling row for rotation archive\n"
+    filler = "x" * (8190 - len((intro + oldest + second).encode("utf-8")))
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(intro + oldest + filler, encoding="utf-8")
+    path.write_text(intro + oldest + second + filler, encoding="utf-8")
 
 
 def test_house_rules_append_rotates_in_one_call(
@@ -243,6 +248,10 @@ def test_house_rules_append_rotates_in_one_call(
     archive_text = (sandbox_root / archive_rel).read_text(encoding="utf-8")
     assert "K1 oldest" in archive_text
     assert landed.get("archive_uri") == authority.RULINGS_ARCHIVE_URI
+    live = (sandbox_root / rel).read_text(encoding="utf-8")
+    assert "- K99 new ruling row" in live
+    assert authority.RULINGS_ARCHIVE_URI in live
+    assert "K99 new ruling row" not in archive_text
 
 
 def test_house_rules_rotation_archive_failure_leaves_file_unchanged(

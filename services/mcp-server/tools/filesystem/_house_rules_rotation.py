@@ -74,7 +74,7 @@ def _oldest_ruling_line_index(lines: list[str], indices: list[int]) -> int | Non
             scored.append((kid, idx))
     if scored:
         return min(scored, key=lambda pair: pair[0])[1]
-    return indices[-1] if indices else None
+    return indices[0] if indices else None
 
 
 def _ensure_rotation_pointer(prefix: str, section_body: str, suffix: str) -> str:
@@ -105,8 +105,13 @@ def _trim_oldest_rulings(text: str, *, limit_bytes: int) -> tuple[str, list[str]
         prefix, section_body, suffix = _split_house_rules_section(current)
         current = _ensure_rotation_pointer(prefix, section_body, suffix)
         while len(current.encode("utf-8")) > limit_bytes:
+            prefix, section_body, suffix = _split_house_rules_section(current)
+            if not section_body:
+                break
             lines = section_body.splitlines(keepends=True)
             indices = _ruling_line_indices(section_body)
+            if len(indices) <= 1:
+                break
             drop_idx = _oldest_ruling_line_index(lines, indices)
             if drop_idx is None:
                 break
