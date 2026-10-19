@@ -63,9 +63,18 @@ def _refuse_scanned_ocr_errors(text: str) -> None:
     """Raise when scanned extraction text contains an OCR error literal."""
     if _OCR_ERROR_MARK not in text:
         return
-    if _UNREACHABLE_OCR_ERROR.search(text):
-        raise OcrUnreachable("scanned OCR failed closed: Stargate unreachable")
-    raise OcrProviderError("scanned OCR failed closed: provider or payload error")
+    prefix = "scanned OCR failed closed: "
+    match = _UNREACHABLE_OCR_ERROR.search(text)
+    if match:
+        literal = match.group(0)
+        raise OcrUnreachable(f"{prefix}{literal[:120]}")
+    start = text.find(_OCR_ERROR_MARK)
+    end = text.find("]", start)
+    if end == -1:
+        literal = text[start : start + 120]
+    else:
+        literal = text[start : end + 1]
+    raise OcrProviderError(f"{prefix}{literal[:120]}")
 
 
 def run_extract_document(
