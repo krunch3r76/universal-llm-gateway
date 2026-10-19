@@ -10,7 +10,11 @@ from typing import Any
 from mcp_events import record
 
 from ._hashing import sha256_hex_of_file
-from ._line_range import apply_line_range
+from ._line_range import (
+    apply_line_range,
+    apply_unwindowed_read_cap,
+    exceeds_unwindowed_read_cap,
+)
 from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
@@ -387,6 +391,10 @@ def read_file_result(
                 f"(offset={offset}, limit={limit}, total_lines={range_meta.get('total_lines')}). "
                 "Empty content ≠ missing file."
             )
+    elif exceeds_unwindowed_read_cap(content):
+        content, cap_meta = apply_unwindowed_read_cap(content)
+        result["content"] = content
+        result.update(cap_meta)
     elif content == "":
         result["observation"] = (
             "Read succeeded; file decoded to empty text (zero-byte or whitespace-only content)."
