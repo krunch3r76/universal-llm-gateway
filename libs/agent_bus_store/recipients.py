@@ -21,7 +21,8 @@ def _seat_uses_maestro_web_alias(seat: str) -> bool:
 def _inbox_recipient_slugs(seat: str) -> list[str]:
     values = set(expand_recipient_slugs(seat))
     if _seat_uses_maestro_web_alias(seat):
-        values.update(MAESTRO_WEB_ALIAS_PAIR)
+        for peer in MAESTRO_WEB_ALIAS_PAIR:
+            values.update(expand_recipient_slugs(peer))
     return sorted(values)
 
 
@@ -74,7 +75,7 @@ def is_same_seat_memo_note(
     for ``mission.house_unread`` — stamping ``read_at`` hides them (a:38363,
     specimen agent-bus:15441#19).
     """
-    recipients = set(expand_recipient_slugs(seat))
+    recipients = set(_inbox_recipient_slugs(seat))
     if from_agent not in recipients or to_agent not in recipients:
         return False
     return bool(MEMO_NOTE_SUBJECT_RE.search(subject or ""))
