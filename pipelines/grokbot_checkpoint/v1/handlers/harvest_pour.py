@@ -23,7 +23,14 @@ async def run_harvest_pour(
     stats = adapter.get("stats")
     if not isinstance(envelope, dict) or not isinstance(stats, dict):
         return refuse("pour.schema", "adapter produced no envelope")
-    return await stage_grok_pour(fs, agent_id, envelope, stats=stats)
+    n = int(options.get("n") or 1)
+    raw_bytes = None
+    norm_ref = str(adapter.get("normalized_ref") or "")
+    if norm_ref:
+        raw_bytes = await fs.read(norm_ref)
+    return await stage_grok_pour(
+        fs, agent_id, envelope, stats=stats, n=n, raw_bytes=raw_bytes
+    )
 
 
 class GrokbotCheckpointHarvestPourHandler(BaseHandler):

@@ -604,6 +604,102 @@ def _restore_unstripped_user_content(
             index += 1
 
 
+def extract_grokbot_structured(
+    text: str,
+    *,
+    agent_id: str,
+    bus_identity: str | None = None,
+    session_id: str | None = None,
+    observed_at: str | None = None,
+    capture_ref: str | None = None,
+    capture_sha256: str | None = None,
+    capture_kind: str = "grok_export",
+) -> ContinuityMessagesEnvelope:
+    """Transcribe ReadTranscript JSONL into structured content blocks.
+
+    ``content`` stays a list of ``text``, ``thinking``, ``tool_use``, and
+    ``tool_result`` blocks. This path never flattens tool calls to marker
+    strings and never drops thinking or tool results.
+    """
+    if capture_kind not in ("grok_export", "dom_harvest"):
+        raise ValueError(f"capture_kind {capture_kind!r} is not a grok checkpoint kind")
+    if capture_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
+        raise ValueError("capture_sha256 must be exactly 64 lowercase hex characters")
+    raw = text.encode("utf-8")
+    pages_sha256 = hashlib.sha256(raw).hexdigest()
+    lines, cov = reassemble_pages(text)
+    header_agent_id = cov.get("header_agent_id")
+    if header_agent_id is not None and header_agent_id != agent_id:
+        raise TranscriptPageError(
+            f"header agent id {header_agent_id} != agent_id {agent_id}"
+        )
+    body = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
+    parsed = _parse_records(lines)
+    truncated_parts = _truncated_part_count(parsed)
+    messages: list[dict[str, Any]] = []
+    for rec in parsed:
+        content = _content(rec)
+        role = rec.get("role")
+        if content is None or role not in ("user", "assistant", "tool", "system"):
+            continue
+        messages.append(
+            {
+                "role": role,
+                "content": content,
+                "turn_index": len(messages) + 1,
+                "source": SOURCE,
+            }
+        )
+    reassembled = hashlib.sha256(body).hexdigest()
+    cap_sha = pages_sha256 if capture_sha256 is None else capture_sha256
+    stats = {
+        "records_in": len(parsed),
+        "thinking_blocks_dropped": 0,
+        "tool_result_records_dropped": 0,
+        "structured_blocks": sum(len(m["content"]) for m in messages),
+    }
+    meta_kwargs: dict[str, Any] = {
+        "surface": "grok",
+        "tools": "openai",
+        "tools_available": True,
+        "extras": True,
+        "turn_count": len(messages),
+        "message_count": len(messages),
+        "truncated": truncated_parts > 0,
+        "messages_sha256": seal_messages_sha256(messages),
+        "transcript_id": agent_id,
+        "session_id": session_id,
+        "observed_at": observed_at or datetime.now(tz=UTC).isoformat(),
+        "source_sha256": reassembled,
+        "coverage": cov["coverage"],
+        "provenance": "transcribed",
+        "sources": [
+            _source_dict(
+                agent_id=agent_id,
+                bus_identity=bus_identity,
+                cov=cov,
+                stats=stats,
+                pages_sha256=pages_sha256,
+                reassembled_sha256=reassembled,
+                truncated_parts=truncated_parts,
+                truncated_parts_kept=truncated_parts,
+            )
+        ],
+    }
+    if capture_ref is not None:
+        meta_kwargs["capture"] = {
+            "kind": capture_kind,
+            "ref": capture_ref,
+            "sha256": cap_sha,
+            "pseudo_byte_exact": capture_kind == "dom_harvest",
+        }
+    return ContinuityMessagesEnvelope(
+        messages=messages,
+        index=[],
+        meta=EnvelopeMeta(**meta_kwargs),
+    )
+
+
 def extract_grokbot_transcript(
     text: str,
     *,

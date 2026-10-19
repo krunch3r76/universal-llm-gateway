@@ -7,7 +7,6 @@ from typing import Any, override
 from continuity_tape.normalize_grokbot_l0_pages import (
     L0NormalizeError,
     normalize_grokbot_l0_pages,
-    normalized_capture_ref,
 )
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -27,6 +26,13 @@ async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, A
         return refuse(exc.code, str(exc))
     if raw is None:
         return refuse("source.missing", f"L0 capture {l0_ref} absent")
+    tape = "tape/" in l0_ref.replace("\\", "/")
+    electron = str(options.get("fallback") or "") == "electron"
+    if tape and not electron:
+        return refuse(
+            "harvest.tape_refused",
+            "tape capture is not a checkpoint input; pass fallback=electron to scrape",
+        )
     expected = str(options.get("l0_sha256") or "").strip()
     digest = file_sha256(raw)
     if expected and digest != expected:
@@ -35,7 +41,13 @@ async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, A
         normalized, stats = normalize_grokbot_l0_pages(raw.decode("utf-8"))
     except L0NormalizeError as exc:
         return refuse("pour.schema", str(exc))
-    norm_ref = normalized_capture_ref(l0_ref)
+    agent_id = str(options.get("agent_id") or "unknown")
+    n = int(options.get("n") or 1)
+    norm_ref = (
+        f"notes/system/checkpoints/grok/{agent_id}/{n}.normalized.pages.txt"
+    )
+    if "tape/" in norm_ref:
+        return refuse("harvest.tape_refused", norm_ref)
     norm_bytes = normalized.encode("utf-8")
     norm_sha = file_sha256(norm_bytes)
     written = await fs.write(norm_ref, norm_bytes, if_absent=True)
