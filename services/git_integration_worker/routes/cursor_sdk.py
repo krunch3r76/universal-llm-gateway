@@ -4332,6 +4332,16 @@ async def admit_cursor_dispatch(
                 "holder_thread_id": exc.holder_thread_id,
                 "holder_kind": exc.holder_kind,
                 "steer": exc.steer,
+                **(
+                    {"holder_surface": exc.holder_surface}
+                    if exc.holder_surface
+                    else {}
+                ),
+                **(
+                    {"lease_epoch": exc.lease_epoch}
+                    if exc.lease_epoch is not None
+                    else {}
+                ),
             },
         )
     except RemintCapExceeded as exc:

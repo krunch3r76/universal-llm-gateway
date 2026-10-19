@@ -93,6 +93,42 @@ def test_t13_pinned_occupancy_skips(watch_dir, monkeypatch) -> None:  # noqa: AN
     assert len(read_journal(path)) == 1
 
 
+def test_fetch_giw_live_work_keys_active_ops_and_write_lease(monkeypatch) -> None:
+    from bus_watch.roster import fetch_giw_live_work_keys
+
+    class Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                "active_ops": [
+                    {
+                        "op_id": "disp-conductor",
+                        "work_key": "todo:impresario-alpha",
+                        "contract": "conductor",
+                        "status": "running",
+                    }
+                ],
+                "write_lease": {
+                    "active_holders": [
+                        {
+                            "holder_work_key": "todo:impresario-beta",
+                            "holder_contract": "conductor",
+                            "holder_status": "admitted",
+                        }
+                    ]
+                },
+            }
+
+    monkeypatch.setattr("bus_watch.roster.httpx.get", lambda *a, **k: Resp())
+    live = fetch_giw_live_work_keys()
+    assert live == {
+        "todo:impresario-alpha": True,
+        "todo:impresario-beta": True,
+    }
+
+
 def test_fetch_giw_non_conductor_not_live(monkeypatch) -> None:
     from bus_watch.roster import fetch_giw_live_work_keys
 

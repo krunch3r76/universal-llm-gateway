@@ -23,6 +23,7 @@ from .admission import (
     enforce_team_dispatch_generate_admit,
     is_cursor_sdk_generate_role,
 )
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_thread_reuse import (
     api_split_warning,
     resolve_generate_thread_targets,
@@ -114,6 +115,7 @@ async def dispatch_api_role_generate(
     request_id: str,
     body: TeamDispatchGenerateBody,
     response: Response,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any]:
     """Auto-provision bus thread and admit API-role generate on to_thread contract."""
     role = body.role
@@ -186,6 +188,9 @@ async def dispatch_api_role_generate(
     )
     last_user = prompt_resolution.text
 
+    provenance_missing = (
+        admit_provenance.missing if admit_provenance is not None else ()
+    )
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"
 
@@ -225,6 +230,7 @@ async def dispatch_api_role_generate(
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
+            provenance_missing=provenance_missing,
         )
         thread_id = reuse_id
         after_turn = pointer_turn
@@ -235,16 +241,14 @@ async def dispatch_api_role_generate(
             subject=thread_subject,
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
+            provenance_missing=provenance_missing,
             # type:generate + consult persistent → dispatch:close_on_read via handoff.py
             tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
             handoff_contract=contract,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
         )
         after_turn = 1
-        if (
-            body.dispatch_thread_id
-            and body.dispatch_thread_id.strip().isdigit()
-        ):
+        if body.dispatch_thread_id and body.dispatch_thread_id.strip().isdigit():
             _emit_dispatch_thread_event(
                 _dispatch_thread_split_event,
                 thread=thread_id,

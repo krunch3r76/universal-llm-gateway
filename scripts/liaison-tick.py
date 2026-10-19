@@ -653,13 +653,21 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             and not is_own_digest_echo(digest, state)
         )
         heartbeat_due = bool(args.heartbeat) and (now - last_emit) >= args.heartbeat
-        due = liaison_loop_due(
+        policy = digest.get("policy") or {}
+        liaison_wake = liaison_loop_due(
             digest,
             state,
             changed_not_echo=changed_not_echo,
             heartbeat_due=heartbeat_due,
             budget_stop_new=budget_stop_new,
-        ) or attended_tick_due(
+        )
+        # ``liaison_loop_due`` may return True on bare digest churn when
+        # ``wake_on_attention_only`` is off; attended loops must still obey the
+        # event-only gate (decision:ide-house-seats-event-only-wake-and-digest-rate-limit).
+        if liaison_wake and not policy.get("wake_on_attention_only"):
+            if not (heartbeat_due or budget_stop_new):
+                liaison_wake = False
+        due = liaison_wake or attended_tick_due(
             changed_since_last_tick=bool(digest["changed_since_last_tick"]),
             digest=digest,
             state=state,
