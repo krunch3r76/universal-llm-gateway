@@ -264,7 +264,7 @@ class GitWorkerDrainSupervisor:
                 pending = self.store.get(intent.intent_id)
                 if pending is not None and pending.status == STATUS_PENDING_DRAIN:
                     await self._on_idle(intent, t0)
-                return
+                    return
             await self._fail_live_intent(
                 intent,
                 reason_code(SUPERVISOR_EXCEPTION, f"{type(exc).__name__}: {exc}"),
@@ -365,36 +365,51 @@ class GitWorkerDrainSupervisor:
         self, intent: Intent, t0: float
     ) -> None:
         """C1b: unbound drained_restarting row after manage reboot."""
-        booted = booted_after_kill_commit(intent)
-        if booted is True:
+        warned_unparseable = False
+        unreachable_emitted = False
+        consecutive_failures = 0
+        while True:
+            if await self._abort_if_requested(intent):
+                return
             snapshot = await self._safe_drain_state()
-            await self._resolve_non_kill(
-                intent, snapshot, confirmed_gone=True
-            )
-            return
-        if booted is False:
-            snapshot = await self._safe_drain_state()
-            await self._fail_live_intent(
-                intent,
-                reason_code(RESUME_GENERATION_UNBOUND, "booted before kill commit"),
-                snapshot=snapshot,
-            )
-            return
-        logger.warning(
-            "unbound drained_restarting resume: unparseable generation clock "
-            "intent_id=%s",
-            intent.intent_id,
-        )
-        snapshot = await self._safe_drain_state()
-        if snapshot is None:
-            if await self._health_pid_absent():
-                await self._on_dead(intent, reason="dead_target")
-            else:
-                await self._emit_probe_unreachable(
-                    intent, elapsed_s=time.monotonic() - t0, consecutive_failures=1
+            if snapshot is None:
+                consecutive_failures += 1
+                if await self._health_pid_absent():
+                    await self._on_dead(intent, reason="dead_target")
+                    return
+                if not unreachable_emitted:
+                    await self._emit_probe_unreachable(
+                        intent,
+                        elapsed_s=time.monotonic() - t0,
+                        consecutive_failures=consecutive_failures,
+                    )
+                    unreachable_emitted = True
+                await asyncio.sleep(self.reconcile_interval_s)
+                continue
+            self._last_probe_snapshot = snapshot
+            booted = booted_after_kill_commit(intent, snapshot)
+            if booted is True:
+                await self._resolve_non_kill(
+                    intent, snapshot, confirmed_gone=True
                 )
-            return
-        await self._resolve_non_kill(intent, snapshot, confirmed_gone=True)
+                return
+            if booted is False:
+                await self._fail_live_intent(
+                    intent,
+                    reason_code(
+                        RESUME_GENERATION_UNBOUND, "booted at or before kill commit"
+                    ),
+                    snapshot=snapshot,
+                )
+                return
+            if not warned_unparseable:
+                logger.warning(
+                    "unbound drained_restarting resume: unparseable generation clock "
+                    "intent_id=%s",
+                    intent.intent_id,
+                )
+                warned_unparseable = True
+            await asyncio.sleep(self.reconcile_interval_s)
 
     async def _on_dead(self, intent: Intent, *, reason: str) -> None:
         """Dead-target branch shared by await, final check, and begin-drain (C18)."""
@@ -851,6 +866,7 @@ class GitWorkerDrainSupervisor:
             if not changed:
                 if await self._abort_if_requested(intent):
                     return
+                return
         try:
             message = await self.kill()
         except Exception as exc:  # noqa: BLE001
@@ -881,11 +897,13 @@ class GitWorkerDrainSupervisor:
         await events.emit_manage_restart_completed(
             intent_id=intent.intent_id, duration_s=time.monotonic() - t0
         )
-        await record_kill_boundary_and_arm_verify(
+        if await record_kill_boundary_and_arm_verify(
             self.store,
             intent,
             boundary_source="kill_return",
-        )
+        ):
+            await self._abort_if_requested(intent)
+            return
 
     # --------------------------------------------------------------- step 5
     async def _on_cancelled(self, intent: Intent) -> None:
@@ -948,6 +966,7 @@ class GitWorkerDrainSupervisor:
             if not changed:
                 if await self._abort_if_requested(intent):
                     return
+                return
         await self._sigterm(intent, t0)
         if self.idle_escalate_s is not None:
             await events.emit_manage_recycle_completed(
@@ -1051,30 +1070,28 @@ class GitWorkerDrainSupervisor:
     ) -> None:
         """Final check failed: arm verify, fail, or complete without kill (C5)."""
         from .git_worker_activation_verify import arm_verify_after_generation_gone
+        from .restart_intent_store import ArmResultKind
 
         other_gen = snapshot is not None and self._generation_gone(snapshot, intent)
         if other_gen or (snapshot is None and confirmed_gone):
-            if await arm_verify_after_generation_gone(
+            arm_result = await arm_verify_after_generation_gone(
                 self.store,
                 intent,
                 completed_reason=reason_code(GENERATION_GONE, "already gone"),
-            ):
-                return
-            changed = self.store.advance_if_status_in(
-                intent.intent_id,
-                from_statuses=LIVE_STATUSES,
-                to_status=STATUS_COMPLETED,
-                reason=reason_code(GENERATION_GONE, "already gone"),
             )
-            if changed:
-                await events.emit_manage_restart_completed(
-                    intent_id=intent.intent_id, duration_s=0.0
-                )
-                logger.info(
-                    "drain target worker generation already gone; intent completed "
-                    "without kill: intent_id=%s",
-                    intent.intent_id,
-                )
+            if arm_result == ArmResultKind.LOST_RACE:
+                await self._abort_if_requested(intent)
+                return
+            if arm_result == ArmResultKind.ARMED:
+                return
+            await events.emit_manage_restart_completed(
+                intent_id=intent.intent_id, duration_s=0.0
+            )
+            logger.info(
+                "drain target worker generation already gone; intent completed "
+                "without kill: intent_id=%s",
+                intent.intent_id,
+            )
             return
         if snapshot is None:
             await self._fail_live_intent(

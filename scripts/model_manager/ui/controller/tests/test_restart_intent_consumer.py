@@ -152,6 +152,19 @@ def test_t4_projection_matrix() -> None:
     last = project_restart_intent_last(with_boundary)
     assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
 
+    cancelled_with_evidence = _intent(
+        status="cancelled",
+        status_reason="cancelled_by_operator",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": STATUS_DRAINED_RESTARTING, "reason": "kill_commit", "at": "t1"},
+            {"status": "cancelled", "reason": "cancelled_by_operator", "at": "t2"},
+        ],
+    )
+    last = project_restart_intent_last(cancelled_with_evidence)
+    assert last is not None and last["status"] == "fired_unverified" and last["executed"] is True
+
     boundary_no_drain = _intent(
         status="failed",
         status_reason="kill_failed",

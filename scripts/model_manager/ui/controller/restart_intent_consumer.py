@@ -102,15 +102,15 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     # Expiry cancels the row (expire_via_cancel) and records ttl_expired.
     # Project that as expired so a TTL end is not shown as an operator cancel.
     reason = intent.status_reason or ""
-    if projected == "cancelled" and reason.split(":", 1)[0] == TTL_EXPIRED:
-        projected = "expired"
     executed = projected == "fired"
-    if projected in {"failed", "cancelled"} and _restart_execution_evidence(intent):
+    if projected in {"failed", "activation_unverified", "cancelled"} and (
+        _restart_execution_evidence(intent)
+    ):
         projected = "fired_unverified"
         executed = True
-    elif intent.status == "activation_unverified" and _restart_execution_evidence(intent):
-        projected = "fired_unverified"
-        executed = True
+    elif projected == "cancelled" and reason.split(":", 1)[0] == TTL_EXPIRED:
+        projected = "expired"
+        executed = False
     return {
         "intent_id": intent.intent_id,
         "status": projected,

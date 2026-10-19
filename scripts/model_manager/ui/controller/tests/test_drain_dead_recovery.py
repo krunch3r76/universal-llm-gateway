@@ -86,11 +86,13 @@ class _Feed:
 
 
 def _patch_validate(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _arm(store: RestartIntentStore, intent: Any) -> bool:
+    from scripts.model_manager.ui.controller.restart_intent_store import ArmResultKind
+
+    async def _arm(store: RestartIntentStore, intent: Any, **_kwargs: Any) -> ArmResultKind:
         store.advance(
             intent.intent_id, status=STATUS_VERIFYING_ACTIVATION, reason="test"
         )
-        return True
+        return ArmResultKind.ARMED
 
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.drain_dead_recovery.arm_verify_after_generation_gone",
@@ -839,18 +841,44 @@ def test_t12_stored_epoch_stop_target_gone(tmp_path, monkeypatch) -> None:
 
 
 def test_t12_stored_epoch_recycle_giw_completes(tmp_path, monkeypatch) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
+        FORCE_START_COMPLETED,
+    )
     from scripts.model_manager.ui.controller.tests import test_friction_39708_r9 as r9
 
     r9._fast(monkeypatch)
     recycle_dir = tmp_path / "recycle"
     recycle_dir.mkdir()
     store = r9._store(recycle_dir)
-    intent = r9._bound(store, action="recycle_giw")
-    w2 = r9._snap(draining=True, epoch=9, worker_id="w2", started="t2", active=0)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    starts: list[int] = []
+
+    class _Begin:
+        async def drain_state(self):
+            return r9._snap(draining=False, epoch=0, active=0)
+
+        async def begin_drain(self, body):
+            raise RuntimeError("absent")
+
     kill = r9._Kill()
-    r9._run(r9._sup(store, r9._Script([w2]), kill).supervise(intent))
+    r9._run(
+        r9._sup(
+            store,
+            _Begin(),
+            kill,
+            start=r9._start("started pid 9", starts),
+            absent=r9._absent(True),
+        ).supervise(intent)
+    )
+    assert starts == [1]
     got = store.get(intent.intent_id)
     assert got is not None and got.status == STATUS_COMPLETED
+    assert (got.status_reason or "").startswith(FORCE_START_COMPLETED)
     assert kill.calls == 0
 
 

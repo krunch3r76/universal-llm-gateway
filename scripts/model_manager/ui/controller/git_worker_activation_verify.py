@@ -101,7 +101,7 @@ async def record_kill_boundary_and_arm_verify(
     *,
     boundary_source: str,
     from_status: str = STATUS_DRAINED_RESTARTING,
-) -> None:
+) -> bool:
     """Persist kill boundary, emit verifying event, and schedule activation verify (V2)."""
     kill_boundary_at = datetime.now(UTC).isoformat()
     arms = arms_activation_verify(intent.action)
@@ -119,17 +119,17 @@ async def record_kill_boundary_and_arm_verify(
     )
     if result.kind == ArmResultKind.LOST_RACE:
         store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
-        return
+        return True
     validation = _bind_validation_boundary(
         intent, kill_boundary_at=kill_boundary_at, boundary_source=boundary_source
     )
     if result.kind == ArmResultKind.NOT_APPLICABLE:
-        return
+        return False
     if validation is None:
         _terminal_unverified_no_validation(
             store, intent.intent_id, reason="missing_validation_at_arm"
         )
-        return
+        return False
     publish_activation_event(
         ManageRestartVerifying(
             intent_id=intent.intent_id,
@@ -140,6 +140,7 @@ async def record_kill_boundary_and_arm_verify(
         )
     )
     schedule_activation_verify(store, intent.intent_id, validation.validation_id)
+    return False
 
 
 async def arm_verify_after_generation_gone(
@@ -148,12 +149,12 @@ async def arm_verify_after_generation_gone(
     *,
     from_statuses: frozenset[str] | None = None,
     completed_reason: str | None = None,
-) -> bool:
+) -> ArmResultKind:
     """Generation-gone path: record boundary and arm verify without SIGTERM (V1).
 
-    Returns True when the intent reached a state requiring no further caller
-    action (normal arm or self-terminalization). Returns False when verification
-    does not apply to this action and the caller may treat the intent as completed.
+    Returns ``ArmResultKind.ARMED`` when verify was scheduled or the row was
+    self-terminalized for missing validation. ``NOT_APPLICABLE`` when the row
+    was atomically completed without verify. ``LOST_RACE`` when the CAS lost.
     """
     live = from_statuses if from_statuses is not None else LIVE_STATUSES
     kill_boundary_at = datetime.now(UTC).isoformat()
@@ -169,19 +170,19 @@ async def arm_verify_after_generation_gone(
         arms_verify=arms_activation_verify(intent.action),
     )
     if result.kind == ArmResultKind.LOST_RACE:
-        return True
+        return ArmResultKind.LOST_RACE
     validation = _bind_validation_boundary(
         intent, kill_boundary_at=kill_boundary_at, boundary_source="generation_gone"
     )
     if result.kind == ArmResultKind.NOT_APPLICABLE:
-        return False
+        return ArmResultKind.NOT_APPLICABLE
     if validation is None:
         _terminal_unverified_no_validation(
             store, intent.intent_id, reason="missing_validation_at_arm"
         )
-        return True
+        return ArmResultKind.ARMED
     schedule_activation_verify(store, intent.intent_id, validation.validation_id)
-    return True
+    return ArmResultKind.ARMED
 
 
 def _monotonic_from_kill_boundary(kill_boundary_at: str | None) -> float | None:

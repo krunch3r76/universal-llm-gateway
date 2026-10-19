@@ -363,7 +363,7 @@ class RestartIntentStore:
             return True
         return False
 
-    def advance_if_status_in(
+    def _advance_if_status_in_core(
         self,
         intent_id: str,
         *,
@@ -371,9 +371,6 @@ class RestartIntentStore:
         to_status: str,
         reason: str | None = None,
     ) -> int:
-        """CAS from any of ``from_statuses`` (S1). One ``BEGIN IMMEDIATE`` txn."""
-        if to_status not in _ALL_STATUSES:
-            raise ValueError(f"unknown intent status: {to_status!r}")
         recorded = _reason_code("unspecified_transition") if not reason else reason
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -396,6 +393,39 @@ class RestartIntentStore:
             )
             conn.commit()
             return 1 if changed else 0
+
+    def advance_if_status_in(
+        self,
+        intent_id: str,
+        *,
+        from_statuses: frozenset[str],
+        to_status: str,
+        reason: str | None = None,
+    ) -> int:
+        """CAS from any of ``from_statuses`` (S1). One ``BEGIN IMMEDIATE`` txn."""
+        if to_status not in _ALL_STATUSES:
+            raise ValueError(f"unknown intent status: {to_status!r}")
+        if to_status in {STATUS_CANCELLED, STATUS_FORCE_REQUESTED}:
+            raise ValueError(
+                f"advance_if_status_in must not target aborting status: {to_status!r}"
+            )
+        return self._advance_if_status_in_core(
+            intent_id,
+            from_statuses=from_statuses,
+            to_status=to_status,
+            reason=reason,
+        )
+
+    def cas_force_preempt_from_pending(
+        self, intent_id: str, *, reason: str
+    ) -> int:
+        """CAS ``pending_drain`` → ``force_requested`` (S1 escape hatch)."""
+        return self._advance_if_status_in_core(
+            intent_id,
+            from_statuses=frozenset({STATUS_PENDING_DRAIN}),
+            to_status=STATUS_FORCE_REQUESTED,
+            reason=reason,
+        )
 
     def arm_with_boundary(
         self,

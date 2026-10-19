@@ -1555,7 +1555,7 @@ def test_preempt_keep_awaiting_waits_then_clears() -> None:
         def active_for_service(self, service: str) -> Any:
             return self.intent if service == _SERVICE else None
 
-        def advance_if_status(self, intent_id: str, **_kw: Any) -> int:
+        def cas_force_preempt_from_pending(self, intent_id: str, *, reason: str) -> int:
             assert intent_id == "i1"
             self.intent.status = STATUS_FORCE_REQUESTED
             return 1

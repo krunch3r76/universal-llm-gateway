@@ -16,7 +16,6 @@ from typing import Any
 from .restart_intent_states import (
     STATUS_CANCELLED,
     STATUS_DRAINED_RESTARTING,
-    STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
 )
@@ -45,11 +44,8 @@ def timeout_affordances(intent_id: str) -> list[str]:
 def cas_force_preempt(store: Any, intent_id: str) -> bool:
     """CAS ``pending_drain`` → ``force_requested``. True when this caller won."""
     return (
-        store.advance_if_status(
-            intent_id,
-            from_status=STATUS_PENDING_DRAIN,
-            to_status=STATUS_FORCE_REQUESTED,
-            reason="force-preempt keep-awaiting drain",
+        store.cas_force_preempt_from_pending(
+            intent_id, reason="force-preempt keep-awaiting drain"
         )
         == 1
     )
@@ -191,17 +187,19 @@ def repair_timeout_intent_gap(store: Any) -> list[dict[str, str]]:
     for intent in listing(STATUS_TIMEOUT):
         live = store.active_for_service(intent.service)
         if live is not None and live.intent_id != intent.intent_id:
-            if (
-                store.advance_if_status(
+            current = store.get(intent.intent_id)
+            if current is not None and current.status == STATUS_TIMEOUT:
+                store.advance(
                     intent.intent_id,
-                    from_status=STATUS_TIMEOUT,
-                    to_status=STATUS_CANCELLED,
+                    status=STATUS_CANCELLED,
                     reason=(
                         "repair timeout gap: superseded by " + live.intent_id
                     ),
                 )
-                == 1
-            ):
+                changed = 1
+            else:
+                changed = 0
+            if changed == 1:
                 repaired.append(
                     {
                         "intent_id": intent.intent_id,

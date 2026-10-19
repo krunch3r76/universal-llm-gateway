@@ -27,7 +27,10 @@ from scripts.model_manager.ui.controller.restart_intent_states import (
     STATUS_DRAINED_RESTARTING,
     STATUS_VERIFYING_ACTIVATION,
 )
-from scripts.model_manager.ui.controller.restart_intent_store import RestartIntentStore
+from scripts.model_manager.ui.controller.restart_intent_store import (
+    ArmResultKind,
+    RestartIntentStore,
+)
 
 _RESOLVABLE_CODE_REF = "ab53680e92543c316b16aef9a1412cd652c2a56b"
 
@@ -383,7 +386,7 @@ def test_arm_verify_after_generation_gone_discharges_missing_validation(
         reason="r",
     )
     armed = _run(arm_verify_after_generation_gone(store, intent))
-    assert armed is True
+    assert armed is ArmResultKind.ARMED
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"

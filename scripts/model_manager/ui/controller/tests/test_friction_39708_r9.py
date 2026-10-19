@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -56,8 +57,14 @@ def events_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any
     return log
 
 
-_AFTER = "2026-10-19T18:00:00+00:00"
-_BEFORE = "2026-10-19T16:00:00+00:00"
+def _after_commit(intent) -> str:
+    base = datetime.fromisoformat(intent.status_changed_at.replace("Z", "+00:00"))
+    return (base + timedelta(minutes=5)).isoformat()
+
+
+def _before_commit(intent) -> str:
+    base = datetime.fromisoformat(intent.status_changed_at.replace("Z", "+00:00"))
+    return (base - timedelta(minutes=5)).isoformat()
 
 
 def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,9 +274,10 @@ def test_t1h_unbound_new_generation(tmp_path, monkeypatch) -> None:
     store.advance(
         intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="kill_commit"
     )
-    store._update(intent.intent_id, worker_started_at=_AFTER)
     intent = store.get(intent.intent_id)
-    snap = _snap(draining=False, epoch=2, worker_id="w9", started=_AFTER, active=0)
+    assert intent is not None
+    after = _after_commit(intent)
+    snap = _snap(draining=False, epoch=2, worker_id="w9", started=after, active=0)
     _run(_sup(store, _Script([snap]), _Kill()).supervise(intent))
     got = store.get(intent.intent_id)
     assert got is not None and got.status == STATUS_COMPLETED
@@ -284,9 +292,10 @@ def test_t1i_unbound_old_releases_snapshot_epoch(tmp_path, monkeypatch, events_l
     store.advance(
         intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="kill_commit"
     )
-    store._update(intent.intent_id, worker_started_at=_BEFORE)
     intent = store.get(intent.intent_id)
-    snap = _snap(draining=True, epoch=3, worker_id="w1", started=_BEFORE, active=0)
+    assert intent is not None
+    before = _before_commit(intent)
+    snap = _snap(draining=True, epoch=3, worker_id="w1", started=before, active=0)
     snap["intent_id"] = intent.intent_id
     released: list[tuple[str, int]] = []
 
@@ -309,8 +318,8 @@ def test_t1j_unbound_dead_start_and_stop(tmp_path, monkeypatch) -> None:
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
     store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="k")
-    store._update(intent.intent_id, worker_started_at="not-a-date")
     intent = store.get(intent.intent_id)
+    assert intent is not None
     starts: list[int] = []
     _run(
         _sup(
@@ -330,7 +339,6 @@ def test_t1j_unbound_dead_start_and_stop(tmp_path, monkeypatch) -> None:
         service=_SERVICE, action="stop", deadline_at="d", reason="r"
     )
     store2.advance(stop.intent_id, status=STATUS_DRAINED_RESTARTING, reason="k")
-    store2._update(stop.intent_id, worker_started_at="not-a-date")
     stop = store2.get(stop.intent_id)
     _run(
         _sup(
@@ -348,12 +356,15 @@ def test_t1k_unparseable_holds(tmp_path, monkeypatch, caplog) -> None:
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
     store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="k")
-    store._update(intent.intent_id, worker_started_at="not-a-date")
     intent = store.get(intent.intent_id)
+    assert intent is not None
+    snap = _snap(
+        draining=False, epoch=2, worker_id="w9", started="not-a-date", active=0
+    )
     caplog.set_level(logging.WARNING)
     _run(
         _supervise_until(
-            _sup(store, _Script([RuntimeError("down")]), _Kill(), absent=_absent(False)),
+            _sup(store, _Script([snap]), _Kill(), absent=_absent(False)),
             intent,
             hold_s=0.15,
         )
@@ -483,12 +494,16 @@ def test_t5_not_applicable_once(tmp_path, monkeypatch, events_log) -> None:
     intent = _bound(store, action="recycle_giw")
     w2 = _snap(draining=True, epoch=2, worker_id="w2", started="t2")
     _run(_sup(store, _Script([w2]), _Kill()).supervise(intent))
-    notes = [p for n, p in events_log if "not_applicable" in str(p).lower() or n.endswith("verifying")]
     got = store.get(intent.intent_id)
     assert got is not None
-    assert (got.status_reason or "").count("activation_not_applicable") <= 1
     assert got.status == STATUS_COMPLETED
-    assert notes is not None
+    reason = got.status_reason or ""
+    assert reason.startswith("generation_gone:") or reason.startswith(
+        "activation_not_applicable"
+    )
+    assert (
+        sum(1 for n, _ in events_log if n == "manage.restart.completed") == 1
+    )
 
 
 def test_t6_writers_leave_abort_rows(tmp_path) -> None:
@@ -855,8 +870,8 @@ def test_t9_unbound_dead_start_raises(tmp_path, monkeypatch) -> None:
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
     store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="k")
-    store._update(intent.intent_id, worker_started_at="not-a-date")
     intent = store.get(intent.intent_id)
+    assert intent is not None
 
     async def _boom() -> str:
         raise RuntimeError("start failed")

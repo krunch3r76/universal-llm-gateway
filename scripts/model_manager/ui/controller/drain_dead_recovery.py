@@ -24,12 +24,8 @@ from .restart_intent_reason_codes import (
     FORCE_START_PENDING,
     reason_code,
 )
-from .restart_intent_states import (
-    LIVE_STATUSES,
-    STATUS_COMPLETED,
-    STATUS_FAILED,
-)
-from .restart_intent_store import Intent, RestartIntentStore
+from .restart_intent_states import LIVE_STATUSES, STATUS_FAILED
+from .restart_intent_store import ArmResultKind, Intent, RestartIntentStore
 
 logger = get_logger(__name__)
 
@@ -175,23 +171,18 @@ async def force_start_with_outcome(
             if _fail_pending(store, intent):
                 return ForceStartOutcome.FAILED, message
             return ForceStartOutcome.LOST_RACE, message
-    armed = await arm_verify_after_generation_gone(store, intent)
-    if armed:
-        return ForceStartOutcome.ARMED, message
-    current = store.get(intent.intent_id)
-    if current is not None and current.status == STATUS_COMPLETED:
-        return ForceStartOutcome.COMPLETED, message
-    if current is not None and current.status == STATUS_FAILED:
-        return ForceStartOutcome.FAILED, message
-    completed = store.advance_if_status_in(
-        intent.intent_id,
-        from_statuses=LIVE_STATUSES,
-        to_status=STATUS_COMPLETED,
-        reason=reason_code(FORCE_START_COMPLETED, "without activation verify"),
+    arm_result = await arm_verify_after_generation_gone(
+        store,
+        intent,
+        completed_reason=reason_code(
+            FORCE_START_COMPLETED, "without activation verify"
+        ),
     )
-    if completed:
-        return ForceStartOutcome.COMPLETED, message
-    return ForceStartOutcome.LOST_RACE, message
+    if arm_result == ArmResultKind.LOST_RACE:
+        return ForceStartOutcome.LOST_RACE, message
+    if arm_result == ArmResultKind.ARMED:
+        return ForceStartOutcome.ARMED, message
+    return ForceStartOutcome.COMPLETED, message
 
 
 async def force_start_and_validate(

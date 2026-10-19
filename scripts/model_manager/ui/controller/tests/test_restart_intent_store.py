@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
     Intent,
@@ -125,6 +127,30 @@ def test_s1_refuses_cancelled_and_force(tmp_path) -> None:
         )
         got = store.get(intent.intent_id)
         assert got is not None and got.status == status
+
+
+def test_s1_raises_when_targeting_cancelled_or_force(tmp_path) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        STATUS_CANCELLED,
+        STATUS_FORCE_REQUESTED,
+        STATUS_PENDING_DRAIN,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    for bad in (STATUS_CANCELLED, STATUS_FORCE_REQUESTED):
+        with pytest.raises(ValueError, match="aborting status"):
+            store.advance_if_status_in(
+                intent.intent_id,
+                from_statuses=frozenset({STATUS_PENDING_DRAIN}),
+                to_status=bad,
+                reason="nope",
+            )
 
 
 def test_arm_not_applicable_is_atomic(tmp_path) -> None:

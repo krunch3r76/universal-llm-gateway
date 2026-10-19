@@ -91,12 +91,14 @@ async def supervise_until_lifecycle(
                 if ceiling == "self_preempt":
                     escalated = True
                     phase = "force_requested"
-                    if not _cas(
-                        store,
-                        intent_id,
-                        from_status=STATUS_PENDING_DRAIN,
-                        to_status=STATUS_FORCE_REQUESTED,
-                        reason=_clip(reason_code(IDLE_CEILING_REACHED, last_cause)),
+                    if (
+                        store.cas_force_preempt_from_pending(
+                            intent_id,
+                            reason=_clip(
+                                reason_code(IDLE_CEILING_REACHED, last_cause)
+                            ),
+                        )
+                        != 1
                     ):
                         return
                     break
