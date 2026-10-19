@@ -56,6 +56,15 @@ def test_manage_forwards_force_reason_and_thread(monkeypatch) -> None:
     assert params.get("force") is True
     assert params["force_reason"] == "coordinator judgment"
     assert params["caller_thread_id"] == "18180"
+    assert params["self_call_counted"] is True
+
+    manage(
+        action="sync_restart",
+        service="gateway",
+        force=True,
+        force_reason="coordinator judgment",
+    )
+    assert "self_call_counted" not in captured[1]["params"]
 
 
 def test_giw_force_still_refused_at_mcp_layer(monkeypatch) -> None:

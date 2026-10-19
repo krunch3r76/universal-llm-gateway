@@ -13,11 +13,12 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import Button, Footer, Header, Select, Static
+from textual.widgets import Button, Footer, Header, Input, Select, Static
 
 from ...controller.busy_work_summary import format_active_work_summary
 from ...controller.operation_log import tee_with_summary
 from ...controller.restart_drain import run_gated
+from ...controller.restart_drain_force_gate import enforce_force_reason_if_needed
 from ...controller.restart_intent_store import intent_status_view
 from ...controller.restart_window_ctl import (
     clear_service_windows,
@@ -58,6 +59,7 @@ class ServicesScreen(Screen):
     _poll_timer: Timer | None = None
     _POLL_INTERVAL = 2.0
     _force_armed: bool = False
+    _force_reason: str = ""
 
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
@@ -105,6 +107,10 @@ class ServicesScreen(Screen):
         background: $surface-darken-1;
         color: $text-muted;
         opacity: 60%;
+    }
+    #force-reason {
+        width: 28;
+        height: 3;
     }
     """
 
@@ -208,6 +214,7 @@ class ServicesScreen(Screen):
                     "Sync + Restart Local", id="btn-restart-local", variant="warning"
                 )
                 yield Button("Force: OFF", id="btn-force-toggle", variant="default")
+                yield Input(placeholder="force_reason", id="force-reason")
             with Horizontal(classes="svc-button-row"):
                 yield Button(
                     "Start Email Bridge",
@@ -267,6 +274,10 @@ class ServicesScreen(Screen):
         self._refresh_status()
         if self._poll_timer is not None:
             self._poll_timer.resume()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "force-reason":
+            self._force_reason = event.value
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "build-scope":
@@ -694,9 +705,19 @@ class ServicesScreen(Screen):
                 svc, service, action, lifecycle
             ),
             before_release=before_release,
+            caller_requested=force,
+            force_reason=self._force_reason,
         )
         if result.get("status") == "deferred":
             await self._render_deferral(action, service, result)
+            return False
+        if result.get("status") == "refused":
+            self.query_one("#svc-log", LogStream).write_line(
+                f"[{service}] {action} refused "
+                f"status={result.get('status')} "
+                f"status_code={result.get('status_code')} "
+                f"reason={result.get('reason')}"
+            )
             return False
         self.query_one("#svc-log", LogStream).write_line(str(result.get("message", "")))
         self._consume_force()
@@ -730,6 +751,24 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         gate = svc.restart_gate
         force = self._force_armed
+        if force:
+            for name in ("stargate", "gateway"):
+                refused = await enforce_force_reason_if_needed(
+                    gate,
+                    "restart",
+                    name,
+                    force=True,
+                    force_reason=self._force_reason,
+                    caller_requested=True,
+                )
+                if refused is not None:
+                    log.write_line(
+                        f"[{name}] restart refused "
+                        f"status={refused.get('status')} "
+                        f"status_code={refused.get('status_code')} "
+                        f"reason={refused.get('reason')}"
+                    )
+                    return
 
         sg = await gate.evaluate("stargate", force=force)
         if sg is not None:

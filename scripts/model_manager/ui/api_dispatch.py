@@ -36,6 +36,7 @@ from .controller.restart_drain import (
     run_gated_stargate_idle_drain_supervised,
     sole_busy_holder_matches,
 )
+from .controller.restart_drain_force_gate import enforce_force_reason_if_needed
 from .controller.restart_intent_consumer import project_restart_intent_consumer
 from .controller.restart_intent_store import (
     STATUS_CANCELLED,
@@ -233,6 +234,12 @@ async def execute(
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
                 return preempted
+            ctx = manage_force_context(params)
+            refused = await enforce_force_reason_if_needed(
+                ctl.restart_gate, "stop", service, force=force, **ctx
+            )
+            if refused is not None:
+                return refused
             preempted = await preempt_stargate_idle_drain_if_needed(
                 ctl, service, force
             )
@@ -249,7 +256,8 @@ async def execute(
                     "stop",
                     lambda: _stop(ctl, service),
                 ),
-                **manage_force_context(params),
+                force_already_enforced=True,
+                **ctx,
             )
 
         case "restart":
@@ -285,6 +293,12 @@ async def execute(
                 preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
                 if preempted is not None:
                     return preempted
+                ctx = manage_force_context(params)
+                refused = await enforce_force_reason_if_needed(
+                    ctl.restart_gate, "restart", service, force=force, **ctx
+                )
+                if refused is not None:
+                    return refused
                 preempted = await preempt_stargate_idle_drain_if_needed(
                     ctl, service, force
                 )
@@ -302,7 +316,8 @@ async def execute(
                         lambda: _restart_cycle(ctl, service),
                     ),
                     before_release=rag_start_settle_hook(service),
-                    **manage_force_context(params),
+                    force_already_enforced=True,
+                    **ctx,
                 )
             return await _finalize_restart_rebuild(ctl, service, result)
 
@@ -405,13 +420,18 @@ async def execute(
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
                 return preempted
+            ctx = manage_force_context(params)
+            refused = await enforce_force_reason_if_needed(
+                ctl.restart_gate, "sync_restart", service, force=force, **ctx
+            )
+            if refused is not None:
+                return refused
             preempted = await preempt_stargate_idle_drain_if_needed(
                 ctl, service, force
             )
             if preempted is not None:
                 return preempted
             before_release = rag_start_settle_hook(service)
-            ctx = manage_force_context(params)
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -425,6 +445,7 @@ async def execute(
                 ),
                 exclude_job_id=caller_job_id if service == "agent_bus" else None,
                 before_release=before_release,
+                force_already_enforced=True,
                 **ctx,
             )
 
@@ -660,12 +681,17 @@ def caller_thread_from_manage_request(params: dict[str, Any]) -> str | None:
 
 
 def manage_force_context(params: dict[str, Any]) -> dict[str, Any]:
-    """Thread force-gate kwargs from a manage.sock params dict."""
+    """Thread force-gate kwargs from a manage.sock params dict.
+
+    ``self_call_counted`` is set by the MCP manage tool when this call is
+    already one of ``mcp.in_flight``.
+    """
     return {
         "force_reason": force_reason_from_manage_request(params),
         "caller_thread_id": caller_thread_from_manage_request(params),
         "caller_dispatch_id": _optional_attr_str(params, "caller_dispatch_id"),
         "caller_requested": bool(params.get("force", False)),
+        "self_call_counted": bool(params.get("self_call_counted", False)),
     }
 
 
@@ -1380,6 +1406,7 @@ async def _mcp_deferred_sync_restart(
         caller_thread_id=ctx.get("caller_thread_id"),
         caller_dispatch_id=ctx.get("caller_dispatch_id"),
         caller_requested=bool(ctx.get("caller_requested", False)),
+        self_call_counted=bool(ctx.get("self_call_counted", False)),
     )
 
 

@@ -200,6 +200,7 @@ def test_rag_force_sync_restart_passes_settle_before_release(
         AsyncMock(return_value=None),
     )
     ctl = MagicMock()
+    ctl.restart_gate = _gate()
     result = _run(api_dispatch.execute(ctl, "sync_restart", "rag", {"force": True}))
     assert result["status"] == "ok"
     assert (
@@ -267,6 +268,7 @@ def test_stargate_sync_restart_does_not_pass_before_release(
         AsyncMock(return_value=None),
     )
     ctl = MagicMock()
+    ctl.restart_gate = _gate()
     _run(api_dispatch.execute(ctl, "sync_restart", "stargate", {"force": True}))
     assert "before_release" not in captured or captured.get("before_release") is None
 
@@ -552,6 +554,7 @@ def test_tui_start_rag_blocks_nonforce_sync_restart_during_settle(
 
     class _Tui:
         _force_armed = False
+        _force_reason = ""
         _run_gated_action = ServicesScreen._run_gated_action
 
         def __init__(self) -> None:

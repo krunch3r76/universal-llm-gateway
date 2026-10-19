@@ -7,13 +7,12 @@ apply_tier: required_gate
 # Restart drain
 
 **Invariant:** `needed(restart) ⇒ fire(restart)` — busy, in-flight, a peer's stream, a dirty tree, an open
-Cowork tab, or "this IDE session" is never a reason to skip, park, or route the force through the operator.
+Cowork tab, or "this IDE session" is never a reason to skip, park.
 `edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)` same turn; `bind_mount ⇏ live`.
 That recycle is **not** a work-complete claim.
 
-∀ service ≠ `git_integration_worker`: busy defers ⇒ re-fire `force=true`, announce.
+No service is forced by default (K48). Busy G1 ⇒ wait for the drain. A force needs a coordinator force_reason announced to Kaywan or maestro first; manage refuses caller force over busy G1 without one (409); mcp force is allowed only when busy is life_hot only (a:39670).
 `git_integration_worker`: arm drain (`status=deferred`, `restart_intent_id`) — never force, never kill. Live cursor-sdk dispatch ⇒ park, not wait (`park_live=true`). `recycle_giw` is park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
-detail: skill `git-posture` § Restart drain — relocated table.
 
 ## Forbidden / Required
 
@@ -23,7 +22,6 @@ Do not claim `live` from a commit, an import, or `status=deferred` — process s
 Do not report exact `live@<sha>` when served dirt was loaded — report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart.
 Do not hold graph stamps / todo close for `live@sha` — close once ACs met and ordinary `live` proven (or `liveness n/a`).
 Do not recycle-as-finished while session paths are uncommitted — commit session paths, **then** recycle; quote both payloads.
-detail: skill `git-posture` § Restart drain — relocated table.
 
 ## Go-live = work-complete finishing (last)
 
