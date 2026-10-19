@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.rag.chroma_writer import GET_PAGE_CAP
 from services.rag.chunkers.messages_chunker import indexing_source_hash
 from services.rag.directory_ops import index_directory_contents
 from services.rag.indexing_helpers import migrate_chroma_source
@@ -189,6 +190,8 @@ def test_migrate_chroma_source_queries_by_source_path() -> None:
     collection.get.assert_called_once_with(
         where={"source": "/old/path.md"},
         include=["metadatas"],
+        limit=GET_PAGE_CAP,
+        offset=0,
     )
 
 
