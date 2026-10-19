@@ -261,6 +261,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: str = "",
         timeout: float = 120.0,
         force: bool = False,
+        force_reason: str = "",
         reason: str = "",
         root_id: str = "",
         clear_wip: bool = False,
@@ -270,6 +271,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         wait_for_boundary: bool = False,
         intent_ttl_s: float = 0.0,
         caller_dispatch_id: str = "",
+        caller_thread_id: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -277,6 +279,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
         force: bypass the drain check for stop/restart/sync_restart (default False)
+        force_reason: required when force=true while Gate 1 reports busy or
+                   restart_would_defer (coordinator judgment; never a silent default)
         park_live: for git_integration_worker stop/restart/sync_restart — after a
                    20s grace, park resume-eligible live cursor-sdk dispatches
                    (sdk_agent_id and SDK store dir on disk) instead of waiting
@@ -297,6 +301,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
                    until the caller exits; foreign holders still get state=busy.
+        caller_thread_id: agent-bus thread for force-gate notices (defaults to
+                   ULG_DISPATCH_THREAD_ID env when set).
         intent_id: required for cancel_restart_intent (restart-intent retraction)
 
         Actions:
@@ -435,7 +441,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
         "active_work","active_work_summary"} where state ∈ {busy, in_progress,
         probe_error, draining}. Prefer active_work_summary for a one-line holder
         identity; dig into active_work only when you need structure. Honor
-        retry_after_s and retry, or pass force=true to preempt in-flight work.
+        retry_after_s and retry, or pass force=true with force_reason to preempt
+        in-flight work while Gate 1 is busy.
         Self-holder busy-skip: when caller_dispatch_id matches the sole write-lease
         holder, sync_restart returns state=draining with restart_intent_id (post-exit
         execution) instead of state=busy without an intent.
@@ -456,6 +463,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         """
         effective_caller = (
             caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
+        ).strip()
+        effective_thread = (
+            caller_thread_id or os.environ.get("ULG_DISPATCH_THREAD_ID", "")
         ).strip()
         if effective_caller and _conductor_descended_manage_refused(
             effective_caller, action
@@ -511,6 +521,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
             return _refuse_giw_force()
         if force and action in _GIW_LIFECYCLE_FORCE_ACTIONS:
             params["force"] = True
+        force_reason_text = (force_reason or "").strip()
+        if force_reason_text:
+            params["force_reason"] = force_reason_text
         if (
             service == "git_integration_worker"
             and action in _GIW_LIFECYCLE_FORCE_ACTIONS
@@ -521,6 +534,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 params["intent_ttl_s"] = float(intent_ttl_s)
         if effective_caller and action in {"stop", "restart", "sync_restart"}:
             params["caller_dispatch_id"] = effective_caller
+        if effective_thread and action in {"stop", "restart", "sync_restart"}:
+            params["caller_thread_id"] = effective_thread
         if action == "cancel_restart_intent":
             params["intent_id"] = intent_id
         if action == "restart_intent_status":

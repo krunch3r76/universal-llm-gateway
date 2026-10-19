@@ -249,6 +249,7 @@ async def execute(
                     "stop",
                     lambda: _stop(ctl, service),
                 ),
+                **manage_force_context(params),
             )
 
         case "restart":
@@ -263,6 +264,7 @@ async def execute(
                     force=bool(params.get("force", False)),
                     no_cache=False,
                     scheduled_message=_MCP_RESTART_ALIASED_MSG,
+                    force_context=manage_force_context(params),
                 )
                 return await _finalize_restart_rebuild(
                     ctl, service, result, restart_scheduled=True
@@ -300,6 +302,7 @@ async def execute(
                         lambda: _restart_cycle(ctl, service),
                     ),
                     before_release=rag_start_settle_hook(service),
+                    **manage_force_context(params),
                 )
             return await _finalize_restart_rebuild(ctl, service, result)
 
@@ -318,6 +321,7 @@ async def execute(
                     gate_action="sync_restart",
                     force=bool(params.get("force", False)),
                     no_cache=True,
+                    force_context=manage_force_context(params),
                 )
                 return await _finalize_restart_rebuild(
                     ctl, service, result, restart_scheduled=True
@@ -341,6 +345,7 @@ async def execute(
                     method="sync_restart",
                     force=bool(params.get("force", False)),
                     no_cache=False,
+                    force_context=manage_force_context(params),
                 )
             force = bool(params.get("force", False))
             caller_dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
@@ -406,6 +411,7 @@ async def execute(
             if preempted is not None:
                 return preempted
             before_release = rag_start_settle_hook(service)
+            ctx = manage_force_context(params)
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -419,6 +425,7 @@ async def execute(
                 ),
                 exclude_job_id=caller_job_id if service == "agent_bus" else None,
                 before_release=before_release,
+                **ctx,
             )
 
         case "busy_status":
@@ -642,6 +649,24 @@ async def sync_restart_charter_harvest(
         before_snap,
         readiness_proven=False,
     )
+
+
+def force_reason_from_manage_request(params: dict[str, Any]) -> str | None:
+    return _optional_attr_str(params, "force_reason")
+
+
+def caller_thread_from_manage_request(params: dict[str, Any]) -> str | None:
+    return _optional_attr_str(params, "caller_thread_id")
+
+
+def manage_force_context(params: dict[str, Any]) -> dict[str, Any]:
+    """Thread force-gate kwargs from a manage.sock params dict."""
+    return {
+        "force_reason": force_reason_from_manage_request(params),
+        "caller_thread_id": caller_thread_from_manage_request(params),
+        "caller_dispatch_id": _optional_attr_str(params, "caller_dispatch_id"),
+        "caller_requested": bool(params.get("force", False)),
+    }
 
 
 def caller_agent_from_manage_request(params: dict[str, Any]) -> str:
@@ -1337,9 +1362,11 @@ async def _mcp_deferred_sync_restart(
     no_cache: bool,
     gate_action: str | None = None,
     scheduled_message: str | None = None,
+    force_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deferred MCP sync+restart (shared by sync_restart, rebuild, and restart alias)."""
     on_ok, on_fail = _mcp_background_hooks(event_bus, method)
+    ctx = force_context or {}
     return await run_gated_deferred(
         ctl.restart_gate,
         gate_action or method,
@@ -1349,6 +1376,10 @@ async def _mcp_deferred_sync_restart(
         scheduled_message=scheduled_message or _MCP_RESTART_SCHEDULED_MSG,
         on_background_complete=on_ok,
         on_background_failed=on_fail,
+        force_reason=ctx.get("force_reason"),
+        caller_thread_id=ctx.get("caller_thread_id"),
+        caller_dispatch_id=ctx.get("caller_dispatch_id"),
+        caller_requested=bool(ctx.get("caller_requested", False)),
     )
 
 
