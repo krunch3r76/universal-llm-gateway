@@ -697,10 +697,108 @@ def test_projected_case_marker_drops_matching_section(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     chunks = chunk_file(path)
-    _assert_capped(chunks)
     joined = "\n".join(chunk.text for chunk in chunks)
     assert "25.7489" not in joined
-    assert "clean-reply" in joined
+    assert "clean-reply" not in joined
+    assert chunks == []
+
+
+def test_projected_case_marker_on_assistant_drops_user_question(tmp_path: Path) -> None:
+    path = tmp_path / "case-assistant.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "what is the filing status"},
+                    {
+                        "role": "assistant",
+                        "content": "Parcel 25.7489 appeal is pending",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "filing status" not in joined
+    assert "25.7489" not in joined
+    assert chunks == []
+
+
+def test_projected_meta_less_excluded_lane_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "s-lane.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "keep-lane"},
+                    {"role": "assistant", "content": "yes"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _resolver(_envelope, _path):  # noqa: ANN001
+        return "16934", ()
+
+    monkeypatch.setattr(
+        "services.rag.chunkers.projected_messages.default_lane_resolver",
+        _resolver,
+    )
+    assert chunk_file(path) == []
+
+
+def test_projected_bare_list_excluded_lane_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "s-bare.json"
+    path.write_text(
+        json.dumps(
+            [
+                {"role": "user", "content": "keep-lane"},
+                {"role": "assistant", "content": "yes"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def _resolver(_envelope, _path):  # noqa: ANN001
+        return "16934", ()
+
+    monkeypatch.setattr(
+        "services.rag.chunkers.projected_messages.default_lane_resolver",
+        _resolver,
+    )
+    assert chunk_file(path) == []
+
+
+def test_schema_tagged_tape_without_cells_skips(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A schema-tagged ``x.tape.json`` with no cells is still a tape."""
+    path = tmp_path / "x.tape.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ulg.continuity.messages/1",
+                "messages": [
+                    {"role": "user", "content": "needle-schema-tape"},
+                    {"role": "assistant", "content": "should-skip"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level("INFO", logger="services.rag.chunkers.projected_messages"):
+        assert chunk_file(path) == []
+    assert any(
+        rec.message == f"rag_chunk_skip path={path} reason=tape"
+        for rec in caplog.records
+    )
 
 
 def test_messages_with_index_is_not_tape(tmp_path: Path) -> None:

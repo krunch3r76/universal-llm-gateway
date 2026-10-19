@@ -14,7 +14,7 @@ import logging
 import re
 from pathlib import Path
 
-from continuity_tape.messages import ContinuityMessagesEnvelope
+from continuity_tape.messages import ContinuityMessagesEnvelope, EnvelopeMeta
 from message_projection.project import project_messages
 from pydantic import ValidationError
 
@@ -154,25 +154,77 @@ def _is_tape(data: object) -> bool:
     """True for a continuity tape body that is not a plain transcript.
 
     A transcript may carry ``index`` beside a ``messages`` list. Tape is
-    ``cells`` or ``open_line``, or ``index`` when ``messages`` is not a list.
-    Seal-named files are routed before this check.
+    ``cells`` or ``open_line``, the continuity schema (so a schema-tagged
+    ``*.tape.json`` with no cells still skips), or ``index`` when ``messages``
+    is not a list. Seal-named files are routed before this check.
     """
     if not isinstance(data, dict):
         return False
     if "cells" in data or "open_line" in data:
         return True
+    if data.get("schema") == SEAL_SCHEMA:
+        return True
     return "index" in data and not isinstance(data.get("messages"), list)
 
 
-def _lane_excluded(path: Path, data: object) -> bool:
-    """Apply the seal chunker's lane exclusion when the body is an envelope."""
-    if not isinstance(data, dict):
-        return False
+def _envelope_for_lane(path: Path, data: object) -> ContinuityMessagesEnvelope | None:
+    """Validate the body, or build meta from the path stem so the resolver runs.
+
+    A bare list, a dict with no meta, ``meta: null``, and invalid meta all
+    fail validation. Those still get a constructed envelope whose session id
+    is the file stem (``<sid>.json``). Returns None only when construction
+    itself fails.
+    """
+    if isinstance(data, dict):
+        try:
+            return ContinuityMessagesEnvelope.model_validate(data)
+        except ValidationError:
+            pass
+    stem = path.stem
+    session_id = stem
+    transcript_id = stem
+    if isinstance(data, dict):
+        meta = data.get("meta")
+        if isinstance(meta, dict):
+            raw_session = meta.get("session_id")
+            raw_transcript = meta.get("transcript_id")
+            if isinstance(raw_session, str) and raw_session.strip():
+                session_id = raw_session.strip()
+            if isinstance(raw_transcript, str) and raw_transcript.strip():
+                transcript_id = raw_transcript.strip()
     try:
-        envelope = ContinuityMessagesEnvelope.model_validate(data)
-    except ValidationError:
-        return False
-    lane_id, lane_tags = default_lane_resolver(envelope, path)
+        return ContinuityMessagesEnvelope.model_construct(
+            meta=EnvelopeMeta.model_construct(
+                session_id=session_id,
+                transcript_id=transcript_id,
+            )
+        )
+    except Exception:
+        logger.warning(
+            "rag_chunk_skip path=%s reason=lane_resolver_unavailable",
+            path,
+        )
+        return None
+
+
+def _lane_excluded(path: Path, data: object) -> bool:
+    """Fail closed: run the lane resolver, and skip when it cannot run.
+
+    Bare lists and invalid envelopes still consult the resolver via constructed
+    meta. A resolver exception skips the file (logged) instead of indexing it.
+    """
+    envelope = _envelope_for_lane(path, data)
+    if envelope is None:
+        return True
+    try:
+        lane_id, lane_tags = default_lane_resolver(envelope, path)
+    except Exception as exc:
+        logger.warning(
+            "rag_chunk_skip path=%s reason=lane_resolver_unavailable error=%s",
+            path,
+            exc,
+        )
+        return True
     return transcript_lane_excluded(lane_id, lane_tags)
 
 
@@ -259,26 +311,55 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
     return _annotate_chunk_indices(chunks)
 
 
+def _section_role(heading: str) -> str:
+    """Return the role at the end of a ``## Turn N - ts - role`` heading."""
+    if " - " not in heading:
+        return ""
+    return heading.rsplit(" - ", 1)[-1].strip().lower()
+
+
+def _exchange_groups(
+    sections: list[tuple[str, str]],
+) -> list[list[tuple[str, str]]]:
+    """Group each user section with the following non-user sections.
+
+    A leading non-user run is its own group. The next user heading starts
+    the next group, matching ``chunk_messages`` exchange drops.
+    """
+    groups: list[list[tuple[str, str]]] = []
+    current: list[tuple[str, str]] = []
+    for section in sections:
+        if _section_role(section[0]) == "user" and current:
+            groups.append(current)
+            current = []
+        current.append(section)
+    if current:
+        groups.append(current)
+    return groups
+
+
 def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk] | None:
     chunks: list[Chunk] = []
-    for heading, body in sections:
-        if exchange_matches_case_markers(f"{heading}\n{body}"):
+    for group in _exchange_groups(sections):
+        combined = "\n\n".join(f"{heading}\n{body}" for heading, body in group)
+        if exchange_matches_case_markers(combined):
             continue
-        scrubbed = scrub_chunk_text(body)
-        if body.strip() and not scrubbed.strip():
-            continue
-        parts = _split_turn(heading, scrubbed)
-        if parts is None:
-            return None
-        for part in parts:
-            if len(part.encode("utf-8")) > CHUNK_HARD_CAP_BYTES:
+        for heading, body in group:
+            scrubbed = scrub_chunk_text(body)
+            if body.strip() and not scrubbed.strip():
+                continue
+            parts = _split_turn(heading, scrubbed)
+            if parts is None:
                 return None
-            chunks.append(
-                Chunk(
-                    text=part,
-                    metadata={"source": str(path), "heading": heading},
+            for part in parts:
+                if len(part.encode("utf-8")) > CHUNK_HARD_CAP_BYTES:
+                    return None
+                chunks.append(
+                    Chunk(
+                        text=part,
+                        metadata={"source": str(path), "heading": heading},
+                    )
                 )
-            )
     return chunks
 
 
