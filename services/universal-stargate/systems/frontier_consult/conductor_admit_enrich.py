@@ -56,7 +56,7 @@ async def enrich_conductor_admit_plan(
         from implement_admission.source_ref import todo_slug_from_ref
 
         slug = todo_slug_from_ref(str(source_ref))
-        if read_tip(slug, files_root=_workspaces_root()) is None:
+        if read_tip(slug) is None:
             from .admission import FrontierEndpointError
 
             raise FrontierEndpointError(

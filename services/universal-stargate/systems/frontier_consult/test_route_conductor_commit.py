@@ -6,14 +6,23 @@ from pathlib import Path
 
 import pytest
 
+from implement_admission import closeout_helpers
 from implement_admission.conductor_score_journal import read_tip
 from implement_admission.source_ref import todo_slug_from_ref
 
 from .route_conductor_commit import ConductorCommitPlan, commit_conductor_plan
 
 
+@pytest.fixture
+def cortex_files_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(closeout_helpers, "cortex_files_root", lambda: tmp_path)
+    return tmp_path
+
+
 @pytest.mark.offline
-def test_giw_reject_leaves_no_birth_writes(tmp_path: Path) -> None:
+def test_giw_reject_leaves_no_birth_writes(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
     slug = "shape-a-bw1"
     source_ref = f"todo:{slug}"
     plan = ConductorCommitPlan(
@@ -28,12 +37,14 @@ def test_giw_reject_leaves_no_birth_writes(tmp_path: Path) -> None:
     out_dir.mkdir(parents=True)
     with pytest.raises(ValueError):
         commit_conductor_plan(plan, "", workspaces_root=tmp_path)
-    assert read_tip(slug, files_root=tmp_path) is None
+    assert read_tip(slug) is None
     assert not (out_dir / f"conductor-{slug}.md").exists()
 
 
 @pytest.mark.offline
-def test_commit_writes_packet_and_birth_tip(tmp_path: Path) -> None:
+def test_commit_writes_packet_and_birth_tip(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
     slug = "shape-a-bw3"
     source_ref = f"todo:{slug}"
     body = (
@@ -53,14 +64,14 @@ def test_commit_writes_packet_and_birth_tip(tmp_path: Path) -> None:
     )
     result = commit_conductor_plan(plan, "disp-bw3-test", workspaces_root=tmp_path)
     assert result.packet_sha256 == digest
-    tip = read_tip(slug, files_root=tmp_path)
+    tip = read_tip(slug)
     assert tip is not None
     tip_body = tip[0] if isinstance(tip, tuple) else tip
     assert plan.birth_scoreboard_markdown.splitlines()[0] in tip_body
 
 
 @pytest.mark.offline
-def test_commit_idempotent(tmp_path: Path) -> None:
+def test_commit_idempotent(tmp_path: Path, cortex_files_root: Path) -> None:
     slug = "shape-a-bw4"
     source_ref = f"todo:{slug}"
     body = "---\nsource_ref: todo:shape-a-bw4\n---\n# same\n"

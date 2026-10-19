@@ -365,7 +365,7 @@ def resolve_source_ref_to_packet(
         fold_entry_gate: str | None = None
         fold_missing: dict[str, str] | None = None
         slug = todo_slug_from_ref(source_ref) if source_ref else ""
-        if slug and read_tip(slug, files_root=repo) is not None:
+        if slug and read_tip(slug) is not None:
             fold = fold_deps_for_admit(
                 source_ref,
                 cortex=cortex,
@@ -377,7 +377,7 @@ def resolve_source_ref_to_packet(
             if fold is not None:
                 from implement_admission.conductor_witness import fold_scoreboard
 
-                folded = fold_scoreboard(slug, deps=fold, files_root=repo)
+                folded = fold_scoreboard(slug, deps=fold)
                 if folded is not None:
                     fold_entry_gate = folded.entry_gate
                     fold_missing = folded.missing_witnesses or None
@@ -398,7 +398,7 @@ def resolve_source_ref_to_packet(
             out_dir=out_dir,
             repo_root=repo,
             hop_seq=hop_seq,
-            write_birth_scoreboard=read_tip(slug, files_root=repo) is None and hop_seq == 0,
+            write_birth_scoreboard=read_tip(slug) is None and hop_seq == 0,
         )
         return BridgeResult(
             gated=False,

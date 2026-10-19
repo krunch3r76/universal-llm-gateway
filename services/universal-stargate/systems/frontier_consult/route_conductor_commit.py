@@ -67,7 +67,7 @@ def commit_conductor_plan(
     if not rel:
         rel = f"universal-llm-gateway/tmp/implement-admission/materialized/conductor-{slug}.md"
 
-    existing_tip = read_tip(slug, files_root=root)
+    existing_tip = read_tip(slug)
     if plan.hop_seq >= 1 and existing_tip is None:
         from .admission import FrontierEndpointError
 
@@ -105,7 +105,6 @@ def commit_conductor_plan(
             reason="conductor spawn birth",
             rows=(),
             delta="sparse birth",
-            files_root=root,
         )
 
     return ConductorCommitResult(

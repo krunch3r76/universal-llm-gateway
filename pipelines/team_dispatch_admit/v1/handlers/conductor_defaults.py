@@ -5,12 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from implement_admission.conductor_materialize import (
-    G_ROWS,
-    load_conductor_context,
-    rematerialize_context_from_dispatch,
-    render_conductor_packet,
-)
+from implement_admission.conductor_materialize import G_ROWS
 from implement_admission.conductor_policy_snapshot import (
     default_knobs_from_route_policy,
     model_for_seat_role,
@@ -43,6 +38,13 @@ def _hop_seq(opts: dict[str, Any]) -> int:
     return 0
 
 
+def _scoreboard_files_root(opts: dict[str, Any]) -> Path | None:
+    raw = opts.get("files_root")
+    if raw is None or raw == "":
+        return None
+    return Path(str(raw))
+
+
 def evaluate_conductor_defaults(
     opts: dict[str, Any], validate_out: dict[str, Any]
 ) -> dict[str, Any]:
@@ -64,12 +66,12 @@ def evaluate_conductor_defaults(
     )
     model = model_for_seat_role(snapshot, seat_role)
     source_ref = str(opts.get("source_ref") or "").strip()
-    files_root = Path(opts.get("files_root") or "/tmp")
+    scoreboard_root = _scoreboard_files_root(opts)
     slug = todo_slug_from_ref(source_ref) if source_ref.startswith("todo:") else ""
     tip_entry_gate: str | None = None
     tip_present = False
     if slug:
-        tip = read_tip(slug, files_root=files_root)
+        tip = read_tip(slug, files_root=scoreboard_root)
         tip_present = tip is not None
         if tip is not None:
             from implement_admission.conductor_score_table import (
@@ -105,45 +107,6 @@ def evaluate_conductor_defaults(
             rows=birth_plan.rows,
         )
 
-    packet_markdown = ""
-    packet_sha256 = ""
-    packet_rel_path = ""
-    if source_ref and not opts.get("_skip_packet_render"):
-        rematerialize = rematerialize_context_from_dispatch(
-            hop_seq=hop_seq,
-            hop_from=opts.get("hop_from"),
-            dispatch_thread_id=opts.get("dispatch_thread_id"),
-            generation_options=opts.get("generation_options") or {},
-        )
-
-        class _StubCortex:
-            def entity_get(self, *_a: object, **_k: object) -> dict[str, Any]:
-                attrs = opts.get("_test_todo_attrs") or {}
-                return {
-                    "id": 1,
-                    "name": attrs.get("name") or "test",
-                    "attributes": attrs,
-                }
-
-        ctx = load_conductor_context(
-            source_ref,
-            cortex=_StubCortex(),  # type: ignore[arg-type]
-            rematerialize=rematerialize,
-        )
-        out_dir = files_root / "tmp/implement-admission/materialized"
-        rendered = render_conductor_packet(
-            ctx,
-            out_dir=out_dir,
-            repo_root=files_root,
-            hop_seq=hop_seq,
-            write_birth_scoreboard=birth_md is not None,
-        )
-        packet_markdown = rendered.text
-        packet_sha256 = rendered.packet_sha256
-        packet_rel_path = rendered.packet_rel_path
-        if birth_md is None and rendered.birth_scoreboard_markdown:
-            birth_md = rendered.birth_scoreboard_markdown
-
     plan = admit_envelope(
         backend="cursor_sdk",
         role=None,
@@ -157,9 +120,9 @@ def evaluate_conductor_defaults(
     )
     plan.update(
         {
-            "packet_markdown": packet_markdown,
-            "packet_sha256": packet_sha256,
-            "packet_rel_path": packet_rel_path,
+            "packet_markdown": "",
+            "packet_sha256": "",
+            "packet_rel_path": "",
             "birth_scoreboard_markdown": birth_md,
             "selected_seat_role": seat_role,
             "birth_seed_ignored": birth_plan.birth_seed_ignored,
@@ -208,8 +171,7 @@ def validate_conductor_tip_required(opts: dict[str, Any]) -> dict[str, Any] | No
     if not source_ref.startswith("todo:"):
         return None
     slug = todo_slug_from_ref(source_ref)
-    files_root = Path(opts.get("files_root") or "/tmp")
-    if read_tip(slug, files_root=files_root) is None:
+    if read_tip(slug, files_root=_scoreboard_files_root(opts)) is None:
         return reject_envelope(
             status_code=422,
             code="conductor_tip_required",
