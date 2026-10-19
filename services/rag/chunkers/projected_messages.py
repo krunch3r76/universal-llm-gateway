@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from services.rag.chunkers._sizing import CHUNK_HARD_CAP_BYTES
 from services.rag.chunkers.messages_chunker import (
+    _is_synthetic_user,
     default_lane_resolver,
     exchange_matches_case_markers,
     scrub_chunk_text,
@@ -49,6 +50,7 @@ SEAL_SCHEMA = "ulg.continuity.messages/1"
 SNIFF_BYTES = 65_536
 MAX_JSON_BYTES = 64 * 1024 * 1024
 _PART_RESERVE = 24
+_BACKGROUND_TASK_NOTICE_RE = re.compile(r"(?is)^background task\b.*\bfinished:")
 
 _seen_skips: set[tuple[str, int, str]] = set()
 _skip_counts: dict[str, int] = {}
@@ -318,25 +320,71 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
     return _annotate_chunk_indices(chunks)
 
 
-def _section_role(heading: str) -> str:
-    """Return the role at the end of a ``## Turn N - ts - role`` heading."""
-    if " - " not in heading:
-        return ""
-    return heading.rsplit(" - ", 1)[-1].strip().lower()
+def _raw_message_content(raw: dict) -> object:
+    """Return the row content ``project_messages`` would render."""
+    nested = raw.get("message")
+    if isinstance(nested, dict) and "content" in nested:
+        return nested["content"]
+    return raw.get("content")
+
+
+def _utterance_text(content: object) -> str | None:
+    """Human text on a user row, or None when the row is not an utterance.
+
+    A list made only of ``tool_result`` blocks has no human text. Other
+    blocks contribute their ``text`` fields. Tool payloads are not text.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    saw_other = False
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            saw_other = True
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+    if not saw_other:
+        return None
+    return "\n".join(texts)
+
+
+def _starts_exchange(raw: dict) -> bool:
+    """True when this raw row is a human user turn that opens an exchange.
+
+    Tool-result-only user rows, synthetic user rows, and background-task
+    finished notices stay inside the open exchange. The heading is not
+    consulted: a timestamp that contains a blank line splits the heading
+    before the role token.
+    """
+    if str(raw.get("role") or "") != "user":
+        return False
+    text = _utterance_text(_raw_message_content(raw))
+    if text is None:
+        return False
+    if _is_synthetic_user(text):
+        return False
+    if _BACKGROUND_TASK_NOTICE_RE.match(text.strip()):
+        return False
+    return True
 
 
 def _exchange_groups(
-    sections: list[tuple[str, str]],
-) -> list[list[tuple[str, str]]]:
-    """Group each user section with the following non-user sections.
+    sections: list[tuple[str, str, bool]],
+) -> list[list[tuple[str, str, bool]]]:
+    """Group each human user section with the following sections.
 
-    A leading non-user run is its own group. The next user heading starts
-    the next group, matching ``chunk_messages`` exchange drops.
+    A leading run that does not start an exchange is its own group. The
+    next human user row starts the next group, matching ``chunk_messages``
+    exchange drops.
     """
-    groups: list[list[tuple[str, str]]] = []
-    current: list[tuple[str, str]] = []
+    groups: list[list[tuple[str, str, bool]]] = []
+    current: list[tuple[str, str, bool]] = []
     for section in sections:
-        if _section_role(section[0]) == "user" and current:
+        if section[2] and current:
             groups.append(current)
             current = []
         current.append(section)
@@ -345,13 +393,15 @@ def _exchange_groups(
     return groups
 
 
-def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk] | None:
+def _chunk_projected(
+    path: Path, sections: list[tuple[str, str, bool]]
+) -> list[Chunk] | None:
     chunks: list[Chunk] = []
     for group in _exchange_groups(sections):
-        combined = "\n\n".join(f"{heading}\n{body}" for heading, body in group)
+        combined = "\n\n".join(f"{heading}\n{body}" for heading, body, _flag in group)
         if exchange_matches_case_markers(combined):
             continue
-        for heading, body in group:
+        for heading, body, _flag in group:
             scrubbed = scrub_chunk_text(body)
             scrubbed_heading = scrub_chunk_text(heading)
             if body.strip() and not scrubbed.strip():
@@ -371,14 +421,17 @@ def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk]
     return chunks
 
 
-def _projected_sections(messages: list[dict], meta: dict) -> list[tuple[str, str]]:
-    """Return the heading and body of each turn ``project_messages`` emits.
+def _projected_sections(
+    messages: list[dict], meta: dict
+) -> list[tuple[str, str, bool]]:
+    """Return heading, body, and whether the raw row opens an exchange.
 
     Each row is projected by itself. A line inside a message body cannot
     become a turn boundary, including a quoted ``## Turn N - `` line whose
-    number is the next integer.
+    number is the next integer. ``starts_exchange`` is decided from the raw
+    row before the heading is parsed.
     """
-    sections: list[tuple[str, str]] = []
+    sections: list[tuple[str, str, bool]] = []
     observed = meta if isinstance(meta, dict) else {}
     for index, raw in enumerate(messages, start=1):
         if not isinstance(raw, dict):
@@ -391,7 +444,7 @@ def _projected_sections(messages: list[dict], meta: dict) -> list[tuple[str, str
         if not rendered:
             continue
         heading, sep, body = rendered.partition("\n\n")
-        sections.append((heading, body if sep else ""))
+        sections.append((heading, body if sep else "", _starts_exchange(raw)))
     return sections
 
 

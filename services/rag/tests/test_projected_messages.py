@@ -835,6 +835,174 @@ def test_projected_case_marker_on_assistant_drops_user_question(tmp_path: Path) 
     assert chunks == []
 
 
+def _tool_round_messages(question: str) -> list[dict]:
+    return [
+        {"role": "user", "content": question},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Shell",
+                    "input": {"command": "echo ok"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "name": "Shell",
+                    "content": "tool-output-kept",
+                }
+            ],
+        },
+        {"role": "assistant", "content": "answer-after-tool"},
+    ]
+
+
+def test_projected_case_marker_drops_tool_round(tmp_path: Path) -> None:
+    path = tmp_path / "case-tool-round.json"
+    path.write_text(
+        json.dumps({"messages": _tool_round_messages("Parcel 25.7489 appeal")}),
+        encoding="utf-8",
+    )
+    assert chunk_file(path) == []
+
+
+def test_projected_tool_round_without_marker_indexes_answer(tmp_path: Path) -> None:
+    path = tmp_path / "tool-round.json"
+    path.write_text(
+        json.dumps({"messages": _tool_round_messages("what is the filing status")}),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "filing status" in joined
+    assert "tool-output-kept" in joined
+    assert "answer-after-tool" in joined
+
+
+def test_projected_case_marker_drops_synthetic_user_tail(tmp_path: Path) -> None:
+    path = tmp_path / "case-synthetic.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Parcel 25.7489 appeal"},
+                    {
+                        "role": "user",
+                        "content": "[GROK_BOT_HIDDEN_PROMPT][cue] only hidden",
+                    },
+                    {"role": "assistant", "content": "answer-after-hidden"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert chunk_file(path) == []
+
+
+def test_projected_synthetic_user_without_marker_indexes_answer(tmp_path: Path) -> None:
+    path = tmp_path / "synthetic-tail.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "what is the filing status"},
+                    {
+                        "role": "user",
+                        "content": "[GROK_BOT_HIDDEN_PROMPT][cue] only hidden",
+                    },
+                    {"role": "assistant", "content": "answer-after-hidden"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "filing status" in joined
+    assert "answer-after-hidden" in joined
+
+
+def test_projected_background_notice_without_marker_indexes_answer(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "notice-tail.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "what is the filing status"},
+                    {
+                        "role": "user",
+                        "content": (
+                            'Background task "partial label…" (executor) finished:'
+                        ),
+                    },
+                    {"role": "assistant", "content": "answer-after-notice"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "filing status" in joined
+    assert "answer-after-notice" in joined
+
+
+def test_projected_case_marker_drops_background_notice(tmp_path: Path) -> None:
+    path = tmp_path / "case-notice.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Parcel 25.7489 appeal"},
+                    {
+                        "role": "user",
+                        "content": (
+                            'Background task "partial label…" (executor) finished:'
+                        ),
+                    },
+                    {"role": "assistant", "content": "answer-after-notice"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert chunk_file(path) == []
+
+
+def test_projected_null_meta_excluded_lane_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "null-meta.json"
+    path.write_text(
+        json.dumps(
+            {
+                "meta": None,
+                "messages": [
+                    {"role": "user", "content": "keep-lane"},
+                    {"role": "assistant", "content": "yes"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _resolver(_envelope, _path):  # noqa: ANN001
+        return "16934", ()
+
+    monkeypatch.setattr(
+        "services.rag.chunkers.projected_messages.default_lane_resolver",
+        _resolver,
+    )
+    assert chunk_file(path) == []
+
+
 def test_projected_meta_less_excluded_lane_skips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
