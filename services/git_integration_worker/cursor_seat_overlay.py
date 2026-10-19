@@ -96,6 +96,13 @@ LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "pager-notify_ulg.mdc",
     Path("rules") / "resume-fence_ulg.mdc",
     Path("rules") / "dispatch-wake-continue_ulg.mdc",
+    Path("rules") / "event-only-seat-wake_ulg.mdc",
+)
+
+# Non-code Cursor plugin caches copied with operator parity — no value on headless SDK.
+HEADLESS_NON_CODE_PLUGIN_DIRNAMES: tuple[str, ...] = (
+    "plugin-gmail-gmail",
+    "plugin-outlook-outlook",
 )
 
 TIER_B_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (Path("skills") / "lean-dispatch",)
@@ -257,3 +264,23 @@ def apply_cursor_sdk_seat_overlay(
         root,
     )
     return pruned, grafted
+
+
+def prune_headless_non_code_plugin_caches(cursor_dir: Path) -> list[str]:
+    """Remove mail plugin copies from a dispatch HOME ``.cursor/plugins`` tree."""
+    plugins_root = cursor_dir / "plugins"
+    removed: list[str] = []
+    for name in HEADLESS_NON_CODE_PLUGIN_DIRNAMES:
+        target = plugins_root / name
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+        else:
+            continue
+        if target.exists():
+            raise SeatOverlayConfigError(
+                f"non-code plugin cache prune failed, still present: {target}"
+            )
+        removed.append(name)
+    return removed

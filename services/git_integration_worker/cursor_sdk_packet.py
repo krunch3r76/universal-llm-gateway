@@ -12,12 +12,12 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from implement_admission.conductor_no_restart import (
     G7_RESTART_OWED_RULE,
     NESTED_PROMPT_RULE,
     NO_RESTART_LINE,
 )
-from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,
@@ -552,6 +552,81 @@ def extract_source_ref_from_packet(text: str) -> str | None:
     return None
 
 
+def _conductor_hop_restate_allowed(
+    *,
+    lane: str | None,
+    contract: str,
+    has_packet_path: bool,
+    existing_text: str | None,
+    hop_seq: int | None,
+) -> bool:
+    """Conductor hop turns may restate fixed blocks; plain Turn-0 may not."""
+    if hop_seq is None:
+        return False
+    return lane == "B" and _packet_is_conductor(
+        contract,
+        has_packet_path=has_packet_path,
+        existing_text=existing_text,
+    )
+
+
+def _fixed_block_carried_elsewhere(
+    block: str,
+    *,
+    prompt_preamble: str | None,
+    existing_text: str | None,
+    allow_restate: bool,
+) -> bool:
+    if allow_restate:
+        return False
+    return block in (prompt_preamble or "") or block in (existing_text or "")
+
+
+def _tier_prefix_blocks(
+    *,
+    tier: DelegationTier,
+    lane: str | None,
+    prompt_preamble: str | None,
+    existing_text: str | None,
+    allow_restate: bool,
+) -> list[str]:
+    blocks: list[str] = []
+    if tier == "A":
+        if not _fixed_block_carried_elsewhere(
+            _LEAN_DISPATCH_PREAMBLE,
+            prompt_preamble=prompt_preamble,
+            existing_text=existing_text,
+            allow_restate=allow_restate,
+        ):
+            blocks.append(_LEAN_DISPATCH_PREAMBLE)
+    elif tier == "B":
+        if not _fixed_block_carried_elsewhere(
+            _TIER_B_SPLIT_PREAMBLE,
+            prompt_preamble=prompt_preamble,
+            existing_text=existing_text,
+            allow_restate=allow_restate,
+        ):
+            blocks.append(_TIER_B_SPLIT_PREAMBLE)
+    else:
+        if not _fixed_block_carried_elsewhere(
+            _TIER_C_LEAF_PREAMBLE,
+            prompt_preamble=prompt_preamble,
+            existing_text=existing_text,
+            allow_restate=allow_restate,
+        ):
+            blocks.append(_TIER_C_LEAF_PREAMBLE)
+        if lane == "B":
+            for block in (NO_RESTART_LINE, _TIER_C_LANE_B_NO_RESTART):
+                if not _fixed_block_carried_elsewhere(
+                    block,
+                    prompt_preamble=prompt_preamble,
+                    existing_text=existing_text,
+                    allow_restate=allow_restate,
+                ):
+                    blocks.append(block)
+    return blocks
+
+
 def _prefix_reasoning_posture(
     contract: str, parts: list[str], *texts: str | None
 ) -> list[str]:
@@ -610,6 +685,8 @@ def _append_lane_b_worktree(
     lane: str | None,
     lane_worktree: str | None,
     existing_text: str | None,
+    prompt_preamble: str | None = None,
+    allow_restate: bool = False,
 ) -> None:
     """Append the shell-cwd warning when this lane-B run does not already carry it.
 
@@ -621,8 +698,11 @@ def _append_lane_b_worktree(
     """
     if lane != "B" or not lane_worktree:
         return
-    if "LANE-B WORKTREE" in (existing_text or ""):
-        return
+    if not allow_restate:
+        if "LANE-B WORKTREE" in (prompt_preamble or ""):
+            return
+        if "LANE-B WORKTREE" in (existing_text or ""):
+            return
     if any("LANE-B WORKTREE" in part for part in parts):
         return
     parts.append(_LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree))
@@ -650,6 +730,8 @@ def _append_failure_paths_block(
     lane_worktree: str | None,
     existing_text: str | None,
     has_packet_path: bool,
+    prompt_preamble: str | None = None,
+    allow_restate: bool = False,
 ) -> None:
     """Append the failure-paths block on lane-B worktree runs, not conductors.
 
@@ -666,8 +748,11 @@ def _append_failure_paths_block(
         existing_text=existing_text,
     ):
         return
-    if _FAILURE_PATHS_BLOCK in (existing_text or ""):
-        return
+    if not allow_restate:
+        if _FAILURE_PATHS_BLOCK in (prompt_preamble or ""):
+            return
+        if _FAILURE_PATHS_BLOCK in (existing_text or ""):
+            return
     if any(_FAILURE_PATHS_BLOCK in part for part in parts):
         return
     parts.append(_FAILURE_PATHS_BLOCK)
@@ -772,19 +857,22 @@ def resolve_prompt_preamble(
         nest_under=nest_under,
         lane=lane,
     )
+    allow_fixed_restate = _conductor_hop_restate_allowed(
+        lane=lane,
+        contract=contract,
+        has_packet_path=has_packet_path,
+        existing_text=existing_text,
+        hop_seq=hop_seq,
+    )
 
     def _tier_prefix() -> list[str]:
-        blocks: list[str] = []
-        if tier == "A":
-            blocks.append(_LEAN_DISPATCH_PREAMBLE)
-        elif tier == "B":
-            blocks.append(_TIER_B_SPLIT_PREAMBLE)
-        else:
-            blocks.append(_TIER_C_LEAF_PREAMBLE)
-            if lane == "B":
-                blocks.append(NO_RESTART_LINE)
-                blocks.append(_TIER_C_LANE_B_NO_RESTART)
-        return blocks
+        return _tier_prefix_blocks(
+            tier=tier,
+            lane=lane,
+            prompt_preamble=prompt_preamble,
+            existing_text=existing_text,
+            allow_restate=allow_fixed_restate,
+        )
 
     if prompt_preamble:
         preamble = prompt_preamble.strip()
@@ -809,6 +897,8 @@ def resolve_prompt_preamble(
             lane=lane,
             lane_worktree=lane_worktree,
             existing_text=existing_text,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
         _append_failure_paths_block(
             parts_bare,
@@ -817,6 +907,8 @@ def resolve_prompt_preamble(
             lane_worktree=lane_worktree,
             existing_text=existing_text,
             has_packet_path=has_packet_path,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
         _append_bare_refusal_line(parts_bare, existing_text=existing_text)
         parts_bare = _tier_prefix() + parts_bare
@@ -853,6 +945,8 @@ def resolve_prompt_preamble(
             lane=lane,
             lane_worktree=lane_worktree,
             existing_text=existing_text,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
         _append_failure_paths_block(
             parts,
@@ -861,6 +955,8 @@ def resolve_prompt_preamble(
             lane_worktree=lane_worktree,
             existing_text=existing_text,
             has_packet_path=has_packet_path,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
         if not parts:
             return ""
@@ -891,6 +987,8 @@ def resolve_prompt_preamble(
             lane=lane,
             lane_worktree=lane_worktree,
             existing_text=existing_text,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
         _append_failure_paths_block(
             parts,
@@ -899,6 +997,8 @@ def resolve_prompt_preamble(
             lane_worktree=lane_worktree,
             existing_text=existing_text,
             has_packet_path=has_packet_path,
+            prompt_preamble=prompt_preamble,
+            allow_restate=allow_fixed_restate,
         )
     is_conductor_packet = _packet_is_conductor(
         contract,
