@@ -191,6 +191,10 @@ class WorkAdmissionController:
                     "started_at",
                     "last_heartbeat_at",
                     "heartbeat_age_s",
+                    "work_key",
+                    "source_ref",
+                    "contract",
+                    "status",
                 ):
                     if proj.get(key) is not None and entry.get(key) is None:
                         entry[key] = proj[key]

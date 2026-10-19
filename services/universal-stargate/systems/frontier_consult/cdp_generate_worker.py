@@ -413,6 +413,7 @@ async def run_cdp_worker(
     topic: str | None = None,
     project_uuid: str | None = None,
     contract: str | None = None,
+    impresario_role: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
@@ -423,7 +424,7 @@ async def run_cdp_worker(
     to_agent = caller_agent or "dispatch"
     from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 
-    reroute = resolve_cdp_reroute(model_id)
+    reroute = resolve_cdp_reroute(model_id, impresario_role=impresario_role)
     admit_substrate = REROUTE_ADMIT_SUBSTRATE if reroute is not None else None
     publish_cdp_kwargs(
         CdpGenerateAdmitted,
@@ -523,6 +524,7 @@ async def run_cdp_worker(
                 thread_id=thread_id,
                 caller_agent=caller_agent,
                 max_wall_s=wall,
+                impresario_role=impresario_role,
             )
             await finalize_cdp_generate(
                 result=result,

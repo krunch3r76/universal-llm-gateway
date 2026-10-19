@@ -604,7 +604,22 @@ async def dispatch_cdp_generate(
         else ""
     )
     declared_parent = parent_thread
-    cdp_reroute_active = resolve_cdp_reroute(model) is not None
+    generation_opts = getattr(body, "generation_options", None)
+    impresario_role: str | None = None
+    if isinstance(generation_opts, dict):
+        imp = generation_opts.get("impresario")
+        if isinstance(imp, dict):
+            role_raw = imp.get("role")
+            if isinstance(role_raw, str) and role_raw.strip():
+                impresario_role = role_raw.strip()
+    if impresario_role is None:
+        if contract in ("code-review", "delivery-review", "check-review"):
+            impresario_role = "critic"
+        elif contract in ("sketch", "confer"):
+            impresario_role = "sketch"
+    cdp_reroute_active = (
+        resolve_cdp_reroute(model, impresario_role=impresario_role) is not None
+    )
     admit_substrate = REROUTE_ADMIT_SUBSTRATE if cdp_reroute_active else CDP_SUBSTRATE
     if is_operator_proxy_mission_purpose(purpose):
         parent_thread, mission_kind = default_operator_seat_binding(
@@ -758,7 +773,7 @@ async def dispatch_cdp_generate(
                 mission_kind=mission_kind,
                 synthesized=declared_parent is None,
             )
-        opts = getattr(body, "generation_options", None) or {}
+        opts = generation_opts if isinstance(generation_opts, dict) else {}
         from .cdp_dispatch_topic import extract_cdp_dispatch_topic
 
         prompt_for_topic = prompt if isinstance(prompt, str) else None
@@ -779,6 +794,8 @@ async def dispatch_cdp_generate(
         }
         if contract is not None:
             worker_kwargs["contract"] = contract
+        if impresario_role is not None:
+            worker_kwargs["impresario_role"] = impresario_role
         if isinstance(opts, dict):
             if "harvest_source" in opts:
                 worker_kwargs["harvest_source"] = opts["harvest_source"]

@@ -237,3 +237,58 @@ async def test_run_cdp_worker_uses_reroute_not_cdp_generate(
     finalize.assert_awaited_once()
     assert finalize.await_args.kwargs["result"].substrate == "cursor-sdk-reroute"
 
+
+@pytest.mark.asyncio
+async def test_run_cdp_worker_critic_contract_skips_reroute_when_flag_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when admit omits impresario_role and critic CDP still reroutes to Argon."""
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, _ENABLED_REROUTE_POLICY)
+
+    monkeypatch.setattr(worker, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
+    finalize = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        finalize,
+    )
+
+    reroute_mock = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_cursor_reroute.run_cdp_reroute_via_cursor_sdk",
+        reroute_mock,
+    )
+    cdp_result = CdpGenerateResult(
+        ok=True,
+        body="review body",
+        execution_id="exec-critic",
+        satellite_execution_id="cdp-1",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="opus-5.5-high",
+        archive_uri="cortex://notes/system/threads/cdp-ask-archive-exec-critic.md",
+        substrate="cdp",
+    )
+    generate_mock = MagicMock(return_value=cdp_result)
+    monkeypatch.setattr(worker, "run_cdp_generate", generate_mock)
+
+    await worker.run_cdp_worker(
+        execution_id="exec-critic",
+        model_id="cdp/opus-5.5-high",
+        thread_id="88002",
+        caller_agent="dispatch",
+        prompt_uri="cortex://notes/prompt.md",
+        request_id="req-critic",
+        contract="code-review",
+        impresario_role="critic",
+    )
+
+    reroute_mock.assert_not_called()
+    generate_mock.assert_called_once()
+    finalize.assert_awaited_once()
+

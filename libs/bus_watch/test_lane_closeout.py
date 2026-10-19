@@ -541,14 +541,21 @@ def test_observe_terminal_lane_closeouts_batches_bulk_abandoned() -> None:
         return []
 
     with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
-        posted = observe_terminal_lane_closeouts(
-            "11667",
-            lanes,
-            state,
-            client,
-            fetch_turns=fetch,
-            parent_thread={"status": "active", "updated_at": "2026-10-12T00:00:00Z"},
-        )
+        with patch(
+            "bus_watch.lane_closeout_parse._get",
+            return_value={"turns": []},
+        ):
+            posted = observe_terminal_lane_closeouts(
+                "11667",
+                lanes,
+                state,
+                client,
+                fetch_turns=fetch,
+                parent_thread={
+                    "status": "active",
+                    "updated_at": "2026-10-18T00:00:00Z",
+                },
+            )
     assert client.post.call_count == 1
     payload = client.post.call_args.kwargs["json"]
     assert (
