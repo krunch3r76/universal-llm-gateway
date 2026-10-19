@@ -6,14 +6,33 @@ import asyncio
 from functools import partial
 from typing import Any
 
-from implement_admission.conductor_materialize import rematerialize_context_from_dispatch
+from implement_admission.conductor_materialize import (
+    rematerialize_context_from_dispatch,
+)
 
 from .generate_wrap import prepare_conductor_packet
 from .handoff import _workspaces_root
 from .stargate_cortex_reader import StargateCortexReader
 
-
 CONDUCTOR_PACKET_MAX_BYTES = 256 * 1024
+
+
+def reject_oversized_conductor_packet(markdown: str, *, request_id: str) -> None:
+    """422 before any GIW call when the packet exceeds the named cap."""
+    if len(markdown.encode("utf-8")) <= CONDUCTOR_PACKET_MAX_BYTES:
+        return
+    from .admission import FrontierEndpointError
+
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="conductor",
+        reason=(
+            f"conductor packet exceeds cap {CONDUCTOR_PACKET_MAX_BYTES} bytes "
+            "before GIW admission"
+        ),
+        status_code=422,
+        code="conductor_packet_too_large",
+    )
 
 
 async def enrich_conductor_admit_plan(
@@ -89,19 +108,7 @@ async def enrich_conductor_admit_plan(
         ),
     )
     markdown = wrap.packet_markdown or ""
-    if len(markdown.encode("utf-8")) > CONDUCTOR_PACKET_MAX_BYTES:
-        from .admission import FrontierEndpointError
-
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="conductor",
-            reason=(
-                f"conductor packet exceeds cap {CONDUCTOR_PACKET_MAX_BYTES} bytes "
-                "before GIW admission"
-            ),
-            status_code=422,
-            code="conductor_packet_too_large",
-        )
+    reject_oversized_conductor_packet(markdown, request_id=request_id)
     out = dict(plan)
     out["source_ref"] = str(source_ref)
     out["packet_markdown"] = markdown

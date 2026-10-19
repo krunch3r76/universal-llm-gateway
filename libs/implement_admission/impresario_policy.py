@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 import yaml
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare_id
@@ -89,7 +90,9 @@ def _canonical_impresario_block(policy: dict[str, Any]) -> str:
     block = policy.get("impresario")
     if not isinstance(block, dict):
         return ""
-    return yaml.safe_dump({"impresario": block}, sort_keys=True, default_flow_style=False)
+    return yaml.safe_dump(
+        {"impresario": block}, sort_keys=True, default_flow_style=False
+    )
 
 
 def policy_snapshot_sha256(*, path: Path | None = None) -> str:
@@ -98,7 +101,9 @@ def policy_snapshot_sha256(*, path: Path | None = None) -> str:
     return hashlib.sha256(_canonical_impresario_block(policy).encode()).hexdigest()
 
 
-def _parse_seat_entry(raw: object, *, default_model: str, default_effort: str) -> SeatSpec:
+def _parse_seat_entry(
+    raw: object, *, default_model: str, default_effort: str
+) -> SeatSpec:
     if not isinstance(raw, dict):
         return _seat(default_model, default_effort)
     model = str(raw.get("model") or default_model).strip()
@@ -117,7 +122,9 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     if under not in ALLOWED_UNDER_SUBSTRATES:
         msg = f"impresario.under_substrate {under!r} not in {sorted(ALLOWED_UNDER_SUBSTRATES)!r}"
         raise ValueError(msg)
-    allowed_under = raw.get("allowed_under_substrates") or list(ALLOWED_UNDER_SUBSTRATES)
+    allowed_under = raw.get("allowed_under_substrates") or list(
+        ALLOWED_UNDER_SUBSTRATES
+    )
     if not isinstance(allowed_under, list):
         msg = "impresario.allowed_under_substrates must be a list"
         raise ValueError(msg)
@@ -125,9 +132,13 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     driver_raw = raw.get("driver") or {}
     mech_raw = raw.get("mechanical") or {}
     critic_raw = raw.get("critic") or {}
-    driver = _parse_seat_entry(driver_raw, default_model="cursor/grok-4.7", default_effort="high")
+    driver = _parse_seat_entry(
+        driver_raw, default_model="cursor/grok-4.7", default_effort="high"
+    )
     mechanical = _parse_seat_entry(
-        mech_raw, default_model=_HYBRID_MECHANICAL_MODEL, default_effort=_HYBRID_MECHANICAL_EFFORT
+        mech_raw,
+        default_model=_HYBRID_MECHANICAL_MODEL,
+        default_effort=_HYBRID_MECHANICAL_EFFORT,
     )
     critic = _parse_seat_entry(
         critic_raw, default_model="cursor/gemini-4-argon", default_effort="high"
@@ -145,7 +156,9 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         if model.startswith("cursor/"):
             bare = canonical_cursor_bare_id(model)
             if bare not in CURSOR_MODEL_CAPABILITIES:
-                msg = f"impresario seat model {model!r} not in CURSOR_MODEL_CAPABILITIES"
+                msg = (
+                    f"impresario seat model {model!r} not in CURSOR_MODEL_CAPABILITIES"
+                )
                 raise ValueError(msg)
     for model in allowed_critics:
         if model.startswith("cursor/"):
@@ -186,7 +199,10 @@ def impresario_registry_errors(policy: dict[str, Any]) -> list[str]:
         return errors
     if parsed.under_substrate == "hybrid":
         mech = parsed.mechanical
-        if mech.model != _HYBRID_MECHANICAL_MODEL or mech.seat != _HYBRID_MECHANICAL_SEAT:
+        if (
+            mech.model != _HYBRID_MECHANICAL_MODEL
+            or mech.seat != _HYBRID_MECHANICAL_SEAT
+        ):
             errors.append(
                 "under_substrate hybrid requires impresario.mechanical "
                 f"model {_HYBRID_MECHANICAL_MODEL!r} on seat {_HYBRID_MECHANICAL_SEAT!r}"
@@ -196,7 +212,10 @@ def impresario_registry_errors(policy: dict[str, Any]) -> list[str]:
             wf = workflows.get("mechanical_implement")
             if isinstance(wf, dict):
                 wf_model = wf.get("model")
-                if isinstance(wf_model, str) and wf_model.strip() != _HYBRID_MECHANICAL_MODEL:
+                if (
+                    isinstance(wf_model, str)
+                    and wf_model.strip() != _HYBRID_MECHANICAL_MODEL
+                ):
                     errors.append(
                         "under_substrate hybrid requires "
                         f"workflows.mechanical_implement.model {_HYBRID_MECHANICAL_MODEL!r}"
@@ -244,7 +263,10 @@ def _validate_effort_for_model(model: str, canonical_rung: str) -> None:
     if wire_effort == "max" and "max" not in effort_knob.accepted:
         if "xhigh" in effort_knob.accepted:
             return
-    if wire_effort not in effort_knob.accepted and canonical_rung not in effort_knob.accepted:
+    if (
+        wire_effort not in effort_knob.accepted
+        and canonical_rung not in effort_knob.accepted
+    ):
         raise ProtocolError(
             code="CRITIC_EFFORT_UNSUPPORTED",
             message=f"model {model!r} does not accept effort {canonical_rung!r}",
@@ -252,22 +274,6 @@ def _validate_effort_for_model(model: str, canonical_rung: str) -> None:
             retryable=False,
             data={"model": model, "effort": canonical_rung},
         )
-
-
-def render_knobs(seat: SeatSpec) -> dict[str, Any]:
-    """Translate canonical rung to wire knobs for *seat*."""
-    model = seat.model
-    rung = seat.effort_rung
-    _validate_effort_for_model(model, rung)
-    if model.startswith("cdp/"):
-        return {"reasoning_effort": rung}
-    wire = rung
-    if rung == "extra":
-        wire = "xhigh"
-    knobs: dict[str, str] = {"effort": wire}
-    if model.startswith("cursor/grok"):
-        knobs["fast"] = "false"
-    return {"model_knobs": knobs}
 
 
 def _role_seat(
@@ -337,69 +343,3 @@ def resolve_roles(
         restore=restore,
         policy=pol,
     )
-
-
-def validate_impresario_envelope(
-    envelope: Mapping[str, Any] | None,
-    *,
-    expected_sha: str | None = None,
-) -> dict[str, Any]:
-    """Validate commission envelope; raise ``ProtocolError`` when incomplete."""
-    if not isinstance(envelope, dict):
-        raise ProtocolError(
-            code="IMPRESARIO_ENVELOPE_MISSING",
-            message="conductor admit requires generation_options.impresario envelope",
-            source="rpc",
-            retryable=False,
-        )
-    house_root = envelope.get("house_root")
-    surface = envelope.get("surface")
-    if not house_root or not surface:
-        raise ProtocolError(
-            code="IMPRESARIO_ENVELOPE_MISSING",
-            message="impresario envelope requires house_root and surface",
-            source="rpc",
-            retryable=False,
-        )
-    if surface not in ALLOWED_SURFACES:
-        raise ProtocolError(
-            code="IMPRESARIO_ENVELOPE_MISSING",
-            message=f"surface {surface!r} not in {sorted(ALLOWED_SURFACES)!r}",
-            source="rpc",
-            retryable=False,
-        )
-    sha = envelope.get("policy_sha256")
-    live_sha = expected_sha or policy_snapshot_sha256()
-    if not sha or str(sha) != live_sha:
-        raise ProtocolError(
-            code="POLICY_SNAPSHOT_MISMATCH",
-            message="impresario policy_sha256 does not match live snapshot",
-            source="rpc",
-            retryable=False,
-            data={"expected": live_sha, "got": sha},
-        )
-    return dict(envelope)
-
-
-def validate_conductor_generation_options(
-    generation_options: Mapping[str, Any] | None,
-) -> None:
-    """Gate conductor admits when ``generation_options`` is present."""
-    if generation_options is None:
-        return
-    if not isinstance(generation_options, dict):
-        raise ProtocolError(
-            code="IMPRESARIO_ENVELOPE_MISSING",
-            message="generation_options must be a mapping",
-            source="rpc",
-            retryable=False,
-        )
-    imp = generation_options.get("impresario")
-    if imp is None:
-        raise ProtocolError(
-            code="IMPRESARIO_ENVELOPE_MISSING",
-            message="generation_options present but impresario envelope missing",
-            source="rpc",
-            retryable=False,
-        )
-    validate_impresario_envelope(imp if isinstance(imp, dict) else None)

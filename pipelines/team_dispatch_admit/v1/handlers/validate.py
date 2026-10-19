@@ -11,6 +11,10 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._envelope import is_cursor_substrate_model, reject_envelope
+from .conductor_defaults import (
+    validate_conductor_policy_drift,
+    validate_conductor_tip_required,
+)
 
 
 def _generate_teaching_data(expected_axis: str) -> dict[str, Any]:
@@ -60,6 +64,12 @@ def evaluate_validate(opts: dict[str, Any]) -> dict[str, Any]:
     seat = opts.get("seat")
     model = opts.get("model")
     job = opts.get("job")
+
+    if str(job or "").strip().lower() == "conductor":
+        for check in (validate_conductor_policy_drift, validate_conductor_tip_required):
+            reject = check(opts)
+            if reject is not None:
+                return reject
 
     if (
         str(job or "").strip().lower() == "wrap"

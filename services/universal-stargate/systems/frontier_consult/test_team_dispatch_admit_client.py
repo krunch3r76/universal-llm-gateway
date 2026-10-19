@@ -153,3 +153,81 @@ def test_rejected_emits_once_on_reject_envelope() -> None:
             )
     assert len(events) == 1
     assert events[0].signal == "frontier.admit.rejected"
+
+
+def test_continuation_emits_hop_admitted_and_zero_progress() -> None:
+    events: list[object] = []
+    plan = {
+        "admitted": True,
+        "backend": "cursor_sdk",
+        "job": "conductor",
+        "hop_seq": 2,
+        "thread_id": "t-ac7",
+        "work_key": "todo:ac7",
+        "hop_from": "pred",
+        "hop_reason": "fold",
+        "selected_seat_role": "mechanical",
+        "tip_mutated": False,
+        "child_dispatched": False,
+        "turn0_budget": {
+            "total_turn0_bytes": 17723,
+            "policy_sha256": "abc123",
+        },
+        "model": "cursor/grok-4.7",
+    }
+    client = MagicMock()
+    client.post.return_value = _ok_response(plan)
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    with patch(
+        "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+        return_value=client,
+    ):
+        run_team_dispatch_admit_sync(
+            body=_body(model="cursor/grok-4.7", job="conductor"),
+            request_id="req-ac7",
+            event_publisher=events.append,
+        )
+    signals = [event.signal for event in events]
+    assert signals.count("frontier.conductor.hop.admitted") == 1
+    assert signals.count("frontier.conductor.hop.zero_progress") == 1
+    decided = next(
+        event for event in events if event.signal == "frontier.admit.decided"
+    )
+    assert decided.payload["turn0_budget"]["total_turn0_bytes"] == 17723
+    assert decided.payload["turn0_budget"]["policy_sha256"] == "abc123"
+
+
+def test_conductor_dead_pipeline_does_not_birth_scoreboard(tmp_path) -> None:
+    from implement_admission.conductor_score_journal import read_tip
+
+    events: list[object] = []
+    client = MagicMock()
+    client.post.side_effect = ConnectionError("pipeline down")
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    slug = "ac9-dead-pipeline"
+    with (
+        patch(
+            "systems.frontier_consult.team_dispatch_admit_client.make_sync_client",
+            return_value=client,
+        ),
+        patch(
+            "implement_admission.conductor_score_journal.birth_scoreboard",
+            side_effect=AssertionError("scoreboard birth"),
+        ),
+    ):
+        with pytest.raises(FrontierEndpointError) as exc:
+            run_team_dispatch_admit_sync(
+                body=_body(
+                    model="cursor/grok-4.7",
+                    job="conductor",
+                    source_ref=f"todo:{slug}",
+                ),
+                request_id="req-ac9",
+                event_publisher=events.append,
+            )
+    assert exc.value.status_code == 503
+    assert exc.value.code == "team_dispatch_admit_unavailable"
+    assert read_tip(slug, files_root=tmp_path) is None
+    assert [event.signal for event in events] == ["frontier.admit.unavailable"]

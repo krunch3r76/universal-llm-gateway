@@ -3,9 +3,50 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from .conductor_hop_seq import resolve_next_hop_seq_from_row
+
+
+def _fold_closeout_delta(row: dict[str, Any], rec: dict[str, Any]) -> str | None:
+    """Fold a closeout scoreboard delta before admit.
+
+    Returns the post-fold tip sha, ``""`` when the closeout has no delta,
+    or None when the fold fails (``auto_fold_failed`` — do not admit).
+    """
+    delta = rec.get("scoreboard_next_body")
+    if not isinstance(delta, str) or not delta.strip():
+        return ""
+    work_key = str(row.get("work_key") or rec.get("source_ref") or "")
+    if not work_key.startswith("todo:"):
+        return None
+    slug = work_key.split(":", 1)[1].strip()
+    if not slug:
+        return None
+    raw_root = row.get("_files_root")
+    files_root = Path(str(raw_root)) if raw_root else None
+    from implement_admission.conductor_score_journal import forward_mutate_tip, read_tip
+
+    prior = read_tip(slug, files_root=files_root)
+    if prior is None:
+        return None
+    result = forward_mutate_tip(
+        slug,
+        next_body=delta,
+        seat="conductor-score",
+        dispatch_id=str(row.get("dispatch_id") or "") or None,
+        reason="auto_fold",
+        rows=tuple(),
+        delta="closeout scoreboard delta",
+        files_root=files_root,
+    )
+    if result.rejected_reason:
+        return None
+    after = read_tip(slug, files_root=files_root)
+    if after is None:
+        return None
+    return after[1]
 
 
 def build_hop_team_dispatch_body(
@@ -33,6 +74,9 @@ def build_hop_team_dispatch_body(
     thread_id = str(row.get("thread_id") or "")
     source_ref = hop._resolve_source_ref(row, rec)
     if not thread_id or not source_ref:
+        return None
+    folded_sha = _fold_closeout_delta(row, rec)
+    if folded_sha is None:
         return None
     next_seq = resolve_next_hop_seq_from_row(row, rec, ledger_rows=ledger_rows)
     if next_seq is None:
@@ -88,4 +132,7 @@ def build_hop_team_dispatch_body(
     body["hop_from"] = predecessor_id
     body["hop_seq"] = next_seq
     body["hop_reason"] = hop_reason
+    if folded_sha:
+        generation_options["scoreboard_tip_sha"] = folded_sha
+        body["generation_options"] = generation_options
     return body
