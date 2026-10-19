@@ -7,7 +7,7 @@
         "content": [
           {
             "type": "text",
-            "text": "<timestamp>Sunday, Oct 18, 2026, 8:40 PM (UTC-7)</timestamp>\n<user_query>Do the structural sample task.</user_query>\n<system_reminder>binding instruction</system_reminder>\n<memory_context>ctx-id-1</memory_context>"
+            "text": "<timestamp>Sunday, Oct 18, 2026, 8:40 PM (UTC-7)</timestamp>\n<user_query>Do the structural sample task.</user_query>\n<system_reminder>binding instruction\nmust-not-leak-reminder</system_reminder>\n<memory_context>ctx-id-1\nmust-not-leak-memory</memory_context>"
           }
         ]
       }
@@ -25,6 +25,13 @@
             "name": "SendToUser",
             "input": {
               "text": "Full user-visible reply without summarization."
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "SendToAgent",
+            "input": {
+              "text": "Full agent-visible body without summarization."
             }
           },
           {
@@ -110,6 +117,35 @@
           }
         ]
       }
+    },
+    {
+      "role": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "name": "Read",
+            "content": [
+              {
+                "type": "text",
+                "text": "alpha line of the tool result\nbeta line stays intact"
+              },
+              {
+                "type": "text",
+                "text": "second block also full BLOCKLISTEND"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "[tool call: SendToAgent]"
+    },
+    {
+      "role": "user",
+      "content": "[GROK_BOT_HIDDEN_PROMPT][cue] only hidden\nsecond hidden line must stay on the same line"
     }
   ],
   "meta": {

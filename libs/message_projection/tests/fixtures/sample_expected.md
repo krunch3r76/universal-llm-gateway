@@ -13,6 +13,13 @@ tool_use: SendToUser
 }
 ```
 
+tool_use: SendToAgent
+```
+{
+  "text": "Full agent-visible body without summarization."
+}
+```
+
 tool_use: Task
 ```
 {
@@ -64,3 +71,22 @@ MARKER8KMARKER8KMARKER8KMARKER8KMARKER8KMARKER8KMARKER8KMARKER8KMARKER8KMARKER8K
 ## Turn 7 - 2026-10-18T20:40:00-07:00 PT - user
 
 only hidden
+
+## Turn 8 - 2026-10-18T20:40:00-07:00 PT - user
+
+tool_result: Read
+```
+alpha line of the tool result
+beta line stays intact
+
+second block also full BLOCKLISTEND
+```
+
+## Turn 9 - 2026-10-18T20:40:00-07:00 PT - assistant
+
+[tool call: SendToAgent]
+[source-truncated]
+
+## Turn 10 - 2026-10-18T20:40:00-07:00 PT - user
+
+only hidden second hidden line must stay on the same line

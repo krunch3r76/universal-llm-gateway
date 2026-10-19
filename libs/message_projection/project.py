@@ -1,4 +1,11 @@
-"""Project structured transcript messages to deterministic markdown."""
+"""Project chat-transcript message rows into deterministic markdown for indexing.
+
+The RAG indexer calls ``project_messages`` with a messages-format list and a
+small meta dict before chunking. The function is pure: no I/O, no clock, and
+the same inputs always return the same string. Hidden prompt tags are stripped
+or collapsed to one line, and bytes the source already cut are marked
+``[source-truncated]`` instead of being repaired or treated as complete.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ MEMORY_CONTEXT_RE = re.compile(r"<memory_context>.*?</memory_context>", re.DOTAL
 TIMESTAMP_EL_RE = re.compile(r"<timestamp>.*?</timestamp>", re.DOTALL)
 TIMESTAMP_INNER_RE = re.compile(r"<timestamp>(.*?)</timestamp>", re.DOTALL)
 GROK_HIDDEN_RE = re.compile(r"\[GROK_BOT_HIDDEN_PROMPT\]\s*(?:\[[^\]]*\])?")
+TOOL_CALL_PLACEHOLDER_RE = re.compile(r"\[tool call:\s*[^\]]+\]")
 ZONE_SUFFIX_RE = re.compile(r"\s*\((?:UTC-7|PDT|PST)\)\s*$")
 SOURCE_TRUNCATED_LINE = "[source-truncated]"
 
@@ -31,8 +39,11 @@ def project_messages(messages: list[dict], meta: dict) -> str:
     """Render ``messages`` as markdown turns using ``meta`` for fallback timestamps.
 
     Each input row is ``{role, content}`` or ReadTranscript ``{role, message:{content}}``.
-    Block-shaped ``content`` lists are flattened without lossy summarization; thinking blocks
-    are omitted. The same ``messages`` and ``meta`` always yield the same string.
+    Block-shaped ``content`` lists and tool_result text blocks are copied in full
+    inside fences. Thinking blocks are omitted. A ``[tool call: NAME]`` stub with
+    no tool input is kept and marked ``[source-truncated]``. Hidden tags collapse
+    to one line. No I/O. The same ``messages`` and ``meta`` always yield the same
+    string, including a second call on the same objects.
     """
     if not messages:
         return ""
@@ -159,10 +170,24 @@ def _transform_text(text: str) -> str:
     out = SYSTEM_REMINDER_RE.sub("[system-reminder]", out)
     out = MEMORY_CONTEXT_RE.sub("[memory-context]", out)
     out = GROK_HIDDEN_RE.sub("", out)
-    out = out.strip()
+    if _hidden_prompt_is_whole_message(text):
+        out = " ".join(out.split())
+    else:
+        out = out.strip()
     if not out:
         return "[hidden-prompt]"
     return out
+
+
+def _hidden_prompt_is_whole_message(text: str) -> bool:
+    """True when the row is a hidden prompt, so its residue must be one line."""
+    core = text.strip()
+    wrapped = USER_QUERY_RE.fullmatch(core)
+    if wrapped:
+        core = wrapped.group(1).strip()
+    return core.startswith("[GROK_BOT_HIDDEN_PROMPT]") or core.startswith(
+        "[SAND_HIDDEN_PROMPT]"
+    )
 
 
 def _format_tool_use(block: dict[str, Any]) -> tuple[str, bool]:
@@ -182,10 +207,43 @@ def _format_tool_result(block: dict[str, Any]) -> tuple[str, bool]:
     raw = block.get("result")
     if raw is None:
         raw = block.get("content")
-    payload, truncated = _serialize_tool_payload(raw)
+    if _is_content_block_list(raw):
+        payload, truncated = _render_content_block_list(raw)
+    else:
+        payload, truncated = _serialize_tool_payload(raw)
     fence = _fence_for(payload)
     segment = f"tool_result: {name}\n{fence}\n{payload}\n{fence}"
     return segment, truncated
+
+
+def _is_content_block_list(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    return all(
+        isinstance(item, dict) and isinstance(item.get("type"), str) for item in value
+    )
+
+
+def _render_content_block_list(blocks: list[Any]) -> tuple[str, bool]:
+    """Join tool_result text blocks verbatim so the fence holds the full text."""
+    parts: list[str] = []
+    truncated = False
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "thinking":
+            continue
+        if block.get("type") == "text":
+            text = block.get("text", "")
+            if not isinstance(text, str):
+                text = str(text)
+            parts.append(text)
+            truncated = truncated or _payload_is_truncated(text)
+            continue
+        payload, flag = _serialize_tool_payload(block)
+        parts.append(payload)
+        truncated = truncated or flag
+    return "\n\n".join(parts), truncated
 
 
 def _serialize_tool_payload(value: Any) -> tuple[str, bool]:
@@ -223,6 +281,8 @@ def _ellipsis_in_middle(text: str) -> bool:
 
 def _payload_is_truncated(text: str) -> bool:
     if TRUNCATION_MARKER_RE.search(text):
+        return True
+    if TOOL_CALL_PLACEHOLDER_RE.search(text):
         return True
     if BACKGROUND_TASK_LABEL_RE.search(text):
         return True
