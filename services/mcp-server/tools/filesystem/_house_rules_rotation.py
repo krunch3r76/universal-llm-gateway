@@ -6,13 +6,16 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools._durable_write import durable_write_text
+from tools._durable_write import durable_rmw_text
 from tools._hashing import format_sha256_uri
 
 from ._write_authority import HOUSE_RULES_MAX_BYTES, RULINGS_ARCHIVE_URI
 
 _HOUSE_RULES_SECTION = "HOUSE RULES"
 _RULING_LINE = re.compile(r"^- (K\d+|a:\d+|\|)")
+_ROTATION_POINTER = (
+    f"<!-- rotated rulings archived in {RULINGS_ARCHIVE_URI} -->\n"
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,14 @@ def _oldest_ruling_line_index(lines: list[str], indices: list[int]) -> int | Non
     return indices[-1] if indices else None
 
 
+def _ensure_rotation_pointer(prefix: str, section_body: str, suffix: str) -> str:
+    if _ROTATION_POINTER.strip() in section_body or RULINGS_ARCHIVE_URI in section_body:
+        return prefix + section_body + suffix
+    if section_body and not section_body.startswith("\n"):
+        section_body = "\n" + section_body
+    return prefix + _ROTATION_POINTER + section_body + suffix
+
+
 def _trim_oldest_rulings(text: str, *, limit_bytes: int) -> tuple[str, list[str]]:
     rotated: list[str] = []
     current = text
@@ -90,6 +101,19 @@ def _trim_oldest_rulings(text: str, *, limit_bytes: int) -> tuple[str, list[str]
         rotated.append(row.rstrip("\r\n"))
         section_body = "".join(lines)
         current = prefix + section_body + suffix
+    if rotated:
+        prefix, section_body, suffix = _split_house_rules_section(current)
+        current = _ensure_rotation_pointer(prefix, section_body, suffix)
+        while len(current.encode("utf-8")) > limit_bytes:
+            lines = section_body.splitlines(keepends=True)
+            indices = _ruling_line_indices(section_body)
+            drop_idx = _oldest_ruling_line_index(lines, indices)
+            if drop_idx is None:
+                break
+            row = lines.pop(drop_idx)
+            rotated.append(row.rstrip("\r\n"))
+            section_body = "".join(lines)
+            current = prefix + section_body + suffix
     return current, rotated
 
 
@@ -115,11 +139,18 @@ def rotate_house_rules_to_fit(
     if not rotated or len(trimmed.encode("utf-8")) > limit_bytes:
         return None
     append_body = "".join(_format_archive_block(row) for row in rotated)
-    prior = archive_path.read_text(encoding="utf-8") if archive_path.is_file() else ""
-    archive_image = prior + append_body
     try:
         archive_path.parent.mkdir(parents=True, exist_ok=True)
-        archive_written_sha256 = durable_write_text(archive_path, archive_image)
+
+        def _append_archive(prior: str) -> str:
+            return prior + append_body
+
+        rmw = durable_rmw_text(
+            archive_path,
+            _append_archive,
+            create_if_absent=True,
+        )
+        archive_written_sha256 = rmw.written_sha256
     except OSError:
         return None
     return HouseRulesRotationResult(

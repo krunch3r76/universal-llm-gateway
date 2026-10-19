@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bus_watch.digest_budget import build_budget_block
+from bus_watch.liaison_conductor_attention import filter_conductor_routine_attention
 from bus_watch.liaison_digest import (
     GEAR_PRESETS,
     _child_lanes,
@@ -14,7 +15,6 @@ from bus_watch.liaison_digest import (
     _merge_observe_lanes,
     build_digest,
     effective_policy,
-    filter_conductor_routine_attention,
     is_life_root,
 )
 
@@ -777,6 +777,71 @@ def test_digest_attention_includes_ready_row_class(
         item.get("kind") == "friction" and item.get("id") == "a:35997"
         for item in digest["attention"]
     )
+
+
+@patch("bus_watch.liaison_digest._lineage_lanes", return_value=[])
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_build_digest_l28_sibling_maestro_dead_letter(
+    _usage: object,
+    _lock: object,
+    mock_bus: object,
+    mock_get: object,
+    _child: object,
+    _unread: object,
+    _health: object,
+    _watchers: object,
+    _lineage: object,
+) -> None:
+    from datetime import UTC, datetime
+
+    now = datetime.now(tz=UTC)
+    old = now.timestamp() - 31 * 60
+    created = (
+        datetime.fromtimestamp(old, tz=UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+    def _get_side_effect(client, path, **kwargs):  # noqa: ANN001
+        thread = str(kwargs.get("thread") or "")
+        if path.startswith("/threads/16416"):
+            return {
+                "id": "16416",
+                "turn_count": 100,
+                "status": "active",
+                "unread_count": 0,
+            }
+        if path == "/turns" and thread == "18374":
+            return {
+                "turns": [
+                    {
+                        "turn_number": 6,
+                        "subject": "AMEND| batch-2",
+                        "from": "maestro",
+                        "read_at": None,
+                        "created_at": created,
+                    }
+                ]
+            }
+        if path == "/turns":
+            return {"turns": []}
+        if path.endswith("/lineage"):
+            return {"children": []}
+        return {}
+
+    mock_bus.return_value.__enter__.return_value = MagicMock()
+    mock_get.side_effect = _get_side_effect
+    state: dict = {"policy": {}}
+    digest = build_digest("16416", state, register="autonomous")
+    kinds = [item.get("kind") for item in digest.get("attention") or []]
+    assert "dead_letter_maestro_turn" in kinds
 
 
 def test_absorb_operator_edits_unions_relayed_watchers(tmp_path) -> None:  # noqa: ANN001

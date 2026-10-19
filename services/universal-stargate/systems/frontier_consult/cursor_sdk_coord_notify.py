@@ -179,6 +179,7 @@ async def post_coord_admit_pointer(
     prompt_turn_number: int | None = None,
     has_explicit_prompt_source: bool = False,
     admit_provenance: AdmitProvenanceContext | None = None,
+    bound_work_key: str | None = None,
 ) -> None:
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
@@ -196,7 +197,15 @@ async def post_coord_admit_pointer(
         if loop:
             return
     missing = admit_provenance.missing if admit_provenance is not None else ()
-    work_key = admit_provenance.work_key if admit_provenance is not None else None
+    work_key = (
+        admit_provenance.work_key
+        if admit_provenance is not None
+        else (
+            bound_work_key.strip()
+            if bound_work_key and bound_work_key.strip()
+            else None
+        )
+    )
     body_text = _admit_body(worker_thread_id=worker_thread_id, contract=contract)
     body_text = stamp_admit_turn_body(
         body_text, work_key=work_key, provenance_missing=missing

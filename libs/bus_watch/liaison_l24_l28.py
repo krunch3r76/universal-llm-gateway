@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from bus_watch.fable_lock import _derived_expires_at, fable_lock_path
+from bus_watch.fable_lock import _derived_expires_at, fable_lock_path, read_lock
 
 CDP_REPLY_SUBJECT_RE = re.compile(r"^cdp reply\s*[—-]\s*(\S+)", re.I)
 EXECUTION_ID_BODY_RE = re.compile(
@@ -197,6 +197,54 @@ def check_dead_letter_maestro_turns(
     return alerts, state
 
 
+def l28_scan_root_ids(
+    root_id: str,
+    lanes: list[dict[str, Any]],
+    policy: dict[str, Any],
+) -> set[str]:
+    """House root, child lane roots, and configured sibling roots for L28 scan."""
+    roots: set[str] = {root_id}
+    for lane in lanes or []:
+        if not isinstance(lane, dict):
+            continue
+        lane_id = str(lane.get("id") or "").strip()
+        if lane_id:
+            roots.add(lane_id)
+    sibling = policy.get("sibling_roots")
+    if sibling is None and root_id == "16416":
+        sibling = ("18374", "15851")
+    if isinstance(sibling, (list, tuple, set, frozenset)):
+        for item in sibling:
+            token = str(item or "").strip()
+            if token:
+                roots.add(token)
+    return roots
+
+
+def build_l28_scan_context(
+    client: Any,
+    bus_get: Any,
+    *,
+    root_id: str,
+    root_recent_turns: list[dict[str, Any]],
+    lanes: list[dict[str, Any]],
+    policy: dict[str, Any],
+    last_turns: int = 25,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """Fetch recent turns and seat locks for every L28 scan root."""
+    scan_ids = l28_scan_root_ids(root_id, lanes, policy)
+    turns_by_root: dict[str, list[dict[str, Any]]] = {
+        root_id: list(root_recent_turns or []),
+    }
+    locks_by_root: dict[str, dict[str, Any]] = {}
+    for thread_id in scan_ids:
+        if thread_id not in turns_by_root:
+            payload = bus_get(client, "/turns", thread=thread_id, last=last_turns) or {}
+            turns_by_root[thread_id] = list(payload.get("turns") or [])
+        locks_by_root[thread_id] = read_lock(thread_id)
+    return turns_by_root, locks_by_root
+
+
 def extend_digest_attention_l24_l28(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -233,7 +281,9 @@ def extend_digest_attention_l24_l28(
 
 
 __all__ = [
+    "build_l28_scan_context",
     "check_dead_letter_maestro_turns",
     "check_unrelayed_k43_replies",
     "extend_digest_attention_l24_l28",
+    "l28_scan_root_ids",
 ]

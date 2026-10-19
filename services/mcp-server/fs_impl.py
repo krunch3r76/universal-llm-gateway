@@ -125,6 +125,7 @@ def fs_impl(
     mode: str = "",
     thread: str | None = None,
     since: str = "",
+    include_worktrees: bool = False,
 ) -> dict[str, Any]:
     if not op:
         return {"error": "'op' is required"}
@@ -213,6 +214,7 @@ def fs_impl(
             "position": position,
             "all_occurrences": all_occurrences,
             "mode": mode,
+            "include_worktrees": include_worktrees,
         },
     )
     if contract_error is not None:
@@ -338,6 +340,7 @@ def fs_impl(
                 FS_WORKFLOW_HINTS,
                 mode=mode,
                 since=since,
+                include_worktrees=include_worktrees,
             )
         if isinstance(result, dict) and "error" not in result:
             attach_batch_key_remap(

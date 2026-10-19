@@ -263,7 +263,7 @@ def _param_provided(name: str, value: Any) -> bool:
     """True when a contract param carries a non-default (caller-supplied) value."""
     if name in ("line", "level"):
         return bool(value)  # int sentinel is 0
-    if name == "all_occurrences":
+    if name in ("all_occurrences", "include_worktrees"):
         return value is True
     if name == "section":
         return bool(str(value).strip())

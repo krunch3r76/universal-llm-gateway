@@ -367,7 +367,7 @@ def reconcile_holder_lost(
         lambda thread_id, execution_id: _post_holder_lost_turn(thread_id, execution_id)
     )
     live = [row for row in (projections or []) if isinstance(row, dict)]
-    from bus_watch.liaison_digest import apply_projection_holder_ids
+    from bus_watch.liaison_conductor_attention import apply_projection_holder_ids
 
     apply_projection_holder_ids(lanes, live)
     held = frozenset(str(x) for x in held_execution_ids)
