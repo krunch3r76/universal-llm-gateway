@@ -8,8 +8,6 @@ from typing import Any, override
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._envelope import pass_through_reject
-
 
 def evaluate_assemble(
     validate_out: dict[str, Any], defaults_out: dict[str, Any]

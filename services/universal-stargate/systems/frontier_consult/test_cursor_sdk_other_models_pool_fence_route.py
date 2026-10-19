@@ -8,8 +8,6 @@ import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from systems.frontier_consult import cursor_sdk_generate_prepare as prepare_mod
-
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 

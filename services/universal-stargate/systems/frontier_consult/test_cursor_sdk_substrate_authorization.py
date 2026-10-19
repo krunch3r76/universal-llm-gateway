@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import pytest
 from fastapi import Response
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 from pydantic import ValidationError
 
-from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
-
 from .admission import FrontierEndpointError
-
-resolve_cursor_sdk_generate_target = admit_pipeline.resolve_cursor_sdk_generate_target
 from .conftest import dispatch_cursor_sdk_generate_mock
 from .route import TeamDispatchGenerateBody, team_dispatch
+
+resolve_cursor_sdk_generate_target = (
+    admit_pipeline.resolve_cursor_sdk_generate_target
+)
 
 
 def test_cloud_role_with_cursor_model_rejects_sdk_substrate_required() -> None:

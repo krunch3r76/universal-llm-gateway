@@ -193,7 +193,9 @@ async def prepare_cursor_sdk_generate(
     to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
-    fence_pin = model if requested_model_pin is _UNSET_MODEL_PIN else requested_model_pin
+    fence_pin = (
+        model if requested_model_pin is _UNSET_MODEL_PIN else requested_model_pin
+    )
     reject_other_models_pool_generate(
         request_id=request_id,
         role=role,

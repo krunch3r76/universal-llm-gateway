@@ -19,6 +19,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from implement_admission.drift_gates import DriftGateState
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 from pydantic import ValidationError
 
 from .admission import (
@@ -573,7 +574,10 @@ def test_h1d_route_web_implement_seat_and_contract(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-implement needs job=implement. Spec step 3 item 16: role does not fill it."""
+    """role=web-implement needs job=implement.
+
+    Spec step 3 item 16: role does not fill it.
+    """
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-wi"))
 
@@ -963,7 +967,10 @@ def test_hc3_cursor_implement_role_yields_absent_contract(tmp_path: Path) -> Non
 
 
 def test_derive_contract_absent_without_signals(tmp_path: Path) -> None:
-    """Spec step 3 item 16: derive_contract with no signals is absent, not none or answer."""
+    """Spec step 3 item 16: derive_contract with no signals is absent.
+
+    Not none or answer.
+    """
     contract, source = derive_contract(
         source_ref=None,
         packet_path=None,
@@ -2414,15 +2421,13 @@ def test_v2_resolve_handoff_seat_alias() -> None:
 # Step 6 — gate_a2, widened gate_a, materialization_mode
 # ---------------------------------------------------------------------------
 
-_IMPLEMENT_PACKET_FM = """\
+_IMPLEMENT_PACKET_FM = f"""\
 ---
 source_ref: todo:traced
 ---
 <scope>Goal: x.</scope>
 <invariants>x
-- Use the `architecture-invariants` skill (canonical slug — seat self-fetches; ¬ fs-read skill body)
-- Use the `ulg-architecture` skill (canonical slug — seat self-fetches; ¬ fs-read skill body)
-- Use the `docstring-quality` skill (canonical slug — seat self-fetches; ¬ fs-read skill body)</invariants>
+{_ARCH_SKILL_REFS}</invariants>
 <task_guidance>## Acceptance criteria
 1. It works.</task_guidance>
 <corpus>the artifact</corpus>
@@ -3277,10 +3282,10 @@ def test_t4_cursor_sdk_role_rejected_on_generate() -> None:
 
 
 def test_t4b_resolve_auto_seat_generate_target_default_model() -> None:
-    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
-
-    to_agent, family, platform, model = admit_pipeline.resolve_auto_seat_generate_target(
-        "cursor-sdk", model=None, request_id="req-t4b"
+    to_agent, family, platform, model = (
+        admit_pipeline.resolve_auto_seat_generate_target(
+            "cursor-sdk", model=None, request_id="req-t4b"
+        )
     )
     assert to_agent == "cursor-sdk"
     assert family == "cursor"
@@ -3294,8 +3299,6 @@ def test_t4c2_bare_auto_resolves_to_cursor_auto() -> None:
     Breaks when a caller sends ``auto`` and admission still demands a
     ``cursor/`` prefix (sdk_generate_model_invalid).
     """
-    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
-
     _to, _f, _p, model = admit_pipeline.resolve_auto_seat_generate_target(
         "cursor-sdk",
         model="auto",
@@ -3305,8 +3308,6 @@ def test_t4c2_bare_auto_resolves_to_cursor_auto() -> None:
 
 
 def test_t4c_resolve_auto_seat_generate_target_explicit_model() -> None:
-    from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
-
     _to, _f, _p, model = admit_pipeline.resolve_auto_seat_generate_target(
         "cursor-sdk",
         model="cursor/claude-opus-4-8",
