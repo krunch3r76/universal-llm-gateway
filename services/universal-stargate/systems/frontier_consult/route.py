@@ -720,9 +720,7 @@ async def team_dispatch(
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    admit_provenance = build_team_dispatch_admit_provenance(
-        body, request_id=request_id
-    )
+    admit_provenance = build_team_dispatch_admit_provenance(body, request_id=request_id)
     if admit_provenance is not None:
         emit_admit_provenance_missing_event(admit_provenance)
     if body.op in ("claim", "claim_release", "occupancy"):
@@ -953,6 +951,7 @@ async def team_dispatch(
                     request_id=request_id,
                     body=body,
                     response=response,
+                    admit_provenance=admit_provenance,
                 )
             except FrontierEndpointError as exc:
                 return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -984,6 +983,7 @@ async def team_dispatch(
                     request_id=request_id,
                     body=body,
                     response=response,
+                    admit_provenance=admit_provenance,
                 )
             except FrontierEndpointError as exc:
                 return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -1031,9 +1031,18 @@ async def frontier_dispatch(
     Agents: use MCP ``team_dispatch`` (``job=freeform`` for inline-only,
     API roles for tool-loop consults). ``POST /api/v1/team/dispatch`` is the
     role-envelope HTTP twin of MCP ``team_dispatch``.
+
+    This door posts no agent-bus admit turn. A blank caller, lane, or work_key
+    is flagged on ``dispatch.admit.provenance_missing`` and on
+    ``provenance_missing`` in the 202 body. The admit is not refused.
     """
+    request_id = uuid.uuid4().hex[:12]
+    admit_provenance = build_team_dispatch_admit_provenance(body, request_id=request_id)
+    if admit_provenance is not None:
+        emit_admit_provenance_missing_event(admit_provenance)
     req = FrontierGenerateRequest(**_normalize_op_body(body))
-    return await _dispatch(req, response)
+    result = await _dispatch(req, response)
+    return finalize_team_dispatch_admit_response(result, admit_provenance)
 
 
 # ---- handoff: synchronous web-seat agent-bus thread creation ----

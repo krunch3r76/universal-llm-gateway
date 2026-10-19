@@ -198,12 +198,19 @@ async def post_coord_admit_pointer(
     missing = admit_provenance.missing if admit_provenance is not None else ()
     body_text = _admit_body(worker_thread_id=worker_thread_id, contract=contract)
     body_text = append_provenance_marker(body_text, missing)
-    await _post_coord_turn(
-        coord_thread_id=coord_thread_id,
-        to_agent=to_agent,
-        from_agent=admit_turn_from_agent(
-            caller_agent, provenance_missing=missing
-        ),
-        subject=_ADMIT_SUBJECT,
-        body=body_text,
-    )
+    try:
+        await _post_coord_turn(
+            coord_thread_id=coord_thread_id,
+            to_agent=to_agent,
+            from_agent=admit_turn_from_agent(caller_agent, provenance_missing=missing),
+            subject=_ADMIT_SUBJECT,
+            body=body_text,
+        )
+    except Exception as exc:
+        if not missing:
+            raise
+        logger.warning(
+            "flagged coord admit post failed; admit continues: thread=%s err=%s",
+            coord_thread_id,
+            exc,
+        )

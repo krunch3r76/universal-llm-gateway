@@ -1179,17 +1179,21 @@ def DispatchAdmitProvenanceMissing(  # noqa: N802
     coord_thread: str | None,
     root_lane: bool,
     request_id: str,
+    provenance_record_failed: bool = False,
 ) -> Event:
     """Generate/to_thread admit recorded with blank caller, lane, or work_key."""
+    payload: dict[str, object] = {
+        "missing": missing,
+        "execution_id": execution_id,
+        "coord_thread": coord_thread,
+        "root_lane": root_lane,
+        "request_id": request_id,
+    }
+    if provenance_record_failed:
+        payload["provenance_record_failed"] = True
     return Event(
         signal="dispatch.admit.provenance_missing",
-        payload={
-            "missing": missing,
-            "execution_id": execution_id,
-            "coord_thread": coord_thread,
-            "root_lane": root_lane,
-            "request_id": request_id,
-        },
+        payload=payload,
         scope="node",
         role="observation",
     )

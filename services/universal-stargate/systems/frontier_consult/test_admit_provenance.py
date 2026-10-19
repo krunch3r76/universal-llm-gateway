@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from fastapi import Response
 from pipelines.cursor_paste_resolve.v1.handlers._message import cursor_sdk_dispatch_body
 
 from .admit_provenance import (
@@ -18,7 +19,12 @@ from .admit_provenance import (
     provenance_missing_marker,
 )
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
-from .route import TeamDispatchGenerateBody
+from .route import (
+    FrontierDispatchGenerateBody,
+    TeamDispatchGenerateBody,
+    frontier_dispatch,
+    team_dispatch,
+)
 
 
 def test_missing_admit_provenance_empty() -> None:
@@ -40,8 +46,7 @@ def test_missing_admit_provenance_all_three() -> None:
 def test_provenance_marker_and_from_agent_when_flagged() -> None:
     missing = ("caller_seat", "work_key")
     assert (
-        provenance_missing_marker(missing)
-        == "PROVENANCE_MISSING:caller_seat,work_key"
+        provenance_missing_marker(missing) == "PROVENANCE_MISSING:caller_seat,work_key"
     )
     body = append_provenance_marker("hello", missing)
     assert body.startswith("hello\nPROVENANCE_MISSING:")
@@ -172,6 +177,246 @@ def test_cursor_sdk_dispatch_body_stamps_pipeline_caller() -> None:
         dispatch_thread_id="16416",
     )
     assert body["caller_agent"] == "pipeline:cursor-paste-resolve"
+
+
+def _root_lane_body() -> TeamDispatchGenerateBody:
+    return TeamDispatchGenerateBody(
+        op="generate",
+        seat="cursor-sdk",
+        lane="B",
+        job="freeform",
+        model="cursor/composer-2.5",
+        dispatch_thread_id="16416",
+        caller_agent=None,
+        work_key="todo:39669",
+        prompt="probe",
+    )
+
+
+def _stub_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy = MagicMock()
+    proxy.event_bus = None
+    monkeypatch.setattr(
+        "systems.proxy.dependencies.get_proxy",
+        lambda: proxy,
+    )
+
+
+def _record_events(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    published: list[object] = []
+
+    def _publish(event: object) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        _publish,
+    )
+    return published
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_root_lane_no_caller_flags_and_admits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = _record_events(monkeypatch)
+    _stub_proxy(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
+        AsyncMock(return_value={"status": "admitted", "execution_id": "exec-root"}),
+    )
+    response = Response()
+    result = await team_dispatch(_root_lane_body(), response)
+    assert isinstance(result, dict)
+    assert response.status_code == 202
+    assert result["status"] == "admitted"
+    assert result["execution_id"] == "exec-root"
+    assert "caller_seat" in result["provenance_missing"]
+    missing_events = [
+        event
+        for event in published
+        if getattr(event, "signal", "") == "dispatch.admit.provenance_missing"
+    ]
+    assert missing_events
+    payload = missing_events[0].payload
+    assert payload["root_lane"] is True
+    assert "caller_seat" in payload["missing"]
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_event_emit_raises_still_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(_event: object) -> None:
+        raise RuntimeError("event bus down")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        _boom,
+    )
+    _stub_proxy(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
+        AsyncMock(return_value={"status": "admitted", "execution_id": "exec-emit"}),
+    )
+    response = Response()
+    result = await team_dispatch(_root_lane_body(), response)
+    assert isinstance(result, dict)
+    assert response.status_code == 202
+    assert result["status"] == "admitted"
+    assert "caller_seat" in result["provenance_missing"]
+
+
+def _patch_sdk_admit_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _thread(**_kwargs: object) -> str:
+        return "thread-worker"
+
+    async def _targets(**kwargs: object) -> tuple[None, object, bool]:
+        return None, kwargs.get("dispatch_thread_id"), False
+
+    async def _worker(**_kwargs: object) -> tuple[bool, dict[str, object]]:
+        return True, {"status_code": 200}
+
+    async def _continuity(_thread_id: str | None) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_cursor_sdk_thread_targets",
+        _targets,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
+        _thread,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.probe_continuity_root_thread_id",
+        _continuity,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+        _worker,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        lambda **_k: None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_store_write_raises_still_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = _record_events(monkeypatch)
+    _stub_proxy(monkeypatch)
+    _patch_sdk_admit_io(monkeypatch)
+
+    def _write(**_kwargs: object) -> None:
+        raise RuntimeError("sqlite locked")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_admission_context_store.write_admission_context",
+        _write,
+    )
+    response = Response()
+    result = await team_dispatch(_root_lane_body(), response)
+    assert isinstance(result, dict)
+    assert response.status_code == 202
+    assert result.get("error") is None
+    assert result["provenance_record_failed"] is True
+    assert "caller_seat" in result["provenance_missing"]
+    failed = [
+        event
+        for event in published
+        if getattr(event, "payload", {}).get("provenance_record_failed") is True
+    ]
+    assert failed
+
+
+class _RaisingBus:
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def __aenter__(self) -> _RaisingBus:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def post(self, _path: str, **_kwargs: object) -> object:
+        raise self._exc
+
+
+async def _flagged_bus_failure_still_202(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    _stub_proxy(monkeypatch)
+    _patch_sdk_admit_io(monkeypatch)
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        lambda *_a, **_k: _RaisingBus(exc),
+    )
+    response = Response()
+    result = await team_dispatch(_root_lane_body(), response)
+    assert isinstance(result, dict)
+    assert response.status_code == 202
+    assert "caller_seat" in result["provenance_missing"]
+
+
+@pytest.mark.asyncio
+async def test_flagged_bus_post_http_error_still_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _flagged_bus_failure_still_202(monkeypatch, httpx.HTTPError("bus down"))
+
+
+@pytest.mark.asyncio
+async def test_flagged_bus_post_generic_error_still_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _flagged_bus_failure_still_202(monkeypatch, RuntimeError("bus exploded"))
+
+
+@pytest.mark.asyncio
+async def test_frontier_dispatch_missing_caller_flags_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = _record_events(monkeypatch)
+
+    async def _ok(_req: object, response: Response) -> dict[str, str]:
+        response.status_code = 202
+        return {"status": "admitted", "execution_id": "exec-frontier"}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route._dispatch",
+        _ok,
+    )
+    response = Response()
+    result = await frontier_dispatch(
+        FrontierDispatchGenerateBody(
+            op="generate",
+            model="cursor/composer-2.5",
+            messages=[{"role": "user", "content": "probe"}],
+        ),
+        response,
+    )
+    assert isinstance(result, dict)
+    assert response.status_code == 202
+    assert result["status"] == "admitted"
+    assert "caller_seat" in result["provenance_missing"]
+    assert "work_key" in result["provenance_missing"]
+    assert "lane_or_thread" in result["provenance_missing"]
+    missing_events = [
+        event
+        for event in published
+        if getattr(event, "signal", "") == "dispatch.admit.provenance_missing"
+    ]
+    assert missing_events
+    assert missing_events[0].payload["root_lane"] is False
 
 
 class _ClientCtx:

@@ -7,7 +7,7 @@ seat is blank.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 PROVENANCE_MISSING_PREFIX = "PROVENANCE_MISSING:"
@@ -89,16 +89,32 @@ class AdmitProvenanceContext:
     coord_thread: str | None
     root_lane: bool
     request_id: str
+    # Cell, not a bool field: the context is frozen and the sqlite write
+    # happens after the route has already captured this object for the 202.
+    _record_failed: list[bool] = field(
+        default_factory=lambda: [False], repr=False, compare=False
+    )
 
     @property
     def missing_list(self) -> list[str]:
         return list(self.missing)
 
+    @property
+    def provenance_record_failed(self) -> bool:
+        return self._record_failed[0]
+
+    def note_provenance_record_failed(self) -> None:
+        """Record that the admission-context write failed. Admit still proceeds."""
+        self._record_failed[0] = True
+
     def enrich_admit_response(self, result: dict[str, Any]) -> dict[str, Any]:
-        if not self.missing:
+        if not self.missing and not self.provenance_record_failed:
             return result
         out = dict(result)
-        out["provenance_missing"] = self.missing_list
+        if self.missing:
+            out["provenance_missing"] = self.missing_list
+        if self.provenance_record_failed:
+            out["provenance_record_failed"] = True
         return out
 
 
@@ -136,9 +152,15 @@ def emit_admit_provenance_missing_event(
     ctx: AdmitProvenanceContext,
     *,
     execution_id: str | None = None,
+    provenance_record_failed: bool = False,
 ) -> None:
-    """Publish ``dispatch.admit.provenance_missing``; failures must not fail admit."""
-    if not ctx.missing:
+    """Publish ``dispatch.admit.provenance_missing``; failures must not fail admit.
+
+    ``provenance_record_failed`` is set when the admission-context store write
+    raised. The publish itself is swallowed so a broken event bus cannot refuse
+    the admit.
+    """
+    if not ctx.missing and not provenance_record_failed:
         return
     try:
         from .cursor_sdk_generate_signals import publish_frontier_event
@@ -151,6 +173,7 @@ def emit_admit_provenance_missing_event(
                 coord_thread=ctx.coord_thread,
                 root_lane=ctx.root_lane,
                 request_id=ctx.request_id,
+                provenance_record_failed=provenance_record_failed,
             )
         )
     except Exception:
@@ -161,8 +184,10 @@ def finalize_team_dispatch_admit_response(
     result: dict[str, Any] | Any,
     ctx: AdmitProvenanceContext | None,
 ) -> Any:
-    """Attach ``provenance_missing`` to successful 202 JSON bodies."""
-    if ctx is None or not ctx.missing:
+    """Attach provenance flags to successful 202 JSON bodies. Never refuses."""
+    if ctx is None:
+        return result
+    if not ctx.missing and not ctx.provenance_record_failed:
         return result
     if isinstance(result, dict):
         return ctx.enrich_admit_response(result)
