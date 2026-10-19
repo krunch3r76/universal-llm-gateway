@@ -20,13 +20,13 @@ from services.rag.chunkers.messages_chunker import (
     scrub_chunk_text,
     transcript_lane_excluded,
 )
+from services.rag.config._parsing import _parse_scopes, _parse_watch_directories
+from services.rag.watcher_manager.protocols import path_matches_extensions
 
 _PROSE_HARD_MAX = _CHUNK_CHARS_TARGET + _CHUNK_CHARS_PAD
 _MAP_SLOT_TOKENS = 4096
 _PREFLIGHT_OVERHEAD = 287
 _EFFECTIVE_CTX_PER_SLOT = 8192
-from services.rag.config._parsing import _parse_scopes, _parse_watch_directories
-from services.rag.watcher_manager.protocols import path_matches_extensions
 
 pytestmark = pytest.mark.offline
 
