@@ -10,11 +10,12 @@ from ._extract_document_helpers import compute_source_sha256
 from ._file_helpers import FILES_ROOT, resolve_files_path
 from ._ingest_dropbox_select import model_family, parse_dropbox_rel, route_pdf
 from ._ingest_dropbox_state import (
-    append_duplicate_path,
     canonical_sidecar_path,
     catch_all_failure,
     entity_id_from_path,
+    handle_duplicate_path,
     is_canonical_sidecar,
+    is_duplicate_visit,
     load_state,
     new_record,
     read_sidecar,
@@ -51,14 +52,13 @@ def process_file(
         if rec is None:
             rec = new_record(source_path=rel, source_sha256=source_sha256)
         elif rec.get("source_path") != rel:
-            rec = _handle_duplicate(rec, rel)
-            if rec.get("stage") == "done" or (
-                rec.get("terminal") and rel in (rec.get("duplicate_paths") or [])
-            ):
-                dup = rec.get("entity_id") or rec.get("source_path")
-                return f"duplicate_of:{dup}", False
+            rec = handle_duplicate_path(rec, rel)
 
-        if rec.get("terminal") or rec.get("stage") == "done":
+        if is_duplicate_visit(rec, rel, source_sha256):
+            dup = rec.get("entity_id") or rec.get("source_path")
+            return f"duplicate_of:{dup}", False
+
+        if rec.get("terminal"):
             return "skipped", False
 
         if not cap_counter():
@@ -83,32 +83,6 @@ def process_file(
         except OcrUnreachable:
             record("mcp.ingest.run.stopped", path=rel)
             return "attempt", True
-
-
-def _handle_duplicate(rec: dict[str, Any], rel: str) -> dict[str, Any]:
-    sha = rec["source_sha256"]
-    if rec.get("stage") == "done":
-        append_duplicate_path(rec, rel)
-        save_state(sha, rec)
-        return rec
-    if rec.get("terminal"):
-        if rel != rec.get("source_path"):
-            append_duplicate_path(rec, rel)
-            save_state(sha, rec)
-        return rec
-    old = resolve_files_path(rec["source_path"], root=FILES_ROOT)
-    if old.exists():
-        try:
-            old_sha, _ = compute_source_sha256(old)
-        except OSError:
-            old_sha = None
-        if old_sha == sha:
-            append_duplicate_path(rec, rel)
-            save_state(sha, rec)
-            return rec
-    rec["source_path"] = rel
-    save_state(sha, rec)
-    return rec
 
 
 def _chain_stages(

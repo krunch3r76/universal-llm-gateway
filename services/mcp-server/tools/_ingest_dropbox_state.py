@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ._extract_document_helpers import atomic_write
+from ._extract_document_helpers import atomic_write, compute_source_sha256
 from ._file_helpers import FILES_ROOT, resolve_files_path
 from ._sidecar_schema import SIDECAR_SUFFIX, parse_leading_frontmatter
 
@@ -37,7 +37,6 @@ def lock_path(source_sha256: str) -> Path:
 
 def entity_id_from_path(rel: str) -> str:
     import re
-
     from pathlib import Path
 
     slug = re.sub(r"[^a-z0-9]+", "-", Path(rel).stem.lower()).strip("-")
@@ -127,6 +126,68 @@ def catch_all_failure(
         record["terminal"] = "needs_human"
     save_state(sha, record)
     return stage
+
+
+def find_promoted_bundle(source_sha256: str, source_rel: str) -> Path | None:
+    from ._promote_document_helpers import sanitize_bundle_name
+
+    stem = sanitize_bundle_name(Path(source_rel).name)
+    pattern = f"evidence/*_{source_sha256[:12]}_{stem}/manifest.json"
+    matches = sorted(FILES_ROOT.glob(pattern))
+    return matches[0] if matches else None
+
+
+def done_path_is_duplicate(rec: dict[str, Any], rel: str, source_sha256: str) -> bool:
+    if rec.get("stage") != "done":
+        return False
+    if rel != rec.get("source_path"):
+        return True
+    dropbox = FILES_ROOT / rel
+    anchor = str(rec.get("source_path") or rel)
+    return dropbox.is_file() and find_promoted_bundle(source_sha256, anchor) is not None
+
+
+def is_duplicate_visit(rec: dict[str, Any], rel: str, source_sha256: str) -> bool:
+    if done_path_is_duplicate(rec, rel, source_sha256):
+        return True
+    if rel in (rec.get("duplicate_paths") or []):
+        return True
+    if rel == rec.get("source_path"):
+        return False
+    old = resolve_files_path(rec["source_path"], root=FILES_ROOT)
+    if not old.is_file():
+        return False
+    try:
+        old_sha, _ = compute_source_sha256(old)
+    except OSError:
+        return False
+    return old_sha == source_sha256
+
+
+def handle_duplicate_path(rec: dict[str, Any], rel: str) -> dict[str, Any]:
+    sha = rec["source_sha256"]
+    if rec.get("stage") == "done":
+        append_duplicate_path(rec, rel)
+        save_state(sha, rec)
+        return rec
+    if rec.get("terminal"):
+        if rel != rec.get("source_path"):
+            append_duplicate_path(rec, rel)
+            save_state(sha, rec)
+        return rec
+    old = resolve_files_path(rec["source_path"], root=FILES_ROOT)
+    if old.exists():
+        try:
+            old_sha, _ = compute_source_sha256(old)
+        except OSError:
+            old_sha = None
+        if old_sha == sha:
+            append_duplicate_path(rec, rel)
+            save_state(sha, rec)
+            return rec
+    rec["source_path"] = rel
+    save_state(sha, rec)
+    return rec
 
 
 def append_duplicate_path(record: dict[str, Any], rel: str) -> None:

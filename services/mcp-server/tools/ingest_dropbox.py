@@ -13,8 +13,13 @@ from ._extraction_profile import load_default_profile
 from ._file_helpers import FILES_ROOT
 from ._ingest_dropbox_pass import process_file
 from ._ingest_dropbox_select import parse_dropbox_rel, route_pdf, select_paths
-from ._ingest_dropbox_state import config_path, iter_state_records, load_state
-from ._promote_document_helpers import sanitize_bundle_name
+from ._ingest_dropbox_state import (
+    config_path,
+    done_path_is_duplicate,
+    find_promoted_bundle,
+    iter_state_records,
+    load_state,
+)
 from .extract_document import OcrUnreachable
 
 if TYPE_CHECKING:
@@ -99,7 +104,7 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
                 continue
             current = load_state(sha) or rec
             entity_id = current.get("entity_id") or _entity_id_from_path(rel)
-            bundle = _find_bundle(sha, rel)
+            bundle = find_promoted_bundle(sha, rel)
             if bundle and _entity_hash(entity_id) == sha:
                 current["stage"] = "done"
                 current["entity_id"] = entity_id
@@ -116,13 +121,6 @@ def _entity_id_from_path(rel: str) -> str:
     stem = Path(rel).stem.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")
     return f"document:{slug or 'document'}"
-
-
-def _find_bundle(source_sha256: str, source_rel: str) -> Path | None:
-    stem = sanitize_bundle_name(Path(source_rel).name)
-    pattern = f"evidence/*_{source_sha256[:12]}_{stem}/manifest.json"
-    matches = sorted(FILES_ROOT.glob(pattern))
-    return matches[0] if matches else None
 
 
 def _entity_hash(entity_id: str) -> str | None:
@@ -174,7 +172,7 @@ def _should_skip_for_cap(rel: str) -> bool:
     rec = load_state(sha)
     if not rec:
         return False
-    return bool(rec.get("terminal")) or rec.get("stage") == "done"
+    return bool(rec.get("terminal"))
 
 
 def ingest_dropbox_run(
@@ -260,7 +258,7 @@ def ingest_dropbox_dry_run(
         except OSError:
             continue
         rec = load_state(sha)
-        if rec and rec.get("stage") == "done" and rel != rec.get("source_path"):
+        if rec and done_path_is_duplicate(rec, rel, sha):
             duplicates.append(
                 {
                     "path": rel,

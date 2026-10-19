@@ -36,7 +36,6 @@ from tools.ingest_dropbox import (
 )
 from tools.promote_document_to_evidence import (
     register_promote_document_to_evidence_tools,
-    run_promote_document,
 )
 
 _SCHEMA = (
@@ -458,19 +457,73 @@ def test_matching_canonical_is_not_reextracted(
     assert called["n"] == 0
 
 
+def _install_cortex_promote_stub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, Any]:
+    state: dict[str, Any] = {"entities": {}, "create_calls": 0}
+
+    def cx(
+        _method: str, _path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        assert body is not None
+        tool = body["tool"]
+        args = body["arguments"]
+        if tool == "entity_get":
+            eid = args["entity_id"]
+            if eid not in state["entities"]:
+                return {
+                    "error": "cortex-api error: HTTP 404 — not found",
+                    "status_code": 404,
+                }
+            return dict(state["entities"][eid])
+        if tool == "entities":
+            ch_filter = args.get("content_hash")
+            rows = [
+                {"id": eid, "content_hash": row.get("content_hash")}
+                for eid, row in state["entities"].items()
+                if ch_filter is None
+                or row.get("content_hash") == ch_filter
+                or row.get("content_hash") == ch_filter.removeprefix("sha256:")
+            ]
+            return {"items": rows}
+        if tool == "entity_create":
+            state["create_calls"] += 1
+            eid = args["id"]
+            if eid in state["entities"]:
+                return {
+                    "error": "cortex-api error: HTTP 409 — conflict",
+                    "status_code": 409,
+                }
+            state["entities"][eid] = {**args, "type": "document"}
+            return {"id": eid, "created": True}
+        raise AssertionError(f"unexpected tool {tool!r}")
+
+    monkeypatch.setattr(evidence_entity_ops, "cx", cx)
+    return state
+
+
 def test_entity_conflict_through_real_run_promote(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tools.test_extract_document_fail_closed import (
-        _conflict_cx,
-        _stage_promote_source,
-    )
+    from tools.test_extract_document_fail_closed import _conflict_cx
 
-    rel = _stage_promote_source(tmp_path)
+    rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "letter.pdf")
+    _text_pdf(tmp_path / rel, "hello " * 20)
+    import hashlib
+
+    sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
+    _write_canonical(tmp_path, rel, sha=sha)
+    rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
+    rec.update(stage="promote", method="text_layer", entity_id="document:letter")
+    ingest_state.save_state(sha, rec)
     monkeypatch.setattr(evidence_entity_ops, "cx", _conflict_cx)
-    with pytest.raises(PromoteError):
-        run_promote_document(rel, "document:bill", "desc")
+    out = ingest_dropbox_run(paths=[rel])
+    assert out["processed"][0]["outcome"] == "needs_human"
+    rec2 = ingest_state.load_state(sha)
+    assert rec2 is not None
+    assert rec2.get("terminal") == "needs_human"
+    assert rec2.get("last_error") == "entity_conflict"
 
 
 def test_same_family_canonical_needs_human(tmp_path: Path) -> None:
@@ -747,7 +800,14 @@ def test_two_page_scan_crosschecks_whole_document(tmp_path: Path, monkeypatch) -
     with patch(
         "ocr_core._core.call_stargate", return_value=_stargate_ok("Amount $100.00")
     ):
-        ingest_dropbox_run(paths=[rel])
+        out = ingest_dropbox_run(paths=[rel])
+    assert out["processed"][0]["outcome"] == "done"
+    rec = json.loads(
+        list((tmp_path / "notes/system/ingest-state").glob("*.json"))[0].read_text()
+    )
+    assert rec is not None
+    cc = rec.get("crosscheck") or {}
+    assert int(cc.get("tokens_compared") or 0) > 0
 
 
 def test_existing_check_variant_is_deleted_and_extractor_called(tmp_path: Path) -> None:
@@ -821,36 +881,96 @@ def test_deleted_canonical_at_crosscheck_resets_to_extract(tmp_path: Path) -> No
     assert ingest_state.canonical_sidecar_path(rel).is_file()
 
 
-def test_state_is_read_only_after_lock(tmp_path: Path) -> None:
+def test_state_is_read_only_after_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "scan.pdf")
     _blank_pdf(tmp_path / rel)
     import hashlib
 
     sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
+    _write_canonical(tmp_path, rel, sha=sha)
     rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
     rec.update(stage="crosscheck", method="vision_crosscheck")
     ingest_state.save_state(sha, rec)
+    check_calls = {"n": 0}
+
+    def _extract(*_a: Any, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("model"):
+            check_calls["n"] += 1
+        return {"sidecar_path": rel + ".extracted.md"}
+
+    monkeypatch.setattr(ingest_pass, "run_extract_document", _extract)
     ingest_dropbox_dry_run(paths=[rel])
+    assert check_calls["n"] == 0
 
 
-def test_duplicate_after_real_promote(tmp_path: Path) -> None:
+def test_duplicate_after_real_promote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_cortex_promote_stub(monkeypatch)
     rel1 = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-18", "a.pdf")
     rel2 = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "b.pdf")
-    payload = b"%PDF-1.4 shared\n"
-    (tmp_path / rel1).write_bytes(payload)
-    (tmp_path / rel2).write_bytes(payload)
+    shared = "Shared duplicate letter body for real promote path. " * 3
+    _text_pdf(tmp_path / rel1, shared)
     import hashlib
 
+    payload = (tmp_path / rel1).read_bytes()
     sha = hashlib.sha256(payload).hexdigest()
-    rec = ingest_state.new_record(source_path=rel1, source_sha256=sha)
-    rec.update(stage="done", entity_id="document:a")
-    ingest_state.save_state(sha, rec)
-    out = ingest_dropbox_run(paths=[rel2])
-    assert "duplicate_of" in out["processed"][0]["outcome"]
+    _write_canonical(tmp_path, rel1, sha=sha, body="Amount $100.00")
+    promote_calls = {"n": 0}
+    real_promote = ingest_pass.run_promote_document
+
+    def _counting_promote(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        promote_calls["n"] += 1
+        return real_promote(*args, **kwargs)
+
+    monkeypatch.setattr(ingest_pass, "run_promote_document", _counting_promote)
+    out1 = ingest_dropbox_run(paths=[rel1])
+    assert out1["processed"][0]["outcome"] == "done"
+    rec = ingest_state.load_state(sha)
+    assert rec is not None
+    entity_id = rec["entity_id"]
+    assert rec["source_path"] == rel1
+
+    (tmp_path / rel2).write_bytes(payload)
+    out2 = ingest_dropbox_run(paths=[rel2])
+    assert out2["processed"][0]["outcome"] == f"duplicate_of:{entity_id}"
+    rec2 = ingest_state.load_state(sha)
+    assert rec2 is not None
+    assert rec2["source_path"] == rel1
+    assert rel2 in (rec2.get("duplicate_paths") or [])
+    assert promote_calls["n"] == 1
 
 
-def test_same_path_redrop_is_duplicate(tmp_path: Path) -> None:
-    test_duplicate_after_real_promote(tmp_path)
+def test_same_path_redrop_is_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_cortex_promote_stub(monkeypatch)
+    rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-18", "a.pdf")
+    shared = "Same-path redrop letter body for real promote path. " * 3
+    _text_pdf(tmp_path / rel, shared)
+    import hashlib
+
+    payload = (tmp_path / rel).read_bytes()
+    sha = hashlib.sha256(payload).hexdigest()
+    _write_canonical(tmp_path, rel, sha=sha, body="Amount $100.00")
+    out1 = ingest_dropbox_run(paths=[rel])
+    assert out1["processed"][0]["outcome"] == "done"
+    rec = ingest_state.load_state(sha)
+    assert rec is not None
+    entity_id = rec["entity_id"]
+
+    (tmp_path / rel).write_bytes(payload)
+    out2 = ingest_dropbox_run(paths=[rel])
+    assert out2["processed"][0]["outcome"] == f"duplicate_of:{entity_id}"
+    rec2 = ingest_state.load_state(sha)
+    assert rec2 is not None
+    assert rel not in (rec2.get("duplicate_paths") or [])
+    dry = ingest_dropbox_dry_run(paths=[rel])
+    assert dry["duplicates"] == [
+        {"path": rel, "duplicate_of": entity_id},
+    ]
 
 
 def test_overwritten_source_rebinds(tmp_path: Path) -> None:
@@ -870,7 +990,9 @@ def test_overwritten_source_rebinds(tmp_path: Path) -> None:
     assert rec2 and rec2.get("source_path") == rel2
 
 
-def test_renamed_at_crosscheck_rebinds(tmp_path: Path) -> None:
+def test_renamed_at_crosscheck_rebinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "old.pdf")
     _blank_pdf(tmp_path / rel)
     import hashlib
@@ -881,7 +1003,20 @@ def test_renamed_at_crosscheck_rebinds(tmp_path: Path) -> None:
     ingest_state.save_state(sha, rec)
     new = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "new.pdf")
     (tmp_path / rel).rename(tmp_path / new)
-    ingest_dropbox_dry_run(paths=[new])
+    monkeypatch.setattr(
+        ingest_pass,
+        "run_promote_document",
+        lambda *_a, **_k: {"entity_id": "document:new"},
+    )
+    with patch(
+        "ocr_core._core.call_stargate", return_value=_stargate_ok("Amount $100.00")
+    ):
+        ingest_dropbox_run(paths=[new])
+    dry = ingest_dropbox_dry_run(paths=[new])
+    assert not dry["duplicates"]
+    rec2 = ingest_state.load_state(sha)
+    assert rec2 is not None
+    assert rec2.get("source_path") == new
 
 
 def test_each_promote_error_code_needs_human(tmp_path: Path, monkeypatch) -> None:
@@ -905,22 +1040,35 @@ def test_each_promote_error_code_needs_human(tmp_path: Path, monkeypatch) -> Non
     assert out["processed"][0]["outcome"] == "needs_human"
 
 
-def test_entity_without_bundle_one_repair_call(tmp_path: Path, monkeypatch) -> None:
+def test_entity_without_bundle_one_repair_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "letter.pdf")
     _text_pdf(tmp_path / rel, "hello " * 20)
     import hashlib
 
     sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
     _write_canonical(tmp_path, rel, sha=sha)
-    calls = {"n": 0}
+    entity_id = "document:letter"
+    cortex = _install_cortex_promote_stub(monkeypatch)
+    cortex["entities"][entity_id] = {
+        "id": entity_id,
+        "type": "document",
+        "content_hash": sha,
+    }
+    rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
+    rec.update(stage="promote", method="text_layer", entity_id=entity_id)
+    ingest_state.save_state(sha, rec)
+    promote_calls = {"n": 0}
+    real_promote = ingest_pass.run_promote_document
 
-    def _promote(*_a, **_k):
-        calls["n"] += 1
-        return {"entity_id": "document:letter"}
+    def _counting_promote(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        promote_calls["n"] += 1
+        return real_promote(*args, **kwargs)
 
-    monkeypatch.setattr(ingest_pass, "run_promote_document", _promote)
+    monkeypatch.setattr(ingest_pass, "run_promote_document", _counting_promote)
     ingest_dropbox_run(paths=[rel])
-    assert calls["n"] >= 1
+    assert promote_calls["n"] == 1
 
 
 def test_reconcile_after_crash_sets_done(tmp_path: Path, monkeypatch) -> None:
@@ -943,9 +1091,26 @@ def test_reconcile_after_crash_sets_done(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_reconcile_null_entity_id_finds_bundle_by_glob(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    test_reconcile_after_crash_sets_done(tmp_path, monkeypatch)
+    rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "a.pdf")
+    _blank_pdf(tmp_path / rel)
+    import hashlib
+
+    sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
+    rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
+    rec.update(stage="promote", entity_id=None)
+    ingest_state.save_state(sha, rec)
+    (tmp_path / rel).unlink()
+    bundle = tmp_path / f"evidence/2026-10-19_{sha[:12]}_a"
+    bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(ingest_mod, "_entity_hash", lambda _e: sha)
+    ingest_dropbox_run()
+    rec2 = ingest_state.load_state(sha)
+    assert rec2 is not None
+    assert rec2.get("stage") == "done"
+    assert rec2.get("entity_id") == "document:a"
 
 
 def test_concurrent_runs_one_promote_second_locked(tmp_path: Path) -> None:
