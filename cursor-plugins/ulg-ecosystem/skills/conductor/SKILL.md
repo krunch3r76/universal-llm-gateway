@@ -31,7 +31,7 @@ related_skills:
 
 - **Run, don't ask; land on green.** Admitted ⇒ drive all open G-rows in one commission; packet = standing merge ack — land at tests+AC, ¬ second "ok to merge?" → `reference-run-to-completion.md`.
 - **ROW_HOP vs exit-and-persist.** `ROW_HOP` = journal → hop CHECKPOINT → closeout `stop: ROW_HOP`; substrate admits successor — never `team_dispatch(reuse_thread=<own thread>)`. `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` persist and stop past the unpaid gate → `reference-invariant.md`, `reference-packet.md`.
-- **Nested CDP (a:37183 · a:37918).** Before `team_dispatch(model=cdp/…)` **or** `cse_session(op=followup)` on G1·G2·G4·G6/width: Use `retrieval-before-authoring`, write report sidecar, `target:` bound to prompt, `retrieval_report: cortex://…` own line (line-anchored). G4/SKEPTIC/adversarial-spec ¬ delivery/code-review chrome. **G6 after admit:** `parent_thread=<this worker thread id>`; stamp `poll_hint` + `execution_id`, `NEXT_ADMIT: harvest <id>`; if that id is still live, `stop: PARKED_TRANSPORT` (not `ROW_HOP`) — GIW `park_harvest_continue_owed` admits the harvest successor on the later `web-anthropic` worker-thread turn. ¬ block MCP `wait` until -32001; timeout ≠ CDP dead; ¬ second-dispatch while that id is live. Hop closeout: every nested prompt URI + report bundle — missing ⇒ not green.
+- **Nested CDP (a:37183 · a:37918).** Full rule → `reference-nested-cdp.md`.
 - **Review harvest ≺ land ≺ DONE.** Land/`DONE`: harvest stronger-model review first — ¬ background, ¬ land-then-review → `reference-run-to-completion.md`, `reference-packet.md`.
 - **G5 witness (a:37198).** After G3→G5 CDP score-ratify harvest, required attended witness = `SCORE_RESURFACE` on `summoning_thread_id` (slug subject; CDP exec/review sha) — ¬ tip `DONE`, ¬ steer-inject, ¬ harvest alone. Attended G5 fold needs that turn **and** implement (`ledger:nested_implement` ∨ `git:lane_head`). `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify → `reference-packet.md`.
 - **Explicit `lane="B"`.** Top-level admit passes `lane="B"`; omit nest/resume only — GIW default Lane A, not "no preference" → `reference-admit.md`, `reference-gotchas.md`.
@@ -70,15 +70,4 @@ Author/admit packet, drive G-rows, `/conductor`, or `follow up` / `page me when 
 
 Failed if a kernel rule is missing, or a reference file is absent from plugin SoT beside `SKILL.md` while install expects split body.
 
-## In-flight guard — relocated table
-
-Moved from `in-flight-work-guard_ulg.mdc`. The rule keeps the halt invariant; this table is the paired column.
-
-| Forbidden | Permitted |
-|---|---|
-| Edit paths the dispatch owns; "head start while SDK runs" | Poll `agent_bus.wait` / read thread / harvest closeout; edits **outside** the overlap |
-| Cancel queued cursor-sdk "as cleanup"; tear down a converse lane / live CSE | Author the packet **before** firing; lead verify **after** terminal closeout |
-| Infer "no active CDP" from empty `active_work` while the private request lane runs | Read the private request thread — transport idle ≠ bus idle |
-| Hop / re-stream / refuse PARK to "keep the tab alive" | PARK; tab ⟂ session (`decision:cse-tab-decoupled-from-session`) |
-
-Doctrine: arc 6328 (wrong abort) · friction 6486/6488 (parallel writer) · `cursor_sdk_conductor_conflict.py`. Also `cdp-operator-proxy` § Interrupt / supersede · `claude-ai-cdp-navigation` · `git-posture`.
+- **In-flight guard.** Table → `reference-in-flight-guard.md`.

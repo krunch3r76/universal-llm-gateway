@@ -18,7 +18,10 @@ _DIFF_SCOPED_GATE_SCRIPT = (
     "files=$(git diff refs/heads/master...HEAD --name-only "
     "--diff-filter=ACMR -- '*.py'); "
     'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi && '
-    "ruff check --select F821 services/git_integration_worker/"
+    "ruff check --select F821 services/git_integration_worker/ && "
+    "python -m pytest "
+    "services/git_integration_worker/tests/test_conductor_lane_retention.py::"
+    "test_packet_reference_forbids_land_disposition_before_done -q --tb=line"
 )
 # F821-only pass on the GIW package subtree. Whole-repo ruff is blocked by master
 # lint debt; this subtree is kept F821-clean so undefined-name defects surface at
