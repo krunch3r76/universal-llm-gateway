@@ -1,5 +1,5 @@
 ---
-description: Restart drain kernel — needed restart fires; busy never skips; GIW drain-never-force; landed ≠ live; work_complete default is land → path-explicit commit → recycle (dirty-tree recycle exceptional). Recovery tables on the manage envelope and runbook.
+description: Restart drain kernel — needed restart fires; busy never skips; GIW drain-never-force; landed ≠ live; work_complete default is land → path-explicit commit → recycle (dirty-tree recycle exceptional). Recovery tables on the manage envelope.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
