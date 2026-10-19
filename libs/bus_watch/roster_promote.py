@@ -22,7 +22,6 @@ from bus_watch.roster import (
     HIRE_AUTO,
     append_row,
     fetch_giw_active_work_payload,
-    fetch_giw_live_work_keys,
     keyed_conductor_work_keys,
     merge_by_row_id,
     read_journal,
@@ -98,8 +97,7 @@ def _giw_blocks_roster_promotion(work_key: str) -> str | None:
     keyed = keyed_conductor_work_keys(payload)
     if len(keyed) < store_count:
         return "giw_conductor_count_mismatch"
-    live_map = fetch_giw_live_work_keys()
-    if live_map is not None and not live_map and store_count > 0:
+    if store_count > 0 and not keyed:
         return "giw_empty_live_map"
     if work_key.lower() in keyed:
         return "giw_conductor_open"

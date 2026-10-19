@@ -23,7 +23,7 @@ from bus_watch.spawn_wake.play_classify import (
 
 _GIW_ACTIVE_WORK = os.environ.get(
     "LIAISON_GIW_ACTIVE_WORK",
-    "http://127.0.0.1:8091/api/v1/integrate/active-work",
+    "http://127.0.0.1:8091/api/v1/git/active-work",
 )
 _FRICTION_NOW_RE = re.compile(r"Friction\s+a:(\d+)", re.I)
 
