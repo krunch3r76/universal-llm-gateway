@@ -6,6 +6,7 @@ Writes workspaces packet + cortex scoreboard tip/journal birth record.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from implement_admission.conductor_packet_render import (
     extract_scoreboard_uri,  # noqa: F401
     hop_invariant_g3_g5_fragment,  # noqa: F401
 )
+from implement_admission.conductor_policy_snapshot import SCOREBOARD_SEED_KEYS
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     birth_scoreboard,
@@ -38,6 +40,7 @@ from implement_admission.conductor_score_journal import (
     resolve_row_labels,
     resolve_scoreboard_rows,
 )
+from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
 from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
 from implement_admission.materialize import MaterializedPacket
@@ -52,6 +55,82 @@ def conductor_opts_from_generation_options(
         return {}
     block = generation_options.get("conductor")
     return dict(block) if isinstance(block, dict) else {}
+
+
+_ROW_ID_VALID = re.compile(rf"^{SCOREBOARD_ROW_ID}$", re.IGNORECASE)
+
+
+def _normalize_conductor_rows(raw: Any) -> tuple[str, ...] | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    cleaned: list[str] = []
+    for item in raw:
+        rid = str(item).strip()
+        if not rid:
+            return None
+        if not _ROW_ID_VALID.match(rid):
+            return None
+        cleaned.append(rid)
+    return tuple(cleaned)
+
+
+def validate_conductor_opts_seeds(
+    conductor_opts: Mapping[str, Any] | None,
+) -> tuple[str, str] | None:
+    """Return (field, reason) when conductor seed knobs are invalid at admit."""
+    if not conductor_opts:
+        return None
+    rows_raw = conductor_opts.get("rows")
+    effective_rows = G_ROWS
+    if rows_raw is not None:
+        if not isinstance(rows_raw, list):
+            return ("conductor.rows", "conductor.rows must be a list")
+        normalized = _normalize_conductor_rows(rows_raw)
+        if normalized is None:
+            return (
+                "conductor.rows",
+                "conductor.rows must be non-empty valid row ids (G1–G7 or R<n>)",
+            )
+        if normalized != G_ROWS:
+            return (
+                "conductor.rows",
+                "conductor.rows must be the full G ladder (G1 through G7)",
+            )
+        effective_rows = normalized
+    entry_gate = conductor_opts.get("entry_gate")
+    if entry_gate is not None and str(entry_gate).strip():
+        gate = str(entry_gate).strip()
+        if gate not in effective_rows:
+            return (
+                "conductor.entry_gate",
+                "conductor.entry_gate must be one of conductor.rows",
+            )
+    stop_after = conductor_opts.get("stop_after")
+    if stop_after is not None and str(stop_after).strip():
+        stop = str(stop_after).strip()
+        if stop not in effective_rows:
+            return (
+                "conductor.stop_after",
+                "conductor.stop_after must be one of conductor.rows",
+            )
+    return None
+
+
+def _conductor_seed_merge_allowed(
+    *,
+    hop_seq: int,
+    slug: str,
+    conductor_opts: Mapping[str, Any] | None,
+    scoreboard_files_root: Path | None,
+) -> tuple[bool, bool]:
+    """Return (merge_seeds, birth_seed_ignored) for scoreboard seed knobs."""
+    has_seed = bool(
+        conductor_opts and SCOREBOARD_SEED_KEYS & set(conductor_opts.keys())
+    )
+    tip_present = read_tip(slug, files_root=scoreboard_files_root) is not None
+    if hop_seq == 0 and not tip_present:
+        return True, False
+    return False, has_seed
 
 
 def _merge_conductor_seed_rows(
@@ -121,6 +200,8 @@ def load_conductor_context(
     summoning_thread_id_unresolved: bool = False,
     rematerialize: RematerializeContext | None = None,
     conductor_opts: Mapping[str, Any] | None = None,
+    hop_seq: int | None = None,
+    scoreboard_files_root: Path | None = None,
 ) -> ConductorMaterializeContext:
     """Read todo attrs and derive conductor spawn context."""
     ref = parse_source_ref(source_ref)
@@ -133,15 +214,29 @@ def load_conductor_context(
         raise ValueError(msg)
     attrs = entity.get("attributes") or {}
     slug = todo_slug_from_ref(source_ref)
+    effective_hop = (
+        hop_seq
+        if hop_seq is not None
+        else int(rematerialize.hop_seq or 0)
+        if rematerialize is not None
+        else 0
+    )
+    merge_seeds, birth_seed_ignored = _conductor_seed_merge_allowed(
+        hop_seq=effective_hop,
+        slug=slug,
+        conductor_opts=conductor_opts,
+        scoreboard_files_root=scoreboard_files_root,
+    )
+    seed_opts = conductor_opts if merge_seeds else None
     derived = attrs.get("derived_from")
     derived_from = str(derived).strip() if derived else None
     stop_raw = attrs.get("stop_after")
     stop_after = str(stop_raw).strip() if stop_raw else None
     rows = resolve_scoreboard_rows(attrs)
     stop_after = _merge_conductor_seed_stop_after(
-        attrs, stop_after, conductor_opts
+        attrs, stop_after, seed_opts
     )
-    rows = _merge_conductor_seed_rows(attrs, rows, conductor_opts)
+    rows = _merge_conductor_seed_rows(attrs, rows, seed_opts)
     row_labels = resolve_row_labels(rows, attrs)
     entry_gate = resolve_entry_gate(
         density_triage=attrs.get("density_triage"),
@@ -150,7 +245,7 @@ def load_conductor_context(
         rows=rows,
     )
     entry_gate = _merge_conductor_seed_entry_gate(
-        entry_gate, fold_entry_gate, conductor_opts
+        entry_gate, fold_entry_gate, seed_opts
     )
     explicit_summon = summon_mode
     if explicit_summon is None:
@@ -181,6 +276,7 @@ def load_conductor_context(
         rematerialize=rematerialize,
         rows=rows,
         row_labels=row_labels,
+        birth_seed_ignored=birth_seed_ignored,
     )
 
 
@@ -317,6 +413,8 @@ def materialize_conductor(
         summoning_thread_id=effective_summoning,
         summoning_thread_id_unresolved=summoning_unresolved,
         rematerialize=rematerialize,
+        hop_seq=hop_seq,
+        scoreboard_files_root=files_root,
     )
     repo = files_root
     if hop_seq >= 1 and folded_tip_body is None:

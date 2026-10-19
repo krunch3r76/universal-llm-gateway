@@ -194,10 +194,19 @@ def model_for_seat_role(snapshot: ConductorKnobSnapshot, role: str) -> str:
     return str(snapshot.driver.get("model") or "")
 
 
-def birth_seed_ignored(conductor_opts: Mapping[str, Any] | None, *, hop_seq: int) -> bool:
-    if hop_seq < 1 or not conductor_opts:
+def birth_seed_ignored(
+    conductor_opts: Mapping[str, Any] | None,
+    *,
+    hop_seq: int,
+    tip_present: bool = False,
+) -> bool:
+    if not conductor_opts:
         return False
-    return bool(SCOREBOARD_SEED_KEYS & set(conductor_opts.keys()))
+    if not (SCOREBOARD_SEED_KEYS & set(conductor_opts.keys())):
+        return False
+    if hop_seq >= 1:
+        return True
+    return tip_present
 
 
 def entry_gate_for_plan(
@@ -206,8 +215,11 @@ def entry_gate_for_plan(
     conductor_opts: Mapping[str, Any] | None,
     tip_entry_gate: str | None,
     default_entry_gate: str,
+    tip_present: bool = False,
 ) -> tuple[str, bool]:
-    ignored = birth_seed_ignored(conductor_opts, hop_seq=hop_seq)
+    ignored = birth_seed_ignored(
+        conductor_opts, hop_seq=hop_seq, tip_present=tip_present
+    )
     if hop_seq >= 1 and tip_entry_gate:
         return tip_entry_gate, ignored
     if conductor_opts and conductor_opts.get("entry_gate"):
@@ -232,7 +244,9 @@ def plan_scoreboard_birth(
     default_entry_gate: str,
     tip_entry_gate: str | None = None,
 ) -> ScoreboardBirthPlan:
-    ignored = birth_seed_ignored(conductor_opts, hop_seq=hop_seq)
+    ignored = birth_seed_ignored(
+        conductor_opts, hop_seq=hop_seq, tip_present=tip_present
+    )
     if hop_seq >= 1 and tip_present:
         gate, _ = entry_gate_for_plan(
             hop_seq=hop_seq,
@@ -245,6 +259,13 @@ def plan_scoreboard_birth(
             entry_gate=gate,
             stop_after=None,
             birth_seed_ignored=ignored,
+        )
+    if ignored:
+        return ScoreboardBirthPlan(
+            rows=None,
+            entry_gate=tip_entry_gate or default_entry_gate,
+            stop_after=None,
+            birth_seed_ignored=True,
         )
     rows_raw = (conductor_opts or {}).get("rows")
     rows: tuple[str, ...] | None = None

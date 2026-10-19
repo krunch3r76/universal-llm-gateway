@@ -704,18 +704,79 @@ def test_ac_p1_3_rematerialize_entry_gate_from_fold(
 
 @pytest.mark.offline
 def test_load_conductor_context_merges_generation_options_conductor() -> None:
+    from implement_admission.conductor_score_journal import G_ROWS
+
     ctx = load_conductor_context(
         "todo:seed-g1-only",
         cortex=_StubCortex({}),
         conductor_opts={
-            "rows": ["G1"],
+            "rows": list(G_ROWS),
             "entry_gate": "G1",
             "stop_after": "G1",
         },
     )
-    assert ctx.rows == ("G1",)
+    assert ctx.rows == G_ROWS
     assert ctx.entry_gate == "G1"
     assert ctx.stop_after == "G1"
+    assert ctx.birth_seed_ignored is False
+
+
+@pytest.mark.offline
+def test_load_conductor_context_ignores_seeds_when_tip_present(
+    tmp_path: Path,
+) -> None:
+    from implement_admission.conductor_score_journal import G_ROWS, read_tip
+
+    slug = "seed-ignored-existing-tip"
+    source_ref = f"todo:{slug}"
+    tip_body = render_sparse_scoreboard(
+        source_ref=source_ref,
+        slug=slug,
+        entry_gate="G2",
+        stop_after=None,
+        rows=G_ROWS,
+    )
+    tip_path = tmp_path / "notes" / "system" / "scoreboards" / f"{slug}-scoreboard.md"
+    tip_path.parent.mkdir(parents=True, exist_ok=True)
+    tip_path.write_text(tip_body, encoding="utf-8")
+    ctx = load_conductor_context(
+        source_ref,
+        cortex=_StubCortex({}),
+        conductor_opts={
+            "rows": list(G_ROWS),
+            "entry_gate": "G1",
+            "stop_after": "G1",
+        },
+        hop_seq=0,
+        scoreboard_files_root=tmp_path,
+    )
+    assert ctx.birth_seed_ignored is True
+    assert ctx.rows == G_ROWS
+    assert ctx.stop_after != "G1"
+    assert read_tip(slug, files_root=tmp_path) is not None
+
+
+@pytest.mark.offline
+def test_load_conductor_context_ignores_seeds_on_hop(
+    tmp_path: Path,
+) -> None:
+    from implement_admission.conductor_score_journal import G_ROWS
+
+    slug = "seed-ignored-hop"
+    source_ref = f"todo:{slug}"
+    ctx = load_conductor_context(
+        source_ref,
+        cortex=_StubCortex({}),
+        conductor_opts={
+            "rows": list(G_ROWS),
+            "entry_gate": "G1",
+            "stop_after": "G1",
+        },
+        hop_seq=1,
+        scoreboard_files_root=tmp_path,
+    )
+    assert ctx.birth_seed_ignored is True
+    assert ctx.stop_after != "G1"
 
 
 @pytest.mark.offline

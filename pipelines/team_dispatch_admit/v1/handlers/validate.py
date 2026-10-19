@@ -13,6 +13,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from ._envelope import is_cursor_substrate_model, reject_envelope
 from .conductor_defaults import (
     validate_conductor_policy_drift,
+    validate_conductor_seed_options,
     validate_conductor_tip_required,
 )
 
@@ -66,7 +67,11 @@ def evaluate_validate(opts: dict[str, Any]) -> dict[str, Any]:
     job = opts.get("job")
 
     if str(job or "").strip().lower() == "conductor":
-        for check in (validate_conductor_policy_drift, validate_conductor_tip_required):
+        for check in (
+            validate_conductor_seed_options,
+            validate_conductor_policy_drift,
+            validate_conductor_tip_required,
+        ):
             reject = check(opts)
             if reject is not None:
                 return reject

@@ -60,6 +60,7 @@ class BridgeResult:
     packet_rel_path: str | None = None
     birth_scoreboard_markdown: str | None = None
     birth_rows: tuple[str, ...] | None = None
+    birth_seed_ignored: bool = False
     implement_spec_hash: str | None = None
     packet_sha256: str | None = None
     materialization_present: bool | None = None
@@ -349,6 +350,7 @@ def resolve_source_ref_to_packet(
             route_contract={"job": "sketch", "lane": "B"},
         )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
+        from implement_admission.closeout_helpers import cortex_files_root
         from implement_admission.conductor_score_journal import read_tip
         from implement_admission.conductor_witness_defaults import fold_deps_for_admit
         from services.git_integration_worker.cursor_sdk_nested_witness import (
@@ -364,11 +366,12 @@ def resolve_source_ref_to_packet(
             else None
         )
         hop_seq = int(getattr(rem_ctx, "hop_seq", 0) or 0) if rem_ctx else 0
+        scoreboard_root = cortex_files_root()
         fold_entry_gate: str | None = None
         fold_missing: dict[str, str] | None = None
         folded_tip_body: str | None = None
         slug = todo_slug_from_ref(source_ref) if source_ref else ""
-        if slug and read_tip(slug) is not None:
+        if slug and read_tip(slug, files_root=scoreboard_root) is not None:
             fold = fold_deps_for_admit(
                 source_ref,
                 cortex=cortex,
@@ -386,7 +389,7 @@ def resolve_source_ref_to_packet(
                     fold_missing = folded.missing_witnesses or None
                     folded_tip_body = folded.folded_body
         if hop_seq >= 1 and folded_tip_body is None and slug:
-            tip_pair = read_tip(slug)
+            tip_pair = read_tip(slug, files_root=scoreboard_root)
             if tip_pair is not None:
                 folded_tip_body = tip_pair[0]
         ctx = load_conductor_context(
@@ -401,13 +404,17 @@ def resolve_source_ref_to_packet(
             summoning_thread_id=summoning_thread_id,
             rematerialize=rem_ctx,
             conductor_opts=conductor_opts,
+            hop_seq=hop_seq,
+            scoreboard_files_root=scoreboard_root,
         )
         rendered = render_conductor_packet(
             ctx,
             out_dir=out_dir,
             repo_root=repo,
+            scoreboard_files_root=scoreboard_root,
             hop_seq=hop_seq,
-            write_birth_scoreboard=read_tip(slug) is None and hop_seq == 0,
+            write_birth_scoreboard=read_tip(slug, files_root=scoreboard_root) is None
+            and hop_seq == 0,
             tip_body=folded_tip_body if hop_seq >= 1 else None,
         )
         return BridgeResult(
@@ -418,6 +425,7 @@ def resolve_source_ref_to_packet(
             packet_rel_path=rendered.packet_rel_path,
             birth_scoreboard_markdown=rendered.birth_scoreboard_markdown,
             birth_rows=rendered.birth_rows,
+            birth_seed_ignored=ctx.birth_seed_ignored,
             implement_spec_hash=None,
             packet_sha256=rendered.packet_sha256,
             materialization_present=False,

@@ -12,7 +12,7 @@ from implement_admission.conductor_policy_snapshot import (
     resolve_conductor_knobs,
     stamp_policy_sha256,
 )
-from implement_admission.conductor_score_journal import render_sparse_scoreboard
+from implement_admission.conductor_score_journal import G_ROWS, render_sparse_scoreboard
 
 
 @pytest.mark.offline
@@ -20,22 +20,23 @@ def test_birth_seed() -> None:
     snap = default_knobs_from_route_policy()
     assert snap.policy_epoch == 1
     plan = plan_scoreboard_birth(
-        {"rows": ["G1"]},
+        {"rows": list(G_ROWS), "entry_gate": "G1", "stop_after": "G1"},
         hop_seq=0,
         tip_present=False,
-        default_rows=("G1", "G2", "G3", "G4", "G5", "G6", "G7"),
+        default_rows=G_ROWS,
         default_entry_gate="G1",
     )
-    assert plan.rows == ("G1",)
+    assert plan.rows == G_ROWS
     body = render_sparse_scoreboard(
         source_ref="todo:test-slug",
         slug="test-slug",
         entry_gate=plan.entry_gate or "G1",
         stop_after=None,
-        rows=plan.rows or ("G1",),
+        rows=plan.rows or G_ROWS,
     )
     assert "G1" in body
-    again = resolve_conductor_knobs({"rows": ["G1"]}, prior=snap)
+    assert "| G7 |" in body
+    again = resolve_conductor_knobs({"rows": list(G_ROWS)}, prior=snap)
     assert again.policy_sha256 == snap.policy_sha256
     assert stamp_policy_sha256(snap.as_wire_dict()) == snap.policy_sha256
 

@@ -75,6 +75,7 @@ class GenerateWrapResult:
     route_contract: dict[str, Any] | None = None
     scoreboard_uri: str | None = None
     birth_rows: tuple[str, ...] | None = None
+    birth_seed_ignored: bool = False
 
 
 def prepare_conductor_packet(
@@ -141,6 +142,7 @@ def prepare_conductor_packet(
         route_contract=bridge.route_contract,
         scoreboard_uri=scoreboard_uri,
         birth_rows=bridge.birth_rows,
+        birth_seed_ignored=bridge.birth_seed_ignored,
     )
 
 
@@ -650,7 +652,9 @@ async def dispatch_cursor_sdk_generate_route(
                     packet_rel_path=str(wrap.packet_rel_path or ""),
                     birth_scoreboard_markdown=wrap.birth_scoreboard_markdown,
                     hop_seq=hop_seq,
-                    birth_seed_ignored=bool(plan.get("birth_seed_ignored")),
+                    birth_seed_ignored=bool(
+                        plan.get("birth_seed_ignored") or wrap.birth_seed_ignored
+                    ),
                     birth_rows=birth_rows,
                 )
                 committed = commit_conductor_plan(commit_plan, dispatch_id)

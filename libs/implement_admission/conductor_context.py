@@ -97,3 +97,4 @@ class ConductorMaterializeContext:
     rematerialize: RematerializeContext | None = None
     rows: tuple[str, ...] = G_ROWS
     row_labels: dict[str, str] | None = None
+    birth_seed_ignored: bool = False

@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from implement_admission.conductor_materialize import G_ROWS
+from implement_admission.conductor_materialize import (
+    G_ROWS,
+    validate_conductor_opts_seeds,
+)
 from implement_admission.conductor_policy_snapshot import (
     default_knobs_from_route_policy,
     model_for_seat_role,
@@ -158,6 +161,22 @@ def validate_conductor_policy_drift(opts: dict[str, Any]) -> dict[str, Any] | No
             code="conductor_policy_drift",
             field="conductor",
             reason="conductor knob delta without rebind_policy",
+        )
+    return None
+
+
+def validate_conductor_seed_options(opts: dict[str, Any]) -> dict[str, Any] | None:
+    if str(opts.get("job") or "").strip().lower() != "conductor":
+        return None
+    conductor_opts = _pipeline_conductor(opts)
+    reject = validate_conductor_opts_seeds(conductor_opts)
+    if reject is not None:
+        field, reason = reject
+        return reject_envelope(
+            status_code=422,
+            code="conductor_seed_invalid",
+            field=field,
+            reason=reason,
         )
     return None
 
