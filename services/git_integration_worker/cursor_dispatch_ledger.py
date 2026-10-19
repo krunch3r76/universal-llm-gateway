@@ -105,6 +105,10 @@ class DispatchConflict(Exception):  # noqa: N818 — spec name (preserved from r
     """Raised when dispatch_id fingerprint does not match a prior admission."""
 
 
+class LedgerUnreadable(Exception):  # noqa: N818 — plan name (a:39715)
+    """A read-only ledger open could not return live write holders."""
+
+
 class WriteLeaseHeld(Exception):  # noqa: N818 — release-before-admit fence (25956)
     """Raised when ``refuse_if_lease_held`` blocks a would-be queued write admit.
 
@@ -617,7 +621,8 @@ def _fetch_write_lease_holder_conn(
         return conn.execute(
             f"{_CONDUCTOR_HOLDER_SELECT}"
             "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
-            f"AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES}) LIMIT 1",
+            f"AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES}) "
+            "ORDER BY rowid ASC LIMIT 1",
             (key,),
         ).fetchone()
     return conn.execute(
@@ -625,7 +630,7 @@ def _fetch_write_lease_holder_conn(
         "WHERE rowid IN ("
         "  SELECT rowid FROM cursor_sdk_dispatches "
         f"  WHERE COALESCE(read_only,0)=0 AND status IN ({_ACTIVE_WRITE_LEASE_STATUSES})"
-        ") LIMIT 1"
+        ") ORDER BY rowid ASC LIMIT 1"
     ).fetchone()
 
 
@@ -649,6 +654,29 @@ def _fetch_write_lease_holders_conn(
             ") ORDER BY rowid ASC"
         ).fetchall()
     return [_holder_projection(row) for row in rows]
+
+
+def read_live_write_holders(path: Path | str) -> list[dict[str, Any]]:
+    """Unkeyed live write holders from a read-only URI open.
+
+    Opens ``file:{path}?mode=ro`` with ``uri=True``. No lease key, no mkdir,
+    and no DDL. A missing file, a missing table, or any sqlite error raises
+    ``LedgerUnreadable``. Not used on the reexec path unless a caller injects
+    a reader.
+    """
+    uri = f"file:{Path(path).as_posix()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=30.0)
+    except sqlite3.Error as exc:
+        raise LedgerUnreadable(str(exc)) from exc
+    try:
+        conn.row_factory = sqlite3.Row
+        try:
+            return _fetch_write_lease_holders_conn(conn)
+        except sqlite3.Error as exc:
+            raise LedgerUnreadable(str(exc)) from exc
+    finally:
+        conn.close()
 
 
 def _count_non_terminal_conductors_conn(conn: sqlite3.Connection) -> int:
@@ -1073,10 +1101,7 @@ def _column_ddl(col: sqlite3.Row) -> str:
     """Render one ``PRAGMA table_info`` row as a CREATE TABLE column clause."""
     name = str(col["name"])
     if name == "status":
-        return (
-            "status TEXT NOT NULL CHECK (status IN ("
-            f"{_STATUS_CHECK}))"
-        )
+        return f"status TEXT NOT NULL CHECK (status IN ({_STATUS_CHECK}))"
     if name == "terminal_status":
         return (
             "terminal_status TEXT CHECK (terminal_status IN ("
@@ -2141,8 +2166,10 @@ class CursorDispatchLedger:
                 wk = effective_work_key
                 did = req.dispatch_id
                 park_emits.append(
-                    lambda e=epoch, w=wk, d=did, s=surface: _emit_impresario_lease_acquired(
-                        work_key=w, lease_epoch=e, dispatch_id=d, surface=s
+                    lambda e=epoch, w=wk, d=did, s=surface: (
+                        _emit_impresario_lease_acquired(
+                            work_key=w, lease_epoch=e, dispatch_id=d, surface=s
+                        )
                     )
                 )
             if g5_nest_pin is not None:

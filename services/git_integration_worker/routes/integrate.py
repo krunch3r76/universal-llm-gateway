@@ -511,9 +511,15 @@ async def get_active_work(request: Request):
     from services.git_integration_worker.cse_session_holders import (
         occupancy_projections,
     )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        _fetch_write_lease_holders_conn,
+    )
 
     with CursorDispatchLedger.instance()._connect() as conn:
         cse_occupancy = occupancy_projections(conn)
+        # Unkeyed: Lane-B lease_key is the worktree path, so a Lane-A
+        # lease_snapshot omits those writers (a:39715 B2).
+        lease["write_holders"] = _fetch_write_lease_holders_conn(conn)
     cse_holder = cse_occupancy[0] if len(cse_occupancy) == 1 else None
     return JSONResponse(
         status_code=200,

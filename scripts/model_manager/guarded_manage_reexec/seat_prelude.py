@@ -123,13 +123,55 @@ def _lease_and_gate(
     return lease_d, busy_st if isinstance(busy_st, dict) else {}
 
 
+def _gate_holder_ids(active_work: dict[str, Any]) -> list[str]:
+    """``cursor_sdk_gate.holders`` standard then operator, strings only."""
+    gate = active_work.get("cursor_sdk_gate")
+    if not isinstance(gate, dict):
+        return []
+    holders = gate.get("holders")
+    if not isinstance(holders, dict):
+        return []
+    ids: list[str] = []
+    for lane in ("standard", "operator"):
+        lane_ids = holders.get(lane)
+        if not isinstance(lane_ids, list):
+            continue
+        for item in lane_ids:
+            if isinstance(item, str) and item:
+                ids.append(item)
+    return ids
+
+
+def _write_holder_ids(lease: dict[str, Any]) -> list[str]:
+    """``write_lease.write_holders`` when the key is present."""
+    raw = lease.get("write_holders")
+    if not isinstance(raw, list):
+        return []
+    ids: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item:
+            ids.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        hid = item.get("holder_dispatch_id") or item.get("dispatch_id")
+        if isinstance(hid, str) and hid:
+            ids.append(hid)
+    return ids
+
+
 def _caller_attributed(
     active_work: dict[str, Any],
     exclude: str,
     lease: dict[str, Any],
     busy_st: dict[str, Any],
 ) -> bool:
-    """True when the payload positively names ``exclude`` as the occupant."""
+    """True when the payload positively names ``exclude`` as the occupant.
+
+    Gate holders and ``write_holders`` are part of this set so a holder-only
+    caller satisfies the ``active_count == 1`` rule. The live_writers offset
+    is this set union holders union write_holders, which equals this set.
+    """
     if lease.get("holder_dispatch_id") == exclude:
         return True
     for row in _dict_rows(lease.get("active_holders")):
@@ -144,7 +186,78 @@ def _caller_attributed(
     for row in _dict_rows(active_work.get("active_ops")):
         if row.get("kind") == "cursor_sdk" and row.get("op_id") == exclude:
             return True
+    if exclude in _gate_holder_ids(active_work):
+        return True
+    if exclude in _write_holder_ids(lease):
+        return True
     return False
+
+
+def _dedup_by_dispatch_id(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first row for each dispatch_id. Count-only rows stay."""
+    seen: set[str] = set()
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        dispatch_id = row.get("dispatch_id")
+        if isinstance(dispatch_id, str) and dispatch_id:
+            if dispatch_id in seen:
+                continue
+            seen.add(dispatch_id)
+        kept.append(row)
+    return kept
+
+
+def _giw_active_work(busy: dict[str, Any]) -> dict[str, Any] | None:
+    """The GIW active_work dict, or None when the service did not answer."""
+    services = busy.get("services")
+    if not isinstance(services, dict):
+        return None
+    entry = services.get(_GIW)
+    if not isinstance(entry, dict) or "active_work" not in entry:
+        return None
+    raw = entry.get("active_work")
+    if not isinstance(raw, dict):
+        return None
+    return raw
+
+
+def _dry_run_occupancy_readable(active_work: dict[str, Any]) -> bool:
+    """True when both holder lists and live_writers are present."""
+    gate = active_work.get("cursor_sdk_gate")
+    if not isinstance(gate, dict):
+        return False
+    holders = gate.get("holders")
+    if not isinstance(holders, dict):
+        return False
+    if not isinstance(holders.get("standard"), list):
+        return False
+    if not isinstance(holders.get("operator"), list):
+        return False
+    return isinstance(gate.get("live_writers"), int)
+
+
+def _ledger_reader_rows(raw: list[Any], *, exclude: str) -> list[dict[str, Any]]:
+    """Foreign ledger rows. Exclude absent from the rows is itself a refusal."""
+    ids: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item:
+            ids.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        hid = item.get("holder_dispatch_id") or item.get("dispatch_id")
+        if isinstance(hid, str) and hid:
+            ids.append(hid)
+    rows: list[dict[str, Any]] = []
+    if exclude not in ids:
+        rows.append({"source": "ledger_reader", "missing_exclude": exclude})
+    seen: set[str] = set()
+    for hid in ids:
+        if hid == exclude or hid in seen:
+            continue
+        seen.add(hid)
+        rows.append({"source": "ledger_reader", "dispatch_id": hid})
+    return rows
 
 
 def _foreign_giw_rows(
@@ -155,15 +268,11 @@ def _foreign_giw_rows(
     lease, busy_st = _lease_and_gate(active_work)
     holder = lease.get("holder_dispatch_id")
     if holder and holder != exclude:
-        rows.append(
-            {"source": "write_lease.holder_dispatch_id", "dispatch_id": holder}
-        )
+        rows.append({"source": "write_lease.holder_dispatch_id", "dispatch_id": holder})
     for row in _dict_rows(lease.get("active_holders")):
         hid = row.get("holder_dispatch_id")
         if hid and hid != exclude:
-            rows.append(
-                {"source": "write_lease.active_holders", "dispatch_id": hid}
-            )
+            rows.append({"source": "write_lease.active_holders", "dispatch_id": hid})
     gate_holder = busy_st.get("active_holder")
     if isinstance(gate_holder, dict):
         gid = gate_holder.get("dispatch_id")
@@ -220,7 +329,29 @@ def _foreign_giw_rows(
         if isinstance(val, int) and val > 1:
             rows.append({"source": "active_count", "count": val})
             break
-    return rows
+    for hid in _gate_holder_ids(active_work):
+        if hid != exclude:
+            rows.append({"source": "cursor_sdk_gate.holders", "dispatch_id": hid})
+    for hid in _write_holder_ids(lease):
+        if hid != exclude:
+            rows.append({"source": "write_lease.write_holders", "dispatch_id": hid})
+    # Residuals, accepted and not closed here:
+    # R-a: live_writers is lanes A and B only. A writer whose lane resolves to
+    # unknown is not counted; holders or active_ops still name it when present.
+    # R-b: the live_writers count includes admitted/running rows with no
+    # live-task filter, so a task that died mid-run can over-count until
+    # reconcile. That over-refuses.
+    # R-c: an admitted-only Lane-B writer before slot acquire shows only in
+    # live_writers. A read-only caller sits in holders and over-offsets by 1,
+    # so that one writer can be missed in that window.
+    gate = active_work.get("cursor_sdk_gate")
+    live = gate.get("live_writers") if isinstance(gate, dict) else None
+    # Offset 1 iff exclude ∈ _caller_attributed ∪ holders ∪ write_holders.
+    # No read_only inference.
+    offset = 1 if _caller_attributed(active_work, exclude, lease, busy_st) else 0
+    if isinstance(live, int) and live > offset:
+        rows.append({"source": "cursor_sdk_gate.live_writers", "count": live})
+    return _dedup_by_dispatch_id(rows)
 
 
 def giw_foreign_claimed_occupants(
@@ -270,23 +401,50 @@ def observe_giw_occupants(
     *,
     caller_dispatch: str | None,
     dry_run: bool = False,
+    ledger_reader: Callable[[], list[Any]] | None = None,
 ) -> RefuseFinding | None:
     """Refuse when GIW has claimed occupants.
 
     Independent of ``manage_inflight_others`` and of whether GIW is a manage
     child: on execute, a seat running inside a cursor-sdk dispatch is itself
     a GIW occupant even when busy_status has not caught up. Dry-run with a
-    caller id uses ``giw_foreign_claimed_occupants`` only (caller excluded).
+    caller id excludes that caller. Order on that branch: foreign rows, then
+    unreadable when active_work or ``cursor_sdk_gate.holders`` (both lane
+    lists) or ``live_writers`` is missing, else clear. ``ledger_reader`` is
+    off unless a caller injects it; the reexec path passes none.
     """
     if caller_dispatch and dry_run:
-        if giw_foreign_claimed_occupants(
-            busy, exclude_dispatch_id=caller_dispatch
-        ):
+        foreign = _foreign_giw_offenders(busy, exclude_dispatch_id=caller_dispatch)[0][
+            "foreign"
+        ]
+        if ledger_reader is not None:
+            foreign = _dedup_by_dispatch_id(
+                [
+                    *foreign,
+                    *_ledger_reader_rows(ledger_reader(), exclude=caller_dispatch),
+                ]
+            )
+        if foreign:
             return RefuseFinding(
                 reason="giw_claimed_occupants",
-                offenders=_foreign_giw_offenders(
-                    busy, exclude_dispatch_id=caller_dispatch
-                ),
+                offenders=[
+                    {
+                        "occupant": "busy_status",
+                        "excluded_dispatch_id": caller_dispatch,
+                        "foreign": foreign,
+                    }
+                ],
+            )
+        active_work = _giw_active_work(busy)
+        if active_work is None or not _dry_run_occupancy_readable(active_work):
+            return RefuseFinding(
+                reason="giw_occupancy_unreadable",
+                offenders=[
+                    {
+                        "occupant": "busy_status",
+                        "active_work_present": active_work is not None,
+                    }
+                ],
             )
         return None
     offenders: list[dict[str, Any]] = []

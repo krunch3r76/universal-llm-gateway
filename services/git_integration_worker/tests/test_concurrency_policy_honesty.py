@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+    read_live_write_holders,
+)
 from services.git_integration_worker.cursor_sdk_capacity_invariant import (
     resolve_admit_lane,
 )
@@ -346,8 +349,6 @@ def test_f_capacity_split_live_writers_separate_from_headroom(
     assert gate["live_writers"] == 0
 
 
-
-
 def test_multi_holder_snapshot_when_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", "1")
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
@@ -386,3 +387,7 @@ def test_multi_holder_snapshot_when_switch_on(monkeypatch: pytest.MonkeyPatch) -
     assert ledger.count_active_write_leases(lease_key=repo) == 2
     assert snap["non_terminal_conductor_count"] == 0
     assert snap["active_holders"] == []
+    holders = read_live_write_holders(ledger._db_path)  # noqa: SLF001
+    ids = [row["holder_dispatch_id"] for row in holders]
+    assert ids == ["op-a", "op-b"]
+    assert snap["holder_dispatch_id"] == ids[0]

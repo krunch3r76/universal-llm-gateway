@@ -5,10 +5,12 @@ Key → producer (lane tip that cited these lines):
 - ``running``, ``queued`` (int): ``integrate.py:495–496`` assigned, ``:521–522``
   in the JSON body. Top-level ``queued`` is ``_GATE.queue_length``, never a list.
 - ``cursor_dispatches``: ``integrate.py:497`` / ``:523``.
-- ``cursor_sdk_gate``: ``integrate.py:524`` from ``sdk_dispatch_gate_stats()``.
-  ``busy_status`` is attached at ``cursor_sdk_gate.py:652``. Envelope fields
-  ``active_holder``, ``active_holders``, ``queue_depth``, ``queued_dispatches``
-  are built at ``cursor_sdk_gate.py:450–465`` (``dispatch_id`` on queued rows).
+- ``cursor_sdk_gate``: ``integrate.py`` from ``sdk_dispatch_gate_stats()``
+  then ``sdk_gate["holders"]`` (standard and operator id lists). ``live_writers``
+  is the A+B count on that stats object. ``busy_status`` is attached inside
+  ``sdk_dispatch_gate_stats``. Envelope fields ``active_holder``,
+  ``active_holders``, ``queue_depth``, ``queued_dispatches`` use ``dispatch_id``
+  on queued rows.
 - ``write_lease``: ``integrate.py:506`` / ``:525`` from ``lease_snapshot``.
   ``holder_dispatch_id`` is ``_holder_projection`` (``cursor_dispatch_ledger.py:407``).
   ``active_holders`` at ``:2670`` (same projection, ``holder_dispatch_id``).
@@ -56,6 +58,8 @@ PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED: dict[str, Any] = {
     "queued": 1,
     "cursor_dispatches": [],
     "cursor_sdk_gate": {
+        "holders": {"standard": ["d-self"], "operator": []},
+        "live_writers": 1,
         "busy_status": {
             "active_holder": {
                 "dispatch_id": "d-self",
@@ -67,7 +71,7 @@ PRODUCER_ACTIVE_WORK_FOREIGN_QUEUED: dict[str, Any] = {
             "active_holders": [_HOLDER_SELF],
             "queue_depth": 1,
             "queued_dispatches": [_QUEUED_GATE_ROW],
-        }
+        },
     },
     "write_lease": {
         "holder_dispatch_id": "d-self",
