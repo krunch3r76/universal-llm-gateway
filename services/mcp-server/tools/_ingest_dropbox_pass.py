@@ -69,6 +69,17 @@ def process_file(
         except Exception as exc:  # noqa: BLE001
             if rec.get("source_sha256") == source_sha256:
                 catch_all_failure(rec, source_sha256, "extract", exc, max_err=_MAX_ERR)
+                if rec.get("terminal"):
+                    prev_stage = rec.get("stage", "extract")
+                    record(
+                        "mcp.ingest.state.advanced",
+                        path=rel,
+                        from_stage=prev_stage,
+                        to_stage=prev_stage,
+                        terminal="needs_human",
+                        last_error_kind=(rec.get("last_error") or "")[:40] or None,
+                    )
+                    return "needs_human", False
             return "attempt", False
         if route_err:
             prev_stage = rec.get("stage")

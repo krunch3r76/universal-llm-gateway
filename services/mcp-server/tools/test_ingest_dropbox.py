@@ -603,12 +603,21 @@ def test_corrupt_pdf_does_not_block_next_file(tmp_path: Path, monkeypatch) -> No
     good = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "good.pdf")
     (tmp_path / bad).write_bytes(b"not-a-pdf")
     _text_pdf(tmp_path / good, "hello " * 20)
+    import hashlib
+
+    bad_sha = hashlib.sha256((tmp_path / bad).read_bytes()).hexdigest()
     monkeypatch.setattr(
         ingest_pass,
         "run_promote_document",
         lambda *_a, **_k: {"entity_id": "document:good"},
     )
+    for _ in range(2):
+        out = ingest_dropbox_run(paths=[bad])
+        assert out["processed"][0]["outcome"] == "attempt"
     out = ingest_dropbox_run(paths=[bad, good])
+    assert out["processed"][0]["outcome"] == "needs_human"
+    rec = ingest_state.load_state(bad_sha)
+    assert rec is not None and rec.get("terminal") == "needs_human"
     assert any(p["path"] == good for p in out["processed"])
 
 
@@ -729,6 +738,7 @@ def test_each_state_transition_emits_one_advisory_event(
             events.append({"name": name, **kw})
 
     monkeypatch.setattr(ingest_pass, "record", _record)
+    monkeypatch.setattr(ingest_mod, "record", _record)
     monkeypatch.setattr(
         ingest_pass,
         "run_promote_document",
@@ -777,6 +787,58 @@ def test_each_state_transition_emits_one_advisory_event(
     assert len(conflict_adv) == 2
     assert len(human) == 1
     assert human[0]["last_error_kind"] == "entity_conflict"
+
+    events.clear()
+    corrupt = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "corrupt2.pdf")
+    (tmp_path / corrupt).write_bytes(b"not-a-pdf")
+    for _ in range(2):
+        ingest_dropbox_run(paths=[corrupt])
+    corrupt_out = ingest_dropbox_run(paths=[corrupt])
+    assert corrupt_out["processed"][0]["outcome"] == "needs_human"
+    corrupt_adv = [e for e in events if e["path"] == corrupt]
+    terminal_adv = [e for e in corrupt_adv if e["terminal"] == "needs_human"]
+    assert len(terminal_adv) == 1
+
+    events.clear()
+    import hashlib
+
+    rec_rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "reconcile.pdf")
+    _blank_pdf(tmp_path / rec_rel)
+    rec_sha = hashlib.sha256((tmp_path / rec_rel).read_bytes()).hexdigest()
+    rec = ingest_state.new_record(source_path=rec_rel, source_sha256=rec_sha)
+    rec.update(stage="promote", entity_id="document:reconcile")
+    ingest_state.save_state(rec_sha, rec)
+    (tmp_path / rec_rel).unlink()
+    bundle = tmp_path / f"evidence/2026-10-19_{rec_sha[:12]}_reconcile"
+    bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(ingest_mod, "_entity_hash", lambda _e: rec_sha)
+    ingest_dropbox_run(paths=[])
+    reconcile_done = [e for e in events if e["path"] == rec_rel]
+    assert reconcile_done == [
+        {
+            "name": "mcp.ingest.state.advanced",
+            "path": rec_rel,
+            "from_stage": "promote",
+            "to_stage": "done",
+            "terminal": None,
+            "last_error_kind": None,
+        }
+    ]
+
+    events.clear()
+    miss_rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "missing.pdf")
+    _blank_pdf(tmp_path / miss_rel)
+    miss_sha = hashlib.sha256((tmp_path / miss_rel).read_bytes()).hexdigest()
+    miss_rec = ingest_state.new_record(source_path=miss_rel, source_sha256=miss_sha)
+    miss_rec.update(stage="promote", entity_id="document:missing")
+    ingest_state.save_state(miss_sha, miss_rec)
+    (tmp_path / miss_rel).unlink()
+    ingest_dropbox_run(paths=[])
+    reconcile_miss = [e for e in events if e["path"] == miss_rel]
+    assert len(reconcile_miss) == 1
+    assert reconcile_miss[0]["terminal"] == "needs_human"
+    assert reconcile_miss[0]["last_error_kind"] == "missing_after_promote"
 
 
 def test_cap_skips_six_terminal_then_processes_new(tmp_path: Path, monkeypatch) -> None:

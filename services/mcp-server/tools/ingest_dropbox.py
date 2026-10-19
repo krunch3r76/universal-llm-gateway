@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from mcp_events import record
 
 from ._extraction_profile import load_default_profile
 from ._file_helpers import FILES_ROOT
@@ -109,9 +110,25 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
                 current["stage"] = "done"
                 current["entity_id"] = entity_id
                 current["last_error"] = None
+                record(
+                    "mcp.ingest.state.advanced",
+                    path=rel,
+                    from_stage="promote",
+                    to_stage="done",
+                    terminal=None,
+                    last_error_kind=None,
+                )
             else:
                 current["terminal"] = "needs_human"
                 current["last_error"] = "missing_after_promote"
+                record(
+                    "mcp.ingest.state.advanced",
+                    path=rel,
+                    from_stage="promote",
+                    to_stage="promote",
+                    terminal="needs_human",
+                    last_error_kind="missing_after_promote",
+                )
             save_state(sha, current)
 
 
