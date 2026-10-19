@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -52,6 +53,61 @@ def _complete_row(work_key: str, *, row_id: str = "done-row") -> dict[str, Any]:
         "text": work_key,
         "live": False,
     }
+
+
+@pytest.mark.offline
+def test_k43_giw_active_work_default_url_matches_git_router() -> None:
+    """Wrong default path → 404; roster and quiet_reason must match GIW integrate router."""
+    from bus_watch import quiet_reason, roster
+    from services.git_integration_worker.routes.integrate import router as git_router
+
+    assert roster._GIW_ACTIVE_WORK == quiet_reason._GIW_ACTIVE_WORK
+    path = urlparse(roster._GIW_ACTIVE_WORK).path
+    assert path == f"{git_router.prefix}/active-work"
+
+
+@pytest.mark.offline
+def test_k43_giw_blocks_promotion_uses_single_active_work_fetch(
+    watch_dir, monkeypatch
+) -> None:  # noqa: ANN001
+    """Two HTTP probes per check can disagree; promotion guard uses one payload."""
+    root = "18290-promo-single-fetch"
+    path = roster_path(root)
+    append_row(path, _complete_row("todo:alpha"))
+    monkeypatch.setattr(
+        "bus_watch.roster_promote.scoreboard_g_rows_done", lambda wk: True
+    )
+    calls: list[str] = []
+
+    def _get(url: str, *_a, **_k):
+        calls.append(url)
+
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {
+                    "active_ops": [],
+                    "write_lease": {
+                        "non_terminal_conductor_count": 0,
+                        "active_holders": [],
+                    },
+                }
+
+        return Resp()
+
+    monkeypatch.setattr("bus_watch.roster.httpx.get", _get)
+    digest = {"root": {"id": root}, "roster": [_complete_row("todo:alpha")]}
+    out = maybe_promote_roster(
+        root,
+        {"next_row": "todo:beta"},
+        digest,
+        {},
+        cortex=lambda *_a, **_k: {},
+    )
+    assert out.get("action") == "appended"
+    assert len(calls) == 1
 
 
 def test_module_does_not_import_cortex_store() -> None:
