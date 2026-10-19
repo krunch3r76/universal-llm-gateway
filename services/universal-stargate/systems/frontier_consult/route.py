@@ -11,7 +11,6 @@ from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
-from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
@@ -30,7 +29,6 @@ from universal_logging import get_logger
 
 from .admission import (
     enforce_handoff_seat_not_auto,
-    is_cursor_sdk_generate_admission,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
@@ -39,11 +37,7 @@ from .admit_provenance import (
     emit_admit_provenance_missing_event,
     finalize_team_dispatch_admit_response,
 )
-from .cdp_generate import (
-    dispatch_cdp_generate,
-    reject_cursor_sdk_seat_with_cdp,
-    reject_role_with_substrate_model,
-)
+from .cdp_generate import dispatch_cdp_generate
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
 from .cursor_sdk_steer_dispatch import (
@@ -824,57 +818,10 @@ async def team_dispatch(
             await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if (
-        body.op == "generate"
-        and getattr(body, "job", None) == "wrap"
-        and isinstance(role, str)
-        and role.strip()
-        and normalize_agent_slug(role) != "cursor-sdk"
-        and not is_cursor_sdk_generate_admission(
-            role=role, seat=seat, model=model, request_id=request_id
-        )
-    ):
-        return JSONResponse(
-            status_code=422,
-            content=FrontierEndpointError(
-                request_id=request_id,
-                field="role",
-                reason=(
-                    "contract=wrap is only admitted on the cursor-sdk generate branch"
-                ),
-                status_code=422,
-                code="wrap_role_not_admitted",
-            ).to_dict(),
-        )
-    if body.op == "generate":
-        from implement_admission.check_review_substrate import (
-            coerce_check_review_omit_to_cursor_seat,
-        )
-
-        role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
-            role, seat, model
-        )
-        if coerced:
-            body.role = role
-            body.seat = seat
-            body.model = model
     if body.op in ("generate", "to_thread"):
         from systems.proxy.dependencies import get_proxy
 
-        from ._frontier_intake import reject_dispatch_id_off_sdk
         from .team_dispatch_admit_client import run_team_dispatch_admit
-
-        if body.op == "generate" and getattr(body, "dispatch_id", None):
-            try:
-                reject_dispatch_id_off_sdk(
-                    request_id=request_id,
-                    dispatch_id=body.dispatch_id,
-                    sdk_admission=is_cursor_sdk_generate_admission(
-                        role=role, seat=seat, model=model, request_id=request_id
-                    ),
-                )
-            except FrontierEndpointError as exc:
-                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
         _proxy = get_proxy()
         _event_bus = getattr(_proxy, "event_bus", None)
@@ -943,12 +890,6 @@ async def team_dispatch(
         backend = plan.get("backend")
         if backend == "cdp":
             try:
-                reject_cursor_sdk_seat_with_cdp(
-                    seat=seat, model=model, request_id=request_id
-                )
-                reject_role_with_substrate_model(
-                    role=role, model=model, request_id=request_id
-                )
                 result = await dispatch_cdp_generate(
                     request_id=request_id,
                     body=body,
@@ -960,12 +901,6 @@ async def team_dispatch(
                 response.status_code = 202
             return finalize_team_dispatch_admit_response(result, admit_provenance)
         if backend == "cursor_sdk":
-            try:
-                reject_role_with_substrate_model(
-                    role=role, model=model, request_id=request_id
-                )
-            except FrontierEndpointError as exc:
-                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
             sdk_seat = str(plan.get("seat") or "cursor-sdk")
             result = await dispatch_cursor_sdk_generate_route(
                 request_id=request_id,
