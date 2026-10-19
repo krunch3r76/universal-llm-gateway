@@ -90,6 +90,23 @@ BODY_18067_2 = (
     '"source_ref":"workspaces://universal-llm-gateway/tmp/reviews/closeouts/'
     'f1ba9cb2f3c9-b4dc61e5.md"}'
 )
+BODY_30054_PARTIAL_CAPTURE = (
+    '{"schema_version":1,"status":"partial","status_incomplete_class":"capture",'
+    '"work_outcome":"unverified","capture_status":null,'
+    '"escalation_harvest":"none","contract":"code-review",'
+    '"deviations":["degraded:sdk_git_probe_absent",'
+    '"divergence:observed_unclaimed:d01894c8d31f-697a773d"],'
+    '"verification":[{"command":"gate_d:passed","exit_code":0,'
+    '"exit_code_register":"derived"},{"command":"ruff check (no python files touched)",'
+    '"exit_code":0,"exit_code_register":"derived"},'
+    '{"command":"ruff check --select F821 services/git_integration_worker/",'
+    '"exit_code":0,"exit_code_register":"observed"}],'
+    '"head_sha":"743839e84a2fb311a67df94f205ea391a2680aae","commits_ahead":0,'
+    '"landed":false,"branch":"cursor-sdk/lane-18336"}'
+)
+LINE_30054_APPROVE = (
+    f"VERDICT: APPROVE range={A035}..{TIP7438} head={TIP7438}\n"
+)
 CLOSEOUT_463D = (
     "VERDICT: APPROVE\n"
     "`a0354858fb998905098762a16ab1cf9038f728da.."
@@ -183,6 +200,52 @@ def test_nonbinding_15851_1833_1822_and_18067_2_write_no_row(
             mounts_table=EXT4,
         )
         assert result.status == "no_match"
+
+
+def test_friction_30054_k43_bind_keys_verdict_not_capture_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fork D guard: partial:capture + sdk_git_probe_absent must not block VERDICT bind.
+
+    Breaks when K43 code treats envelope ``status`` / ``status_incomplete_class``
+    as the commit bind instead of the canonical VERDICT line (master_review_owed
+    notice at :531). Seat bar may read partial:capture; the ledger reader must not.
+    """
+    _pin_ledger(monkeypatch)
+    approve_body = LINE_30054_APPROVE + BODY_30054_PARTIAL_CAPTURE
+    bound = mro.bind_canonical_verdict(
+        approve_body,
+        repo=REPO,
+        bus_thread="15851",
+        bus_turn=30054,
+        review_dispatch_id="d01894c8d31f-697a773d",
+        mounts_table=EXT4,
+    )
+    assert bound.status == "bound"
+    assert bound.verdict == "APPROVE"
+    assert bound.tip_sha == TIP7438
+    assert bound.base_sha == A035
+
+    request_changes_body = "VERDICT: REQUEST_CHANGES\n" + BODY_30054_PARTIAL_CAPTURE
+    rejected = mro.bind_canonical_verdict(
+        request_changes_body,
+        repo=REPO,
+        bus_thread="15851",
+        bus_turn=30055,
+        review_dispatch_id="d01894c8d31f-697a773d",
+        mounts_table=EXT4,
+    )
+    assert rejected.status == "no_match"
+
+    capture_only = mro.bind_canonical_verdict(
+        BODY_30054_PARTIAL_CAPTURE,
+        repo=REPO,
+        bus_thread="15851",
+        bus_turn=30056,
+        review_dispatch_id="d01894c8d31f-697a773d",
+        mounts_table=EXT4,
+    )
+    assert capture_only.status == "no_match"
 
 
 def test_section7_k43_backticked_closeout_writes_no_row(
