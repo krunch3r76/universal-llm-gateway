@@ -12,7 +12,7 @@ from universal_logging import get_logger
 from .admit_provenance import (
     AdmitProvenanceContext,
     admit_turn_from_agent,
-    append_provenance_marker,
+    stamp_admit_turn_body,
 )
 from .cursor_sdk_admit_loop import (
     classify_admit_pointer_loop,
@@ -196,8 +196,11 @@ async def post_coord_admit_pointer(
         if loop:
             return
     missing = admit_provenance.missing if admit_provenance is not None else ()
+    work_key = admit_provenance.work_key if admit_provenance is not None else None
     body_text = _admit_body(worker_thread_id=worker_thread_id, contract=contract)
-    body_text = append_provenance_marker(body_text, missing)
+    body_text = stamp_admit_turn_body(
+        body_text, work_key=work_key, provenance_missing=missing
+    )
     try:
         await _post_coord_turn(
             coord_thread_id=coord_thread_id,

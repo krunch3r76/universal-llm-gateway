@@ -1,7 +1,7 @@
 """Harvest preamble for cursor-sdk closeout sidecars.
 
 The first section maestro reads is the preamble before the first ATX heading,
-capped at 4500 characters. These helpers keep line-start status, VERDICT, and
+capped at 4000 characters. These helpers keep line-start status, VERDICT, and
 residue inside that window. Moved out of cursor_sdk_deliverables.
 """
 
@@ -11,11 +11,11 @@ import json
 import re
 
 # Maestro step 2 reads the preamble before the first ATX heading, capped at
-# 4500 characters (cdp-operator-proxy: fs read ≤4500; a longer first section
+# 4000 characters (step-2 budget ~4500 chars; executive envelope stays ≤4000;
 # falls through to a line-start VERDICT/status search and skips
 # structured_closeout_full). A verbatim model body can hide those fields past
 # that window — specimen closeout d40fa4c3b9c3-8dcc4e70.md, 153153-char preamble.
-_HARVEST_SECTION_CAP = 4500
+_HARVEST_SECTION_CAP = 4000
 _HARVEST_PREAMBLE_MAX_LINES = 60
 _CLOSEOUT_BODY_HEADING = "## closeout_body"
 _UNSTATED_STATUS_LINE = "status: unstated"
@@ -150,7 +150,7 @@ def _splice_harvest_lines(
 
 
 def bound_closeout_harvest_preamble(content: str) -> str:
-    """Keep line-start harvest fields inside a first section of at most 4500 chars.
+    """Keep line-start harvest fields inside a first section of at most 4000 chars.
 
     The first section is the preamble before the first ATX heading. When that
     preamble already fits and already carries status, residue, and VERDICT

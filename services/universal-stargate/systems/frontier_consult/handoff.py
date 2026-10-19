@@ -27,7 +27,7 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
-from .admit_provenance import admit_turn_from_agent, append_provenance_marker
+from .admit_provenance import admit_turn_from_agent, stamp_admit_turn_body
 from .handoff_life_mirror import (
     build_life_mirror_pointer_body,
     build_workspaces_pointer_body,
@@ -844,6 +844,7 @@ async def post_pointer_turn(
     pointer_body: str,
     caller_agent: str | None,
     provenance_missing: tuple[str, ...] = (),
+    work_key: str | None = None,
 ) -> int:
     """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns.
 
@@ -872,7 +873,9 @@ async def post_pointer_turn(
         ),
         "to": to_agent,
         "subject": subject,
-        "body": append_provenance_marker(pointer_body, provenance_missing),
+        "body": stamp_admit_turn_body(
+            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+        ),
         "status": "open",
     }
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -941,6 +944,7 @@ async def claim_and_post_pointer_turn(
     pipeline_id: str,
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
+    work_key: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
@@ -973,7 +977,9 @@ async def claim_and_post_pointer_turn(
         ),
         "to_agent": to_agent,
         "subject": subject,
-        "body": append_provenance_marker(pointer_body, provenance_missing),
+        "body": stamp_admit_turn_body(
+            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+        ),
     }
     if parent_thread_id is not None:
         payload["parent_thread_id"] = parent_thread_id
@@ -1052,6 +1058,7 @@ async def admit_and_post_pointer_turn(
     pipeline_id: str,
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
+    work_key: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-admit-and-post — atomic link + pointer turn."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -1080,7 +1087,9 @@ async def admit_and_post_pointer_turn(
         ),
         "to_agent": to_agent,
         "subject": subject,
-        "body": append_provenance_marker(pointer_body, provenance_missing),
+        "body": stamp_admit_turn_body(
+            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+        ),
     }
     if parent_thread_id is not None:
         payload["parent_thread_id"] = parent_thread_id
@@ -1198,6 +1207,7 @@ async def create_handoff_thread(
     lifecycle_state: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     provenance_missing: tuple[str, ...] = (),
+    work_key: str | None = None,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -1233,7 +1243,9 @@ async def create_handoff_thread(
     from_agent = admit_turn_from_agent(
         caller_agent, provenance_missing=provenance_missing
     )
-    pointer_body = append_provenance_marker(pointer_body, provenance_missing)
+    pointer_body = stamp_admit_turn_body(
+        pointer_body, work_key=work_key, provenance_missing=provenance_missing
+    )
     from agent_bus_store.disposition import append_bus_lifecycle_tags
 
     contract_tag = (
