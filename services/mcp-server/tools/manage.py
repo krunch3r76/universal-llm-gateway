@@ -524,6 +524,13 @@ def register_manage_tools(mcp: FastMCP) -> None:
         force_reason_text = (force_reason or "").strip()
         if force_reason_text:
             params["force_reason"] = force_reason_text
+        if service == "mcp" and action in {
+            "stop",
+            "restart",
+            "sync_restart",
+            "rebuild",
+        }:
+            params["self_call_counted"] = True
         if (
             service == "git_integration_worker"
             and action in _GIW_LIFECYCLE_FORCE_ACTIONS

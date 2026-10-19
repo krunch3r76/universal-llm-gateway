@@ -720,8 +720,12 @@ async def run_gated(
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
     caller_requested: bool = False,
+    force_already_enforced: bool = False,
+    self_call_counted: bool = False,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
+
+    ``force_already_enforced`` means the caller already enforced the force gate.
 
     Both the MCP dispatch path (``api_dispatch.execute``) and the TUI workers
     (``view/screens/services.py``) call this so the gate sits at the real shared
@@ -738,20 +742,22 @@ async def run_gated(
     """
     if not _restart_slot_required(action, service):
         return {"status": "ok", "message": await lifecycle()}
-    from .restart_drain_force_gate import enforce_force_reason_if_needed
+    if not force_already_enforced:
+        from .restart_drain_force_gate import enforce_force_reason_if_needed
 
-    refused = await enforce_force_reason_if_needed(
-        gate,
-        action,
-        service,
-        force=force,
-        force_reason=force_reason,
-        caller_thread_id=caller_thread_id,
-        caller_dispatch_id=caller_dispatch_id,
-        caller_requested=caller_requested,
-    )
-    if refused is not None:
-        return refused
+        refused = await enforce_force_reason_if_needed(
+            gate,
+            action,
+            service,
+            force=force,
+            force_reason=force_reason,
+            caller_thread_id=caller_thread_id,
+            caller_dispatch_id=caller_dispatch_id,
+            caller_requested=caller_requested,
+            self_call_counted=self_call_counted,
+        )
+        if refused is not None:
+            return refused
     outcome = await gate.evaluate(service, force=force, exclude_job_id=exclude_job_id)
     if outcome is not None:
         return outcome.to_result()
@@ -793,8 +799,12 @@ async def run_gated_deferred(
     caller_thread_id: str | None = None,
     caller_dispatch_id: str | None = None,
     caller_requested: bool = False,
+    force_already_enforced: bool = False,
+    self_call_counted: bool = False,
 ) -> dict[str, Any]:
     """Acquire the restart gate, schedule lifecycle in background, return immediately.
+
+    ``force_already_enforced`` means the caller already enforced the force gate.
 
     Used for MCP ``sync_restart`` / ``rebuild`` so the manage.sock JSON-RPC response
     is flushed before the MCP container is stopped (the triggering MCP tool call
@@ -804,20 +814,22 @@ async def run_gated_deferred(
     """
     if action not in GATED_ACTIONS:
         return {"status": "ok", "message": await lifecycle()}
-    from .restart_drain_force_gate import enforce_force_reason_if_needed
+    if not force_already_enforced:
+        from .restart_drain_force_gate import enforce_force_reason_if_needed
 
-    refused = await enforce_force_reason_if_needed(
-        gate,
-        action,
-        service,
-        force=force,
-        force_reason=force_reason,
-        caller_thread_id=caller_thread_id,
-        caller_dispatch_id=caller_dispatch_id,
-        caller_requested=caller_requested,
-    )
-    if refused is not None:
-        return refused
+        refused = await enforce_force_reason_if_needed(
+            gate,
+            action,
+            service,
+            force=force,
+            force_reason=force_reason,
+            caller_thread_id=caller_thread_id,
+            caller_dispatch_id=caller_dispatch_id,
+            caller_requested=caller_requested,
+            self_call_counted=self_call_counted,
+        )
+        if refused is not None:
+            return refused
     outcome = await gate.evaluate(service, force=force)
     if outcome is not None:
         return outcome.to_result()

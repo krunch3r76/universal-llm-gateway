@@ -148,12 +148,15 @@ def test_busy_force_with_reason_proceeds_and_audits(
     events_log: list[tuple[str, dict[str, Any]]],
     notices: list[dict[str, str]],
 ) -> None:
-    gate = _busy_gate()
+    gate = RestartDrainGate()
+    gate._probes["gateway"] = _StaticProbe(  # noqa: SLF001
+        ActiveWork(busy=True, detail={"busy": True, "active_ops": [{"op_id": "job-1"}]})
+    )
     result = _run(
         enforce_force_reason_if_needed(
             gate,
             "sync_restart",
-            "mcp",
+            "gateway",
             force=True,
             force_reason="coordinator: clear stale holder",
             caller_thread_id="18180",
@@ -365,14 +368,22 @@ def test_force_refused_is_409_names_force_reason(
 
 
 def test_run_gated_busy_force_with_reason_runs_lifecycle() -> None:
-    gate = _busy_gate()
+    """Non-mcp busy force with a reason still runs the lifecycle.
+
+    Breaks when the mcp life_hot rule is applied to gateway and a reasoned
+    force returns 409 instead of running.
+    """
+    gate = RestartDrainGate()
+    gate._probes["gateway"] = _StaticProbe(  # noqa: SLF001
+        ActiveWork(busy=True, detail={"busy": True, "active_ops": [{"op_id": "job-1"}]})
+    )
     lifecycle = AsyncMock(return_value="done")
 
     async def _run_it() -> dict[str, Any]:
         return await run_gated(
             gate,
             "sync_restart",
-            "mcp",
+            "gateway",
             force=True,
             force_reason="test: proceed",
             lifecycle=lifecycle,
@@ -640,13 +651,13 @@ def test_stargate_econnrefused_force_stays_caller_requested_false(
     assert seen == [False]
 
 
-def test_tui_force_arm_does_not_set_caller_requested(
+def test_tui_force_arm_sets_caller_requested(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TUI Force toggle sets ``force`` and leaves ``caller_requested`` false.
+    """TUI Force sets ``caller_requested`` and forwards ``force_reason``.
 
-    Breaks when the services screen forwards the arm as a manage force
-    request: a busy service with no reason field would 409.
+    Breaks when Force-ON stop of busy mcp skips Gate 1 (``caller_requested``
+    false) and the one-shot arm never reaches the force gate.
     """
     captured: dict[str, Any] = {}
 
@@ -665,6 +676,7 @@ def test_tui_force_arm_does_not_set_caller_requested(
 
     screen = SimpleNamespace(
         _force_armed=True,
+        _force_reason="",
         app=SimpleNamespace(service_controller=SimpleNamespace(restart_gate=object())),
         query_one=lambda *_a, **_k: SimpleNamespace(write_line=lambda _m: None),
         _consume_force=lambda: None,
@@ -680,7 +692,104 @@ def test_tui_force_arm_does_not_set_caller_requested(
     )
     assert result is True
     assert captured["force"] is True
-    assert captured.get("caller_requested", False) is False
+    assert captured["caller_requested"] is True
+    assert captured.get("force_reason") == ""
+
+
+def test_tui_force_refused_does_not_consume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 409 refusal does not consume the one-shot Force arm.
+
+    Breaks when a refused stop is logged as success and ``_consume_force``
+    runs, so the next attempt is unarmed.
+    """
+    consumed: list[int] = []
+
+    async def _run_gated(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "refused",
+            "status_code": 409,
+            "reason": "force_requires_reason",
+        }
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.view.screens.services.run_gated",
+        _run_gated,
+    )
+    from scripts.model_manager.ui.view.screens.services import ServicesScreen
+
+    async def _window(*_args: Any, **_kwargs: Any) -> str:
+        return "stopped"
+
+    screen = SimpleNamespace(
+        _force_armed=True,
+        _force_reason="",
+        app=SimpleNamespace(service_controller=SimpleNamespace(restart_gate=object())),
+        query_one=lambda *_a, **_k: SimpleNamespace(write_line=lambda _m: None),
+        _consume_force=lambda: consumed.append(1),
+        _tui_lifecycle_with_window=_window,
+    )
+    result = _run(
+        ServicesScreen._run_gated_action(
+            screen,  # type: ignore[arg-type]
+            "stop",
+            "mcp",
+            AsyncMock(return_value="stopped"),
+        )
+    )
+    assert result is False
+    assert consumed == []
+
+
+def test_tui_restart_local_force_refusal_skips_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Force-armed local restart returns before stop when the gate refuses.
+
+    Breaks when ``_restart_local`` evaluates and calls ``stop_stargate``
+    after a 409 on the caller-requested force.
+    """
+    stops: list[str] = []
+
+    async def _enforce(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "refused",
+            "status_code": 409,
+            "reason": "force_requires_reason",
+        }
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.view.screens.services.enforce_force_reason_if_needed",
+        _enforce,
+    )
+    from scripts.model_manager.ui.view.screens.services import ServicesScreen
+
+    async def _stop_stargate() -> str:
+        stops.append("stargate")
+        return "stopped"
+
+    async def _stop_gateway() -> str:
+        stops.append("gateway")
+        return "stopped"
+
+    log = SimpleNamespace(clear=lambda: None, write_line=lambda _m: None)
+    screen = SimpleNamespace(
+        _force_armed=True,
+        _force_reason="",
+        app=SimpleNamespace(
+            service_controller=SimpleNamespace(
+                restart_gate=object(),
+                restart_intent_store=object(),
+                stop_stargate=_stop_stargate,
+                stop_gateway=_stop_gateway,
+            )
+        ),
+        query_one=lambda *_a, **_k: log,
+        _consume_force=lambda: stops.append("consume"),
+    )
+    _run(ServicesScreen._restart_local(screen))  # type: ignore[arg-type]
+    assert stops == []
 
 
 def test_manage_sock_force_forward_is_caller_requested(
@@ -770,3 +879,230 @@ def test_supervised_evaluate_force_does_not_enter_reason_gate(
         )
     )
     assert calls == [("stargate", True, True)]
+
+
+def _mcp_life_hot_detail(
+    *,
+    in_flight: int = 1,
+    include_life_hot: bool = True,
+    busy_reasons: list[str] | None = None,
+    running_count: int | None = 0,
+) -> dict[str, Any]:
+    mcp: dict[str, Any] = {"in_flight": in_flight}
+    if include_life_hot:
+        mcp["life_hot"] = True
+    cdp: dict[str, Any] = {}
+    if running_count is not None:
+        cdp["running_count"] = running_count
+    return {
+        "mcp": mcp,
+        "busy_reasons": (
+            ["mcp_session_hot"] if busy_reasons is None else busy_reasons
+        ),
+        "cdp_ask": cdp,
+        "busy": True,
+    }
+
+
+def _mcp_force_gate(detail: dict[str, Any]) -> RestartDrainGate:
+    gate = RestartDrainGate()
+    gate._probes["mcp"] = _StaticProbe(  # noqa: SLF001
+        ActiveWork(busy=True, detail=detail)
+    )
+    return gate
+
+
+def test_mcp_force_life_hot_only_allowed_with_reason(
+    events_log: list[tuple[str, dict[str, Any]]],
+    notices: list[dict[str, str]],
+) -> None:
+    """Flagged n==1 life_hot-only busy admits and audits.
+
+    Breaks when a lone life session is refused, or when the allow path
+    skips ``manage.restart.force_applied``.
+    """
+    gate = _mcp_force_gate(_mcp_life_hot_detail())
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason="coordinator: life session only",
+            caller_thread_id="18180",
+            caller_requested=True,
+            self_call_counted=True,
+        )
+    )
+    assert result is None
+    applied = [p for s, p in events_log if s == "manage.restart.force_applied"]
+    assert len(applied) == 1
+    assert notices and "applied" in notices[0]["body"]
+
+
+def test_mcp_force_in_flight_refused_409() -> None:
+    """Flagged n==2 is another request besides this call.
+
+    Breaks when the caller's own in-flight request hides a second one
+    and the gate returns None.
+    """
+    gate = _mcp_force_gate(_mcp_life_hot_detail(in_flight=2))
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason="coordinator: life session only",
+            caller_requested=True,
+            self_call_counted=True,
+        )
+    )
+    assert result is not None
+    assert result["status"] == "refused"
+    assert result["status_code"] == 409
+    assert result["reason"] == "force_refused_in_flight"
+    assert result["n"] == 2
+    assert result["others"] == 1
+
+
+def test_mcp_force_cdp_running_refused() -> None:
+    """cdp_ask_live or a positive running_count refuses even when life_hot.
+
+    Breaks when a live CDP turn is treated as the life_hot-only allow.
+    """
+    details = (
+        _mcp_life_hot_detail(running_count=2),
+        _mcp_life_hot_detail(busy_reasons=["mcp_session_hot", "cdp_ask_live"]),
+    )
+    for detail in details:
+        gate = _mcp_force_gate(detail)
+        result = _run(
+            enforce_force_reason_if_needed(
+                gate,
+                "sync_restart",
+                "mcp",
+                force=True,
+                force_reason="coordinator: life session only",
+                caller_requested=True,
+                self_call_counted=True,
+            )
+        )
+        assert result is not None
+        assert result["status"] == "refused"
+        assert result["status_code"] == 409
+        assert result["reason"] == "force_refused_in_flight"
+
+
+def test_mcp_force_missing_life_hot_refused() -> None:
+    """Missing ``life_hot`` fails closed.
+
+    Breaks when an mcp dict with only ``in_flight`` is admitted.
+    """
+    gate = _mcp_force_gate(_mcp_life_hot_detail(include_life_hot=False))
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason="coordinator: life session only",
+            caller_requested=True,
+            self_call_counted=True,
+        )
+    )
+    assert result is not None
+    assert result["status_code"] == 409
+    assert result["reason"] == "force_refused_in_flight"
+
+
+def test_mcp_force_unflagged_self_refused() -> None:
+    """Unflagged n==1 counts as someone else's in-flight request.
+
+    Breaks when a manage call that did not set ``self_call_counted``
+    subtracts itself and admits.
+    """
+    gate = _mcp_force_gate(_mcp_life_hot_detail())
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason="coordinator: life session only",
+            caller_requested=True,
+            self_call_counted=False,
+        )
+    )
+    assert result is not None
+    assert result["status_code"] == 409
+    assert result["reason"] == "force_refused_in_flight"
+    assert result["others"] == 1
+
+
+def test_mcp_force_no_reason_still_refused() -> None:
+    """No force_reason stays force_requires_reason even on the allow shape.
+
+    Breaks when the life_hot predicate runs first and emits
+    ``force_refused_in_flight`` instead of the reason refusal.
+    """
+    gate = _mcp_force_gate(_mcp_life_hot_detail())
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "mcp",
+            force=True,
+            force_reason=None,
+            caller_requested=True,
+            self_call_counted=True,
+        )
+    )
+    assert result is not None
+    assert result["status"] == "refused"
+    assert result["status_code"] == 409
+    assert result["reason"] == REFUSE_REASON
+    assert result["reason"] != "force_refused_in_flight"
+
+
+def test_execute_mcp_force_without_reason_stays_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restart and rebuild keep status refused through post-state finalize.
+
+    Breaks when ``finalize_restart_rebuild_result`` rewrites a gate 409
+    to scheduled because ``restart_scheduled`` is true. The post-state
+    probe still runs; the lifecycle does not.
+    """
+    from scripts.model_manager.ui import api_dispatch
+    from scripts.model_manager.ui.controller.service_ctl.post_state import (
+        ServicePostStateProbe,
+    )
+
+    gate = _busy_gate()
+    ctl = MagicMock()
+    ctl.restart_gate = gate
+    ctl.sync_restart_mcp = AsyncMock(side_effect=AssertionError("lifecycle"))
+    probes: list[str] = []
+
+    def _probe(*_args: Any, **_kwargs: Any) -> ServicePostStateProbe:
+        probes.append("called")
+        return ServicePostStateProbe(
+            probe_status="ok",
+            service="mcp",
+            service_status="running",
+            restart_scheduled=True,
+        )
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.post_state.probe_service_post_state",
+        _probe,
+    )
+    for method in ("restart", "rebuild"):
+        probes.clear()
+        result = _run(api_dispatch.execute(ctl, method, "mcp", {"force": True}))
+        assert result["status"] == "refused", result
+        assert result["status_code"] == 409
+        assert result["reason"] == REFUSE_REASON
+        assert probes == ["called"]
+    ctl.sync_restart_mcp.assert_not_called()

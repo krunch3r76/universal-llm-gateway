@@ -358,6 +358,55 @@ def test_stargate_force_preempts_idle_drain_slot(
     assert got.status == STATUS_FORCE_REQUESTED
 
 
+def test_refused_caller_force_leaves_pending_drain(tmp_path: Any) -> None:
+    """A refused caller force does not CAS pending_drain or cancel supervise.
+
+    Breaks when preempt runs before the gate: the intent becomes
+    force_requested and the supervise task is cancelled, then the gate
+    returns 409.
+    """
+    store = RestartIntentStore(db_path=tmp_path / "stargate-refuse-preempt.db")
+    gate = RestartDrainGate(probes={"stargate": _StargateBusyProbe(busy=True)})
+    intent = store.create_intent(
+        service="stargate",
+        action="restart",
+        deadline_at="d",
+        reason="hold slot",
+    )
+    assert intent.status == STATUS_PENDING_DRAIN
+    cancelled = False
+
+    async def _supervise(_intent: Any) -> None:
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    async def _exercise() -> dict[str, Any]:
+        task = asyncio.create_task(_supervise(intent))
+        register_supervise_task("stargate", task)
+        ctl = MagicMock(restart_intent_store=store, restart_gate=gate)
+        try:
+            result = await api_dispatch.execute(
+                ctl, "restart", "stargate", {"force": True}
+            )
+            assert result["status"] == "refused"
+            assert result["status_code"] == 409
+            live = store.get(intent.intent_id)
+            assert live is not None
+            assert live.status == STATUS_PENDING_DRAIN
+            assert cancelled is False
+            assert task.cancelled() is False
+            return result
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    _run(_exercise())
+
+
 def test_stargate_force_lost_cas_does_not_cancel(
     tmp_path: Any,
 ) -> None:
