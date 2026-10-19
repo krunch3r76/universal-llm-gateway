@@ -36,10 +36,13 @@ from markdown_sections import (
 )
 from mcp_events import record
 
-from tools._hashing import format_sha256_uri
+from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools.filesystem._house_rules_rotation import rotate_house_rules_to_fit
 from tools.filesystem._write_authority import (
+    RULINGS_ARCHIVE_REL,
     HouseRulesSizeRejectedError,
     evaluate_house_rules_post_edit_size,
+    is_house_rules_path,
 )
 
 from ._durable_write import (
@@ -109,6 +112,10 @@ def _resolve_sandbox(sandbox: str, path: str, *, for_write: bool = False) -> Pat
     return candidate
 
 
+def _read_sha256_for_file(resolved: Path) -> str:
+    return sha256_hex_of_bytes(resolved.read_bytes())
+
+
 def _load_text(resolved: Path) -> tuple[str | None, str | None]:
     """Load text content, using format-specific extraction for PDF/DOCX/etc."""
     try:
@@ -145,7 +152,47 @@ def _rmw_error_payload(
     return payload
 
 
-def _gate_house_rules_post_image(*, path: str, before_text: str, after_text: str) -> None:
+def _archive_path_for_rulings(sandbox: str) -> Path:
+    rel = RULINGS_ARCHIVE_REL.lstrip("/")
+    if sandbox == "cortex":
+        return (_FILES_ROOT / rel).resolve()
+    return (_PROJECT_ROOT / rel).resolve()
+
+
+def _maybe_rotate_house_rules_after_image(
+    *,
+    path: str,
+    sandbox: str,
+    before_text: str,
+    after_text: str,
+) -> tuple[str, dict[str, Any]]:
+    if not is_house_rules_path(path):
+        return after_text, {}
+    before_len = len(before_text.encode("utf-8"))
+    decision = evaluate_house_rules_post_edit_size(
+        path=path,
+        post_edit_text=after_text,
+        before_len=before_len,
+        dest_exists=True,
+    )
+    if decision is None:
+        return after_text, {}
+    rotation = rotate_house_rules_to_fit(
+        house_rules_text=after_text,
+        archive_path=_archive_path_for_rulings(sandbox),
+    )
+    if rotation is None:
+        raise HouseRulesSizeRejectedError(decision)
+    return rotation.trimmed_text, {
+        "rotated_rows": rotation.rotated_rows,
+        "archive_uri": rotation.archive_uri,
+        "archive_written_sha256": rotation.archive_written_sha256,
+    }
+
+
+def _gate_house_rules_post_image(
+    *, path: str, before_text: str, after_text: str
+) -> None:
     """Apply the hop byte gate on the locked pre-image and post-transform body."""
     before_len = len(before_text.encode("utf-8"))
     decision = evaluate_house_rules_post_edit_size(
@@ -158,17 +205,15 @@ def _gate_house_rules_post_image(*, path: str, before_text: str, after_text: str
         raise HouseRulesSizeRejectedError(decision)
 
 
-def _house_rules_size_error(path: str, exc: HouseRulesSizeRejectedError) -> dict[str, Any]:
+def _house_rules_size_error(
+    path: str, exc: HouseRulesSizeRejectedError
+) -> dict[str, Any]:
     rejection = exc.rejection
     return {
         "error": rejection["error"],
         "reason": rejection["reason"],
         "path": path,
-        **{
-            k: v
-            for k, v in rejection.items()
-            if k not in ("error", "reason", "path")
-        },
+        **{k: v for k, v in rejection.items() if k not in ("error", "reason", "path")},
     }
 
 
@@ -217,6 +262,7 @@ def _section_write_result(
             )
         }
     normalized = False
+    rotation_meta: dict[str, Any] = {}
 
     def _apply_transform(text: str) -> str:
         nonlocal normalized
@@ -227,7 +273,14 @@ def _section_write_result(
         return raw
 
     def _gated_transform(text: str) -> str:
+        nonlocal rotation_meta
         updated = _apply_transform(text)
+        updated, rotation_meta = _maybe_rotate_house_rules_after_image(
+            path=path,
+            sandbox=sandbox,
+            before_text=text,
+            after_text=updated,
+        )
         _gate_house_rules_post_image(path=path, before_text=text, after_text=updated)
         return updated
 
@@ -282,6 +335,8 @@ def _section_write_result(
         warning = shrink_warning(prior_body, new_body, op=mutation_op)
         if warning:
             result["_warning"] = warning
+    if rotation_meta:
+        result.update(rotation_meta)
     return result
 
 
@@ -320,13 +375,22 @@ def _section_patch_result(
     except SectionError as exc:
         return {"error": str(exc)}
 
+    rotation_meta: dict[str, Any] = {}
+
     def _patch_transform(locked_text: str) -> str:
+        nonlocal rotation_meta
         after_text, _replacements = md_patch_section_body(
             locked_text,
             section,
             target,
             content,
             all_occurrences=all_occurrences,
+        )
+        after_text, rotation_meta = _maybe_rotate_house_rules_after_image(
+            path=path,
+            sandbox=sandbox,
+            before_text=locked_text,
+            after_text=after_text,
         )
         _gate_house_rules_post_image(
             path=path, before_text=locked_text, after_text=after_text
@@ -367,7 +431,7 @@ def _section_patch_result(
         sandbox=sandbox,
         section=section,
     )
-    return {
+    result: dict[str, Any] = {
         "status": "replaced",
         "path": path,
         "section": section,
@@ -375,6 +439,9 @@ def _section_patch_result(
         "replacements_made": replacements_made,
         "mutation": section_mutation_summary(prior_body, new_body),
     }
+    if rotation_meta:
+        result.update(rotation_meta)
+    return result
 
 
 def _section_delete_result(
@@ -462,6 +529,7 @@ def _pdf_section_op(
             )
             return {"data": data, "path": path, "sandbox": sandbox}
         body = read_pdf_section(resolved, section)
+        read_sha256 = _read_sha256_for_file(resolved)
         record(
             "mcp.tool.markdown.section.read",
             path=path,
@@ -470,7 +538,13 @@ def _pdf_section_op(
             chars=len(body),
             source="pdf",
         )
-        return {"content": body, "path": path, "sandbox": sandbox, "section": section}
+        return {
+            "content": body,
+            "path": path,
+            "sandbox": sandbox,
+            "section": section,
+            "read_sha256": read_sha256,
+        }
     except PdfSectionError as e:
         return {"error": str(e)}
     except Exception as e:  # pymupdf open/parse failures surface as a tool error
@@ -540,6 +614,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             text, err = _load_text(resolved)
             if err:
                 return {"error": err}
+            read_sha256 = _read_sha256_for_file(resolved)
             if op == "list_sections":
                 try:
                     sections = md_list_sections(text)
@@ -573,6 +648,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "sandbox": sandbox,
                         "section": None,
                         "selection": "full_document",
+                        "read_sha256": read_sha256,
                     }
                 try:
                     body = md_read_section(text, section)
@@ -590,6 +666,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     "path": path,
                     "sandbox": sandbox,
                     "section": section,
+                    "read_sha256": read_sha256,
                 }
             try:
                 data = sections_to_dict(text)
