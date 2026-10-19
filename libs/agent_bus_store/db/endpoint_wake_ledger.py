@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 
+from ..recipients import MAESTRO_WEB_ALIAS_PAIR
 from .connection import connect, write_connect
 from .lane_associations import get_current_lane
 
@@ -119,23 +120,37 @@ def _references_wake_turn(
     return re.search(pattern, text) is not None
 
 
+def _wake_ledger_read_cursor_agent(agent: str) -> bool:
+    """Alias pair uses ledger pending→delivered, not shared turns.read_at (L20)."""
+    raw = agent.strip().lower()
+    if raw in MAESTRO_WEB_ALIAS_PAIR:
+        return True
+    return normalize_bus_address(agent) in MAESTRO_WEB_ALIAS_PAIR
+
+
 def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     turn = conn.execute(
         "SELECT read_at, thread FROM turns WHERE id=?", (row["turn_id"],)
     ).fetchone()
-    if turn is not None and turn["read_at"]:
+    agent = str(row["agent"])
+    if (
+        turn is not None
+        and turn["read_at"]
+        and not _wake_ledger_read_cursor_agent(agent)
+    ):
         return "already_read"
     later = conn.execute(
         "SELECT from_agent, subject, body, supersedes_turn FROM turns "
         "WHERE thread=? AND id>?",
         (row["thread_id"], row["turn_id"]),
     ).fetchall()
-    agent = str(row["agent"])
     wake_turn_id = int(row["turn_id"])
     wake_turn_number = int(row["turn_number"])
     thread_id = str(row["thread_id"])
     for nxt in later:
-        if _same_wake_agent(str(nxt["from_agent"] or ""), agent) and _references_wake_turn(
+        if _same_wake_agent(
+            str(nxt["from_agent"] or ""), agent
+        ) and _references_wake_turn(
             nxt,
             thread_id=thread_id,
             turn_id=wake_turn_id,

@@ -64,7 +64,12 @@ def test_cold_start_cursor_is_max_id(db: TestClient) -> None:
     made = _turn(str(detail["id"]))
     cursor = get_cursor()
     assert cursor["high_water_turn_id"] == made["turn_id"]
-    assert db.get("/turns/since", params={"after_id": made["turn_id"], "limit": 2}).json()["turns"] == []
+    assert (
+        db.get("/turns/since", params={"after_id": made["turn_id"], "limit": 2}).json()[
+            "turns"
+        ]
+        == []
+    )
 
 
 def test_turns_since_shape_and_stale_scan(db: TestClient) -> None:
@@ -88,7 +93,9 @@ def test_turns_since_shape_and_stale_scan(db: TestClient) -> None:
     with pytest.raises(WakeConflictError):
         advance_scan("endpoint-wake-dispatcher", 0, second["turn_id"], [second])
     with connect() as conn:
-        count = conn.execute("SELECT COUNT(*) AS n FROM endpoint_wake_ledger").fetchone()["n"]
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger"
+        ).fetchone()["n"]
     assert count == 1
 
 
@@ -99,7 +106,13 @@ def test_claim_once_and_ttl_folds_unknown(db: TestClient) -> None:
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
-    advance_scan("endpoint-wake-dispatcher", 0, item["turn_id"], [item], now="2020-01-01 00:00:00")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        item["turn_id"],
+        [item],
+        now="2020-01-01 00:00:00",
+    )
     barrier = threading.Barrier(2)
     results: list[str | None] = []
 
@@ -372,7 +385,9 @@ def test_stage_manager_alias_rows_coalesce_in_one_claim(db: TestClient) -> None:
     )
     claimed = claim_due_wakes(now="2020-01-01 11:00:01")
     assert claimed["wake_id"] is not None
-    turn_ids = sorted(r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed")
+    turn_ids = sorted(
+        r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed"
+    )
     assert turn_ids == [t1_id, t2_id]
 
 
@@ -627,6 +642,153 @@ def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) 
     assert claimed["rows"][0]["thread_id"] == child_id
 
 
+def test_maestro_wake_not_skipped_already_read_when_turn_stamped(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="l20-maestro-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:00:00",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 17:00:00", t_id),
+        )
+    claimed = claim_due_wakes(now="2020-01-01 17:00:01")
+    assert claimed["wake_id"] is not None
+    assert [r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed"] == [
+        t_id,
+    ]
+
+
+def test_web_anthropic_wake_not_skipped_already_read_when_turn_stamped(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="l20-web-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="VERDICT|y",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "web-anthropic",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:10:00",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 17:10:00", t_id),
+        )
+    claimed = claim_due_wakes(now="2020-01-01 17:10:01")
+    assert claimed["wake_id"] is not None
+
+
+def test_maestro_wake_still_skipped_already_answered(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="l20-maestro-answered")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|z",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:20:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject=f"ACK|re #{t_n}",
+        body="done",
+    )
+    skipped = claim_due_wakes(now="2020-01-01 17:20:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_answered"
+
+
+def test_to_all_turn_does_not_qualify_for_wake(db: TestClient) -> None:
+    from bus_watch.endpoint_wake_dispatcher import qualifies
+
+    detail = create_thread(thread_id=None, slug="l20-all-no-wake")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="all",
+        subject="VERDICT|broadcast",
+        body="b",
+    )
+    turn = {
+        "id": t_id,
+        "thread": thread,
+        "turn_number": t_n,
+        "from_agent": "cursor",
+        "to_agent": "all",
+        "subject": "VERDICT|broadcast",
+        "body": "b",
+    }
+    assert qualifies(turn, cse=True) is False
+
+
 def test_parent_scope_unsubscribe_tombstone_honored(db: TestClient) -> None:
     """Unsubscribing parent scope must not match a stale subscribed journal row."""
     from agent_bus_store.db.endpoint_subscriptions import (
@@ -657,4 +819,3 @@ def test_parent_scope_unsubscribe_tombstone_honored(db: TestClient) -> None:
     assert resolve_subscription_for_thread("impresario", child_id) is not None
     unsubscribe_endpoint(agent="impresario", thread_scope=parent_id)
     assert resolve_subscription_for_thread("impresario", child_id) is None
-
