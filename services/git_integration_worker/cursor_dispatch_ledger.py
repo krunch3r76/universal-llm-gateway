@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.conductor_g5_nest_pin import pin_g5_nest_dispatch_id
-from implement_admission.impresario_policy import validate_conductor_generation_options
+from implement_admission.impresario_envelope import (
+    validate_conductor_generation_options,
+)
 from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 

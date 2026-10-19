@@ -718,9 +718,13 @@ def _reply_matches_harvest_execution(row: dict[str, Any], token: str) -> bool:
 
 
 def _hop_seq_from_row(row: dict[str, Any]) -> int:
-    hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
-    hop_seq = hop_fields.get("hop_seq")
-    return int(hop_seq) if isinstance(hop_seq, int) else 1
+    from .conductor_hop_seq import resolve_next_hop_seq_from_row
+
+    rec = _record_data(row)
+    seq = resolve_next_hop_seq_from_row(row, rec)
+    if seq is None:
+        return 0
+    return seq
 
 
 def _maybe_record_park_harvest_continue_refused(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from universal_event_bus import Event, event_factory
 
@@ -1098,18 +1098,22 @@ def FrontierAdmitDecided(  # noqa: N802
     code: str,
     field: str,
     status_code: int,
+    turn0_budget: dict[str, Any] | None = None,
 ) -> Event:
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "execution_id": execution_id,
+        "model_entity_id": model_entity_id,
+        "admitted": admitted,
+        "code": code,
+        "field": field,
+        "status_code": status_code,
+    }
+    if turn0_budget is not None:
+        payload["turn0_budget"] = turn0_budget
     return Event(
         signal="frontier.admit.decided",
-        payload={
-            "request_id": request_id,
-            "execution_id": execution_id,
-            "model_entity_id": model_entity_id,
-            "admitted": admitted,
-            "code": code,
-            "field": field,
-            "status_code": status_code,
-        },
+        payload=payload,
         role="coordination",
         scope="node",
     )

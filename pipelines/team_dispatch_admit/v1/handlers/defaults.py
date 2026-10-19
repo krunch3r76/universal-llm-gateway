@@ -25,6 +25,7 @@ from ._envelope import (
     pass_through_reject,
     reject_envelope,
 )
+from .conductor_defaults import evaluate_conductor_defaults
 from .defaults_split import (
     _resolve_auto_seat_profile,
     _resolve_sdk_target,
@@ -41,6 +42,9 @@ def evaluate_defaults(
     prior = pass_through_reject(validate_out)
     if prior.get("admitted") is False:
         return prior
+
+    if str(opts.get("job") or "").strip().lower() == "conductor":
+        return evaluate_conductor_defaults(opts, validate_out)
 
     op = str(opts.get("op") or "")
     role = opts.get("role")

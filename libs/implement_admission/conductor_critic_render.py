@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from implement_admission.impresario_policy import ResolvedRoles, SeatSpec, resolve_roles, render_knobs
+from implement_admission.impresario_envelope import render_knobs
+from implement_admission.impresario_policy import ResolvedRoles, SeatSpec, resolve_roles
 
 WIDTH_SEAT_MARKER_START = "<!-- width-seat:v1:start -->"
 WIDTH_SEAT_MARKER_END = "<!-- width-seat:v1:end -->"

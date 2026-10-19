@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""CLI for conductor scoreboard tip mutation (fold / advance / rebind-policy)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+POLICY_KEYS = frozenset(
+    {"driver", "mechanical", "roles", "summon_mode", "lane", "policy_sha256", "policy_epoch"}
+)
+
+
+def _load_payload(path: str | None) -> dict:
+    if path:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = sys.stdin.read()
+    return json.loads(raw) if raw.strip() else {}
+
+
+def _refuses_policy_keys(payload: dict) -> bool:
+    return bool(POLICY_KEYS & set(payload.keys()))
+
+
+def cmd_fold(args: argparse.Namespace) -> int:
+    payload = _load_payload(args.payload)
+    if _refuses_policy_keys(payload):
+        return 2
+    from implement_admission.conductor_score_journal import forward_mutate_tip
+
+    slug = args.slug
+    delta = str(payload.get("delta") or "cli fold")
+    from implement_admission.conductor_score_journal import read_tip
+
+    files_root = Path(args.files_root) if args.files_root else None
+    prior = read_tip(slug, files_root=files_root)
+    if prior is None:
+        print("missing tip", file=sys.stderr)
+        return 1
+    body, _sha = prior
+    result = forward_mutate_tip(
+        slug,
+        next_body=body,
+        seat="conductor-score",
+        dispatch_id=None,
+        reason="cli_fold",
+        rows=tuple(),
+        delta=delta,
+        files_root=files_root,
+    )
+    if result.rejected_reason:
+        print(result.rejected_reason, file=sys.stderr)
+        return 1
+    print(result.tip_sha)
+    return 0
+
+
+def cmd_advance(args: argparse.Namespace) -> int:
+    payload = _load_payload(args.payload)
+    if _refuses_policy_keys(payload):
+        return 2
+    print("advance: no-op stub — use fold with gate delta", file=sys.stderr)
+    return 0
+
+
+def cmd_rebind_policy(args: argparse.Namespace) -> int:
+    from implement_admission.conductor_policy_snapshot import (
+        rebind_policy_epoch,
+        resolve_conductor_knobs,
+    )
+    from implement_admission.conductor_score_journal import load_journal
+
+    payload = _load_payload(args.payload)
+    journal = load_journal(args.slug, files_root=Path(args.files_root) if args.files_root else None)
+    epoch = rebind_policy_epoch(journal, bump=True)
+    snapshot = resolve_conductor_knobs(payload, rebind_policy=True)
+    out = snapshot.as_wire_dict()
+    out["policy_epoch"] = epoch
+    print(json.dumps(out, sort_keys=True))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="conductor-score")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, fn in (("fold", cmd_fold), ("advance", cmd_advance), ("rebind-policy", cmd_rebind_policy)):
+        p = sub.add_parser(name)
+        p.add_argument("slug")
+        p.add_argument("--payload", default=None)
+        p.add_argument("--files-root", default=None)
+        p.set_defaults(func=fn)
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

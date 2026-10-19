@@ -25,7 +25,16 @@ ADMIT_READ_TIMEOUT_S = 25.0
 EventPublisher = Callable[[Any], None]
 
 
+def _conductor_opts_from_gen(gen: object) -> dict[str, Any]:
+    if not isinstance(gen, dict):
+        return {}
+    block = gen.get("conductor")
+    return block if isinstance(block, dict) else {}
+
+
 def _body_to_options(body: Any, *, request_id: str) -> dict[str, Any]:
+    gen = getattr(body, "generation_options", None) or {}
+    pipeline_opts = gen.get("pipeline_options") if isinstance(gen, dict) else None
     return {
         "op": getattr(body, "op", None),
         "role": getattr(body, "role", None),
@@ -34,6 +43,15 @@ def _body_to_options(body: Any, *, request_id: str) -> dict[str, Any]:
         "job": getattr(body, "job", None),
         "dispatch_id": getattr(body, "dispatch_id", None),
         "request_id": request_id,
+        "source_ref": getattr(body, "source_ref", None),
+        "hop_seq": getattr(body, "hop_seq", None),
+        "hop_reason": getattr(body, "hop_reason", None),
+        "next_admit_verb": getattr(body, "next_admit_verb", None),
+        "hop_from": getattr(body, "hop_from", None),
+        "dispatch_thread_id": getattr(body, "dispatch_thread_id", None),
+        "generation_options": gen if isinstance(gen, dict) else {},
+        "pipeline_options": pipeline_opts if isinstance(pipeline_opts, dict) else {},
+        "conductor": _conductor_opts_from_gen(gen),
     }
 
 
@@ -88,6 +106,8 @@ def _emit_admit_event(
             )
         )
         return
+    raw_budget = plan.get("turn0_budget")
+    turn0_budget = raw_budget if isinstance(raw_budget, dict) else None
     publisher(
         FrontierAdmitDecided(
             request_id=request_id,
@@ -97,8 +117,12 @@ def _emit_admit_event(
             code="",
             field="",
             status_code=200,
+            turn0_budget=turn0_budget,
         )
     )
+    from .events_conductor_hop import emit_conductor_hop_lifecycle
+
+    emit_conductor_hop_lifecycle(plan, publisher)
 
 
 def run_team_dispatch_admit_sync(

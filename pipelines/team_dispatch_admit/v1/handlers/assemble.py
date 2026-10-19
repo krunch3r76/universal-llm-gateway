@@ -9,6 +9,34 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 
+def _turn0_budget_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    packet = str(plan.get("packet_markdown") or "")
+    guidance = ""
+    if "<task_guidance>" in packet:
+        start = packet.index("<task_guidance>") + len("<task_guidance>")
+        end = packet.index("</task_guidance>", start)
+        guidance = packet[start:end]
+    scoreboard_embed = guidance
+    packet_bytes = len(packet.encode("utf-8"))
+    task_guidance_bytes = len(guidance.encode("utf-8"))
+    scoreboard_embed_bytes = len(scoreboard_embed.encode("utf-8"))
+    preamble_bytes = max(0, packet_bytes - task_guidance_bytes)
+    total = packet_bytes
+    return {
+        "packet_bytes": packet_bytes,
+        "task_guidance_bytes": task_guidance_bytes,
+        "scoreboard_embed_bytes": scoreboard_embed_bytes,
+        "injected_invariant_bytes": 0,
+        "preamble_bytes": preamble_bytes,
+        "total_turn0_bytes": total,
+        "delegation_tier": plan.get("selected_seat_role"),
+        "invariant_delivery_mode": "inline",
+        "scoreboard_tip_sha": plan.get("scoreboard_tip_sha"),
+        "policy_sha256": plan.get("policy_sha256"),
+        "policy_epoch": plan.get("policy_epoch"),
+    }
+
+
 def evaluate_assemble(
     validate_out: dict[str, Any], defaults_out: dict[str, Any]
 ) -> dict[str, Any]:
@@ -18,6 +46,8 @@ def evaluate_assemble(
     plan = dict(defaults_out)
     plan["skill_rows"] = []
     plan["admitted"] = True
+    if plan.get("job") == "conductor" and plan.get("packet_markdown"):
+        plan["turn0_budget"] = _turn0_budget_from_plan(plan)
     return plan
 
 
