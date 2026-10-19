@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,13 +12,21 @@ from mcp_events import record
 from ._extraction_profile import load_default_profile
 from ._file_helpers import FILES_ROOT
 from ._ingest_dropbox_pass import process_file
-from ._ingest_dropbox_select import parse_dropbox_rel, route_pdf, select_paths
+from ._ingest_dropbox_select import (
+    model_family,
+    parse_dropbox_rel,
+    route_pdf,
+    select_paths,
+)
 from ._ingest_dropbox_state import (
     config_path,
     done_path_is_duplicate,
+    entity_id_from_path,
     find_promoted_bundle,
     iter_state_records,
     load_state,
+    save_state,
+    try_ingest_lock,
 )
 from .extract_document import OcrUnreachable
 
@@ -50,13 +57,6 @@ def _parse_family_map(raw: Any) -> list[tuple[str, str]]:
     return rows
 
 
-def _model_family(model: str, family_map: list[tuple[str, str]]) -> str | None:
-    for pattern, family in family_map:
-        if fnmatch.fnmatch(model, pattern):
-            return family
-    return None
-
-
 def load_config(path: Path | None = None) -> IngestConfig:
     cfg_path = path or config_path()
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
@@ -68,7 +68,7 @@ def load_config(path: Path | None = None) -> IngestConfig:
     profile = load_default_profile()
     if canonical != profile.model:
         raise ValueError("canonical model must match document-extraction-v1 profile")
-    if _model_family(canonical, family_map) == _model_family(check, family_map):
+    if model_family(canonical, family_map) == model_family(check, family_map):
         raise ValueError("check model must be a different family from canonical")
     selection = data.get("selection") or {}
     since = str(selection.get("since", "2026-10-18"))
@@ -86,13 +86,6 @@ def load_config(path: Path | None = None) -> IngestConfig:
 
 
 def reconcile_promote_stages(_config: dict[str, Any]) -> None:
-    from ._ingest_dropbox_state import (
-        iter_state_records,
-        load_state,
-        save_state,
-        try_ingest_lock,
-    )
-
     for rec in list(iter_state_records()):
         if rec.get("stage") != "promote" or rec.get("terminal"):
             continue
@@ -104,40 +97,18 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
             if not locked:
                 continue
             current = load_state(sha) or rec
-            entity_id = current.get("entity_id") or _entity_id_from_path(rel)
+            entity_id = current.get("entity_id") or entity_id_from_path(rel)
             bundle = find_promoted_bundle(sha, rel)
             if bundle and _entity_hash(entity_id) == sha:
                 current["stage"] = "done"
                 current["entity_id"] = entity_id
                 current["last_error"] = None
-                record(
-                    "mcp.ingest.state.advanced",
-                    path=rel,
-                    from_stage="promote",
-                    to_stage="done",
-                    terminal=None,
-                    last_error_kind=None,
-                )
+                record("mcp.ingest.state.advanced", path=rel, from_stage="promote", to_stage="done", terminal=None, last_error_kind=None)
             else:
                 current["terminal"] = "needs_human"
                 current["last_error"] = "missing_after_promote"
-                record(
-                    "mcp.ingest.state.advanced",
-                    path=rel,
-                    from_stage="promote",
-                    to_stage="promote",
-                    terminal="needs_human",
-                    last_error_kind="missing_after_promote",
-                )
+                record("mcp.ingest.state.advanced", path=rel, from_stage="promote", to_stage="promote", terminal="needs_human", last_error_kind="missing_after_promote")
             save_state(sha, current)
-
-
-def _entity_id_from_path(rel: str) -> str:
-    import re
-
-    stem = Path(rel).stem.lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")
-    return f"document:{slug or 'document'}"
 
 
 def _entity_hash(entity_id: str) -> str | None:

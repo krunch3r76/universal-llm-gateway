@@ -32,6 +32,17 @@ _OCR_POISON = "[OCR error: "
 _MAX_ERR = 200
 
 
+def _emit_advance(
+    rel: str,
+    *,
+    from_stage: str | None,
+    to_stage: str | None,
+    terminal: str | None,
+    last_error_kind: str | None,
+) -> None:
+    record("mcp.ingest.state.advanced", path=rel, from_stage=from_stage, to_stage=to_stage, terminal=terminal, last_error_kind=last_error_kind)
+
+
 def process_file(
     config: dict[str, Any],
     rel: str,
@@ -71,14 +82,7 @@ def process_file(
                 catch_all_failure(rec, source_sha256, "extract", exc, max_err=_MAX_ERR)
                 if rec.get("terminal"):
                     prev_stage = rec.get("stage", "extract")
-                    record(
-                        "mcp.ingest.state.advanced",
-                        path=rel,
-                        from_stage=prev_stage,
-                        to_stage=prev_stage,
-                        terminal="needs_human",
-                        last_error_kind=(rec.get("last_error") or "")[:40] or None,
-                    )
+                    _emit_advance(rel, from_stage=prev_stage, to_stage=prev_stage, terminal="needs_human", last_error_kind=(rec.get("last_error") or "")[:40] or None)
                     return "needs_human", False
             return "attempt", False
         if route_err:
@@ -86,14 +90,7 @@ def process_file(
             rec["terminal"] = "needs_human"
             rec["last_error"] = route_err
             save_state(source_sha256, rec)
-            record(
-                "mcp.ingest.state.advanced",
-                path=rel,
-                from_stage=prev_stage,
-                to_stage=prev_stage,
-                terminal="needs_human",
-                last_error_kind=route_err,
-            )
+            _emit_advance(rel, from_stage=prev_stage, to_stage=prev_stage, terminal="needs_human", last_error_kind=route_err)
             return "needs_human", False
         if rec.get("method") is None:
             rec["method"] = method
@@ -127,36 +124,15 @@ def _chain_stages(
         else:
             nxt = _stage_promote(config, rel, rec, source_sha256, method)
         if rec.get("terminal"):
-            record(
-                "mcp.ingest.state.advanced",
-                path=rel,
-                from_stage=prev,
-                to_stage=rec.get("stage") or prev,
-                terminal=rec.get("terminal"),
-                last_error_kind=(rec.get("last_error") or "")[:40] or None,
-            )
+            _emit_advance(rel, from_stage=prev, to_stage=rec.get("stage") or prev, terminal=rec.get("terminal"), last_error_kind=(rec.get("last_error") or "")[:40] or None)
             save_state(source_sha256, rec)
             return "needs_human", False
         if nxt == "done":
-            record(
-                "mcp.ingest.state.advanced",
-                path=rel,
-                from_stage=prev,
-                to_stage="done",
-                terminal=None,
-                last_error_kind=None,
-            )
+            _emit_advance(rel, from_stage=prev, to_stage="done", terminal=None, last_error_kind=None)
             save_state(source_sha256, rec)
             return "done", False
         if nxt and nxt != prev:
-            record(
-                "mcp.ingest.state.advanced",
-                path=rel,
-                from_stage=prev,
-                to_stage=nxt,
-                terminal=rec.get("terminal"),
-                last_error_kind=(rec.get("last_error") or "")[:40] or None,
-            )
+            _emit_advance(rel, from_stage=prev, to_stage=nxt, terminal=rec.get("terminal"), last_error_kind=(rec.get("last_error") or "")[:40] or None)
         if not nxt or nxt == prev:
             break
         stage = nxt
