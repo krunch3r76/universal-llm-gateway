@@ -196,6 +196,36 @@ def test_stale_pidfile_does_not_kill_unrelated(watch_dir: Path) -> None:
         )
 
 
+def test_mark_relayed_refreshes_fingerprint(tmp_path: Path) -> None:
+    from bus_watch.digest_publish import lanes_fingerprint
+    from bus_watch.tick_state import load_state, save_state
+
+    state_path = tmp_path / "liaison-38446.tick.json"
+    state = {
+        "policy": {"gear": "3-wake-on-attention"},
+        "relayed_watchers": [],
+        "fingerprint": "old-fp",
+    }
+    save_state(state_path, state)
+    digest = {
+        "fingerprint": "new-fp",
+        "lanes": [],
+        "attention": [],
+        "checkpoint_due": False,
+        "watchers_complete_unrelayed": [],
+        "policy": state["policy"],
+        "root": {"id": "38446"},
+    }
+    state["relayed_watchers"] = ["watcher-a.json"]
+    state["fingerprint"] = digest["fingerprint"]
+    state["digest_lanes_fp"] = lanes_fingerprint(digest)
+    state["last_tick_at"] = "2026-10-18T21:00:00Z"
+    save_state(state_path, state)
+    loaded = load_state(state_path)
+    assert loaded["fingerprint"] == "new-fp"
+    assert loaded.get("digest_lanes_fp")
+
+
 def test_monitor_heartbeat_stale_helper(tmp_path: Path) -> None:
     from bus_watch.liaison_loop_detach import monitor_heartbeat_stale
 

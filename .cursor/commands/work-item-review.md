@@ -185,7 +185,7 @@ team_dispatch(
 )
 ```
 
-¬ `model=xai/grok-*` artisan · ¬ default web-anthropic R-admit · ¬ `anthropic/*`.
+¬ `model=xai/grok-*` artisan · ¬ default web-anthropic R-admit. `anthropic/*` API is admitted when the credit gate is healthy; this command's pin stays the cursor-sdk mechanical model unless the operator supplies a model token.
 Operator override model token only when explicitly supplied on the command line.
 
 Write durable verdict to

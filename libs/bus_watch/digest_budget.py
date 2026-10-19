@@ -65,9 +65,9 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "max_conductors": 2,
     # Closed-park re-admits per row. Gear presets do not override this.
     "max_readmits": 2,
-    # Pattern A: grok (or argon) under confers with argon when cdp/opus-5.5 is paused.
-    "confer_model": "cursor/gemini-4-argon",
-    "confer_model_knobs": {"effort": "high", "fast": "false"},
+    # Pattern A critic when cdp/opus-5.5 is paused (liaison policy key: critic_model).
+    "critic_model": "cursor/gemini-4-argon",
+    "critic_model_knobs": {"effort": "high", "fast": "false"},
 }
 # Gear name kept so a stored policy fails closed instead of falling through
 # to POLICY_DEFAULTS (that fall-through would silently spawn grok).
@@ -92,8 +92,9 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "post_digest": True,
     },
     "4-cdp-liaison": {
-        "successor_seat": "cdp",
-        "successor_model": "cdp/opus-5.5",
+        "successor_seat": "cursor-sdk",
+        "successor_model": "cursor/grok-4.7",
+        "successor_model_knobs": {"effort": "high", "fast": "false"},
         "successor_cost_intent": None,
         "successor_job": "conductor",
         "ready": False,

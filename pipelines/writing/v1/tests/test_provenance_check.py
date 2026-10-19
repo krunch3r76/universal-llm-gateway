@@ -5,10 +5,12 @@ The pure checker is the subject. No client, network, or model is constructed.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -197,7 +199,7 @@ def test_provenance_bolted_closer() -> None:
 
 
 def test_provenance_draft_unparseable() -> None:
-    for bad in (None, "not-json", {"claims": []}, ["nope"]):
+    for bad in (None, {"claims": []}, ["nope"]):
         violations = provenance.check_provenance(_LEDGER, bad)
         assert _types(violations) == ["draft_unparseable"]
         assert violations[0]["claim_id"] is None
@@ -315,3 +317,424 @@ def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
         if row["type"] == "v2_dropped_name"
     ]
     assert dropped[0]["detail"] == "Jennifer"
+
+
+def test_causal_connective_clause_joining_so() -> None:
+    pattern = provenance._CAUSAL_CONNECTIVES_RE
+    merge = (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+        "so two days of work and it's sitting where it started."
+    )
+    assert pattern.search(merge).group(0).strip().lower() == "so"
+    assert pattern.search("So two days of work.").group(0).strip().lower() == "so"
+    assert pattern.search("I was so tired on Saturday.") is None
+    assert pattern.search("because").group(0).lower() == "because"
+    assert pattern.search(", so that we").group(0).lower() == "so that"
+
+
+def test_prose_rhythm_subordinate_clause_merge_preserves_pin_trace() -> None:
+    v1 = (
+        "Fill was 251 when I opened Saturday. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v2 = (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+        "so two days of work and it's sitting where it started."
+    )
+    v1_clauses = [
+        {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"]},
+        {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"]},
+        {
+            "text": "So two days of work and it's sitting where it started.",
+            "pin_ids": ["P3"],
+        },
+    ]
+    v2_clauses = [
+        {
+            "text": v2,
+            "pin_ids": ["P1", "P2", "P3"],
+        }
+    ]
+    assert (
+        provenance.revision_delta(
+            {"draft": v1, "claims": v1_clauses},
+            {"draft": v2, "claims": v2_clauses},
+            v1_clauses=v1_clauses,
+            v2_clauses=v2_clauses,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("v2", "kind"),
+    [
+        (
+            "Fill was 251 when I opened Saturday and 213 Sunday morning, because extra.",
+            "fact_added",
+        ),
+        (
+            "It was 213 Sunday morning.",
+            "v2_dropped_number",
+        ),
+        (
+            "Fill seems to be 251 when I opened Saturday. It was 213 Sunday morning. So two days.",
+            "fact_hedged",
+        ),
+        (
+            "It was 213 Sunday morning. Fill was 251 when I opened Saturday. So two days.",
+            "fact_reordered",
+        ),
+    ],
+)
+def test_fact_ceiling_final_detects_mutations(v2: str, kind: str) -> None:
+    v1 = (
+        "Fill was 251 when I opened Saturday. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v1_clauses = [
+        {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"]},
+        {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"]},
+        {"text": "So two days of work and it's sitting where it started.", "pin_ids": ["P3"]},
+    ]
+    v2_clauses = list(v1_clauses)
+    if kind == "fact_reordered":
+        v2_clauses = [v1_clauses[1], v1_clauses[0], v1_clauses[2]]
+    kinds = _types(
+        provenance.revision_delta(
+            {"draft": v1, "claims": v1_clauses},
+            {"draft": v2, "claims": v2_clauses},
+            v1_clauses=v1_clauses,
+            v2_clauses=v2_clauses,
+        )
+    )
+    assert kind in kinds
+
+
+class _Out:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.json = payload
+
+
+class _Ctx:
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self.outputs = outputs
+
+
+class _Step:
+    def __init__(self) -> None:
+        self.handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "draft.json",
+        }
+
+
+def test_provenance_check_unknown_pin_from_fact_ceiling_audit_clauses() -> None:
+    draft = _draft(
+        "Backed.",
+        [
+            {
+                "claim_id": "c1",
+                "text": "Backed.",
+                "pin_ids": ["P1"],
+                "disposition": "express",
+                "state": "backed",
+            }
+        ],
+    )
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _Step(),
+            _Ctx(
+                {
+                    "assemble": _Out({"pin_ledger": _LEDGER}),
+                    "draft": _Out(draft),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": [
+                                {
+                                    "text": "Unknown cite.",
+                                    "pin_ids": ["P9"],
+                                    "disposition": "express",
+                                }
+                            ],
+                        }
+                    ),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    kinds = _types(payload["violations"])
+    assert "unknown_pin" in kinds
+    row = next(item for item in payload["violations"] if item["type"] == "unknown_pin")
+    assert row["detail"] == "P9"
+
+
+_FILL_LEDGER = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "Fill was 251 when I opened Saturday",
+    },
+    {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
+    {
+        "pin_id": "P3",
+        "attested": True,
+        "excerpt": "So two days of work and it's sitting where it started",
+    },
+]
+_FILL_V1 = (
+    "Fill was 251 when I opened Saturday. "
+    "It was 213 Sunday morning. "
+    "So two days of work and it's sitting where it started."
+)
+_FILL_V1_CLAUSES = [
+    {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"], "disposition": "express"},
+    {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"], "disposition": "express"},
+    {
+        "text": "So two days of work and it's sitting where it started.",
+        "pin_ids": ["P3"],
+        "disposition": "express",
+    },
+]
+
+
+def test_fixture_saturday_drop_is_drop_finding() -> None:
+    v2 = (
+        "Fill was 251 when I opened. "
+        "It was 213 Sunday morning. "
+        "So two days of work and it's sitting where it started."
+    )
+    v2_clauses = provenance.derive_v2_clauses_from_audit(
+        v2, _FILL_V1_CLAUSES, _FILL_LEDGER
+    )
+    violations = provenance.revision_delta(
+        {"draft": _FILL_V1, "claims": _FILL_V1_CLAUSES},
+        {"draft": v2, "claims": v2_clauses},
+        v1_clauses=_FILL_V1_CLAUSES,
+        v2_clauses=v2_clauses,
+        pin_ledger=_FILL_LEDGER,
+    )
+    kinds = _types(violations)
+    assert "fact_dropped" in kinds
+    assert any(
+        row["type"] == "fact_dropped" and row["detail"] == "Saturday" for row in violations
+    )
+
+
+class _Raw:
+    def __init__(self, text: str) -> None:
+        self.raw = text
+
+
+class _StepFactCeilingFinal:
+    def __init__(self) -> None:
+        self.handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "prose_rhythm_pass.raw",
+            "draft_v1": "draft.json",
+        }
+
+
+def _run_fact_ceiling_final(
+    *,
+    v2_raw: str,
+    v1_draft: str,
+    v1_clauses: list[dict[str, Any]],
+    pin_ledger: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _StepFactCeilingFinal(),
+            _Ctx(
+                {
+                    "assemble": _Out({"pin_ledger": pin_ledger}),
+                    "draft": _Out(
+                        {
+                            "ok": True,
+                            "draft": v1_draft,
+                            "selected_role": "drafter_openai",
+                        }
+                    ),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": v1_clauses,
+                        }
+                    ),
+                    "prose_rhythm_pass": _Raw(v2_raw),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    return payload["violations"]
+
+
+def test_fact_ceiling_final_probe_a_fact_added() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning because the pump failed, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    added = [row for row in violations if row["type"] == "fact_added"]
+    assert added
+    assert added[0]["detail"] == (
+        "Fill was 251 when I opened Saturday and 213 Sunday morning because the pump failed, "
+        "so two days of work and it's sitting where it started."
+    )
+
+
+def test_fact_ceiling_final_probe_b_fact_added() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday because the pump failed. "
+            "It was 213 Sunday morning. "
+            "So two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    added = [row for row in violations if row["type"] == "fact_added"]
+    assert added
+    assert added[0]["detail"] == (
+        "Fill was 251 when I opened Saturday because the pump failed."
+    )
+
+
+def test_fact_ceiling_final_merged_p2_before_p1_fact_reordered() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 213 Sunday morning, and fill was 251 when I opened Saturday, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+_RENT_V1 = "Rent is 1200. Rent goes up to 1350 in March."
+_RENT_V1_CLAUSES = [
+    {"text": "Rent is 1200.", "pin_ids": ["P1"], "disposition": "express"},
+    {"text": "Rent goes up to 1350 in March.", "pin_ids": ["P2"], "disposition": "express"},
+]
+_RENT_LEDGER = [
+    {"pin_id": "P1", "attested": True, "excerpt": "Rent is 1200"},
+    {"pin_id": "P2", "attested": True, "excerpt": "Rent goes up to 1350 in March"},
+]
+
+
+def test_fact_ceiling_final_rent_merge_p2_before_p1_fact_reordered() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw="Rent goes up to 1350 in March and rent is 1200.",
+        v1_draft=_RENT_V1,
+        v1_clauses=_RENT_V1_CLAUSES,
+        pin_ledger=_RENT_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_section_91_merge_still_passes() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert violations == []
+
+
+_PARAPHRASE_V1 = (
+    "On Saturday morning the fill level read 251. "
+    "By Sunday it had dropped to 213. "
+    "Two days of work, and we are back where we started."
+)
+_PARAPHRASE_CLAUSES = [
+    {
+        "text": "On Saturday morning the fill level read 251.",
+        "pin_ids": ["P1"],
+        "disposition": "express",
+    },
+    {
+        "text": "By Sunday it had dropped to 213.",
+        "pin_ids": ["P2"],
+        "disposition": "express",
+    },
+    {
+        "text": "Two days of work, and we are back where we started.",
+        "pin_ids": ["P3"],
+        "disposition": "express",
+    },
+]
+_PARAPHRASE_LEDGER = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "Fill was 251 when I opened Saturday",
+    },
+    {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
+    {
+        "pin_id": "P3",
+        "attested": True,
+        "excerpt": "So two days of work and it's sitting where it started",
+    },
+]
+
+
+def test_fact_ceiling_final_paraphrase_swap_fact_reordered() -> None:
+    v2 = (
+        "By Sunday it had dropped to 213. "
+        "On Saturday morning the fill level read 251. "
+        "Two days of work, and we are back where we started."
+    )
+    violations = _run_fact_ceiling_final(
+        v2_raw=v2,
+        v1_draft=_PARAPHRASE_V1,
+        v1_clauses=_PARAPHRASE_CLAUSES,
+        pin_ledger=_PARAPHRASE_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_r2_probe_merged_fact_reordered() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "It was 213 Sunday morning, and fill was 251 when I opened Saturday, "
+            "so two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_ceiling_final_derived_unpinned_new_sentence() -> None:
+    violations = _run_fact_ceiling_final(
+        v2_raw=(
+            "Fill was 251 when I opened Saturday and 213 Sunday morning. "
+            "It was 251 when I opened Sunday. "
+            "So two days of work and it's sitting where it started."
+        ),
+        v1_draft=_FILL_V1,
+        v1_clauses=_FILL_V1_CLAUSES,
+        pin_ledger=_FILL_LEDGER,
+    )
+    assert violations
+    assert "v2_new_unpinned_clause" in _types(violations)

@@ -533,7 +533,7 @@ def test_ac_p2_1_g4_stops_row_pinned_blocks(tmp_path: Path) -> None:
     (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip_body, encoding="utf-8")
     fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
     assert fold is not None
-    assert fold.row_status["G4"] == "CLAIMED"
+    assert fold.row_status["G4"] == "DONE"
 
 
 @pytest.mark.offline
@@ -798,8 +798,10 @@ def test_g5_git_lane_head_when_head_equals_l1(tmp_path: Path) -> None:
 
 
 @pytest.mark.offline
-def test_g5_git_lane_head_not_descendant_head(tmp_path: Path) -> None:
-    """confer_and_finish: descendant HEAD must not witness G5 from L1 alone."""
+def test_g5_git_lane_head_descendant_head_witnesses(tmp_path: Path) -> None:
+    """confer_and_finish: lane HEAD descendant of L1 witnesses G5 (ancestry-or-HEAD)."""
+    from implement_admission.conductor_witness_defaults import DefaultWitnessGit
+
     repo, l1_sha = _git_repo_at_commit(tmp_path, advance=True)
     tip_body = (
         "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
@@ -809,7 +811,7 @@ def test_g5_git_lane_head_not_descendant_head(tmp_path: Path) -> None:
         cortex=_StubCortex(),
         bus=_StubBus(),
         nested_implement=_StubNestedImplement(),
-        git=_StubGit(),
+        git=DefaultWitnessGit(repo),
         source_ref=_SOURCE_REF,
         summon_mode="confer_and_finish",
         repo=repo,
@@ -821,7 +823,9 @@ def test_g5_git_lane_head_not_descendant_head(tmp_path: Path) -> None:
         files_root=tmp_path / "cortex",
         rows=G_ROWS,
     )
-    assert witnesses.get("G5") is None
+    g5 = witnesses.get("G5")
+    assert g5 is not None
+    assert g5.source == "git:lane_head"
 
 
 @pytest.mark.offline

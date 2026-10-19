@@ -76,6 +76,12 @@ _CDP_FAIL_ROUTE_RE = re.compile(
 )
 
 
+def _cdp_reroute_for_critic_enabled() -> bool:
+    from implement_admission.impresario_policy import load_impresario_policy
+
+    return load_impresario_policy().cdp_reroute_for_critic
+
+
 def _cdp_fail_route(tip_body: str, row_id: str) -> str | None:
     """Route named in one Gated row's Stops cell, if it is a known token."""
     column = stops_index(tip_body)
@@ -583,6 +589,10 @@ def _row_witnesses_g_ladder(
             repo=repo,
             route=g6_route,
         )
+        rerouted = bool(g6_route)
+        if rerouted and not _cdp_reroute_for_critic_enabled():
+            g6_id = None
+            g6_uri = None
         if (
             g6_id
             and g6_uri
@@ -594,7 +604,8 @@ def _row_witnesses_g_ladder(
             )
         ):
             g6_source = (
-                f"witness:{_WITNESS_KIND_BIND}:{g6_id}:route={g6_route}"
+                f"witness:{_WITNESS_KIND_BIND}:{g6_id}:route={g6_route}:rerouted=True"
+                f":endpoint={g6_route}"
                 if g6_route
                 else f"artifact:{g6_id}"
             )

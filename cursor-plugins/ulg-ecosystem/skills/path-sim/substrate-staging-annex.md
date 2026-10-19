@@ -1,7 +1,7 @@
 # Path-sim L3 annex — substrate house rules, vision-align, docstring AC, staging
 
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=high` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=extra`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=extra` (one rung above ACTIVE; cross-family review stays on this effort). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` · usage channel **Cursor**. SKETCH (G1) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}`. SKEPTIC (G4) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 **Parent SOT:** `cursor-plugins/ulg-ecosystem/skills/path-sim/SKILL.md`.
@@ -33,12 +33,12 @@ Window params above name **quality** (Opus/Fable/Grok). Transport is separate (`
 
 | Path | Default |
 |---|---|
-| `team_dispatch` `model=anthropic/*` (Stargate API) | **PROHIBITED** |
+| `team_dispatch` `model=anthropic/*` (Stargate API) | **Admitted** when the credit gate is healthy (standard sonnet-5-5 / haiku-5-5; opus-5-5 and fable-5-1 need `deliberate_high_cost`). Prohibition retired 2026-10-18. |
 | `seat=cursor-sdk` `model=cursor/*` | **OK** except **Fable** |
 | Anthropic-family wide consult / R | **web-anthropic-cdp preferred** (cortex-packaged corpus; Use the `claude-ai-cdp-navigation` skill) |
 | Need live codebase navigation | **`cursor/claude-opus-*`** acceptable |
 
-¬ equate “Opus High” / “Fable Max” with `anthropic/*`. ¬ unlock API via routine `cost_intent`. Detail: `consult-routing` § Anthropic-family substrate.
+¬ equate “Opus High” / “Fable Max” with `anthropic/*`. High-cost API Opus/Fable still needs `cost_intent=deliberate_high_cost` plus a reason; that gate is admission, not a house-rule ban. Detail: `consult-routing` § Anthropic-family substrate.
 
 ## xAI coding-substrate (house rule — operator 2026-07-18, friction 25081)
 

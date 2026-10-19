@@ -159,14 +159,18 @@ def test_fold_live_fixture_entry_gate_and_claimed(
     )
     fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root)
     assert fold is not None
-    assert fold.entry_gate == "G1"
-    assert fold.row_status["G1"] == "CLAIMED"
+    assert fold.entry_gate == "G5"
+    assert fold.row_status["G1"] == "DONE"
+    assert "G1" not in fold.witnessed_done
     assert fold.row_status["G2"] == "DONE"
     assert fold.row_status["G3"] == "DONE"
-    assert fold.row_status["G4"] == "CLAIMED"
+    assert fold.row_status["G4"] == "DONE"
+    assert "G4" not in fold.witnessed_done
     assert fold.row_status["G5"] == "CLAIMED"
-    # Legacy 6-row tip had G6=land DONE without R1 review; 7-row fold reclassifies.
-    assert fold.row_status["G6"] == "CLAIMED"
+    # Legacy self-authored DONE without witness stays DONE; not witnessed_done (P3).
+    assert fold.row_status["G6"] == "DONE"
+    assert "G6" not in fold.witnessed_done
+    assert fold.witnessed_done == frozenset({"G2", "G3"})
     journal = load_journal(_SLUG, files_root=files_root)
     assert any(r.get("reason") == "witness_fold" for r in journal)
 
@@ -192,10 +196,9 @@ def test_materialize_lists_missing_witnesses(
         fold_deps=deps,
         caller_agent="cursor",
     )
-    assert "Entry gate: G1" in mp.text
-    assert "G1 CLAIMED:" in mp.text
-    assert "G4 CLAIMED:" in mp.text
+    assert "Entry gate: G5" in mp.text
     assert "G5 CLAIMED:" in mp.text
+    assert "G1 DONE:" in mp.text or "G1 CLAIMED:" in mp.text
     assert "attach witnesses, do not re-derive" in mp.text
     assert "DONE is rendered from witnesses" in mp.text
     assert (
@@ -1211,7 +1214,33 @@ def _reroute_deps(tmp_path: Path) -> FoldDeps:
     )
 
 
-def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -> None:
+@pytest.fixture
+def critic_reroute_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from implement_admission import impresario_policy
+
+    policy = impresario_policy.load_impresario_policy()
+    monkeypatch.setattr(
+        impresario_policy,
+        "load_impresario_policy",
+        lambda *args, **kwargs: impresario_policy.ImpresarioPolicy(
+            pattern=policy.pattern,
+            pattern_version=policy.pattern_version,
+            under_substrate=policy.under_substrate,
+            allowed_under_substrates=policy.allowed_under_substrates,
+            driver=policy.driver,
+            mechanical=policy.mechanical,
+            critic=policy.critic,
+            critic_roles=policy.critic_roles,
+            allowed_critics=policy.allowed_critics,
+            cdp_reroute_for_critic=True,
+            policy_sha256=policy.policy_sha256,
+        ),
+    )
+
+
+def test_g6_reroute_prefers_stamped_route_and_journal_names_it(
+    tmp_path: Path, critic_reroute_enabled: None
+) -> None:
     """Two G6 artifacts: the Stops route wins, and the journal delta names it.
 
     The operator artifact is listed first so document order cannot govern.
@@ -1243,17 +1272,19 @@ def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -
     assert fold is not None
     assert fold.witnesses["G6"] is not None
     assert fold.witnesses["G6"].detail == nested_uri
-    assert (
-        fold.witnesses["G6"].source
-        == "witness:BIND:G6-REVIEW-nested-grok:route=nested-grok"
+    assert fold.witnesses["G6"].source.startswith(
+        "witness:BIND:G6-REVIEW-nested-grok:route=nested-grok:rerouted=True"
     )
     journal = load_journal(slug, files_root=files_root)
     fold_records = [row for row in journal if row.get("reason") == "witness_fold"]
     assert fold_records
     assert "G6 OPEN→DONE [route=nested-grok]" in str(fold_records[-1].get("delta"))
+    assert "witnessed_done" in fold_records[-1]
 
 
-def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> None:
+def test_g6_fold_keeps_route_while_second_artifact_is_posted(
+    tmp_path: Path, critic_reroute_enabled: None
+) -> None:
     """Fold, then a conductor posts a late G6 artifact, then fold again.
 
     Interleaving: the first fold sees only the stamped route's artifact. The
@@ -1328,8 +1359,8 @@ def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> 
     assert third is not None
     assert third.witnesses["G6"] is not None
     assert third.witnesses["G6"].detail == operator_uri
-    assert (
-        third.witnesses["G6"].source == "witness:BIND:G6-REVIEW-operator:route=operator"
+    assert third.witnesses["G6"].source.startswith(
+        "witness:BIND:G6-REVIEW-operator:route=operator:rerouted=True"
     )
 
 
@@ -1571,3 +1602,61 @@ def test_g1_skips_missing_document(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *_a, **_k: _Client(),
     )
     assert _witness_g1(source_ref=_SOURCE_REF, cortex=DefaultWitnessCortex()) is None
+
+
+def test_pre_p3_g6_done_stays_unwitnessed_first_fold(tmp_path: Path) -> None:
+    """First post-upgrade fold must not grandfather pre-P3 G6 DONE without R1."""
+    files_root = tmp_path / "cortex"
+    tip_body = "\n".join(
+        [
+            "# Scoreboard",
+            "",
+            "## Gated deliverables",
+            "",
+            "| ID | Deliverable | Status | Stops |",
+            "|---|---|---|---|",
+            "| G5 | Implement | DONE | |",
+            "| G6 | Review | DONE | |",
+            "",
+        ]
+    )
+    slug = "pre-p3-g6"
+    birth_scoreboard(slug, scoreboard_body=tip_body, files_root=files_root)
+    fold = fold_scoreboard(
+        slug,
+        deps=FoldDeps(
+            cortex=_StubCortex(),
+            bus=_StubBus(),
+            git=_StubGit(),
+            source_ref=f"todo:{slug}",
+            repo=tmp_path / "repo",
+        ),
+        files_root=files_root,
+        write_journal=True,
+    )
+    assert fold is not None
+    assert fold.row_status["G6"] == "DONE"
+    assert "G6" not in fold.witnessed_done
+    assert fold.witnesses.get("G6") is None
+
+
+def test_g6_reroute_requires_cdp_reroute_for_critic(tmp_path: Path) -> None:
+    """Rerouted G6 seal is withheld when cdp_reroute_for_critic is false (default)."""
+    files_root = tmp_path / "cortex"
+    nested_uri, nested_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-no-flag.md",
+        _REROUTE_RATIFY + "nested-grok\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=nested-grok",
+        sidecars=_sidecar("G6-REVIEW-nested-grok", nested_uri, nested_sha),
+    )
+    witnesses = row_witnesses(
+        "reroute-flag-off",
+        tip_body=tip,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert witnesses.get("G6") is None

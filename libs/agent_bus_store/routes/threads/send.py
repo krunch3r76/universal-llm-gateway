@@ -277,6 +277,37 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     except Exception as exc:
         _raise_spill_http(exc, thread_id=thread_id)
         raise  # pragma: no cover — _raise_spill_http always raises
+    from ...notice_closeout_dedupe import (
+        find_duplicate_notice_closeout,
+        turn_created_from_row,
+    )
+
+    duplicate = await asyncio.to_thread(
+        find_duplicate_notice_closeout,
+        thread_id,
+        from_agent=body.from_agent,
+        subject=body.subject,
+        body=prepared.body,
+    )
+    if duplicate is not None:
+        thread_row = await asyncio.to_thread(get_thread, thread_id)
+        if thread_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Thread {thread_id} not found",
+            )
+        payload = TurnSendCreated(
+            send_path="continue",
+            thread=_thread_detail(thread_row),
+            turn=turn_created_from_row(duplicate),
+            idempotent_replay=True,
+        )
+        content = payload.model_dump(mode="json")
+        content["idempotent_replay"] = True
+        thread_dump = content.get("thread")
+        if isinstance(thread_dump, dict):
+            thread_dump["idempotent_replay"] = True
+        return JSONResponse(status_code=status.HTTP_200_OK, content=content)
     try:
         thread_row, turn_id, ts, turn_number, marked_read = await asyncio.to_thread(
             create_turn,

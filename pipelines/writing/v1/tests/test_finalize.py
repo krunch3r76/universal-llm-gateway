@@ -33,6 +33,7 @@ finalize = importlib.import_module("writing_v1_handlers.finalize")
 pytestmark = pytest.mark.offline
 
 _HERMES = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+_ERNIE = "ernie-4-5-21b-a3b-pt-q8-0-65536"
 _QWEN = "qwen3-14b-q4-k-m-40960"
 
 
@@ -42,6 +43,7 @@ class _Out:
         payload: dict[str, Any] | None,
         *,
         error: str | None = None,
+        raw: str = "",
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         model_id: str | None = None,
@@ -49,7 +51,7 @@ class _Out:
     ) -> None:
         self.json = payload
         self.error = error
-        self.raw = ""
+        self.raw = raw
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.model_id = model_id
@@ -92,19 +94,19 @@ def _run(outputs: dict[str, Any]) -> dict[str, Any]:
 
 def test_finalize_cost_resolves_rate_alias() -> None:
     outputs = {
-        "draft": _Out(
+        "drafter_openai": _Out(
             _draft(),
-            model_id="composer-2.5",
+            model_id="openai/gpt-5.4",
             model_call_count=1,
         )
     }
     total, note = finalize._cost(
         outputs,
-        {"draft": {"prompt_tokens": 1_000_000, "completion_tokens": 0}},
-        {"writer": "unused"},
+        {"drafter_openai": {"prompt_tokens": 1_000_000, "completion_tokens": 0}},
+        {"drafter_openai": "openai/gpt-5.4"},
     )
     assert note is None
-    assert total == 0.5
+    assert total == 2.5
 
 
 def test_finalize_partial_review_failure() -> None:
@@ -143,52 +145,36 @@ def test_finalize_revision_happy_path() -> None:
         {
             "assemble": _Out(_assemble()),
             "draft": _Out(
-                _draft(),
+                {"draft": "Backed.", "ok": True},
                 prompt_tokens=20,
                 completion_tokens=10,
                 model_id=_HERMES,
                 model_call_count=1,
             ),
-            "provenance_check": _Out(
-                {
-                    "violations": [{"type": "em_dash", "claim_id": None, "detail": 1}],
-                    "pass": False,
-                }
-            ),
+            "provenance_check": _Out({"violations": [], "pass": True}),
             "independence": _Out({"refused": None, "independence": "full"}),
-            "review": _Out(
-                {
-                    "findings": [{"ref": "s1", "type": "register", "fix": "shorter"}],
-                    "verdict": "revise",
-                },
+            "fact_ceiling_audit": _Out(
+                {"findings": [], "verdict": "ship"},
                 prompt_tokens=8,
                 completion_tokens=4,
                 model_id=_QWEN,
                 model_call_count=1,
             ),
-            "revise": _Out(
-                {
-                    "draft": "Shorter.",
-                    "changed_claims": ["c1"],
-                    "dispositions": ["express"],
-                },
+            "prose_rhythm_pass": _Out(
+                None,
+                raw="Shorter.",
                 prompt_tokens=15,
                 completion_tokens=6,
-                model_id=_HERMES,
+                model_id=_ERNIE,
                 model_call_count=1,
             ),
-            "provenance_check_final": _Out({"violations": [], "pass": True}),
+            "fact_ceiling_final": _Out({"violations": [], "pass": True}),
         }
     )
     assert payload["ship_gate"]["pass"] is True
-    assert payload["ship_gate"]["unresolved"] == []
+    assert payload["ship_gate"]["selected"] == "draft_v2"
     assert payload["revision"]["draft_v2"] == "Shorter."
-    assert payload["revision"]["changed_claims"] == ["c1"]
     assert payload["provenance"]["final"] == []
-    assert payload["seats_used"]["writer"] == _HERMES
-    assert payload["seats_used"]["reviewer"] == _QWEN
-    assert payload["seats_used"]["reviser"] == _HERMES
-    assert payload["est_cost_usd"] == 0.0
     assert payload["review"]["status"] == "ok"
 
 

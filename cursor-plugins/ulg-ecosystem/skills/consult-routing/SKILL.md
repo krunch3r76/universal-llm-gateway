@@ -5,7 +5,7 @@ description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk
 
 # Consult Routing
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=high` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=extra`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=extra` (one rung above ACTIVE; cross-family review stays on this effort). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` · usage channel **Cursor**. SKETCH (G1) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}`. SKEPTIC (G4) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -329,7 +329,7 @@ Rationale for the independence axis (weight class vs family, self-review definit
 
 | Path | Default |
 |---|---|
-| `anthropic/*` on `team_dispatch` | **PROHIBITED** |
+| `anthropic/*` on `team_dispatch` | **Admitted** when the credit gate is healthy. Standard: `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5`. High-cost: `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1` need `cost_intent=deliberate_high_cost` plus a reason. Standing prohibition retired 2026-10-18. |
 | `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when operator-named (§ Cursor-sdk generate shape). |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
 | IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy, contract=freeform)`. Warm paste: `cse_session(op=followup)` |

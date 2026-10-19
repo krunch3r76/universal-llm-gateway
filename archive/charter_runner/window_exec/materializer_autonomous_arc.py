@@ -7,7 +7,7 @@ Emitted packet bodies append ``charter-state`` via
 from __future__ import annotations
 
 from implement_admission.check_review_substrate import consultant_identity
-from implement_admission.conductor_width_seat import ACTIVE
+from implement_admission.impresario_policy import resolve_roles
 
 _CONSULT_IDENT = consultant_identity("cdp/opus-5")
 _CONSULT_MODEL = _CONSULT_IDENT.model_identity
@@ -17,7 +17,7 @@ _CONSULT_EFFORT = _CONSULT_IDENT.rung or "unmeasured"
 def autonomous_arc_guidance(*, revise_cap: int) -> str:
     """Return the G-row decomposition block for autonomous task guidance.
 
-    G1 names ``conductor_width_seat.ACTIVE`` at format time so restoring
+    G1 names ``resolve_roles().critic`` at format time so restoring
     Fable is that assignment, not a second string in this packet.
     """
     return f"""\
@@ -28,7 +28,7 @@ Steps template (machine lane annotations — BINDING on mint):
 5. [ ] G5 — R-after · [consult:judgment_gap]   # or [inline] when folded into G4
 
 G1  Q (L0)           lead CDP width seat ACTIVE — ranked question table + Question set
-                     (team_dispatch model={ACTIVE.model}, reasoning_effort={ACTIVE.reasoning_effort};
+                     (team_dispatch model={resolve_roles().critic.model}, …;
                      CLI --model is that id without the cdp/ prefix.
                      Assignment: libs/implement_admission/conductor_width_seat.py.
                      ¬ default Grok on bundled arc; closed-detent carve-out stays Grok).

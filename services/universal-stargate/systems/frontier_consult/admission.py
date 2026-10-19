@@ -49,6 +49,15 @@ def _generate_teaching_data(expected_axis: str) -> dict[str, Any]:
     }
 
 
+def _is_cursor_substrate_model(model: str | None) -> bool:
+    if not model or not str(model).strip():
+        return False
+    try:
+        return ModelId.parse(model).backend_type == "cursor_sdk"
+    except (TypeError, ValueError):
+        return False
+
+
 def reject_role_cursor_sdk_on_generate(
     role: str,
     *,
@@ -611,6 +620,45 @@ def _resolve_auto_seat_profile(
         )
     to_agent = normalize_bus_address(f"{family}-{platform}")
     return to_agent, family, platform, profile
+
+
+def is_auto_seat_generate_admission(
+    *,
+    seat: str | None = None,
+    role: str | None = None,
+    model: str | None,
+    request_id: str,
+) -> bool:
+    """True when ``op=generate`` should enter the auto-seat SDK handler branch."""
+    del model
+    if seat is not None and str(seat).strip():
+        try:
+            _resolve_auto_seat_profile(seat, request_id=request_id)
+        except FrontierEndpointError:
+            return False
+        return True
+    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
+        return False
+    return False
+
+
+def is_cursor_sdk_generate_admission(
+    role: str | None = None,
+    *,
+    seat: str | None = None,
+    model: str | None = None,
+    request_id: str,
+) -> bool:
+    """True when ``op=generate`` should enter the cursor-sdk handler branch."""
+    if role is not None and normalize_agent_slug(role) == "cursor-sdk":
+        return False
+    if seat is not None and str(seat).strip():
+        return is_auto_seat_generate_admission(
+            seat=seat, role=None, model=None, request_id=request_id
+        )
+    if _is_cursor_substrate_model(model):
+        return True
+    return False
 
 
 def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:

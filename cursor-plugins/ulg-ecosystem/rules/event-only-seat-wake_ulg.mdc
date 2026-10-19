@@ -1,0 +1,30 @@
+---
+description: IDE/house seats wake only on real bus events; liaison-ticker quiesces overnight; DIGEST posts are deduped and rate-limited.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - event-only wake
+  - liaison-ticker
+  - liaison-tick heartbeat
+  - DIGEST rate limit
+  - overnight quiet
+---
+# Event-only seat wake
+
+**Binding:** IDE/house seats are woken only on events, never on idle timers; digests are deduped and rate-limited.
+
+**Decision:** `decision:ide-house-seats-event-only-wake-and-digest-rate-limit` (`a:39651`). **Audit:** gc1 Pool-Two waste audit 2026-10-18 15:23 PT (counts from `agent-bus:16417` and `agent-bus:16416` — idle `ORIENTED` liaison-ticker wakes and duplicate `DIGEST`s).
+
+## Invariant
+
+| Layer | Rule |
+|---|---|
+| **liaison-ticker / gear-3** | No tick, spawn, or digest publish during overnight quiet (default 23:00–07:00 local, `LIAISON_OVERNIGHT_QUIET=1`). Skip wake when the house has no open `REQUEST` and no real event. |
+| **Real wake events** | **land** (worker closeout), **VERDICT** / review apply, **blocker** (`FAILED`, `BLOCKED`, `OPERATOR_GATE`, `HOLD_MERGE`, `checks_failed`), **new REQUEST** — not idle `checkpoint_due`, not `--heartbeat` / 20 min timers, not `ORIENTED`-only churn. |
+| **Attended `--loop`** | `--heartbeat` default **0** (disabled). Emit `AGENT_LOOP_TICK_liaison` only when the digest changed and a real event or fresh context-budget stop is present. |
+| **DIGEST publish** | Semantic content hash dedupe across ticks/processes; minimum interval default **300s** (`LIAISON_DIGEST_MIN_INTERVAL_S` / `digest_min_interval_seconds`). `publish_if_enabled(..., require_change=True)` on ticker loops. |
+
+**Code:** `libs/bus_watch/spawn_on_wake.py`, `scripts/liaison-tick.py`, `libs/bus_watch/digest_publish.py`.
+
+**Hop retire:** liaison IDE hop successors attach watcher tails only — no idle heartbeat re-arm (`liaison-hop-retire_ulg.mdc`).

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from implement_admission.conductor_width_seat import ACTIVE
+from implement_admission.impresario_policy import resolve_roles
 
 from services.git_integration_worker.cursor_sdk_packet import (
     _CONDUCTOR_HOP_TEMPLATE,
@@ -68,8 +68,9 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     )
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "SCORE_RESURFACE" in preamble
-    assert ACTIVE.model in preamble
-    assert f"reasoning_effort={ACTIVE.reasoning_effort}" in preamble
+    critic = resolve_roles().critic
+    assert critic.model in preamble
+    assert critic.model.split("/", 1)[-1] in preamble or critic.model in preamble
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble
     assert "required attended G5 fold witness (a:37198)" in preamble

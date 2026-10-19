@@ -20,6 +20,7 @@ from scripts.model_manager.ui.controller.grokbot_context_hop_io import (
     DEFAULT_CDP_PORTS,
     hop_reply_argv,
     probe_grok_agent_context,
+    probe_ports,
     reply_context_hop,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
@@ -32,6 +33,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     decide_context_hop,
     hop_subject,
     parse_last_message_id,
+    rebuild_hop_state,
     record_hop_notified,
     roster_name_allowed,
 )
@@ -140,6 +142,48 @@ def test_ac1c_probe_default_multi_port_dedupe_and_tolerate_failure(
     by_id = {str(r["agent_id"]): r for r in rows}
     assert by_id["only-9340"]["updated_at_ms"] == 500
     assert by_id["dup"]["updated_at_ms"] == 50
+
+
+def test_probe_ports_skips_runtime_error_and_falls_back_to_9339(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probed_ports: list[int] = []
+
+    def fake_resolve(cdp_port: int, *, timeout_s: float) -> str:
+        del timeout_s
+        probed_ports.append(cdp_port)
+        return f"ws://127.0.0.1:{cdp_port}"
+
+    async def fake_eval(
+        ws_url: str,
+        expression: str,
+        *,
+        await_promise: bool = True,
+        timeout_s: float = 30.0,
+    ) -> list[dict[str, object]]:
+        del expression, await_promise, timeout_s
+        if ws_url.endswith(":9340"):
+            raise RuntimeError(
+                "grok-bot-cdp list-agents failed on port 9340 (rc=1)"
+            )
+        return [
+            {
+                "agent_id": "gc1",
+                "name": "Stage Manager",
+                "lastMessageId": "t4s1",
+                "is_running": False,
+                "updated_at_ms": _FRESH,
+                "loaded_entry_count": 2,
+            }
+        ]
+
+    monkeypatch.setattr("cursor_bridge.grok_computer._resolve_ws_url", fake_resolve)
+    monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
+
+    rows = asyncio.run(probe_ports())
+    assert probed_ports == [9340, 9339]
+    assert len(rows) == 1
+    assert rows[0]["agent_id"] == "gc1"
 
 
 def test_ac1d_probe_dedup_keeps_highest_updated_at_ms(
@@ -280,6 +324,31 @@ def test_ac5_allowlist() -> None:
     assert roster_name_allowed("Impresario Backlog (bl1)") is False
     assert roster_name_allowed("Stage Manager extra") is False
     assert roster_name_allowed("other gc1") is False
+
+
+def test_journal_cooldown_rebuild_skips_due_agent() -> None:
+    future_until = 9_999_999_999.0
+    state = rebuild_hop_state([{"agent_id": "a1", "cooldown_until": future_until}])
+    assert state.first_due_at == {}
+    notice = decide_context_hop(
+        rows=[_row(agent_id="a1")],
+        now=100.0,
+        now_ms=_NOW_MS,
+        state=state,
+        open_gc1_bus_turn=False,
+        in_flight_gc1_mcp=False,
+    )
+    assert notice is None
+    cleared = rebuild_hop_state([{"agent_id": "a1", "cooldown_until": 1.0}])
+    after = decide_context_hop(
+        rows=[_row(agent_id="a1")],
+        now=100.0,
+        now_ms=_NOW_MS,
+        state=cleared,
+        open_gc1_bus_turn=False,
+        in_flight_gc1_mcp=False,
+    )
+    assert after is not None
 
 
 def test_ac6_cooldown_successor_and_failed_reply() -> None:
@@ -597,7 +666,16 @@ def test_ac11_event_factories(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(grokbot_egress_watch_loop, "reply_context_hop", fake_reply_ok)
     asyncio.run(loop._context_hop(now=101.0, now_ms=_NOW_MS, snapshot=snap))
-    assert len(emitted) == 1
+    assert len(emitted) == 2
     assert emitted[0][0] == "mcp.edge.grokbot.context_hop.due"
+    assert emitted[1][0] == "impresario.hop.noticed"
+    assert emitted[1][1] == {
+        "house_root": "15851",
+        "hop_name": "NUDGE|context-hop-due|Impresario Alpha,Reviewer R1 Zed",
+        "detail": {
+            "names": ["Impresario Alpha", "Reviewer R1 Zed"],
+            "agent_ids": ["b", "a"],
+        },
+    }
     assert set(loop._hop_state.cooldown_until) == {"a", "b"}
 

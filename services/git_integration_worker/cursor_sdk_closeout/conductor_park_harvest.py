@@ -284,7 +284,7 @@ async def fire_park_harvest(
     *,
     poster: Any | None = None,
 ) -> bool:
-    """Emit event + harvest nudge; stamp ledger idempotently on successful POST."""
+    """Emit park-harvest event and stamp ledger; bus wake only when ``poster`` is set."""
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     rec = _record_data(row)
@@ -307,16 +307,17 @@ async def fire_park_harvest(
         summoning_thread_id=summoning_thread_id,
         closeout_turn=turn_i,
     )
-    try:
-        (poster or default_park_harvest_poster)(summoning_thread_id, body)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "park harvest bus post failed dispatch=%s thread=%s",
-            dispatch_id,
-            summoning_thread_id,
-            exc_info=True,
-        )
-        return False
+    if poster is not None:
+        try:
+            poster(summoning_thread_id, body)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "park harvest bus post failed dispatch=%s thread=%s",
+                dispatch_id,
+                summoning_thread_id,
+                exc_info=True,
+            )
+            return False
 
     emit_frontier_sdk_conductor_hop_park_harvest(
         dispatch_id=dispatch_id,

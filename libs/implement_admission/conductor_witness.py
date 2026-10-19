@@ -12,6 +12,8 @@ G-ladder the last resort.
 
 from __future__ import annotations
 
+import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +21,12 @@ from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     forward_mutate_tip,
+    load_journal,
     read_tip,
     resolve_scoreboard_rows,
+    retracted_rows_from_journal,
     tip_sha256,
+    witnessed_done_from_journal,
 )
 from implement_admission.conductor_score_table import (
     STATUS_HEADER,
@@ -60,6 +65,8 @@ from implement_admission.conductor_witness_types import (
 from implement_admission.events_conductor_witness import (
     emit_conductor_score_witness_fold,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DefaultWitnessCortex",
@@ -247,6 +254,35 @@ def _fold_cortex_unavailable(
     )
 
 
+def _emit_impresario_witness_sealed(
+    *,
+    work_key: str,
+    row: str,
+    witness: Witness,
+) -> None:
+    from implement_admission.impresario_events import ImpresarioWitnessSealed
+
+    detail_sha: str | None = None
+    if witness.detail:
+        detail_sha = hashlib.sha256(witness.detail.encode("utf-8")).hexdigest()
+    try:
+        from scripts.model_manager.observation_event import _emit_sync
+
+        event = ImpresarioWitnessSealed(
+            work_key=work_key,
+            row=row,
+            witness_kind=witness.source,
+            detail_sha256=detail_sha,
+        )
+        _emit_sync(
+            event.signal,
+            dict(event.payload),
+            source="implement_admission",
+        )
+    except Exception:  # noqa: BLE001 — observation must not fail the fold
+        logger.debug("impresario.witness.sealed emit skipped", exc_info=True)
+
+
 def resolve_entry_gate_from_fold(fold: FoldResult) -> str | None:
     """First scoreboard row whose folded status is not DONE.
 
@@ -291,9 +327,20 @@ def fold_scoreboard(
             raw_body=raw_body,
             exc=exc,
         )
-    witnessed_done = frozenset(
+    journal_records = load_journal(slug, files_root=root)
+    retracted_rows = retracted_rows_from_journal(journal_records)
+    prior_witnessed = witnessed_done_from_journal(journal_records)
+    current_witnessed = frozenset(
         row_id for row_id, w in witnesses.items() if w is not None
     )
+    witnessed_done = (prior_witnessed | current_witnessed) - retracted_rows
+    work_key = deps.source_ref or f"todo:{slug}"
+    for row_id, witness in witnesses.items():
+        if witness is None or row_id in prior_witnessed:
+            continue
+        _emit_impresario_witness_sealed(
+            work_key=work_key, row=row_id, witness=witness
+        )
     row_status: dict[str, str] = {}
     rows_claimed: set[str] = set()
     missing: dict[str, str] = {}
@@ -301,11 +348,15 @@ def fold_scoreboard(
     for row_id in rows:
         raw_status = (row_status_in_tip(raw_body, row_id) or "OPEN").upper()
         stops = stops_block_reason(raw_body, row_id) if row_id == "G4" else None
-        if witnesses.get(row_id) is not None:
+        if row_id in retracted_rows:
+            row_status[row_id] = "RETRACTED"
+            missing[row_id] = "witness retracted"
+        elif witnesses.get(row_id) is not None:
             row_status[row_id] = "DONE"
         elif raw_status in {"DONE", "CLAIMED"}:
-            row_status[row_id] = "CLAIMED"
-            rows_claimed.add(row_id)
+            row_status[row_id] = raw_status
+            if raw_status == "CLAIMED":
+                rows_claimed.add(row_id)
             missing[row_id] = _missing_witness_message(
                 row_id,
                 stops=stops,
@@ -353,7 +404,9 @@ def fold_scoreboard(
             source = sources.get(row_id) or ""
             marker = ":route="
             if marker in source:
-                part = f"{part} [route={source.rsplit(marker, 1)[1]}]"
+                route_tail = source.rsplit(marker, 1)[1]
+                route_only = route_tail.split(":rerouted", 1)[0]
+                part = f"{part} [route={route_only}]"
             delta_parts.append(part)
         delta = " ".join(delta_parts) or "witness fold render"
         result = forward_mutate_tip(
@@ -370,6 +423,7 @@ def fold_scoreboard(
             delta=delta,
             files_root=root,
             prior_witnessed_done=witnessed_done,
+            witnessed_done=witnessed_done,
         )
         journal_applied = result.rejected_reason is None
         emit_conductor_score_witness_fold(

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -87,6 +88,30 @@ def _req(**overrides: object) -> CursorDispatchRequest:
     return CursorDispatchRequest(**base)
 
 
+def test_conductor_direct_admit_empty_generation_options_raises() -> None:
+    ledger = _ledger()
+    with pytest.raises(ProtocolError) as excinfo:
+        _admit(
+            ledger,
+            dispatch_id="cond-direct",
+            work_key="todo:impresario-direct-admit",
+            contract="conductor",
+            generation_options={},
+        )
+    assert excinfo.value.code == "IMPRESARIO_ENVELOPE_MISSING"
+
+
+def test_no_impresario_leases_table_after_claim() -> None:
+    ledger = _ledger()
+    claim(_KEY, "seat-a", "16006", ledger=ledger)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            ("impresario_leases",),
+        ).fetchone()
+    assert row is None
+
+
 def _admit(
     ledger: CursorDispatchLedger,
     *,
@@ -95,12 +120,15 @@ def _admit(
     thread_id: str = "16006",
     claim_id: str | None = None,
     force: bool = False,
+    contract: str = "implement",
+    generation_options: dict | None = None,
 ) -> None:
     req = _req(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         execution_id=f"exec-{dispatch_id}",
         message=f"msg-{dispatch_id}",
+        generation_options=generation_options,
     )
     ledger.admit(
         req=req,
@@ -114,7 +142,7 @@ def _admit(
             thread_id=req.thread_id,
             model_id="grok-4.7",
         ),
-        contract="implement",
+        contract=contract,
         read_only=True,
         work_key=work_key,
         source_ref=work_key,

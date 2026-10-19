@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .assemble import WritingAssembleHandler
+from .draft_selector import WritingDraftSelectorHandler
 from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
+from .prompt_architect import WritingPromptArchitectHandler
 from .provenance_check import WritingProvenanceCheckHandler
 from .review_local import WritingReviewLocalHandler
 from .seat_dispatch import WritingReviewOpenaiHandler, WritingSeatDispatchHandler
@@ -37,6 +39,16 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_assemble_v1",
         WritingAssembleHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_prompt_architect_v1",
+        WritingPromptArchitectHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_draft_selector_v1",
+        WritingDraftSelectorHandler,
     )
     router.register_domain_handler_class(
         "writing",

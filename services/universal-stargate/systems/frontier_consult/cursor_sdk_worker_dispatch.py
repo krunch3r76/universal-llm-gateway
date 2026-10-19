@@ -247,6 +247,7 @@ async def dispatch_cursor_sdk_worker(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     claim_id: str | None = None,
+    impresario_envelope: dict[str, Any] | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
@@ -310,6 +311,8 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_park_release"] = True
     if claim_id:
         payload["claim_id"] = claim_id
+    if impresario_envelope:
+        payload["generation_options"] = {"impresario": impresario_envelope}
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
     if wake_lane:

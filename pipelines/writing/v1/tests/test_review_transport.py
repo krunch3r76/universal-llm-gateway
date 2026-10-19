@@ -156,9 +156,10 @@ def test_review_local_call_receives_schema() -> None:
         )
     ).json
     assert parsed["verdict"] == "ship"
+    assert parsed["clauses"] == []
     schema = seen["json_schema"]
     assert schema["additionalProperties"] is False
-    assert schema["required"] == ["findings", "verdict"]
+    assert schema["required"] == ["findings", "verdict", "clauses"]
     assert (
         "omission"
         in schema["properties"]["findings"]["items"]["properties"]["type"]["enum"]
@@ -226,7 +227,7 @@ def test_sensitive_brief_runs_through_finalize() -> None:
         "need": [],
         "dispositions": [],
     }
-    review = {"findings": [], "verdict": "ship"}
+    review = {"findings": [], "verdict": "ship", "clauses": []}
     outputs = {
         "assemble": assembled,
         "draft": _Out(draft),

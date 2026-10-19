@@ -217,6 +217,80 @@ def test_related_with_missing_target_assertion_fails_before_insert(related_db: P
 
 
 @pytest.mark.offline
+def test_friction_related_second_edge_failure_returns_related_errors(
+    related_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan s2 #3: partial post-create edge failure surfaces related_errors, keeps first edge."""
+    from fastapi import HTTPException
+
+    from cortex_store.dispatch_ops import _related_edges as related_edges_mod
+    from cortex_store.routes import edges as edges_routes
+
+    real_impl = edges_routes._create_edge_impl
+    call_count = 0
+
+    def flaky_create(payload: dict) -> dict:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason": "simulated_second_edge_failure"},
+            )
+        return real_impl(payload)
+
+    monkeypatch.setattr(related_edges_mod, "_create_edge_impl", flaky_create)
+
+    res = _op_friction(
+        owner="service:mcp-server",
+        category="tool_error",
+        note="partial related edge failure isolation",
+        agent="cursor",
+        session_id=_VALID_SESSION,
+        related=[
+            {"to_node": "service:mcp-server", "edge_type": "relates_to"},
+            {"to_node": "service:mcp-server", "edge_type": "duplicates"},
+        ],
+    )
+    assert "error" not in res, res
+    assert len(res["related_edges"]) == 1
+    assert res["related_edges"][0]["edge_type"] == "relates_to"
+    assert len(res["related_errors"]) == 1
+    err = res["related_errors"][0]
+    assert err["edge_type"] == "duplicates"
+    assert err["to_node"] == "service:mcp-server"
+    assert err["error"]["reason"] == "simulated_second_edge_failure"
+
+
+@pytest.mark.offline
+def test_assert_related_invalid_session_id_grok_bot_gc1_returns_seat_hint(
+    related_db: Path,
+) -> None:
+    """Plan s2 #15: assert() path rejects grok-bot-gc1 bad session_id with 422 + seat_hint."""
+    from cortex_store import db as cortex_db
+
+    res = _op_assert(
+        entity_id="service:mcp-server",
+        claim="Assert with bad grok-bot session grammar must not insert",
+        confidence="believed",
+        evidence="verified in libs/cortex_store/dispatch_ops/test_related_edges.py",
+        evidence_uris=["cortex://notes/system/threads/15851-plan-cortex-link-and-grok-bot-seat-fable.md"],
+        seeded_by="grok-bot-gc1",
+        derivation_type="agent_observation",
+        confidence_score=0.75,
+        session_id="2026-10-18-gc1",
+        related=[{"to_node": "service:mcp-server"}],
+    )
+    assert res.get("status_code") == 422
+    assert res.get("reason") == "session_id_grammar"
+    assert res.get("seat_hint") == "mint via cortex_brief(seat='grok-bot')"
+
+    with cortex_db.cortex_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    assert count == 0
+
+
+@pytest.mark.offline
 def test_related_with_both_or_neither_target_keys_rejects(related_db: Path) -> None:
     from cortex_store import db as cortex_db
 

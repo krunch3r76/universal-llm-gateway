@@ -1,5 +1,5 @@
 ---
-description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. anthropic/* prohibited by default; operator-named cursor/claude-* follows consult-routing § Cursor-sdk generate shape; CDP preferred when corpus can be cortex-packaged.
+description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. Standing prohibition retired 2026-10-18 (credits funded); standard models admit when the credit gate is healthy; high-cost Opus/Fable API needs deliberate_high_cost; CDP remains the default judgment wire; operator-named cursor/claude-* follows consult-routing § Cursor-sdk generate shape.
 alwaysApply: false
 rule_category: workflow
 apply_tier: description
@@ -18,31 +18,30 @@ trigger_match_terms:
 ---
 # Anthropic-family dispatch substrate
 
-**House rule (operator 2026-07-17 / 2026-07-18):** substrate choice for Anthropic-family work — not a “how to spend API credits” guide.
+**House rule (operator 2026-10-18):** the 2026-07-18 standing prohibition is retired. Anthropic API credits are funded. This rule names which wire to pick, not a ban.
 
 ## Defaults (binding)
 
 | Path | Default |
 |---|---|
-| `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **PROHIBITED** |
+| `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **Admitted** when `credit_gate_healthy`. Standard (`config/anthropic_credit.yaml`): `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5`. High-cost: `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1` need `cost_intent=deliberate_high_cost` plus a non-empty reason. Do not refuse a named `anthropic/*` call as prohibited. |
 | `model=cursor/*` on `seat=cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when the operator names it available (`consult-routing` § Cursor-sdk generate shape). |
-| Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — **prefer** cortex-packaged hot paths (`cortex://`) for fewer tool calls; `workspaces://` is readable (name it when exploration is encouraged); ¬ GitHub connector browse |
+| Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp remains the default judgment wire** — cortex-packaged hot paths (`cortex://`) for fewer tool calls; `workspaces://` is readable (name it when exploration is encouraged); ¬ GitHub connector browse. API is the metered alternative, not a replacement for every consult. |
 | Codebase must be navigable on the executor | **`cursor/grok-4.7`** (cursor-sdk) |
 
-**Fable:** standing consult is the CDP / web-anthropic product picker — ¬ `anthropic/claude-fable-*` API. Operator-named `cursor/claude-fable-5{,-1}` follows `consult-routing` § Cursor-sdk generate shape.
+**Fable:** standing consult default is the CDP / web-anthropic product picker. `anthropic/claude-fable-5-1` is the high-cost API path (credit gate + `deliberate_high_cost`). Operator-named `cursor/claude-fable-5{,-1}` follows `consult-routing` § Cursor-sdk generate shape.
 
 ## Anti-patterns
 
 | Bad | Good |
 |---|---|
-| “Opus High” → `job=freeform model=anthropic/claude-opus-5` + `cost_intent` | CDP sealed ask `model=cdp/opus-5.5`. Live checkout: `seat=cursor-sdk model=cursor/grok-4.7` |
-
-| Self-attest `deliberate_high_cost` to unlock API Opus | Treat API as **off** unless operator **explicitly** overrides the house rule for that call |
+| “Opus High” → always `model=anthropic/claude-opus-5-5` | Default consult stays `cdp/opus-5.5`. Use API Opus when the leg is metered on purpose, with `deliberate_high_cost` and a reason. |
+| Tell the operator or a peer seat that `anthropic/*` is prohibited | Credits are funded. Admit when the credit gate allows the model. |
 | Cancel / re-route without operator bind when substrate was wrong | Ask substrate; ¬ silent cancel of a live dispatch |
 
-## Stargate gate (residual mechanics — not the house rule)
+## Stargate gate
 
-Stargate still hard-gates explicit `model=anthropic/*` via `anthropic_override_gate` (`cost_intent=deliberate_high_cost` + reason, in-family profile, or review-child spawn). **Passing that gate ≠ house-rule permission.** Fleet default remains: do not select `anthropic/*`. Operator override of the house rule is a spoken/written exception for that dispatch — not routine self-attestation.
+`anthropic_override_gate` admits explicit `model=anthropic/*` when the credit gate is healthy and the id is a standard model, or when `cost_intent=deliberate_high_cost` plus a reason, an in-family profile, or a review-child spawn. **Passing that gate is permission.** A credit-unhealthy or non-standard id without `deliberate_high_cost` still 422s. That 422 is the gate, not a house-rule ban to lecture.
 
 ## SOT pointers
 

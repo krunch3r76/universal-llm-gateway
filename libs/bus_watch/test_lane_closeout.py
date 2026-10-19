@@ -31,6 +31,10 @@ def _hermetic_live_inspect(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("bus_watch.lane_live.ticker_start_unix", lambda _root: None)
     monkeypatch.setattr("bus_watch.lane_live.commit_unix", lambda _sha: None)
     monkeypatch.setattr("bus_watch.lane_live.sha_on_head", lambda _sha: None)
+    monkeypatch.setattr(
+        "bus_watch.lane_closeout.query_lane_closeouts",
+        lambda *_a, **_k: [],
+    )
 
 
 def _worker_closeout(*, sha: str = "0e6653cdf") -> str:
@@ -341,6 +345,40 @@ def test_post_lane_closeout_emits_event() -> None:
     assert "LANE CLOSEOUT" in payload["body"]
 
 
+def test_observe_skips_when_bus_already_has_same_closeout_empty_state() -> None:
+    """State reset must not replay LANE CLOSEOUT rows already on the parent root."""
+    client = MagicMock()
+    lane = {
+        "id": "18139",
+        "slug": "lane-closeout-dedupe",
+        "lifecycle": "completed",
+        "status": "closed",
+    }
+    worker = _worker_closeout()
+    record = build_closeout_record(
+        lane,
+        parent_root="17934",
+        worker_closeout_text=worker,
+    )
+    existing = {**record, "terminal_status": "completed"}
+    state: dict = {}
+    turns = [{"turn_number": 3, "subject": "cursor-sdk CLOSEOUT", "body": worker}]
+
+    def fetch(_tid: str) -> list[dict]:
+        return turns
+
+    with patch(
+        "bus_watch.lane_closeout.query_lane_closeouts", return_value=[existing]
+    ):
+        with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+            posted = observe_terminal_lane_closeouts(
+                "17934", [lane], state, client, fetch_turns=fetch
+            )
+    assert posted == []
+    client.post.assert_not_called()
+    assert closeout_idempotency_key("18139", "completed") in state["lane_closeouts_emitted"]
+
+
 def test_observe_terminal_lane_closeouts_idempotent() -> None:
     client = MagicMock()
     resp = MagicMock()
@@ -493,9 +531,9 @@ def test_observe_terminal_lane_closeouts_batches_bulk_abandoned() -> None:
     resp.json.return_value = {"turn": {"turn_number": 90}}
     client.post.return_value = resp
     lanes = [
-        {"id": "10923", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
-        {"id": "10925", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
-        {"id": "10927", "lifecycle": "abandoned", "updated_at": "2026-10-10T00:00:00Z"},
+        {"id": "10923", "lifecycle": "abandoned", "updated_at": "2026-10-17T00:00:00Z"},
+        {"id": "10925", "lifecycle": "abandoned", "updated_at": "2026-10-17T00:00:00Z"},
+        {"id": "10927", "lifecycle": "abandoned", "updated_at": "2026-10-17T00:00:00Z"},
     ]
     state: dict = {}
 

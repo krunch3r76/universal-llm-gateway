@@ -44,7 +44,7 @@ Use for research-corpus extension, literature survey during recon, or multi-mode
 | `openai/o3-deep-research` (+ snapshot) | **retired** — superseded chain |
 | `openai/gpt-5-search-api` | demoted — theme drift / not lit-agent depth |
 | general `openai/gpt-5.5` (+ tools) | demoted — frontier chat SKU; ¬ discovery default |
-| `anthropic/*` API mcp | prohibited / timeout path |
+| `anthropic/*` with `mcp=True` | timeout path (friction 21132); the API itself is admitted when the credit gate is healthy |
 | `grok-web` | deprecated |
 | `perplexity/sonar-deep-research` (no `openrouter/` prefix) | wrong wire |
 | `openrouter/openai/gpt-5.6-sol` | wrong wire — use `openai/gpt-5.6-sol` unless explicitly wanted |
@@ -97,8 +97,8 @@ Live-search evidence: current-year arXiv IDs, novel framing not in training data
 
 Prompt includes full discovery output + operator bias. Prefer **Opus via CDP**
 (`team_dispatch(model=cdp/opus-5)`, cortex-packaged brief; `project_ask` escape
-only). `anthropic/*` Stargate API remains prohibited by default
-(`decision:anthropic-family-dispatch-substrate`).
+only). `anthropic/*` Stargate API is admitted when the credit gate is healthy
+(`decision:anthropic-family-dispatch-substrate`; prohibition retired 2026-10-18). CDP stays the default scoping wire.
 
 Fallback when CDP unavailable: `team_dispatch` reviewer with a non-Anthropic API model, or `seat=cursor-sdk` + `cursor/claude-opus-4-8` when live checkout browse is required — not general `openai/gpt-5.5`.
 

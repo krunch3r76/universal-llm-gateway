@@ -1,12 +1,5 @@
-# writer-specialist-v1 — local draft, independent review, targeted revision.
-# bare id writer-specialist-v1 is an alias of writing/writer-specialist-v1 (both resolve to this member).
-# UNSENT by construction: no send, post, file write, or mail draft.
-# delivery: id_status_only — admit refuses bus or async delivery of draft bodies.
-# AC6: review transport or model failure after draft -> envelope with draft_v1, provenance,
-# review.status=failed, a review_unresolved row in ship_gate.unresolved, no revision,
-# ship_gate.pass=false; the run completes.
-# T8: review error -> envelope with draft_v1 + provenance, review.status=failed,
-# review_unresolved in ship_gate.unresolved, no revision, ship_gate false; the run completes.
+# writer-specialist-v1 — multi-weight plain-text draft, post-hoc verification.
+# UNSENT by construction. Zero cdp/* and web-anthropic pipeline steps.
 
 schema_version: 6
 id: writer-specialist-v1
@@ -14,35 +7,13 @@ version: "1.0"
 type: writing
 category: writing
 description: >
-  Local writer, a different-family reviewer, and a targeted revision.
-  UNSENT by construction: every draft stays in the envelope.
+  Multi-weight plain-text outbound drafting with post-hoc fact-ceiling and prose-rhythm gates.
+  UNSENT by construction.
 delivery: id_status_only
 output: finalize
 
 options:
   timeout_seconds: 1800
-  writer_seat:
-    type: string
-    description: local, cdp, or cursor_pool1
-    default: local
-  reviewer_seat:
-    type: string
-    description: auto, local, cdp, or openai
-    default: auto
-  dispatch_thread_id:
-    type: string
-    description: agent-bus thread for a non-local seat
-    default: "15790"
-  seat_models:
-    type: object
-    description: model id per remote seat
-    default:
-      cdp: cdp/opus-5.5
-      cursor_pool1: cursor/grok-4.7
-  seat_timeout_s:
-    type: integer
-    description: per wait step
-    default: 600
   output:
     type: string
     description: envelope or packet
@@ -59,194 +30,137 @@ options:
     type: array
     description: refs resolved into the pin ledger
     default: []
-  brief:
-    type: object
-    description: signer, objective, recipient, deliverable, and attested lists
-    default: {}
 
 steps:
   - name: assemble
     type: writing_assemble_v1
 
-  - name: draft_dispatch
-    type: writing_seat_dispatch_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and assemble.json.get('writer_seat') != 'local'"
+  - name: prompt_architect
+    type: writing_prompt_architect_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
-  - name: draft_wait
-    type: writing_seat_wait_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and assemble.json.get('writer_seat') != 'local'"
-
-  - name: draft_local
+  - name: drafter_openai
     type: generate
-    model_ref: writer
+    model_ref: drafter_openai
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (assemble.json.get('writer_seat') == 'local' or draft_wait.json.get('fallback_to') == 'local')"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 16384
+
+  - name: drafter_google
+    type: generate
+    model_ref: drafter_google
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 16384
+
+  - name: drafter_xai
+    type: generate
+    model_ref: drafter_xai
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 16384
+
+  - name: drafter_local_hermes
+    type: generate
+    model_ref: drafter_local_hermes
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
     generation_parameters:
       temperature: 0.4
       max_tokens: 3072
-      response_format:
-        type: json_object
-        schema:
-          type: object
-          additionalProperties: false
-          properties:
-            draft:
-              type: string
-            claims:
-              type: array
-              items:
-                type: object
-                additionalProperties: false
-                properties:
-                  claim_id:
-                    type: string
-                  text:
-                    type: string
-                  pin_ids:
-                    type: array
-                    items:
-                      type: string
-                  disposition:
-                    type: string
-                    enum: [express, imply, omit_with_reason, request]
-                  state:
-                    type: string
-                    enum: [backed, unverified, need]
-                required:
-                  - claim_id
-                  - text
-                  - pin_ids
-                  - disposition
-                  - state
-            need:
-              type: array
-              items:
-                type: string
-            dispositions:
-              type: array
-              items:
-                type: string
-          required:
-            - draft
-            - claims
-            - need
-            - dispositions
+
+  - name: drafter_local_ernie
+    type: generate
+    model_ref: drafter_local_ernie
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 3072
+
+  - name: drafter_anthropic
+    type: generate
+    model_ref: drafter_anthropic
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      architect_brief: prompt_architect.json.architect_brief_block
+      verbatim_notes: assemble.json.verbatim_notes_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 16384
 
   - name: draft
-    type: writing_seat_select_v1
+    type: writing_draft_selector_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
-
-  - name: provenance_check
-    type: writing_provenance_check_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None"
-    handler_inputs:
-      pin_ledger: assemble.json.pin_ledger
-      draft: draft.json
 
   - name: independence
     type: writing_independence_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None"
 
-  - name: review_dispatch
-    type: writing_seat_dispatch_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
-
-  - name: review_openai
-    type: writing_review_openai_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
-
-  - name: review_openai_wait
-    type: writing_review_openai_wait_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'openai'"
-
-  - name: review_wait
-    type: writing_seat_wait_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
-
-  - name: review_local
+  - name: fact_ceiling_audit
     type: writing_review_local_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (assemble.json.get('reviewer_seat') == 'local' or review_wait.json.get('fallback_to') == 'local')"
-
-  - name: review
-    type: writing_seat_select_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None"
 
-  - name: revise
+  - name: provenance_check
+    type: writing_provenance_check_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
+    handler_inputs:
+      pin_ledger: assemble.json.pin_ledger
+      draft: draft.json
+
+  - name: prose_rhythm_pass
     type: generate
     model_ref: reviser
-    prompt_ref: writing.v1.reviser
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    prompt_ref: writing.v1.prose_rhythm
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
+      draft: draft.json.draft
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
-      draft: draft.json.draft
-      findings: review.json.findings_actionable
-      violations: provenance_check.json.violations
     generation_parameters:
       temperature: 0.3
       max_tokens: 3072
-      response_format:
-        type: json_object
-        schema:
-          type: object
-          additionalProperties: false
-          properties:
-            draft:
-              type: string
-            claims:
-              type: array
-              items:
-                type: object
-                additionalProperties: false
-                properties:
-                  claim_id:
-                    type: string
-                  text:
-                    type: string
-                  pin_ids:
-                    type: array
-                    items:
-                      type: string
-                  disposition:
-                    type: string
-                    enum: [express, imply, omit_with_reason, request]
-                  state:
-                    type: string
-                    enum: [backed, unverified, need]
-                required:
-                  - claim_id
-                  - text
-                  - pin_ids
-                  - disposition
-                  - state
-            need:
-              type: array
-              items:
-                type: string
-            dispositions:
-              type: array
-              items:
-                type: string
-            changed_claims:
-              type: array
-              items:
-                type: string
-          required:
-            - draft
-            - claims
-            - need
-            - dispositions
-            - changed_claims
 
-  - name: provenance_check_final
+  - name: fact_ceiling_final
     type: writing_provenance_check_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
-      draft: revise.json
+      draft: prose_rhythm_pass.raw
       draft_v1: draft.json
 
   - name: finalize
@@ -254,33 +168,31 @@ steps:
     reads_from:
       - step: assemble
         fields: [json]
-      - step: draft_dispatch
+      - step: prompt_architect
         fields: [json]
-      - step: draft_wait
-        fields: [json]
-      - step: draft_local
-        fields: [json]
+      - step: drafter_openai
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: drafter_google
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: drafter_xai
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: drafter_local_hermes
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: drafter_local_ernie
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: drafter_anthropic
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: draft
         fields: [json]
       - step: provenance_check
         fields: [json]
       - step: independence
         fields: [json]
-      - step: review_dispatch
+      - step: fact_ceiling_audit
         fields: [json]
-      - step: review_openai
-        fields: [json]
-      - step: review_openai_wait
-        fields: [json]
-      - step: review_wait
-        fields: [json]
-      - step: review_local
-        fields: [json]
-      - step: review
-        fields: [json]
-      - step: revise
-        fields: [json]
-      - step: provenance_check_final
+      - step: prose_rhythm_pass
+        fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: fact_ceiling_final
         fields: [json]
     handler_outputs:
       unsent: finalize.json.unsent

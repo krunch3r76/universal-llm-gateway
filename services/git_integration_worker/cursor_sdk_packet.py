@@ -17,7 +17,7 @@ from implement_admission.conductor_no_restart import (
     NESTED_PROMPT_RULE,
     NO_RESTART_LINE,
 )
-from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
+from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,

@@ -405,6 +405,51 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
     run_mock.assert_called_once()
 
 
+def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
+    tmp_path: Path,
+) -> None:
+    """15851#1815 — expired hop on Glass :8 must not SSH remote_toplevels."""
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    message = f"resume 15420\n\n{marker}\nNOW: test\n"
+    departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _write_transcript(
+        tmp_path, departing, _wrapped_land_line("15420", 17), time.time() - 90
+    )
+    proc = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.subprocess.run", return_value=proc),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels") as toplevels_mock,
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch(
+            "bus_watch.ide_hop.mark_fired",
+            return_value={"root": "15420", "state": "fired"},
+        ),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=0.01,
+            departing_transcript_id=departing,
+            armed_since=lambda *_a, **_k: [],
+        )
+    assert out["ok"] is False
+    assert out["phase"] == "expired"
+    assert out["toplevels"] == []
+    toplevels_mock.assert_not_called()
+
+
 def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     tmp_path: Path,
 ) -> None:
@@ -728,7 +773,7 @@ def test_find_land_via_fence_default_probe_uses_http(monkeypatch: pytest.MonkeyP
             }
 
     class _Client:
-        def __enter__(self) -> "_Client":
+        def __enter__(self) -> _Client:
             return self
 
         def __exit__(self, *_a: object) -> None:

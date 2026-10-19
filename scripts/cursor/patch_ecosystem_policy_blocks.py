@@ -7,7 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from implement_admission.conductor_width_seat import (
+from implement_admission.conductor_critic_render import (
     WIDTH_SEAT_MARKER_START,
     embed_width_seat_block,
 )

@@ -54,12 +54,30 @@ OPERATOR_KEYS: tuple[str, ...] = (
 )
 
 
+def migrate_tick_policy(state: dict[str, Any]) -> None:
+    """In-place rename ``policy.confer_model`` → ``critic_model`` (fork 3)."""
+    policy = state.get("policy")
+    if not isinstance(policy, dict):
+        return
+    if "confer_model" not in policy:
+        return
+    confer = policy.pop("confer_model")
+    if "critic_model" not in policy and confer:
+        policy["critic_model"] = confer
+    if "confer_model_knobs" in policy:
+        knobs = policy.pop("confer_model_knobs")
+        if "critic_model_knobs" not in policy and isinstance(knobs, dict):
+            policy["critic_model_knobs"] = knobs
+
+
 def load_state(path: Path) -> dict[str, Any]:
     if path.is_file():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            state = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             return {}
+        migrate_tick_policy(state)
+        return state
     return {}
 
 
@@ -107,25 +125,45 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
     disk = load_state(path)
     changed: list[str] = []
     stamped_policy = False
+    disk_tick_at = str(disk.get("last_tick_at") or "")
+    mem_tick_at = str(state.get("last_tick_at") or "")
+    adopt_fingerprint = bool(disk_tick_at and disk_tick_at > mem_tick_at)
+
     for key in OPERATOR_KEYS:
-        if key in disk and disk[key] != state.get(key):
-            if key == "policy" and isinstance(disk[key], dict):
-                stamp_now_row_set_at(
-                    state,
-                    disk[key],
-                    as_of=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                )
-                stamped_policy = True
-            if key == "now_row_set_at" and stamped_policy:
-                continue
-            state[key] = disk[key]
-            changed.append(key)
+        if key not in disk:
+            continue
+        if key == "relayed_watchers":
+            disk_set = set(disk.get(key) or [])
+            mem_set = set(state.get(key) or [])
+            merged = sorted(disk_set | mem_set)
+            if merged != sorted(state.get(key) or []):
+                state[key] = merged
+                changed.append(key)
+            continue
+        if disk[key] == state.get(key):
+            continue
+        if key == "policy" and isinstance(disk[key], dict):
+            stamp_now_row_set_at(
+                state,
+                disk[key],
+                as_of=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            stamped_policy = True
+        if key == "now_row_set_at" and stamped_policy:
+            continue
+        state[key] = disk[key]
+        changed.append(key)
+    if adopt_fingerprint and disk.get("fingerprint") is not None:
+        if state.get("fingerprint") != disk["fingerprint"]:
+            state["fingerprint"] = disk["fingerprint"]
+            changed.append("fingerprint")
     return changed
 
 
 __all__ = [
     "OPERATOR_KEYS",
     "absorb_operator_edits",
+    "migrate_tick_policy",
     "stamp_now_row_set_at",
     "load_state",
     "save_state",

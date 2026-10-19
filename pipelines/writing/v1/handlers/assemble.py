@@ -7,6 +7,7 @@ stay skipped. The handler never calls a model and never writes a file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -16,6 +17,7 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
+from writing_intake.schema import validate_intake_payload
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
 
@@ -25,7 +27,8 @@ _QUOTA_MESSAGE_TOKEN_RE = re.compile(
 _EXCERPT_MAX = 1200
 _EXCERPT_SUFFIX = " [truncated]"
 _FENCE_TAG = re.compile(
-    r"</?(?:violations|findings|documents|draft|brief|pin)\b",
+    r"</?(?:violations|findings|documents|draft|brief|pin|verbatim_notes|recipient|"
+    r"objective|channel|max_chars|not_attested|architect_brief)\b",
     re.IGNORECASE,
 )
 _OUTPUTS = frozenset({"envelope", "packet"})
@@ -176,9 +179,17 @@ class WritingAssembleHandler(BaseHandler):
         """
         del step
         options = getattr(context, "options", {}) or {}
+        messages = getattr(context, "messages", None)
+        if messages is None:
+            messages = options.get("messages")
         refusal = _validate_options(options)
         if refusal is not None:
             return _step(refusal)
+        intake, intake_refusal = validate_intake_payload(options, messages)
+        if intake_refusal is not None:
+            return _step(intake_refusal)
+        if intake is not None:
+            return await self._execute_intake(intake, options)
         brief_or_error = _validate_brief(options.get("brief"))
         if isinstance(brief_or_error, dict) and brief_or_error.get("refused"):
             return _step(brief_or_error)
@@ -216,7 +227,12 @@ class WritingAssembleHandler(BaseHandler):
         brief_block = _brief_lines(brief)
         packet = PromptBuilder().render(
             _writer_template(),
-            {"documents": documents, "brief": brief_block},
+            {
+                "documents": documents,
+                "brief": brief_block,
+                "verbatim_notes": "",
+                "architect_brief": "",
+            },
         )
         output = str(_unwrap(options.get("output", "envelope"), "envelope"))
         success: dict[str, Any] = {
@@ -237,6 +253,76 @@ class WritingAssembleHandler(BaseHandler):
         if seats.get("reviewer_model"):
             success["reviewer_model"] = seats["reviewer_model"]
         return _step(success)
+
+    async def _execute_intake(self, intake: Any, options: dict[str, Any]) -> StepOutput:
+        data = intake.model_dump(exclude_none=True)
+        parsed, bad = _parse_working_set(data.get("working_set") or options.get("working_set"))
+        if bad is not None:
+            return _step(bad)
+        client = self._client or WorkingSetClient()
+        try:
+            ws_pins = await _resolve_pins(client, parsed)
+        except WorkingSetUnavailable as exc:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "working_set_unavailable",
+                    "error": exc.reason,
+                    "ref": exc.ref,
+                }
+            )
+        pins = _verbatim_note_pins(data["verbatim_notes"], start=1)
+        offset = len(pins) + 1
+        for index, pin in enumerate(ws_pins, start=offset):
+            pin["pin_id"] = f"P{index}"
+            pins.append(pin)
+            offset = index + 1
+        for offset, item in enumerate(list(data.get("not_attested") or [])):
+            pins.append(
+                {
+                    "pin_id": f"P{len(pins) + 1}",
+                    "source_uri": f"intake:not_attested[{offset}]",
+                    "kind": "not_attested",
+                    "excerpt": _truncate(_fence(item)),
+                    "sha256": None,
+                    "attested": False,
+                }
+            )
+        max_pins = int(_unwrap(options.get("max_pins", 40), 40))
+        if len(pins) > max_pins:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "brief_invalid",
+                    "error": "max_pins_exceeded",
+                }
+            )
+        blocks = _intake_blocks(data, pins)
+        output = str(_unwrap(options.get("output", "envelope"), "envelope"))
+        packet = PromptBuilder().render(
+            _writer_template(),
+            {
+                "documents": blocks["documents_block"],
+                "brief": blocks["brief_block"],
+                "architect_brief": "",
+                "verbatim_notes": blocks["verbatim_notes_block"],
+            },
+        )
+        return _step(
+            {
+                "ok": True,
+                "refused": None,
+                "pin_ledger": pins,
+                "verbatim_notes_block": blocks["verbatim_notes_block"],
+                "documents_block": blocks["documents_block"],
+                "brief_block": blocks["brief_block"],
+                "intake": data,
+                "max_chars": data.get("max_chars"),
+                "channel": data.get("channel"),
+                "packet": packet,
+                "output": output,
+            }
+        )
 
 
 def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
@@ -666,6 +752,47 @@ def _not_attested_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
             }
         )
     return pins
+
+
+def _verbatim_note_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
+    pins: list[dict[str, Any]] = []
+    for offset, item in enumerate(items):
+        pins.append(
+            {
+                "pin_id": f"P{start + offset}",
+                "source_uri": f"intake:verbatim_notes[{offset}]",
+                "kind": "verbatim_note",
+                "excerpt": _truncate(_fence(item)),
+                "sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
+                "attested": True,
+            }
+        )
+    return pins
+
+
+def _intake_blocks(intake: dict[str, Any], pins: list[dict[str, Any]]) -> dict[str, str]:
+    notes = "\n".join(
+        f"<note id=\"{pin['pin_id']}\">{pin['excerpt']}</note>"
+        for pin in pins
+        if pin.get("kind") == "verbatim_note"
+    )
+    verbatim_notes_block = f"<verbatim_notes>\n{notes}\n</verbatim_notes>"
+    not_attested = ", ".join(_fence(item) for item in intake.get("not_attested") or [])
+    max_chars = intake.get("max_chars")
+    brief_lines = [
+        f"Recipient: {_fence(str(intake.get('recipient') or ''))}",
+        f"Objective: {_fence(str(intake.get('objective') or ''))}",
+        f"Channel: {_fence(str(intake.get('channel') or ''))}",
+        f"Max chars: {max_chars if max_chars is not None else 'none'}",
+        f"Not attested: {not_attested or 'none'}",
+    ]
+    brief_block = "<brief>\n" + "\n".join(brief_lines) + "\n</brief>"
+    documents_block = "\n".join(_pin_line(pin) for pin in pins)
+    return {
+        "verbatim_notes_block": verbatim_notes_block,
+        "brief_block": brief_block,
+        "documents_block": documents_block,
+    }
 
 
 def _pin_line(pin: dict[str, Any]) -> str:

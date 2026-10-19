@@ -267,6 +267,17 @@ def record_hop_notified(
         state.first_due_at.pop(agent_id, None)
 
 
+def rebuild_hop_state(entries: list[dict[str, object]]) -> ContextHopState:
+    """Restore cooldown_until from a journal; first_due_at stays empty."""
+    state = ContextHopState()
+    for entry in entries:
+        agent_id = entry.get("agent_id")
+        until = entry.get("cooldown_until")
+        if isinstance(agent_id, str) and isinstance(until, (int, float)):
+            state.cooldown_until[agent_id] = float(until)
+    return state
+
+
 def _deferral_ceiling_hit(now: float, state: GrokbotEgressLoopState) -> bool:
     if state.deferral_started_at is None:
         return False
@@ -380,6 +391,7 @@ __all__ = [
     "parse_last_message_id",
     "parse_watch_log_line_ts_ms",
     "record_hop_notified",
+    "rebuild_hop_state",
     "roster_name_allowed",
     "step_index_due_threshold",
     "watch_connection_state",

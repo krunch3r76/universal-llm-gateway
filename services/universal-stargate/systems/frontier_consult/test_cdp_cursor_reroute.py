@@ -60,6 +60,14 @@ def test_resolve_cdp_reroute_matches_opus_and_fable(
     assert resolve_cdp_reroute("cursor/grok-4.7") is None
 
 
+def test_critic_impresario_role_blocks_reroute_when_flag_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, _ENABLED_REROUTE_POLICY)
+    assert resolve_cdp_reroute("cdp/opus-5.5-high", impresario_role="skeptic") is None
+    assert resolve_cdp_reroute("cdp/opus-5.5-high") is not None
+
+
 def test_resolve_cdp_reroute_respects_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

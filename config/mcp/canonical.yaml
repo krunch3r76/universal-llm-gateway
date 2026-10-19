@@ -3670,6 +3670,57 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-09-08
+- canonical_name: pipeline_outbound_write
+  domain: pipeline
+  operation: outbound_write
+  dispatcher_call_shape:
+    tool: pipeline
+    dispatch_key: op
+    dispatch_value: outbound_write
+  flat_call_shape:
+    tool: outbound_write
+    substrate_qualified: user-vortex__outbound_write
+  fol_descriptor: "Structured outbound write intake relay to writing/writer-specialist-v1."
+  json_schema:
+    type: object
+    properties:
+      verbatim_notes:
+        type: array
+        items:
+          type: string
+      recipient:
+        type: string
+      objective:
+        type: string
+      channel:
+        type: string
+        enum: [email, sms, letter, portal, filing]
+      max_chars:
+        type: integer
+      not_attested:
+        type: array
+        items:
+          type: string
+      working_set:
+        type: array
+        items:
+          type: string
+      async_exec:
+        type: boolean
+      timeout:
+        type: number
+    required:
+    - verbatim_notes
+    - recipient
+    - objective
+    - channel
+  skill_uri: agent_skill:pipeline
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-10-18
 - canonical_name: pipeline_run
   domain: pipeline
   operation: run

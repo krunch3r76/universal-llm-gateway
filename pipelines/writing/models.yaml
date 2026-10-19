@@ -1,10 +1,23 @@
 models:
+  prompt_architect:
+    model: qwen3-14b-q4-k-m-40960
   writer:
-    # G3 bound: Hermes hybrid — model_family(writer) == llama (closed G2 role split).
     model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+  drafter_local_hermes:
+    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+  drafter_local_ernie:
+    model: ernie-4-5-21b-a3b-pt-q8-0-65536
+  drafter_openai:
+    model: openai/gpt-5.4
+  drafter_google:
+    model: google/gemini-2.5-pro
+  drafter_xai:
+    model: xai/grok-4.20-0309-reasoning
+  drafter_anthropic:
+    model: anthropic/claude-sonnet-5-5
   reviser:
-    # G3 bound: Ernie 65536 — reviser is not mapped onto qwen or llama families.
     model: ernie-4-5-21b-a3b-pt-q8-0-65536
   reviewer:
-    # G3 bound: Qwen 40960 — model_family(reviewer) == qwen (originator != verifier).
+    model: qwen3-14b-q4-k-m-40960
+  verifier:
     model: qwen3-14b-q4-k-m-40960

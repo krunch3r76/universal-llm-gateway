@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.conductor_g5_nest_pin import pin_g5_nest_dispatch_id
+from implement_admission.impresario_policy import validate_conductor_generation_options
 from universal_logging import get_logger
+from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_home import operator_real_home
 from services.git_integration_worker.cursor_sdk_nest_depth import (
@@ -195,6 +197,8 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer work-identity gate
         work_fingerprint: str | None = None,
         holder_kind: str | None = None,
         steer: dict[str, str] | None = None,
+        holder_surface: str | None = None,
+        lease_epoch: int | None = None,
     ) -> None:
         self.source_ref = source_ref
         self.work_key = work_key
@@ -203,6 +207,8 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer work-identity gate
         self.holder_thread_id = holder_thread_id
         self.holder_kind = holder_kind
         self.steer = steer
+        self.holder_surface = holder_surface
+        self.lease_epoch = lease_epoch
         identity = work_key or work_fingerprint or source_ref or "?"
         super().__init__(
             f"work identity {identity!r} already has non-terminal dispatch "
@@ -386,7 +392,97 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "wake_lane": req.wake_lane,
         "parent_dispatch_thread_id": req.parent_dispatch_thread_id,
     }
+    if req.generation_options is not None:
+        payload["generation_options"] = req.generation_options
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _lease_epoch_max(conn: sqlite3.Connection, *, work_key: str) -> int:
+    row = conn.execute(
+        "SELECT MAX(COALESCE(lease_epoch, 0)) AS m FROM cursor_sdk_dispatches "
+        "WHERE work_key=?",
+        (work_key,),
+    ).fetchone()
+    return int(row["m"] or 0) if row is not None else 0
+
+
+def bump_lease_epoch_conn(conn: sqlite3.Connection, *, work_key: str) -> int:
+    """Monotonic per-``work_key`` epoch bump inside an open transaction."""
+    return _lease_epoch_max(conn, work_key=work_key) + 1
+
+
+def _holder_surface_from_record(record_json: str | None) -> str | None:
+    try:
+        data = json.loads(record_json or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    gen = data.get("generation_options")
+    if isinstance(gen, dict):
+        imp = gen.get("impresario")
+        if isinstance(imp, dict):
+            surface = imp.get("surface")
+            if isinstance(surface, str) and surface.strip():
+                return surface.strip()
+    return None
+
+
+def _lease_epoch_from_row(row: sqlite3.Row | Any) -> int | None:
+    if row is None:
+        return None
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if "lease_epoch" not in keys:
+        return None
+    val = row["lease_epoch"]
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _emit_impresario_admit_refused(
+    *,
+    work_key: str | None,
+    code: str,
+    message: str,
+    dispatch_id: str | None,
+) -> None:
+    from implement_admission.impresario_events import ImpresarioAdmitRefused
+
+    from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+
+    emit_frontier_event(
+        ImpresarioAdmitRefused(
+            work_key=work_key,
+            code=code,
+            message=message,
+            dispatch_id=dispatch_id,
+        )
+    )
+
+
+def _emit_impresario_lease_acquired(
+    *,
+    work_key: str,
+    lease_epoch: int,
+    dispatch_id: str,
+    surface: str | None = None,
+) -> None:
+    from implement_admission.impresario_events import ImpresarioLeaseAcquired
+
+    from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+
+    emit_frontier_event(
+        ImpresarioLeaseAcquired(
+            work_key=work_key,
+            lease_epoch=lease_epoch,
+            dispatch_id=dispatch_id,
+            surface=surface,
+        )
+    )
 
 
 def resolve_conductor_summoning_thread_id(
@@ -1241,6 +1337,7 @@ class CursorDispatchLedger:
             _migrate_park_columns(conn)
             _migrate_memo_columns(conn)
             _add_column_if_missing(conn, cols, "claim_expires_at", "TEXT")
+            _add_column_if_missing(conn, cols, "lease_epoch", "INTEGER")
             _migrate_claimed_status(conn)
             _migrate_active_lease_index(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
@@ -1547,7 +1644,7 @@ class CursorDispatchLedger:
                 gate_now = _now()
                 peer = conn.execute(
                     "SELECT dispatch_id, thread_id, status, contract, packet_kind, "
-                    "record_json, work_key FROM cursor_sdk_dispatches "
+                    "record_json, work_key, lease_epoch FROM cursor_sdk_dispatches "
                     "WHERE work_key=? AND dispatch_id<>? "
                     f"AND (status IN ({_ACTIVE_IDENTITY_STATUSES}) "
                     f"OR {OPEN_RESTART_PARK_SQL} "
@@ -1613,7 +1710,38 @@ class CursorDispatchLedger:
                                 holder_dispatch_id=peer["dispatch_id"],
                                 holder_thread_id=peer["thread_id"],
                             ),
+                            holder_surface=_holder_surface_from_record(
+                                peer["record_json"]
+                            ),
+                            lease_epoch=_lease_epoch_from_row(peer)
+                            if _lease_epoch_from_row(peer) is not None
+                            else (
+                                _lease_epoch_max(conn, work_key=effective_work_key)
+                                if effective_work_key
+                                else None
+                            ),
                         )
+            if is_conductor_admit and req.generation_options is not None:
+                try:
+                    validate_conductor_generation_options(req.generation_options)
+                except ProtocolError as exc:
+                    _emit_impresario_admit_refused(
+                        work_key=effective_work_key,
+                        code=str(exc.code),
+                        message=str(exc.message),
+                        dispatch_id=req.dispatch_id,
+                    )
+                    raise
+            insert_lease_epoch: int | None = None
+            if (
+                is_conductor_admit
+                and is_root
+                and effective_work_key
+                and identity_class != "adhoc"
+            ):
+                insert_lease_epoch = bump_lease_epoch_conn(
+                    conn, work_key=effective_work_key
+                )
             if req.resume_of:
                 from services.git_integration_worker.cursor_sdk_await_reply_gate import (
                     refuse_if_await_resume_taken,
@@ -1882,9 +2010,9 @@ class CursorDispatchLedger:
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
                 " queued_at, source_ref, work_key, work_fingerprint, resume_of, "
                 " identity_class, work_key_seq, packet_kind, lineage_depth, hop_from, "
-                " nest_under, wake_lane) "
+                " nest_under, wake_lane, lease_epoch) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?)",
+                "?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -1914,8 +2042,24 @@ class CursorDispatchLedger:
                     effective_hop,
                     effective_nest,
                     req.wake_lane,
+                    insert_lease_epoch,
                 ),
             )
+            if insert_lease_epoch is not None and effective_work_key:
+                imp_env = (req.generation_options or {}).get("impresario")
+                surface = (
+                    str(imp_env.get("surface")).strip()
+                    if isinstance(imp_env, dict) and imp_env.get("surface")
+                    else None
+                )
+                epoch = insert_lease_epoch
+                wk = effective_work_key
+                did = req.dispatch_id
+                park_emits.append(
+                    lambda e=epoch, w=wk, d=did, s=surface: _emit_impresario_lease_acquired(
+                        work_key=w, lease_epoch=e, dispatch_id=d, surface=s
+                    )
+                )
             if g5_nest_pin is not None:
                 pin_g5_nest_dispatch_id(**g5_nest_pin)
             if nested_park_parent is None and insert_status == _STATUS_QUEUED:
@@ -2660,6 +2804,40 @@ class CursorDispatchLedger:
             }
             for row in rows
         ]
+
+    def sole_non_terminal_display_holder(self) -> dict[str, Any] | None:
+        """When exactly one non-terminal row exists, project it for busy_status display."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, thread_id, resolved_model, status, record_json "
+                "FROM cursor_sdk_dispatches "
+                f"WHERE status IN ({_ACTIVE_IDENTITY_STATUSES}) "
+                "ORDER BY rowid ASC LIMIT 2"
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        record_json = row["record_json"] if "record_json" in row.keys() else "{}"
+        preview = _subject_preview(record_json or "{}")
+        lane_val: str | None = None
+        try:
+            data = json.loads(record_json) if record_json else {}
+            if isinstance(data, dict):
+                raw_lane = data.get("lane")
+                if isinstance(raw_lane, str) and raw_lane.strip():
+                    lane_val = raw_lane.strip()
+        except json.JSONDecodeError:
+            lane_val = None
+        holder: dict[str, Any] = {
+            "dispatch_id": row["dispatch_id"],
+            "thread_id": row["thread_id"],
+            "model": row["resolved_model"],
+            "subject_preview": preview,
+            "status": row["status"],
+        }
+        if lane_val:
+            holder["lane"] = lane_val
+        return holder
 
     def lease_snapshot(
         self,

@@ -756,9 +756,19 @@ def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
     }
 
 
+def _writing_intake_options(options: dict[str, Any] | None) -> bool:
+    opts = options or {}
+    if isinstance(opts.get("intake"), dict):
+        return True
+    return "verbatim_notes" in opts
+
+
 def register_pipeline_tools(mcp: FastMCP) -> None:
     """Register the unified ``pipeline`` tool."""
+    from tools.pipeline_outbound_write import register_outbound_write_tool
+
     _refresh_pipeline_timeouts()
+    register_outbound_write_tool(mcp)
 
     @mcp.tool(title="Pipeline")
     def pipeline(
@@ -848,7 +858,12 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 if invalid is not None:
                     return invalid
                 return _capability_async(cap_id, options, messages)
-            if not pipeline_id or messages is None:
+            intake_mode = _writing_intake_options(options) and (
+                cap_id is None
+                or (cap_id and cap_id.startswith("writing/"))
+                or (pipeline_id and "writer-specialist" in pipeline_id)
+            )
+            if not pipeline_id or (messages is None and not intake_mode):
                 return {
                     "error": {
                         "code": "missing_required",
@@ -856,7 +871,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                     }
                 }
             run_id = cap_id if cap_id is not None else pipeline_id
-            return _pipeline_run(run_id, messages, options, timeout)
+            return _pipeline_run(run_id, messages or [], options, timeout)
         if op == "async":
             cap_id = _strip_capability_vocab_prefix(pipeline_id)
             if cap_id and "/" in cap_id:
@@ -864,7 +879,12 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 if invalid is not None:
                     return invalid
                 return _capability_async(cap_id, options, messages)
-            if not pipeline_id or messages is None:
+            intake_mode = _writing_intake_options(options) and (
+                cap_id is None
+                or (cap_id and cap_id.startswith("writing/"))
+                or (pipeline_id and "writer-specialist" in pipeline_id)
+            )
+            if not pipeline_id or (messages is None and not intake_mode):
                 return {
                     "error": {
                         "code": "missing_required",
@@ -873,7 +893,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 }
             return _pipeline_async(
                 pipeline_id,
-                messages,
+                messages or [],
                 options,
                 result_delivery,
                 caller_agent,

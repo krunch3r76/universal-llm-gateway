@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from collections.abc import Awaitable, Callable, Sequence
-from urllib.error import URLError
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 _ROW_KEYS = ("agent_id", "name", "lastMessageId", "is_running", "updated_at_ms")
 DEFAULT_CDP_PORTS: tuple[int, ...] = (9340, 9339)
@@ -102,10 +102,13 @@ async def probe_grok_agent_context(
         try:
             ws_url = _resolve_ws_url(port, timeout_s=5.0)
             raw = await _cdp_eval(ws_url, _CONTEXT_JS, await_promise=False)
-        except (URLError, OSError, ConnectionError, TimeoutError):
+        except (URLError, OSError, ConnectionError, TimeoutError, RuntimeError):
             continue
         merged.extend(_normalize_rows(raw))
     return _merge_rows_by_agent_id(merged)
+
+
+probe_ports = probe_grok_agent_context
 
 
 def _run_reply(argv: list[str]) -> subprocess.CompletedProcess[str]:

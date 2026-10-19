@@ -1169,3 +1169,27 @@ def FrontierAdmitUnavailable(  # noqa: N802
         role="coordination",
         scope="node",
     )
+
+
+@event_factory
+def DispatchAdmitProvenanceMissing(  # noqa: N802
+    *,
+    missing: list[str],
+    execution_id: str,
+    coord_thread: str | None,
+    root_lane: bool,
+    request_id: str,
+) -> Event:
+    """Generate/to_thread admit recorded with blank caller, lane, or work_key."""
+    return Event(
+        signal="dispatch.admit.provenance_missing",
+        payload={
+            "missing": missing,
+            "execution_id": execution_id,
+            "coord_thread": coord_thread,
+            "root_lane": root_lane,
+            "request_id": request_id,
+        },
+        scope="node",
+        role="observation",
+    )

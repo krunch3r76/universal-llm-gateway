@@ -27,6 +27,7 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
+from .admit_provenance import admit_turn_from_agent, append_provenance_marker
 from .handoff_life_mirror import (
     build_life_mirror_pointer_body,
     build_workspaces_pointer_body,
@@ -842,6 +843,7 @@ async def post_pointer_turn(
     subject: str,
     pointer_body: str,
     caller_agent: str | None,
+    provenance_missing: tuple[str, ...] = (),
 ) -> int:
     """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns.
 
@@ -865,10 +867,12 @@ async def post_pointer_turn(
         )
     payload: dict[str, Any] = {
         "thread": thread_id,
-        "from": caller_agent or "dispatch",
+        "from": admit_turn_from_agent(
+            caller_agent, provenance_missing=provenance_missing
+        ),
         "to": to_agent,
         "subject": subject,
-        "body": pointer_body,
+        "body": append_provenance_marker(pointer_body, provenance_missing),
         "status": "open",
     }
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -877,7 +881,8 @@ async def post_pointer_turn(
             resp = await client.post("/turns", headers=headers, json=payload)
     except httpx.HTTPError as exc:
         logger.error(
-            "handoff post_pointer_turn transport error: request_id=%s thread=%s error=%s",
+            "handoff post_pointer_turn transport error: "
+            "request_id=%s thread=%s error=%s",
             request_id,
             thread_id,
             exc,
@@ -935,6 +940,7 @@ async def claim_and_post_pointer_turn(
     execution_id: str,
     pipeline_id: str,
     parent_thread_id: str | None = None,
+    provenance_missing: tuple[str, ...] = (),
 ) -> int:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
@@ -962,10 +968,12 @@ async def claim_and_post_pointer_turn(
         "execution_id": execution_id,
         "pipeline_id": pipeline_id,
         "caller_agent": caller_agent,
-        "from_agent": caller_agent or "dispatch",
+        "from_agent": admit_turn_from_agent(
+            caller_agent, provenance_missing=provenance_missing
+        ),
         "to_agent": to_agent,
         "subject": subject,
-        "body": pointer_body,
+        "body": append_provenance_marker(pointer_body, provenance_missing),
     }
     if parent_thread_id is not None:
         payload["parent_thread_id"] = parent_thread_id
@@ -1043,6 +1051,7 @@ async def admit_and_post_pointer_turn(
     execution_id: str,
     pipeline_id: str,
     parent_thread_id: str | None = None,
+    provenance_missing: tuple[str, ...] = (),
 ) -> int:
     """POST /threads/{id}/dispatch-admit-and-post — atomic link + pointer turn."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -1066,10 +1075,12 @@ async def admit_and_post_pointer_turn(
         "execution_id": execution_id,
         "pipeline_id": pipeline_id,
         "caller_agent": caller_agent,
-        "from_agent": caller_agent or "dispatch",
+        "from_agent": admit_turn_from_agent(
+            caller_agent, provenance_missing=provenance_missing
+        ),
         "to_agent": to_agent,
         "subject": subject,
-        "body": pointer_body,
+        "body": append_provenance_marker(pointer_body, provenance_missing),
     }
     if parent_thread_id is not None:
         payload["parent_thread_id"] = parent_thread_id
@@ -1186,6 +1197,7 @@ async def create_handoff_thread(
     handoff_contract: str | None,
     lifecycle_state: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+    provenance_missing: tuple[str, ...] = (),
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -1218,7 +1230,10 @@ async def create_handoff_thread(
         )
 
     slug = _slug_from_subject(subject)
-    from_agent = caller_agent or "dispatch"
+    from_agent = admit_turn_from_agent(
+        caller_agent, provenance_missing=provenance_missing
+    )
+    pointer_body = append_provenance_marker(pointer_body, provenance_missing)
     from agent_bus_store.disposition import append_bus_lifecycle_tags
 
     contract_tag = (
