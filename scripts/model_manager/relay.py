@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from deploy_identity.source_sync_stamp import STAMP_BASENAME
+from transport_utils.gateway_dir import resolve_gateway_dir
 from universal_event_bus.events.debug import emit_debug_event
 
 from scripts.model_manager import relay_state
@@ -35,7 +36,7 @@ _REQUIRED_KEYS = (
     "FEDERATION_KEY_RELAY",
 )
 _ROOT = Path(__file__).resolve().parents[2]
-_GATEWAY_DIR = Path.home() / ".gateway"
+_GATEWAY_DIR = resolve_gateway_dir(env_var=None)
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 _RELAY_TEMPLATE = _ROOT / "config" / "templates" / "relay-stargate.yaml"
 _COMPOSE_PATH = _ROOT / "docker" / "compose" / "gpu-edge.yml"

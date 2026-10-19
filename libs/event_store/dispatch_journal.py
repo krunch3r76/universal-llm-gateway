@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from transport_utils.gateway_dir import resolve_gateway_data_dir
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,8 +15,7 @@ logger = get_logger(__name__)
 
 def dispatch_journal_path() -> Path:
     """Return the service's cold async-dispatch journal path."""
-    data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
-    return data_dir / "pipeline-dispatch.db"
+    return resolve_gateway_data_dir() / "pipeline-dispatch.db"
 
 
 def fetch_dispatch_journal_summary(execution_id: str) -> dict[str, Any] | None:

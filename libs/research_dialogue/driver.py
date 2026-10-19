@@ -3,13 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pwd
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from transport_utils.gateway_dir import passwd_home
 
 from research_dialogue._types import Snapshot
 from research_dialogue.ledger_read import read_status
@@ -32,7 +34,7 @@ def resolve_gateway_dir(override: str | Path | None = None) -> Path:
     env = os.environ.get("RESEARCH_DIALOGUE_GATEWAY_DIR")
     if env and env.strip():
         return Path(env.strip())
-    return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+    return passwd_home(strict=True) / ".gateway"
 
 
 def cloud_proxy_pidfile_path(gateway_dir: str | Path | None = None) -> Path:

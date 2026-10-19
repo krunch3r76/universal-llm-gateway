@@ -7,8 +7,14 @@ from pathlib import Path
 import yaml
 
 from transport_utils.client_factory import DEFAULT_RAG_URL
+from transport_utils.gateway_dir import resolve_gateway_dir
 
-_STARGATE_CONFIG_PATH = Path.home() / ".gateway" / "stargate.yaml"
+
+def _stargate_config_path() -> Path:
+    return resolve_gateway_dir() / "stargate.yaml"
+
+
+_STARGATE_CONFIG_PATH = _stargate_config_path()
 
 
 def resolve_rag_base_url() -> str:
@@ -17,10 +23,11 @@ def resolve_rag_base_url() -> str:
     Returns unix:///path or http://host:port. Used by pipeline handlers
     for runtime transport resolution.
     """
-    if not _STARGATE_CONFIG_PATH.exists():
+    config_path = _stargate_config_path()
+    if not config_path.exists():
         return DEFAULT_RAG_URL
     try:
-        data = yaml.safe_load(_STARGATE_CONFIG_PATH.read_text()) or {}
+        data = yaml.safe_load(config_path.read_text()) or {}
     except (OSError, yaml.YAMLError):
         return DEFAULT_RAG_URL
     rag = data.get("rag")

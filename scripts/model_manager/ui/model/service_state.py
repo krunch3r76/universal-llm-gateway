@@ -16,6 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ..controller.service_config import (
+    GATEWAY_DIR,
     read_cloud_proxy_socket_path,
     read_rag_socket_path,
     read_rag_tcp_config,
@@ -71,9 +72,9 @@ class ServiceState:
     STARGATE_PORT: int = 9999
     RAG_PORT: int = 8100
     CLOUD_PROXY_PORT: int = 8200  # TCP mode only; UDS mode uses socket
-    STARGATE_PID_FILE: Path = Path.home() / ".gateway" / "stargate.pid"
-    RAG_PID_FILE: Path = Path.home() / ".gateway" / "rag.pid"
-    CLOUD_PROXY_PID_FILE: Path = Path.home() / ".gateway" / "cloud-proxy.pid"
+    STARGATE_PID_FILE: Path = GATEWAY_DIR / "stargate.pid"
+    RAG_PID_FILE: Path = GATEWAY_DIR / "rag.pid"
+    CLOUD_PROXY_PID_FILE: Path = GATEWAY_DIR / "cloud-proxy.pid"
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root: Path = workspace_root
@@ -245,7 +246,7 @@ class ServiceState:
         try:
             from services.universal_cloud_proxy.config import load_config
 
-            cfg = load_config(Path.home() / ".gateway" / "cloud-proxy.yaml")
+            cfg = load_config(GATEWAY_DIR / "cloud-proxy.yaml")
             uds_mode = cfg.socket_path is not None
             host = cfg.host
             port = cfg.port
@@ -477,16 +478,16 @@ class ServiceState:
             return info
         return ServiceInfo(name="MCP", status=ServiceStatus.STOPPED)
 
-    CORTEX_API_PID_FILE: Path = Path.home() / ".gateway" / "cortex-api.pid"
+    CORTEX_API_PID_FILE: Path = GATEWAY_DIR / "cortex-api.pid"
     CORTEX_API_SOCK: Path = Path(
         os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
     )
 
-    AGENT_BUS_PID_FILE: Path = Path.home() / ".gateway" / "agent-bus.pid"
+    AGENT_BUS_PID_FILE: Path = GATEWAY_DIR / "agent-bus.pid"
     AGENT_BUS_SOCK: Path = Path(
         os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
     )
-    EMAIL_BRIDGE_PID_FILE: Path = Path.home() / ".gateway" / "email-bridge.pid"
+    EMAIL_BRIDGE_PID_FILE: Path = GATEWAY_DIR / "email-bridge.pid"
     EMAIL_BRIDGE_SOCK: Path = Path(
         os.environ.get("EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock")
     )
@@ -503,7 +504,7 @@ class ServiceState:
             ),
         )
 
-    JOBS_PID_FILE: Path = Path.home() / ".gateway" / "jobs.pid"
+    JOBS_PID_FILE: Path = GATEWAY_DIR / "jobs.pid"
     JOBS_SOCK: Path = Path(
         os.environ.get("JOBS_SOCK", "/tmp/universal-protocol/jobs.sock")
     )
@@ -544,9 +545,7 @@ class ServiceState:
             ),
         )
 
-    GIT_INTEGRATION_WORKER_PID_FILE: Path = (
-        Path.home() / ".gateway" / "git-integration-worker.pid"
-    )
+    GIT_INTEGRATION_WORKER_PID_FILE: Path = GATEWAY_DIR / "git-integration-worker.pid"
     GIT_INTEGRATION_WORKER_HOST: str = os.environ.get(
         "GIT_INTEGRATION_WORKER_HOST", "127.0.0.1"
     )
@@ -554,7 +553,7 @@ class ServiceState:
         os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091")
     )
 
-    CDP_ASK_PID_FILE: Path = Path.home() / ".gateway" / "cdp-ask.pid"
+    CDP_ASK_PID_FILE: Path = GATEWAY_DIR / "cdp-ask.pid"
 
     def check_cdp_ask(self) -> ServiceInfo:
         """Return cdp-ask status; remote misses that still accept TCP stay unhealthy."""
@@ -664,7 +663,7 @@ class ServiceState:
             return _once()
         return healthy, note
 
-    EVENT_SERVICE_PID_FILE: Path = Path.home() / ".gateway" / "event-service.pid"
+    EVENT_SERVICE_PID_FILE: Path = GATEWAY_DIR / "event-service.pid"
     EVENT_SERVICE_QUERY_SOCK: Path = Path(
         os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
     )

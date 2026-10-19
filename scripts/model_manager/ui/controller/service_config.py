@@ -13,8 +13,21 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def _manage_gateway_dir() -> Path:
+    """Passwd-only gateway dir; import resolver lazily for guarded-reexec subprocesses."""
+    try:
+        from transport_utils.gateway_dir import resolve_gateway_dir
+
+        return resolve_gateway_dir(env_var=None)
+    except ModuleNotFoundError:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+
+
 WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
-GATEWAY_DIR = Path.home() / ".gateway"
+GATEWAY_DIR = _manage_gateway_dir()
 NODES_DIR = GATEWAY_DIR / "nodes"
 
 _STARGATE_CONFIG_TEMPLATE = """\
@@ -742,7 +755,7 @@ _CORTEX_DB_PATH = Path.home() / ".cortex" / "cortex.db"
 _TODOS_DB_PATH = Path.home() / ".cortex" / "todos.db"
 _AGENT_BUS_DATA_DIR = Path.home() / ".agent-bus"
 _AGENT_BUS_DB_PATH = _AGENT_BUS_DATA_DIR / "messages.db"
-_RAG_CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
+_RAG_CONFIG_PATH = GATEWAY_DIR / "rag.yaml"
 _CLOUD_PROXY_CONFIG_PATH = GATEWAY_DIR / "cloud-proxy.yaml"
 
 

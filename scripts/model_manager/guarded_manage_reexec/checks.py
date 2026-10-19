@@ -39,7 +39,7 @@ def resolve_gateway_dir(*, manage_pid: int | None = None) -> Path:
 
     cursor-sdk seats often have HOME under the dispatch tree; manage itself runs
     with the operator HOME (``/home/io``). Prefer ``GATEWAY_DIR`` env, then the
-    live manage process environ via ``/proc/<pid>/environ``, then ``Path.home()``.
+    live manage process environ via ``/proc/<pid>/environ``, then passwd ``pw_dir/.gateway``.
     """
     env_dir = os.environ.get("GATEWAY_DIR")
     if env_dir:
@@ -54,7 +54,14 @@ def resolve_gateway_dir(*, manage_pid: int | None = None) -> Path:
                 return Path(item.split(b"=", 1)[1].decode())
             if item.startswith(b"HOME="):
                 return Path(item.split(b"=", 1)[1].decode()) / ".gateway"
-    return Path.home() / ".gateway"
+    try:
+        from transport_utils.gateway_dir import passwd_home
+
+        return passwd_home() / ".gateway"
+    except ModuleNotFoundError:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
 
 
 def default_intent_db(*, manage_pid: int | None = None) -> Path:

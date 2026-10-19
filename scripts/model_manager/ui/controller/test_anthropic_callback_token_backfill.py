@@ -10,6 +10,14 @@ import yaml
 from scripts.model_manager.ui.controller import service_config
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_gateway_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never read operator passwd ~/.gateway/secrets.env under dispatch HOME."""
+    gw = tmp_path / "gateway"
+    gw.mkdir()
+    monkeypatch.setattr(service_config, "GATEWAY_DIR", gw)
+
+
 @pytest.fixture
 def tmp_mcp_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "mcp.yaml"

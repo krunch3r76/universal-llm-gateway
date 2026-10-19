@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from transport_utils.gateway_dir import resolve_gateway_dir
 
 from .model_rate_cache import clear_rate_caches, load_yaml_payload
 
@@ -21,7 +22,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Curated seed (tracked). Override: MODEL_RATES_PATH.
 _DEFAULT_RATES_PATH = _REPO_ROOT / "config" / "model_rates.yaml"
 # Runtime catalog projection (gitignored host state). Override: MODEL_RATES_CATALOG_PATH.
-_CATALOG_PATH = Path.home() / ".gateway" / "model_rates_catalog.yaml"
+_CATALOG_PATH = resolve_gateway_dir() / "model_rates_catalog.yaml"
 
 _CATALOG_ROWS: dict[str, dict[str, Any]] = {}
 _CATALOG_GENERATION = 0
