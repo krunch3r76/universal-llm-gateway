@@ -81,6 +81,16 @@ def _mark_emitted(state: dict[str, Any], key: str) -> None:
     state["lane_closeouts_emitted"] = emitted
 
 
+def _bus_closeout_matches_record(prior: dict[str, Any], record: dict[str, Any]) -> bool:
+    """True when parent-root debrief already reflects this worker settlement."""
+    if bool(prior.get("abandoned")) != bool(record.get("abandoned")):
+        return False
+    return (
+        str(prior.get("settled") or "") == str(record.get("settled") or "")
+        and str(prior.get("landed") or "") == str(record.get("landed") or "")
+    )
+
+
 def _pytest_blocks_live_bus(client: httpx.Client) -> bool:
     return bool(
         os.environ.get("PYTEST_CURRENT_TEST")
@@ -221,6 +231,10 @@ def observe_terminal_lane_closeouts(
 
     posted: list[dict[str, Any]] = []
     abandoned_pending: list[tuple[dict[str, Any], str]] = []
+    existing_by_lane = {
+        str(row.get("lane") or ""): row
+        for row in query_lane_closeouts(client, parent_root, last=200)
+    }
 
     for lane in lanes:
         if not isinstance(lane, dict) or not row_is_terminal(lane):
@@ -259,17 +273,29 @@ def observe_terminal_lane_closeouts(
                 record["friction_id"] = fid
             if ferr:
                 record["friction_error"] = ferr
+        prior = existing_by_lane.get(lane_id)
+        if prior is not None and _bus_closeout_matches_record(prior, record):
+            _mark_emitted(state, key)
+            if worker_turn > 0:
+                _mark_projected_worker_turn(state, lane_id, worker_turn)
+            continue
         result = post_lane_closeout(client, parent_root=parent_root, record=record, abandoned=abandoned)
         if result and result.get("ok"):
             _mark_emitted(state, key)
             if worker_turn > 0:
                 _mark_projected_worker_turn(state, lane_id, worker_turn)
+            existing_by_lane[lane_id] = record
             posted.append(record)
 
     if len(abandoned_pending) == 1:
         record, key = abandoned_pending[0]
-        if (result := post_lane_closeout(client, parent_root=parent_root, record=record, abandoned=True)) and result.get("ok"):
+        lane_id = str(record.get("lane") or "")
+        prior = existing_by_lane.get(lane_id)
+        if prior is not None and _bus_closeout_matches_record(prior, record):
             _mark_emitted(state, key)
+        elif (result := post_lane_closeout(client, parent_root=parent_root, record=record, abandoned=True)) and result.get("ok"):
+            _mark_emitted(state, key)
+            existing_by_lane[lane_id] = record
             posted.append(record)
     elif len(abandoned_pending) > 1:
         records = [r for r, _ in abandoned_pending]

@@ -1724,3 +1724,206 @@ def test_idle_checkpoint_guard_kill_switch() -> None:
     )
     assert ev["clauses"]["idle_checkpoint_clear"] is True
     assert ev["spawn"] is True
+
+
+def test_tick_spawn_overnight_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: True
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out["spawned"] is False
+    assert out["reason"] == "overnight_disabled"
+
+
+def test_tick_spawn_no_open_request_or_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    digest = _digest(attention=[], checkpoint_due=True)
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out["spawned"] is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
+def test_tick_spawn_allows_actionable_attention(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+    assert out.get("reason") != "no_open_request_or_event"
+    assert out.get("reason") != "overnight_disabled"
+
+
+def test_is_overnight_quiet_default_window() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from bus_watch.spawn_on_wake import is_overnight_quiet
+
+    la = ZoneInfo("America/Los_Angeles")
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 23, 30, tzinfo=la), policy={}
+    )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 12, 0, tzinfo=la), policy={}
+    )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 22, 59, tzinfo=la), policy={}
+    )
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 23, 0, tzinfo=la), policy={}
+    )
+    assert is_overnight_quiet(
+        now=datetime(2026, 10, 18, 6, 59, tzinfo=la), policy={}
+    )
+    assert not is_overnight_quiet(
+        now=datetime(2026, 10, 18, 7, 0, tzinfo=la), policy={}
+    )
+
+
+def test_tick_spawn_consumed_handoff_and_checkpoint_due_does_not_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    state = {"handoff": {"seq": 1}, "handoff_spawned_seq": 1}
+    digest = _digest(attention=[], checkpoint_due=True)
+    digest["policy"]["ready"] = True
+    out = tick_spawn_on_wake(digest, state, "10479", dry_run=True)
+    assert out.get("spawned") is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
+def test_tick_spawn_post_reap_live_dry_run_false_does_not_call_fire_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    release_events: list[dict] = []
+    fire_spawn_calls: list[tuple] = []
+
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.emit_pending_spawn_released",
+        lambda **kw: release_events.append(kw),
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.release_fable_lock", lambda *_a, **_k: {"ok": True}
+    )
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.close_unharvested_quiet_lanes_on_bus",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.fetch_held_execution_ids", lambda: None
+    )
+
+    class _FakeLedger:
+        def unstarted_claims(self) -> list:
+            return []
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger._instance",
+        _FakeLedger(),
+    )
+
+    def _track_fire_spawn(*args, **kwargs):  # noqa: ANN002, ANN003
+        fire_spawn_calls.append((args, kwargs))
+        return {"status_code": 200}
+
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.fire_spawn", _track_fire_spawn)
+
+    state = {
+        "handoff": {"seq": 1},
+        "handoff_spawned_seq": 1,
+        "pending_spawn": {"execution_id": "e1", "thread_id": "t1"},
+    }
+    digest = _digest(attention=[], checkpoint_due=True)
+    digest["policy"]["ready"] = True
+    out = tick_spawn_on_wake(
+        digest,
+        state,
+        "10479",
+        dry_run=False,
+        is_terminal=lambda _p: True,
+    )
+    assert "pending_spawn" not in state
+    assert len(release_events) == 1
+    assert len(fire_spawn_calls) == 0
+    assert out["spawned"] is False
+    assert out["reason"] == "no_open_request_or_event"
+
+
+def test_tick_spawn_stale_failed_or_hold_merge_lane_with_zero_unread_does_not_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+    for lane in (
+        {
+            "id": "10999",
+            "unread": 0,
+            "turns": 4,
+            "status": "closed",
+            "lifecycle": "failed",
+            "last_subject": "FAILED dispatch",
+        },
+        {
+            "id": "11000",
+            "unread": 0,
+            "turns": 3,
+            "status": "closed",
+            "lifecycle": "completed",
+            "last_subject": "HOLD_MERGE on row",
+        },
+    ):
+        digest = _digest(attention=[], checkpoint_due=True)
+        digest["lanes"] = [lane]
+        digest["policy"]["ready"] = True
+        out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
+        assert out.get("spawned") is False
+        assert out["reason"] == "no_open_request_or_event"
+
+
+def test_attended_loop_ignores_positive_heartbeat_without_real_event() -> None:
+    from bus_watch.spawn_on_wake import attended_tick_due
+
+    quiet = _digest(attention=[], checkpoint_due=True)
+    quiet["changed_since_last_tick"] = True
+    assert (
+        attended_tick_due(
+            changed_since_last_tick=True,
+            digest=quiet,
+            state={},
+            budget_stop_new=False,
+            digest_is_own_echo=False,
+        )
+        is False
+    )
+
+
+def test_attended_loop_may_wake_requires_real_event() -> None:
+    from bus_watch.spawn_on_wake import attended_loop_may_wake
+
+    quiet = _digest(attention=[], checkpoint_due=True)
+    assert attended_loop_may_wake(quiet, {}) is False
+    live = _digest(attention=[{"id": "1", "unread": 1}])
+    assert attended_loop_may_wake(live, {}) is True

@@ -9,6 +9,11 @@ import httpx
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
+from .admit_provenance import (
+    AdmitProvenanceContext,
+    admit_turn_from_agent,
+    append_provenance_marker,
+)
 from .cursor_sdk_admit_loop import (
     classify_admit_pointer_loop,
     increment_admit_pointer_would_have_refused,
@@ -173,6 +178,7 @@ async def post_coord_admit_pointer(
     prompt_bind_mode: str | None = None,
     prompt_turn_number: int | None = None,
     has_explicit_prompt_source: bool = False,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> None:
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
@@ -189,10 +195,15 @@ async def post_coord_admit_pointer(
         )
         if loop:
             return
+    missing = admit_provenance.missing if admit_provenance is not None else ()
+    body_text = _admit_body(worker_thread_id=worker_thread_id, contract=contract)
+    body_text = append_provenance_marker(body_text, missing)
     await _post_coord_turn(
         coord_thread_id=coord_thread_id,
         to_agent=to_agent,
-        from_agent=caller_agent or "dispatch",
+        from_agent=admit_turn_from_agent(
+            caller_agent, provenance_missing=missing
+        ),
         subject=_ADMIT_SUBJECT,
-        body=_admit_body(worker_thread_id=worker_thread_id, contract=contract),
+        body=body_text,
     )

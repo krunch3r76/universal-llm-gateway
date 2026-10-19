@@ -27,6 +27,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest 
     _park_harvest_target_token,
     _reply_matches_harvest_execution,
     build_park_harvest_arm_recipe,
+    fire_park_harvest,
     fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
     park_harvest_continue_owed,
@@ -330,16 +331,7 @@ async def test_reactor_fires_park_harvest_not_team_dispatch(tmp_path, monkeypatc
         closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
     )
 
-    posted: list[tuple[str, str]] = []
     events: list[str] = []
-
-    def _poster(thread_id: str, body: str) -> None:
-        posted.append((thread_id, body))
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
-        _poster,
-    )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
         lambda **_: events.append("park_harvest"),
@@ -356,8 +348,6 @@ async def test_reactor_fires_park_harvest_not_team_dispatch(tmp_path, monkeypatc
 
     await maybe_fire_conductor_hop_reactor(dispatch_id=req.dispatch_id)
 
-    assert posted
-    assert "scripts/watch-supervise.sh start" in posted[0][1]
     assert events == ["park_harvest"]
     hop_post.assert_not_called()
     with ledger._connect() as conn:
@@ -384,21 +374,12 @@ NEXT_ADMIT: harvest {_LIVE_CDP}
 async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not_double(
     tmp_path, monkeypatch
 ):
-    """conductor_park_harvest_owed with an in-flight CDP id posts one wake.
+    """conductor_park_harvest_owed with an in-flight CDP id stamps once (no bus wake).
 
     Stored tokens omit PARKED_TRANSPORT (the stop line is fenced), which is
     the next_admit_blocked strand. A designed PARKED_TRANSPORT stop still
-    posts exactly one wake.
+    stamps exactly once per row.
     """
-    posted: list[tuple[str, str]] = []
-
-    def _poster(thread_id: str, body: str) -> None:
-        posted.append((thread_id, body))
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
-        _poster,
-    )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
         lambda **_: None,
@@ -424,9 +405,14 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
         closeout_tokens=[],
     )
     await maybe_fire_conductor_hop_reactor(dispatch_id=fenced.dispatch_id)
-    assert len(posted) == 1
-    assert "park-harvest: arm watcher" in posted[0][1]
-    assert _LIVE_CDP in posted[0][1]
+    with ledger._connect() as conn:
+        fenced_rec = json.loads(
+            conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (fenced.dispatch_id,),
+            ).fetchone()["record_json"]
+        )
+    assert "hop_park_harvest_fired_at" in fenced_rec
 
     designed = _req(dispatch_id="pred-park-designed")
     _admit_conductor(ledger, designed)
@@ -441,7 +427,14 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
         closeout_tokens=["PARKED_TRANSPORT"],
     )
     await maybe_fire_conductor_hop_reactor(dispatch_id=designed.dispatch_id)
-    assert len(posted) == 2
+    with ledger._connect() as conn:
+        designed_rec = json.loads(
+            conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (designed.dispatch_id,),
+            ).fetchone()["record_json"]
+        )
+    assert "hop_park_harvest_fired_at" in designed_rec
 
     ledger.merge_record_json(
         dispatch_id=fenced.dispatch_id, patch={"closeout_turn": 48}
@@ -506,6 +499,50 @@ async def test_fenced_park_harvest_owed_wakes_once_and_parked_transport_does_not
     )
     assert not park_harvest_continue_owed(_load(row_hop.dispatch_id), reply_fn=_reply)
     assert len(admits) == 2
+
+
+@pytest.mark.asyncio
+async def test_routine_park_harvest_stamps_without_default_poster(
+    tmp_path, monkeypatch
+):
+    """Production path (poster=None) emits event + stamp, no park-harvest wake bus turn."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req)
+    row = _terminal_row(
+        ledger,
+        req,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+    posted: list[tuple[str, str]] = []
+    events: list[str] = []
+
+    def _poster(thread_id: str, body: str) -> None:
+        posted.append((thread_id, body))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
+        _poster,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
+        lambda **_: events.append("park_harvest"),
+    )
+
+    assert await fire_park_harvest(row)
+    assert posted == []
+    assert events == ["park_harvest"]
+    with ledger._connect() as conn:
+        rec_row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    assert "hop_park_harvest_fired_at" in json.loads(rec_row["record_json"])
+
+    assert await fire_park_harvest(row, poster=_poster)
+    assert len(posted) == 1
+    assert "watch-supervise.sh" in posted[0][1]
 
 
 @pytest.mark.asyncio
@@ -941,11 +978,11 @@ def test_park_harvest_owed_body_park_live_sibling_parity_with_designed(
 async def test_fire_park_harvest_failed_post_leaves_row_retryable(
     tmp_path, monkeypatch
 ):
-    """F2: failed POST must not stamp hop_park_harvest_fired_at; watchdog retries."""
+    """F2: explicit poster failure must not stamp hop_park_harvest_fired_at."""
     ledger = CursorDispatchLedger.instance()
     req = _req()
     _admit_conductor(ledger, req)
-    _terminal_row(
+    row = _terminal_row(
         ledger,
         req,
         closeout_body=_PARKED_HARVEST_CLOSEOUT,
@@ -959,10 +996,6 @@ async def test_fire_park_harvest_failed_post_leaves_row_retryable(
     def _raise_post(*_a, **_k):
         raise RuntimeError("bus post failed")
 
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
-        _raise_post,
-    )
     events: list[str] = []
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
@@ -973,7 +1006,7 @@ async def test_fire_park_harvest_failed_post_leaves_row_retryable(
         lambda **_: True,
     )
 
-    assert not await maybe_fire_conductor_park_harvest(dispatch_id=req.dispatch_id)
+    assert not await fire_park_harvest(row, poster=_raise_post)
     assert events == []
     with ledger._connect() as conn:
         row = conn.execute(

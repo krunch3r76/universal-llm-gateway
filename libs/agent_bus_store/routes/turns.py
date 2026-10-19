@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
@@ -161,6 +162,20 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             raise
         status_code, detail = mapped
         raise HTTPException(status_code=status_code, detail=detail) from exc
+    from ..notice_closeout_dedupe import (
+        find_duplicate_notice_closeout,
+        json_turn_replay,
+    )
+
+    duplicate = await asyncio.to_thread(
+        find_duplicate_notice_closeout,
+        turn.thread,
+        from_agent=turn.from_agent,
+        subject=turn.subject,
+        body=prepared.body,
+    )
+    if duplicate is not None:
+        return json_turn_replay(duplicate)
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
         turn_id, ts, turn_number, _claimed_existing = await asyncio.to_thread(

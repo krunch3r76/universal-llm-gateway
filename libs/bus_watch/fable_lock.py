@@ -5,6 +5,8 @@ Gear-3 ticker holds ``ticker:<root>`` separately; seat holders are ``ide:`` or `
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
 import os
 import time
@@ -41,6 +43,58 @@ def fable_lock_path(root_id: str) -> Path:
 
 def ticker_lock_path(root_id: str) -> Path:
     return WATCH_DIR / f"liaison-ticker-{_validate_root_id(root_id)}.lock"
+
+
+def loop_flock_path(root_id: str) -> Path:
+    return WATCH_DIR / f"liaison-loop-{_validate_root_id(root_id)}.flock"
+
+
+def acquire_root_loop_flock(root_id: str) -> tuple[bool, Any, dict[str, Any]]:
+    """Exclusive per-root ``fcntl`` lock for ``liaison-tick.py --loop`` (process lifetime fd)."""
+    rid = _validate_root_id(root_id)
+    path = loop_flock_path(rid)
+    WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    fd = open(path, "a+")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError) as exc:
+        if not isinstance(exc, BlockingIOError) and exc.errno not in (
+            errno.EACCES,
+            errno.EAGAIN,
+        ):
+            fd.close()
+            raise
+        existing_meta: dict[str, Any] = {}
+        try:
+            fd.seek(0)
+            raw = fd.read().strip()
+            if raw:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    existing_meta = parsed
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        fd.close()
+        return False, None, existing_meta
+    meta = {"root": rid, "pid": os.getpid(), "acquired_at": _utcnow()}
+    fd.seek(0)
+    fd.truncate()
+    fd.write(json.dumps(meta))
+    fd.flush()
+    return True, fd, meta
+
+
+def release_root_loop_flock(fd: Any) -> None:
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        fd.close()
+    except OSError:
+        pass
 
 
 def current_night_id() -> str:
@@ -227,6 +281,7 @@ def refresh_fable_lock(
     root_id: str = "",
     max_hop_minutes: float = 60.0,
     turns_seen: int | None = None,
+    require_pid: int | None = None,
 ) -> bool:
     """Model-gated lease refresh — extends ``expires_at``, bumps ``tick_seq``."""
     rid = _validate_root_id(root_id)
@@ -234,6 +289,10 @@ def refresh_fable_lock(
     current = read_lock(rid)
     if current.get("holder") != holder:
         return False
+    lock_pid = current.get("holder_pid")
+    if require_pid is not None and lock_pid is not None:
+        if int(lock_pid) != int(require_pid):
+            return False
     tick_seq = int(current.get("tick_seq") or 0) + 1
     now = _utcnow()
     payload = {
@@ -421,15 +480,18 @@ __all__ = [
     "MAX_HOPS_PER_NIGHT",
     "TICKER_LOCK",
     "WATCH_DIR",
+    "acquire_root_loop_flock",
     "claim_fable_lock",
     "claim_ticker_lease",
     "current_night_id",
     "fable_lock_path",
+    "loop_flock_path",
     "read_lock",
     "read_ticker_lock",
     "refresh_fable_lock",
     "refresh_ticker_lease",
     "release_fable_lock",
+    "release_root_loop_flock",
     "release_ticker_lease",
     "seat_lock_free",
     "ticker_lease_live",

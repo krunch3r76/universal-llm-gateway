@@ -495,8 +495,13 @@ def sdk_busy_status_envelope(
         for row in lease.get("queued") or []
         if isinstance(row, dict)
     ]
+    active_holder = _active_holder_from_lease(lease)
+    if active_holder is None:
+        sole = CursorDispatchLedger.instance().sole_non_terminal_display_holder()
+        if sole is not None:
+            active_holder = sole
     envelope: dict[str, Any] = {
-        "active_holder": _active_holder_from_lease(lease),
+        "active_holder": active_holder,
         "active_holders": list(lease.get("active_holders") or []),
         "queue_depth": int(lease.get("queue_depth") or 0),
         "queued_dispatches": queued_dispatches,

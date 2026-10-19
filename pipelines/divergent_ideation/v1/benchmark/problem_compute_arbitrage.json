@@ -1,0 +1,17 @@
+{
+  "problem_id": "bench-compute-arbitrage-002",
+  "target_statement": "Identify cash-flow patterns when spare inference cycles appear unpredictably and buyers need low-latency completion guarantees.",
+  "hard_constraints": [
+    "No exclusive hardware purchase",
+    "Pricing must survive 30% demand variance",
+    "Operator retains audit trail for every settlement"
+  ],
+  "domain_terms_to_strip": [
+    "inference",
+    "LLM",
+    "token",
+    "VRAM"
+  ],
+  "run_seed": 18011,
+  "benchmark_tag": "divergent-ideation-benchmark"
+}

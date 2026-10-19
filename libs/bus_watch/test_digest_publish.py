@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -18,6 +19,13 @@ from bus_watch.digest_publish import (
     render_body,
 )
 from bus_watch.liaison_digest import effective_policy
+
+
+@pytest.fixture(autouse=True)
+def _isolated_digest_watch_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("bus_watch.digest_publish.WATCH_DIR", tmp_path)
 
 
 def _full_digest(**overrides: object) -> dict:
@@ -270,7 +278,13 @@ def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
     resp.status_code = 201
     resp.json.return_value = {"turn": {"turn_number": 11, "id": 1001}}
     client.post.return_value = resp
-    state = {"policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"}}
+    state = {
+        "policy": {
+            "gear": "3-wake-on-attention",
+            "loop_thread": "10479",
+            "digest_min_interval_seconds": 0,
+        }
+    }
     budget = {"kind": "budget_estimate", "used_tokens": 1, "pct": 0.1}
     first = _full_digest(changed_since_last_tick=True, attention=[{"id": "2"}, budget])
     assert publish_if_enabled("10479", first, state, client=client) == "published"
@@ -367,7 +381,11 @@ def test_publish_if_enabled_forces_when_occupancy_thread_moves() -> None:
     resp.json.return_value = {"turn": {"turn_number": 3, "id": 8802}}
     client.post.return_value = resp
     state = {
-        "policy": {"loop_thread": "11876", "gear": "3-wake-on-attention"},
+        "policy": {
+            "loop_thread": "11876",
+            "gear": "3-wake-on-attention",
+            "digest_min_interval_seconds": 0,
+        },
         "digest_turn_number": 4650,
         "digest_publish_thread": "10479",
     }
@@ -477,7 +495,11 @@ def test_stale_retry_bypasses_require_change(monkeypatch: pytest.MonkeyPatch) ->
     resp.json.return_value = {"turn": {"turn_number": 2680, "id": 7000}}
     client.post.return_value = resp
     state = {
-        "policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"},
+        "policy": {
+            "gear": "3-wake-on-attention",
+            "loop_thread": "10479",
+            "digest_min_interval_seconds": 0,
+        },
         "digest_turn_number": 2679,
     }
     digest = _full_digest(
@@ -685,3 +707,67 @@ def test_post_digest_policy_gear_three_and_default() -> None:
         is True
     )
     assert effective_policy({"policy": {}})["post_digest"] is False
+
+
+def test_digest_content_hash_stable_across_ts_jitter() -> None:
+    from bus_watch.digest_publish import digest_content_hash
+
+    a = _full_digest(ts="2026-09-11T12:00:00Z")
+    b = _full_digest(ts="2026-09-11T12:00:15Z")
+    assert digest_content_hash(a) == digest_content_hash(b)
+
+
+def test_publish_if_enabled_dedupes_same_semantic_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.digest_publish import digest_content_hash
+
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 11, "id": 1001}}
+    client.post.return_value = resp
+    state = {"policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"}}
+    first = _full_digest(changed_since_last_tick=True)
+    assert publish_if_enabled("10479", first, state, client=client) == "published"
+    assert client.post.call_count == 1
+    second = _full_digest(changed_since_last_tick=True, ts="2026-09-11T12:01:00Z")
+    assert digest_content_hash(first) == digest_content_hash(second)
+    assert publish_if_enabled("10479", second, state, client=client) == "skipped"
+    assert client.post.call_count == 1
+
+
+def test_publish_if_enabled_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 11, "id": 1001}}
+    client.post.return_value = resp
+    state = {
+        "policy": {
+            "gear": "3-wake-on-attention",
+            "loop_thread": "10479",
+            "digest_min_interval_seconds": 300,
+        }
+    }
+    first = _full_digest(changed_since_last_tick=True)
+    assert publish_if_enabled("10479", first, state, client=client) == "published"
+    moved = _full_digest(changed_since_last_tick=True)
+    moved["lanes"][1] = {**moved["lanes"][1], "turns": 9}
+    assert publish_if_enabled("10479", moved, state, client=client) == "skipped"
+    assert client.post.call_count == 1
+
+
+def test_publish_skipped_overnight(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: True
+    )
+    state = {"policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"}}
+    digest = _full_digest(changed_since_last_tick=True)
+    assert publish_if_enabled("10479", digest, state) == "skipped"
+    captured = capsys.readouterr()
+    assert '"reason": "overnight_disabled"' in captured.out

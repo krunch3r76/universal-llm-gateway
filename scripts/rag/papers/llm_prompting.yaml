@@ -1,0 +1,53 @@
+# Curated papers for the llm_prompting RAG corpus scope.
+# scope: llm_prompting
+# corpus_dir: docs/research/llm/prompting
+
+papers:
+  divergent_reasoning:
+    - arxiv_id: "2303.17651"
+      slug: self-consistency-improves-reasoning
+      published: "2023-03-30"
+      title: "Self-Consistency Improves Chain of Thought Reasoning in Language Models"
+      note: "self-consistency — diversity sampling over reasoning paths"
+
+    - arxiv_id: "2310.09497"
+      slug: setwise-zero-shot-ranking
+      published: "2023-10-14"
+      title: "A Setwise Approach for Effective Zero-shot Ranking with LLMs"
+      note: "diversity sampling — groupwise generation without ranking bias"
+
+    - arxiv_id: "2310.07712"
+      slug: permutation-self-consistency-ranking
+      published: "2023-10-11"
+      title: "Found in the Middle: Permutation Self-Consistency Improves Listwise Ranking"
+      note: "decomposition — permutation-based option ordering control"
+
+    - arxiv_id: "2402.01345"
+      slug: large-language-models-cannot-self-correct
+      published: "2024-02-02"
+      title: "Large Language Models Cannot Self-Correct Reasoning Yet"
+      note: "critique-and-revise — limits of self-correction loops"
+
+    - arxiv_id: "2305.10601"
+      slug: tree-of-thoughts
+      published: "2023-05-17"
+      title: "Tree of Thoughts: Deliberate Problem Solving with Large Language Models"
+      note: "decomposition — branching search over intermediate thoughts"
+
+    - arxiv_id: "2304.04473"
+      slug: analogical-reasoning-language-models
+      published: "2023-04-10"
+      title: "Language Models as Analogical Reasoners"
+      note: "analogy transfer — structured cross-domain mapping"
+
+    - arxiv_id: "2401.14295"
+      slug: chain-of-verification
+      published: "2024-01-25"
+      title: "Chain-of-Verification Reduces Hallucination in Large Language Models"
+      note: "critique-and-revise — verification pass before answer"
+
+    - arxiv_id: "2210.03629"
+      slug: react-synergizing-reasoning-acting
+      published: "2022-10-07"
+      title: "ReAct: Synergizing Reasoning and Acting in Language Models"
+      note: "constraint reformulation — interleaved reasoning and action"
