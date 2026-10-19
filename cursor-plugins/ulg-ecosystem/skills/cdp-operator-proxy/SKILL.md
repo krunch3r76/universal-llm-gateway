@@ -123,18 +123,18 @@ Warm follow-up does **not** reload chips or MCP; a new window inherits no chat c
 the handoff. Either way: **¬ mint a second private lane.**
 
 **mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02;
-force generalized 2026-08-13).** SOT: rule `restart-drain-discipline` § Force is
-permitted — GIW is the sole exception. **Force is permitted on every service except
-`git_integration_worker`** — no operator authorization, no streaming/window test. What
-the window classification now tells you is only what recovery to expect:
+force rule K48 2026-10-18).** SOT: `runbook:restart-drain` § Force rule. No service is
+forced by default; wait for the G1 busy gate. A force needs a coordinator `force_reason`
+announced to Kaywan or maestro first (manage refuses caller force over busy G1 without one, 409).
+The window classification tells you only what recovery to expect:
 
 | Blocker | Move |
 |---|---|
 | No recorded stream / ghost `live_cse` | Restart — an observed tab is not a lifecycle lease; nothing to recover |
-| **This** CSE streaming | `force` — MCP surface dies mid-stream; recover via **continuity** after healthy |
-| **Other** window streaming | `force` permitted; peer recovers by `chat_url`. Prefer a short wait if not urgent — courtesy, not a gate |
+| **This** CSE streaming | Arm, wait for the drain; after healthy recover via **continuity** |
+| **Other** window streaming | Arm, wait for the drain; peer recovers by `chat_url` |
 | **`git_integration_worker`** | **Never force** — drain-gated. `park_live` defaults true: resume-eligible busy occupants park after 20s; others drain-wait. Arm it, report `restart_intent_id`, exit |
-| **`stargate`** (propagate / non-force `sync_restart`) | **Do not** put `force: true` on the YAML row (admit refuses). Busy Stargate arms a durable `restart_intent_id` via manage — fires when `/admin/active-work` is idle (`requests_in_flight` + async pipelines); **600s** idle ceiling then self-preempt restart (CDP in-flight is the expected casualty — recover via continuity). Receipt `disposition: queued`, not `harvest_wanted`. Human `manage sync_restart stargate force=true` remains the immediate kill shortcut. |
+| **`stargate`** (propagate / non-force `sync_restart`) | **Do not** put `force: true` on the YAML row (admit refuses). Busy Stargate arms a durable `restart_intent_id` via manage — fires when `/admin/active-work` is idle (`requests_in_flight` + async pipelines); **600s** idle ceiling then self-preempt restart (CDP in-flight is the expected casualty — recover via continuity). Receipt `disposition: queued`, not `harvest_wanted`. |
 
 Tooling MCP restart ⇒ continuity protocol (not warm follow-up). Ordered sequence:
 

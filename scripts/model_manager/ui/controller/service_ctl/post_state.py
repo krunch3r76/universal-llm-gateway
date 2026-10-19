@@ -97,6 +97,8 @@ def finalize_restart_rebuild_result(
     """Attach post-state and derive top-level status/liveness from observation."""
     if result.get("status") == "deferred":
         return result
+    if result.get("status") == "refused":
+        return result
 
     out = dict(result)
     out["service_post_state"] = probe.to_dict()
