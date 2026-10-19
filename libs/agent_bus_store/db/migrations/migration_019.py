@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 MIGRATION_ID = "migration_019"
+logger = logging.getLogger(__name__)
 
 _LEDGER_COLUMNS = (
     "id",
@@ -69,6 +71,19 @@ def run(conn: sqlite3.Connection) -> None:
             )
             """
         )
+        orphan_count = conn.execute(
+            "SELECT count(*) FROM endpoint_wake_ledger "
+            "WHERE turn_id NOT IN (SELECT id FROM turns)"
+        ).fetchone()[0]
+        if orphan_count > 0:
+            logger.warning(
+                "migration_019 omitting %s endpoint_wake_ledger rows whose turn_id is not in turns",
+                orphan_count,
+            )
+        else:
+            logger.debug(
+                "migration_019 omitting 0 endpoint_wake_ledger rows whose turn_id is not in turns"
+            )
         conn.execute(
             "INSERT INTO endpoint_wake_ledger_new ("
             f"{column_list}) SELECT {column_list} FROM endpoint_wake_ledger "
@@ -88,6 +103,9 @@ def run(conn: sqlite3.Connection) -> None:
         )
         conn.execute("RELEASE m019")
     except BaseException:
-        conn.execute("ROLLBACK TO m019")
-        conn.execute("RELEASE m019")
+        try:
+            conn.execute("ROLLBACK TO m019")
+            conn.execute("RELEASE m019")
+        except sqlite3.Error:
+            pass
         raise

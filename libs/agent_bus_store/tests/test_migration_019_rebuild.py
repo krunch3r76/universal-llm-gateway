@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 
 import pytest
+from agent_bus_store.db import create_thread, init_db, insert_turn
+from agent_bus_store.db import migrations as migration_registry
 
-os.environ["EMAIL_BRIDGE_SOCK"] = "/nonexistent"
 
-from agent_bus_store.db import create_thread, init_db, insert_turn  # noqa: E402
+@pytest.fixture(autouse=True)
+def _email_bridge_sock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMAIL_BRIDGE_SOCK", "/nonexistent")
+
 
 pytestmark = pytest.mark.offline
 
@@ -41,7 +46,6 @@ _ORPHAN_TURN_ID = 2_000_000_000
 def _prepare(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str, int, int]:
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
-    monkeypatch.setenv("EMAIL_BRIDGE_SOCK", "/nonexistent")
     init_db()
     detail = create_thread(thread_id=None, slug="pre-019")
     assert detail is not None
@@ -155,7 +159,7 @@ def test_failed_copy_leaves_no_shadow_and_keeps_rows(
 
 
 def test_init_db_after_failed_copy_records_migration(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     db_path, _thread, turn_id, _turn_number = _prepare(tmp_path, monkeypatch)
     real_connect = sqlite3.connect
@@ -163,7 +167,16 @@ def test_init_db_after_failed_copy_records_migration(
     with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
         init_db()
     monkeypatch.setattr(sqlite3, "connect", real_connect)
-    init_db()
+    with caplog.at_level(
+        logging.DEBUG, logger="agent_bus_store.db.migrations.migration_019"
+    ):
+        init_db()
+    debugs = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.DEBUG and rec.name.endswith("migration_019")
+    ]
+    assert any("omitting 0 " in rec.getMessage() for rec in debugs)
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT turn_id, route, state FROM endpoint_wake_ledger"
@@ -208,8 +221,96 @@ def test_precreated_shadow_table_is_replaced(
         assert recorded is not None
 
 
-def test_orphan_turn_id_is_skipped_and_parent_route_is_accepted(
+class _RollbackThenRaise(sqlite3.Connection):
+    """Issue a full ROLLBACK, then raise, so savepoint m019 is already gone."""
+
+    def execute(self, sql, parameters=()):  # type: ignore[no-untyped-def]
+        if isinstance(sql, str) and "INSERT INTO endpoint_wake_ledger_new" in sql:
+            super().execute("ROLLBACK")
+            raise sqlite3.OperationalError("disk I/O error")
+        return super().execute(sql, parameters)
+
+
+def _connect_rollback_on_copy(monkeypatch: pytest.MonkeyPatch, db_path: str) -> None:
+    real_connect = sqlite3.connect
+
+    def connect(database, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if os.path.abspath(str(database)) == os.path.abspath(db_path):
+            kwargs["factory"] = _RollbackThenRaise
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+
+
+def test_autorollback_propagates_original_error(
     tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, _thread, _turn_id, _turn_number = _prepare(tmp_path, monkeypatch)
+    _connect_rollback_on_copy(monkeypatch, db_path)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error") as raised:
+        init_db()
+    assert "no such savepoint" not in str(raised.value)
+
+
+class _DdlFreeEarlier:
+    """Unrecorded predecessor. No DDL: the runner's schema_migrations INSERT opens the txn."""
+
+    MIGRATION_ID = "migration_test_before_019"
+
+    @staticmethod
+    def run(conn: sqlite3.Connection) -> None:
+        conn.execute("SELECT 1")
+
+
+def _insert_earlier_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    earlier = _DdlFreeEarlier()
+    patched = []
+    for migration in migration_registry.MIGRATIONS:
+        if migration.MIGRATION_ID == "migration_019":
+            patched.append(earlier)
+        patched.append(migration)
+    monkeypatch.setattr(migration_registry, "MIGRATIONS", patched)
+
+
+def test_failed_copy_inside_open_transaction_retries_clean(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, _thread, turn_id, _turn_number = _prepare(tmp_path, monkeypatch)
+    _insert_earlier_migration(monkeypatch)
+    real_connect = sqlite3.connect
+    _fail_shadow_copy(monkeypatch, db_path)
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        init_db()
+    with _connect(db_path) as conn:
+        names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "endpoint_wake_ledger_new" not in names
+        recorded = {
+            row["id"] for row in conn.execute("SELECT id FROM schema_migrations")
+        }
+        assert "migration_019" not in recorded
+        assert _DdlFreeEarlier.MIGRATION_ID not in recorded
+    monkeypatch.setattr(sqlite3, "connect", real_connect)
+    init_db()
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT turn_id, route FROM endpoint_wake_ledger"
+        ).fetchall()
+        assert [(row["turn_id"], row["route"]) for row in rows] == [(turn_id, "exact")]
+        assert "parent" in _ledger_sql(conn)
+        recorded = {
+            row["id"] for row in conn.execute("SELECT id FROM schema_migrations")
+        }
+        assert "migration_019" in recorded
+        assert _DdlFreeEarlier.MIGRATION_ID in recorded
+
+
+def test_orphan_turn_id_is_skipped_and_parent_route_is_accepted(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     db_path, thread, turn_id, turn_number = _prepare(tmp_path, monkeypatch)
     with _connect(db_path) as conn:
@@ -225,7 +326,17 @@ def test_orphan_turn_id_is_skipped_and_parent_route_is_accepted(
             "SELECT id FROM turns WHERE id = ?", (_ORPHAN_TURN_ID,)
         ).fetchone()
         assert present is None
-    init_db()
+    with caplog.at_level(
+        logging.DEBUG, logger="agent_bus_store.db.migrations.migration_019"
+    ):
+        init_db()
+    warnings = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING and rec.name.endswith("migration_019")
+    ]
+    assert len(warnings) == 1
+    assert "omitting 1 " in warnings[0].getMessage()
     with _connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=ON")
         rows = conn.execute(
