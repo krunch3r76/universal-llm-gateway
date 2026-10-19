@@ -14,7 +14,7 @@ tab's ``--loop``, ``watch-supervise`` tails, and ``ide:`` lock (``bus_watch.ide_
 Pollers arm via ``scripts/watch-supervise.sh start`` — that spawn closes stdin and fds >2
 so ``start`` returns before poller closeout (a:39593). On land, suffix this tab title with
 `` (retired)`` (``rename_chat``) before ``RETIRED → <transcript_id>``. On :8 Xvfb,
-``archive_cursor_agents_tab`` archives the sidebar row for ``--transcript-id``.
+``prune_cursor_agents_predecessors`` keeps the departing tab active and archives older root rows.
 UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
@@ -59,8 +59,8 @@ from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
 from cursor_bridge.cursor_agents_hop import (
-    archive_cursor_agents_tab,
     is_cursor_xvfb_host,
+    prune_cursor_agents_predecessors,
 )
 
 
@@ -327,8 +327,11 @@ def main() -> int:
             gui = args.gui_host or policy_gui_host(args.root)
             if is_cursor_xvfb_host(gui) and args.transcript_id:
                 try:
-                    out["archived_departing_tab"] = archive_cursor_agents_tab(
-                        args.transcript_id
+                    out["archived_departing_tab"] = prune_cursor_agents_predecessors(
+                        args.root,
+                        active_agent_id=str(out.get("landed_transcript_id") or ""),
+                        departing_agent_id=args.transcript_id,
+                        keep_recent_predecessors=1,
                     )
                 except Exception as exc:  # noqa: BLE001 — must not abort retire
                     out["archived_departing_tab"] = {
