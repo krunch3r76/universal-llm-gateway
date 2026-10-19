@@ -262,12 +262,17 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
     rest of a large file is worth parsing. Skip results are empty chunk
     lists so ``_handle_empty_chunks`` can drop that path's prior rows.
     """
+    seal_keep = path.name.lower().endswith(".messages.json") and not _is_raw_name(path)
     try:
         size = path.stat().st_size
     except OSError:
         return _skip(path, "parse_error")
-    if size <= 0 or size > MAX_JSON_BYTES:
-        return _skip(path, "parse_error" if size <= 0 else "oversize_unsplittable")
+    if size > MAX_JSON_BYTES:
+        return _skip(path, "oversize_unsplittable")
+    if size <= 0:
+        if seal_keep:
+            raise OSError(f"empty seal file: {path}")
+        return _skip(path, "parse_error")
     if _is_raw_name(path):
         return _skip(path, "raw")
     seal_name = path.name.lower().endswith(".messages.json")
@@ -275,6 +280,8 @@ def chunk_json_file(path: Path) -> list[Chunk] | UseSealChunker:
         with path.open("rb") as fh:
             prefix = fh.read(min(size, SNIFF_BYTES))
     except OSError:
+        if seal_keep:
+            raise
         return _skip(path, "parse_error")
     stripped = prefix.lstrip()
     if not seal_name and not stripped.startswith((b"{", b"[")):
@@ -346,9 +353,10 @@ def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk]
             continue
         for heading, body in group:
             scrubbed = scrub_chunk_text(body)
+            scrubbed_heading = scrub_chunk_text(heading)
             if body.strip() and not scrubbed.strip():
                 continue
-            parts = _split_turn(heading, scrubbed)
+            parts = _split_turn(scrubbed_heading, scrubbed)
             if parts is None:
                 return None
             for part in parts:
@@ -357,7 +365,7 @@ def _chunk_projected(path: Path, sections: list[tuple[str, str]]) -> list[Chunk]
                 chunks.append(
                     Chunk(
                         text=part,
-                        metadata={"source": str(path), "heading": heading},
+                        metadata={"source": str(path), "heading": scrubbed_heading},
                     )
                 )
     return chunks

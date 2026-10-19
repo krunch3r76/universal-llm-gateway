@@ -613,6 +613,122 @@ def test_envelope_dump_with_messages_is_tape(
             )
 
 
+def _assert_heading_scrubbed(chunks: list, secret: str, placeholder: str) -> None:
+    assert chunks, "expected chunks after scrub, not drop"
+    for chunk in chunks:
+        assert secret not in chunk.text
+        assert secret not in chunk.metadata.get("heading", "")
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert placeholder in joined
+
+
+def test_heading_timestamp_sk_key_scrubbed(tmp_path: Path) -> None:
+    secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
+    path = tmp_path / "ts-secret.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "hello user", "ts": secret},
+                    {"role": "assistant", "content": "hello assistant"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    _assert_heading_scrubbed(chunks, secret, "[REDACTED_SECRET]")
+
+
+def test_heading_timestamp_email_scrubbed(tmp_path: Path) -> None:
+    secret = "leak@example.com"
+    path = tmp_path / "email-ts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"<timestamp>{secret}</timestamp>\nquestion",
+                    },
+                    {"role": "assistant", "content": "answer"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    _assert_heading_scrubbed(chunks, secret, "[REDACTED_EMAIL]")
+
+
+def test_heading_timestamp_bearer_scrubbed(tmp_path: Path) -> None:
+    secret = "Bearer abcdefghijklmnopqrstuvwxyz"
+    path = tmp_path / "bearer-ts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "ask", "timestamp": secret},
+                    {"role": "assistant", "content": "reply"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    _assert_heading_scrubbed(chunks, secret, "[REDACTED_SECRET]")
+
+
+def test_seal_zero_byte_raises(tmp_path: Path) -> None:
+    path = tmp_path / "empty.messages.json"
+    path.write_bytes(b"")
+    with pytest.raises(OSError):
+        chunk_json_file(path)
+
+
+def test_seal_read_oserror_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "readfail.messages.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "u"},
+                    {"role": "assistant", "content": "a"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    real_open = Path.open
+
+    def _fail_read(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        fh = real_open(self, *args, **kwargs)
+        if self == path and "rb" in args:
+            read = fh.read
+
+            def _broken(size=-1):  # noqa: ANN001
+                raise OSError("simulated read failure")
+
+            fh.read = _broken  # type: ignore[method-assign]
+        return fh
+
+    monkeypatch.setattr(Path, "open", _fail_read)
+    with pytest.raises(OSError, match="simulated read failure"):
+        chunk_json_file(path)
+
+
+def test_non_seal_zero_byte_still_skips(tmp_path: Path) -> None:
+    path = tmp_path / "empty.json"
+    path.write_bytes(b"")
+    assert chunk_json_file(path) == []
+
+
 def test_seal_parse_error_raises(tmp_path: Path) -> None:
     invalid = tmp_path / "session.messages.json"
     invalid.write_bytes(b"\xff\xfe")
