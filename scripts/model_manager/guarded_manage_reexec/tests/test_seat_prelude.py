@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import sqlite3
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -387,6 +389,10 @@ def test_dry_run_self_lease_passes(
     active_work = {
         "write_lease": {"holder_dispatch_id": "d-self"},
         "active_count": 1,
+        "cursor_sdk_gate": {
+            "holders": {"standard": ["d-self"], "operator": []},
+            "live_writers": 1,
+        },
     }
     busy = _occupant_busy(active_work=active_work)
     assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
@@ -531,24 +537,41 @@ def test_dry_run_refuses_unattributable_single_active_count(
 
 
 def test_dry_run_caller_only_in_active_holders_passes() -> None:
-    """AC2: holder_dispatch_id on active_holders identifies the caller."""
+    """AC2: holder_dispatch_id on active_holders identifies the caller.
+
+    Condition (2): d-self is not in holders, and live_writers is 0. Empty
+    holder lists satisfy the presence check. Putting d-self in holders would
+    mask a break in active_holders attribution.
+    """
     active_work = {
         "write_lease": {
             "holder_dispatch_id": None,
             "active_holders": [{"holder_dispatch_id": "d-self"}],
         },
         "active_count": 1,
+        "cursor_sdk_gate": {
+            "holders": {"standard": [], "operator": []},
+            "live_writers": 0,
+        },
     }
     busy = _occupant_busy(active_work=active_work)
     assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
 
 
 def test_dry_run_caller_identified_in_active_ops_passes() -> None:
-    """AC2: active_ops op_id for kind cursor_sdk identifies the caller."""
+    """AC2: active_ops op_id for kind cursor_sdk identifies the caller.
+
+    Condition (2): d-self is not in holders, and live_writers is 0. The
+    caller is attributed only through active_ops.
+    """
     active_work = {
         "write_lease": {"holder_dispatch_id": None},
         "active_count": 1,
         "active_ops": [{"kind": "cursor_sdk", "op_id": "d-self"}],
+        "cursor_sdk_gate": {
+            "holders": {"standard": [], "operator": []},
+            "live_writers": 0,
+        },
     }
     busy = _occupant_busy(active_work=active_work)
     assert observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
@@ -622,19 +645,28 @@ def test_giw_has_claimed_occupants_ignores_queued_only_state() -> None:
     assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is True
 
 
-def test_dry_run_missing_giw_service_is_not_a_claim(
+def test_dry_run_missing_giw_service_refuses_unreadable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC5: missing GIW service entry is not a foreign claim on dry-run."""
+    """Missing GIW service is unreadable on dry-run, not a pass.
+
+    AC5 (c47bafdfe, "gate exclude-self to dry_run only") asserted that
+    observe_giw_occupants returns None when services is {}. It existed so
+    the exclude-self dry-run would not invent giw_claimed_occupants from an
+    absent services.git_integration_worker entry: giw_foreign_claimed_occupants
+    is false when that key is missing, and the old dry-run treated that false
+    as clear. That pass hid a GIW that did not answer. Absence is now
+    giw_occupancy_unreadable. It is still not a foreign claim.
+    """
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
     busy = {
         "process": {"manage_inflight": 1, "activities": []},
         "services": {},
     }
     assert giw_foreign_claimed_occupants(busy, exclude_dispatch_id="d-self") is False
-    assert (
-        observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True) is None
-    )
+    finding = observe_giw_occupants(busy, caller_dispatch="d-self", dry_run=True)
+    assert finding is not None
+    assert finding.reason == "giw_occupancy_unreadable"
 
 
 def test_execute_empty_active_work_keeps_caller_and_skips_paired_stop(
@@ -703,3 +735,341 @@ def test_dry_run_surfaces_occupant_refusal(tmp_path: Path) -> None:
     assert result.checks["refused"] is True
     assert result.executed is False
     assert "charter_pause" not in calls
+
+
+def _readable_gate(
+    *,
+    standard: list[str] | None = None,
+    operator: list[str] | None = None,
+    live_writers: int = 0,
+) -> dict[str, Any]:
+    return {
+        "holders": {
+            "standard": list(standard or []),
+            "operator": list(operator or []),
+        },
+        "live_writers": live_writers,
+    }
+
+
+def _foreign_ids(finding: Any) -> list[dict[str, Any]]:
+    assert finding is not None
+    return finding.offenders[0]["foreign"]
+
+
+def test_two_writers_sibling_foreign_via_holders_and_ledger() -> None:
+    """(a) exclude one of two writers: sibling is foreign via holders and ledger."""
+    via_holders = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self", "d-sib"], live_writers=2),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=via_holders),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    assert any(
+        row.get("dispatch_id") == "d-sib"
+        and row.get("source") == "cursor_sdk_gate.holders"
+        for row in _foreign_ids(finding)
+    )
+    sole = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+
+    def reader() -> list[dict[str, str]]:
+        return [
+            {"holder_dispatch_id": "d-self"},
+            {"holder_dispatch_id": "d-sib"},
+        ]
+
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=sole),
+        caller_dispatch="d-self",
+        dry_run=True,
+        ledger_reader=reader,
+    )
+    assert any(
+        row.get("dispatch_id") == "d-sib" and row.get("source") == "ledger_reader"
+        for row in _foreign_ids(finding)
+    )
+
+
+def test_lane_b_sibling_absent_from_keyed_lease_is_foreign() -> None:
+    """(b) Lane-B writer missing from the Lane-A write_lease is still foreign."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": "d-self",
+            "active_holders": [],
+            "queued": [],
+        },
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(
+            standard=["d-self"], operator=["d-lane-b"], live_writers=2
+        ),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    assert any(row.get("dispatch_id") == "d-lane-b" for row in _foreign_ids(finding))
+
+
+def test_sole_writer_dry_run_has_no_foreign_rows() -> None:
+    """(c) the caller alone is not a foreign occupant."""
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+    assert (
+        observe_giw_occupants(
+            _occupant_busy(active_work=active_work),
+            caller_dispatch="d-self",
+            dry_run=True,
+        )
+        is None
+    )
+
+
+def test_conductor_in_active_holders_stays_foreign() -> None:
+    """(d) a conductor row other than the caller is still foreign."""
+    active_work = {
+        "write_lease": {
+            "holder_dispatch_id": "d-self",
+            "active_holders": [{"holder_dispatch_id": "d-conductor"}],
+        },
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    assert any(
+        row.get("dispatch_id") == "d-conductor"
+        and row.get("source") == "write_lease.active_holders"
+        for row in _foreign_ids(finding)
+    )
+
+
+def test_live_writers_above_one_attributed_caller_is_foreign() -> None:
+    """(e) live_writers=2 with one attributed caller is a foreign count."""
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=2),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    assert any(
+        row.get("source") == "cursor_sdk_gate.live_writers" and row.get("count") == 2
+        for row in _foreign_ids(finding)
+    )
+
+
+def test_dry_run_holders_missing_refuses_unreadable() -> None:
+    """(f) a payload with no foreign rows and no holders is unreadable."""
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    assert finding is not None
+    assert finding.reason == "giw_occupancy_unreadable"
+
+
+def test_read_live_write_holders_missing_path_raises(tmp_path: Path) -> None:
+    """(g) a missing ledger path raises and creates neither the file nor its dir."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        LedgerUnreadable,
+        read_live_write_holders,
+    )
+
+    missing = tmp_path / "no-such-dir" / "ledger.db"
+    assert not missing.parent.exists()
+    with pytest.raises(LedgerUnreadable):
+        read_live_write_holders(missing)
+    assert not missing.exists()
+    assert not missing.parent.exists()
+
+
+def test_dry_run_ledger_reader_does_not_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(h) an injected read-only reader leaves the ledger bytes and CSE rows."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+        read_live_write_holders,
+    )
+
+    db = tmp_path / "cursor-sdk-dispatch.db"
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:  # noqa: SLF001
+        conn.execute(
+            "INSERT INTO cse_session_holders ("
+            "holder_id, chat_url, seat_state, bound_at, last_transition_at"
+            ") VALUES (?, ?, ?, ?, ?)",
+            ("h1", "https://claude.ai/c/1", "driving", "t0", "t0"),
+        )
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches ("
+            "dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "message_present, record_json, read_only"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-self", "fp", "t-self", "cursor/grok-4.7", "running", 0, "{}", 0),
+        )
+        conn.commit()
+
+    def fingerprint() -> tuple[str, int, int]:
+        data = db.read_bytes()
+        st = db.stat()
+        return hashlib.sha256(data).hexdigest(), st.st_size, st.st_mtime_ns
+
+    def cse_rows() -> list[tuple[Any, ...]]:
+        uri = f"file:{db.as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            return conn.execute(
+                "SELECT holder_id, seat_state FROM cse_session_holders "
+                "ORDER BY holder_id"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    before = fingerprint()
+    rows_before = cse_rows()
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+        ledger_reader=lambda: read_live_write_holders(db),
+    )
+    assert finding is None
+    assert fingerprint() == before
+    assert cse_rows() == rows_before
+    CursorDispatchLedger._instance = None
+
+
+def test_ledger_reader_without_exclude_refuses() -> None:
+    """(i) ledger rows that do not name the caller refuse."""
+    active_work = {
+        "write_lease": {"holder_dispatch_id": "d-self"},
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+        ledger_reader=lambda: [{"holder_dispatch_id": "d-other"}],
+    )
+    assert finding is not None
+    assert finding.reason == "giw_claimed_occupants"
+    assert any(row.get("source") == "ledger_reader" for row in _foreign_ids(finding))
+
+
+def test_running_writer_not_in_holders_is_foreign() -> None:
+    """(j) a writer in active_ops and live_writers, absent from holders, is foreign."""
+    active_work = {
+        "active_ops": [
+            {"kind": "cursor_sdk", "op_id": "d-self"},
+            {"kind": "cursor_sdk", "op_id": "d-running"},
+        ],
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=2),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    foreign = _foreign_ids(finding)
+    assert any(
+        row.get("dispatch_id") == "d-running" and row.get("source") == "active_ops"
+        for row in foreign
+    )
+    assert any(row.get("source") == "cursor_sdk_gate.live_writers" for row in foreign)
+
+
+def test_read_only_caller_with_foreign_holder_refuses_via_holders() -> None:
+    """(k) read-only caller in holders and active_ops; foreign writer in holders."""
+    active_work = {
+        "active_ops": [{"kind": "cursor_sdk", "op_id": "d-self"}],
+        "cursor_sdk_gate": _readable_gate(
+            standard=["d-self", "d-foreign"], live_writers=1
+        ),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    foreign = _foreign_ids(finding)
+    assert any(
+        row.get("dispatch_id") == "d-foreign"
+        and row.get("source") == "cursor_sdk_gate.holders"
+        for row in foreign
+    )
+    assert all(row.get("source") != "cursor_sdk_gate.live_writers" for row in foreign)
+
+
+def test_holder_only_writer_with_active_count_one_passes() -> None:
+    """(k2) writer caller in holders only, live_writers=1, active_count=1, passes."""
+    active_work = {
+        "active_count": 1,
+        "cursor_sdk_gate": _readable_gate(standard=["d-self"], live_writers=1),
+    }
+    assert (
+        observe_giw_occupants(
+            _occupant_busy(active_work=active_work),
+            caller_dispatch="d-self",
+            dry_run=True,
+        )
+        is None
+    )
+
+
+def test_dead_heartbeat_still_refuses_through_holders_and_live_writers() -> None:
+    """(l) dead_heartbeat clears active_ops; holders and live_writers still refuse."""
+    active_work = {
+        "busy": False,
+        "active_count": 0,
+        "active_ops": [],
+        "determination": "dead_heartbeat",
+        "dead_heartbeat_ops": [{"kind": "cursor_sdk", "op_id": "d-dead"}],
+        "cursor_sdk_gate": _readable_gate(standard=["d-foreign"], live_writers=1),
+    }
+    finding = observe_giw_occupants(
+        _occupant_busy(active_work=active_work),
+        caller_dispatch="d-self",
+        dry_run=True,
+    )
+    foreign = _foreign_ids(finding)
+    assert any(
+        row.get("dispatch_id") == "d-foreign"
+        and row.get("source") == "cursor_sdk_gate.holders"
+        for row in foreign
+    )
+    assert any(
+        row.get("source") == "cursor_sdk_gate.live_writers" and row.get("count") == 1
+        for row in foreign
+    )
