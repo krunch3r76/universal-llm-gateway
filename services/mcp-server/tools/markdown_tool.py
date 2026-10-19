@@ -37,12 +37,12 @@ from markdown_sections import (
 from mcp_events import record
 
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools.filesystem._house_rules_rotation import rotate_house_rules_to_fit
 from tools.filesystem._write_authority import (
     RULINGS_ARCHIVE_REL,
     HouseRulesSizeRejectedError,
     evaluate_house_rules_post_edit_size,
     is_house_rules_path,
-    rotate_house_rules_to_fit,
 )
 
 from ._durable_write import (

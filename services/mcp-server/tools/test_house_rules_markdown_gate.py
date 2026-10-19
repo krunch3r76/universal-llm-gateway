@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from tools import markdown_tool
+from tools.filesystem import _house_rules_rotation as house_rules_rotation
 from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
 from tools.filesystem import _write_authority as authority
@@ -253,7 +254,7 @@ def test_house_rules_rotation_archive_failure_leaves_file_unchanged(
     _house_rules_near_cap(sandbox_root, rel)
     before = (sandbox_root / rel).read_bytes()
     with patch.object(
-        authority,
+        house_rules_rotation,
         "durable_write_text",
         side_effect=OSError("archive write failed"),
     ):
