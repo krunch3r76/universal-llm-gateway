@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from implement_admission.admission_read import compute_packet_sha256, replace_frontmatter_value
+from implement_admission.admission_read import (
+    compute_packet_sha256,
+    replace_frontmatter_value,
+)
 from implement_admission.conductor_score_journal import birth_scoreboard, read_tip
 from implement_admission.source_ref import todo_slug_from_ref
 
@@ -65,7 +68,10 @@ def commit_conductor_plan(
     out_path = out_dir / f"conductor-{slug}.md"
     rel = plan.packet_rel_path
     if not rel:
-        rel = f"universal-llm-gateway/tmp/implement-admission/materialized/conductor-{slug}.md"
+        rel = (
+            f"universal-llm-gateway/tmp/implement-admission/materialized/"
+            f"conductor-{slug}.md"
+        )
 
     existing_tip = read_tip(slug)
     if plan.hop_seq >= 1 and existing_tip is None:
@@ -85,10 +91,14 @@ def commit_conductor_plan(
         on_disk = out_path.read_text(encoding="utf-8")
         on_sha = compute_packet_sha256(on_disk)
         if on_sha != digest:
-            text = replace_frontmatter_value(plan.packet_markdown, "packet_sha256", digest)
+            text = replace_frontmatter_value(
+                plan.packet_markdown, "packet_sha256", digest
+            )
             out_path.write_text(text, encoding="utf-8")
     else:
-        text = replace_frontmatter_value(plan.packet_markdown, "packet_sha256", digest)
+        text = replace_frontmatter_value(
+            plan.packet_markdown, "packet_sha256", digest
+        )
         out_path.write_text(text, encoding="utf-8")
 
     if (

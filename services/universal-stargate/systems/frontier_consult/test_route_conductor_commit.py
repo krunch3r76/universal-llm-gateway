@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from implement_admission import closeout_helpers
 from implement_admission.conductor_score_journal import read_tip
 from implement_admission.source_ref import todo_slug_from_ref
@@ -59,7 +58,10 @@ def test_commit_writes_packet_and_birth_tip(
         packet_markdown=body,
         packet_sha256=digest,
         packet_rel_path=f"universal-llm-gateway/tmp/implement-admission/materialized/conductor-{slug}.md",
-        birth_scoreboard_markdown="| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n",
+        birth_scoreboard_markdown=(
+            "| ID | Deliverable | Mode | Status | Stops |\n"
+            "|---|---|---|---|---|\n"
+        ),
         hop_seq=0,
     )
     result = commit_conductor_plan(plan, "disp-bw3-test", workspaces_root=tmp_path)

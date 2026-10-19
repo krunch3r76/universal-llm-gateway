@@ -347,8 +347,8 @@ def resolve_source_ref_to_packet(
             route_contract={"job": "sketch", "lane": "B"},
         )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
-        from implement_admission.conductor_witness_defaults import fold_deps_for_admit
         from implement_admission.conductor_score_journal import read_tip
+        from implement_admission.conductor_witness_defaults import fold_deps_for_admit
         from services.git_integration_worker.cursor_sdk_nested_witness import (
             LedgerNestedImplementWitness,
         )
