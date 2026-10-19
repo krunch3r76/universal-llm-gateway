@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import struct
+import threading
 import zlib
 from pathlib import Path
 from typing import Any
@@ -286,6 +287,7 @@ def _write_canonical(
     sha: str,
     model: str = "openai/gpt-5.4",
     body: str = "Amount $100.00",
+    variant: str | None = None,
 ) -> None:
     pdf = root / rel
     fm = {
@@ -307,7 +309,12 @@ def _write_canonical(
         "extraction_type": "ocr_transcription",
         "tool_version": "extract_document/1.0",
     }
-    sidecar = pdf.parent / f"{pdf.name}{SIDECAR_SUFFIX}"
+    name = (
+        f"{pdf.name}.args-{variant}{SIDECAR_SUFFIX}"
+        if variant
+        else f"{pdf.name}{SIDECAR_SUFFIX}"
+    )
+    sidecar = pdf.parent / name
     sidecar.write_text(format_sidecar(fm, body), encoding="utf-8")
 
 
@@ -396,14 +403,33 @@ def test_dropbox_paths_are_not_indexed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "a.pdf")
-    _blank_pdf(tmp_path / rel)
+    _text_pdf(
+        tmp_path / rel,
+        "This letter contains enough alphanumeric content to stay on the text layer path.",
+    )
 
     def _boom(*_a: Any, **_k: Any) -> None:
         raise AssertionError("rag index called")
 
-    monkeypatch.setattr("tools.rag.register_rag_tools", lambda *_a, **_k: None)
-    with patch("tools.rag.register_rag_tools", lambda *_a, **_k: None):
-        ingest_dropbox_dry_run(paths=[rel])
+    def _rag_post(
+        path: str, body: dict[str, Any], *_a: Any, **_k: Any
+    ) -> dict[str, Any]:
+        blob = f"{path} {body}"
+        if "index" in path or "dropbox" in blob:
+            _boom(path, body)
+        return {}
+
+    monkeypatch.setattr("tools.rag.rag_post", _rag_post)
+    monkeypatch.setattr("tools._rag_http.rag_post", _rag_post)
+    monkeypatch.setattr(
+        ingest_pass,
+        "run_promote_document",
+        lambda *_a, **_k: {"entity_id": "document:a"},
+    )
+    out = ingest_dropbox_run(paths=[rel])
+    assert out["processed"][0]["path"] == rel
+    assert rel.startswith("dropbox/")
+    assert out["processed"][0]["outcome"] == "done"
 
 
 def test_cap_limits_processed_files(tmp_path: Path) -> None:
@@ -694,19 +720,63 @@ def test_promote_not_called_before_agree(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_each_state_transition_emits_one_advisory_event(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "letter.pdf")
-    _text_pdf(tmp_path / rel, "hello " * 20)
-    events: list[str] = []
-    monkeypatch.setattr(ingest_pass, "record", lambda name, **kw: events.append(name))
+    events: list[dict[str, Any]] = []
+
+    def _record(name: str, **kw: Any) -> None:
+        if name == "mcp.ingest.state.advanced":
+            events.append({"name": name, **kw})
+
+    monkeypatch.setattr(ingest_pass, "record", _record)
     monkeypatch.setattr(
         ingest_pass,
         "run_promote_document",
         lambda *_a, **_k: {"entity_id": "document:letter"},
     )
+    rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "letter.pdf")
+    _text_pdf(tmp_path / rel, "hello " * 20)
     ingest_dropbox_run(paths=[rel])
-    assert "mcp.ingest.state.advanced" in events
+    advances = [e for e in events if e["path"] == rel]
+    assert [(e["from_stage"], e["to_stage"], e["terminal"]) for e in advances] == [
+        ("extract", "promote", None),
+        ("promote", "done", None),
+    ]
+
+    events.clear()
+    mixed = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "mixed.pdf")
+    doc = pymupdf.open()
+    p1 = doc.new_page()
+    p1.insert_text((72, 72), "x" * 60)
+    p2 = doc.new_page()
+    img = tmp_path / "i.png"
+    img.write_bytes(_png())
+    p2.insert_image(pymupdf.Rect(72, 72, 200, 200), filename=str(img))
+    p2.insert_text((72, 40), "x")
+    doc.save(str(tmp_path / mixed))
+    doc.close()
+    mixed_out = ingest_dropbox_run(paths=[mixed])
+    assert mixed_out["processed"][0]["outcome"] == "needs_human"
+    mixed_adv = [e for e in events if e["path"] == mixed]
+    assert len(mixed_adv) == 1
+    assert mixed_adv[0]["terminal"] == "needs_human"
+    assert mixed_adv[0]["last_error_kind"] == "mixed_text_layer"
+
+    events.clear()
+
+    def _conflict(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise PromoteError("entity_conflict", "entity_conflict")
+
+    monkeypatch.setattr(ingest_pass, "run_promote_document", _conflict)
+    rel2 = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "letter2.pdf")
+    _text_pdf(tmp_path / rel2, "hello " * 20)
+    conflict_out = ingest_dropbox_run(paths=[rel2])
+    assert conflict_out["processed"][0]["outcome"] == "needs_human"
+    conflict_adv = [e for e in events if e["path"] == rel2]
+    human = [e for e in conflict_adv if e["terminal"] == "needs_human"]
+    assert len(conflict_adv) == 2
+    assert len(human) == 1
+    assert human[0]["last_error_kind"] == "entity_conflict"
 
 
 def test_cap_skips_six_terminal_then_processes_new(tmp_path: Path, monkeypatch) -> None:
@@ -860,6 +930,7 @@ def test_promote_runtime_error_stays_at_promote(tmp_path: Path, monkeypatch) -> 
     ingest_dropbox_run(paths=[rel])
     rec2 = ingest_state.load_state(sha)
     assert rec2 and rec2["stage"] == "promote"
+    assert rec2["last_error"] == "promote_runtime"
 
 
 def test_deleted_canonical_at_crosscheck_resets_to_extract(tmp_path: Path) -> None:
@@ -889,20 +960,61 @@ def test_state_is_read_only_after_lock(
     import hashlib
 
     sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
-    _write_canonical(tmp_path, rel, sha=sha)
+    body = "Amount $100.00"
+    _write_canonical(tmp_path, rel, sha=sha, body=body)
     rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
     rec.update(stage="crosscheck", method="vision_crosscheck")
     ingest_state.save_state(sha, rec)
     check_calls = {"n": 0}
+    loaded = threading.Event()
+    release = threading.Event()
+    real_load = ingest_pass.load_state
+
+    def _load(source_sha: str) -> dict[str, Any] | None:
+        found = real_load(source_sha)
+        if source_sha == sha and not loaded.is_set():
+            loaded.set()
+            release.wait(timeout=5)
+        return found
 
     def _extract(*_a: Any, **kwargs: Any) -> dict[str, Any]:
         if kwargs.get("model"):
             check_calls["n"] += 1
+            _write_canonical(tmp_path, rel, sha=sha, body=body, variant="abc123")
         return {"sidecar_path": rel + ".extracted.md"}
 
+    monkeypatch.setattr(ingest_pass, "load_state", _load)
     monkeypatch.setattr(ingest_pass, "run_extract_document", _extract)
-    ingest_dropbox_dry_run(paths=[rel])
-    assert check_calls["n"] == 0
+    monkeypatch.setattr(
+        ingest_pass,
+        "run_promote_document",
+        lambda *_a, **_k: {"entity_id": "document:scan"},
+    )
+    results: dict[str, dict[str, Any]] = {}
+    errors: list[BaseException] = []
+
+    def _run(slot: str) -> None:
+        try:
+            results[slot] = ingest_dropbox_run(paths=[rel])
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    first = threading.Thread(target=_run, args=("first",))
+    second = threading.Thread(target=_run, args=("second",))
+    first.start()
+    assert loaded.wait(timeout=5)
+    second.start()
+    second.join(timeout=3)
+    did_not_wait = not second.is_alive()
+    release.set()
+    first.join(timeout=5)
+    if second.is_alive():
+        second.join(timeout=5)
+    assert not errors
+    assert did_not_wait
+    assert results["second"]["processed"][0]["outcome"] == "locked"
+    assert check_calls["n"] == 1
+    assert results["first"]["processed"][0]["outcome"] == "done"
 
 
 def test_duplicate_after_real_promote(
@@ -973,21 +1085,31 @@ def test_same_path_redrop_is_duplicate(
     ]
 
 
-def test_overwritten_source_rebinds(tmp_path: Path) -> None:
+def test_overwritten_source_rebinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "a.pdf")
     _blank_pdf(tmp_path / rel)
     import hashlib
 
     sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
+    rel2 = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "b.pdf")
     rec = ingest_state.new_record(source_path=rel, source_sha256=sha)
+    rec["duplicate_paths"] = [rel2]
     ingest_state.save_state(sha, rec)
     original = (tmp_path / rel).read_bytes()
     (tmp_path / rel).write_bytes(b"%PDF-overwritten")
-    rel2 = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "b.pdf")
     (tmp_path / rel2).write_bytes(original)
-    ingest_dropbox_run(paths=[rel2])
+
+    def _extract(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(ingest_pass, "run_extract_document", _extract)
+    out = ingest_dropbox_run(paths=[rel2])
     rec2 = ingest_state.load_state(sha)
     assert rec2 and rec2.get("source_path") == rel2
+    assert rel2 not in (rec2.get("duplicate_paths") or [])
+    assert out["processed"][0]["outcome"] != f"duplicate_of:{rel2}"
 
 
 def test_renamed_at_crosscheck_rebinds(
@@ -1113,15 +1235,64 @@ def test_reconcile_null_entity_id_finds_bundle_by_glob(
     assert rec2.get("entity_id") == "document:a"
 
 
-def test_concurrent_runs_one_promote_second_locked(tmp_path: Path) -> None:
+def test_concurrent_runs_one_promote_second_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rel = _dropbox_rel(tmp_path, "cortex_finance", "2026-10-19", "scan.pdf")
     _blank_pdf(tmp_path / rel)
     import hashlib
 
     sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
-    with ingest_state.try_ingest_lock(sha) as held:
-        assert held is True
-        with ingest_state.try_ingest_lock(sha) as second:
-            assert second is False
-    out = ingest_dropbox_run(paths=[rel])
-    assert out["processed"]
+    body = "Amount $100.00"
+    counts = {"extract": 0, "check": 0, "promote": 0}
+    extract_entered = threading.Event()
+    release_extract = threading.Event()
+
+    def _extract(*_a: Any, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("model"):
+            counts["check"] += 1
+            _write_canonical(tmp_path, rel, sha=sha, body=body, variant="abc123")
+            return {"sidecar_path": rel + ".args-abc123.extracted.md"}
+        counts["extract"] += 1
+        _write_canonical(tmp_path, rel, sha=sha, body=body)
+        extract_entered.set()
+        release_extract.wait(timeout=5)
+        return {"sidecar_path": rel + SIDECAR_SUFFIX}
+
+    def _promote(*_a: Any, **_k: Any) -> dict[str, Any]:
+        counts["promote"] += 1
+        return {"entity_id": "document:scan"}
+
+    monkeypatch.setattr(ingest_pass, "run_extract_document", _extract)
+    monkeypatch.setattr(ingest_pass, "run_promote_document", _promote)
+    results: dict[str, dict[str, Any]] = {}
+    errors: list[BaseException] = []
+
+    def _run(slot: str) -> None:
+        try:
+            results[slot] = ingest_dropbox_run(paths=[rel])
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    first = threading.Thread(target=_run, args=("first",))
+    second = threading.Thread(target=_run, args=("second",))
+    first.start()
+    assert extract_entered.wait(timeout=5)
+    second.start()
+    second.join(timeout=3)
+    did_not_wait = not second.is_alive()
+    release_extract.set()
+    first.join(timeout=5)
+    if second.is_alive():
+        second.join(timeout=5)
+    assert not errors
+    assert did_not_wait
+    outcomes = [
+        results["first"]["processed"][0]["outcome"],
+        results["second"]["processed"][0]["outcome"],
+    ]
+    assert "locked" in outcomes
+    assert "done" in outcomes
+    assert counts["extract"] == 1
+    assert counts["check"] == 1
+    assert counts["promote"] <= 1

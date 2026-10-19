@@ -71,9 +71,18 @@ def process_file(
                 catch_all_failure(rec, source_sha256, "extract", exc, max_err=_MAX_ERR)
             return "attempt", False
         if route_err:
+            prev_stage = rec.get("stage")
             rec["terminal"] = "needs_human"
             rec["last_error"] = route_err
             save_state(source_sha256, rec)
+            record(
+                "mcp.ingest.state.advanced",
+                path=rel,
+                from_stage=prev_stage,
+                to_stage=prev_stage,
+                terminal="needs_human",
+                last_error_kind=route_err,
+            )
             return "needs_human", False
         if rec.get("method") is None:
             rec["method"] = method
@@ -101,12 +110,21 @@ def _chain_stages(
             if method != "vision_crosscheck":
                 rec["terminal"] = "needs_human"
                 rec["last_error"] = "route_mismatch"
-                save_state(source_sha256, rec)
-                return "needs_human", False
-            nxt = _stage_crosscheck(config, rel, rec, source_sha256)
+                nxt = None
+            else:
+                nxt = _stage_crosscheck(config, rel, rec, source_sha256)
         else:
             nxt = _stage_promote(config, rel, rec, source_sha256, method)
         if rec.get("terminal"):
+            record(
+                "mcp.ingest.state.advanced",
+                path=rel,
+                from_stage=prev,
+                to_stage=rec.get("stage") or prev,
+                terminal=rec.get("terminal"),
+                last_error_kind=(rec.get("last_error") or "")[:40] or None,
+            )
+            save_state(source_sha256, rec)
             return "needs_human", False
         if nxt == "done":
             record(

@@ -115,7 +115,10 @@ def catch_all_failure(
 
     key = f"{stage}_attempts"
     record[key] = int(record.get(key, 0)) + 1
-    record["last_error"] = f"{exc.__class__.__name__}: {str(exc)[:max_err]}"
+    if stage == "promote" and isinstance(exc, RuntimeError):
+        record["last_error"] = "promote_runtime"
+    else:
+        record["last_error"] = f"{exc.__class__.__name__}: {str(exc)[:max_err]}"
     emit(
         "mcp.ingest.file.failed",
         path=record.get("source_path"),
@@ -186,6 +189,7 @@ def handle_duplicate_path(rec: dict[str, Any], rel: str) -> dict[str, Any]:
             save_state(sha, rec)
             return rec
     rec["source_path"] = rel
+    rec["duplicate_paths"] = [p for p in (rec.get("duplicate_paths") or []) if p != rel]
     save_state(sha, rec)
     return rec
 
