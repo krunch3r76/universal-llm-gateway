@@ -367,6 +367,8 @@ async def test_route_cdp_model_only_admits_without_role_seat_required(
         dispatch_thread_id="todo:arc",
         job="freeform",
         packet_path="tmp/reviews/packet.md",
+        caller_agent="test-lead",
+        work_key="todo:arc",
     )
     result = await team_dispatch(body, Response())
     assert result == {"execution_id": "e1", "thread_id": "t1"}
@@ -470,6 +472,8 @@ async def test_route_admit_event_published_on_loop_thread_503(
             job="freeform",
             lane="B",
             packet_path="tmp/reviews/packet.md",
+            caller_agent="test-lead",
+            work_key="todo:arc",
         )
         result = await team_dispatch(body, Response())
 
@@ -508,6 +512,8 @@ async def test_route_admit_event_published_on_loop_thread_422(
             job="freeform",
             lane="B",
             packet_path="tmp/reviews/packet.md",
+            caller_agent="test-lead",
+            work_key="todo:arc",
         )
         result = await team_dispatch(body, Response())
 
@@ -556,6 +562,8 @@ async def test_route_admit_event_published_on_loop_thread_202(
             job="freeform",
             lane="B",
             packet_path="tmp/reviews/packet.md",
+            caller_agent="test-lead",
+            work_key="todo:arc",
         )
         response = Response()
         result = await team_dispatch(body, response)
