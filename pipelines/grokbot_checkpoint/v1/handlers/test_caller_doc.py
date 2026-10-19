@@ -107,7 +107,8 @@ def test_caller_doc_letter_guidance() -> None:
     assert "handoff_binding_source" in text
     assert "pipeline" in text
     assert "state should be one string" in text or "state` should be one string" in text
-    assert "notes/system/tape/pours/grok/<agent>.messages.json" in text
+    assert "notes/system/checkpoints/grok/<agent>/<n>.raw.json" in text
+    assert "harvest.tape_refused" in text
     assert "ReadTranscript" in text
     assert "expected_card_sha256" in text
     assert "card.legacy_name" in text

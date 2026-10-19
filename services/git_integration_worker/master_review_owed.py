@@ -534,6 +534,15 @@ def _post_one(
     poster(subject, body, tag)
 
 
+def _gap_tip_claimed(conn: sqlite3.Connection, tip: str) -> bool:
+    """True when ``tip`` already holds a gap claim (``gap_posted_at`` set)."""
+    row = conn.execute(
+        "SELECT gap_posted_at FROM master_review_owed WHERE tip_sha = ?",
+        (tip,),
+    ).fetchone()
+    return row is not None and row["gap_posted_at"] is not None
+
+
 def _claim_gap(
     conn: sqlite3.Connection,
     *,
@@ -688,7 +697,9 @@ def unreviewed_master_commits(
 
     ``base_sha`` must equal the stored window floor. A mismatch returns
     ``base_rewritten`` and does not move the floor. Failure results set
-    ``commits`` to null and do not post.
+    ``commits`` to null and do not post. A range whose tip already has
+    ``gap_posted_at`` set does not consume ``MAX_RANGES_PER_RUN``; only
+    still-unclaimed ranges past that cap land on ``deferred_ranges``.
     """
     root = Path(repo)
     conn, reason = _open_ledger(mounts_table)
@@ -732,7 +743,8 @@ def unreviewed_master_commits(
         send = poster or _default_poster
         posted: list[str] = []
         deferred: list[dict[str, Any]] = []
-        for index, group in enumerate(ranges):
+        pending = [group for group in ranges if not _gap_tip_claimed(conn, group[-1])]
+        for index, group in enumerate(pending):
             tip = group[-1]
             base = group[0]
             if index >= MAX_RANGES_PER_RUN:

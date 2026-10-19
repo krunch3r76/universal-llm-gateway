@@ -38,6 +38,9 @@ async def run_harvest_adapter(
         capture_ref=norm_ref,
         capture_sha256=norm_sha,
         bus_identity=bus_identity,
+        capture_kind="dom_harvest"
+        if str(options.get("fallback") or "") == "electron"
+        else "grok_export",
     )
     if err:
         return err

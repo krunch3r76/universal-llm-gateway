@@ -59,6 +59,15 @@ def _refuse(code: str, message: str) -> None:
     raise PourRefused(code, message)
 
 
+def _content_present(content: Any) -> bool:
+    """String body or a non-empty structured block list."""
+    if isinstance(content, str):
+        return bool(content)
+    if isinstance(content, list):
+        return any(isinstance(block, dict) and block.get("type") for block in content)
+    return False
+
+
 def validate_pour(
     envelope_dict: dict[str, Any],
     *,
@@ -105,8 +114,7 @@ def validate_pour(
     user_with_content = any(
         isinstance(m, dict)
         and m.get("role") == "user"
-        and isinstance(m.get("content"), str)
-        and m.get("content")
+        and _content_present(m.get("content"))
         for m in messages
     )
     if not user_with_content:

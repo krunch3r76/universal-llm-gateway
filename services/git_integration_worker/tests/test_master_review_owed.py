@@ -515,6 +515,36 @@ def test_section7_five_commits_one_range_one_post(
     assert result.posted_tips == (shas[-1],)
 
 
+def _four_disjoint_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, str, tuple[str, str, str, str]]:
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 9)
+    base, _c1, c2, c3, c4, c5, c6, c7, c8 = shas
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", base)
+    rows = [
+        {"tip_sha": c3, "base_sha": c2, "verdict": "APPROVE", "fixes_sha": None},
+        {"tip_sha": c5, "base_sha": c4, "verdict": "APPROVE", "fixes_sha": None},
+        {"tip_sha": c7, "base_sha": c6, "verdict": "APPROVE", "fixes_sha": None},
+    ]
+    path = root / "rows.json"
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    return repo, path, base, (c2, c4, c6, c8)
+
+
+def _gap_posted_at(tip: str) -> str | None:
+    conn, reason = mro._open_ledger(EXT4)
+    assert conn is not None, reason
+    row = conn.execute(
+        "SELECT gap_posted_at FROM master_review_owed WHERE tip_sha = ?",
+        (tip,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row["gap_posted_at"]
+
+
 def test_section7_four_disjoint_ranges_defer_the_fourth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -538,6 +568,59 @@ def test_section7_four_disjoint_ranges_defer_the_fourth(
     assert deferred["commits"] == [c8]
     assert deferred["gap_posted_at"] is None
     assert "id" not in deferred
+
+
+def test_section7_claimed_ranges_do_not_consume_the_next_run_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, path, base, tips = _four_disjoint_ranges(monkeypatch)
+    oldest_three = tips[:3]
+    fourth = tips[3]
+    first_posts: list[str] = []
+    first = _check(
+        repo, base, data_path=path, poster=lambda *args: first_posts.append(args[0])
+    )
+    assert first.posted_tips == oldest_three
+    assert len(first_posts) == 3
+    assert len(first.deferred_ranges) == 1
+    assert first.deferred_ranges[0]["commits"] == [fourth]
+    assert first.deferred_ranges[0]["gap_posted_at"] is None
+    assert _gap_posted_at(fourth) is None
+    second_posts: list[str] = []
+    second = _check(
+        repo, base, data_path=path, poster=lambda *args: second_posts.append(args[0])
+    )
+    assert second_posts == [f"NOTICE|gap|{fourth}"]
+    assert second.posted_tips == (fourth,)
+    assert _gap_posted_at(fourth) is not None
+    for tip in oldest_three:
+        assert tip not in second_posts[0]
+    assert "team_dispatch(" not in Path(mro.__file__).read_text(encoding="utf-8")
+
+
+def test_section7_fourth_range_poster_raise_releases_claim_for_run_three(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, path, base, tips = _four_disjoint_ranges(monkeypatch)
+    fourth = tips[3]
+    first = _check(repo, base, data_path=path, poster=lambda *_args: None)
+    assert first.posted_tips == tips[:3]
+    assert _gap_posted_at(fourth) is None
+
+    def _boom(*_args: object) -> None:
+        raise RuntimeError("down")
+
+    second = _check(repo, base, data_path=path, poster=_boom)
+    assert second.ok is True
+    assert second.posted_tips == ()
+    assert _gap_posted_at(fourth) is None
+    third_posts: list[str] = []
+    third = _check(
+        repo, base, data_path=path, poster=lambda *args: third_posts.append(args[0])
+    )
+    assert third_posts == [f"NOTICE|gap|{fourth}"]
+    assert third.posted_tips == (fourth,)
+    assert _gap_posted_at(fourth) is not None
 
 
 def test_section7_ledger_under_mnt_or_nfs_does_not_connect(

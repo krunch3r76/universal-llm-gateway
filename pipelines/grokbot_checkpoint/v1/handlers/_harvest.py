@@ -10,7 +10,7 @@ from typing import Any
 import continuity_tape.extract_grokbot_jsonl as _adapter_mod
 from continuity_tape.extract_grokbot_jsonl import (
     TranscriptPageError,
-    extract_grokbot_transcript,
+    extract_grokbot_structured,
 )
 from continuity_tape.messages import envelope_wire_dict
 from continuity_tape.pour_contract import PourRefused, validate_pour
@@ -23,6 +23,14 @@ def adapter_read_sha256() -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def checkpoint_raw_uri(agent_id: str, n: int) -> str:
+    return f"notes/system/checkpoints/grok/{agent_id}/{n}.raw.json"
+
+
+def checkpoint_messages_uri(agent_id: str, n: int) -> str:
+    return f"notes/system/checkpoints/grok/{agent_id}/{n}.messages.json"
+
+
 def run_adapter_twice(
     text: str,
     *,
@@ -30,13 +38,16 @@ def run_adapter_twice(
     capture_ref: str,
     capture_sha256: str,
     bus_identity: str | None,
+    capture_kind: str = "grok_export",
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Run ``extract_grokbot_transcript`` twice; return (envelope_dict, error)."""
+    """Run structured transcription twice; return (envelope_dict, error)."""
+    if "tape/" in capture_ref.replace("\\", "/"):
+        return None, refuse("harvest.tape_refused", f"tape path {capture_ref}")
     kwargs: dict[str, Any] = {
         "agent_id": agent_id,
         "capture_ref": capture_ref,
         "capture_sha256": capture_sha256,
-        "tools": "marker",
+        "capture_kind": capture_kind,
     }
     if bus_identity:
         kwargs["bus_identity"] = bus_identity
@@ -50,8 +61,8 @@ def run_adapter_twice(
             f"capture_sha256 {capture_sha256} != normalized {actual_text_sha256}",
         )
     try:
-        first = extract_grokbot_transcript(text, observed_at="harvest-run-1", **kwargs)
-        second = extract_grokbot_transcript(text, observed_at="harvest-run-2", **kwargs)
+        first = extract_grokbot_structured(text, observed_at="harvest-run-1", **kwargs)
+        second = extract_grokbot_structured(text, observed_at="harvest-run-2", **kwargs)
     except TranscriptPageError as exc:
         return None, refuse("pour.schema", str(exc))
     except (ValueError, UnicodeDecodeError) as exc:
@@ -62,8 +73,12 @@ def run_adapter_twice(
         return None, refuse("source.sha_mismatch", f"adapter runs differ {m1} != {m2}")
     if first.meta.coverage != "full":
         return None, refuse("pour.coverage", f"coverage {first.meta.coverage!r}")
-    if first.meta.provenance != "raw":
-        return None, refuse("source.slot_mismatch", f"provenance {first.meta.provenance!r}")
+    if first.meta.provenance != "transcribed":
+        return None, refuse(
+            "source.slot_mismatch", f"provenance {first.meta.provenance!r}"
+        )
+    if first.meta.tools == "marker":
+        return None, refuse("harvest.tape_refused", "tools=marker is not a checkpoint")
     window = (first.meta.sources or [{}])[0].get("window") or {}
     lo, hi, total = window.get("lo"), window.get("hi"), window.get("total")
     if lo != 1 or hi != total:
@@ -91,8 +106,8 @@ def run_adapter_twice(
     return {"envelope": payload, "stats": stats}, None
 
 
-def grok_pour_uri(agent_id: str) -> str:
-    return f"notes/system/tape/pours/grok/{agent_id}.messages.json"
+def grok_pour_uri(agent_id: str, n: int = 1) -> str:
+    return checkpoint_messages_uri(agent_id, n)
 
 
 async def stage_grok_pour(
@@ -101,11 +116,27 @@ async def stage_grok_pour(
     envelope: dict[str, Any],
     *,
     stats: dict[str, Any],
+    n: int = 1,
+    raw_bytes: bytes | None = None,
+    l0_ref: str = "",
 ) -> dict[str, Any]:
-    """Write L1 pour if_absent or prefix-extend with expected_sha256."""
+    """Write the verbatim L0 bytes and the structured messages envelope."""
     from cortex_store.verbatim_succession import prefix_holds
 
-    uri = grok_pour_uri(agent_id)
+    uri = grok_pour_uri(agent_id, n)
+    if "tape/" in uri:
+        return refuse("harvest.tape_refused", uri)
+    if raw_bytes is not None:
+        raw_uri = checkpoint_raw_uri(agent_id, n)
+        bare_l0 = l0_ref.removeprefix("cortex://").removeprefix("workspaces://")
+        raw_written = await fs.write(raw_uri, raw_bytes, if_absent=True)
+        if not raw_written.get("ok"):
+            existing_raw = await fs.read(raw_uri)
+            same = existing_raw == raw_bytes or (
+                bare_l0 == raw_uri and existing_raw is not None
+            )
+            if not same:
+                return refuse("harvest.raw_conflict", "raw checkpoint bytes differ")
     raw = dumps(envelope)
     existing = await fs.read(uri)
     if existing is None:
@@ -198,9 +229,9 @@ def format_harvest_record(
 ) -> str:
     cap12 = capture_sha256[:12]
     line = (
-        f"L0 {l0_ref}@{l0_sha256} pages={pages} bytes={l0_bytes} "
+        f"raw {l0_ref}@{l0_sha256} pages={pages} bytes={l0_bytes} "
         f"truncated_parts={truncated_parts} · "
-        f"L1 {l1_ref}@{l1_sha256} messages_sha256={messages_sha256} "
+        f"messages {l1_ref}@{l1_sha256} messages_sha256={messages_sha256} "
         f"source_sha256={source_sha256} coverage=full · "
         f"adapter {adapter_read_sha256} · "
         f"capture:dom_harvest@{cap12}~pseudo"
@@ -217,6 +248,8 @@ def format_harvest_record(
 __all__ = [
     "adapter_read_sha256",
     "format_harvest_record",
+    "checkpoint_messages_uri",
+    "checkpoint_raw_uri",
     "grok_pour_uri",
     "run_adapter_twice",
     "stage_grok_pour",

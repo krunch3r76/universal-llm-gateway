@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from continuity_tape.normalize_grokbot_l0_pages import normalized_capture_ref
 from systems.pipeline.core.conditions import evaluate_condition, extract_condition_deps
 
 from ._clients import file_sha256
@@ -25,7 +24,6 @@ pytestmark = pytest.mark.offline
 _AGENT = "68757fe5-d68e-43f6-8708-6abd160bf205"
 _FIXTURES = Path(__file__).parent / "fixtures"
 _YAML = Path(__file__).resolve().parents[1] / "grokbot-checkpoint-v1.yaml"
-_GOLDEN_MSHA = "7037ed6807fe6d29978c86b93c3e46a05ac40179433f3649e8e5483cda6edcbc"
 _SPECIMEN = Path(
     "/mnt/torus/mcp-data/files/notes/system/tape/captures/grok/"
     "85dcee4a-0b20-4a86-95ae-01a529464072/20261017T203227.pages.txt"
@@ -54,6 +52,7 @@ async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
         "l0_ref": l0_ref,
         "l0_sha256": l0_sha,
         "bus_identity": "grok-bot",
+        "fallback": "electron",
     }
     admitted = await run_admit(options, {}, fs=fs, get=get)
     assert admitted.get("refused") is None
@@ -66,7 +65,35 @@ async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
     pour = await run_harvest_pour(options, adapter, fs)
     assert pour.get("refused") is None
     assert pour["coverage"] == "full"
-    assert pour["provenance"] == "raw"
+    assert pour["provenance"] == "transcribed"
+    assert pour["ref"].startswith("notes/system/checkpoints/grok/")
+    assert "tape/" not in pour["ref"]
+    blocks = pour["envelope"]["messages"][0]["content"]
+    assert isinstance(blocks, list)
+
+
+@pytest.mark.asyncio
+async def test_prewritten_raw_json_keeps_l0_bytes(fs: MemFs) -> None:
+    """K43 falsifier: l0_ref is already <n>.raw.json; pour must not rewrite it."""
+    raw = (_FIXTURES / "bl1_drift.pages.txt").read_bytes()
+    l0 = f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"
+    fs.files[l0] = raw
+    l0_sha = file_sha256(raw)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": l0,
+        "l0_sha256": l0_sha,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter.get("refused") is None
+    pour = await run_harvest_pour(options, adapter, fs)
+    assert pour.get("refused") is None
+    assert file_sha256(fs.files[l0]) == l0_sha
 
 
 @pytest.mark.asyncio
@@ -79,6 +106,7 @@ async def test_harvest_idempotent_second_run(fs: MemFs) -> None:
         "agent_id": _AGENT,
         "l0_ref": l0_ref,
         "l0_sha256": l0_sha,
+        "fallback": "electron",
     }
     norm1 = await run_harvest_normalise(options, fs)
     adapter1 = await run_harvest_adapter(options, norm1, fs)
@@ -90,7 +118,7 @@ async def test_harvest_idempotent_second_run(fs: MemFs) -> None:
     assert norm2.get("refused") is None
     assert adapter2["stats"]["messages_sha256"] == adapter1["stats"]["messages_sha256"]
     assert pour2["sha256"] == pour1["sha256"]
-    assert normalized_capture_ref(l0_ref) not in fs.writes[len(writes_after_first) :]
+    assert not any("tape/" in w for w in fs.writes[len(writes_after_first) :])
 
 
 @pytest.mark.asyncio
@@ -127,6 +155,7 @@ async def test_harvest_pour_prefix_refuse(fs: MemFs) -> None:
         "agent_id": _AGENT,
         "l0_ref": l0_ref,
         "l0_sha256": l0_sha,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -165,11 +194,21 @@ async def test_specimen_messages_sha256(fs: MemFs) -> None:
         "agent_id": agent,
         "l0_ref": l0_ref,
         "l0_sha256": file_sha256(raw),
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
-    assert adapter["stats"]["messages_sha256"] == _GOLDEN_MSHA
+    assert adapter.get("refused") is None
     assert adapter["stats"]["coverage"] == "full"
+    contents = [
+        block.get("type")
+        for msg in adapter["envelope"]["messages"]
+        if isinstance(msg.get("content"), list)
+        for block in msg["content"]
+        if isinstance(block, dict)
+    ]
+    assert "tool_use" in contents
+    assert "thinking" in contents or "tool_result" in contents
 
 
 def test_yaml_harvest_steps_registered() -> None:
@@ -224,6 +263,7 @@ async def test_run_adapter_twice_rejects_mismatched_capture_sha256(fs: MemFs) ->
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": l0_ref,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None
@@ -250,6 +290,7 @@ async def test_harvest_record_line(fs: MemFs) -> None:
         "agent_id": _AGENT,
         "l0_ref": l0_ref,
         "l0_sha256": l0_sha,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -264,7 +305,8 @@ async def test_harvest_record_line(fs: MemFs) -> None:
         },
     )
     line = result["harvest_record"]
-    assert line.startswith(f"L0 {l0_ref}@{l0_sha}")
+    assert line.startswith(f"raw {l0_ref}@{l0_sha}")
+    assert "tape/pours" not in line
     assert "coverage=full" in line
     cap_sha = pour["envelope"]["meta"]["capture"]["sha256"]
     cap_tok = f"capture:dom_harvest@{cap_sha[:12]}~pseudo"
