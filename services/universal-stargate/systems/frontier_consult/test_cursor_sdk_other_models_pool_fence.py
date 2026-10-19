@@ -27,16 +27,6 @@ def _patch_prepare_deps(
     published: list[object] = []
 
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-fixture",
-            "cursor",
-            "sdk",
-            resolved_model,
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -213,28 +203,17 @@ async def test_prepare_explicit_other_models_pin_reaches_mint(
 async def test_prepare_omit_path_other_models_refused_before_mint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    probes = _patch_prepare_deps(
-        monkeypatch, resolved_model="cursor/claude-sonnet-5"
-    )
+    """Omit-path resolution lives in admit pipeline; fence still hard-422s omit+pool."""
+    _patch_prepare_deps(monkeypatch, resolved_model="cursor/claude-sonnet-5")
     with pytest.raises(FrontierEndpointError) as excinfo:
-        await prepare_mod.prepare_cursor_sdk_generate(
+        reject_other_models_pool_generate(
             request_id="req-omit",
             role="cursor-sdk",
+            seat=None,
             model=None,
-            subject="s",
-            caller_agent="dispatch",
-            contract="none",
-            packet_path="tmp/reviews/packet.md",
-            message_text=None,
-            execution_id=None,
-            dispatch_id=None,
+            resolved_model="cursor/claude-sonnet-5",
         )
     assert excinfo.value.code == "other_models_pool_denied"
-    assert probes["mint_calls"] == []
-    assert probes["context_writes"] == []
-    assert [getattr(ev, "signal", "") for ev in probes["published"]] == [
-        "frontier.sdk.pool.denied"
-    ]
 
 
 @pytest.mark.asyncio
@@ -244,21 +223,27 @@ async def test_e2e_generate_worker_not_called_for_omit_path_other_models(
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
     monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker", worker)
     monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker_message", worker)
+
+    async def _admit_plan(*, body: object, request_id: str, **_: object) -> dict:
+        return {
+            "admitted": True,
+            "backend": "cursor_sdk",
+            "role": None,
+            "seat": "cursor-sdk",
+            "model": "cursor/claude-sonnet-5",
+            "job": getattr(body, "job", None),
+        }
+
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:x",
-            "cursor",
-            "sdk",
-            "cursor/claude-sonnet-5",
-        ),
+        "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
+        _admit_plan,
     )
     with pytest.raises(FrontierEndpointError) as excinfo:
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-e2e",
             role="cursor-sdk",
-            model=None,
+            model="cursor/claude-sonnet-5",
+            requested_model_pin=None,
             subject="s",
             caller_agent="dispatch",
             contract="none",

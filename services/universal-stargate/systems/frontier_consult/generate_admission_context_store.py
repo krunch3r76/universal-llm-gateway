@@ -67,6 +67,8 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("prompt_turn_number", "INTEGER"),
     ("prompt_bind_mode", "TEXT"),
     ("resolved_effort", "TEXT"),
+    ("caller_seat", "TEXT"),
+    ("work_key", "TEXT"),
 )
 
 
@@ -107,6 +109,8 @@ class AdmissionContext:
     prompt_turn_number: int | None = None
     prompt_bind_mode: str | None = None
     resolved_effort: str | None = None
+    caller_seat: str | None = None
+    work_key: str | None = None
     created_at: str = ""
 
 
@@ -139,6 +143,8 @@ def write_admission_context(
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
     resolved_effort: str | None = None,
+    caller_seat: str | None = None,
+    work_key: str | None = None,
 ) -> None:
     conn = _connect()
     try:
@@ -148,7 +154,8 @@ def write_admission_context(
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "caller_seat, work_key, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 int(auto_review_child),
@@ -164,6 +171,8 @@ def write_admission_context(
                 prompt_turn_number,
                 prompt_bind_mode,
                 resolved_effort,
+                caller_seat,
+                work_key,
                 _now(),
             ),
         )
@@ -180,6 +189,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
+            "caller_seat, work_key, "
             "created_at FROM generate_admission_context WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
@@ -212,6 +222,8 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=row["prompt_bind_mode"],
         resolved_effort=row["resolved_effort"],
+        caller_seat=row["caller_seat"] if "caller_seat" in row.keys() else None,
+        work_key=row["work_key"] if "work_key" in row.keys() else None,
         created_at=row["created_at"],
     )
 

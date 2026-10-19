@@ -64,6 +64,7 @@ class PreparedCursorSdkHandle:
     force_reason: str | None = None
     hop_park_release: bool = False
     claim_id: str | None = None
+    impresario_envelope: dict[str, Any] | None = None
     consume_branch: str | None = None
     consume_activation: dict[str, str] | None = None
     consume_reason: str | None = None
@@ -142,6 +143,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "force_reason": handle.force_reason,
         "hop_park_release": handle.hop_park_release,
         "claim_id": handle.claim_id,
+        "impresario_envelope": handle.impresario_envelope,
         "consume_branch": handle.consume_branch,
         "consume_activation": handle.consume_activation,
         "consume_reason": handle.consume_reason,
@@ -204,6 +206,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         force_reason=data.get("force_reason"),
         hop_park_release=bool(data.get("hop_park_release", False)),
         claim_id=data.get("claim_id"),
+        impresario_envelope=data.get("impresario_envelope"),
         consume_branch=data.get("consume_branch"),
         consume_activation=data.get("consume_activation"),
         consume_reason=data.get("consume_reason"),

@@ -13,16 +13,6 @@ from systems.frontier_consult.handoff import PendingShellContention
 
 def _patch_generate_deps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-fixture",
-            "cursor",
-            "sdk",
-            "composer-2.5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -80,7 +70,7 @@ class TestAutoConsolidationAtomicClaim:
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-test",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject=None,
             caller_agent="claude-web",
             contract="none",
@@ -115,7 +105,7 @@ class TestAutoConsolidationAtomicClaim:
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-test",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject=None,
             caller_agent="claude-web",
             contract="none",
@@ -154,7 +144,7 @@ class TestExplicitReuseBypassesGate:
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-test",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject=None,
             caller_agent="claude-web",
             contract="none",

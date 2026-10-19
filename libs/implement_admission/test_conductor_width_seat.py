@@ -1,4 +1,4 @@
-"""Width-seat rendering: ACTIVE is the shipped width seat; RESTORE is Fable."""
+"""Width-seat rendering from Pattern A ``resolve_roles()``."""
 
 from __future__ import annotations
 
@@ -7,18 +7,17 @@ from pathlib import Path
 
 import pytest
 
+from implement_admission.conductor_critic_render import (
+    WIDTH_SEAT_MARKER_START,
+    embed_width_seat_block,
+    g3_g5_score_ratify_clause,
+    width_seat_block,
+)
 from implement_admission.conductor_materialize import (
     attended_g3_g5_task_sentence,
     hop_invariant_g3_g5_fragment,
 )
-from implement_admission.conductor_width_seat import (
-    ACTIVE,
-    RESTORE,
-    WIDTH_SEAT_MARKER_START,
-    ConductorWidthSeat,
-    embed_width_seat_block,
-    g3_g5_score_ratify_clause,
-)
+from implement_admission.impresario_policy import resolve_roles
 from services.git_integration_worker.cursor_sdk_packet import (
     _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE,
     _CONDUCTOR_HOP_TEMPLATE,
@@ -40,79 +39,27 @@ def _render_templates(seat_clause: str) -> tuple[str, str]:
     return hop, attended
 
 
-_OPUS_5 = ConductorWidthSeat(
-    model="cdp/opus-5",
-    reasoning_effort="max",
-    effort_when_bind_gates_wave="max",
-)
-
-
 @pytest.mark.offline
-def test_render_restore_and_active_width_seat() -> None:
-    """Production ACTIVE renders cdp/opus-5.5 at reasoning_effort=high."""
-    assert ACTIVE is not RESTORE
-    assert ACTIVE.model == "cdp/opus-5.5"
-    assert ACTIVE.reasoning_effort == "high"
-    assert ACTIVE.effort_when_bind_gates_wave == "max"
-
-    active_clause = g3_g5_score_ratify_clause()
-    active_hop, active_attended = _render_templates(active_clause)
-    active_materialize = (
+def test_default_critic_renders_in_clause_and_materialize() -> None:
+    roles = resolve_roles()
+    assert roles.critic.model == "cursor/gemini-4-argon"
+    clause = g3_g5_score_ratify_clause()
+    hop, attended = _render_templates(clause)
+    for rendered in (
+        clause,
+        hop,
+        attended,
         hop_invariant_g3_g5_fragment(),
         attended_g3_g5_task_sentence(),
-    )
-
-    for rendered in (active_clause, active_hop, active_attended, *active_materialize):
-        assert "cdp/opus-5.5," in rendered
-        assert "reasoning_effort=high" in rendered
-        assert "effort_when_bind_gates_wave=max" in rendered
-        assert "cdp/fable-5.1" not in rendered
-
-    restore_clause = g3_g5_score_ratify_clause(RESTORE)
-    restore_hop, restore_attended = _render_templates(restore_clause)
-    restore_materialize = (
-        hop_invariant_g3_g5_fragment(RESTORE),
-        attended_g3_g5_task_sentence(RESTORE),
-    )
-
-    for rendered in (
-        restore_clause,
-        restore_hop,
-        restore_attended,
-        *restore_materialize,
     ):
-        assert "cdp/fable-5.1" in rendered
-        assert "reasoning_effort=high" in rendered
-        assert "effort_when_bind_gates_wave=max" in rendered
+        assert "cursor/gemini-4-argon" in rendered
 
 
 @pytest.mark.offline
-def test_explicit_opus_5_seat_renders_without_editing_active() -> None:
-    """A passed-in cdp/opus-5 seat renders while ACTIVE stays cdp/opus-5.5 high."""
-    clause = g3_g5_score_ratify_clause(_OPUS_5)
-    hop, attended = _render_templates(clause)
-    materialize = (
-        hop_invariant_g3_g5_fragment(_OPUS_5),
-        attended_g3_g5_task_sentence(_OPUS_5),
-    )
-    for rendered in (clause, hop, attended, *materialize):
-        assert "cdp/opus-5," in rendered
-        assert "cdp/opus-5.5" not in rendered
-        assert "cdp/fable-5.1" not in rendered
-        assert "reasoning_effort=max" in rendered
-        assert "effort_when_bind_gates_wave=max" in rendered
-    assert ACTIVE.model == "cdp/opus-5.5"
-    assert ACTIVE.reasoning_effort == "high"
-
-
-def test_default_render_reads_active_constant(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Production render with no seat argument reads the ACTIVE assignment."""
-    import implement_admission.conductor_width_seat as seat_mod
-
-    monkeypatch.setattr(seat_mod, "ACTIVE", RESTORE)
-    rendered = hop_invariant_g3_g5_fragment()
-    assert "cdp/fable-5.1" in rendered
-    assert "reasoning_effort=high" in rendered
+def test_width_seat_block_names_critic_render_module() -> None:
+    block = width_seat_block()
+    assert "conductor_critic_render.py" in block
+    assert "cursor/gemini-4-argon" in block
 
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "cursor-plugins" / "ulg-ecosystem"
@@ -160,7 +107,7 @@ def _rel(path: Path) -> str:
 
 @pytest.mark.offline
 def test_width_seat_blocks_match_active() -> None:
-    """T1: every width-seat block matches ACTIVE."""
+    """T1: every width-seat block matches resolve_roles()."""
     stale: list[str] = []
     found = False
     for path in _plugin_files():
@@ -183,6 +130,9 @@ def test_no_width_seat_literal_outside_block() -> None:
     """T2: no width-seat literals outside generated blocks."""
     violations: list[str] = []
     for path in _plugin_files():
+        rel = _rel(path)
+        if rel in _NON_WIDTH_ACTIVE:
+            continue
         text = path.read_text(encoding="utf-8")
         body = _strip_blocks(text)
         norm = re.sub(r"\s+", " ", body)

@@ -14,6 +14,7 @@ from effort_vocabulary import WIRE_LADDER
 from job_vocab import CURSOR_AUTO_ADMITTED_JOBS, GENERATE_ADMITTED_JOBS
 from model_id import ModelId
 
+from implement_admission.impresario_policy import impresario_registry_errors
 from implement_admission.routing import default_policy_path, load_route_policy
 
 _ULG_ROOT = Path(__file__).resolve().parents[2]
@@ -316,6 +317,8 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
         for contract in CANONICAL_CONTRACTS:
             if contract not in seen_effort:
                 errors.append(f"contract {contract!r} missing from contract_effort")
+
+    errors.extend(impresario_registry_errors(policy))
 
     return errors
 

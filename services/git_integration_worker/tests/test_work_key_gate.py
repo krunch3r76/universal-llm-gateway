@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from implement_admission.impresario_policy import policy_snapshot_sha256
+from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -30,6 +32,7 @@ def _req(
     work_key: str | None = None,
     force: bool = False,
     contract: str = "implement",
+    generation_options: dict | None = None,
 ) -> CursorDispatchRequest:
     return CursorDispatchRequest(
         thread_id=thread_id,
@@ -40,6 +43,7 @@ def _req(
         handoff_contract=contract,
         work_key=work_key,
         force=force,
+        generation_options=generation_options,
     )
 
 
@@ -146,3 +150,92 @@ def test_root_predicate_ac13() -> None:
     assert is_root_row(resume_of=None, nest_under=None, hop_from=None)
     assert not is_root_row(resume_of="p", nest_under=None, hop_from=None)
     assert not is_root_row(resume_of=None, nest_under=None, hop_from="h")
+
+
+def _impresario_envelope(**overrides: object) -> dict[str, object]:
+    env: dict[str, object] = {
+        "house_root": "todo:impresario-test-house",
+        "surface": "cursor-ide",
+        "policy_sha256": policy_snapshot_sha256(),
+    }
+    env.update(overrides)
+    return env
+
+
+def test_conductor_empty_generation_options_raises_envelope_missing(
+    isolated_ledger,
+) -> None:
+    req = _req(
+        dispatch_id="cond-empty-go",
+        work_key="todo:impresario-envelope-gate",
+        contract="conductor",
+        generation_options={},
+    )
+    with pytest.raises(ProtocolError) as excinfo:
+        _admit(
+            isolated_ledger,
+            req,
+            work_key=req.work_key,
+            contract="conductor",
+        )
+    assert excinfo.value.code == "IMPRESARIO_ENVELOPE_MISSING"
+
+
+def test_conductor_omitted_generation_options_admits(isolated_ledger) -> None:
+    req = _req(
+        dispatch_id="cond-no-go",
+        work_key="todo:impresario-envelope-exempt",
+        contract="conductor",
+    )
+    _admit(
+        isolated_ledger,
+        req,
+        work_key=req.work_key,
+        contract="conductor",
+    )
+
+
+def test_peer_held_beats_envelope_missing(isolated_ledger) -> None:
+    key = "todo:impresario-peer-409"
+    first = _req(dispatch_id="cond-peer-1", work_key=key, contract="conductor")
+    _admit(isolated_ledger, first, work_key=key, contract="conductor")
+    isolated_ledger.mark_running(dispatch_id="cond-peer-1")
+    second = _req(
+        dispatch_id="cond-peer-2",
+        thread_id="10002",
+        work_key=key,
+        contract="conductor",
+        generation_options={},
+    )
+    with pytest.raises(SourceRefConflict):
+        _admit(isolated_ledger, second, work_key=key, contract="conductor")
+
+
+def test_k2_lease_epoch_unchanged_when_k1_claimed(isolated_ledger) -> None:
+    k1 = "todo:impresario-epoch-k1"
+    k2 = "todo:impresario-epoch-k2"
+    from services.git_integration_worker.cursor_sdk_work_claim import claim
+
+    claim(k1, "seat-a", "L1", ledger=isolated_ledger)
+    req = _req(dispatch_id="cond-k2", work_key=k2, contract="conductor")
+    _admit(isolated_ledger, req, work_key=k2, contract="conductor")
+    with isolated_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT lease_epoch FROM cursor_sdk_dispatches WHERE work_key=?",
+            (k2,),
+        ).fetchone()
+    assert row is not None
+    assert row["lease_epoch"] is None or int(row["lease_epoch"] or 0) <= 1
+    with isolated_ledger._connect() as conn:
+        k1_epoch = conn.execute(
+            "SELECT MAX(COALESCE(lease_epoch, 0)) FROM cursor_sdk_dispatches "
+            "WHERE work_key=?",
+            (k1,),
+        ).fetchone()[0]
+        k2_epoch = conn.execute(
+            "SELECT MAX(COALESCE(lease_epoch, 0)) FROM cursor_sdk_dispatches "
+            "WHERE work_key=?",
+            (k2,),
+        ).fetchone()[0]
+    assert int(k1_epoch or 0) >= 1
+    assert int(k2_epoch or 0) <= 1

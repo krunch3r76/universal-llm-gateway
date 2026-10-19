@@ -19,6 +19,7 @@ from deploy_identity.mcp_external_probe import (
     choose_public_ipv4,
     external_probe_hostname,
 )
+from implement_admission.impresario_events import ImpresarioHopNoticed
 from universal_logging import get_logger
 
 from scripts.model_manager.observation_event import _emit
@@ -30,21 +31,24 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     DEFAULT_DAEMON_LOG,
     DEFAULT_DESKTOP_BINARY,
     DEFAULT_DESKTOP_STATUS,
+    DEFAULT_HOP_COOLDOWN,
     build_snapshot_from_inputs,
     desktop_pid_alive,
     keep_alive_grokbot_presence,
+    load_hop_cooldown_journal,
     query_events_rows,
     read_daemon_log,
     read_desktop_status,
+    save_hop_cooldown_journal,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     HOP_THREAD_ID,
-    ContextHopState,
     GrokbotEgressLoopState,
     GrokbotEgressSnapshot,
     GrokbotTickDecision,
     decide_context_hop,
     decide_grokbot_tick,
+    rebuild_hop_state,
     record_hop_notified,
 )
 from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
@@ -84,13 +88,17 @@ class GrokbotEgressWatchLoop:
         interval_s: float = _INTERVAL_S,
         snapshot_fn: Callable[[], Awaitable[GrokbotEgressSnapshot]] | None = None,
         restart_desktop_fn: Callable[[], Awaitable[None]] | None = None,
+        hop_cooldown_path: Path | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._interval_s = interval_s
         self._snapshot_fn = snapshot_fn
         self._restart_desktop_fn = restart_desktop_fn
+        self._hop_cooldown_path = hop_cooldown_path or DEFAULT_HOP_COOLDOWN
         self._state = GrokbotEgressLoopState()
-        self._hop_state = ContextHopState()
+        self._hop_state = rebuild_hop_state(
+            load_hop_cooldown_journal(self._hop_cooldown_path)
+        )
         self._last_watch_ok_emitted_at: float | None = None
         self._health_probe_failed = False
         self._task: asyncio.Task[None] | None = None
@@ -358,6 +366,21 @@ class GrokbotEgressWatchLoop:
             )
             return
         record_hop_notified(self._hop_state, notice.agent_ids, now=now)
+        save_hop_cooldown_journal(
+            self._hop_cooldown_path, self._hop_state.cooldown_until
+        )
+        noticed = ImpresarioHopNoticed(
+            house_root=HOP_THREAD_ID,
+            hop_name=notice.subject,
+            detail={"names": notice.names, "agent_ids": notice.agent_ids},
+        )
+        await _emit(
+            noticed.signal,
+            dict(noticed.payload),
+            source="manage",
+            role=noticed.role,
+            scope=noticed.scope,
+        )
 
 
 __all__ = ["GrokbotEgressWatchLoop"]

@@ -1086,3 +1086,110 @@ def FrontierSkillSuggestDispatchDegraded(  # noqa: N802
         payload=payload,
         scope="node",
     )
+
+
+@event_factory
+def FrontierAdmitDecided(  # noqa: N802
+    *,
+    request_id: str,
+    execution_id: str,
+    model_entity_id: str,
+    admitted: bool,
+    code: str,
+    field: str,
+    status_code: int,
+) -> Event:
+    return Event(
+        signal="frontier.admit.decided",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "model_entity_id": model_entity_id,
+            "admitted": admitted,
+            "code": code,
+            "field": field,
+            "status_code": status_code,
+        },
+        role="coordination",
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierAdmitRejected(  # noqa: N802
+    *,
+    request_id: str,
+    execution_id: str,
+    model_entity_id: str,
+    admitted: bool,
+    code: str,
+    field: str,
+    status_code: int,
+) -> Event:
+    return Event(
+        signal="frontier.admit.rejected",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "model_entity_id": model_entity_id,
+            "admitted": admitted,
+            "code": code,
+            "field": field,
+            "status_code": status_code,
+        },
+        role="coordination",
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierAdmitUnavailable(  # noqa: N802
+    *,
+    request_id: str,
+    execution_id: str,
+    model_entity_id: str,
+    admitted: bool,
+    code: str,
+    field: str,
+    status_code: int,
+    cause: str,
+) -> Event:
+    return Event(
+        signal="frontier.admit.unavailable",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "model_entity_id": model_entity_id,
+            "admitted": admitted,
+            "code": code,
+            "field": field,
+            "status_code": status_code,
+            "cause": cause,
+        },
+        role="coordination",
+        scope="node",
+    )
+
+
+@event_factory
+def DispatchAdmitProvenanceMissing(  # noqa: N802
+    *,
+    missing: list[str],
+    execution_id: str,
+    coord_thread: str | None,
+    root_lane: bool,
+    request_id: str,
+) -> Event:
+    """Generate/to_thread admit recorded with blank caller, lane, or work_key."""
+    return Event(
+        signal="dispatch.admit.provenance_missing",
+        payload={
+            "missing": missing,
+            "execution_id": execution_id,
+            "coord_thread": coord_thread,
+            "root_lane": root_lane,
+            "request_id": request_id,
+        },
+        scope="node",
+        role="observation",
+    )

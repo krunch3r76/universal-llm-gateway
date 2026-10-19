@@ -8,7 +8,9 @@ from agent_seat.profiles import get_profile
 from cursor_capabilities import effective_knobs
 from model_id import ModelId
 
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_generate_prepare import (
+    _UNSET_MODEL_PIN,
     PreparedCursorSdkHandle,
     prepare_cursor_sdk_generate,
 )
@@ -147,6 +149,7 @@ async def _finish_prepared_dispatch(
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
             claim_id=handle.claim_id,
+            impresario_envelope=handle.impresario_envelope,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,
@@ -356,18 +359,16 @@ async def dispatch_cursor_sdk_generate(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     claim_id: str | None = None,
+    impresario_envelope: dict[str, Any] | None = None,
     transcript_id: str | None = None,
     wake_lane: str | None = None,
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
+    requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any]:
-    """Execute cursor-sdk generate with to_thread default delivery.
-
-    Packet present: worker gets ``packet_path=`` (durable instruction channel).
-    No packet: dispatch-thread text → worker gets ``message=`` (bus-turn fallback).
-    When ``prepared_handle`` is supplied, identities are not reminted.
-    """
+    """Cursor-sdk generate with to_thread delivery (or reuse ``prepared_handle``)."""
     if prepared_handle is not None:
         return await dispatch_prepared_cursor_sdk(
             prepared_handle, transcript_id=transcript_id
@@ -417,9 +418,12 @@ async def dispatch_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
         claim_id=claim_id,
+        impresario_envelope=impresario_envelope,
         wake_lane=wake_lane,
         bus_body=bus_body,
         off_bus_ref=off_bus_ref,
         prompt_sha256=prompt_sha256,
+        requested_model_pin=requested_model_pin,
+        admit_provenance=admit_provenance,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

@@ -7,9 +7,9 @@ before the first worker admission attempt.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from .admission import resolve_cursor_sdk_generate_target
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_alignment import align_cursor_knobs
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .cursor_sdk_generate_signals import (
@@ -64,6 +64,8 @@ def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[st
                 tags.append(tag)
     return tags
 
+
+_UNSET_MODEL_PIN: object = object()
 
 __all__ = [
     "PreparedCursorSdkHandle",
@@ -129,12 +131,18 @@ async def prepare_cursor_sdk_generate(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     claim_id: str | None = None,
+    impresario_envelope: dict[str, Any] | None = None,
     wake_lane: str | None = None,
     bus_body: str | None = None,
     off_bus_ref: str | None = None,
     prompt_sha256: str | None = None,
+    requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
+    provenance_missing = (
+        admit_provenance.missing if admit_provenance is not None else ()
+    )
     from .generate_lane_ac_observer import (
         prepare_lb_auto_review_for_generate,
         stamp_lb_review_spawn_fields,
@@ -177,19 +185,54 @@ async def prepare_cursor_sdk_generate(
     effective_contract = (contract or "").strip().lower() or None
     if early_packet_text and not effective_contract:
         effective_contract = extract_contract_from_body(early_packet_text)
-    to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
-        role,
-        model=model,
-        request_id=request_id,
-        job=contract,
-    )
+    from cursor_capabilities import is_cursor_model_denied
+    from implement_admission.routing import load_route_policy
+    from implement_admission.workflow_registry import load_auto_judgment_default_model
+
+    from .admission import FrontierEndpointError
+
+    raw_model = str(model).strip() if model else ""
+    if raw_model:
+        resolved_model = raw_model
+    else:
+        resolved_model = load_auto_judgment_default_model(load_route_policy())
+    if resolved_model == "auto":
+        resolved_model = "cursor/auto"
+    if not resolved_model:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor-sdk generate requires a resolvable model",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    if not resolved_model.startswith("cursor/"):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor-sdk generate requires a cursor/* model",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    if is_cursor_model_denied(resolved_model):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="cursor model is denied for sdk generate",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        )
+    to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
+    fence_pin = (
+        model if requested_model_pin is _UNSET_MODEL_PIN else requested_model_pin
+    )
     reject_other_models_pool_generate(
         request_id=request_id,
         role=role,
         seat=None,
-        model=model,
+        model=fence_pin if isinstance(fence_pin, str) else None,
         resolved_model=resolved_model,
     )
     if execution_id is None or dispatch_id is None:
@@ -346,6 +389,7 @@ async def prepare_cursor_sdk_generate(
                     execution_id=execution_id,
                     pipeline_id="cursor-sdk-generate",
                     parent_thread_id=parent_dispatch_thread_id,
+                    provenance_missing=provenance_missing,
                 )
                 claimed_via_atomic = True
                 emit_sdk_thread_created(
@@ -371,6 +415,7 @@ async def prepare_cursor_sdk_generate(
                     handoff_contract=handoff_contract,
                     lifecycle_state="pending",
                     bus_lifecycle=effective_bus_lifecycle,
+                    provenance_missing=provenance_missing,
                 )
                 emit_sdk_thread_created(
                     request_id=request_id,
@@ -386,6 +431,7 @@ async def prepare_cursor_sdk_generate(
                 subject=thread_subject,
                 pointer_body=pointer_body,
                 caller_agent=caller_agent,
+                provenance_missing=provenance_missing,
             )
             emit_sdk_thread_created(
                 request_id=request_id,
@@ -410,6 +456,7 @@ async def prepare_cursor_sdk_generate(
             handoff_contract=handoff_contract,
             lifecycle_state="pending",
             bus_lifecycle=effective_bus_lifecycle,
+            provenance_missing=provenance_missing,
         )
         emit_sdk_thread_created(
             request_id=request_id,
@@ -430,6 +477,7 @@ async def prepare_cursor_sdk_generate(
         prompt_bind_mode=prompt_bind_mode,
         prompt_turn_number=prompt_turn_number,
         has_explicit_prompt_source=has_explicit_prompt_source,
+        admit_provenance=admit_provenance,
     )
 
     from implement_admission.check_review_substrate import consultant_rung
@@ -450,6 +498,20 @@ async def prepare_cursor_sdk_generate(
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
         resolved_effort=consultant_rung(resolved_model, aligned_knobs),
+        caller_seat=(
+            admit_provenance.caller_seat
+            if admit_provenance is not None
+            else (
+                caller_agent.strip()
+                if caller_agent and caller_agent.strip()
+                else None
+            )
+        ),
+        work_key=(
+            admit_provenance.work_key
+            if admit_provenance is not None
+            else (work_key.strip() if work_key and work_key.strip() else None)
+        ),
     )
 
     if claimed_via_atomic:
@@ -598,6 +660,7 @@ async def prepare_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
         claim_id=claim_id,
+        impresario_envelope=impresario_envelope,
         requested_model_knobs=dict(model_knobs or {}),
         wake_lane=wake_lane,
     )

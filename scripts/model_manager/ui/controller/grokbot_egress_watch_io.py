@@ -23,6 +23,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
 )
 
 DEFAULT_DESKTOP_STATUS = Path.home() / ".gateway/grok-io/desktop-status.json"
+DEFAULT_HOP_COOLDOWN = DEFAULT_DESKTOP_STATUS.parent / "hop-cooldown.json"
 DEFAULT_DAEMON_LOG = Path.home() / ".gateway/grok-io/sand-data/local-exec-daemon.log"
 DEFAULT_DESKTOP_BINARY = Path("/opt/Grok Bot/grok-bot")
 _PRESENCE_KEEPALIVE_TIMEOUT_S = 5.0
@@ -68,6 +69,39 @@ _GC1_TERMINAL_SUBJECT_RES = (
 _GC1_TIME_BOUNDED_TERMINAL_RES = (
     re.compile(r"^cursor-sdk generate admitted", re.IGNORECASE),
 )
+
+
+def load_hop_cooldown_journal(
+    path: Path = DEFAULT_HOP_COOLDOWN,
+) -> list[dict[str, object]]:
+    """Load persisted context-hop cooldown entries."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    entries: list[dict[str, object]] = []
+    for item in parsed:
+        if isinstance(item, dict):
+            entries.append(item)
+    return entries
+
+
+def save_hop_cooldown_journal(
+    path: Path, cooldown_until: dict[str, float]
+) -> None:
+    """Persist agent cooldown_until values for context-hop."""
+    entries = [
+        {"agent_id": agent_id, "cooldown_until": until}
+        for agent_id, until in sorted(cooldown_until.items())
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
 
 def read_desktop_status(
@@ -483,6 +517,9 @@ __all__ = [
     "DEFAULT_DAEMON_LOG",
     "DEFAULT_DESKTOP_BINARY",
     "DEFAULT_DESKTOP_STATUS",
+    "DEFAULT_HOP_COOLDOWN",
+    "load_hop_cooldown_journal",
+    "save_hop_cooldown_journal",
     "keep_alive_grokbot_presence",
     "GC1_BUS_TIP_STALE_MS",
     "GC1_CLIENT_IP",

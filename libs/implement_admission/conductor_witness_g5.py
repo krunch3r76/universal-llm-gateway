@@ -74,8 +74,13 @@ def g5_implement_witness(
     l1_sha = artifacts.get("L1")
     if l1_sha and _SHA_RE.match(l1_sha) and repo is not None:
         head_sha = _repo_head_full_sha(repo)
-        if head_sha is not None and head_sha == l1_sha.lower():
-            return Witness(row="G5", source="git:lane_head", detail=l1_sha)
+        if head_sha is not None:
+            l1 = l1_sha.lower()
+            head = head_sha.lower()
+            if head == l1:
+                return Witness(row="G5", source="git:lane_head", detail=l1_sha)
+            if deps.git is not None and deps.git.is_ancestor(l1, head):
+                return Witness(row="G5", source="git:lane_head", detail=l1_sha)
     return None
 
 

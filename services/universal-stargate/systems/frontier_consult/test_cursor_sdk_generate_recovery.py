@@ -23,16 +23,6 @@ def _patch_prepare_deps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return "thread-stable"
 
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-fixture",
-            "cursor",
-            "sdk",
-            "composer-2.5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -92,7 +82,7 @@ async def test_prepared_handle_retry_reuses_identities(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-stable",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",
@@ -168,7 +158,7 @@ async def test_generate_composes_prepare_then_dispatch(
     result = await generate_mod.dispatch_cursor_sdk_generate(
         request_id="req-compose",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",

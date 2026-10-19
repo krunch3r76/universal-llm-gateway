@@ -222,14 +222,14 @@ def test_trio_sketch_paused_opus_holds() -> None:
     assert is_valid_work_key_scheme(trio)
 
 
-def test_trio_sketch_paused_opus_falls_back_to_confer() -> None:
+def test_trio_sketch_paused_opus_falls_back_to_critic() -> None:
     body = build_trio_sketch_body(
         "17934",
         {
             "max_hop_minutes": 60,
             "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
-            "confer_model": "cursor/gemini-4-argon",
-            "confer_model_knobs": {"effort": "high", "fast": "false"},
+            "critic_model": "cursor/gemini-4-argon",
+            "critic_model_knobs": {"effort": "high", "fast": "false"},
         },
         {
             "id": "a:36249",
@@ -283,3 +283,22 @@ def test_fired_park_pages_once_per_fid(monkeypatch) -> None:  # noqa: ANN001
     assert second is not None and second.get("_row_class_fired") is True
     assert len(pages) == 1
     assert "row_class_fired" in pages[0][1]
+
+
+def test_load_state_migrates_confer_model_to_critic(tmp_path) -> None:  # noqa: ANN001
+    from bus_watch.tick_state import load_state, save_state
+
+    path = tmp_path / "liaison-root.tick.json"
+    save_state(
+        path,
+        {
+            "policy": {
+                "confer_model": "cursor/gemini-4-argon",
+                "confer_model_knobs": {"effort": "high"},
+            }
+        },
+    )
+    loaded = load_state(path)
+    assert "confer_model" not in (loaded.get("policy") or {})
+    assert loaded["policy"]["critic_model"] == "cursor/gemini-4-argon"
+    assert loaded["policy"]["critic_model_knobs"] == {"effort": "high"}

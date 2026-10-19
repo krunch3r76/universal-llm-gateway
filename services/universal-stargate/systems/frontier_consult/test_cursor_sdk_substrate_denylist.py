@@ -7,7 +7,11 @@ import pytest
 import cursor_capabilities.cursor_capabilities as cap_mod
 from agent_seat.profiles import CapabilityProfile
 
-from .admission import FrontierEndpointError, resolve_cursor_sdk_generate_target
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
+
+from .admission import FrontierEndpointError
+
+resolve_cursor_sdk_generate_target = admit_pipeline.resolve_cursor_sdk_generate_target
 
 
 def test_cursor_sdk_admits_descriptor_uncovered_model() -> None:

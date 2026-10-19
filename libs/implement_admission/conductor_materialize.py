@@ -31,13 +31,11 @@ from implement_admission.conductor_score_journal import (
     scoreboard_tip_uri,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
-from implement_admission.conductor_width_seat import (
-    ACTIVE,
-    SKEPTIC,
-    SKETCH,
-    ConductorWidthSeat,
+from implement_admission.conductor_critic_render import (
     g3_g5_score_ratify_clause,
+    review_leg_transport_hint,
 )
+from implement_admission.impresario_policy import ResolvedRoles, resolve_roles
 from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
 from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
@@ -47,21 +45,19 @@ _CONDUCTOR_USE_LINE = (
 )
 
 
-def score_play_seat_lines() -> tuple[str, ...]:
-    """Seat lines for packet invariants, filled from ACTIVE at render time.
-
-    Width rows follow the one assignment. Bind and review stay on Opus 5.5,
-    so a packet cannot keep offering Fable after ACTIVE moves.
-    """
+def score_play_seat_lines(roles: ResolvedRoles | None = None) -> tuple[str, ...]:
+    """Seat lines for packet invariants, filled from Pattern A at render time."""
+    resolved = roles or resolve_roles()
+    critic = resolved.critic
     return (
-        "- Enumerate · implement · drive: `cursor/grok-4.7` — omitted knobs "
+        f"- Enumerate · implement · drive: `{resolved.driver.model}` — omitted knobs "
         "follow the card; same slug as the ticker successor.",
         "- Intelligence: G2 and G3→G5 read "
-        f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort}. "
-        f"G1 sketcher reads `{SKETCH.model}` at reasoning_effort={SKETCH.reasoning_effort}. "
-        f"G4 skeptic reads `{SKEPTIC.model}` at reasoning_effort={SKEPTIC.reasoning_effort} "
-        "(one rung above the high rows; cross-family review on the Opus channel). "
-        "Bind/review and code review stay `cdp/opus-5.5` at high.",
+        f"`{critic.model}` ({critic.transport}). "
+        f"G1 sketcher reads `{resolved.sketch.model}`. "
+        f"G4 skeptic reads `{resolved.skeptic.model}` "
+        "(cross-family review on the configured critic channel). "
+        f"G6 delivery-review reads `{resolved.review.model}`.",
         "- The house driver enumerates and does not rank rival designs — write "
         "`OPEN FORK:` and stop.",
         "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
@@ -69,32 +65,20 @@ def score_play_seat_lines() -> tuple[str, ...]:
     )
 
 
-def hop_invariant_g3_g5_fragment(
-    seat: ConductorWidthSeat | None = None,
-) -> str:
-    """G3→G5 fragment of the hop invariant, filled at call time.
-
-    Production omits ``seat`` and reads ACTIVE. Tests pass RESTORE so the
-    Fable wire renders without editing that assignment.
-    """
+def hop_invariant_g3_g5_fragment(roles: ResolvedRoles | None = None) -> str:
+    """G3→G5 fragment of the hop invariant, filled at call time."""
     return (
-        "G3→G5 fires in-process CDP score-ratify "
-        f"({g3_g5_score_ratify_clause(seat)}) then continues — a live "
+        "G3→G5 fires in-process score-ratify "
+        f"({g3_g5_score_ratify_clause(roles)}) then continues — a live "
         "summoning chat is not a human stop"
     )
 
 
-def attended_g3_g5_task_sentence(
-    seat: ConductorWidthSeat | None = None,
-) -> str:
-    """Attended G3→G5 task-guidance sentence, filled at call time.
-
-    Uses the same clause as the hop invariant and the GIW preamble so one
-    assignment names the seat in every rendered packet.
-    """
+def attended_g3_g5_task_sentence(roles: ResolvedRoles | None = None) -> str:
+    """Attended G3→G5 task-guidance sentence, filled at call time."""
     return (
-        "G3→G5 attended: fire in-process CDP score-ratify "
-        f"({g3_g5_score_ratify_clause(seat)}, do-not-fight / likely-optimal), "
+        "G3→G5 attended: fire in-process score-ratify "
+        f"({g3_g5_score_ratify_clause(roles)}, do-not-fight / likely-optimal), "
         "then continue."
     )
 
@@ -431,10 +415,10 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
         ]
     else:
         g3_g5_lines = [
-            "G3→G5 default: in-process CDP score-ratify "
+            "G3→G5 default: in-process score-ratify "
             f"({g3_g5_score_ratify_clause()}) "
             "(do-not-fight / likely-optimal) via "
-            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
+            f"team_dispatch(op=generate, model={resolve_roles().critic.model}, contract=freeform, "
             "session=ask, dispatch_thread_id=<this worker thread id>).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
         ]
@@ -454,7 +438,8 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             "only when it cannot run in this row — name why. "
             "Run that missing command before the review dispatch. Do not discover "
             "the gap by receiving a WITHHOLD and then starting another row. "
-            "2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, "
+            "2. One dispatch. G6 is team_dispatch(op=generate, "
+            f"model={resolve_roles().review.model}, "
             "contract=delivery-review, dispatch_thread_id=<this worker "
             "thread id>, parent_thread=<this worker thread id>, "
             "prompt=<body>); the body carries job=delivery-review and "
@@ -462,26 +447,10 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             "block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row "
             "does not search the repo for that contract. G5 ratify stays the "
             "session=ask sentence above. "
-            "3. Stamp and park while live. After G6 admit, write poll_hint and "
-            "execution_id into the CHECKPOINT, and write `NEXT_ADMIT: harvest "
-            "<execution_id>` on its own line in BOTH the CHECKPOINT and your "
-            "closeout prose (outside code fences) before `stop: PARKED_TRANSPORT`. "
-            "Optional wait_seconds=0 snapshot may copy status; "
-            "it is not a harvest. If that snapshot is already complete, harvest "
-            "in this dispatch. If the execution_id is still live, stop: "
-            "PARKED_TRANSPORT (not ROW_HOP) with the stamped poll_hint. Do not "
-            "block MCP agent_bus wait (wait_seconds>0 or default blocking wait) "
-            "until -32001 / httpx.ReadTimeout. Timeout is a transport clock, not "
-            "harvest failure: while execution_id is live, do not second-dispatch "
-            "G6 and do not treat CDP as dead. GIW park-harvest continue admits "
-            "the successor when a web-anthropic turn lands on this worker thread "
-            "after the closeout turn (park_harvest_continue_owed); that successor "
-            "harvests the stamped id. Attended harvest of that id arms "
-            "runbook:bus-consult-watcher; the conductor seat does not hold wait. "
-            "Do not chain agent_bus_read. A successor whose CHECKPOINT carries a "
-            "G6 execution_id harvests that id and does not dispatch G6. A second "
-            "verdict on the same gate is commentary unless the scoreboard Stops "
-            "stamp changes."
+            f"3. {review_leg_transport_hint(resolve_roles().review)} "
+            "Do not second-dispatch G6 for the same gate in this row. "
+            "A successor whose CHECKPOINT carries a G6 execution_id harvests that id "
+            "and does not dispatch G6."
         ),
         f"stop_after={ctx.stop_after!r}: run bound leg before ROW_PINNED when set.",
     ]

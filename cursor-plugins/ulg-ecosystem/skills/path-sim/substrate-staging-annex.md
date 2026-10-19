@@ -1,7 +1,7 @@
 # Path-sim L3 annex — substrate house rules, vision-align, docstring AC, staging
 
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=high` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=extra`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=extra` (one rung above ACTIVE; cross-family review stays on this effort). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` · usage channel **Cursor**. SKETCH (G1) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}`. SKEPTIC (G4) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 **Parent SOT:** `cursor-plugins/ulg-ecosystem/skills/path-sim/SKILL.md`.

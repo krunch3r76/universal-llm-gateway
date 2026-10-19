@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
+from pipelines.team_dispatch_admit.v1.handlers import test_handlers as admit_pipeline
 
 from .admission import (
     FrontierEndpointError,
-    enforce_generate_role_seat_exclusive,
     enforce_handoff_seat_not_auto,
     reject_role_cursor_sdk_on_generate,
-    resolve_auto_seat_generate_target,
 )
+
+enforce_generate_role_seat_exclusive = (
+    admit_pipeline.enforce_generate_role_seat_exclusive
+)
+resolve_auto_seat_generate_target = admit_pipeline.resolve_auto_seat_generate_target
+is_cursor_sdk_generate_admission = admit_pipeline.is_cursor_sdk_generate_admission
 
 pytestmark = pytest.mark.offline
 
@@ -66,8 +70,6 @@ def test_seat_path_admits_cursor_sdk() -> None:
 
 
 def test_cursor_model_only_generate_admission() -> None:
-    from .admission import is_cursor_sdk_generate_admission
-
     assert (
         is_cursor_sdk_generate_admission(
             None,

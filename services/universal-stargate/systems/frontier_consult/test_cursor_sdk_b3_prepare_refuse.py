@@ -32,16 +32,6 @@ def _patch_prepare_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         coord.append(tuple(kwargs.items()))
 
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-fixture",
-            "cursor",
-            "sdk",
-            "composer-2.5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.densify_triage.validate_generate_density_intake",
         lambda **_k: None,
     )
@@ -110,7 +100,7 @@ async def test_b3_refuse_before_handoff_and_coord(
         await prepare_mod.prepare_cursor_sdk_generate(
             request_id="req-b3",
             role="cursor-sdk",
-            model=None,
+            model="cursor/composer-2.5",
             subject="s",
             caller_agent="dispatch",
             contract="none",
@@ -148,7 +138,7 @@ async def test_b3_row2_frozen_pin_still_admits(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-row2",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",
@@ -174,7 +164,7 @@ async def test_b3_row1_cross_thread_still_admits(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-row1",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",
@@ -202,7 +192,7 @@ async def test_b3_packet_path_standing_arc_admits(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-packet-arc",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",
@@ -231,7 +221,7 @@ async def test_b3_explicit_external_standing_arc_admits(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-sidecar-arc",
         role="cursor-sdk",
-        model=None,
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",
@@ -265,16 +255,6 @@ async def test_prepare_stamps_resolved_effort(
     monkeypatch.setattr(
         "systems.frontier_consult.generate_admission_context_store.write_admission_context",
         _capture_write,
-    )
-    monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:exec-effort",
-            "cursor",
-            "sdk",
-            "cursor/claude-sonnet-5",
-        ),
     )
     monkeypatch.setattr(
         prepare_mod,

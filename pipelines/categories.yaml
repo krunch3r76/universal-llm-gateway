@@ -11,6 +11,8 @@ categories:
     description: continuity_consolidate
   cursor_paste_resolve:
     description: cursor_paste_resolve
+  team_dispatch_admit:
+    description: team_dispatch_admit
   display_chat_wake:
     description: display_chat_wake
   implement_closeout:

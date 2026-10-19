@@ -322,6 +322,43 @@ def force_release_sdk_dispatch_slot_sync(
     return fut.result(timeout=30.0)
 
 
+def _bump_lease_epoch_on_transfer(*, from_id: str, to_id: str) -> None:
+    from implement_admission.impresario_events import ImpresarioLeaseTransferred
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+        bump_lease_epoch_conn,
+    )
+    from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT work_key FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (from_id,),
+        ).fetchone()
+        if row is None or not row["work_key"]:
+            conn.commit()
+            return
+        work_key = str(row["work_key"])
+        epoch = bump_lease_epoch_conn(conn, work_key=work_key)
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET lease_epoch=? "
+            "WHERE dispatch_id IN (?, ?)",
+            (epoch, from_id, to_id),
+        )
+        conn.commit()
+    emit_frontier_event(
+        ImpresarioLeaseTransferred(
+            work_key=work_key,
+            lease_epoch=epoch,
+            from_dispatch_id=from_id,
+            to_dispatch_id=to_id,
+        )
+    )
+
+
 async def transfer_sdk_dispatch_slot(*, from_id: str, to_id: str) -> None:
     """Park/restore capacity handoff — no waiter wake; ``active_count`` unchanged.
 
@@ -344,6 +381,7 @@ async def transfer_sdk_dispatch_slot(*, from_id: str, to_id: str) -> None:
             f"{from_gate_lane} gate but to_id resolves to {to_lane} lane"
         )
     await gate.transfer_holder(from_id=from_id, to_id=to_id)
+    await asyncio.to_thread(_bump_lease_epoch_on_transfer, from_id=from_id, to_id=to_id)
 
 
 def transfer_sdk_dispatch_slot_sync(
@@ -457,8 +495,13 @@ def sdk_busy_status_envelope(
         for row in lease.get("queued") or []
         if isinstance(row, dict)
     ]
+    active_holder = _active_holder_from_lease(lease)
+    if active_holder is None:
+        sole = CursorDispatchLedger.instance().sole_non_terminal_display_holder()
+        if sole is not None:
+            active_holder = sole
     envelope: dict[str, Any] = {
-        "active_holder": _active_holder_from_lease(lease),
+        "active_holder": active_holder,
         "active_holders": list(lease.get("active_holders") or []),
         "queue_depth": int(lease.get("queue_depth") or 0),
         "queued_dispatches": queued_dispatches,

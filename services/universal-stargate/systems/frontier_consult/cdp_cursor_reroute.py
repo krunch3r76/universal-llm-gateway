@@ -57,12 +57,28 @@ def _parse_expires_at_utc(raw: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+_CRITIC_IMPRESARIO_ROLES = frozenset({"critic", "sketch", "skeptic", "review"})
+
+
+def _impresario_critic_role_present(impresario_role: str | None) -> bool:
+    if not impresario_role:
+        return False
+    role = impresario_role.strip().lower()
+    return role in _CRITIC_IMPRESARIO_ROLES
+
+
 def resolve_cdp_reroute(
     model_id: str,
     *,
     now: datetime | None = None,
+    impresario_role: str | None = None,
 ) -> dict[str, Any] | None:
     """Return reroute target when policy matches ``model_id``, else ``None``."""
+    if _impresario_critic_role_present(impresario_role):
+        from implement_admission.impresario_policy import load_impresario_policy
+
+        if not load_impresario_policy().cdp_reroute_for_critic:
+            return None
     cfg = load_cdp_reroute_config()
     if cfg.get("enabled") is not True:
         return None
@@ -78,10 +94,25 @@ def resolve_cdp_reroute(
         return None
     for prefix in prefixes:
         if isinstance(prefix, str) and model.startswith(prefix):
+            target_model = str(cfg.get("target_model") or "cursor/gemini-4-argon")
+            if impresario_role:
+                from implement_admission.impresario_events import (
+                    ImpresarioCriticResolved,
+                )
+
+                from .cdp_events import publish_cdp_event
+
+                publish_cdp_event(
+                    ImpresarioCriticResolved(
+                        role=impresario_role,
+                        requested_model=model,
+                        resolved_model=target_model,
+                        transport="cursor_nested",
+                        rerouted=True,
+                    )
+                )
             return {
-                "target_model": str(
-                    cfg.get("target_model") or "cursor/gemini-4-argon"
-                ),
+                "target_model": target_model,
                 "effort": str(cfg.get("effort") or "high"),
             }
     return None
@@ -188,9 +219,10 @@ async def run_cdp_reroute_via_cursor_sdk(
     thread_id: str,
     caller_agent: str | None,
     max_wall_s: float | None = None,
+    impresario_role: str | None = None,
 ) -> CdpGenerateResult:
     """Execute staged CDP prompt on cursor-sdk per global reroute policy."""
-    reroute = resolve_cdp_reroute(model_id)
+    reroute = resolve_cdp_reroute(model_id, impresario_role=impresario_role)
     if reroute is None:
         return CdpGenerateResult(
             ok=False,

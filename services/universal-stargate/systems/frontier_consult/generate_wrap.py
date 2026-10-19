@@ -17,6 +17,7 @@ from implement_admission.preflight import (
 )
 from implement_admission.source_ref import SourceRefError
 
+from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
@@ -38,6 +39,16 @@ def _claim_id_from_options(generation_options: dict[str, Any] | None) -> str | N
         return None
     text = raw.strip()
     return text or None
+
+
+def _impresario_from_options(
+    generation_options: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Extract inbound impresario envelope for GIW pass-through only."""
+    if not generation_options:
+        return None
+    imp = generation_options.get("impresario")
+    return dict(imp) if isinstance(imp, dict) else None
 
 
 if TYPE_CHECKING:
@@ -229,6 +240,8 @@ async def dispatch_cursor_sdk_generate_route(
     body: TeamDispatchGenerateBody,
     seat: str,
     response: Response,
+    requested_model_pin: str | None = None,
+    admit_provenance: AdmitProvenanceContext | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
@@ -483,7 +496,7 @@ async def dispatch_cursor_sdk_generate_route(
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
-            model=getattr(body, "model", None),
+            model=getattr(body, "model", None), requested_model_pin=requested_model_pin,
             subject=None,
             caller_agent=body.caller_agent,
             contract=body.job,
@@ -539,11 +552,15 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             ),
             claim_id=_claim_id_from_options(getattr(body, "generation_options", None)),
+            impresario_envelope=_impresario_from_options(
+                getattr(body, "generation_options", None)
+            ),
             transcript_id=getattr(body, "transcript_id", None),
             wake_lane=getattr(body, "wake_lane", None),
             bus_body=getattr(body, "bus_body", None),
             off_bus_ref=getattr(body, "sidecar_ref", None),
             prompt_sha256=getattr(body, "prompt_sha256", None),
+            admit_provenance=admit_provenance,
         )
         if isinstance(result, dict):
             if operator_lane_summon_warning:

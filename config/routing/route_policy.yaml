@@ -11,6 +11,30 @@ cdp_reroute:
     - cdp/opus
     - cdp/fable
 
+impresario:
+  pattern: pattern-a
+  pattern_version: "1"
+  under_substrate: cursor-sdk
+  allowed_under_substrates:
+    - cursor-sdk
+    - grok-bot
+    - hybrid
+  driver: {model: cursor/grok-4.7, effort: high}
+  mechanical: {model: cursor/composer-2.5, effort: medium}
+  critic: {model: cursor/gemini-4-argon, effort: high}
+  critic_roles:
+    sketch: {}
+    skeptic: {}
+    review: {}
+  allowed_critics:
+    - cursor/gemini-4-argon
+    - cdp/opus-5.5
+    - cdp/opus-5.1
+    - cdp/opus-5
+    - cdp/fable-5.1
+    - cdp/fable-5
+    - cursor/muse-wonder-1.0
+  cdp_reroute_for_critic: false
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
 default_seat: cursor-sdk

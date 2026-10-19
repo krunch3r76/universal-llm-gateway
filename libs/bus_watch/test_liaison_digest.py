@@ -14,6 +14,7 @@ from bus_watch.liaison_digest import (
     _merge_observe_lanes,
     build_digest,
     effective_policy,
+    filter_conductor_routine_attention,
     is_life_root,
 )
 
@@ -229,6 +230,32 @@ def test_attention_excludes_terminal_without_unread(
     ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
     assert "10493" not in ids
     assert "10496" in ids
+
+
+def test_conductor_routine_hop_unread_dropped_from_attention() -> None:
+    routine = {
+        "id": "18134",
+        "unread": 3,
+        "contract": "conductor",
+        "status": "active",
+        "lifecycle": "admitted",
+        "last_subject": "cursor-sdk generate — 150cfca0",
+    }
+    filtered = filter_conductor_routine_attention([routine])
+    assert filtered == []
+
+
+def test_conductor_verdict_unread_kept_in_attention() -> None:
+    verdict = {
+        "id": "18135",
+        "unread": 1,
+        "contract": "conductor",
+        "status": "active",
+        "lifecycle": "admitted",
+        "last_subject": "VERDICT — G4 skeptic",
+    }
+    filtered = filter_conductor_routine_attention([verdict])
+    assert filtered == [verdict]
 
 
 def test_checkpoint_observed_event_signal() -> None:
@@ -745,4 +772,47 @@ def test_digest_attention_includes_ready_row_class(
     assert any(
         item.get("kind") == "friction" and item.get("id") == "a:35997"
         for item in digest["attention"]
+    )
+
+
+def test_absorb_operator_edits_unions_relayed_watchers(tmp_path) -> None:  # noqa: ANN001
+    from bus_watch.tick_state import absorb_operator_edits, save_state
+
+    path = tmp_path / "tick.json"
+    save_state(
+        path,
+        {
+            "relayed_watchers": ["a.json"],
+            "last_tick_at": "2026-10-18T20:00:00Z",
+            "fingerprint": "disk-fp",
+        },
+    )
+    loop_state = {"relayed_watchers": ["b.json"], "last_tick_at": "2026-10-18T19:00:00Z"}
+    changed = absorb_operator_edits(loop_state, path)
+    assert "a.json" in loop_state["relayed_watchers"]
+    assert "b.json" in loop_state["relayed_watchers"]
+    assert loop_state["fingerprint"] == "disk-fp"
+    assert "relayed_watchers" in changed or "fingerprint" in changed
+
+
+def test_liaison_loop_due_wake_on_attention_only_ignores_churn() -> None:
+    from bus_watch.liaison_digest import liaison_loop_due
+
+    digest = {
+        "policy": {"wake_on_attention_only": True},
+        "changed_since_last_tick": True,
+        "watchers_complete_unrelayed": [],
+        "root": {"unread_turns": 0},
+        "attention": [{"kind": "budget_estimate", "used_tokens": 1}],
+        "roster": [{"hire": "auto", "live": False, "last_hire_dispatch_id": "x"}],
+    }
+    assert (
+        liaison_loop_due(
+            digest,
+            {},
+            changed_not_echo=True,
+            heartbeat_due=False,
+            budget_stop_new=False,
+        )
+        is False
     )

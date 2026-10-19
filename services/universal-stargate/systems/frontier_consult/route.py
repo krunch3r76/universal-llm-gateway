@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import uuid
 from functools import partial
@@ -28,16 +29,18 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import (
-    enforce_generate_role_seat_exclusive,
     enforce_handoff_seat_not_auto,
     is_cursor_sdk_generate_admission,
-    reject_role_cursor_sdk_on_generate,
     resolve_handoff_seat,
     resolve_handoff_target,
 )
+from .admit_provenance import (
+    build_team_dispatch_admit_provenance,
+    emit_admit_provenance_missing_event,
+    finalize_team_dispatch_admit_response,
+)
 from .cdp_generate import (
     dispatch_cdp_generate,
-    is_cdp_model,
     reject_cursor_sdk_seat_with_cdp,
     reject_role_with_substrate_model,
 )
@@ -717,6 +720,11 @@ async def team_dispatch(
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    admit_provenance = build_team_dispatch_admit_provenance(
+        body, request_id=request_id
+    )
+    if admit_provenance is not None:
+        emit_admit_provenance_missing_event(admit_provenance)
     if body.op in ("claim", "claim_release", "occupancy"):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
@@ -816,9 +824,6 @@ async def team_dispatch(
             await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    # job=wrap on an explicit non-sdk role must refuse before check-review
-    # coercion rewrites reviewer/skeptic into seat=cursor-sdk. role=cursor-sdk
-    # stays on the later role_is_not_a_seat teaching path.
     if (
         body.op == "generate"
         and getattr(body, "job", None) == "wrap"
@@ -853,80 +858,151 @@ async def team_dispatch(
             body.role = role
             body.seat = seat
             body.model = model
-    if body.op == "generate" and getattr(body, "dispatch_id", None):
-        from ._frontier_intake import reject_dispatch_id_off_sdk
+    if body.op in ("generate", "to_thread"):
+        from systems.proxy.dependencies import get_proxy
 
-        try:
-            reject_dispatch_id_off_sdk(
-                request_id=request_id,
-                dispatch_id=body.dispatch_id,
-                sdk_admission=is_cursor_sdk_generate_admission(
-                    role=role, seat=seat, model=model, request_id=request_id
-                ),
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op == "generate" and is_cdp_model(model):
-        try:
-            reject_cursor_sdk_seat_with_cdp(
-                seat=seat, model=model, request_id=request_id
-            )
-            reject_role_with_substrate_model(
-                role=role, model=model, request_id=request_id
-            )
-            result = await dispatch_cdp_generate(
-                request_id=request_id,
-                body=body,
-                response=response,
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if isinstance(result, dict):
-            response.status_code = 202
-        return result
-    if body.op == "generate":
-        try:
-            enforce_generate_role_seat_exclusive(
-                role, seat, request_id=request_id, model=model
-            )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if role is not None:
+        from ._frontier_intake import reject_dispatch_id_off_sdk
+        from .team_dispatch_admit_client import run_team_dispatch_admit
+
+        if body.op == "generate" and getattr(body, "dispatch_id", None):
             try:
-                reject_role_cursor_sdk_on_generate(role, request_id=request_id)
+                reject_dispatch_id_off_sdk(
+                    request_id=request_id,
+                    dispatch_id=body.dispatch_id,
+                    sdk_admission=is_cursor_sdk_generate_admission(
+                        role=role, seat=seat, model=model, request_id=request_id
+                    ),
+                )
             except FrontierEndpointError as exc:
                 return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op == "generate" and is_cursor_sdk_generate_admission(
-        role=role, seat=seat, model=model, request_id=request_id
-    ):
+
+        _proxy = get_proxy()
+        _event_bus = getattr(_proxy, "event_bus", None)
+        _admit_loop = asyncio.get_running_loop()
+
+        def _publish_admit_event(event: Any) -> None:
+            if _event_bus is None:
+                return
+            try:
+                caller_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                caller_loop = None
+            if caller_loop is _admit_loop:
+                _event_bus.publish_from_sync(event)
+                return
+            done = threading.Event()
+            publish_error: list[BaseException] = []
+
+            def _publish_on_admit_loop() -> None:
+                try:
+                    _event_bus.publish_from_sync(event)
+                except BaseException as exc:
+                    publish_error.append(exc)
+                finally:
+                    done.set()
+
+            _admit_loop.call_soon_threadsafe(_publish_on_admit_loop)
+            done.wait()
+            if publish_error:
+                raise publish_error[0]
+
         try:
-            reject_role_with_substrate_model(
-                role=role, model=model, request_id=request_id
+            plan = await run_team_dispatch_admit(
+                body=body,
+                request_id=request_id,
+                event_publisher=_publish_admit_event,
             )
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        sdk_seat = seat or "cursor-sdk"
-        return await dispatch_cursor_sdk_generate_route(
-            request_id=request_id,
-            body=body,
-            seat=sdk_seat,
-            response=response,
-        )
 
-    if body.op == "generate" and role is not None:
-        from .api_role_generate import dispatch_api_role_generate
+        role = plan.get("role")
+        seat = plan.get("seat")
+        model = plan.get("model")
+        requested_model_pin = body.model
+        if role is not None and hasattr(body, "role"):
+            body.role = role
+        if seat is not None and hasattr(body, "seat"):
+            body.seat = seat
+        if model is not None and hasattr(body, "model"):
+            body.model = model
 
-        try:
-            result = await dispatch_api_role_generate(
+        if body.op == "to_thread":
+            source_text = await resolve_generate_prompt_body(
+                request_id=request_id,
+                role=role or "synthesizer",
+                dispatch_thread_id=body.dispatch_thread_id,
+                prompt=getattr(body, "prompt", None),
+                sidecar_ref=getattr(body, "sidecar_ref", None),
+            )
+            req = FrontierGenerateRequest(
+                **_normalize_op_body(body, source_text=source_text)
+            )
+            result = await _dispatch(req, response)
+            return finalize_team_dispatch_admit_response(result, admit_provenance)
+
+        backend = plan.get("backend")
+        if backend == "cdp":
+            try:
+                reject_cursor_sdk_seat_with_cdp(
+                    seat=seat, model=model, request_id=request_id
+                )
+                reject_role_with_substrate_model(
+                    role=role, model=model, request_id=request_id
+                )
+                result = await dispatch_cdp_generate(
+                    request_id=request_id,
+                    body=body,
+                    response=response,
+                )
+            except FrontierEndpointError as exc:
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+            if isinstance(result, dict):
+                response.status_code = 202
+            return finalize_team_dispatch_admit_response(result, admit_provenance)
+        if backend == "cursor_sdk":
+            try:
+                reject_role_with_substrate_model(
+                    role=role, model=model, request_id=request_id
+                )
+            except FrontierEndpointError as exc:
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+            sdk_seat = str(plan.get("seat") or "cursor-sdk")
+            result = await dispatch_cursor_sdk_generate_route(
                 request_id=request_id,
                 body=body,
+                seat=sdk_seat,
                 response=response,
+                requested_model_pin=requested_model_pin,
+                admit_provenance=admit_provenance,
             )
-        except FrontierEndpointError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-        if isinstance(result, dict):
-            response.status_code = 202
-        return result
+            return finalize_team_dispatch_admit_response(result, admit_provenance)
+        if backend == "api_role":
+            from .api_role_generate import dispatch_api_role_generate
+
+            try:
+                result = await dispatch_api_role_generate(
+                    request_id=request_id,
+                    body=body,
+                    response=response,
+                )
+            except FrontierEndpointError as exc:
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+            if isinstance(result, dict):
+                response.status_code = 202
+            return finalize_team_dispatch_admit_response(result, admit_provenance)
+
+        source_text = await resolve_generate_prompt_body(
+            request_id=request_id,
+            role=role or "synthesizer",
+            dispatch_thread_id=body.dispatch_thread_id,
+            prompt=getattr(body, "prompt", None),
+            sidecar_ref=getattr(body, "sidecar_ref", None),
+        )
+        req = FrontierGenerateRequest(
+            **_normalize_op_body(body, source_text=source_text)
+        )
+        result = await _dispatch(req, response)
+        return finalize_team_dispatch_admit_response(result, admit_provenance)
 
     source_text = await resolve_generate_prompt_body(
         request_id=request_id,
@@ -936,7 +1012,8 @@ async def team_dispatch(
         sidecar_ref=getattr(body, "sidecar_ref", None),
     )
     req = FrontierGenerateRequest(**_normalize_op_body(body, source_text=source_text))
-    return await _dispatch(req, response)
+    result = await _dispatch(req, response)
+    return finalize_team_dispatch_admit_response(result, admit_provenance)
 
 
 @frontier_router.post("/dispatch", status_code=202, response_model=None)

@@ -166,6 +166,30 @@ def test_cse_allowlist_not_display(db: None) -> None:
     # ACK/ROUTE receipts to grok-bot-gc1 or maestro do not wake them, while ACK to an impresario house still wakes it
     assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": "ACK|work-1"}, cse=False)
     assert qualifies({"to_agent": "grok-bot-bl1", "from_agent": "grok-bot-gc1", "subject": "ACK|work-1"}, cse=False)
+    assert not qualifies(
+        {
+            "to_agent": "cursor",
+            "from_agent": "conductor-hop",
+            "subject": "park-harvest wake — 17934",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "cursor",
+            "from_agent": "conductor-hop",
+            "subject": "park-harvest escalation — 17934",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "cursor",
+            "from_agent": "conductor-hop",
+            "subject": "SCORE_RESURFACE — slug G5",
+        },
+        cse=True,
+    )
 
 
 def test_retry_pending_and_paste_failed_unknown(db: None) -> None:

@@ -8,8 +8,6 @@ import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from systems.frontier_consult import cursor_sdk_generate_prepare as prepare_mod
-
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 
@@ -58,18 +56,23 @@ async def test_cursor_sdk_omit_path_other_models_generate_rejected_at_route(
         worker,
     )
     monkeypatch.setattr(
-        prepare_mod,
-        "resolve_cursor_sdk_generate_target",
-        lambda *_a, **_k: (
-            "cursor-sdk:dispatch:x",
-            "cursor",
-            "sdk",
-            "cursor/claude-sonnet-5",
-        ),
-    )
-    monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap._resolve_packet_file",
         lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
+    )
+
+    async def _admit_plan(*, body: object, request_id: str, **_: object) -> dict:
+        return {
+            "admitted": True,
+            "backend": "cursor_sdk",
+            "role": None,
+            "seat": "cursor-sdk",
+            "model": "cursor/claude-sonnet-5",
+            "job": getattr(body, "job", None),
+        }
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
+        _admit_plan,
     )
 
     body = TeamDispatchGenerateBody(

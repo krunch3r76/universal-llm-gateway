@@ -39,17 +39,18 @@ from pathlib import Path
 import bus_watch.doorbell as doorbell_module
 import httpx
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
-from bus_watch.liaison_loop_detach import clear_loop_pid_files, monitor_heartbeat_stale
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
 from bus_watch.fable_lock import (
+    acquire_root_loop_flock,
     claim_fable_lock,
     claim_ticker_lease,
     read_lock,
     refresh_fable_lock,
     refresh_ticker_lease,
     release_fable_lock,
+    release_root_loop_flock,
     release_ticker_lease,
 )
 from bus_watch.friction_rows import mark_friction, parse_mark
@@ -61,7 +62,9 @@ from bus_watch.liaison_digest import (
 from bus_watch.liaison_digest import (
     build_digest,
     effective_policy,
+    liaison_loop_due,
 )
+from bus_watch.liaison_loop_detach import clear_loop_pid_files, monitor_heartbeat_stale
 from bus_watch.liaison_stops import (
     OperatorGateChannelError,
     apply_policy_set,
@@ -69,7 +72,11 @@ from bus_watch.liaison_stops import (
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.now_row_bind import maybe_bind_now_row
-from bus_watch.spawn_on_wake import tick_spawn_on_wake
+from bus_watch.spawn_on_wake import (
+    attended_tick_due,
+    is_overnight_quiet,
+    tick_spawn_on_wake,
+)
 from bus_watch.tick_state import (
     absorb_operator_edits,
     load_state,
@@ -177,8 +184,8 @@ def main() -> int:
     p.add_argument(
         "--heartbeat",
         type=int,
-        default=1200,
-        help="max seconds between sentinels in --loop (20 min: re-arm / watcher health)",
+        default=0,
+        help="disabled by default (0): event-only wakes; legacy idle re-arm interval if set",
     )
     p.add_argument(
         "--mark-checkpoint",
@@ -187,8 +194,15 @@ def main() -> int:
     )
     p.add_argument(
         "--mark-relayed",
+        action="append",
+        default=[],
+        metavar="BASENAME",
+        help="watcher state basename now relayed (repeatable)",
+    )
+    p.add_argument(
+        "--save-reflection",
         default="",
-        help="comma-separated watcher state file names now relayed",
+        help="persist last_harvest_reflection on the tick state",
     )
     p.add_argument(
         "--mark-friction",
@@ -321,8 +335,17 @@ def main() -> int:
             fresh["last_cp_tick"] = int(fresh.get("ticks") or 0)
         if args.mark_relayed:
             relayed = set(fresh.get("relayed_watchers") or [])
-            relayed.update(x.strip() for x in args.mark_relayed.split(",") if x.strip())
+            for item in args.mark_relayed:
+                for part in str(item).split(","):
+                    name = part.strip()
+                    if name:
+                        relayed.add(name)
             fresh["relayed_watchers"] = sorted(relayed)
+            fresh["last_tick_at"] = _utcnow()
+            fresh["reflection_acknowledged"] = True
+        if args.save_reflection:
+            fresh["last_harvest_reflection"] = str(args.save_reflection)
+            fresh["reflection_acknowledged"] = False
         if friction_mark:
             mark_friction(fresh, *friction_mark, at=_utcnow())
         if set_items:
@@ -357,11 +380,25 @@ def main() -> int:
     if (
         args.mark_checkpoint
         or args.mark_relayed
+        or args.save_reflection
         or friction_mark
         or set_items
         or args.policy
     ):
         state = update_state(state_path, _operator_edits)
+        if args.mark_relayed or args.save_reflection:
+            digest = build_digest(root, state, register=register)
+            state["fingerprint"] = digest.get("fingerprint")
+            from bus_watch.digest_publish import lanes_fingerprint
+
+            policy = digest.get("policy") or {}
+            from bus_watch.loop_tape import loop_tape_thread
+
+            tape = loop_tape_thread(root, policy)
+            state["digest_lanes_fp"] = lanes_fingerprint(
+                digest, ignore_turn_for=tape if tape != str(root) else ""
+            )
+            save_state(state_path, state)
         if not (args.once or args.loop):
             print(
                 json.dumps(
@@ -420,8 +457,22 @@ def main() -> int:
         return _spawn_loop(args, root, state, state_path, register)
 
     holder = args.holder or f"ide:{root}"
+    flock_ok, flock_fd, flock_meta = acquire_root_loop_flock(root)
+    if not flock_ok:
+        print(
+            json.dumps(
+                {
+                    "loop": "refused",
+                    "reason": "loop_flock_held",
+                    "flock": flock_meta,
+                }
+            ),
+            flush=True,
+        )
+        return 3
     claim = claim_fable_lock(holder, hop=False, root_id=root, take_over=args.take_over)
     if not claim.get("ok"):
+        release_root_loop_flock(flock_fd)
         print(
             json.dumps(
                 {
@@ -433,7 +484,6 @@ def main() -> int:
             flush=True,
         )
         return 3
-    last_emit = 0.0
     print(
         json.dumps(
             {
@@ -448,16 +498,32 @@ def main() -> int:
         flush=True,
     )
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    last_emit = 0.0
     try:
         return _loop(args, root, state, state_path, register, holder, last_emit)
     finally:
+        release_root_loop_flock(flock_fd)
         release_fable_lock(holder, root_id=root)
         clear_loop_pid_files()
 
 
 def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
+    flock_ok, flock_fd, flock_meta = acquire_root_loop_flock(root)
+    if not flock_ok:
+        print(
+            json.dumps(
+                {
+                    "loop": "refused",
+                    "reason": "loop_flock_held",
+                    "flock": flock_meta,
+                }
+            ),
+            flush=True,
+        )
+        return 3
     claim = claim_ticker_lease(root)
     if not claim.get("ok"):
+        release_root_loop_flock(flock_fd)
         print(
             json.dumps(
                 {"loop": "refused", "reason": "ticker_held", "lock": claim.get("lock")}
@@ -485,6 +551,10 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
             if not refresh_ticker_lease(root):
                 print(json.dumps({"loop": "ticker_lost", "root": root}), flush=True)
                 return 4
+            policy_pre = effective_policy(state)
+            if is_overnight_quiet(policy=policy_pre):
+                time.sleep(poll_s)
+                continue
             _log_steer(absorb_operator_edits(state, state_path))
             register = str(state.get("register") or register)
             try:
@@ -517,6 +587,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 return 0
             time.sleep(poll_s)
     finally:
+        release_root_loop_flock(flock_fd)
         release_ticker_lease(root)
 
 
@@ -530,8 +601,13 @@ def _log_steer(changed: list[str]) -> None:
 
 def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
     while True:
-        if not refresh_fable_lock(holder, root_id=root) or read_lock(root).get(
-            "preempt_by"
+        policy_pre = effective_policy(state)
+        if is_overnight_quiet(policy=policy_pre):
+            time.sleep(args.poll)
+            continue
+        if (
+            not refresh_fable_lock(holder, root_id=root, require_pid=os.getpid())
+            or read_lock(root).get("preempt_by")
         ):
             print(
                 json.dumps(
@@ -564,7 +640,6 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             )
             time.sleep(args.poll)
             continue
-        now = time.monotonic()
         budget = digest.get("budget") or {}
         # CONTEXT_BUDGET wakes the seat once per window epoch (tab transcript or
         # sdk stream); re-waking every poll would spam the tab it is telling to
@@ -572,21 +647,32 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         budget_stop_new = bool(budget.get("stop_class")) and state.get(
             "budget_stop_emitted_epoch"
         ) != budget.get("epoch")
-        due = (
-            (
-                digest["changed_since_last_tick"]
-                and not is_own_digest_echo(digest, state)
-            )
-            or (now - last_emit) >= args.heartbeat
-            or budget_stop_new
+        now = time.monotonic()
+        changed_not_echo = bool(
+            digest["changed_since_last_tick"]
+            and not is_own_digest_echo(digest, state)
+        )
+        heartbeat_due = bool(args.heartbeat) and (now - last_emit) >= args.heartbeat
+        due = liaison_loop_due(
+            digest,
+            state,
+            changed_not_echo=changed_not_echo,
+            heartbeat_due=heartbeat_due,
+            budget_stop_new=budget_stop_new,
+        ) or attended_tick_due(
+            changed_since_last_tick=bool(digest["changed_since_last_tick"]),
+            digest=digest,
+            state=state,
+            budget_stop_new=budget_stop_new,
+            digest_is_own_echo=is_own_digest_echo(digest, state),
         )
         if due:
             if budget_stop_new:
                 state["budget_stop_emitted_epoch"] = budget.get("epoch")
             save_state(state_path, state)
-            publish_if_enabled(root, digest, state) == "published" and save_state(
-                state_path, state
-            )
+            publish_if_enabled(
+                root, digest, state, require_change=True
+            ) == "published" and save_state(state_path, state)
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
             last_emit = now
         else:

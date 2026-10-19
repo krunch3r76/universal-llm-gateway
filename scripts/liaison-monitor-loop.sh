@@ -40,6 +40,25 @@ if [[ ! -f "$log" ]]; then
   exit 1
 fi
 
+flock_file="${log}.monitor.flock"
+pid_file="${log}.monitor.pid"
+if [[ -f "$pid_file" ]]; then
+  old_pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+  if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+    kill "$old_pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$old_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+fi
+exec 9>"$flock_file"
+if ! flock -n 9; then
+  echo "liaison-monitor-loop: monitor flock held on $flock_file" >&2
+  exit 3
+fi
+echo $$ > "$pid_file"
+
 touch "$heartbeat"
 (
   while true; do
