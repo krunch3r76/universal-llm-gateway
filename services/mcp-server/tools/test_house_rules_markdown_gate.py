@@ -255,7 +255,7 @@ def test_house_rules_rotation_archive_failure_leaves_file_unchanged(
     before = (sandbox_root / rel).read_bytes()
     with patch.object(
         house_rules_rotation,
-        "durable_write_text",
+        "durable_rmw_text",
         side_effect=OSError("archive write failed"),
     ):
         rejected = markdown_tool._section_write_result(

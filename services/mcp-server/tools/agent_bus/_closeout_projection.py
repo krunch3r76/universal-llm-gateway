@@ -7,17 +7,43 @@ import json
 import re
 from typing import Any
 
-_COMPACT_DEFAULT_LIMIT = 1500
+_COMPACT_MAX_BYTES = 1500
+_COMPACT_BUDGET_BYTES = 1450
 _CDP_LINE_CAP = 45
-_CDP_BYTE_CAP = 1400
+_CDP_BYTE_CAP = 1200
 _JSON_SUMMARY_LINE_CAP = 40
+_JSON_SUMMARY_BYTE_CAP = 700
 
 _EXEC_ID_RE = re.compile(r"execution_id:\s*(\S+)", re.IGNORECASE)
 _ARCHIVE_URI_RE = re.compile(r"archive_uri:\s*(\S+)", re.IGNORECASE)
+_FENCE_MARK_RE = re.compile(r"(?m)^```")
+_VERDICT_LINE_RE = re.compile(r"(?m)^(VERDICT:[^\n]*)$")
 
 
 def _body_bytes(raw: str) -> int:
     return len(raw.encode("utf-8"))
+
+
+def _fenced_spans(text: str) -> tuple[tuple[int, int], ...]:
+    marks = [match.start() for match in _FENCE_MARK_RE.finditer(text)]
+    spans: list[tuple[int, int]] = []
+    for index in range(0, len(marks), 2):
+        end = marks[index + 1] if index + 1 < len(marks) else len(text)
+        spans.append((marks[index], end))
+    return tuple(spans)
+
+
+def _unfenced_verdict_line(body: str) -> str | None:
+    spans = _fenced_spans(body)
+    hits: list[str] = []
+    for match in _VERDICT_LINE_RE.finditer(body):
+        if any(start <= match.start() < end for start, end in spans):
+            continue
+        hits.append(match.group(1))
+    distinct = list(dict.fromkeys(hits))
+    if len(distinct) == 1:
+        return distinct[0]
+    return None
 
 
 def _is_json_closeout(subject: str, body: str) -> bool:
@@ -47,19 +73,46 @@ def _lines_cap(text: str, max_lines: int, max_bytes: int) -> str:
     return "\n".join(kept)
 
 
+def _fit_json_envelope(envelope: dict[str, Any]) -> str:
+    """Serialize *envelope* with field truncation until UTF-8 size is under budget."""
+    summary_key = "summary_excerpt"
+    excerpt = str(envelope.get(summary_key) or "")
+    while True:
+        out = json.dumps(envelope, indent=2, sort_keys=True)
+        if _body_bytes(out) < _COMPACT_MAX_BYTES:
+            return out
+        if excerpt:
+            cut = max(80, len(excerpt) // 2)
+            excerpt = excerpt[:cut].rstrip()
+            envelope[summary_key] = excerpt
+            continue
+        envelope.pop("verification", None)
+        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+            return json.dumps(envelope, indent=2, sort_keys=True)
+        envelope.pop("evidence_uris", None)
+        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+            return json.dumps(envelope, indent=2, sort_keys=True)
+        envelope.pop(summary_key, None)
+        return json.dumps(envelope, indent=2, sort_keys=True)
+
+
 def _compact_json_closeout(body: str) -> str:
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        return body[:_COMPACT_DEFAULT_LIMIT]
+        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode("utf-8", errors="ignore")
+        return raw
     if not isinstance(data, dict):
-        return body[:_COMPACT_DEFAULT_LIMIT]
+        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode("utf-8", errors="ignore")
+        return raw
     summary = data.get("summary") or data.get("work_outcome") or ""
     if isinstance(summary, dict):
         summary_text = json.dumps(summary, indent=2, sort_keys=True)
     else:
         summary_text = str(summary)
-    summary_excerpt = _lines_cap(summary_text, _JSON_SUMMARY_LINE_CAP, 800)
+    summary_excerpt = _lines_cap(
+        summary_text, _JSON_SUMMARY_LINE_CAP, _JSON_SUMMARY_BYTE_CAP
+    )
     envelope: dict[str, Any] = {
         "projection": "compact_executive",
         "status": data.get("status"),
@@ -67,6 +120,9 @@ def _compact_json_closeout(body: str) -> str:
         "summary_excerpt": summary_excerpt,
         "source_ref": data.get("source_ref"),
     }
+    for key in ("landed", "head_sha"):
+        if data.get(key) is not None:
+            envelope[key] = data.get(key)
     evidence = data.get("evidence_uris")
     if isinstance(evidence, dict):
         envelope["evidence_uris"] = {
@@ -81,20 +137,17 @@ def _compact_json_closeout(body: str) -> str:
         }
     elif verification is not None:
         envelope["verification"] = verification
-    out = json.dumps(envelope, indent=2, sort_keys=True)
-    if _body_bytes(out) > _COMPACT_DEFAULT_LIMIT:
-        envelope.pop("verification", None)
-        out = json.dumps(envelope, indent=2, sort_keys=True)
-    return out[:_COMPACT_DEFAULT_LIMIT]
+    return _fit_json_envelope(envelope)
 
 
 def _compact_cdp_markdown(body: str) -> str:
     lines = body.splitlines()
     header: list[str] = []
+    verdict = _unfenced_verdict_line(body)
+    if verdict:
+        header.append(verdict)
     for line in lines:
-        if line.startswith("VERDICT:"):
-            header.append(line)
-        elif line.startswith("read-all-cited-files:"):
+        if line.startswith("read-all-cited-files:"):
             header.append(line)
         else:
             match = _EXEC_ID_RE.search(line)
@@ -106,8 +159,10 @@ def _compact_cdp_markdown(body: str) -> str:
     excerpt = _lines_cap(body, _CDP_LINE_CAP, _CDP_BYTE_CAP)
     parts = header + ["", excerpt]
     out = "\n".join(parts).strip()
-    if _body_bytes(out) > _COMPACT_DEFAULT_LIMIT:
-        out = out[:_COMPACT_DEFAULT_LIMIT]
+    if _body_bytes(out) >= _COMPACT_MAX_BYTES:
+        out = out.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
     return out
 
 
@@ -124,7 +179,7 @@ def project_turn_body(
         return turn
     raw_bytes = _body_bytes(raw_body)
     mode = (projection or "compact").strip().lower()
-    if mode == "full" or raw_bytes <= _COMPACT_DEFAULT_LIMIT:
+    if mode == "full" or raw_bytes < _COMPACT_MAX_BYTES:
         return turn
     subject = str(turn.get("subject") or "")
     if not (_is_json_closeout(subject, raw_body) or _is_cdp_reply(subject, raw_body)):

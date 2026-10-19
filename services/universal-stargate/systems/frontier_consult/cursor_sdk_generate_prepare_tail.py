@@ -284,6 +284,7 @@ async def finish_cursor_sdk_generate_prepare(
         prompt_turn_number=prompt_turn_number,
         has_explicit_prompt_source=has_explicit_prompt_source,
         admit_provenance=admit_provenance,
+        bound_work_key=work_key,
     )
 
     from implement_admission.check_review_substrate import consultant_rung

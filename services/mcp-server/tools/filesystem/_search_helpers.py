@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fnmatch
-import os
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +15,28 @@ def path_contains_worktree_segment(rel_path: str) -> bool:
     return any(part in WORKTREE_PATH_PARTS for part in Path(rel_path).parts)
 
 
-def filter_find_matches(matches: list[str], *, include_worktrees: bool) -> list[str]:
+def path_has_worktree_below_scope(rel_path: str, scope_dir: str) -> bool:
+    """True when a worktree segment appears below *scope_dir*, not within it."""
+    rel_parts = Path(rel_path).parts
+    scope_parts = Path(scope_dir).parts if scope_dir else ()
+    if scope_parts and any(part in WORKTREE_PATH_PARTS for part in scope_parts):
+        return False
+    if scope_parts and rel_parts[: len(scope_parts)] != scope_parts:
+        return path_contains_worktree_segment(rel_path)
+    suffix = rel_parts[len(scope_parts) :]
+    return any(part in WORKTREE_PATH_PARTS for part in suffix)
+
+
+def filter_find_matches(
+    matches: list[str], *, scope_dir: str, include_worktrees: bool
+) -> list[str]:
     if include_worktrees:
         return matches
-    return [m for m in matches if not path_contains_worktree_segment(m)]
+    return [
+        m
+        for m in matches
+        if not path_has_worktree_below_scope(m, scope_dir)
+    ]
 
 
 def find_workspaces_files(
@@ -30,6 +47,7 @@ def find_workspaces_files(
     max_results: int = DEFAULT_MAX_RESULTS,
 ) -> dict[str, Any]:
     """Glob filename find under workspaces with worktree exclusion before truncation."""
+    from tools import project as project_mod
     from tools.project import (
         _filesystem_listing,
         _safe_project_path,
@@ -38,7 +56,7 @@ def find_workspaces_files(
         workspaces_relative,
     )
 
-    project_root = Path(os.environ.get("PROJECT_ROOT", "/data/project")).resolve()
+    project_root = project_mod._PROJECT_ROOT.resolve()
     directory = normalize_directory_arg(directory)
     if multi_repo_root_unscoped(project_root) and not directory:
         return {
@@ -62,6 +80,7 @@ def find_workspaces_files(
                 )
                 paths = filter_find_matches(
                     [rel] if matched else [],
+                    scope_dir=directory,
                     include_worktrees=include_worktrees,
                 )
                 return {
@@ -79,7 +98,7 @@ def find_workspaces_files(
     matches: list[str] = []
     truncated = False
     for rel_path in files:
-        if path_contains_worktree_segment(rel_path) and not include_worktrees:
+        if path_has_worktree_below_scope(rel_path, directory) and not include_worktrees:
             continue
         base = Path(rel_path).name
         if fnmatch.fnmatch(base, glob_pat) or fnmatch.fnmatch(rel_path, glob_pat):

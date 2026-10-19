@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from bus_watch.digest_budget import (
@@ -44,20 +43,22 @@ from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
 from bus_watch.ide_budget import measure_ide_tab
 from bus_watch.induction import build_wake_induction
-from bus_watch.liaison_l24_l28 import extend_digest_attention_l24_l28
+from bus_watch.liaison_conductor_attention import filter_conductor_routine_attention
+from bus_watch.liaison_l24_l28 import (
+    build_l28_scan_context,
+    extend_digest_attention_l24_l28,
+)
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
-from bus_watch.quiet_reason import usable_holder_id
 from bus_watch.roster import fold_roster
 from bus_watch.roster_promote import maybe_promote_roster, maybe_surface_contention
 from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,
     observe_terminal_lane_closeouts,
-    row_is_terminal,
 )
 from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
@@ -75,94 +76,6 @@ _fingerprint = digest_fingerprint
 _measure_ide_tab = measure_ide_tab
 
 
-def apply_projection_holder_ids(
-    lanes: list[Any], projections: list[Any] | None
-) -> None:
-    """Copy a live projection's holder id onto the lane with the same thread id.
-
-    Does not replace an id the lane already carries. Does not copy a bare
-    8-hex prefix.
-    """
-    by_thread: dict[str, dict[str, Any]] = {}
-    for proj in projections or []:
-        if not isinstance(proj, dict):
-            continue
-        thread_id = str(proj.get("thread_id") or "").strip()
-        if thread_id:
-            by_thread[thread_id] = proj
-    for lane in lanes or []:
-        if not isinstance(lane, dict):
-            continue
-        thread_id = str(lane.get("id") or "").strip()
-        proj = by_thread.get(thread_id)
-        if not proj:
-            continue
-        lane["live_projection_thread_id"] = thread_id
-        dispatch_id = usable_holder_id(proj.get("dispatch_id") or proj.get("op_id"))
-        execution_id = usable_holder_id(proj.get("execution_id"))
-        if dispatch_id and not usable_holder_id(lane.get("dispatch_id")):
-            lane["dispatch_id"] = dispatch_id
-        if execution_id and not usable_holder_id(lane.get("execution_id")):
-            lane["execution_id"] = execution_id
-
-
-_CONDUCTOR_ATTENTION_WAKE_RE = re.compile(
-    r"(?i)(?:VERDICT|SCORE_RESURFACE|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
-    r"\bFAILED\b|UNVERIFIED|escalation|"
-    r"\bDONE\b|\bG7\b|LANDED|land_disposition:\s*landed|"
-    r"park-harvest escalation|conductor-hop escalation)"
-)
-_ROUTINE_CONDUCTOR_HOP_RE = re.compile(
-    r"(?i)^(?:cursor-sdk generate(?:\s+admitted|\s+—)|"
-    r"CHECKPOINT — hop\b|park-harvest wake —|cursor-sdk CLOSEOUT\b)"
-)
-
-
-def _lane_is_conductor_contract(lane: dict[str, Any]) -> bool:
-    contract = str(lane.get("contract") or "").strip().lower()
-    if contract == "conductor":
-        return True
-    for tag in lane.get("tags") or []:
-        token = str(tag).strip().lower()
-        if token == "contract:conductor":
-            return True
-        if (
-            token.startswith("contract:")
-            and token.split(":", 1)[1].strip() == "conductor"
-        ):
-            return True
-    return False
-
-
-def _conductor_lane_enters_attention(lane: dict[str, Any]) -> bool:
-    """Conductor child lanes wake the IDE only on terminal/unharvested/gate signals."""
-    if str(lane.get("quiet_reason") or "") == "closeout_unharvested":
-        return True
-    if row_is_terminal(lane) and int(lane.get("unread") or 0) > 0:
-        return True
-    subject = str(lane.get("last_subject") or "")
-    if _CONDUCTOR_ATTENTION_WAKE_RE.search(subject):
-        return True
-    if _ROUTINE_CONDUCTOR_HOP_RE.search(subject):
-        return False
-    return False
-
-
-def filter_conductor_routine_attention(
-    attention: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Drop unread conductor lanes whose last turn is routine hop telemetry."""
-    out: list[dict[str, Any]] = []
-    for lane in attention:
-        if not isinstance(lane, dict):
-            continue
-        if not _lane_is_conductor_contract(lane) or _conductor_lane_enters_attention(
-            lane
-        ):
-            out.append(lane)
-    return out
-
-
 def is_life_root(root: dict[str, Any]) -> bool:
     tags = root.get("tags")
     if isinstance(tags, str):
@@ -174,12 +87,23 @@ def build_digest(
     root_id: str, state: dict[str, Any], *, register: str
 ) -> dict[str, Any]:
     """Assemble one digest; mutates ``state`` counters (ticks, est_tokens)."""
+    policy = effective_policy(state)
+    l28_turns_by_root: dict[str, list[dict[str, Any]]] | None = None
+    l28_locks_by_root: dict[str, dict[str, Any]] | None = None
     with _bus() as client:
         root = _get(client, f"/threads/{root_id}", to=DIGEST_UNREAD_TO) or {}
         recent_turns, tip_checkpoint_turn, unread_turns = digest_root_surface(
             client, _get, root_id, root
         )
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
+        l28_turns_by_root, l28_locks_by_root = build_l28_scan_context(
+            client,
+            _get,
+            root_id=root_id,
+            root_recent_turns=recent_turns,
+            lanes=lanes,
+            policy=policy,
+        )
         observe_lanes = (
             _merge_observe_lanes(lanes, _lineage_lanes(client, root_id))
             if "_error" not in root
@@ -206,7 +130,6 @@ def build_digest(
             parent_thread=root,
         )
 
-    policy = effective_policy(state)
     policy_bind = str(policy.get("now_row") or "").strip()
     entity_cache = harvest_policy_entity_cache(policy_bind) if policy_bind else {}
     night_id = current_night_id()
@@ -371,7 +294,12 @@ def build_digest(
         state=state,
         lock=lock_now,
     )
-    extend_digest_attention_l24_l28(digest, state)
+    extend_digest_attention_l24_l28(
+        digest,
+        state,
+        turns_by_root=l28_turns_by_root,
+        locks_by_root=l28_locks_by_root,
+    )
     state.update(
         {
             "fingerprint": fp,
