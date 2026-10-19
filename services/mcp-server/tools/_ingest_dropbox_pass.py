@@ -20,6 +20,8 @@ from ._ingest_dropbox_state import (
     new_record,
     read_sidecar,
     save_state,
+    stage_provider_failure,
+    terminal_needs_human,
     try_ingest_lock,
 )
 from ._ingest_dropbox_tokens import compare_bodies
@@ -32,15 +34,28 @@ _OCR_POISON = "[OCR error: "
 _MAX_ERR = 200
 
 
-def _emit_advance(
+def emit_ingest_advance(
     rel: str,
     *,
     from_stage: str | None,
     to_stage: str | None,
     terminal: str | None,
-    last_error_kind: str | None,
+    last_error_kind: str | None = None,
+    rec: dict[str, Any] | None = None,
 ) -> None:
-    record("mcp.ingest.state.advanced", path=rel, from_stage=from_stage, to_stage=to_stage, terminal=terminal, last_error_kind=last_error_kind)
+    kind = (
+        last_error_kind
+        if last_error_kind is not None or rec is None
+        else (rec.get("last_error") or "")[:40] or None
+    )
+    record(
+        "mcp.ingest.state.advanced",
+        path=rel,
+        from_stage=from_stage,
+        to_stage=to_stage,
+        terminal=terminal,
+        last_error_kind=kind,
+    )
 
 
 def process_file(
@@ -82,7 +97,13 @@ def process_file(
                 catch_all_failure(rec, source_sha256, "extract", exc, max_err=_MAX_ERR)
                 if rec.get("terminal"):
                     prev_stage = rec.get("stage", "extract")
-                    _emit_advance(rel, from_stage=prev_stage, to_stage=prev_stage, terminal="needs_human", last_error_kind=(rec.get("last_error") or "")[:40] or None)
+                    emit_ingest_advance(
+                        rel,
+                        from_stage=prev_stage,
+                        to_stage=prev_stage,
+                        terminal="needs_human",
+                        rec=rec,
+                    )
                     return "needs_human", False
             return "attempt", False
         if route_err:
@@ -90,7 +111,13 @@ def process_file(
             rec["terminal"] = "needs_human"
             rec["last_error"] = route_err
             save_state(source_sha256, rec)
-            _emit_advance(rel, from_stage=prev_stage, to_stage=prev_stage, terminal="needs_human", last_error_kind=route_err)
+            emit_ingest_advance(
+                rel,
+                from_stage=prev_stage,
+                to_stage=prev_stage,
+                terminal="needs_human",
+                last_error_kind=route_err,
+            )
             return "needs_human", False
         if rec.get("method") is None:
             rec["method"] = method
@@ -124,15 +151,27 @@ def _chain_stages(
         else:
             nxt = _stage_promote(config, rel, rec, source_sha256, method)
         if rec.get("terminal"):
-            _emit_advance(rel, from_stage=prev, to_stage=rec.get("stage") or prev, terminal=rec.get("terminal"), last_error_kind=(rec.get("last_error") or "")[:40] or None)
+            emit_ingest_advance(
+                rel,
+                from_stage=prev,
+                to_stage=rec.get("stage") or prev,
+                terminal=rec.get("terminal"),
+                rec=rec,
+            )
             save_state(source_sha256, rec)
             return "needs_human", False
         if nxt == "done":
-            _emit_advance(rel, from_stage=prev, to_stage="done", terminal=None, last_error_kind=None)
+            emit_ingest_advance(rel, from_stage=prev, to_stage="done", terminal=None)
             save_state(source_sha256, rec)
             return "done", False
         if nxt and nxt != prev:
-            _emit_advance(rel, from_stage=prev, to_stage=nxt, terminal=rec.get("terminal"), last_error_kind=(rec.get("last_error") or "")[:40] or None)
+            emit_ingest_advance(
+                rel,
+                from_stage=prev,
+                to_stage=nxt,
+                terminal=rec.get("terminal"),
+                rec=rec,
+            )
         if not nxt or nxt == prev:
             break
         stage = nxt
@@ -163,12 +202,9 @@ def _stage_extract(
     except OcrUnreachable:
         raise
     except OcrProviderError as exc:
-        rec["extract_attempts"] = int(rec.get("extract_attempts", 0)) + 1
-        rec["last_error"] = str(exc)[:_MAX_ERR]
-        if rec["extract_attempts"] >= 3:
-            rec["terminal"] = "needs_human"
-        save_state(sha, rec)
-        return "extract"
+        return stage_provider_failure(
+            rec, sha, "extract", exc, attempts_key="extract_attempts", max_err=_MAX_ERR
+        )
     except Exception as exc:  # noqa: BLE001
         return catch_all_failure(rec, sha, "extract", exc, max_err=_MAX_ERR)
 
@@ -206,15 +242,13 @@ def _stage_crosscheck(
     canon_fam = model_family(canon_model, fam_map)
     check_model = config["check"]
     check_fam = model_family(check_model, fam_map)
+    fam_err: str | None = None
     if canon_fam is None or check_fam is None:
-        rec["terminal"] = "needs_human"
-        rec["last_error"] = "unknown_family"
-        save_state(sha, rec)
-        return None
-    if canon_fam == check_fam:
-        rec["terminal"] = "needs_human"
-        rec["last_error"] = "same_family"
-        save_state(sha, rec)
+        fam_err = "unknown_family"
+    elif canon_fam == check_fam:
+        fam_err = "same_family"
+    if fam_err:
+        terminal_needs_human(rec, sha, fam_err)
         return None
 
     pdf = resolve_files_path(rel, root=FILES_ROOT)
@@ -227,12 +261,9 @@ def _stage_crosscheck(
     except OcrUnreachable:
         raise
     except OcrProviderError as exc:
-        rec["check_attempts"] = int(rec.get("check_attempts", 0)) + 1
-        rec["last_error"] = str(exc)[:_MAX_ERR]
-        if rec["check_attempts"] >= 3:
-            rec["terminal"] = "needs_human"
-        save_state(sha, rec)
-        return "crosscheck"
+        return stage_provider_failure(
+            rec, sha, "crosscheck", exc, attempts_key="check_attempts", max_err=_MAX_ERR
+        )
     except Exception as exc:  # noqa: BLE001
         return catch_all_failure(rec, sha, "crosscheck", exc, max_err=_MAX_ERR)
 
@@ -240,9 +271,7 @@ def _stage_crosscheck(
     _fm2, check_body = read_sidecar(check_path)
     agree, compared, mismatches = compare_bodies(body, check_body)
     if compared == 0:
-        rec["terminal"] = "needs_human"
-        rec["last_error"] = "no_tokens"
-        save_state(sha, rec)
+        terminal_needs_human(rec, sha, "no_tokens")
         return None
     cc = {
         "canonical_model": canon_model,
@@ -252,10 +281,7 @@ def _stage_crosscheck(
         "mismatches": mismatches if not agree else [],
     }
     if not agree:
-        rec["terminal"] = "needs_human"
-        rec["last_error"] = "crosscheck_disagree"
-        rec["crosscheck"] = cc
-        save_state(sha, rec)
+        terminal_needs_human(rec, sha, "crosscheck_disagree", crosscheck=cc)
         return None
     rec["stage"] = "promote"
     rec["crosscheck"] = cc
@@ -289,9 +315,7 @@ def _stage_promote(
         desc = f"Ingested {ctx} document {Path(rel).stem} ({method})"
         result = run_promote_document(rel, entity_id, desc, entity_attributes=attrs)
     except PromoteError as exc:
-        rec["terminal"] = "needs_human"
-        rec["last_error"] = exc.code
-        save_state(sha, rec)
+        terminal_needs_human(rec, sha, exc.code)
         return None
     except Exception as exc:  # noqa: BLE001
         return catch_all_failure(rec, sha, "promote", exc, max_err=_MAX_ERR)

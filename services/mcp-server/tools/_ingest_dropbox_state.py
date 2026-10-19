@@ -131,6 +131,37 @@ def catch_all_failure(
     return stage
 
 
+def stage_provider_failure(
+    rec: dict[str, Any],
+    sha: str,
+    stage: str,
+    exc: Exception,
+    *,
+    attempts_key: str,
+    max_err: int,
+) -> str:
+    rec[attempts_key] = int(rec.get(attempts_key, 0)) + 1
+    rec["last_error"] = str(exc)[:max_err]
+    if rec[attempts_key] >= 3:
+        rec["terminal"] = "needs_human"
+    save_state(sha, rec)
+    return stage
+
+
+def terminal_needs_human(
+    rec: dict[str, Any],
+    sha: str,
+    last_error: str,
+    *,
+    crosscheck: dict[str, Any] | None = None,
+) -> None:
+    rec["terminal"] = "needs_human"
+    rec["last_error"] = last_error
+    if crosscheck is not None:
+        rec["crosscheck"] = crosscheck
+    save_state(sha, rec)
+
+
 def find_promoted_bundle(source_sha256: str, source_rel: str) -> Path | None:
     from ._promote_document_helpers import sanitize_bundle_name
 

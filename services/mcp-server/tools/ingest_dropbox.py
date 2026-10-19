@@ -28,7 +28,6 @@ from ._ingest_dropbox_state import (
     save_state,
     try_ingest_lock,
 )
-from .extract_document import OcrUnreachable
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -103,11 +102,25 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
                 current["stage"] = "done"
                 current["entity_id"] = entity_id
                 current["last_error"] = None
-                record("mcp.ingest.state.advanced", path=rel, from_stage="promote", to_stage="done", terminal=None, last_error_kind=None)
+                record(
+                    "mcp.ingest.state.advanced",
+                    path=rel,
+                    from_stage="promote",
+                    to_stage="done",
+                    terminal=None,
+                    last_error_kind=None,
+                )
             else:
                 current["terminal"] = "needs_human"
                 current["last_error"] = "missing_after_promote"
-                record("mcp.ingest.state.advanced", path=rel, from_stage="promote", to_stage="promote", terminal="needs_human", last_error_kind="missing_after_promote")
+                record(
+                    "mcp.ingest.state.advanced",
+                    path=rel,
+                    from_stage="promote",
+                    to_stage="promote",
+                    terminal="needs_human",
+                    last_error_kind="missing_after_promote",
+                )
             save_state(sha, current)
 
 
@@ -144,20 +157,24 @@ def _newest_as_of() -> str | None:
     return latest
 
 
-def _should_skip_for_cap(rel: str) -> bool:
-    parsed = parse_dropbox_rel(rel)
-    if parsed is None:
-        return True
+def _sha_and_state(rel: str) -> tuple[str | None, dict[str, Any] | None]:
     abs_path = FILES_ROOT / rel
     if not abs_path.is_file():
-        return False
+        return None, None
     from ._extract_document_helpers import compute_source_sha256
 
     try:
         sha, _ = compute_source_sha256(abs_path)
     except OSError:
-        return False
-    rec = load_state(sha)
+        return None, None
+    return sha, load_state(sha)
+
+
+def _should_skip_for_cap(rel: str) -> bool:
+    parsed = parse_dropbox_rel(rel)
+    if parsed is None:
+        return True
+    _sha, rec = _sha_and_state(rel)
     if not rec:
         return False
     return bool(rec.get("terminal"))
@@ -199,10 +216,7 @@ def ingest_dropbox_run(
         return True
 
     for rel in selected:
-        try:
-            outcome, stop = process_file(cfgd, rel, cap_counter=cap_counter)
-        except OcrUnreachable:
-            outcome, stop = "attempt", True
+        outcome, stop = process_file(cfgd, rel, cap_counter=cap_counter)
         processed.append({"path": rel, "outcome": outcome})
         if stop:
             stopped = True
@@ -236,16 +250,9 @@ def ingest_dropbox_dry_run(
     rows: list[dict[str, str]] = []
     duplicates: list[dict[str, str]] = []
     for rel in selected:
-        abs_path = FILES_ROOT / rel
-        if not abs_path.is_file():
+        sha, rec = _sha_and_state(rel)
+        if sha is None:
             continue
-        from ._extract_document_helpers import compute_source_sha256
-
-        try:
-            sha, _ = compute_source_sha256(abs_path)
-        except OSError:
-            continue
-        rec = load_state(sha)
         if rec and done_path_is_duplicate(rec, rel, sha):
             duplicates.append(
                 {
