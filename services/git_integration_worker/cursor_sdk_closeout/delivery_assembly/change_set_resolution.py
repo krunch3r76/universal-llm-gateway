@@ -12,6 +12,7 @@ assembly.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -141,12 +142,37 @@ def resolve_closeout_change_set(
     ChangeSet,
     RangePythonCorroboration,
 ]:
+    """Resolve the closeout change set and bind one canonical review line.
+
+    The bind runs after the sidecar text exists. A non-match writes no row.
+    Ledger or git failure is logged and does not fail delivery.
+    """
     write_tree, receipt_tree, mount = _capture_trees(source_repo, binding)
     repo_roots = list(binding.repo_roots) if binding is not None else None
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_path, archived_closeout_body = write_repo_sidecar(
         receipt_tree, dispatch_id, text
     )
+    # Canonical review line only. A non-match writes nothing. Ledger or git
+    # failure must not fail closeout delivery.
+    try:
+        from services.git_integration_worker.master_review_owed import (
+            bind_canonical_verdict,
+        )
+
+        bind_canonical_verdict(
+            text,
+            repo=receipt_tree,
+            bus_thread=thread_id,
+            bus_turn=None,
+            review_dispatch_id=dispatch_id,
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "bind_canonical_verdict failed dispatch_id=%s",
+            dispatch_id,
+            exc_info=True,
+        )
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(text.encode("utf-8"))
     files_expected = (

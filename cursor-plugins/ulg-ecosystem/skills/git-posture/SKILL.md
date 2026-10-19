@@ -321,6 +321,8 @@ session-path commit on a work-complete claim.
 
 ## Land = merge, never copy (operator bind a:29557, re-bound 2026-09-02)
 
+Land on green. The landed range owes a review afterward; `unreviewed_master_commits` is how a missing review is seen. `REQUEST_CHANGES` is a forward fix, not a revert. The review is not a merge hold.
+
 `∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when incoming paths
 are clean on master; otherwise commit overlapping dirty paths, merge, and
 resolve keep-both. **Never stash instead of merge. Never leave a stash unpopped.**

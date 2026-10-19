@@ -59,6 +59,11 @@ def settle_lane_and_dispatch_fields(
     str | None,
     str | None,
 ]:
+    """Settle the lane branch, then record review debt for commits now on master.
+
+    The review check and ride-along notice run after the silent land call.
+    Either one failing to post does not change the land or the disposition.
+    """
     lane_b_lane: str | None = None
     lane_b_branch: str | None = None
     lane_b_branch_point: str | None = None
@@ -176,7 +181,12 @@ def settle_lane_and_dispatch_fields(
             from services.git_integration_worker.cursor_sdk_branch_terminal import (
                 maybe_ff_land_silent_lane,
             )
+            from services.git_integration_worker.master_review_owed import (
+                apply_review_obligations_after_land,
+                head_ref_sha,
+            )
 
+            live_old_master = head_ref_sha(binding.receipt_tree)
             maybe_ff_land_silent_lane(
                 repo=binding.receipt_tree,
                 branch_name=record.branch_name,
@@ -185,6 +195,15 @@ def settle_lane_and_dispatch_fields(
                 land_text=land_text,
                 closeout_text=closeout_text,
                 commits_ahead=state.commits_ahead,
+            )
+            # Review owed after the land. Notices do not refuse or delay it.
+            # Restart-time ride-along (process code_ref, not this master ref)
+            # is outside this file's shas; see the module docstring.
+            apply_review_obligations_after_land(
+                repo=binding.receipt_tree,
+                live_old_sha=live_old_master,
+                live_new_sha=head_ref_sha(binding.receipt_tree),
+                triggering_land_sha=state.head_sha,
             )
             # landed@local-master — ancestry probe + G₂ meter; unknown stays None.
             from services.git_integration_worker.relay.closeout_plane_probe import (
@@ -335,11 +354,11 @@ def settle_lane_and_dispatch_fields(
             if meter_pair is not None:
                 capture_commits_ahead, capture_commits_ahead_unfiltered = meter_pair
         if lane_b_lane != "B" and capture_commits_ahead is not None:
-            from services.git_integration_worker.relay.closeout_plane_probe import (
-                probe_three_planes,
-            )
             from services.git_integration_worker.cursor_sdk_deliverables_expected import (
                 admit_landed_true,
+            )
+            from services.git_integration_worker.relay.closeout_plane_probe import (
+                probe_three_planes,
             )
 
             plane_obs = probe_three_planes(

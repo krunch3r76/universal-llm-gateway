@@ -12,12 +12,12 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from implement_admission.conductor_no_restart import (
     G7_RESTART_OWED_RULE,
     NESTED_PROMPT_RULE,
     NO_RESTART_LINE,
 )
-from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,
@@ -293,6 +293,17 @@ _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "master. Declare "
     "`land_disposition: unlanded <tip sha>` so an intentional stay is complete. "
     "Declared discard and unlanded archive the tip first, so neither loses work."
+)
+
+_REVIEW_VERDICT_CONTRACT = (
+    "REVIEW VERDICT CONTRACT: When the packet names a commit range or head, "
+    "the closeout's first line is the one unfenced canonical line "
+    "`VERDICT: APPROVE range=<40 lowercase hex>..<40 lowercase hex> "
+    "head=<40 lowercase hex>` or the same line with `REQUEST_CHANGES`. "
+    "`head` equals the range tip. `fixes=<full sha of the REQUEST_CHANGES tip>` "
+    "is present only when this review closes one. There is no second "
+    "`VERDICT:` line. When the packet names no commit, do not invent "
+    "`range=` or `head=`."
 )
 
 _CONTINUITY_ROOT_TEMPLATE = (
@@ -993,5 +1004,7 @@ def resolve_prompt_preamble(
         parts.append(skill_block)
     if preamble:
         parts.append(preamble.strip())
+    if contract in {"check-review", "code-review"}:
+        parts.append(_REVIEW_VERDICT_CONTRACT)
     parts = _prefix_reasoning_posture(contract, parts, prompt_preamble, existing_text)
     return "\n\n".join(parts) + "\n\n"

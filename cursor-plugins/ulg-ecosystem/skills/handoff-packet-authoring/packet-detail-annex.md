@@ -228,6 +228,11 @@ CODE/VORTEX MCP: OFF — no workspaces or code-only tools.
 
 <output_format>
 Findings or closeout table.
+A commit-binding review closeout's first line is the one canonical line
+`VERDICT: APPROVE range=<40 lowercase hex>..<40 lowercase hex> head=<40 lowercase hex>`
+or `REQUEST_CHANGES`, head equal to the range tip, `fixes=<full sha>` only when
+closing a REQUEST_CHANGES tip, and no second `VERDICT:` line. A review that names
+no commit does not invent `range=` or `head=`. Finding fields in this skeleton stay.
 </output_format>
 ```
 
