@@ -155,7 +155,7 @@ def _recognized_fence_lengths(text: str) -> tuple[bool, set[int]]:
             opener = run
             lengths.add(run)
             continue
-        if run == opener and info.strip() == "":
+        if run >= opener and info.strip() == "":
             opener = None
             lengths.add(run)
     return opener is None, lengths
@@ -255,6 +255,66 @@ def test_tool_result_long_fence_stays_balanced(tmp_path: Path) -> None:
     assert saw_inner
 
 
+def test_sealed_raw_messages_json_skips_as_raw_before_seal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Name wins: ``*.raw.messages.json`` is raw even when the body is a seal.
+
+    ``_is_raw_name`` matches a bare ``raw`` dot-segment, including ``raw.json``,
+    and runs before ``_is_seal``. A sealed body is not handed to ``chunk_messages``.
+    """
+    path = tmp_path / "session.raw.messages.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ulg.continuity.messages/1",
+                "meta": {"provenance": "raw", "sealed_at": "2026-10-19T00:00:00Z"},
+                "messages": [
+                    {"role": "user", "content": "sealed-raw"},
+                    {"role": "assistant", "content": "still raw by name"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level("INFO", logger="services.rag.chunkers.projected_messages"):
+        assert chunk_json_file(path) == []
+        assert not isinstance(chunk_json_file(path), UseSealChunker)
+    assert any(
+        rec.message == f"rag_chunk_skip path={path} reason=raw"
+        for rec in caplog.records
+    )
+
+
+def test_longer_backtick_run_closes_shorter_fence(tmp_path: Path) -> None:
+    path = tmp_path / "commonmark-close.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "go"},
+                    {
+                        "role": "assistant",
+                        "content": "```python\nkeep-token\n````\noutside-token",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "keep-token" in joined
+    assert "outside-token" in joined
+    for chunk in chunks:
+        if "outside-token" not in chunk.text:
+            continue
+        assert chunk.text.index("````") < chunk.text.index("outside-token")
+        balanced, _lengths = _recognized_fence_lengths(chunk.text)
+        assert balanced, chunk.text[:200]
+
+
 def test_raw_dotted_json_names_skip(tmp_path: Path) -> None:
     payload = json.dumps(
         {
@@ -307,6 +367,7 @@ def test_two_megabyte_turn_and_tool_result_stay_under_cap(tmp_path: Path) -> Non
     assert any("(part " in chunk.text for chunk in tool_chunks)
     for chunk in tool_chunks:
         assert chunk.text.count("```") % 2 == 0
+        assert not _fence_only_piece(chunk.text)
 
 
 def test_giant_token_is_cut() -> None:
@@ -436,10 +497,10 @@ def test_tool_result_list_split_keeps_following_prose_outside_fence(
                                     {"type": "text", "text": long_block},
                                     {"type": "text", "text": "second block"},
                                 ],
-                            }
+                            },
+                            {"type": "text", "text": "follow-up prose"},
                         ],
                     },
-                    {"role": "assistant", "content": "follow-up prose"},
                 ]
             }
         ),
@@ -459,6 +520,160 @@ def test_tool_result_list_split_keeps_following_prose_outside_fence(
         balanced, lengths = _recognized_fence_lengths(chunk.text)
         assert balanced
         assert long_block[:80] not in chunk.text
+
+
+def _fence_only_piece(text: str) -> bool:
+    """True when the chunk body is only fence lines, such as `` ```tool\\n``` ``."""
+    body = text.split("\n\n", 1)[-1]
+    lines = [line for line in body.split("\n") if line.strip()]
+    if not lines:
+        return False
+    return all(line.startswith("```") for line in lines)
+
+
+def test_python_fence_info_string_drops_empty_reopen(tmp_path: Path) -> None:
+    payload = "p" * 20_690
+    path = tmp_path / "python-fence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "run"},
+                    {
+                        "role": "assistant",
+                        "content": f"```python\n{payload}\n```",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    assistant = [chunk for chunk in chunks if "assistant" in chunk.text.splitlines()[0]]
+    assert assistant
+    for chunk in assistant:
+        assert not _fence_only_piece(chunk.text)
+        assert "```python\n```" not in chunk.text
+    assert any(payload[:80] in chunk.text for chunk in assistant)
+
+
+def test_envelope_dump_with_messages_is_tape(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "libs"
+        / "continuity_tape"
+        / "tests"
+        / "fixtures"
+        / "envelope_dump_base_87f3104b.json"
+    )
+    shape = json.loads(fixture.read_text(encoding="utf-8"))
+    shape["messages"] = [
+        {"role": "user", "content": "needle-tape"},
+        {"role": "assistant", "content": "tape reply"},
+    ]
+    raw = json.dumps(shape)
+    with caplog.at_level("INFO", logger="services.rag.chunkers.projected_messages"):
+        for name in ("x.json", "x.tape.json"):
+            path = tmp_path / name
+            path.write_text(raw, encoding="utf-8")
+            assert chunk_file(path) == []
+            assert any(
+                rec.message == f"rag_chunk_skip path={path} reason=tape"
+                for rec in caplog.records
+            )
+
+
+def test_seal_parse_error_raises(tmp_path: Path) -> None:
+    invalid = tmp_path / "session.messages.json"
+    invalid.write_bytes(b"\xff\xfe")
+    with pytest.raises(UnicodeError):
+        chunk_json_file(invalid)
+    bom = tmp_path / "bom.messages.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + b'{"schema": "ulg.continuity.messages/1"}')
+    with pytest.raises(json.JSONDecodeError):
+        chunk_json_file(bom)
+    plain = tmp_path / "broken.json"
+    plain.write_bytes(b"\xff\xfe")
+    assert chunk_json_file(plain) == []
+
+
+def test_projected_tool_result_secret_is_scrubbed(tmp_path: Path) -> None:
+    path = tmp_path / "secret.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "run"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "name": "bash",
+                                "content": "token sk-abcdefghijklmnopqrstuvwxyz123456",
+                            }
+                        ],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "sk-" not in joined
+    assert "[REDACTED_SECRET]" in joined
+
+
+def test_projected_excluded_lane_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "lane.json"
+    path.write_text(
+        json.dumps(
+            {
+                "meta": {"session_id": "s-lane"},
+                "messages": [
+                    {"role": "user", "content": "keep-lane"},
+                    {"role": "assistant", "content": "yes"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _resolver(_envelope, _path):  # noqa: ANN001
+        return "16934", ()
+
+    monkeypatch.setattr(
+        "services.rag.chunkers.projected_messages.default_lane_resolver",
+        _resolver,
+    )
+    assert chunk_file(path) == []
+
+
+def test_projected_case_marker_drops_matching_section(tmp_path: Path) -> None:
+    path = tmp_path / "case.json"
+    path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Parcel 25.7489 appeal"},
+                    {"role": "assistant", "content": "clean-reply"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunks = chunk_file(path)
+    _assert_capped(chunks)
+    joined = "\n".join(chunk.text for chunk in chunks)
+    assert "25.7489" not in joined
+    assert "clean-reply" in joined
 
 
 def test_messages_with_index_is_not_tape(tmp_path: Path) -> None:
