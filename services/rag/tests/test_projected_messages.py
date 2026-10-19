@@ -133,6 +133,33 @@ def test_tape_raw_and_render_skip(tmp_path: Path) -> None:
     assert chunk_file(fine) == []
 
 
+def test_real_shape_tape_json_skips(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A rendered tape (open_line, cells, messages, index) is not a transcript."""
+    path = tmp_path / "tape.json"
+    path.write_text(
+        json.dumps(
+            {
+                "open_line": {"thread_id": "15851", "turn_count": 1},
+                "cells": [{"cp_ordinal": 1}],
+                "messages": [
+                    {"role": "user", "content": "needle-real-tape"},
+                    {"role": "assistant", "content": "tape reply"},
+                ],
+                "index": [{"turn": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level("INFO", logger="services.rag.chunkers.projected_messages"):
+        assert chunk_file(path) == []
+    assert any(
+        rec.message == f"rag_chunk_skip path={path} reason=tape"
+        for rec in caplog.records
+    )
+
+
 def _recognized_fence_lengths(text: str) -> tuple[bool, set[int]]:
     """Return whether fences are closed, and the run lengths that opened them.
 

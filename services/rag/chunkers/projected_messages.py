@@ -151,17 +151,17 @@ def _is_seal(path: Path, data: object) -> bool:
 
 
 def _is_tape(data: object) -> bool:
-    """True for a continuity tape or seal body that is not a plain transcript.
+    """True for a continuity tape body that is not a plain transcript.
 
-    A transcript may carry ``index`` beside ``messages``. Tape is the presence
-    of ``cells`` or ``open_line``, or the continuity schema. Seal-named files
-    are routed before this check.
+    A transcript may carry ``index`` beside a ``messages`` list. Tape is
+    ``cells`` or ``open_line``, or ``index`` when ``messages`` is not a list.
+    Seal-named files are routed before this check.
     """
     if not isinstance(data, dict):
         return False
     if "cells" in data or "open_line" in data:
         return True
-    return data.get("schema") == SEAL_SCHEMA
+    return "index" in data and not isinstance(data.get("messages"), list)
 
 
 def _lane_excluded(path: Path, data: object) -> bool:
