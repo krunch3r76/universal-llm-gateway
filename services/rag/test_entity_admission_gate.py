@@ -161,7 +161,8 @@ async def test_refresh_replaces_set_on_success() -> None:
 
 @pytest.mark.asyncio
 async def test_index_file_impl_l2_gated_returns_unchanged() -> None:
-    from services.rag.rag_service import indexing, state
+    from services.rag.rag_service import state
+    from services.rag.rag_service.indexing import index_file
 
     source = "/legal/unbacked.pdf"
     file_path = Path(source)
@@ -182,11 +183,11 @@ async def test_index_file_impl_l2_gated_returns_unchanged() -> None:
         patch.object(state, "_property_index", None),
         patch.object(state, "_event_bus", event_bus),
         patch(
-            "services.rag.rag_service.indexing.asyncio.to_thread",
+            "services.rag.rag_service.indexing.index_file.asyncio.to_thread",
             return_value=MagicMock(st_mtime_ns=1, st_size=100),
         ),
     ):
-        result = await indexing._index_file_impl(
+        result = await index_file._index_file_impl(
             file_path,
             None,
             None,
@@ -203,7 +204,8 @@ async def test_index_file_impl_l2_gated_returns_unchanged() -> None:
 
 @pytest.mark.asyncio
 async def test_index_file_impl_l2_admitted_proceeds_past_gate() -> None:
-    from services.rag.rag_service import indexing, state
+    from services.rag.rag_service import state
+    from services.rag.rag_service.indexing import index_file
 
     source = "/legal/backed.pdf"
     file_path = Path(source)
@@ -221,16 +223,16 @@ async def test_index_file_impl_l2_admitted_proceeds_past_gate() -> None:
         patch.object(state, "_property_index", None),
         patch.object(state, "_event_bus", None),
         patch(
-            "services.rag.rag_service.indexing.asyncio.to_thread",
+            "services.rag.rag_service.indexing.index_file.asyncio.to_thread",
             return_value=MagicMock(st_mtime_ns=1, st_size=100),
         ),
         patch(
-            "services.rag.rag_service.indexing.require_healthy",
+            "services.rag.rag_service.indexing.index_file.require_healthy",
             side_effect=RuntimeError("past-gate"),
         ),
     ):
         with pytest.raises(RuntimeError, match="past-gate"):
-            await indexing._index_file_impl(
+            await index_file._index_file_impl(
                 file_path,
                 None,
                 None,
