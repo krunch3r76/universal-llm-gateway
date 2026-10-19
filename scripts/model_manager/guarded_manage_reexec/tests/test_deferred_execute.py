@@ -366,6 +366,92 @@ def test_wait_parent_timeout_900s_injected_clock() -> None:
     assert t["now"] == 900.0
 
 
+def _advancing_clock() -> tuple[dict[str, float], Any, Any]:
+    t = {"now": 0.0}
+
+    def clock() -> float:
+        return t["now"]
+
+    def sleep(seconds: float) -> None:
+        t["now"] += seconds
+
+    return t, clock, sleep
+
+
+def test_wait_transient_undetermined_then_idle_returns_ready() -> None:
+    samples = iter(
+        [
+            (False, "giw_idle_busy_status_undetermined"),
+            (True, None),
+        ]
+    )
+    t, clock, sleep = _advancing_clock()
+    ok, refuse = wait_for_parent_and_giw_idle(
+        parent_dispatch_id="d1",
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: next(samples),
+        timeout_s=10.0,
+        poll_s=1.0,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert ok
+    assert refuse is None
+    assert t["now"] == 1.0
+
+
+def test_wait_persistent_undetermined_to_deadline_names_reason() -> None:
+    t, clock, sleep = _advancing_clock()
+    checks: dict[str, Any] = {}
+    ok, refuse = wait_for_parent_and_giw_idle(
+        parent_dispatch_id="d1",
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (False, "giw_idle_busy_status_undetermined"),
+        timeout_s=4.0,
+        poll_s=2.0,
+        clock=clock,
+        sleep_fn=sleep,
+        checks=checks,
+    )
+    assert not ok
+    assert refuse == "giw_idle_busy_status_undetermined"
+    assert t["now"] == 4.0
+    assert checks["giw_idle_transient_consecutive"] == 2
+    assert checks["giw_idle_transient_total"] == 2
+
+
+def test_wait_busy_to_deadline_times_out() -> None:
+    t, clock, sleep = _advancing_clock()
+    ok, refuse = wait_for_parent_and_giw_idle(
+        parent_dispatch_id="d1",
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (False, None),
+        timeout_s=4.0,
+        poll_s=2.0,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert not ok
+    assert refuse is None
+    assert t["now"] == 4.0
+
+
+def test_wait_idle_parent_live_waits() -> None:
+    t, clock, sleep = _advancing_clock()
+    ok, refuse = wait_for_parent_and_giw_idle(
+        parent_dispatch_id="d1",
+        dispatch_status_fn=lambda _d: {"status": "running"},
+        giw_idle_probe_fn=lambda: (True, None),
+        timeout_s=4.0,
+        poll_s=2.0,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert not ok
+    assert refuse is None
+    assert t["now"] == 4.0
+
+
 def test_deferred_timeout_posts_one_reply_and_writes_result(
     tmp_path: Path,
 ) -> None:
@@ -452,6 +538,175 @@ def test_giw_busy_during_wait_never_executes(
     assert code == 2
     assert result.reason == "parent_wait_timeout"
     assert executed == []
+
+
+def _recycle_ctx(
+    tmp_path: Path, *, name: str, timeout_s: float, poll_s: float
+) -> DeferredRecycleContext:
+    return DeferredRecycleContext(
+        parent_dispatch_id="d-step1",
+        report_thread="15851",
+        report_after_turn=1293,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=tmp_path / name,
+        wait_timeout_s=timeout_s,
+        poll_s=poll_s,
+        repo_root=tmp_path,
+    )
+
+
+def test_step1_undetermined_reentry_bounded_by_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executed: list[bool] = []
+
+    def _boom(**_k: Any) -> GuardedReexecResult:
+        executed.append(True)
+        raise AssertionError("run_guarded_reexec must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        _boom,
+    )
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {
+        "busy": False,
+        "holder": None,
+        "probe_error": "ReadTimeout",
+        "determination": "undetermined",
+    }
+    t, clock, sleep = _advancing_clock()
+    code, result = run_deferred_recycle(
+        _recycle_ctx(tmp_path, name="undetermined.json", timeout_s=5.0, poll_s=2.0),
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **_k: None,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert code == 2
+    assert result.executed is False
+    assert result.reason == "step1_giw_busy_status_undetermined"
+    assert executed == []
+    assert t["now"] == 5.0
+    assert t["now"] <= 5.0
+
+
+def test_step1_undetermined_then_idle_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = _proof_rows()
+    giw_calls = {"n": 0}
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        if (
+            method == "busy_status"
+            and (params or {}).get("service") == "git_integration_worker"
+        ):
+            giw_calls["n"] += 1
+            if giw_calls["n"] == 1:
+                return {
+                    "busy": False,
+                    "holder": None,
+                    "probe_error": "ReadTimeout",
+                    "determination": "undetermined",
+                    "service": "git_integration_worker",
+                }
+        return _manage_from_rows(rows)(method, params, **kwargs)
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: GuardedReexecResult(
+            status="proof-satisfied",
+            reason="proof_satisfied",
+            dry_run=False,
+            target_ref="abc",
+            executed=True,
+        ),
+    )
+    t, clock, sleep = _advancing_clock()
+    code, result = run_deferred_recycle(
+        _recycle_ctx(tmp_path, name="then-idle.json", timeout_s=10.0, poll_s=2.0),
+        manage_call=manage_call,
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **_k: None,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert code == 0
+    assert result.executed is True
+    assert giw_calls["n"] >= 2
+    assert t["now"] == 2.0
+    assert t["now"] <= 10.0
+
+
+def _step1_determination_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    determination: str,
+    result_name: str,
+) -> tuple[int, GuardedReexecResult, float]:
+    executed: list[bool] = []
+
+    def _boom(**_k: Any) -> GuardedReexecResult:
+        executed.append(True)
+        raise AssertionError("run_guarded_reexec must not run")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        _boom,
+    )
+    rows = {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+    rows["git_integration_worker"] = {
+        "busy": determination == "busy",
+        "holder": None,
+        "probe_error": None,
+        "determination": determination,
+    }
+    t, clock, sleep = _advancing_clock()
+    code, result = run_deferred_recycle(
+        _recycle_ctx(tmp_path, name=result_name, timeout_s=10.0, poll_s=2.0),
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **_k: None,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert executed == []
+    return code, result, t["now"]
+
+
+def test_step1_giw_busy_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, result, elapsed = _step1_determination_exits(
+        tmp_path,
+        monkeypatch,
+        determination="busy",
+        result_name="busy.json",
+    )
+    assert code == 2
+    assert result.executed is False
+    assert result.reason == "step1_giw_busy_status_undetermined"
+    assert elapsed == 0.0
+
+
+def test_step1_giw_dead_heartbeat_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, result, elapsed = _step1_determination_exits(
+        tmp_path,
+        monkeypatch,
+        determination="dead_heartbeat",
+        result_name="dead.json",
+    )
+    assert code == 2
+    assert result.executed is False
+    assert result.reason == "step1_giw_busy_status_undetermined"
+    assert elapsed == 0.0
 
 
 def test_deferred_success_single_reply_and_p3_probes(
@@ -571,8 +826,7 @@ def test_deferred_success_reply_carries_pid_unverifiable_and_marker_compare(
     assert "pid_unverifiable: gateway" in replies[0]["body"]
     assert (
         "marker_compare: gateway container_started_at "
-        "2026-10-17T16:00:00Z -> 2026-10-17T16:00:00Z unchanged"
-        in replies[0]["body"]
+        "2026-10-17T16:00:00Z -> 2026-10-17T16:00:00Z unchanged" in replies[0]["body"]
     )
 
     replies.clear()

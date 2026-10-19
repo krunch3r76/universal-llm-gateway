@@ -1,4 +1,10 @@
-"""Deferred manage recycle — wait, re-gate, execute orchestration."""
+"""Deferred manage recycle — one deadline for parent wait, GIW idle, and step1.
+
+``run_deferred_recycle`` is the child path after a parent dispatch is armed.
+It polls until that parent row is terminal and git_integration_worker is idle,
+re-checks the step1 gate, then calls ``run_guarded_reexec``. Transient GIW
+probe failures stay inside the original timeout instead of ending the window.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +31,15 @@ from .result import GuardedReexecResult
 from .runner import _write_result_file, run_guarded_reexec
 
 _STATUS_TERMINAL = frozenset({"completed", "failed", "cancelled"})
+_GIW_IDLE_TRANSIENT_REASONS = frozenset(
+    {
+        "giw_idle_ledger_unreadable",
+        "giw_idle_busy_status_unobservable",
+        "giw_idle_busy_status_undetermined",
+    }
+)
+_CHECK_TRANSIENT_CONSECUTIVE = "giw_idle_transient_consecutive"
+_CHECK_TRANSIENT_TOTAL = "giw_idle_transient_total"
 
 ManageCall = Callable[..., dict[str, Any]]
 DispatchStatusFn = Callable[[str], dict[str, Any] | None]
@@ -45,6 +60,11 @@ def _manage(
 
 
 def dispatch_status_terminal(row: dict[str, Any] | None) -> bool:
+    """True when a dispatch row has reached completed, failed, or cancelled.
+
+    A missing row is not terminal. Callers use this to decide whether the
+    parent dispatch has left the in-flight set. No I/O.
+    """
     if not row:
         return False
     return str(row.get("status") or "") in _STATUS_TERMINAL
@@ -56,6 +76,14 @@ def giw_idle_probe(
     *,
     sock_path: str | None,
 ) -> tuple[bool, str | None]:
+    """Read the GIW lease and busy_status once and say whether it is idle.
+
+    Returns ``(True, None)`` only when the lease holder is empty, the queue
+    depth is zero, and busy_status determination is idle with no holder.
+    Ledger read failures, unobservable busy_status, and undetermined rows
+    return a named refuse reason. Busy or held rows return ``(False, None)``.
+    Side effect: one ``busy_status`` manage call for git_integration_worker.
+    """
     try:
         snap = ledger_factory().lease_snapshot()
     except Exception:
@@ -85,6 +113,19 @@ def _ledger_factory_default() -> CursorDispatchLedger:
     return CursorDispatchLedger.instance()
 
 
+def _bounded_sleep(
+    sleep: SleepFn,
+    *,
+    poll_s: float,
+    deadline: float,
+    now: ClockFn,
+) -> None:
+    remaining = deadline - now()
+    if remaining <= 0:
+        return
+    sleep(min(poll_s, remaining))
+
+
 def wait_for_parent_and_giw_idle(
     *,
     parent_dispatch_id: str,
@@ -94,18 +135,48 @@ def wait_for_parent_and_giw_idle(
     poll_s: float,
     clock: ClockFn | None = None,
     sleep_fn: SleepFn | None = None,
+    checks: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
+    """Poll until the parent is terminal and GIW is idle, or the budget ends.
+
+    ``timeout_s`` is the remaining seconds from ``clock()`` for this call.
+    Callers that already own a deadline pass only the time left; this function
+    does not add a fresh full window. Ledger-unreadable, busy-status
+    unobservable, and busy-status undetermined samples count as not idle and
+    keep polling. At the deadline a trailing transient reason is returned and
+    consecutive plus total counts are written onto ``checks`` when that dict
+    is provided. Any other exhausted budget returns ``(False, None)``. A
+    refuse string outside that set returns immediately.
+
+    Returns ``(True, None)`` when the parent row is terminal and the probe is
+    idle. No I/O beyond the injected probe and status callables.
+    """
     now = clock or time.time
     sleep = sleep_fn or time.sleep
     deadline = now() + timeout_s
+    consecutive = 0
+    total = 0
+    last_transient: str | None = None
     while now() < deadline:
         idle, refuse = giw_idle_probe_fn()
-        if refuse:
+        if refuse in _GIW_IDLE_TRANSIENT_REASONS:
+            last_transient = refuse
+            consecutive += 1
+            total += 1
+        elif refuse:
             return False, refuse
-        parent_row = dispatch_status_fn(parent_dispatch_id)
-        if dispatch_status_terminal(parent_row) and idle:
-            return True, None
-        sleep(poll_s)
+        else:
+            consecutive = 0
+            last_transient = None
+            parent_row = dispatch_status_fn(parent_dispatch_id)
+            if dispatch_status_terminal(parent_row) and idle:
+                return True, None
+        _bounded_sleep(sleep, poll_s=poll_s, deadline=deadline, now=now)
+    if last_transient is not None:
+        if checks is not None:
+            checks[_CHECK_TRANSIENT_CONSECUTIVE] = consecutive
+            checks[_CHECK_TRANSIENT_TOTAL] = total
+        return False, last_transient
     return False, None
 
 
@@ -141,6 +212,36 @@ def _refused_exit(
     return 2, refused
 
 
+def _step1_giw_undetermined_reentry(gate: Any) -> bool:
+    """True when step1 failed because the GIW row itself is undetermined.
+
+    ``step1_giw_busy_status_undetermined`` also covers busy, dead_heartbeat,
+    and in_progress. Only ``probe_error`` or ``determination == "undetermined"``
+    on the git_integration_worker offender may re-enter the wait.
+    """
+    if getattr(gate, "reason", None) != "step1_giw_busy_status_undetermined":
+        return False
+    for offender in getattr(gate, "offenders", None) or []:
+        if not isinstance(offender, dict):
+            continue
+        if offender.get("service") != "git_integration_worker":
+            continue
+        row = offender.get("row")
+        if not isinstance(row, dict):
+            return False
+        return (
+            row.get("probe_error") is not None
+            or row.get("determination") == "undetermined"
+        )
+    return False
+
+
+def _gate_finding_checks(gate: Any) -> dict[str, Any]:
+    return {
+        "findings": [{"reason": gate.reason, "offenders": gate.offenders}],
+    }
+
+
 def run_deferred_recycle(
     ctx: DeferredRecycleContext,
     *,
@@ -152,9 +253,23 @@ def run_deferred_recycle(
     clock: ClockFn | None = None,
     sleep_fn: SleepFn | None = None,
 ) -> tuple[int, GuardedReexecResult]:
+    """Wait out the parent, re-gate step1, then execute the guarded recycle.
+
+    The deadline is ``clock() + ctx.wait_timeout_s`` once, before any poll.
+    A GIW row with ``probe_error`` set or ``determination == "undetermined"``
+    sleeps ``poll_s`` (capped at the time left) and calls the wait again with
+    only the remaining seconds. Busy, dead_heartbeat, in_progress, and every
+    other step1 reason return immediately. Execute runs only after a terminal
+    parent, an idle GIW probe, and a passing step1 gate.
+
+    Returns the process exit code and the guarded result. Refusals write the
+    result file and post one maestro reply.
+    """
     manage = manage_call or call_manage
     sock = ctx.sock_path
     factory = ledger_factory or _ledger_factory_default
+    now = clock or time.time
+    sleep = sleep_fn or time.sleep
 
     if dispatch_status_fn is None:
         dispatch_status_fn = lambda did: factory().dispatch_status_by_id(  # noqa: E731
@@ -165,47 +280,79 @@ def run_deferred_recycle(
         lambda: giw_idle_probe(manage, factory, sock_path=sock)  # noqa: E731
     )
 
-    ready, refuse_reason = wait_for_parent_and_giw_idle(
-        parent_dispatch_id=ctx.parent_dispatch_id,
-        dispatch_status_fn=dispatch_status_fn,
-        giw_idle_probe_fn=giw_probe,
-        timeout_s=ctx.wait_timeout_s,
-        poll_s=ctx.poll_s,
-        clock=clock,
-        sleep_fn=sleep_fn,
-    )
+    deadline = now() + ctx.wait_timeout_s
+    probe_checks: dict[str, Any] = {}
+    deadline_reason = "parent_wait_timeout"
+    deadline_checks: dict[str, Any] = {}
 
-    if refuse_reason:
-        return _refused_exit(
-            ctx,
-            reason=refuse_reason,
-            manage_before={},
-            child_before={},
-            reply_fn=reply_fn,
+    while True:
+        remaining = deadline - now()
+        if remaining <= 0:
+            return _refused_exit(
+                ctx,
+                reason=deadline_reason,
+                manage_before={},
+                child_before={},
+                reply_fn=reply_fn,
+                checks=deadline_checks,
+            )
+        ready, refuse_reason = wait_for_parent_and_giw_idle(
+            parent_dispatch_id=ctx.parent_dispatch_id,
+            dispatch_status_fn=dispatch_status_fn,
+            giw_idle_probe_fn=giw_probe,
+            timeout_s=remaining,
+            poll_s=ctx.poll_s,
+            clock=clock,
+            sleep_fn=sleep_fn,
+            checks=probe_checks,
         )
+        if refuse_reason:
+            return _refused_exit(
+                ctx,
+                reason=refuse_reason,
+                manage_before={},
+                child_before={},
+                reply_fn=reply_fn,
+                checks=probe_checks,
+            )
+        if not ready:
+            return _refused_exit(
+                ctx,
+                reason="parent_wait_timeout",
+                manage_before={},
+                child_before={},
+                reply_fn=reply_fn,
+            )
 
-    if not ready:
-        return _refused_exit(
-            ctx,
-            reason="parent_wait_timeout",
-            manage_before={},
-            child_before={},
-            reply_fn=reply_fn,
+        gate = run_recycle_step1_per_service_gate(
+            manage,
+            parent_dispatch_id=ctx.parent_dispatch_id,
+            sock_path=sock,
         )
-
-    gate = run_recycle_step1_per_service_gate(
-        manage,
-        parent_dispatch_id=ctx.parent_dispatch_id,
-        sock_path=sock,
-    )
-    if gate is not None:
+        if gate is None:
+            break
+        if _step1_giw_undetermined_reentry(gate):
+            deadline_reason = gate.reason
+            deadline_checks = _gate_finding_checks(gate)
+            remaining = deadline - now()
+            if remaining <= 0:
+                return _refused_exit(
+                    ctx,
+                    reason=gate.reason,
+                    manage_before={},
+                    child_before={},
+                    reply_fn=reply_fn,
+                    checks=deadline_checks,
+                )
+            _bounded_sleep(sleep, poll_s=ctx.poll_s, deadline=deadline, now=now)
+            continue
         return _refused_exit(
             ctx,
             reason=gate.reason,
             manage_before={},
             child_before={},
             reply_fn=reply_fn,
-            checks={"findings": [{"reason": gate.reason, "offenders": gate.offenders}]},
+            checks=_gate_finding_checks(gate),
         )
 
     manage_before = _manage(manage, "whoami", {}, sock)
