@@ -15,6 +15,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -27,6 +28,7 @@ from .restart_intent_states import (
     _BLOCKS_NEW_RESTART,
     _NEEDS_RECONCILE,
     _TERMINAL,
+    LIVE_STATUSES,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
@@ -34,6 +36,7 @@ from .restart_intent_states import (
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
+    STATUS_VERIFYING_ACTIVATION,
 )
 from .restart_intent_transitions import (
     append_kill_commit,
@@ -48,6 +51,19 @@ from .restart_window_store import (
 from .service_config import GATEWAY_DIR
 
 logger = get_logger(__name__)
+
+
+class ArmResultKind(StrEnum):
+    """Outcome of ``arm_with_boundary`` (S2)."""
+
+    ARMED = "armed"
+    NOT_APPLICABLE = "not_applicable"
+    LOST_RACE = "lost_race"
+
+
+@dataclass(frozen=True, slots=True)
+class ArmResult:
+    kind: ArmResultKind
 
 
 class RestartIntentCancelError(Exception):
@@ -333,6 +349,29 @@ class RestartIntentStore:
         reason: str | None = None,
     ) -> int:
         """CAS; transition reason does not overwrite the arm reason."""
+        return self.advance_if_status_in(
+            intent_id,
+            from_statuses=frozenset({from_status}),
+            to_status=to_status,
+            reason=reason,
+        )
+
+    def _refuse_aborting_status(self, status: str, to_status: str) -> bool:
+        if status == STATUS_CANCELLED:
+            return True
+        if status == STATUS_FORCE_REQUESTED and to_status != STATUS_DRAINED_RESTARTING:
+            return True
+        return False
+
+    def advance_if_status_in(
+        self,
+        intent_id: str,
+        *,
+        from_statuses: frozenset[str],
+        to_status: str,
+        reason: str | None = None,
+    ) -> int:
+        """CAS from any of ``from_statuses`` (S1). One ``BEGIN IMMEDIATE`` txn."""
         if to_status not in _ALL_STATUSES:
             raise ValueError(f"unknown intent status: {to_status!r}")
         recorded = _reason_code("unspecified_transition") if not reason else reason
@@ -342,7 +381,14 @@ class RestartIntentStore:
                 "SELECT status FROM restart_intents WHERE intent_id=?",
                 (intent_id,),
             ).fetchone()
-            if row is None or row["status"] != from_status:
+            if row is None:
+                conn.commit()
+                return 0
+            current = row["status"]
+            if self._refuse_aborting_status(current, to_status):
+                conn.commit()
+                return 0
+            if current not in from_statuses:
                 conn.commit()
                 return 0
             changed = append_status_transition(
@@ -350,6 +396,68 @@ class RestartIntentStore:
             )
             conn.commit()
             return 1 if changed else 0
+
+    def arm_with_boundary(
+        self,
+        intent_id: str,
+        *,
+        from_statuses: frozenset[str],
+        kill_boundary_at: str,
+        verify_arm_reason: str,
+        completed_reason: str,
+        arms_verify: bool,
+    ) -> ArmResult:
+        """Record kill boundary and arm verify in one txn (S2).
+
+        Sets ``kill_boundary_at`` then appends the status transition without
+        an intermediate commit. Returns ``lost_race`` when the CAS misses.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status FROM restart_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return ArmResult(ArmResultKind.LOST_RACE)
+            current = row["status"]
+            target_status = (
+                STATUS_VERIFYING_ACTIVATION if arms_verify else STATUS_COMPLETED
+            )
+            if self._refuse_aborting_status(current, target_status):
+                conn.commit()
+                return ArmResult(ArmResultKind.LOST_RACE)
+            if current not in from_statuses:
+                conn.commit()
+                return ArmResult(ArmResultKind.LOST_RACE)
+            stamp = _now()
+            conn.execute(
+                "UPDATE restart_intents SET kill_boundary_at=?, updated_at=? "
+                "WHERE intent_id=?",
+                (kill_boundary_at, stamp, intent_id),
+            )
+            if not arms_verify:
+                append_status_transition(
+                    conn,
+                    intent_id,
+                    status=STATUS_COMPLETED,
+                    reason=completed_reason,
+                    at=stamp,
+                )
+                conn.commit()
+                return ArmResult(ArmResultKind.NOT_APPLICABLE)
+            changed = append_status_transition(
+                conn,
+                intent_id,
+                status=STATUS_VERIFYING_ACTIVATION,
+                reason=verify_arm_reason,
+                at=stamp,
+            )
+            conn.commit()
+            if not changed:
+                return ArmResult(ArmResultKind.LOST_RACE)
+            return ArmResult(ArmResultKind.ARMED)
 
     def claim_kill(
         self,
@@ -541,10 +649,12 @@ class RestartIntentStore:
 # Re-export status constants for backward compatibility.
 from .restart_intent_states import (  # noqa: E402
     STATUS_ACTIVATION_UNVERIFIED,
-    STATUS_VERIFYING_ACTIVATION,
 )
 
 __all__ = [
+    "ArmResult",
+    "ArmResultKind",
+    "LIVE_STATUSES",
     "Intent",
     "IntentStatusView",
     "RestartIntentCancelError",

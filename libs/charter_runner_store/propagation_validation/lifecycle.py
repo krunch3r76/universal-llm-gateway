@@ -169,7 +169,17 @@ def sweep_stale_pending_validations(
 
 
 def repair_supersession_pairs(*, store=None, conn=None) -> None:
-    """Align superseded validation rows with their replacement restart intents."""
+    """Align superseded validation rows with their replacement restart intents.
+
+    Two repair halves, each reading the column its writer uses:
+
+    * Pending validations whose intent is ``activation_unverified`` with a
+      ``superseded_by:`` prefix in **status_reason** (written at
+      ``advance_if_status`` via ``mint_pending_validation_for_intent``, not the
+      arm ``reason`` column).
+    * Superseded validations whose linked intent is still ``verifying_activation``
+      — reads **failure_reason** on the validation row (``lc:204-211``).
+    """
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -184,7 +194,7 @@ def repair_supersession_pairs(*, store=None, conn=None) -> None:
             intent = store.get(str(intent_id))
             if intent is None:
                 continue
-            reason = intent.reason or ""
+            reason = intent.status_reason or ""
             if intent.status == "activation_unverified" and reason.startswith(
                 _SUPERSEDED_PREFIX
             ):

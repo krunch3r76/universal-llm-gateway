@@ -354,7 +354,8 @@ async def test_busy_status_hides_failed_intent_and_keeps_last(tmp_path: Any) -> 
     assert busy["restart_intent"] is None
     last = busy["restart_intent_last"]
     assert last["intent_id"] == intent.intent_id
-    assert last["status"] == "failed"
+    assert last["status"] == "fired_unverified"
+    assert last["executed"] is True
     assert last["reason"] == "lifecycle_exception:RuntimeError"
     assert last["drain_begun"] is False
     assert last["armed_at"]
@@ -444,6 +445,7 @@ def test_supervisor_reasons_use_known_codes() -> None:
         ACTIVATION_VERIFY_ARMED,
         ALL_REASON_CODES,
         BEGIN_DRAIN_UNREACHABLE,
+        DRAIN_STATE_UNREADABLE_FINAL_CHECK,
         EPOCH_CHECK_MISMATCH,
         EPOCH_CHECK_OK,
         FORCE_START_COMPLETED,
@@ -453,6 +455,7 @@ def test_supervisor_reasons_use_known_codes() -> None:
         KILL_FAILED,
         LIFECYCLE_UNCONFIRMED,
         RECONCILE_RESUME_FAILED,
+        RESUME_GENERATION_UNBOUND,
         SUPERVISOR_EXCEPTION,
         TARGET_GONE,
         UNSPECIFIED_TRANSITION,
@@ -475,6 +478,8 @@ def test_supervisor_reasons_use_known_codes() -> None:
         reason_code(ACTIVATION_VALIDATED),
         reason_code(RECONCILE_RESUME_FAILED),
         reason_code(KILL_COMMIT),
+        reason_code(DRAIN_STATE_UNREADABLE_FINAL_CHECK),
+        reason_code(RESUME_GENERATION_UNBOUND),
         reason_code(UNSPECIFIED_TRANSITION),
     ]
     for sample in samples:

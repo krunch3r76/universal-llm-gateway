@@ -43,6 +43,8 @@ ACTIVATION_VERIFY_ARMED = "activation_verify_armed"
 ACTIVATION_VALIDATED = "activation_validated"
 RECONCILE_RESUME_FAILED = "reconcile_resume_failed"
 UNSPECIFIED_TRANSITION = "unspecified_transition"
+DRAIN_STATE_UNREADABLE_FINAL_CHECK = "drain_state_unreadable_final_check"
+RESUME_GENERATION_UNBOUND = "resume_generation_unbound"
 
 ALL_REASON_CODES = frozenset(
     {
@@ -71,6 +73,8 @@ ALL_REASON_CODES = frozenset(
         ACTIVATION_VALIDATED,
         RECONCILE_RESUME_FAILED,
         UNSPECIFIED_TRANSITION,
+        DRAIN_STATE_UNREADABLE_FINAL_CHECK,
+        RESUME_GENERATION_UNBOUND,
     }
 )
 

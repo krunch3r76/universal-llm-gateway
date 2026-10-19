@@ -241,3 +241,56 @@ def test_head_lookup_does_not_return_foreign_bound_validation(
     )
     assert by_sha["activation"] is not None
     assert by_sha["activation"]["validation_id"] == occupied_id
+
+
+def test_repair_supersession_reads_status_reason(monkeypatch, tmp_path) -> None:
+    """T15.a/b: pending loop matches status_reason, not arm reason (C21)."""
+    from charter_runner_store.propagation_validation.lifecycle import (
+        repair_supersession_pairs,
+    )
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    calls: list[tuple[str, str, str]] = []
+
+    class _FakeStore:
+        def get(self, intent_id: str):
+            if intent_id == "old":
+                return SimpleNamespace(
+                    intent_id="old",
+                    status="activation_unverified",
+                    reason="manage restart (park_live)",
+                    status_reason="superseded_by:new",
+                )
+            if intent_id == "disc":
+                return SimpleNamespace(
+                    intent_id="disc",
+                    status="activation_unverified",
+                    reason="superseded_by:new",
+                    status_reason="idle_timeout",
+                )
+            return None
+
+        def advance_if_status(self, intent_id, **kwargs):
+            calls.append((intent_id, kwargs.get("from_status"), kwargs.get("to_status")))
+            return 1
+
+    vid = propagation_validation.record_validation(
+        service="git_integration_worker",
+        code_ref=_ROW_SHA,
+        restart_intent="old",
+        outcome="pending",
+    )
+    repair_supersession_pairs(store=_FakeStore())
+    row = get_validation(vid)
+    assert row is not None
+    assert row.outcome == "superseded"
+    assert row.failure_reason == "superseded_by:new"
+    assert calls == []
+
+    vid2 = propagation_validation.record_validation(
+        service="git_integration_worker",
+        code_ref=_ROW_SHA,
+        restart_intent="disc",
+        outcome="pending",
+    )
+    repair_supersession_pairs(store=_FakeStore())
+    assert get_validation(vid2).outcome == "pending"

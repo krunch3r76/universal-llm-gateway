@@ -1807,3 +1807,107 @@ def test_cancel_stargate_intent_clears_window_and_slot(
     result = _run(_cancel())
     assert result["status"] == "cancelled"
     assert store.window_for_service("stargate") is None
+
+
+def test_resumed_bound_drained_restarting_same_gen_kills(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """T1.a: bound drained_restarting resume skips begin-drain and delivers one kill."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    assert store.claim_kill(
+        intent.intent_id,
+        worker_id="w1",
+        worker_started_at="t1",
+        drain_epoch=1,
+    )
+    intent = store.get(intent.intent_id)  # type: ignore[assignment]
+    worker = _Worker(
+        drain_states=[_snap(draining=True, epoch=1, active=0)],
+        begin_snap=_snap(draining=True, epoch=1, active=0),
+    )
+    kill = _Kill()
+    sup = _supervisor(store, worker, _Feed([]), kill)
+    _run(sup.supervise(intent))
+    assert worker.begun == []
+    assert kill.calls == 1
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status in {
+        STATUS_VERIFYING_ACTIVATION,
+        STATUS_COMPLETED,
+        STATUS_ACTIVATION_UNVERIFIED,
+    }
+
+
+def test_idle_gate_skips_other_generation_bound_resume(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T14.a: w2 snapshots must not idle-escalate kill on bound drained_restarting."""
+    import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
+
+    monkeypatch.setattr(sup_mod, "_GENERATION_GONE_CONFIRM_WINDOW_S", 0.03)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    store.claim_kill(
+        intent.intent_id,
+        worker_id="w1",
+        worker_started_at="t1",
+        drain_epoch=1,
+    )
+    intent = store.get(intent.intent_id)  # type: ignore[assignment]
+    w2 = _snap(
+        draining=True,
+        epoch=1,
+        worker_id="w2",
+        started="t2",
+        active=1,
+        ops=[{"op_id": "o1"}],
+    )
+
+    class _FlapWorker:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def drain_state(self) -> dict[str, Any]:
+            self.n += 1
+            if self.n % 3 == 0:
+                raise RuntimeError("probe miss")
+            return w2
+
+        async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError("begin-drain must not run on resume")
+
+    flap = _FlapWorker()
+
+    async def _pid_present() -> bool:
+        return False
+
+    kill = _Kill()
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=flap.begin_drain,
+        drain_state=flap.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        idle_escalate_s=0.2,
+        process_absent=_pid_present,
+    )
+
+    _run(_supervise_until(sup, intent, hold_s=0.65))
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_DRAINED_RESTARTING

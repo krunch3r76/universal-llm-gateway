@@ -30,13 +30,17 @@ from .restart_intent_reason_codes import (
     reason_code,
 )
 from .restart_intent_states import (
+    LIVE_STATUSES,
     STATUS_ACTIVATION_UNVERIFIED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
-    STATUS_PENDING_DRAIN,
     STATUS_VERIFYING_ACTIVATION,
 )
-from .restart_intent_store import Intent, RestartIntentStore
+from .restart_intent_store import (
+    ArmResultKind,
+    Intent,
+    RestartIntentStore,
+)
 
 logger = get_logger(__name__)
 
@@ -73,25 +77,22 @@ def mint_activation_validation(
     )
 
 
-def _persist_kill_boundary(
-    store: RestartIntentStore,
+def _bind_validation_boundary(
     intent: Intent,
     *,
+    kill_boundary_at: str,
     boundary_source: str,
-) -> tuple[str, Any | None]:
-    """Record kill boundary on intent and bound validation row when present."""
-    kill_boundary_at = datetime.now(UTC).isoformat()
-    kill_mono = time.monotonic()
-    store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
+) -> Any | None:
+    """Record kill boundary on the bound validation row when present."""
     validation = latest_validation_for_intent(intent.intent_id)
     if validation is not None:
         set_kill_boundary(
             validation.validation_id,
             kill_boundary_at=kill_boundary_at,
             boundary_source=boundary_source,
-            restart_boundary_monotonic=kill_mono,
+            restart_boundary_monotonic=time.monotonic(),
         )
-    return kill_boundary_at, validation
+    return validation
 
 
 async def record_kill_boundary_and_arm_verify(
@@ -101,26 +102,28 @@ async def record_kill_boundary_and_arm_verify(
     boundary_source: str,
     from_status: str = STATUS_DRAINED_RESTARTING,
 ) -> None:
-    """Persist kill boundary, emit verifying event, and schedule activation verify."""
-    kill_boundary_at, validation = _persist_kill_boundary(
-        store, intent, boundary_source=boundary_source
-    )
-    if not arms_activation_verify(intent.action):
-        store.advance(
-            intent.intent_id,
-            status=STATUS_COMPLETED,
-            reason=reason_code(
-                ACTIVATION_NOT_APPLICABLE, "does not apply to this action"
-            ),
-        )
-        return
-    cas_ok = store.advance_if_status(
+    """Persist kill boundary, emit verifying event, and schedule activation verify (V2)."""
+    kill_boundary_at = datetime.now(UTC).isoformat()
+    arms = arms_activation_verify(intent.action)
+    result = store.arm_with_boundary(
         intent.intent_id,
-        from_status=from_status,
-        to_status=STATUS_VERIFYING_ACTIVATION,
-        reason=reason_code(ACTIVATION_VERIFY_ARMED, "kill boundary recorded"),
+        from_statuses=frozenset({from_status}),
+        kill_boundary_at=kill_boundary_at,
+        verify_arm_reason=reason_code(
+            ACTIVATION_VERIFY_ARMED, "kill boundary recorded"
+        ),
+        completed_reason=reason_code(
+            ACTIVATION_NOT_APPLICABLE, "does not apply to this action"
+        ),
+        arms_verify=arms,
     )
-    if not cas_ok:
+    if result.kind == ArmResultKind.LOST_RACE:
+        store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
+        return
+    validation = _bind_validation_boundary(
+        intent, kill_boundary_at=kill_boundary_at, boundary_source=boundary_source
+    )
+    if result.kind == ArmResultKind.NOT_APPLICABLE:
         return
     if validation is None:
         _terminal_unverified_no_validation(
@@ -142,25 +145,35 @@ async def record_kill_boundary_and_arm_verify(
 async def arm_verify_after_generation_gone(
     store: RestartIntentStore,
     intent: Intent,
+    *,
+    from_statuses: frozenset[str] | None = None,
+    completed_reason: str | None = None,
 ) -> bool:
-    """Generation-gone path: record boundary and arm verify without SIGTERM.
+    """Generation-gone path: record boundary and arm verify without SIGTERM (V1).
 
     Returns True when the intent reached a state requiring no further caller
     action (normal arm or self-terminalization). Returns False when verification
     does not apply to this action and the caller may treat the intent as completed.
     """
-    _, validation = _persist_kill_boundary(
-        store, intent, boundary_source="generation_gone"
+    live = from_statuses if from_statuses is not None else LIVE_STATUSES
+    kill_boundary_at = datetime.now(UTC).isoformat()
+    completed = completed_reason or reason_code(
+        ACTIVATION_NOT_APPLICABLE, "does not apply to this action"
     )
-    if not arms_activation_verify(intent.action):
-        return False
-    cas_ok = store.advance_if_status(
+    result = store.arm_with_boundary(
         intent.intent_id,
-        from_status=STATUS_PENDING_DRAIN,
-        to_status=STATUS_VERIFYING_ACTIVATION,
-        reason=reason_code(ACTIVATION_VERIFY_ARMED, "generation gone"),
+        from_statuses=live,
+        kill_boundary_at=kill_boundary_at,
+        verify_arm_reason=reason_code(ACTIVATION_VERIFY_ARMED, "generation gone"),
+        completed_reason=completed,
+        arms_verify=arms_activation_verify(intent.action),
     )
-    if not cas_ok:
+    if result.kind == ArmResultKind.LOST_RACE:
+        return True
+    validation = _bind_validation_boundary(
+        intent, kill_boundary_at=kill_boundary_at, boundary_source="generation_gone"
+    )
+    if result.kind == ArmResultKind.NOT_APPLICABLE:
         return False
     if validation is None:
         _terminal_unverified_no_validation(

@@ -31,6 +31,10 @@ from .restart_intent_store import Intent
 logger = get_logger(__name__)
 
 
+class BeginDrainTargetAbsent(Exception):  # noqa: N818 — plan name
+    """Begin-drain failed because the health/pid probe reports no process (C18)."""
+
+
 class BeginDrainSeat(Protocol):
     """The supervisor surface this retry needs."""
 
@@ -69,6 +73,8 @@ async def begin_drain_or_wait(
             if seat._abort_kind(intent) is not None:
                 return None
             if await seat._health_pid_absent():
+                if intent.drain_epoch is not None:
+                    raise BeginDrainTargetAbsent from None
                 raise
             failures += 1
             elapsed = time.monotonic() - t0
@@ -88,4 +94,8 @@ async def begin_drain_or_wait(
         await asyncio.sleep(seat.reconcile_interval_s)
 
 
-__all__ = ["BeginDrainSeat", "begin_drain_or_wait"]
+__all__ = [
+    "BeginDrainSeat",
+    "BeginDrainTargetAbsent",
+    "begin_drain_or_wait",
+]

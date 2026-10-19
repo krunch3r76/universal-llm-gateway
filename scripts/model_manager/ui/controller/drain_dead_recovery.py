@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 
 from charter_runner_store.propagation_validation import latest_validation_for_intent
 from universal_logging import get_logger
@@ -23,7 +24,11 @@ from .restart_intent_reason_codes import (
     FORCE_START_PENDING,
     reason_code,
 )
-from .restart_intent_states import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING_DRAIN
+from .restart_intent_states import (
+    LIVE_STATUSES,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+)
 from .restart_intent_store import Intent, RestartIntentStore
 
 logger = get_logger(__name__)
@@ -38,6 +43,15 @@ START_GAP_S = 15.0
 
 StartCaller = Callable[[], Awaitable[str]]
 ReadPid = Callable[[], Awaitable[int | None]]
+
+
+class ForceStartOutcome(StrEnum):
+    """Result of ``force_start_with_outcome`` (C4)."""
+
+    ARMED = "armed"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    LOST_RACE = "lost_race"
 
 
 def drain_supervisor_start(action: str, start: StartCaller) -> StartCaller | None:
@@ -97,17 +111,18 @@ def intent_code_ref(intent: Intent) -> str | None:
     return str(code_ref) if code_ref else None
 
 
-def _fail_pending(store: RestartIntentStore, intent: Intent) -> None:
-    current = store.get(intent.intent_id)
-    if current is not None and current.status == STATUS_PENDING_DRAIN:
-        store.advance(
-            intent.intent_id,
-            status=STATUS_FAILED,
-            reason=reason_code(FORCE_START_PENDING, "left the intent pending"),
-        )
+def _fail_pending(store: RestartIntentStore, intent: Intent) -> bool:
+    """Mark the intent failed from any LIVE status. Returns True when the CAS won."""
+    changed = store.advance_if_status_in(
+        intent.intent_id,
+        from_statuses=LIVE_STATUSES,
+        to_status=STATUS_FAILED,
+        reason=reason_code(FORCE_START_PENDING, "left the intent pending"),
+    )
+    return changed == 1
 
 
-async def force_start_and_validate(
+async def force_start_with_outcome(
     store: RestartIntentStore,
     intent: Intent,
     start: StartCaller,
@@ -115,13 +130,8 @@ async def force_start_and_validate(
     reason: str,
     prior_pid: int | None = None,
     read_pid: ReadPid | None = None,
-) -> str:
-    """Start the worker and arm activation verify only if a new process exists.
-
-    Does not SIGTERM. ``reason`` is ``dead_target`` or ``deadline_ceiling``.
-    "already running", a failed start, or a re-read pid that still matches
-    ``prior_pid`` leaves the intent failed and does not arm verify.
-    """
+) -> tuple[ForceStartOutcome, str]:
+    """Start the worker and arm activation verify when a new process exists (C4)."""
     code_ref = intent_code_ref(intent)
     logger.warning(
         "drain force-start: intent_id=%s reason=%s code_ref=%s",
@@ -131,17 +141,19 @@ async def force_start_and_validate(
     )
     try:
         message = await start()
-    except Exception:
-        _fail_pending(store, intent)
-        raise
+    except Exception as exc:
+        if _fail_pending(store, intent):
+            return ForceStartOutcome.FAILED, str(exc)
+        return ForceStartOutcome.LOST_RACE, str(exc)
     if not start_spawned_new_process(message):
         logger.warning(
             "drain force-start did not spawn: intent_id=%s message=%s",
             intent.intent_id,
             message[:200],
         )
-        _fail_pending(store, intent)
-        return message
+        if _fail_pending(store, intent):
+            return ForceStartOutcome.FAILED, message
+        return ForceStartOutcome.LOST_RACE, message
     if read_pid is not None:
         try:
             observed = await read_pid()
@@ -160,17 +172,46 @@ async def force_start_and_validate(
                 prior_pid,
                 observed,
             )
-            _fail_pending(store, intent)
-            return message
+            if _fail_pending(store, intent):
+                return ForceStartOutcome.FAILED, message
+            return ForceStartOutcome.LOST_RACE, message
     armed = await arm_verify_after_generation_gone(store, intent)
-    if not armed:
-        current = store.get(intent.intent_id)
-        if current is not None and current.status == STATUS_PENDING_DRAIN:
-            store.advance(
-                intent.intent_id,
-                status=STATUS_COMPLETED,
-                reason=reason_code(FORCE_START_COMPLETED, "without activation verify"),
-            )
+    if armed:
+        return ForceStartOutcome.ARMED, message
+    current = store.get(intent.intent_id)
+    if current is not None and current.status == STATUS_COMPLETED:
+        return ForceStartOutcome.COMPLETED, message
+    if current is not None and current.status == STATUS_FAILED:
+        return ForceStartOutcome.FAILED, message
+    completed = store.advance_if_status_in(
+        intent.intent_id,
+        from_statuses=LIVE_STATUSES,
+        to_status=STATUS_COMPLETED,
+        reason=reason_code(FORCE_START_COMPLETED, "without activation verify"),
+    )
+    if completed:
+        return ForceStartOutcome.COMPLETED, message
+    return ForceStartOutcome.LOST_RACE, message
+
+
+async def force_start_and_validate(
+    store: RestartIntentStore,
+    intent: Intent,
+    start: StartCaller,
+    *,
+    reason: str,
+    prior_pid: int | None = None,
+    read_pid: ReadPid | None = None,
+) -> str:
+    """Start the worker and arm activation verify only if a new process exists."""
+    _outcome, message = await force_start_with_outcome(
+        store,
+        intent,
+        start,
+        reason=reason,
+        prior_pid=prior_pid,
+        read_pid=read_pid,
+    )
     return message
 
 

@@ -64,3 +64,33 @@ def test_intent_status_view_pending_drain_passthrough_drain_epoch_none() -> None
     view = intent_status_view(_intent(drain_epoch=None), now=datetime.now(UTC))
 
     assert view["drain_epoch"] is None
+
+
+def test_arm_with_boundary_lost_race_leaves_no_verify(tmp_path) -> None:
+    """T2: lost CAS does not arm verifying_activation."""
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        STATUS_COMPLETED,
+        ArmResultKind,
+        RestartIntentStore,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance(intent.intent_id, status=STATUS_COMPLETED, reason="done")
+    result = store.arm_with_boundary(
+        intent.intent_id,
+        from_statuses=frozenset({STATUS_PENDING_DRAIN}),
+        kill_boundary_at="2026-01-01T00:00:00+00:00",
+        verify_arm_reason="activation_verify_armed:test",
+        completed_reason="activation_not_applicable:test",
+        arms_verify=True,
+    )
+    assert result.kind == ArmResultKind.LOST_RACE
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_COMPLETED
+    assert got.kill_boundary_at is None

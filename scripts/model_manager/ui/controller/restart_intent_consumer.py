@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .restart_intent_reason_codes import TERMINAL_STATUS_PROJECTION, TTL_EXPIRED
-from .restart_intent_states import _NEEDS_RECONCILE
+from .restart_intent_states import (
+    _NEEDS_RECONCILE,
+    STATUS_DRAINED_RESTARTING,
+    STATUS_VERIFYING_ACTIVATION,
+)
 from .restart_intent_store import Intent, intent_status_view
 
 __all__ = [
@@ -71,6 +75,20 @@ def project_restart_intent_consumer(
     }
 
 
+def _restart_execution_evidence(intent: Intent) -> bool:
+    """True when kill boundary or a pre-terminal drain/verify transition exists (C6)."""
+    if intent.kill_boundary_at:
+        return True
+    history = intent.transitions or []
+    if len(history) < 2:
+        return False
+    prior_statuses = {entry.get("status") for entry in history[:-1]}
+    return (
+        STATUS_DRAINED_RESTARTING in prior_statuses
+        or STATUS_VERIFYING_ACTIVATION in prior_statuses
+    )
+
+
 def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     """Terminal row for ``busy_status.restart_intent_last``.
 
@@ -86,6 +104,13 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     reason = intent.status_reason or ""
     if projected == "cancelled" and reason.split(":", 1)[0] == TTL_EXPIRED:
         projected = "expired"
+    executed = False
+    if projected in {"failed", "cancelled"} and _restart_execution_evidence(intent):
+        projected = "fired_unverified"
+        executed = True
+    elif intent.status == "activation_unverified" and _restart_execution_evidence(intent):
+        projected = "fired_unverified"
+        executed = True
     return {
         "intent_id": intent.intent_id,
         "status": projected,
@@ -93,6 +118,7 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
         "armed_at": intent.armed_at,
         "terminal_at": intent.status_changed_at,
         "drain_begun": intent.drain_epoch is not None,
+        "executed": executed,
     }
 
 

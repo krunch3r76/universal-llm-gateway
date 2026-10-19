@@ -60,24 +60,33 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from . import git_worker_liveness as _liveness
-from .drain_begin_stall import begin_drain_or_wait
+from .drain_begin_stall import BeginDrainTargetAbsent, begin_drain_or_wait
 from .drain_dead_recovery import (
     START_ON_DEAD_ACTIONS,
-    force_start_and_validate,
+    ForceStartOutcome,
+    force_start_with_outcome,
     lifecycle_result_certifies,
+)
+from .drain_resume import (
+    booted_after_kill_commit,
+    is_bound_drained_restarting,
+    is_drained_restarting_resume,
 )
 from .drain_timeout_keep_await import timeout_affordances
 from .restart_intent_reason_codes import (
     BEGIN_DRAIN_UNREACHABLE,
+    DRAIN_STATE_UNREADABLE_FINAL_CHECK,
     EPOCH_CHECK_MISMATCH,
     EPOCH_CHECK_OK,
     GENERATION_GONE,
     KILL_FAILED,
     LIFECYCLE_UNCONFIRMED,
+    RESUME_GENERATION_UNBOUND,
     SUPERVISOR_EXCEPTION,
     TARGET_GONE,
     reason_code,
 )
+from .restart_intent_states import LIVE_STATUSES
 from .restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -208,124 +217,191 @@ class GitWorkerDrainSupervisor:
         deadline = t0 + self.deadline_s
         timeout_alerted = False
         try:
-            begun = await begin_drain_or_wait(self, intent, t0=t0)
+            current = self.store.get(intent.intent_id)
+            if current is not None:
+                intent = current
+            if is_drained_restarting_resume(intent):
+                if is_bound_drained_restarting(intent):
+                    await self._drive_from_await(
+                        intent, deadline, t0, timeout_alerted=timeout_alerted
+                    )
+                    return
+                await self._resume_unbound_drained_restarting(intent, t0)
+                return
+            try:
+                begun = await begin_drain_or_wait(self, intent, t0=t0)
+            except BeginDrainTargetAbsent:
+                if await self._abort_if_requested(intent):
+                    return
+                await self._on_dead(intent, reason="dead_target")
+                return
             if await self._abort_if_requested(intent) or begun is None:
                 return
             intent = begun
-            # a:37227 AC5 — wait_for_boundary drain clock starts when GIW
-            # activates (_draining=True), not when arm is posted. Arm-post
-            # reset burned GIT_WORKER_DRAIN_DEADLINE_S (often 600s) during the
-            # armed-open-admits window that wait_for_boundary exists to cover.
             defer_deadline = bool(intent.wait_for_boundary)
             if intent.park_live:
-                # a:38111 — wait_for_boundary keeps admits open while armed.
-                # Starting park_live grace here CancelRun-manufactures the
-                # holder's terminal. Defer the grace until GIW reports
-                # draining=True (same predicate as the deadline clock).
                 await self._park_live_after_grace(intent)
-            while True:
-                outcome, t0 = await self._await_drain_completed(
-                    intent,
-                    deadline,
-                    t0,
-                    defer_deadline_until_draining=defer_deadline,
-                )
-                # Deferral is first-call only; IDLE re-entry with a stale
-                # deadline is unreachable for wait_for_boundary because
-                # recycle_giw never sets that flag. Subsequent timeout
-                # re-arms use a live deadline.
-                defer_deadline = False
-                if outcome == _AWAIT_CANCELLED:
-                    if await self._abort_if_requested(intent):
-                        return
-                    await self._on_cancelled(intent)
-                    return
-                if outcome == _AWAIT_DEAD:
-                    if self._may_start(intent):
-                        await self._force_start(intent, reason="dead_target")
-                    else:
-                        await self._complete_stopped_target(intent)
-                    return
-                if outcome == _AWAIT_HANDED_OFF:
-                    return
-                if outcome == _AWAIT_TIMEOUT:
-                    if await self._ceiling_should_force_start():
-                        if self._may_start(intent):
-                            await self._force_start(intent, reason="deadline_ceiling")
-                        else:
-                            await self._complete_stopped_target(intent)
-                        return
-                    # A live pid past the ceiling still pages. Starting would
-                    # not replace in-flight work; the 2026-07-24 bind forbids
-                    # that auto-kill. A dead probe force-starts above.
-                    if not timeout_alerted:
-                        await self._on_timeout(intent)
-                        timeout_alerted = True
-                    deadline = time.monotonic() + _DEFAULT_DEADLINE_S
-                    continue
-                if outcome == _AWAIT_IDLE:
-                    if await self._park_first_on_idle(intent):
-                        continue
-                    await self._on_idle(intent, t0)
-                    return
-                if outcome == _AWAIT_GENERATION_GONE:
-                    snapshot = await self._safe_drain_state()
-                    await self._resolve_non_kill(intent, snapshot)
-                    return
-                break
-            if await self._abort_if_requested(intent):
-                return
-            ok, snapshot = await self._final_epoch_check(intent)
-            if await self._abort_if_requested(intent):
-                return
-            if not ok:
-                await self._resolve_non_kill(intent, snapshot)
-                return
-            if not self._claim_kill(intent):
-                await self._resolve_non_kill(intent, snapshot)
-                return
-            await events.emit_manage_restart_drain_completed(
-                intent_id=intent.intent_id,
-                drain_epoch=intent.drain_epoch or 0,
-                worker_id=intent.worker_id,
+            await self._drive_from_await(
+                intent,
+                deadline,
+                t0,
+                timeout_alerted=timeout_alerted,
+                defer_deadline_until_draining=defer_deadline,
             )
-            await self._sigterm(intent, t0)
-            if self.idle_escalate_s is not None:
-                await events.emit_manage_recycle_completed(
-                    intent_id=intent.intent_id,
-                    escalated=False,
-                    duration_s=time.monotonic() - t0,
-                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — supervisor must not crash the loop
             logger.exception("drain supervisor failed: intent_id=%s", intent.intent_id)
+            if await self._abort_if_requested(intent):
+                return
             current = self.store.get(intent.intent_id)
             if current is not None and current.status in {
                 STATUS_CANCELLED,
                 STATUS_FORCE_REQUESTED,
             }:
                 return
-            # begin-drain never landed (drain_epoch stays null) AND
-            # begin_drain_or_wait gave up: the health/pid probe reported the
-            # process absent, or recycle mode exhausted idle_escalate_s on a
-            # pid-alive, HTTP-wedged GIW (a:36019). Cooperative drain cannot
-            # start — SIGTERM. A pid-alive stall alone retries there and never
-            # reaches this kill (a:36911: one 10s timeout reaped six live
-            # conductors).
             if intent.drain_epoch is None:
+                pending = self.store.get(intent.intent_id)
+                if pending is not None and pending.status == STATUS_PENDING_DRAIN:
+                    await self._on_idle(intent, t0)
+                return
+            await self._fail_live_intent(
+                intent,
+                reason_code(SUPERVISOR_EXCEPTION, f"{type(exc).__name__}: {exc}"),
+                snapshot=None,
+            )
+
+    async def _drive_from_await(
+        self,
+        intent: Intent,
+        deadline: float,
+        t0: float,
+        *,
+        timeout_alerted: bool = False,
+        defer_deadline_until_draining: bool = False,
+    ) -> None:
+        """Await-loop through kill for pending_drain or bound drained_restarting."""
+        defer_deadline = defer_deadline_until_draining
+        snapshot_only = is_drained_restarting_resume(intent)
+        while True:
+            outcome, t0 = await self._await_drain_completed(
+                intent,
+                deadline,
+                t0,
+                defer_deadline_until_draining=defer_deadline,
+                snapshot_converge_only=snapshot_only,
+            )
+            defer_deadline = False
+            if outcome == _AWAIT_CANCELLED:
+                if await self._abort_if_requested(intent):
+                    return
+                await self._on_cancelled(intent)
+                return
+            if outcome == _AWAIT_DEAD:
+                await self._on_dead(intent, reason="dead_target")
+                return
+            if outcome == _AWAIT_HANDED_OFF:
+                return
+            if outcome == _AWAIT_TIMEOUT:
+                if await self._ceiling_should_force_start():
+                    await self._on_dead(intent, reason="deadline_ceiling")
+                    return
+                if not timeout_alerted:
+                    await self._on_timeout(intent)
+                    timeout_alerted = True
+                deadline = time.monotonic() + _DEFAULT_DEADLINE_S
+                continue
+            if outcome == _AWAIT_IDLE:
+                if await self._park_first_on_idle(intent):
+                    continue
                 await self._on_idle(intent, t0)
                 return
-            self.store.advance(
-                intent.intent_id,
-                status=STATUS_FAILED,
-                reason=reason_code(
-                    SUPERVISOR_EXCEPTION, f"{type(exc).__name__}: {exc}"
+            if outcome == _AWAIT_GENERATION_GONE:
+                snapshot = self._last_probe_snapshot
+                await self._resolve_non_kill(
+                    intent, snapshot, confirmed_gone=True
+                )
+                return
+            break
+        if await self._abort_if_requested(intent):
+            return
+        check, snapshot = await self._final_epoch_check(intent)
+        if await self._abort_if_requested(intent):
+            return
+        if check == "aborted":
+            return
+        if check == "dead":
+            await self._on_dead(intent, reason="dead_target")
+            return
+        if check == "unreadable":
+            await self._fail_live_intent(
+                intent,
+                reason_code(
+                    DRAIN_STATE_UNREADABLE_FINAL_CHECK, "final epoch re-probe"
                 ),
+                snapshot=snapshot,
             )
-            await events.emit_manage_restart_failed(
-                intent_id=intent.intent_id, reason=str(exc)
+            return
+        if check != "ok":
+            await self._resolve_non_kill(intent, snapshot, confirmed_gone=False)
+            return
+        if not self._claim_kill(intent):
+            await self._resolve_non_kill(intent, snapshot, confirmed_gone=False)
+            return
+        await events.emit_manage_restart_drain_completed(
+            intent_id=intent.intent_id,
+            drain_epoch=intent.drain_epoch or 0,
+            worker_id=intent.worker_id,
+        )
+        await self._sigterm(intent, t0)
+        if self.idle_escalate_s is not None:
+            await events.emit_manage_recycle_completed(
+                intent_id=intent.intent_id,
+                escalated=False,
+                duration_s=time.monotonic() - t0,
             )
+
+    async def _resume_unbound_drained_restarting(
+        self, intent: Intent, t0: float
+    ) -> None:
+        """C1b: unbound drained_restarting row after manage reboot."""
+        booted = booted_after_kill_commit(intent)
+        if booted is True:
+            snapshot = await self._safe_drain_state()
+            await self._resolve_non_kill(
+                intent, snapshot, confirmed_gone=True
+            )
+            return
+        if booted is False:
+            snapshot = await self._safe_drain_state()
+            await self._fail_live_intent(
+                intent,
+                reason_code(RESUME_GENERATION_UNBOUND, "booted before kill commit"),
+                snapshot=snapshot,
+            )
+            return
+        logger.warning(
+            "unbound drained_restarting resume: unparseable generation clock "
+            "intent_id=%s",
+            intent.intent_id,
+        )
+        snapshot = await self._safe_drain_state()
+        if snapshot is None:
+            if await self._health_pid_absent():
+                await self._on_dead(intent, reason="dead_target")
+            else:
+                await self._emit_probe_unreachable(
+                    intent, elapsed_s=time.monotonic() - t0, consecutive_failures=1
+                )
+            return
+        await self._resolve_non_kill(intent, snapshot, confirmed_gone=True)
+
+    async def _on_dead(self, intent: Intent, *, reason: str) -> None:
+        """Dead-target branch shared by await, final check, and begin-drain (C18)."""
+        if self._may_start(intent):
+            await self._force_start(intent, reason=reason)
+        else:
+            await self._complete_stopped_target(intent)
 
     # --------------------------------------------------------------- step 1
     async def _begin_drain(self, intent: Intent) -> Intent:
@@ -565,6 +641,7 @@ class GitWorkerDrainSupervisor:
         start: float,
         *,
         defer_deadline_until_draining: bool = False,
+        snapshot_converge_only: bool = False,
     ) -> tuple[str, float]:
         """Await drain convergence, idle escalate, deadline timeout, or cancel.
 
@@ -654,7 +731,10 @@ class GitWorkerDrainSupervisor:
                         generation_gone_streak = 0
                     if self._drain_state_matches(snapshot, intent):
                         return _AWAIT_CONVERGED, start
-                    if await self._idle_gate_tripped(snapshot, now, start):
+                    if (
+                        not self._generation_gone(snapshot, intent)
+                        and await self._idle_gate_tripped(snapshot, now, start)
+                    ):
                         return _AWAIT_IDLE, start
                 else:
                     generation_gone_streak = 0
@@ -702,7 +782,7 @@ class GitWorkerDrainSupervisor:
                 seq = _field(ev, "seq")
                 if isinstance(seq, int):
                     self.store.set_last_seen_seq(intent.intent_id, seq)
-                if self._event_matches(ev, intent):
+                if not snapshot_converge_only and self._event_matches(ev, intent):
                     return _AWAIT_CONVERGED, start
         finally:
             if agen is not None:
@@ -711,12 +791,41 @@ class GitWorkerDrainSupervisor:
     # --------------------------------------------------------------- step 3
     async def _final_epoch_check(
         self, intent: Intent
-    ) -> tuple[bool, dict[str, Any] | None]:
-        """One non-looping drain-state read; True only if safe to SIGTERM."""
+    ) -> tuple[str, dict[str, Any] | None]:
+        """One-shot epoch check with re-probe when drain-state is unreadable (C9)."""
+        if self._abort_kind(intent) is not None:
+            return "aborted", None
         snapshot = await self._safe_drain_state()
-        if snapshot is None:
-            return False, None
-        return self._drain_state_matches(snapshot, intent), snapshot
+        if snapshot is not None:
+            self._last_probe_snapshot = snapshot
+            if self._drain_state_matches(snapshot, intent):
+                return "ok", snapshot
+            if self._generation_gone(snapshot, intent):
+                return "mismatch", snapshot
+            return "mismatch", snapshot
+        confirm_polls = _polls_for_window(
+            _GENERATION_GONE_CONFIRM_WINDOW_S, self.reconcile_interval_s
+        )
+        miss_threshold = _polls_for_window(
+            _liveness.unreachable_window_s(), self.reconcile_interval_s
+        )
+        misses = 0
+        while misses < confirm_polls + miss_threshold:
+            if self._abort_kind(intent) is not None:
+                return "aborted", None
+            snapshot = await self._safe_drain_state()
+            if snapshot is not None:
+                self._last_probe_snapshot = snapshot
+                if self._drain_state_matches(snapshot, intent):
+                    return "ok", snapshot
+                if self._generation_gone(snapshot, intent):
+                    return "mismatch", snapshot
+                return "mismatch", snapshot
+            misses += 1
+            await asyncio.sleep(self.reconcile_interval_s)
+        if await self._health_pid_absent():
+            return "dead", None
+        return "unreadable", self._last_probe_snapshot
 
     # --------------------------------------------------------------- step 4
     async def _sigterm(self, intent: Intent, t0: float) -> None:
@@ -730,22 +839,23 @@ class GitWorkerDrainSupervisor:
         }:
             return
         if current.status != STATUS_DRAINED_RESTARTING:
-            self.store.advance(
+            changed = self.store.advance_if_status_in(
                 intent.intent_id,
-                status=STATUS_DRAINED_RESTARTING,
+                from_statuses=LIVE_STATUSES,
+                to_status=STATUS_DRAINED_RESTARTING,
                 reason=reason_code(EPOCH_CHECK_OK, "delivering SIGTERM"),
             )
+            if not changed:
+                if await self._abort_if_requested(intent):
+                    return
         try:
             message = await self.kill()
         except Exception as exc:  # noqa: BLE001
             logger.exception("drain SIGTERM failed: intent_id=%s", intent.intent_id)
-            self.store.advance(
-                intent.intent_id,
-                status=STATUS_FAILED,
-                reason=reason_code(KILL_FAILED, str(exc)),
-            )
-            await events.emit_manage_restart_failed(
-                intent_id=intent.intent_id, reason=f"kill failed: {exc}"
+            await self._fail_live_intent(
+                intent,
+                reason_code(KILL_FAILED, str(exc)),
+                snapshot=await self._safe_drain_state(),
             )
             return
         if not lifecycle_result_certifies(message, action=current.action):
@@ -754,14 +864,10 @@ class GitWorkerDrainSupervisor:
                 intent.intent_id,
                 message[:200],
             )
-            self.store.advance(
-                intent.intent_id,
-                status=STATUS_FAILED,
-                reason=reason_code(LIFECYCLE_UNCONFIRMED, message[:200]),
-            )
-            await events.emit_manage_restart_failed(
-                intent_id=intent.intent_id,
-                reason=f"lifecycle unconfirmed: {message[:200]}",
+            await self._fail_live_intent(
+                intent,
+                reason_code(LIFECYCLE_UNCONFIRMED, message[:200]),
+                snapshot=await self._safe_drain_state(),
             )
             return
         logger.info(
@@ -796,7 +902,11 @@ class GitWorkerDrainSupervisor:
         await events.emit_manage_restart_cancelled(intent_id=intent.intent_id)
 
     async def _on_idle(self, intent: Intent, t0: float) -> None:
-        """Force-kill when recycle occupants idle, or begin-drain never lands."""
+        """Force-kill when recycle occupants idle, or begin-drain never lands.
+
+        On a resumed ``drained_restarting`` row the kill-commit CAS is skipped;
+        only ``pending_drain`` rows advance into ``drained_restarting`` here.
+        """
         snapshot = await self._safe_drain_state() or {}
         idle_s = float(self.idle_escalate_s or 0.0)
         park_summary = self._last_park_summary
@@ -822,11 +932,17 @@ class GitWorkerDrainSupervisor:
                 "SIGTERM without epoch: intent_id=%s",
                 intent.intent_id,
             )
-        self.store.advance(
-            intent.intent_id,
-            status=STATUS_DRAINED_RESTARTING,
-            reason=reason_code(BEGIN_DRAIN_UNREACHABLE, "SIGTERM without epoch"),
-        )
+        current = self.store.get(intent.intent_id)
+        if current is not None and current.status == STATUS_PENDING_DRAIN:
+            changed = self.store.advance_if_status_in(
+                intent.intent_id,
+                from_statuses=frozenset({STATUS_PENDING_DRAIN}),
+                to_status=STATUS_DRAINED_RESTARTING,
+                reason=reason_code(BEGIN_DRAIN_UNREACHABLE, "SIGTERM without epoch"),
+            )
+            if not changed:
+                if await self._abort_if_requested(intent):
+                    return
         await self._sigterm(intent, t0)
         if self.idle_escalate_s is not None:
             await events.emit_manage_recycle_completed(
@@ -922,37 +1038,111 @@ class GitWorkerDrainSupervisor:
         return False
 
     async def _resolve_non_kill(
-        self, intent: Intent, snapshot: dict[str, Any] | None
+        self,
+        intent: Intent,
+        snapshot: dict[str, Any] | None,
+        *,
+        confirmed_gone: bool = False,
     ) -> None:
-        """Final check failed: complete if the target generation is gone, else fail."""
+        """Final check failed: arm verify, fail, or complete without kill (C5)."""
         from .git_worker_activation_verify import arm_verify_after_generation_gone
 
-        if snapshot is None or self._generation_gone(snapshot, intent):
-            if await arm_verify_after_generation_gone(self.store, intent):
+        other_gen = snapshot is not None and self._generation_gone(snapshot, intent)
+        if other_gen or (snapshot is None and confirmed_gone):
+            if await arm_verify_after_generation_gone(
+                self.store,
+                intent,
+                completed_reason=reason_code(GENERATION_GONE, "already gone"),
+            ):
                 return
-            self.store.advance(
+            changed = self.store.advance_if_status_in(
                 intent.intent_id,
-                status=STATUS_COMPLETED,
+                from_statuses=LIVE_STATUSES,
+                to_status=STATUS_COMPLETED,
                 reason=reason_code(GENERATION_GONE, "already gone"),
             )
-            await events.emit_manage_restart_completed(
-                intent_id=intent.intent_id, duration_s=0.0
-            )
-            logger.info(
-                "drain target worker generation already gone; intent completed "
-                "without kill: intent_id=%s",
-                intent.intent_id,
+            if changed:
+                await events.emit_manage_restart_completed(
+                    intent_id=intent.intent_id, duration_s=0.0
+                )
+                logger.info(
+                    "drain target worker generation already gone; intent completed "
+                    "without kill: intent_id=%s",
+                    intent.intent_id,
+                )
+            return
+        if snapshot is None:
+            await self._fail_live_intent(
+                intent,
+                reason_code(
+                    DRAIN_STATE_UNREADABLE_FINAL_CHECK, "same worker generation"
+                ),
+                snapshot=snapshot,
             )
             return
-        self.store.advance(
+        await self._fail_live_intent(
+            intent,
+            reason_code(EPOCH_CHECK_MISMATCH, "same worker generation"),
+            snapshot=snapshot,
+        )
+
+    async def _fail_live_intent(
+        self,
+        intent: Intent,
+        reason: str,
+        *,
+        snapshot: dict[str, Any] | None,
+    ) -> None:
+        changed = self.store.advance_if_status_in(
             intent.intent_id,
-            status=STATUS_FAILED,
-            reason=reason_code(EPOCH_CHECK_MISMATCH, "same worker generation"),
+            from_statuses=LIVE_STATUSES,
+            to_status=STATUS_FAILED,
+            reason=reason,
         )
+        if not changed:
+            await self._abort_if_requested(intent)
+            return
+        await self._release_drain(intent, snapshot)
         await events.emit_manage_restart_failed(
-            intent_id=intent.intent_id,
-            reason="final epoch-check mismatch (epoch/draining/active) on the same worker generation",
+            intent_id=intent.intent_id, reason=reason
         )
+
+    async def _release_drain(
+        self,
+        intent: Intent,
+        snapshot: dict[str, Any] | None,
+    ) -> None:
+        """Best-effort cancel-drain after a terminal LIVE exit (C16)."""
+        if self.cancel_drain is None:
+            return
+        epoch = intent.drain_epoch
+        if epoch is None and isinstance(snapshot, dict):
+            if snapshot.get("intent_id") == intent.intent_id:
+                raw = snapshot.get("drain_epoch")
+                if isinstance(raw, int):
+                    epoch = raw
+        if epoch is None:
+            return
+        threshold = _polls_for_window(
+            _liveness.unreachable_window_s(), self.reconcile_interval_s
+        )
+        attempts = 0
+        while True:
+            try:
+                await self.cancel_drain(intent.intent_id, epoch)
+                return
+            except Exception:
+                attempts += 1
+                logger.exception(
+                    "supervisor cancel-drain release failed: intent_id=%s attempt=%s",
+                    intent.intent_id,
+                    attempts,
+                )
+                if await self._health_pid_absent():
+                    return
+                if attempts >= threshold:
+                    return
+                await asyncio.sleep(self.reconcile_interval_s)
 
     # ----------------------------------------------------------- predicates
     def _claim_kill(self, intent: Intent) -> bool:
@@ -1056,13 +1246,15 @@ class GitWorkerDrainSupervisor:
         )
         if outcome != "validated":
             return False
-        self.store.advance_if_status(
+        changed = self.store.advance_if_status_in(
             intent.intent_id,
-            from_status=STATUS_PENDING_DRAIN,
+            from_statuses=frozenset({STATUS_PENDING_DRAIN}),
             to_status=STATUS_COMPLETED,
             reason="out-of-band start satisfied code_ref",
         )
-        return True
+        if not changed:
+            await self._abort_if_requested(intent)
+        return bool(changed)
 
     def _may_start(self, intent: Intent) -> bool:
         """Restart-class actions with a start callable may replace a dead target."""
@@ -1073,9 +1265,10 @@ class GitWorkerDrainSupervisor:
         current = self.store.get(intent.intent_id)
         if current is None or current.status != STATUS_PENDING_DRAIN:
             return
-        self.store.advance(
+        self.store.advance_if_status_in(
             intent.intent_id,
-            status=STATUS_COMPLETED,
+            from_statuses=LIVE_STATUSES,
+            to_status=STATUS_COMPLETED,
             reason=reason_code(TARGET_GONE, "action does not start it"),
         )
         logger.info(
@@ -1131,7 +1324,7 @@ class GitWorkerDrainSupervisor:
             pid = snap.get("pid")
             if isinstance(pid, int) and not isinstance(pid, bool):
                 prior_pid = pid
-        await force_start_and_validate(
+        outcome, _message = await force_start_with_outcome(
             self.store,
             intent,
             self.start,
@@ -1139,6 +1332,11 @@ class GitWorkerDrainSupervisor:
             prior_pid=prior_pid,
             read_pid=self.read_pid,
         )
+        if outcome == ForceStartOutcome.LOST_RACE:
+            await self._abort_if_requested(intent)
+        elif outcome == ForceStartOutcome.FAILED:
+            snapshot = self._last_probe_snapshot
+            await self._release_drain(intent, snapshot)
 
     async def _safe_drain_state(self) -> dict[str, Any] | None:
         try:

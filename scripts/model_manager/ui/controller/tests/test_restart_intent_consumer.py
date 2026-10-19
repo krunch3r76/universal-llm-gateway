@@ -50,3 +50,46 @@ def test_drain_deferred_result_shape_includes_ceiling_fields() -> None:
     assert payload["deadline_ceiling_at"] == "2026-08-12T15:40:39.447241+00:00"
     assert "deadline_semantics" in payload
     assert "NOT the scheduled restart fire time" in payload["deadline_semantics"]
+
+
+def test_failed_with_kill_evidence_projects_fired_unverified() -> None:
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        STATUS_DRAINED_RESTARTING,
+    )
+
+    intent = _intent(
+        status="failed",
+        status_reason="epoch_check_mismatch:same worker generation",
+        kill_boundary_at="2026-08-12T15:31:00+00:00",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": STATUS_DRAINED_RESTARTING, "reason": "kill_commit", "at": "t1"},
+            {"status": "failed", "reason": "epoch_check_mismatch", "at": "t2"},
+        ],
+    )
+    last = project_restart_intent_last(intent)
+    assert last is not None
+    assert last["status"] == "fired_unverified"
+    assert last["executed"] is True
+
+
+def test_cancelled_without_boundary_stays_cancelled() -> None:
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+
+    intent = _intent(
+        status="cancelled",
+        status_reason="cancelled_by_operator",
+        transitions=[
+            {"status": "pending_drain", "reason": "armed", "at": "t0"},
+            {"status": "cancelled", "reason": "cancelled_by_operator", "at": "t1"},
+        ],
+    )
+    last = project_restart_intent_last(intent)
+    assert last is not None
+    assert last["status"] == "cancelled"
+    assert last.get("executed") is False
