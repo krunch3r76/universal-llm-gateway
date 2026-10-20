@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from scripts.model_manager.ui.controller import owed_wake_ledger as owed_wake_mod
 from scripts.model_manager.ui.controller.owed_wake_ledger import (
     OwedWakeDeps,
     attempt_dispatch,
     flush_pending_owed_wakes,
     is_chrome_bus_subject,
+    maybe_flush_pending_owed_wakes,
     maybe_producer1_milestone,
     producer1_cse_dispatch_enabled,
     producer2_on_restart_terminal,
+    project_stale_unread_milestone_owed_wakes,
     subject_qualifies_producer1,
 )
 from scripts.model_manager.ui.controller.restart_drain_supervise import (
@@ -82,20 +86,43 @@ def test_allowlisted_subject_qualifies() -> None:
     assert subject_qualifies_producer1("MILESTONE|decision:foo|bar")
 
 
-def test_checkpoint_creates_no_owed_wake_row(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("to_agent", ["maestro", "web-anthropic"])
+def test_checkpoint_creates_no_owed_wake_row(
+    tmp_path, monkeypatch, to_agent: str
+) -> None:
     monkeypatch.delenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", raising=False)
     store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
     deps = _deps()
     out = maybe_producer1_milestone(
         store,
         subject="CHECKPOINT 18460 tip",
-        to_agent="maestro",
+        to_agent=to_agent,
         from_agent="cursor",
         thread_id="18460",
         turn_number=79,
         holder_id="holder-maestro",
         lane_thread_id="18460",
         deps=deps,
+    )
+    assert out["recorded"] is False
+    assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_cdp_generate_chrome_creates_no_owed_wake_row_web_anthropic(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", raising=False)
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    out = maybe_producer1_milestone(
+        store,
+        subject="cdp generate",
+        to_agent="web-anthropic",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=81,
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        deps=_deps(),
     )
     assert out["recorded"] is False
     assert store.list_open_undispatched_owed_wakes() == []
@@ -122,8 +149,35 @@ def test_allowlisted_milestone_creates_row(tmp_path, monkeypatch) -> None:
     assert len(rows[0].turn_refs) == 1
 
 
-def test_two_milestones_one_open_row_second_appends_without_dispatch(
+def test_allowlisted_milestone_web_anthropic_creates_row_and_requests_dispatch(
     tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    endpoint_calls: list[dict] = []
+    deps = _deps()
+    deps.endpoint_wake = lambda **kw: endpoint_calls.append(kw) or True  # type: ignore[method-assign]
+    out = maybe_producer1_milestone(
+        store,
+        subject="MILESTONE|decision:operator-observability-ledger|web",
+        to_agent="web-anthropic",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=82,
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        deps=deps,
+    )
+    assert out["recorded"] is True
+    assert out["created"] is True
+    assert out["dispatched"] is True
+    assert len(endpoint_calls) == 1
+    assert store.list_open_undispatched_owed_wakes() == []
+
+
+@pytest.mark.parametrize("to_agent", ["maestro", "web-anthropic"])
+def test_two_milestones_one_open_row_second_appends_without_dispatch(
+    tmp_path, monkeypatch, to_agent: str
 ) -> None:
     monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
     store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
@@ -133,7 +187,7 @@ def test_two_milestones_one_open_row_second_appends_without_dispatch(
     first = maybe_producer1_milestone(
         store,
         subject="MILESTONE|a|one",
-        to_agent="maestro",
+        to_agent=to_agent,
         from_agent="cursor",
         thread_id="18460",
         turn_number=1,
@@ -146,7 +200,7 @@ def test_two_milestones_one_open_row_second_appends_without_dispatch(
     second = maybe_producer1_milestone(
         store,
         subject="MILESTONE|a|two",
-        to_agent="maestro",
+        to_agent=to_agent,
         from_agent="cursor",
         thread_id="18460",
         turn_number=2,
@@ -225,7 +279,98 @@ def test_producer1_explicit_off_writes_row_without_dispatch(
     assert len(store.list_open_undispatched_owed_wakes()) == 1
 
 
-def test_bus_failure_then_gate_flush_succeeds(tmp_path) -> None:
+def _stale_turn(*, turn_number: int, age_minutes: float, to_agent: str = "maestro") -> dict:
+    return {
+        "turn_number": turn_number,
+        "subject": "MILESTONE|stale|backstop",
+        "to": to_agent,
+        "from": "cursor",
+        "read_at": None,
+        "created_at": (
+            datetime.now(UTC) - timedelta(minutes=age_minutes)
+        ).isoformat(),
+    }
+
+
+def test_stale_unread_milestone_projected_on_lazy_flush(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    old = _stale_turn(turn_number=5, age_minutes=16)
+    young = _stale_turn(turn_number=6, age_minutes=5)
+    monkeypatch.setattr(
+        owed_wake_mod, "_lanes_for_stale_projection", lambda: ["18460"]
+    )
+    monkeypatch.setattr(
+        owed_wake_mod,
+        "_fetch_turns_for_lane",
+        lambda _lane: [old, young],
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        lambda _lane: "holder-maestro",
+    )
+    projected = project_stale_unread_milestone_owed_wakes(store)
+    assert projected == 1
+    rows = store.list_open_undispatched_owed_wakes()
+    assert len(rows) == 1
+    assert rows[0].turn_refs[0]["turn_number"] == 5
+
+
+def test_stale_unread_younger_than_15_min_not_projected(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    young = _stale_turn(turn_number=7, age_minutes=10)
+    monkeypatch.setattr(
+        owed_wake_mod, "_lanes_for_stale_projection", lambda: ["18460"]
+    )
+    monkeypatch.setattr(
+        owed_wake_mod, "_fetch_turns_for_lane", lambda _lane: [young]
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        lambda _lane: "holder-maestro",
+    )
+    assert project_stale_unread_milestone_owed_wakes(store) == 0
+    assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_maybe_flush_deps_unavailable_keeps_open_row(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    maybe_producer1_milestone(
+        store,
+        subject="MILESTONE|decision:operator-observability-ledger|hold",
+        to_agent="maestro",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=90,
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        deps=_deps(),
+    )
+    monkeypatch.setattr(
+        owed_wake_mod, "_lanes_for_stale_projection", lambda: []
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.build_owed_wake_deps",
+        MagicMock(side_effect=RuntimeError("deps down")),
+    )
+    assert maybe_flush_pending_owed_wakes(store=store) == 0
+    open_rows = store.list_open_undispatched_owed_wakes()
+    assert len(open_rows) == 1
+    assert open_rows[0].dispatched_at is None
+
+
+def test_bus_failure_then_gate_flush_succeeds(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        owed_wake_mod, "_lanes_for_stale_projection", lambda: []
+    )
     store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
     intent = store.create_intent(
         service="git_integration_worker",

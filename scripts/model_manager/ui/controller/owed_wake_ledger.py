@@ -12,6 +12,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from universal_logging import get_logger
@@ -40,6 +41,9 @@ _CHROME_SUBJECT_MARKERS: tuple[str, ...] = (
 PRODUCER_MILESTONE = "milestone"
 PRODUCER_DRAIN_COMPLETE = "drain_complete"
 
+PRODUCER1_TO_AGENTS: frozenset[str] = frozenset({"maestro", "web-anthropic"})
+DEFAULT_MILESTONE_BACKSTOP_AGE_S = 900.0
+
 
 def producer1_cse_dispatch_enabled() -> bool:
     """Producer 1 CSE dispatch — on unless explicitly disabled.
@@ -52,6 +56,21 @@ def producer1_cse_dispatch_enabled() -> bool:
     if raw is None or not raw.strip():
         return True
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def producer1_to_agent_qualifies(to_agent: str) -> bool:
+    """Producer 1 arms for house milestones addressed to maestro or web-anthropic."""
+    return (to_agent or "").strip().lower() in PRODUCER1_TO_AGENTS
+
+
+def milestone_backstop_min_age_s() -> float:
+    raw = os.environ.get("OPERATOR_OBSERVABILITY_MILESTONE_BACKSTOP_MIN_AGE_S")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_MILESTONE_BACKSTOP_AGE_S
+    try:
+        return max(float(raw.strip()), 0.0)
+    except ValueError:
+        return DEFAULT_MILESTONE_BACKSTOP_AGE_S
 
 
 def subject_qualifies_producer1(subject: str) -> bool:
@@ -143,9 +162,9 @@ def maybe_producer1_milestone(
     user_agent: str | None = None,
     deps: OwedWakeDeps | None = None,
 ) -> dict[str, Any]:
-    """Producer 1 — allowlisted house milestone to maestro."""
-    if (to_agent or "").strip().lower() != "maestro":
-        return {"recorded": False, "reason": "not_to_maestro"}
+    """Producer 1 — allowlisted house milestone to maestro or web-anthropic."""
+    if not producer1_to_agent_qualifies(to_agent):
+        return {"recorded": False, "reason": "not_to_producer1_recipient"}
     if is_chrome_bus_subject(subject):
         return {"recorded": False, "reason": "chrome_subject"}
     if not is_house_authored_turn(from_agent=from_agent, user_agent=user_agent):
@@ -210,22 +229,154 @@ def producer2_on_restart_terminal(
 
 def maybe_flush_pending_owed_wakes(*, store: Any | None = None) -> int:
     """Backstop flush for manage gate reads and posts; failures are non-fatal."""
+    from .restart_intent_store import RestartIntentStore
+
+    resolved = store if store is not None else RestartIntentStore.instance()
     try:
         from services.git_integration_worker.cse_session_holders import (
             build_owed_wake_deps,
         )
 
-        from .restart_intent_store import RestartIntentStore
-
-        resolved = store if store is not None else RestartIntentStore.instance()
         return flush_pending_owed_wakes(resolved, deps=build_owed_wake_deps())
     except Exception:
         logger.debug("maybe_flush_pending_owed_wakes failed", exc_info=True)
         return 0
 
 
+def _parse_turn_timestamp(raw: Any) -> datetime | None:
+    if raw is None or not str(raw).strip():
+        return None
+    text = str(raw).strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _turn_field(turn: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = turn.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _turn_is_stale_unread_producer1_candidate(
+    turn: dict[str, Any], *, min_age_s: float, now: datetime
+) -> bool:
+    if turn.get("read_at") is not None:
+        return False
+    created = _parse_turn_timestamp(turn.get("created_at"))
+    if created is None:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    if (now - created.astimezone(UTC)).total_seconds() < min_age_s:
+        return False
+    subject = _turn_field(turn, "subject")
+    to_agent = _turn_field(turn, "to_agent", "to")
+    from_agent = _turn_field(turn, "from_agent", "from")
+    user_agent = turn.get("user_agent")
+    if not producer1_to_agent_qualifies(to_agent):
+        return False
+    if is_chrome_bus_subject(subject):
+        return False
+    if not is_house_authored_turn(from_agent=from_agent, user_agent=user_agent):
+        return False
+    if not subject_qualifies_producer1(subject):
+        return False
+    return True
+
+
+def _lanes_for_stale_projection() -> list[str]:
+    from services.git_integration_worker.cse_session_holders import (
+        _ledger_conn,
+        ensure_schema,
+    )
+
+    lanes: list[str] = []
+    try:
+        with _ledger_conn() as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT lane_thread_id FROM cse_session_holders "
+                "WHERE lane_thread_id IS NOT NULL "
+                "AND seat_state IN ('driving', 'dormant')"
+            ).fetchall()
+        for row in rows:
+            lane = str(row["lane_thread_id"] or "").strip()
+            if lane and lane not in lanes:
+                lanes.append(lane)
+    except Exception:
+        logger.debug("lane list for stale projection failed", exc_info=True)
+    return lanes
+
+
+def _fetch_turns_for_lane(thread_id: str) -> list[dict[str, Any]]:
+    lane = (thread_id or "").strip()
+    if not lane:
+        return []
+    try:
+        from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+            resp = client.get("/turns", params={"thread": lane, "last": 100})
+            if resp.status_code >= 400:
+                return []
+            payload = resp.json()
+    except Exception:
+        logger.debug("fetch turns for stale projection failed lane=%s", lane, exc_info=True)
+        return []
+    turns = payload.get("turns") if isinstance(payload, dict) else None
+    if not isinstance(turns, list):
+        return []
+    return [t for t in turns if isinstance(t, dict)]
+
+
+def project_stale_unread_milestone_owed_wakes(store: Any) -> int:
+    """Lazy backstop: project unread milestones older than the threshold into owed_wake."""
+    from services.git_integration_worker.cse_session_holders import (
+        resolve_maestro_holder_id_for_lane,
+    )
+
+    min_age_s = milestone_backstop_min_age_s()
+    now = datetime.now(UTC)
+    projected = 0
+    for lane in _lanes_for_stale_projection():
+        holder_id = resolve_maestro_holder_id_for_lane(lane)
+        if not holder_id:
+            continue
+        for turn in _fetch_turns_for_lane(lane):
+            if not _turn_is_stale_unread_producer1_candidate(
+                turn, min_age_s=min_age_s, now=now
+            ):
+                continue
+            turn_number = turn.get("turn_number")
+            if turn_number is None:
+                continue
+            out = maybe_producer1_milestone(
+                store,
+                subject=_turn_field(turn, "subject"),
+                to_agent=_turn_field(turn, "to_agent", "to"),
+                from_agent=_turn_field(turn, "from_agent", "from"),
+                thread_id=lane,
+                turn_number=int(turn_number),
+                holder_id=holder_id,
+                lane_thread_id=lane,
+                user_agent=turn.get("user_agent"),
+                deps=None,
+            )
+            if out.get("recorded"):
+                projected += 1
+    return projected
+
+
 def flush_pending_owed_wakes(store: Any, *, deps: OwedWakeDeps) -> int:
-    """Backstop: retry dispatch for open rows with dispatched_at null."""
+    """Backstop: project stale unread milestones, then retry dispatch for open rows."""
+    try:
+        project_stale_unread_milestone_owed_wakes(store)
+    except Exception:
+        logger.debug("stale milestone projection failed", exc_info=True)
     count = 0
     for row in store.list_open_undispatched_owed_wakes():
         if row.producer == PRODUCER_MILESTONE and not producer1_cse_dispatch_enabled():
