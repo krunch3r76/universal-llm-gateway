@@ -11,9 +11,9 @@ import sqlite3
 from typing import Any
 
 from .bus_notice import classify_unread_turn
-from .recipients import _inbox_recipient_slugs
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 from .db.connection import connect
+from .recipients import _inbox_recipient_slugs
 
 _SCAN_LIMIT = 400
 _SHOWN_CAP = 12

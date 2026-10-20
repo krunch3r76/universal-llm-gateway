@@ -198,7 +198,12 @@ def _get_impl(
             if result.get("read_at") is None:
                 turn_id = result.get("id")
                 if turn_id is not None:
-                    patched = relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
+                    read_qs = urlencode({"mark_read_seat": reader_agent})
+                    patched = relay(
+                        "agent-bus",
+                        "PATCH",
+                        f"/turns/{turn_id}/read?{read_qs}",
+                    )
                     if isinstance(patched, dict) and patched.get("read_at"):
                         result = dict(result)
                         result["read_at"] = patched["read_at"]

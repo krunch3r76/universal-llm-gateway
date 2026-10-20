@@ -119,10 +119,13 @@ def test_get_mark_read_skips_broadcast() -> None:
 
 
 def test_get_mark_read_marks_when_addressed_to_caller() -> None:
+    patch_paths: list[str] = []
+
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
-        del kwargs, service, path
+        del kwargs, service
         if method == "GET":
             return {"id": 5, "to_agent": "cursor", "read_at": None}
+        patch_paths.append(path)
         return {"read_at": "2026-01-01T00:00:00+00:00"}
 
     with patch("tools.agent_bus.fetch.relay", side_effect=relay):
@@ -134,6 +137,8 @@ def test_get_mark_read_marks_when_addressed_to_caller() -> None:
         )
 
     assert result["turn"]["read_at"] is not None
+    assert patch_paths
+    assert "mark_read_seat=cursor" in patch_paths[0]
 
 
 def test_fetch_after_turn_keeps_last_bound() -> None:

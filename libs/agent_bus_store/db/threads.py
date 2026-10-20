@@ -898,6 +898,8 @@ def list_triage_candidates(
 
 def execute_triage_mark_read(*, agent: str, thread_ids: list[str]) -> int:
     """Mark caller-owned unread turns read (skips broadcast recipients)."""
+    from .turns import mark_turn_ids_read_for_seat
+
     owned = _triage_owned_recipients(agent)
     if not owned or not thread_ids:
         return 0
@@ -905,14 +907,21 @@ def execute_triage_mark_read(*, agent: str, thread_ids: list[str]) -> int:
     thread_placeholders = ",".join("?" * len(thread_ids))
     ts = now()
     with write_connect() as conn:
-        cur = conn.execute(
-            f"UPDATE turns SET read_at = ? "
+        stamp_rows = conn.execute(
+            f"SELECT id, thread FROM turns "
             f"WHERE thread IN ({thread_placeholders}) "
             f"AND to_agent IN ({owned_placeholders}) "
             f"AND read_at IS NULL AND status != 'superseded'",
-            [ts, *thread_ids, *owned],
+            [*thread_ids, *owned],
+        ).fetchall()
+        by_thread: dict[str, list[int]] = {}
+        for stamp_row in stamp_rows:
+            by_thread.setdefault(str(stamp_row["thread"]), []).append(
+                int(stamp_row["id"])
+            )
+        marked = mark_turn_ids_read_for_seat(
+            conn, seat=agent, by_thread=by_thread, ts=ts
         )
-        marked = max(cur.rowcount, 0)
     return marked
 
 
