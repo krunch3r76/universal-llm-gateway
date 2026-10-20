@@ -117,3 +117,7 @@ def test_md_replace_requires_target() -> None:
 
 def test_md_target_on_replace_is_valid() -> None:
     assert validate_op_params("md_replace", _values(section="Intro", target="old")) is None
+
+
+def test_search_accepts_include_worktrees() -> None:
+    assert validate_op_params("search", _values(include_worktrees=True)) is None

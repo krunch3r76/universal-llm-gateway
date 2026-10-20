@@ -91,7 +91,7 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "delete": ("(path)", "delete file"),
     "search": (
-        "(path, content, mode?)",
+        "(path, content, mode?, include_worktrees?)",
         "literal regex content search (case-sensitive; NOT semantic — use "
         "rag/cortex search for meaning); content holds the regex pattern; "
         "path = file or directory; cortex: mode ∈ auto|content only "
@@ -175,7 +175,8 @@ PARAM_PURPOSE: dict[str, str] = {
     "all_occurrences": "replace-all flag for replace",
     "mode": "search routing selector (auto|content|filename) for search",
     "include_worktrees": (
-        "when true, fs find includes .worktrees and ulg-arc-worktrees paths"
+        "when true, fs find and search include .worktrees and "
+        "ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
 }
@@ -195,7 +196,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "list": frozenset(),
     "find": frozenset({"include_worktrees"}),
     "recent_commits": frozenset(),
-    "search": frozenset({"mode"}),
+    "search": frozenset({"mode", "include_worktrees"}),
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
     "delete": frozenset(),
@@ -474,12 +475,15 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("search_project_files")
         if fn is None:
             return {"error": "search_project_files tool not available"}
-        return fn(
-            content,
-            directory=path,
-            include_untracked=include_untracked,
-            mode=mode or "auto",
-        )
+        search_kwargs: dict[str, Any] = {
+            "directory": path,
+            "include_untracked": include_untracked,
+            "mode": mode or "auto",
+            "include_worktrees": include_worktrees,
+        }
+        if limit > 0:
+            search_kwargs["max_results"] = limit
+        return fn(content, **search_kwargs)
 
     if op in {"append", "prepend"}:
         fn = overflow_registry.get("edit_project_file")
