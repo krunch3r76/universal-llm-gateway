@@ -40,11 +40,9 @@ def test_resolve_stargate_execution_id_empty_without_carrier() -> None:
     assert resolve_stargate_execution_id(req) == ""
 
 
-def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record(
+def _hermetic_operator_proxy_resolve(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from cdp_ask.runner import resolve_prompt
-
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setattr(
         "claude_bundles.operator_proxy_live_leg._default_fold_state_path",
@@ -58,6 +56,44 @@ def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record(
         "claude_bundles.operator_proxy_live_leg.fetch_lane_status",
         lambda _lane: None,
     )
+
+
+def test_resolve_prompt_mission_fallback_prepends_arrival_skills_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Runner path when sealed prompt lacks <!--cdp-required-skills:…-->."""
+    from claude_bundles.cowork_skill_delivery import extract_cdp_required_authority
+    from claude_bundles.operator_proxy_mission import (
+        MISSION_ARRIVAL_SKILL_SLUGS,
+        MISSION_TRIGGER_SKILL_SLUGS,
+    )
+    from cdp_ask.runner import resolve_prompt
+
+    _hermetic_operator_proxy_resolve(monkeypatch, tmp_path)
+    req = SubmitProjectAskRequest(
+        prompt_text="thread_id: 9501\n# Mission\nDo the thing.\n",
+        purpose="operator-proxy",
+    )
+    with patch(
+        "claude_bundles.operator_proxy_hop_status.standing_handoff_path"
+    ) as path:
+        path.return_value.is_file.return_value = False
+        rendered = resolve_prompt(req)[0]
+    authority = extract_cdp_required_authority(rendered)
+    assert authority is not None
+    sealed = {s.lstrip("/").lower() for s in authority}
+    for slug in MISSION_ARRIVAL_SKILL_SLUGS:
+        assert slug.lower() in sealed
+    for slug in MISSION_TRIGGER_SKILL_SLUGS:
+        assert slug.lower() not in sealed
+
+
+def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cdp_ask.runner import resolve_prompt
+
+    _hermetic_operator_proxy_resolve(monkeypatch, tmp_path)
     req = SubmitProjectAskRequest(
         prompt_text="thread_id: 9501\n# Mission\n",
         purpose="operator-proxy",
