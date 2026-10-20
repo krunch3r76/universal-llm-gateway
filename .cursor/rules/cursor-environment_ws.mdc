@@ -137,6 +137,37 @@ MCP tools are reached via `CallMcpTool` against the configured servers
 - `tmp/`: ephemeral; never committed; never referenced from durable
   knowledge (rules, cortex notes, journal entries).
 
+## Two Cursor Glass Environments (orion-node vs :8)
+
+Two Cursor Glass instances share `io`'s workspace but run on different displays
+and CDP debug ports:
+
+| Environment | Display / `gui_host` | CDP origin | Typical use |
+|---|---|---|---|
+| **orion-node** | `orion-node` (`/endpoint-subscriptions` `display="orion-node"`) | `http://127.0.0.1:19338` | Remote-SSH desktop Glass on orion-node |
+| **:8 Xvfb** | `8` or `:8` (`display="8"`) | `http://127.0.0.1:9338` | Headless Glass on `io` (Xvfb `:8`) |
+
+Both use the same Glass CDP helpers (`libs/cursor_bridge/glass_services_js.py`,
+`cursor_agents_hop.py`, `wake_delivery.py`): hop/spawn via
+`instantiationService`, wake via composer services (no `Input.*` keystrokes),
+rename via `renameComposer`, sidebar prune via archive CDP. The
+`ide_context_hop_monitor` path rotates context budget on **both** displays when
+configured.
+
+**MCP `cursor_bridge` direct Glass ops** (in addition to legacy agent-bus
+`open_tab` / `send_msg` / `status`): pass `gui_host=":8"` (default) or
+`gui_host="orion-node"`.
+
+| op | Required params | Effect |
+|---|---|---|
+| `spawn_tab` | `prompt`, optional `model` | New agent tab; model label resolved via `_resolve_catalog_js` |
+| `wake_tab` | `body`, optional `agent_id` | Paste/submit wake line into composer |
+| `rename_tab` | `agent_id`, `title` | Persist sidebar title |
+| `prune_sidebar` | `thread` (root id), `agent_id` (keep row) | Archive older predecessor rows |
+
+Identify which window you inhabit via `gui_host`, bus `/endpoint-subscriptions`
+`display`, or the CDP port your tools target.
+
 ## Operational topology
 
 - Stargate, RAG, Cortex API, agent-bus, and git-integration-worker

@@ -89,6 +89,18 @@ def test_resolve_catalog_js_maps_display_names_to_slugs() -> None:
     assert "mapFromLabel" in cat_js or "slugShape" in cat_js
 
 
+def test_resolve_catalog_js_claude_opus_and_sonnet_high() -> None:
+    cat_js = _resolve_catalog_js()
+    assert "claude-opus-5-5" in cat_js
+    assert "claude-sonnet-5-5" in cat_js
+    opus_js = launch_new_agent_tab_js("resume 18528", "Claude Opus 5.5 High")
+    assert "claude-opus-5-5" in opus_js
+    assert "reasoning_effort" in opus_js
+    assert "high" in opus_js
+    sonnet_js = launch_new_agent_tab_js("resume 18528", "Claude Sonnet 5.5 High")
+    assert "claude-sonnet-5-5" in sonnet_js
+
+
 def test_cursor_agents_archive_imports_without_circular_error() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     libs = str(repo_root / "libs")

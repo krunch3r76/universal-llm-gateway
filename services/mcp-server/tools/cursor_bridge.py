@@ -9,9 +9,17 @@ Spec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Literal
 
+from cursor_bridge.cursor_agents_archive import prune_cursor_agents_predecessors
+from cursor_bridge.cursor_agents_hop import (
+    cursor_debug_url_for_gui_host,
+    launch_cursor_agents_tab,
+    rename_agent_row_in_sidebar,
+)
 from cursor_bridge.lane_ready import assess_lane_readiness
+from cursor_bridge.wake_delivery import _paste_cursor_services, normalize_target
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
@@ -26,7 +34,15 @@ _TO = "cursor"
 _LANE_TAG = "lane:cursor-bridge"
 _PREVIEW_CHARS = 300
 
-BridgeOp = Literal["open_tab", "send_msg", "status"]
+BridgeOp = Literal[
+    "open_tab",
+    "send_msg",
+    "status",
+    "spawn_tab",
+    "wake_tab",
+    "rename_tab",
+    "prune_sidebar",
+]
 
 
 def _param_error(op: str, code: str, detail: str) -> dict[str, Any]:
@@ -104,6 +120,121 @@ def _send_msg(
     return {**result, "op": "send_msg"}
 
 
+def _gui_display(gui_host: str) -> str:
+    return "orion-node" if str(gui_host or "").strip() == "orion-node" else "8"
+
+
+def _spawn_tab(
+    *, gui_host: str, prompt: str | None, model: str | None
+) -> dict[str, Any]:
+    if not prompt or not str(prompt).strip():
+        return _param_error("spawn_tab", "prompt_required", "spawn_tab requires prompt")
+    debug_url = cursor_debug_url_for_gui_host(gui_host)
+    res = launch_cursor_agents_tab(
+        str(prompt).strip(),
+        model_query=str(model or "").strip(),
+        debug_url=debug_url,
+    )
+    record("mcp.cursor_bridge.spawn_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+    return {**res, "op": "spawn_tab", "gui_host": gui_host}
+
+
+def _wake_tab(
+    *, gui_host: str, agent_id: str | None, body: str | None
+) -> dict[str, Any]:
+    if not body or not str(body).strip():
+        return _param_error("wake_tab", "body_required", "wake_tab requires body")
+    display = _gui_display(gui_host)
+    target = normalize_target(display, "cursor")
+    if not target.get("ok"):
+        return _param_error(
+            "wake_tab",
+            "unknown_target",
+            f"wake_tab unknown gui_host {gui_host!r}",
+        )
+    from cursor_bridge.cdp_pages import list_pages
+    from cursor_bridge.wake_delivery import _pick_page
+
+    try:
+        pages = list_pages(target["origin"])
+    except OSError as exc:
+        return {
+            "ok": False,
+            "error": "debug_unreachable",
+            "detail": type(exc).__name__,
+            "op": "wake_tab",
+            "gui_host": gui_host,
+        }
+    page = _pick_page(pages, "cursor")
+    if page is None:
+        return {
+            "ok": False,
+            "error": "no_page",
+            "op": "wake_tab",
+            "gui_host": gui_host,
+            "pages": len(pages),
+        }
+    ws_url = page["web_socket_debugger_url"]
+    line = str(body).strip()
+    aid = str(agent_id or "").strip()
+    try:
+        paste_res = asyncio.run(_paste_cursor_services(ws_url, line, agent_id=aid))
+    except (TimeoutError, RuntimeError, OSError) as exc:
+        return {
+            "ok": False,
+            "error": "paste_failed",
+            "detail": type(exc).__name__,
+            "op": "wake_tab",
+            "gui_host": gui_host,
+        }
+    record(
+        "mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(paste_res.get("ok"))
+    )
+    return {**paste_res, "op": "wake_tab", "gui_host": gui_host, "display": display}
+
+
+def _rename_tab(
+    *, gui_host: str, agent_id: str | None, title: str | None
+) -> dict[str, Any]:
+    if not agent_id or not str(agent_id).strip():
+        return _param_error(
+            "rename_tab", "agent_id_required", "rename_tab requires agent_id"
+        )
+    if not title or not str(title).strip():
+        return _param_error("rename_tab", "title_required", "rename_tab requires title")
+    debug_url = cursor_debug_url_for_gui_host(gui_host)
+    res = rename_agent_row_in_sidebar(
+        str(agent_id).strip(),
+        str(title).strip(),
+        debug_url=debug_url,
+    )
+    record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+    return {**res, "op": "rename_tab", "gui_host": gui_host}
+
+
+def _prune_sidebar(
+    *, gui_host: str, thread: str | None, agent_id: str | None
+) -> dict[str, Any]:
+    if not thread or not str(thread).strip():
+        return _param_error(
+            "prune_sidebar",
+            "thread_required",
+            "prune_sidebar requires thread (root_id)",
+        )
+    if not agent_id or not str(agent_id).strip():
+        return _param_error(
+            "prune_sidebar", "agent_id_required", "prune_sidebar requires agent_id"
+        )
+    debug_url = cursor_debug_url_for_gui_host(gui_host)
+    res = prune_cursor_agents_predecessors(
+        str(thread).strip(),
+        active_agent_id=str(agent_id).strip(),
+        debug_url=debug_url,
+    )
+    record("mcp.cursor_bridge.prune_sidebar", gui_host=gui_host, ok=bool(res.get("ok")))
+    return {**res, "op": "prune_sidebar", "gui_host": gui_host}
+
+
 def _status(*, thread: str | None, last: int) -> dict[str, Any]:
     if not thread:
         return _param_error("status", "thread_required", "status requires thread")
@@ -141,9 +272,7 @@ def _status(*, thread: str | None, last: int) -> dict[str, Any]:
         and t.get("subject") == "REPLY"
         and t.get("turn_number") is not None
     ]
-    readiness = assess_lane_readiness(
-        [t for t in raw if isinstance(t, dict)]
-    )
+    readiness = assess_lane_readiness([t for t in raw if isinstance(t, dict)])
     record("mcp.cursor_bridge.status", thread=thread, count=len(turns))
     return {
         "op": "status",
@@ -172,6 +301,11 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
         body: str | None = None,
         after_turn: int | None = None,
         last: int = 10,
+        gui_host: str = ":8",
+        agent_id: str | None = None,
+        prompt: str | None = None,
+        model: str | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         """claude.ai ↔ Cursor Composer keystroke bridge.
 
@@ -205,6 +339,16 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
                 return _send_msg(thread=thread, body=body, after_turn=after_turn)
             if op == "status":
                 return _status(thread=thread, last=last)
+            if op == "spawn_tab":
+                return _spawn_tab(gui_host=gui_host, prompt=prompt, model=model)
+            if op == "wake_tab":
+                return _wake_tab(gui_host=gui_host, agent_id=agent_id, body=body)
+            if op == "rename_tab":
+                return _rename_tab(gui_host=gui_host, agent_id=agent_id, title=title)
+            if op == "prune_sidebar":
+                return _prune_sidebar(
+                    gui_host=gui_host, thread=thread, agent_id=agent_id
+                )
             return _param_error(
                 "dispatch", "unknown_op", f"unknown op {op!r}; expected {BridgeOp}"
             )

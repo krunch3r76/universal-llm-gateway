@@ -137,6 +137,31 @@ async function resolveCatalog(modelConfigService, label) {
     if (lower.includes('composer') && lower.includes('2.5')) {
       return { modelId: 'composer-2.5', parameters: [] };
     }
+    if (lower.includes('opus') && (lower.includes('5.5') || lower.includes('5-5'))) {
+      return {
+        modelId: 'claude-opus-5-5',
+        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+      };
+    }
+    if (lower.includes('opus') && lower.includes('5')
+        && !lower.includes('5.5') && !lower.includes('5-5')) {
+      return {
+        modelId: 'claude-opus-5',
+        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+      };
+    }
+    if (lower.includes('sonnet') && (lower.includes('5.5') || lower.includes('5-5'))) {
+      return {
+        modelId: 'claude-sonnet-5-5',
+        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+      };
+    }
+    if (lower.includes('fable') && (lower.includes('5.1') || lower.includes('5-1'))) {
+      return {
+        modelId: 'claude-fable-5-1',
+        parameters: [{ id: 'reasoning_effort', value: effort || 'xhigh' }],
+      };
+    }
     const stripped = labelStr.replace(/\s+(extra\s+high|xhigh|high|medium|low|fast)$/i, '').trim();
     const slug = stripped.toLowerCase().replace(/\s+/g, '-');
     if (slugShape(slug)) {
