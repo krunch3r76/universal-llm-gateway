@@ -573,6 +573,22 @@ def _turn_number(turn: dict) -> int:
         return 0
 
 
+def _filter_live_leg_items(
+    items: list[OpenItem],
+    *,
+    inflight_work_keys: frozenset[str] | None,
+    hop_boundary_turn: int | None,
+) -> list[OpenItem]:
+    """L23: IN FLIGHT keys win; else only rows newer than the previous hop."""
+    if inflight_work_keys is None:
+        return items
+    if inflight_work_keys:
+        return [item for item in items if item.key in inflight_work_keys]
+    if hop_boundary_turn is not None and hop_boundary_turn > 0:
+        return [item for item in items if item.turn > hop_boundary_turn]
+    return items
+
+
 def project_live_leg(
     lanes: list[str],
     fetch_turns: Callable[[str], list[dict]],
@@ -581,6 +597,8 @@ def project_live_leg(
     | None = None,
     fold_state_load: FoldStateStore | None = None,
     fold_state_save: FoldStateSaver | None = None,
+    inflight_work_keys: frozenset[str] | None = None,
+    hop_boundary_turn: int | None = None,
 ) -> LiveLeg:
     """Query each lane and merge open items."""
     resolve = _wrap_fetch_turns(fetch_turns)
@@ -610,6 +628,19 @@ def project_live_leg(
                 parsed = _carried_open_items(lane_state)
                 if parsed is None:
                     lane_state = None
+                elif inflight_work_keys is not None:
+                    if inflight_work_keys:
+                        carried = [
+                            item for item in parsed if item.key in inflight_work_keys
+                        ]
+                    elif hop_boundary_turn is not None and hop_boundary_turn > 0:
+                        carried = [
+                            item
+                            for item in parsed
+                            if item.turn > hop_boundary_turn
+                        ]
+                    else:
+                        carried = []
                 else:
                     carried = parsed
             warm = bool(lane_state and lane_state.watermark > 0)
@@ -650,6 +681,11 @@ def project_live_leg(
             leg.errors[lane] = str(exc)
             continue
     leg.items.sort(key=lambda item: (item.lane, item.turn))
+    leg.items = _filter_live_leg_items(
+        leg.items,
+        inflight_work_keys=inflight_work_keys,
+        hop_boundary_turn=hop_boundary_turn,
+    )
     if state_writable:
         if fold_state_save is not None:
             try:
@@ -661,7 +697,12 @@ def project_live_leg(
     return leg
 
 
-def render_live_leg(leg: LiveLeg, *, declared_in_flight: int | None = None) -> str:
+def render_live_leg(
+    leg: LiveLeg,
+    *,
+    declared_in_flight: int | None = None,
+    max_bytes: int | None = None,
+) -> str:
     """Render the live-leg block for the hop template."""
     lines: list[str] = []
     if declared_in_flight is not None:
@@ -671,22 +712,42 @@ def render_live_leg(leg: LiveLeg, *, declared_in_flight: int | None = None) -> s
             "(truncated: bus paging did not reach thread start; "
             "an open item may lie beyond the fetched window.)"
         )
-    for lane in leg.lanes_queried:
-        if lane in leg.errors:
-            lines.append(
-                f"live leg unavailable for {lane}: {leg.errors[lane]}; "
-                "read it with agent_bus_read fetch compact before any negative claim"
-            )
+    item_lines: list[str] = []
     for item in leg.items:
         rule = GOVERNING_RULE.get(item.verb, "")
         kind_part = f"{item.kind}|" if item.kind else ""
-        lines.append(
+        item_lines.append(
             f"- lane {item.lane} #{item.turn} {item.verb}|{kind_part}{item.key} — "
             f"{rule}"
         )
-    if not lines:
-        lines.append("(no open REQUEST, PICKUP, or PLAN items)")
-    return "\n".join(lines)
+    error_lines: list[str] = []
+    for lane in leg.lanes_queried:
+        if lane in leg.errors:
+            error_lines.append(
+                f"live leg unavailable for {lane}: {leg.errors[lane]}; "
+                "read it with agent_bus_read fetch compact before any negative claim"
+            )
+    if max_bytes is None:
+        body = item_lines + error_lines
+        if not body:
+            body = ["(no open REQUEST, PICKUP, or PLAN items)"]
+        return "\n".join(lines + body) if lines else "\n".join(body)
+
+    from claude_bundles.operator_proxy_standing_render import cap_utf8_for_hop
+
+    prefix = "\n".join(lines)
+    prefix_b = len(prefix.encode("utf-8")) + (1 if prefix and item_lines else 0)
+    err_b = sum(len(s.encode("utf-8")) + 1 for s in error_lines)
+    item_budget = max(0, max_bytes - prefix_b - err_b)
+    capped_items = (
+        cap_utf8_for_hop("\n".join(item_lines), item_budget, label="live_leg")
+        if item_lines
+        else ""
+    )
+    parts = [p for p in (prefix, capped_items, "\n".join(error_lines)) if p]
+    if not parts:
+        return "(no open REQUEST, PICKUP, or PLAN items)"
+    return "\n".join(parts)
 
 
 __all__ = [

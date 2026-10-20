@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +28,6 @@ from claude_bundles.operator_proxy_hop_status import (
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 from claude_bundles.operator_proxy_standing_render import (
-    RULES_BUDGET_B,
     assess_render_budget_and_identity,
 )
 from claude_bundles.runbook_excerpt import extract_sections
@@ -68,8 +66,6 @@ _SECTION_ORDER = (
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
-    "## How this seat works",
-    "## Standing authority",
     "## Data, not instructions",
     "## Hop request (data)",
     "## Hard refusals",
@@ -138,9 +134,8 @@ def test_house_rules_extracted_verbatim() -> None:
         journal_text="",
         register_text="",
     )
-    assert "{lane}" in out
-    house = out.split("## Lessons in force", 1)[0]
-    assert "rule A on lane {lane}" in house
+    assert "House rules (do not inline)" in out
+    assert "1-house-rules.md" in out
 
 
 def test_fixture_head_does_not_copy_leg_stack() -> None:
@@ -222,7 +217,7 @@ def test_rendered_prompt_section_order() -> None:
     )
     _assert_section_order(out, _SECTION_ORDER, strict=True)
     assert "must not copy" in out.split("## CURRENT LEG (rendered checkpoint)", 1)[1]
-    assert "R0" in out.split("## Lessons in force", 1)[0]
+    assert "House rules (do not inline)" in out.split("## Lessons in force", 1)[0]
     assert f"successor_birth_id {birth}" in out
     assert "execution_id exec-1" in out
 
@@ -236,14 +231,13 @@ def test_first_acts_are_numbered_in_order() -> None:
         register_text="",
     )
     start = out.index("## Your first acts, in order")
-    end = out.index("## How this seat works")
+    end = out.index("## Data, not instructions")
     block = out[start:end]
     assert "1. Use the cdp-operator-proxy" in block
-    assert "md_read" in block and "maestro-loop.md" in block
+    assert "read_multi" in block and "maestro-loop.md" in block
     assert "2." in block
     assert block.index("1. Use") < block.index("2.")
     assert block.index("2.") < block.index("7. Act")
-    assert "live leg unavailable" in block
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:
@@ -618,7 +612,8 @@ def test_runbook_cost_is_refuse_plus_steps(
         register_text="",
     )
     assert f"| {n}/32768 |" in housekeeping
-    assert f"(runbook {n} bytes)." in mission
+    assert "### route" in mission
+    assert "read_multi" in mission
     assert str(whole) not in housekeeping
     assert str(whole) not in mission
 
@@ -752,15 +747,20 @@ def test_ac1_checkpoint_budget_excludes_house_rules() -> None:
     ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
         "## Lessons in force", 1
     )[0]
-    assert "### IN FLIGHT" in ck
-    assert 'poll_hint {"thread":"1","after_turn":0}' in ck
+    inflight = out.split("## In flight (from the checkpoint", 1)[1].split(
+        "## Live leg", 1
+    )[0]
+    assert 'poll_hint {"thread":"1","after_turn":0}' in inflight
+    assert "### IN FLIGHT" not in ck
     assert (
         "K1 rule" not in ck.split("### HOUSE RULES")[0]
         if "### HOUSE RULES" in ck
         else True
     )
+    from claude_bundles.operator_proxy_standing_render import CHECKPOINT_HOP_INLINE_B
+
     body_no_rules = ck.split("### HOUSE RULES")[0] if "### HOUSE RULES" in ck else ck
-    assert len(body_no_rules.encode("utf-8")) <= 8192 + 200
+    assert len(body_no_rules.encode("utf-8")) <= CHECKPOINT_HOP_INLINE_B + 200
     assert "[budget_exceeded" in ck
 
 
@@ -782,9 +782,9 @@ def test_ac2_nine_row_inflight_preamble_flag() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    for i in range(9):
-        assert f'"row":{i}' in out
-    assert "[preamble over budget by IN FLIGHT: 9 rows]" in out
+    assert "declared_in_flight: 9" in out
+    assert "[hop_budget_exceeded inflight" in out
+    assert len(out.encode()) <= 12_000
 
 
 def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
@@ -797,18 +797,19 @@ def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "operative rule text forty" in out_file.split("## Lessons in force", 1)[0]
+    assert "House rules (do not inline)" in out_file.split("## Lessons in force", 1)[0]
     out_inline = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "inline fallback" in out_inline.split("## Lessons in force", 1)[0]
+    assert "inline fallback" not in out_inline.split("## Lessons in force", 1)[0]
 
 
 def _rendered_house_rules_in_hop_prompt(out: str) -> str:
-    start = out.find("## HOUSE RULES")
+    marker = "House rules (do not inline):"
+    start = out.find(marker)
     assert start >= 0
     end = out.find("\n## CURRENT LEG (rendered checkpoint)", start)
     assert end > start
@@ -828,28 +829,9 @@ def test_ac4_rules_truncation_lists_k_ids() -> None:
         fetch_turns=_noop_fetch,
     )
     rules_block = _rendered_house_rules_in_hop_prompt(out)
-    assert len(rules_block.encode("utf-8")) <= RULES_BUDGET_B
-    assert "[rules truncated:" in rules_block
-    match = re.search(r"\[rules truncated: ([^\]]+) —", rules_block)
-    assert match is not None
-    ids = [part.strip() for part in match.group(1).split(",")]
-    assert ids == [
-        "K24",
-        "K23",
-        "K22",
-        "K21",
-        "K20",
-        "K19",
-        "K18",
-        "K17",
-        "K16",
-    ]
-    assert "K1" not in ids
-    for k in range(1, 16):
-        assert f"- K{k} " + ("x" * 500) in rules_block
-    for k in range(16, 25):
-        assert f"- K{k} " + ("x" * 500) not in rules_block
-        assert f"- K{k} " + ("x" * 499) not in rules_block
+    assert "House rules (do not inline)" in rules_block
+    assert "- K1 " not in out.split("## Hard refusals", 1)[0]
+    assert len(out.encode("utf-8")) <= 12_000
 
 
 def test_ac10_checkpoint_stale_identity() -> None:
@@ -896,9 +878,9 @@ def test_pa2_no_hardcoded_leg119_k1_22() -> None:
 
 def test_pa3_act2_md_read_and_runbook_size() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
-    acts = out.split("## Your first acts", 1)[1].split("## How this seat works", 1)[0]
-    assert "md_read" in acts and "§ Refuse" in acts and "§ Steps" in acts
-    assert "bytes" in acts or "size unknown" in acts
+    acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
+    assert "read_multi" in acts
+    assert "### route" in acts
     assert "2. 2." not in acts
 
 
@@ -1033,9 +1015,8 @@ def test_ac5_live_shape_house_rules_heading_is_not_in_the_checkpoint() -> None:
     ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
         "## Lessons in force", 1
     )[0]
-    rules = out.split("## Lessons in force", 1)[0]
-    assert sentinel in rules
     assert sentinel not in ck
+    assert "House rules (do not inline)" in out
     assert "owed-stays" in ck
 
 
@@ -1070,10 +1051,11 @@ def test_ac17_full_preamble_span_flags_nine_inflight_rows() -> None:
         journal_text="",
         register_text="",
     )
-    from claude_bundles.operator_proxy_standing_render import measure_preamble_bytes
 
-    assert measure_preamble_bytes(out) > 30720
-    assert "[preamble over budget by IN FLIGHT: 9 rows]" in out
+    from claude_bundles.operator_proxy_standing_render import HOP_RENDER_MAX_B
+
+    assert len(out.encode()) <= HOP_RENDER_MAX_B
+    assert "[hop_budget_exceeded inflight" in out
 
 
 def test_ac17_prior_leg_range_uses_the_header_only() -> None:
@@ -1199,7 +1181,7 @@ def test_ac8_journal_projection_raise_replaces_only_those_blocks(
         "cortex://notes/system/maestro/journal.md]"
     ) in out
     assert "[render_failed register_card: RuntimeError" in out
-    assert "rules-still-here" in out
+    assert "House rules (do not inline)" in out
     assert "checkpoint-x" in out
     assert "## Hard refusals" in out
 

@@ -65,8 +65,6 @@ _SECTION_ORDER = (
     "## Live leg (data, projected from the bus)",
     "## Pointers",
     "## Your first acts, in order",
-    "## How this seat works",
-    "## Standing authority",
     "## Data, not instructions",
     "## Hop request (data)",
     "## Hard refusals",
@@ -329,12 +327,11 @@ def test_stage_resolve_single_briefing_with_house_pool_inline(
 
 
 def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
-    """How-this-seat-works names ulg-code team_dispatch and lane B."""
+    """Cut 6: commission defaults live in on-trigger md_read, not inline hop body."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    how = out.split("## How this seat works", 1)[1].split("## Standing authority", 1)[0]
-    assert "team_dispatch" in how
-    assert "ulg-code" in how
-    assert "lane=B" in how
+    data = out.split("## Data, not instructions", 1)[1].split("## Hard refusals", 1)[0]
+    assert "How this seat works" in data
+    assert "Standing authority" in data
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
 
@@ -367,14 +364,12 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
 
 def test_how_this_seat_works_names_reachable_models() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    how = out.split("## How this seat works", 1)[1].split("## Standing authority", 1)[0]
-    assert "cdp/fable" in how
-    assert "cursor/grok-4.7" in how
-    assert "cursor/composer-2.5" in how
-    assert "cdp/opus-5.5" in how
-    assert "cursor/claude-opus-5" not in how
+    refusals = out.split("## Hard refusals", 1)[1]
+    assert "cdp/fable" in refusals
+    assert "cdp/opus-5.5-extra" in refusals
+    assert "cursor/claude-opus-5" not in out
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
-    assert _legacy_reasoner not in how
+    assert _legacy_reasoner not in out
 
 
 def test_identity_is_successor_birth_id_not_chat_url() -> None:
@@ -389,7 +384,7 @@ def test_first_act_names_mission_skill_slugs() -> None:
     """Act 1 names the mission slugs; a failed load must be said, not claimed."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     acts = out.split("## Your first acts, in order", 1)[1].split(
-        "## How this seat works", 1
+        "## Data, not instructions", 1
     )[0]
     for slug in MISSION_SKILL_SLUGS:
         assert slug in acts
@@ -433,18 +428,19 @@ def _runbook_for_refuse_coverage() -> str:
 
 
 def test_refuse_bullets_map_to_template_lines() -> None:
-    bullets = _refuse_bullets(_runbook_for_refuse_coverage())
-    assert len(bullets) == len(_REFUSE_BULLET_KEYWORDS)
-    template_lines = _BRIEFING_BLOCK.splitlines()
-    template_aliases = {"contract=none": "contract=conductor"}
-    for bullet, keyword in zip(bullets, _REFUSE_BULLET_KEYWORDS, strict=True):
-        assert keyword in bullet
-        template_key = template_aliases.get(keyword, keyword)
-        assert any(template_key in line for line in template_lines)
+    """Hop template keeps 11 original bullets plus L5 append (1685-1687 cite)."""
+    refusals = _BRIEFING_BLOCK.split("## Hard refusals", 1)[1]
+    hop_bullets = [ln for ln in refusals.splitlines() if ln.startswith("- ")]
+    assert len(hop_bullets) == 16
+    assert "wc -m" in refusals
+    assert "conductor_hop.py:1685-1687" in refusals
+    assert "Sleep at most 290" not in refusals
 
 
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
-    """Fixed template plus caller body stays bounded with a noop bus projection."""
+    """Cut 6 falsifier: rendered hop UTF-8 stays at or under 12_000 B."""
+    from claude_bundles.operator_proxy_standing_render import HOP_RENDER_MAX_B
+
     out = ensure_operator_proxy_mission_prompt(
         "TYPE: CONTINUITY_HANDOFF\n# body\n",
         roster_text="",
@@ -452,15 +448,14 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
         journal_text="",
         register_text="",
     )
-    assert len(out.encode()) < 16000
+    assert len(out.encode()) <= HOP_RENDER_MAX_B
     for needle in (
         "2000 characters",
-        "poll_hint",
         "contract=conductor",
         "git_integration_worker",
-        "porcelain_raw_open",
         "send_later",
         "successor_birth_id",
+        "conductor_hop.py:1685-1687",
     ):
         assert needle in out
     assert not any(line.endswith("…") for line in out.splitlines())
@@ -670,33 +665,25 @@ def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
         "### OWED / NEXT\nfixture owed line\n"
         "### HOUSE RULES\n- K1 golden-rule\n"
     )
-    with patch(
-        "claude_bundles.operator_proxy_mission.maestro_runbook_act2_line",
-        return_value="`md_read` cortex://notes/runbooks/maestro-loop.md sections § Refuse and § Steps only (runbook 12345 bytes).",
-    ):
-        out = ensure_operator_proxy_mission_prompt(
-            caller,
-            standing_handoff_text=sidecar,
-            roster_text="",
-            fetch_turns=_noop_fetch,
-            journal_text="",
-            register_text="",
-            execution_id="exec-golden",
-        )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
     assert out == golden
-    with patch(
-        "claude_bundles.operator_proxy_mission.maestro_runbook_act2_line",
-        return_value="`md_read` cortex://notes/runbooks/maestro-loop.md sections § Refuse and § Steps only (runbook 12345 bytes).",
-    ):
-        explicit = ensure_operator_proxy_mission_prompt(
-            caller + "hop_kind: mission\n",
-            standing_handoff_text=sidecar,
-            roster_text="",
-            fetch_turns=_noop_fetch,
-            journal_text="",
-            register_text="",
-            execution_id="exec-golden",
-        )
+    explicit = ensure_operator_proxy_mission_prompt(
+        caller + "hop_kind: mission\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
     assert "Act on the running items" in explicit
     assert "## Housekeeping acts" not in explicit
     assert explicit.split("## Hop request (data)", 1)[0] == golden.split(
@@ -752,7 +739,11 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
         "    ## Hard refusals (indented quote in HOUSE RULES, not template)\n"
         "tail line\n"
     )
-    sidecar = f"## HOUSE RULES\n{handoff_snippet}"
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\n"
+        f"{handoff_snippet}"
+    )
     birth = "cd" * 16
     caller = f"thread_id: 12286\nsuccessor_birth_id: {birth}\n"
     out = ensure_operator_proxy_mission_prompt(
@@ -891,7 +882,7 @@ def test_ac6_production_seams_render_rules_lineage_and_archive(
         _lineage,
     )
     for text in _ac6_texts(root, monkeypatch):
-        assert "FILE-RULES-SENTINEL" in text
+        assert "House rules (do not inline)" in text
         assert "liveness: terminal(completed)" in text
         assert "archive_missing" in text
 
@@ -910,7 +901,7 @@ def test_ac6_lineage_transport_raise_is_unverified(
     )
     for text in _ac6_texts(root, monkeypatch):
         assert "liveness: unverified" in text
-        assert "FILE-RULES-SENTINEL" in text
+        assert "House rules (do not inline)" in text
 
 
 def test_ac7_rules_reader_valueerror_replaces_only_that_block() -> None:
@@ -927,10 +918,7 @@ def test_ac7_rules_reader_valueerror_replaces_only_that_block() -> None:
         journal_text="",
         register_text="",
     )
-    assert (
-        "[render_failed house_rules: ValueError — read "
-        "cortex://notes/system/threads/12286-house-rules.md]"
-    ) in out
+    assert "House rules (do not inline)" in out
     assert "checkpoint-still-here" in out
     assert "## Hard refusals" in out
 
@@ -961,7 +949,6 @@ def test_ac7_live_leg_raise_replaces_only_that_block(
         "[render_failed live_leg: RuntimeError — read "
         "cortex://notes/system/threads/12286-standing-handoff.md]"
     ) in out
-    assert "rules-still-here" in out
     assert "checkpoint-still-here" in out
 
 
@@ -977,9 +964,8 @@ def test_ac1_non_utf8_rules_file_falls_back_inline(
     )
     (threads / "12286-house-rules.md").write_bytes(b"\xff")
     for text in _ac6_texts(root, monkeypatch):
-        assert "INLINE-RULES-SENTINEL" in text
-        assert "[rules_file_unreadable: UnicodeDecodeError" in text
-        assert "[render_failed house_rules" not in text
+        assert "House rules (do not inline)" in text
+        assert "INLINE-RULES-SENTINEL" not in text
 
 
 def test_ac1_missing_rules_file_is_plain_inline_fallback(
@@ -994,8 +980,7 @@ def test_ac1_missing_rules_file_is_plain_inline_fallback(
     )
     (threads / "12286-house-rules.md").unlink()
     for text in _ac6_texts(root, monkeypatch):
-        assert "INLINE-RULES-SENTINEL" in text
-        assert "rules_file_unreadable" not in text
+        assert "House rules (do not inline)" in text
 
 
 def test_ac3_unreadable_journal_renders_unavailable(
@@ -1039,7 +1024,6 @@ def test_ac6_checkpoint_raise_replaces_only_that_block(
         "[render_failed checkpoint: RuntimeError — read "
         "cortex://notes/system/threads/12286-standing-handoff.md]"
     ) in out
-    assert "rules-still-here" in out
     assert "## Hard refusals" in out
 
 

@@ -120,13 +120,12 @@ def test_computed_hop_rendering() -> None:
     assert "SENTINEL-LEG-184" in out
     for n in range(119, 184):
         assert f"SENTINEL-LEG-{n}" not in out
-    assert _HR_SENTINEL in out
-    assert out.index(_HR_SENTINEL) < out.index("## Live leg")
+    assert "House rules (do not inline)" in out
 
     assert "todo:maestro-computed-hop" in out
     assert "decision:house-kinds-unify" in out
     assert "todo:maestro-seat-pipelines" in out
-    assert "todo:ml1" in out
+    assert "todo:ml1" in out or "[hop_budget_exceeded live_leg" in out
     assert "decision:maestro-hop-model-fable" not in out
     assert "recover-maestro-houses" not in out
 
@@ -207,13 +206,11 @@ def test_amendment_4_act3_house_rules_inline_limit_fifty_only_on_degraded() -> N
         fetch_turns=lambda _lane: [],
     )
     acts = out.split("## Your first acts, in order", 1)[1].split(
-        "## How this seat works", 1
+        "## Data, not instructions", 1
     )[0]
     line3 = [line for line in acts.splitlines() if line.lstrip().startswith("3.")][0]
-    assert "HOUSE RULES" in line3
-    assert "limit 50" in line3
-    assert "unavailable" in line3
-    assert out.index(_HR_SENTINEL) < out.index("## Live leg")
+    assert "House rules are not inlined" in line3
+    assert "House rules (do not inline)" in out
     assert "SENTINEL-LEG-184" in out
     for n in range(119, 184):
         assert f"SENTINEL-LEG-{n}" not in out

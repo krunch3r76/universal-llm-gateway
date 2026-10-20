@@ -39,6 +39,16 @@ from claude_bundles.operator_proxy_live_leg import (
     render_live_leg,
 )
 from claude_bundles.operator_proxy_standing_render import (
+    HOP_INFLIGHT_CAP_B,
+    HOP_LIVE_LEG_CAP_B,
+    HOP_POINTERS_CAP_B,
+    HOP_RUNNING_NOW_CAP_B,
+    _extract_current_leg_block,
+    cap_utf8_for_hop,
+    extract_inflight_work_keys,
+    hop_boundary_turn_from_header,
+    hop_house_rules_pointer,
+    inflight_section_from_sidecar,
     measure_checkpoint_budget_bytes,
     render_budgets_table_block,
     render_checkpoint_block,
@@ -277,6 +287,8 @@ def hop_successor_fields(
     inflight_block = ""
     inflight_count = 0
     checkpoint_header = ""
+    inflight_work_keys: frozenset[str] | None = None
+    hop_boundary_turn: int | None = None
     rules_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     handoff_uri = standing_handoff_uri(lane)
     if sidecar:
@@ -287,6 +299,7 @@ def hop_successor_fields(
                 inline_house_rules=inline_rules,
                 path_exists=archive_path_exists,
                 superseded_registration_id=superseded_reg,
+                hop_inline=hop_kind == "mission",
             )
         except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
             checkpoint_block = (
@@ -301,10 +314,20 @@ def hop_successor_fields(
                 inflight_block = render_inflight_block(
                     inflight_rows,
                     lineage_lookup=lineage_lookup,
+                    max_bytes=HOP_INFLIGHT_CAP_B if hop_kind == "mission" else None,
                 )
             except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
                 inflight_block = _render_failed("inflight", exc, handoff_uri)
         checkpoint_header = str(ck_meta.get("leg_header") or "")
+        current_leg_block = _extract_current_leg_block(sidecar)
+        if (
+            hop_kind == "mission"
+            and current_leg_block
+            and "### IN FLIGHT" in current_leg_block
+        ):
+            inflight_section = inflight_section_from_sidecar(sidecar)
+            inflight_work_keys = extract_inflight_work_keys(inflight_section)
+            hop_boundary_turn = hop_boundary_turn_from_header(checkpoint_header)
         if ck_meta.get("identity") == "stale":
             act5_fetch_last = 5
 
@@ -313,6 +336,8 @@ def hop_successor_fields(
             house_rules_verbatim = handoff_failure
         elif not sidecar:
             house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
+        elif hop_kind == "mission":
+            house_rules_verbatim = hop_house_rules_pointer(lane)
         else:
             house_rules_verbatim, _rules_budget = render_house_rules_block(
                 lane=lane,
@@ -330,8 +355,14 @@ def hop_successor_fields(
             page_fetch=page_fetch,
             fold_state_load=fold_state_load,
             fold_state_save=fold_state_save,
+            inflight_work_keys=inflight_work_keys,
+            hop_boundary_turn=hop_boundary_turn,
         )
-        live_leg = render_live_leg(leg, declared_in_flight=inflight_count)
+        live_leg = render_live_leg(
+            leg,
+            declared_in_flight=inflight_count,
+            max_bytes=HOP_LIVE_LEG_CAP_B if hop_kind == "mission" else None,
+        )
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
         live_leg = _render_failed("live_leg", exc, handoff_uri)
     lane_list = ", ".join(lanes) if lanes else "none"
@@ -359,6 +390,7 @@ def hop_successor_fields(
     pointers = render_pointers_block(
         checkpoint_preamble=checkpoint_header,
         rules_text=house_rules_verbatim,
+        max_bytes=HOP_POINTERS_CAP_B if hop_kind == "mission" else None,
     )
 
     try:
@@ -418,6 +450,11 @@ def hop_successor_fields(
             budgets_table = f"{budgets_table}\n\n{over_budget}"
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
         budgets_table = _render_failed("budgets_table", exc, standing_handoff_uri(lane))
+
+    if hop_kind == "mission":
+        running_now = cap_utf8_for_hop(
+            running_now, HOP_RUNNING_NOW_CAP_B, label="running_now"
+        )
 
     return {
         "hop_kind": hop_kind,

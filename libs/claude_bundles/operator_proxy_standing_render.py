@@ -14,6 +14,14 @@ from claude_bundles.runbook_excerpt import extract_sections
 
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
+CHECKPOINT_HOP_INLINE_B = 2400
+HOP_RENDER_MAX_B = 12_000
+HOP_RUNNING_NOW_CAP_B = 200
+HOP_INFLIGHT_CAP_B = 400
+HOP_LIVE_LEG_CAP_B = 600
+HOP_POINTERS_CAP_B = 300
+HOP_LESSONS_CAP_B = 1200
+HOP_REGISTER_CAP_B = 600
 RULES_BUDGET_B = 8 * _KB
 SECTION_OWED_CAP_B = 1536
 SECTION_OPEN_CAP_B = 600
@@ -52,6 +60,52 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
     while cut and (cut[-1] & 0xC0) == 0x80:
         cut = cut[:-1]
     return cut.decode("utf-8", errors="ignore")
+
+
+def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
+    """Truncate hop slot text and append a budget flag when over *max_bytes*."""
+    body = text or ""
+    size = _utf8_len(body)
+    if size <= max_bytes:
+        return body
+    flag = f"[hop_budget_exceeded {label} {size}/{max_bytes}]"
+    room = max(0, max_bytes - _utf8_len(flag) - 1)
+    trimmed = _truncate_utf8(body, room).rstrip()
+    return f"{trimmed}\n{flag}" if trimmed else flag
+
+
+def hop_house_rules_pointer(lane: str) -> str:
+    """226 B house-rules slot for hop render (L5); not an inline of the rules file."""
+    return (
+        f'House rules (do not inline): `fs(op="read", '
+        f'path="cortex://notes/system/threads/{lane}-house-rules.md")` '
+        f"and quote `read_sha256`. Live file is 8134 B "
+        f"(`sha256:3b5ee38cc7a8451651f61e37646314819b137be6ac06292ed7f4287fc5f3d28b`).\n"
+    )
+
+
+_HOP_TURN_REF_RE = re.compile(r"#(\d+)\b")
+
+
+def extract_inflight_work_keys(inflight_section: str) -> frozenset[str]:
+    """Work keys named in CURRENT LEG IN FLIGHT (L23)."""
+    from claude_bundles.operator_proxy_live_leg import _WORK_KEY_IN_SUBJECT_RE
+
+    return frozenset(_WORK_KEY_IN_SUBJECT_RE.findall(inflight_section or ""))
+
+
+def hop_boundary_turn_from_header(header: str) -> int:
+    """Largest explicit #turn in the CURRENT LEG header (previous-hop floor)."""
+    refs = [int(m.group(1)) for m in _HOP_TURN_REF_RE.finditer(header or "")]
+    return max(refs) if refs else 0
+
+
+def inflight_section_from_sidecar(sidecar: str) -> str:
+    """Return the ### IN FLIGHT body from a standing-handoff sidecar."""
+    current = _extract_current_leg_block(sidecar)
+    if not current:
+        return ""
+    return _parse_h3_sections(current).get("IN FLIGHT", "")
 
 
 def _heading_sections(text: str) -> list[tuple[str, str, int]]:
@@ -226,6 +280,7 @@ def _apply_checkpoint_budget(
     sections: dict[str, str],
     *,
     uri: str,
+    max_budget: int = CHECKPOINT_BUDGET_B,
 ) -> tuple[str, list[str], bool]:
     """Render checkpoint excluding HOUSE RULES; IN FLIGHT is never truncated."""
     flags: list[str] = []
@@ -239,7 +294,7 @@ def _apply_checkpoint_budget(
             flags.append(flag.replace("standing handoff", uri))
         working["FIRST ACTS"] = capped
 
-    exceeded = _checkpoint_budget_body_len(working) > CHECKPOINT_BUDGET_B
+    exceeded = _checkpoint_budget_body_len(working) > max_budget
     caps = {
         "LAST LEG": SECTION_LAST_CAP_B,
         "OWED / NEXT": SECTION_OWED_CAP_B,
@@ -256,7 +311,7 @@ def _apply_checkpoint_budget(
             flags.append(flag)
             working[name] = _truncate_utf8(sec, cap) + "\n" + flag
 
-    while _checkpoint_budget_body_len(working) > CHECKPOINT_BUDGET_B:
+    while _checkpoint_budget_body_len(working) > max_budget:
         exceeded = True
         trimmed = False
         for name in _TRUNCATABLE_SECTIONS:
@@ -278,12 +333,12 @@ def _apply_checkpoint_budget(
     no_inflight = {k: v for k, v in working.items() if k != "IN FLIGHT"}
     tail = _assemble_checkpoint(no_inflight)
     tail_len = _utf8_len(tail)
-    if tail_len > CHECKPOINT_BUDGET_B:
+    if tail_len > max_budget:
         exceeded = True
-        flag = f"[budget_exceeded checkpoint {tail_len}/{CHECKPOINT_BUDGET_B} — read {uri}]"
+        flag = f"[budget_exceeded checkpoint {tail_len}/{max_budget} — read {uri}]"
         if flag not in flags:
             flags.append(flag)
-        tail = _truncate_utf8(tail, CHECKPOINT_BUDGET_B) + "\n" + flag
+        tail = _truncate_utf8(tail, max_budget) + "\n" + flag
 
     joined_parts: list[str] = []
     if inflight:
@@ -335,6 +390,7 @@ def render_inflight_block(
     rows: list[InflightRow],
     *,
     lineage_lookup: Callable[[str, str], str | None] | None = None,
+    max_bytes: int | None = None,
 ) -> str:
     lines = ["## In flight (from the checkpoint; liveness from bus lineage)"]
     lookup = lineage_lookup
@@ -352,7 +408,10 @@ def render_inflight_block(
             else:
                 suffix = f"liveness: terminal({status})"
         lines.append(f"{row.raw_line} {suffix}")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if max_bytes is None:
+        return text
+    return cap_utf8_for_hop(text, max_bytes, label="inflight")
 
 
 _BULLET_LINE_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+")
@@ -576,6 +635,7 @@ def render_checkpoint_block(
     inline_house_rules: str | None,
     path_exists: Callable[[str], bool] | None = None,
     superseded_registration_id: str | None = None,
+    hop_inline: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Render the checkpoint block callers inject into a hop prompt.
 
@@ -636,8 +696,15 @@ def render_checkpoint_block(
             meta["flags"].append("archive_missing")
 
     if current:
-        render_sections = {k: v for k, v in sections.items() if "HOUSE RULES" not in k}
-        body, flags, exceeded = _apply_checkpoint_budget(render_sections, uri=uri)
+        render_sections = {
+            k: v
+            for k, v in sections.items()
+            if "HOUSE RULES" not in k and not (hop_inline and k == "IN FLIGHT")
+        }
+        inline_cap = CHECKPOINT_HOP_INLINE_B if hop_inline else CHECKPOINT_BUDGET_B
+        body, flags, exceeded = _apply_checkpoint_budget(
+            render_sections, uri=uri, max_budget=inline_cap
+        )
         meta["flags"].extend(flags)
         if exceeded:
             meta["budget"] = "exceeded"
@@ -674,6 +741,7 @@ def render_pointers_block(
     *,
     checkpoint_preamble: str,
     rules_text: str,
+    max_bytes: int | None = None,
 ) -> str:
     leg_nums = [
         int(m.group(1)) for m in _LEG_NUM_RE.finditer(checkpoint_preamble or "")
@@ -683,7 +751,7 @@ def render_pointers_block(
         f"LEG {min(leg_nums)}…{max(leg_nums)}" if leg_nums else "prior LEG blocks"
     )
     k_part = f"K{min(k_ids)}–K{max(k_ids)}" if k_ids else "K-row rulings"
-    return (
+    block = (
         f"- Prior LEG blocks ({leg_part}): "
         f"`cortex://notes/system/threads/<lane>-standing-handoff.md` and the house "
         "lanes listed above — still-open work is re-derived into the live leg; "
@@ -702,6 +770,9 @@ def render_pointers_block(
         "- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal "
         "against re-arming send_later stays inline."
     )
+    if max_bytes is None:
+        return block
+    return cap_utf8_for_hop(block, max_bytes, label="pointers")
 
 
 def runbook_refuse_steps_bytes(body: str | None) -> int | None:
@@ -855,13 +926,26 @@ def compute_preamble_over_inflight_flag(
 
 __all__ = [
     "CHECKPOINT_BUDGET_B",
+    "CHECKPOINT_HOP_INLINE_B",
+    "HOP_INFLIGHT_CAP_B",
+    "HOP_LESSONS_CAP_B",
+    "HOP_LIVE_LEG_CAP_B",
+    "HOP_POINTERS_CAP_B",
+    "HOP_REGISTER_CAP_B",
+    "HOP_RENDER_MAX_B",
+    "HOP_RUNNING_NOW_CAP_B",
     "JOURNAL_HEAD_BUDGET_B",
     "PREAMBLE_SOFT_CAP_B",
     "RULES_BUDGET_B",
     "RUNBOOK_BUDGET_B",
     "InflightRow",
     "assess_render_budget_and_identity",
+    "cap_utf8_for_hop",
     "compute_preamble_over_inflight_flag",
+    "extract_inflight_work_keys",
+    "hop_boundary_turn_from_header",
+    "hop_house_rules_pointer",
+    "inflight_section_from_sidecar",
     "maestro_runbook_act2_line",
     "measure_checkpoint_budget_bytes",
     "measure_preamble_bytes",

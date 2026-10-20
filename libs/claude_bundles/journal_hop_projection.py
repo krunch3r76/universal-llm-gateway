@@ -9,6 +9,12 @@ from typing import Final
 
 from implement_admission.closeout_helpers import cortex_files_root
 
+from claude_bundles.operator_proxy_standing_render import (
+    HOP_LESSONS_CAP_B,
+    HOP_REGISTER_CAP_B,
+    cap_utf8_for_hop,
+)
+
 _ARCHIVED_PREV_RE = re.compile(
     r"^archived_prev:\s*(\S+)\s+sha256\s+([0-9a-f]{64})\s*$",
     re.MULTILINE | re.IGNORECASE,
@@ -334,6 +340,9 @@ def hop_journal_projection_fields(
             )
         else:
             register = render_register_card(reg_body)
+
+    lessons = cap_utf8_for_hop(lessons, HOP_LESSONS_CAP_B, label="lessons")
+    register = cap_utf8_for_hop(register, HOP_REGISTER_CAP_B, label="register")
 
     fields = {"lessons_in_force": lessons, "register_card": register}
     if total_bytes is not None:

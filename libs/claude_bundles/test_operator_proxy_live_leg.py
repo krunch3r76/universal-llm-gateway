@@ -14,6 +14,8 @@ from claude_bundles.operator_proxy_live_leg import (
     GOVERNING_RULE,
     LaneFoldState,
     LiveLeg,
+    OpenItem,
+    _filter_live_leg_items,
     fetch_turns_to_closure,
     load_fold_state,
     load_maestro_roster_text,
@@ -505,3 +507,43 @@ def test_friction_39270_roster_load_absent_vs_unreadable(
     bad = load_maestro_roster_text()
     assert bad.text == ""
     assert bad.unreadable == "UnicodeDecodeError"
+
+
+def test_l23_inflight_keys_win_over_stale_open_items() -> None:
+    items = [
+        OpenItem("15722", 50, "REQUEST", "investigate", "decision:old", "s"),
+        OpenItem("15722", 90, "PICKUP", "", "todo:inflight", "s"),
+    ]
+    filtered = _filter_live_leg_items(
+        items,
+        inflight_work_keys=frozenset({"todo:inflight"}),
+        hop_boundary_turn=80,
+    )
+    assert [i.key for i in filtered] == ["todo:inflight"]
+
+
+def test_l23_boundary_turn_drops_rows_at_or_before_hop() -> None:
+    items = [
+        OpenItem("15722", 80, "REQUEST", "", "todo:stale", "s"),
+        OpenItem("15722", 81, "PLAN", "", "todo:fresh", "s"),
+    ]
+    filtered = _filter_live_leg_items(
+        items,
+        inflight_work_keys=frozenset(),
+        hop_boundary_turn=80,
+    )
+    assert [i.key for i in filtered] == ["todo:fresh"]
+
+
+def test_render_live_leg_keeps_lane_errors_when_item_budget_truncates() -> None:
+    leg = LiveLeg(
+        items=[
+            OpenItem("1", 1, "REQUEST", "", "todo:a", "s"),
+            OpenItem("1", 2, "REQUEST", "", "todo:b", "s"),
+        ],
+        errors={"9": "simulated bus down"},
+        lanes_queried=["1", "9"],
+    )
+    out = render_live_leg(leg, max_bytes=120)
+    assert "live leg unavailable for 9" in out
+    assert "todo:a" in out or "[hop_budget_exceeded live_leg" in out
