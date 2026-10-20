@@ -338,6 +338,7 @@ def test_submit_wake_line_js_no_input_events() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "setContent" in js
     assert "submitChatMaybeAbortCurrent" in js
+    assert "appendQueuedHumanMessage" not in js
     assert "Input.insertText" not in js
     assert "Input.dispatchKeyEvent" not in js
 
