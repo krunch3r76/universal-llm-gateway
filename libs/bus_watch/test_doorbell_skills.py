@@ -80,6 +80,23 @@ def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
     assert dispatch_skills_for_surface("cursor-sdk") == []
 
 
+# friction:39814 — a third retry of the same input is still forbidden; one
+# resolve-or-replace attempt must be visible in ide-continuity skill text.
+IDE_CONTINUITY_REPEATED_FAILURE_RESOLVE_OR_REPLACE = (
+    "one attempt of a different kind (resolve or replace the input) is allowed before REPEATED_FAILURE"
+)
+
+
+@pytest.mark.offline
+def test_ide_continuity_repeated_failure_resolve_or_replace_in_skill_body() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    body = (
+        repo / "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert IDE_CONTINUITY_REPEATED_FAILURE_RESOLVE_OR_REPLACE in body
+    assert "third retry of the same input is forbidden" in body
+
+
 @pytest.mark.offline
 def test_liaison_protocol_echo_marker_in_skill_body() -> None:
     repo = Path(__file__).resolve().parents[2]
