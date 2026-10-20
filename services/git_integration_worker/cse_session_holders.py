@@ -526,6 +526,24 @@ def reap_stale_driving_holders(
     return released
 
 
+def reap_stale_driving_holders_fail_open(
+    conn: sqlite3.Connection, **kwargs: Any
+) -> int:
+    """Reap stale holders without failing the caller.
+
+    ``GET /active-work`` is the drain probe. A locked ledger or a raise inside
+    ``transition_seat_state`` must not turn that probe into a 500 or a 30s stall
+    (review of friction:39833, F3).
+    """
+    try:
+        return reap_stale_driving_holders(conn, **kwargs)
+    except Exception:
+        logger.exception("cse holder reap failed; active-work continues")
+        with contextlib.suppress(sqlite3.Error):
+            conn.rollback()
+        return 0
+
+
 def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Active CSE occupancy rows for ``/active-work`` (never drain-blocking)."""
     rows = conn.execute(
@@ -661,6 +679,7 @@ __all__ = [
     "occupy_holder_on_hop",
     "occupancy_projections",
     "reap_stale_driving_holders",
+    "reap_stale_driving_holders_fail_open",
     "resolve_nest_parent",
     "seat_successor_on_lane",
     "transition_seat_state",

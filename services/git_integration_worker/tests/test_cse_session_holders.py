@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -13,8 +14,10 @@ from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
     ensure_schema,
     get_holder,
+    occupancy_projections,
     occupy_holder_on_hop,
     reap_stale_driving_holders,
+    reap_stale_driving_holders_fail_open,
     resolve_nest_parent,
     seat_successor_on_lane,
     transition_seat_state,
@@ -359,3 +362,30 @@ def test_reap_empty_registry_releases_nothing(ledger: CursorDispatchLedger) -> N
         row = get_holder(conn, str(stale["holder_id"]))
     assert released == 0
     assert row is not None and row["seat_state"] == "driving"
+
+
+def test_reap_fail_open_keeps_active_work_readable(
+    ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked transition must not fail the active-work read (review F3)."""
+
+    def _locked(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.transition_seat_state",
+        _locked,
+    )
+    stale_url = "https://claude.ai/cowork/cse_stale"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        stale = upsert_holder(conn, chat_url=stale_url, lane_thread_id="11")
+        _backdate(conn, str(stale["holder_id"]))
+    with ledger._connect() as conn:
+        released = reap_stale_driving_holders_fail_open(
+            conn, registry_urls={"https://claude.ai/cowork/cse_other"}
+        )
+        rows = occupancy_projections(conn)
+    assert released == 0
+    assert any(row["holder_id"] == stale["holder_id"] for row in rows)

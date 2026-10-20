@@ -1121,7 +1121,17 @@ async def arm_agent_bus_busy_drain(
     ``state=busy`` without an intent drops the restart when the caller exits
     (friction:39833).
     """
-    work = await gate.probe("agent_bus")
+    try:
+        work = await gate.probe("agent_bus")
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        # Same set evaluate catches. Returning None lets run_gated ask the
+        # witnesses (probe_error deferral, or proceed on an idle witness).
+        # Raising here is a JSON-RPC -32000 and skips that path.
+        logger.warning(
+            "agent_bus busy probe failed; deferring to run_gated: %s",
+            describe_probe_exc(exc),
+        )
+        return None
     if isinstance(exclude_job_id, str) and exclude_job_id.strip():
         work = exclude_caller_from_agent_bus_census(
             work.detail, exclude_job_id=exclude_job_id

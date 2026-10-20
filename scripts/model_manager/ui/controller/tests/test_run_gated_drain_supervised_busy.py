@@ -350,6 +350,41 @@ def test_run_gated_foreign_holder_busy_without_caller_id(tmp_path: Any) -> None:
     assert "restart_intent_id" not in result
 
 
+class _DownProbe:
+    async def snapshot(self) -> ActiveWork:
+        raise OSError("giw down")
+
+
+def test_agent_bus_probe_error_falls_through_to_run_gated() -> None:
+    """GIW down must defer via run_gated, not escape the arm as JSON-RPC -32000."""
+    gate = RestartDrainGate(probes={_AGENT_BUS: _DownProbe()})
+
+    armed = _run(
+        arm_agent_bus_busy_drain(
+            gate,
+            store=None,
+            supervisor=None,
+            reason="probe down",
+        )
+    )
+    assert armed is None
+
+    async def _lifecycle() -> str:
+        raise AssertionError("must not restart on a failed probe")
+
+    deferred = _run(
+        run_gated(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            force=False,
+            lifecycle=_lifecycle,
+        )
+    )
+    assert deferred["status"] == "deferred"
+    assert deferred["state"] == "probe_error"
+
+
 def test_busy_soft_defer_path_gone_for_force_false_evaluate(
     tmp_path: Any,
 ) -> None:

@@ -510,14 +510,14 @@ async def get_active_work(request: Request):
     lane_fields = await active_work_lane_fields_bounded(source_repo=cfg.source_repo)
     from services.git_integration_worker.cse_session_holders import (
         occupancy_projections,
-        reap_stale_driving_holders,
+        reap_stale_driving_holders_fail_open,
     )
     from services.git_integration_worker.cursor_dispatch_ledger import (
         _fetch_write_lease_holders_conn,
     )
 
     with CursorDispatchLedger.instance()._connect() as conn:
-        reap_stale_driving_holders(conn)
+        reap_stale_driving_holders_fail_open(conn)
         cse_occupancy = occupancy_projections(conn)
         # Unkeyed: Lane-B lease_key is the worktree path, so a Lane-A
         # lease_snapshot omits those writers (a:39715 B2).
