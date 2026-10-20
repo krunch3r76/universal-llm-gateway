@@ -13,6 +13,13 @@ options:
   max_leak_retries: 2
   briefs_per_model: 3
   min_auditors: 2
+  pool_manifest:
+    - model: qwen3-5-9b-q8-0-131072
+      family: qwen
+    - model: gemma-4-26b-a4b-it-q4-k-m-65536
+      family: gemma
+    - model: openai/gpt-5.4
+      family: openai
 
 steps:
   - name: load_problem
@@ -124,7 +131,7 @@ steps:
     condition: "leak_check_final.json.get('passed') is True"
     handler_inputs:
       operators: retrieve_operators.json
-      pool_manifest: sourceNs.metadata.pool_manifest
+      pool_manifest: optionsNs.pool_manifest
       run_seed: load_problem.json.run_seed
 
   - name: map_ideate
@@ -171,7 +178,7 @@ steps:
     condition: "leak_check_final.json.get('passed') is True"
     handler_inputs:
       briefs: re_instantiate.*
-      pool_manifest: sourceNs.metadata.pool_manifest
+      pool_manifest: optionsNs.pool_manifest
       run_seed: load_problem.json.run_seed
       min_auditors: optionsNs.min_auditors
 
@@ -197,7 +204,7 @@ steps:
     type: collate_v1
     handler_inputs:
       problem: load_problem.json
-      pool_manifest: sourceNs.metadata.pool_manifest
+      pool_manifest: optionsNs.pool_manifest
       leak_report: leak_check_final.json.leak_report
       operators: retrieve_operators.json
       operator_subsets: operator_split.json

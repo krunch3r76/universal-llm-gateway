@@ -19,7 +19,7 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 | Unpaid `PARKED_TRANSPORT`, consult reply already on the worker thread | After harvest: if no successor after one GIW reconcile sweep, fire GIW park-harvest continue (`fire_park_harvest_continue` / `caller_agent=conductor-hop`). Never hand-build `team_dispatch` hop fields |
 | Script or upload, no repo edit | same cursor-sdk generate, `lane=B`, `contract=freeform` |
 | Independent check of a harvested closeout | `team_dispatch(model=cdp/opus-5.5)` |
-| Open design / strategy / retry(same_AC) fork (non-mechanical) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", body=<fork + constraints>)` before binding |
+| Open design / strategy / retry(same_AC) fork (non-mechanical) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON: fork + constraints>"}])` before binding |
 | High-stakes outbound prose (after OUTBOUND SPEC) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", ...) -> pipeline(op="run", pipeline_id="writer-specialist-v1", ...)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
 

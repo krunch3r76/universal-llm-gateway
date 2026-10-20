@@ -1,5 +1,5 @@
 models:
   decontextualize:
-    model: qwen3-5-35b-a3b-q4km-131072
+    model: qwen3-5-9b-q8-0-131072
   map_static:
-    model: qwen3-5-35b-a3b-q4km-131072
+    model: qwen3-5-9b-q8-0-131072

@@ -33,11 +33,33 @@ from divergent_ideation.map_enrich_v1 import (
 from divergent_ideation.operator_split_v1 import split_operators
 
 
+SERVED_POOL_MODELS = (
+    "qwen3-5-9b-q8-0-131072",
+    "gemma-4-26b-a4b-it-q4-k-m-65536",
+    "openai/gpt-5.4",
+)
+
+
 def _pool(size: int) -> list[dict[str, str]]:
     families = ["f0", "f1", "f2", "f3", "f4"]
     return [
         {"model": f"m{i}", "family": families[i % len(families)]} for i in range(size)
     ]
+
+
+def test_divergent_ideation_v1_yaml_default_pool_and_models() -> None:
+    """F2-A: YAML defaults and models.yaml name only the three served pool ids."""
+    repo_root = Path(__file__).resolve().parents[2]
+    spec_dict = yaml.safe_load(
+        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+    )
+    pool = spec_dict["options"]["pool_manifest"]
+    assert [entry["model"] for entry in pool] == list(SERVED_POOL_MODELS)
+    models_yaml = yaml.safe_load(
+        (repo_root / "pipelines/divergent_ideation/models.yaml").read_text()
+    )
+    for alias in ("decontextualize", "map_static"):
+        assert models_yaml["models"][alias]["model"] == SERVED_POOL_MODELS[0]
 
 
 def _brief(bid: str, author: str, family: str) -> dict:
@@ -722,7 +744,6 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
     """A-2.6: collate resolves whole-step JSON bindings when gated steps are skipped."""
     from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import PipelineOptions, PipelineSpec
-    from systems.pipeline.core.step_types import SourceInput
 
     from pipelines.divergent_ideation.v1.handlers.collate import CollateV1Handler
 
@@ -735,7 +756,6 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
 
     skipped = StepOutput(raw="", json={"_skipped": True})
     leak_report = {"passed": False, "hits": [{"term": "secret"}], "attempts": 3}
-    pool = _pool(3)
     pipeline = PipelineSpec(
         id="divergent-ideation-v1",
         version="1",
@@ -743,7 +763,7 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
         category="test",
         steps=[],
         output="collate",
-        options=PipelineOptions(),
+        options=PipelineOptions.model_validate(spec_dict.get("options") or {}),
         source_search_path="pipelines",
     )
     ctx = PipelineContext(
@@ -775,9 +795,7 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
     ):
         ctx.outputs[name] = skipped
 
-    source = SourceInput(text="{}", metadata={"pool_manifest": pool})
-    with patch.object(type(ctx), "source", new_callable=PropertyMock, return_value=source):
-        out = await CollateV1Handler().execute(step, ctx)
+    out = await CollateV1Handler().execute(step, ctx)
 
     assert out.json is not None
     assert out.json["halted_at"] == "retrieve_operators"
