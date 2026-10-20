@@ -34,10 +34,9 @@ def parse_ide_holder_agent_id(holder: str) -> str | None:
 
 def cursor_xvfb_display_for_gui_host(gui_host: str | None) -> str:
     """Endpoint subscription display label for a Glass GUI host."""
-    key = str(gui_host or "").strip().lstrip(":").lower()
-    if key == "orion-node":
-        return "orion-node"
-    return "8"
+    from cursor_bridge.cursor_window_config import subscription_display_for_gui_host
+
+    return subscription_display_for_gui_host(gui_host)
 
 
 def cursor_xvfb_subscription_body(
@@ -146,10 +145,9 @@ def subscribe_cursor_xvfb_from_holder(
 
 
 def _normalize_gui_host(gui_host: str | None) -> str:
-    key = str(gui_host or "").strip().lstrip(":").lower()
-    if key == "orion-node":
-        return "orion-node"
-    return ":8"
+    from cursor_bridge.cursor_window_config import normalize_gui_host
+
+    return normalize_gui_host(gui_host)
 
 
 def _gui_host_from_process_env() -> str | None:

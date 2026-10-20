@@ -34,6 +34,8 @@ from tools._continuity_relays import (
 from tools._cortex_relay import cx
 from tools._restart_probe import annotate_unreachable_error
 from tools.continuity_ops import (
+    continuity_liaison_hop,
+    continuity_liaison_tick,
     maybe_subscribe_cursor_xvfb_on_checkpoint,
     maybe_subscribe_cursor_xvfb_on_resume,
 )
@@ -265,6 +267,8 @@ def register_continuity_tools(mcp: FastMCP) -> None:
             "checkpoint",
             "resume",
             "resume_release",
+            "tick",
+            "hop",
         ],
         trigger_thread: str | None = None,
         turn: int | None = None,
@@ -297,6 +301,13 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         fence_id: str | None = None,
         channel: str | None = None,
         handoff: dict[str, Any] | None = None,
+        register: str | None = None,
+        holder: str | None = None,
+        row: str | None = None,
+        gui_host: str | None = None,
+        tip_cp: int | None = None,
+        find_transcript: str | None = None,
+        model_query: str | None = None,
     ) -> dict[str, Any]:
         """Continuity checkpoint (lean) and resume/tape/consolidate relays.
 
@@ -335,7 +346,49 @@ def register_continuity_tools(mcp: FastMCP) -> None:
           pre-pour harvest).
 
         - ``resume_release`` — explicit fence release. Required: ``fence_id``.
+
+        - ``tick`` — one liaison digest (``liaison-tick.py --once``). Required:
+          ``thread`` (continuity root). Optional: ``register``, ``holder``.
+
+        - ``hop`` — attended IDE hop (``liaison-ide-hop.py``). Required:
+          ``thread``. Optional: ``transcript_id``, ``row``, ``gui_host``,
+          ``tip_cp``, ``find_transcript``, ``dry_run``, ``force``,
+          ``model_query``.
         """
+        if op == "tick":
+            if not thread:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=tick requires thread",
+                    }
+                }
+            return continuity_liaison_tick(
+                thread=thread,
+                register=register,
+                holder=holder,
+            )
+
+        if op == "hop":
+            if not thread:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=hop requires thread",
+                    }
+                }
+            return continuity_liaison_hop(
+                thread=thread,
+                transcript_id=transcript_id,
+                row=row,
+                gui_host=gui_host,
+                tip_cp=tip_cp,
+                find_transcript=find_transcript,
+                dry_run=bool(dry_run),
+                force=bool(force),
+                model_query=model_query,
+            )
+
         if op == "resume":
             if not thread:
                 return {
@@ -480,7 +533,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 "code": "unknown_op",
                 "message": (
                     f"Unknown op: {op}. Valid: consolidate|replay|status|"
-                    "tape_read|checkpoint|resume|resume_release"
+                    "tape_read|checkpoint|resume|resume_release|tick|hop"
                 ),
             }
         }

@@ -8,52 +8,26 @@ import uuid
 from typing import Any
 
 from cursor_bridge.cdp_pages import list_pages
+from cursor_bridge.cursor_window_config import (
+    cdp_origin_for_gui_host,
+    is_configured_cursor_glass_host,
+)
 from cursor_bridge.glass_services_js import (
     GLASS_SERVICE_MAP_FN,
     launch_new_agent_tab_js,
 )
 
 _CURSOR_AGENTS_TITLE = "Cursor Agents"
-_XVFB_HOSTS = frozenset(
-    {
-        ":8",
-        "8",
-        "io:8",
-        "127.0.0.1:9338",
-        "http://127.0.0.1:9338",
-        "orion-node",
-        "127.0.0.1:19338",
-        "http://127.0.0.1:19338",
-    }
-)
-_DEBUG_ORIGIN_BY_HOST: dict[str, str] = {
-    ":8": "http://127.0.0.1:9338",
-    "8": "http://127.0.0.1:9338",
-    "io:8": "http://127.0.0.1:9338",
-    "127.0.0.1:9338": "http://127.0.0.1:9338",
-    "http://127.0.0.1:9338": "http://127.0.0.1:9338",
-    "orion-node": "http://127.0.0.1:19338",
-    "127.0.0.1:19338": "http://127.0.0.1:19338",
-    "http://127.0.0.1:19338": "http://127.0.0.1:19338",
-}
 
 
 def cursor_debug_url_for_gui_host(gui_host: str | None) -> str:
     """Map a GUI host label to the local CDP origin for Cursor Agents."""
-    key = str(gui_host or "").strip() or ":8"
-    if key in _DEBUG_ORIGIN_BY_HOST:
-        return _DEBUG_ORIGIN_BY_HOST[key]
-    lowered = key.lstrip(":").lower()
-    if lowered == "8":
-        return "http://127.0.0.1:9338"
-    if lowered == "orion-node":
-        return "http://127.0.0.1:19338"
-    return "http://127.0.0.1:9338"
+    return cdp_origin_for_gui_host(gui_host)
 
 
 def is_cursor_xvfb_host(gui_host: str | None) -> bool:
     """True when ``gui_host`` names a Glass Cursor Agents CDP target."""
-    return str(gui_host or "").strip() in _XVFB_HOSTS
+    return is_configured_cursor_glass_host(gui_host)
 
 
 def pick_chat_page(

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "scope": "cursor-glass-windows",
+  "windows": {
+    ":8": {
+      "gui_host": ":8",
+      "cdp_origin": "http://127.0.0.1:9338",
+      "subscription_display": "8",
+      "aliases": [
+        ":8",
+        "8",
+        "io:8",
+        "127.0.0.1:9338",
+        "http://127.0.0.1:9338"
+      ]
+    },
+    "orion-node": {
+      "gui_host": "orion-node",
+      "cdp_origin": "http://127.0.0.1:19338",
+      "subscription_display": "orion-node",
+      "aliases": [
+        "orion-node",
+        "127.0.0.1:19338",
+        "http://127.0.0.1:19338"
+      ]
+    }
+  }
+}
