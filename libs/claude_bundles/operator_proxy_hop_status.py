@@ -45,6 +45,7 @@ from claude_bundles.operator_proxy_standing_render import (
     HOP_RUNNING_NOW_CAP_B,
     _extract_current_leg_block,
     cap_utf8_for_hop,
+    current_leg_has_inflight_section,
     extract_inflight_work_keys,
     hop_boundary_turn_from_header,
     hop_house_rules_pointer,
@@ -288,7 +289,7 @@ def hop_successor_fields(
     inflight_count = 0
     checkpoint_header = ""
     inflight_work_keys: frozenset[str] | None = None
-    hop_boundary_turn: int | None = None
+    hop_boundary_by_lane: dict[str, int] | None = None
     rules_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
     handoff_uri = standing_handoff_uri(lane)
     if sidecar:
@@ -323,11 +324,13 @@ def hop_successor_fields(
         if (
             hop_kind == "mission"
             and current_leg_block
-            and "### IN FLIGHT" in current_leg_block
+            and current_leg_has_inflight_section(current_leg_block)
         ):
             inflight_section = inflight_section_from_sidecar(sidecar)
             inflight_work_keys = extract_inflight_work_keys(inflight_section)
-            hop_boundary_turn = hop_boundary_turn_from_header(checkpoint_header)
+            hop_boundary_by_lane = {
+                lane: hop_boundary_turn_from_header(checkpoint_header)
+            }
         if ck_meta.get("identity") == "stale":
             act5_fetch_last = 5
 
@@ -356,7 +359,7 @@ def hop_successor_fields(
             fold_state_load=fold_state_load,
             fold_state_save=fold_state_save,
             inflight_work_keys=inflight_work_keys,
-            hop_boundary_turn=hop_boundary_turn,
+            hop_boundary_by_lane=hop_boundary_by_lane,
         )
         live_leg = render_live_leg(
             leg,

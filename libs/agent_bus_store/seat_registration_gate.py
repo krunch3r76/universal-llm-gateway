@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from claude_bundles.fetch_decision import parse_fetch_decisions
-from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
+from claude_bundles.operator_proxy_mission import MISSION_ARRIVAL_SKILL_SLUGS
 
 from .db.connection import write_connect
 from .db.threads import add_thread_tags, remove_thread_tags
@@ -153,15 +153,15 @@ def seat_registration_refusal(
     ):
         return None
 
-    required_skills = set(MISSION_SKILL_SLUGS)
+    required_skills = set(MISSION_ARRIVAL_SKILL_SLUGS)
     held = _parse_skills_held(body)
     if held is None or held != required_skills:
         missing = sorted(required_skills - (held or set()))
         return {
             "reason": "seat_registration_skills_held",
             "fix_hint": (
-                "skills_held must equal MISSION_SKILL_SLUGS: "
-                f"{','.join(MISSION_SKILL_SLUGS)}"
+                "skills_held must equal MISSION_ARRIVAL_SKILL_SLUGS: "
+                f"{','.join(MISSION_ARRIVAL_SKILL_SLUGS)}"
             ),
             "missing": missing,
         }

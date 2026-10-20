@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
+from claude_bundles.operator_proxy_mission import MISSION_ARRIVAL_SKILL_SLUGS
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
@@ -32,7 +32,7 @@ def _tag_lane_auto(thread_id: str) -> None:
 
 
 def _skills_line() -> str:
-    return "skills_held: " + ", ".join(MISSION_SKILL_SLUGS)
+    return "skills_held: " + ", ".join(MISSION_ARRIVAL_SKILL_SLUGS)
 
 
 def _admit_report_body(*, model: str, effort: str) -> str:
@@ -114,8 +114,8 @@ def test_missing_skills_held_422(bus_db: TestClient) -> None:
     )
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert "MISSION_SKILL_SLUGS" in detail["fix_hint"]
-    assert "lane-act-gates" in detail["fix_hint"]
+    assert "MISSION_ARRIVAL_SKILL_SLUGS" in detail["fix_hint"]
+    assert "lane-act-gates" not in detail["fix_hint"]
 
 
 def test_full_valid_registration_201(bus_db: TestClient) -> None:

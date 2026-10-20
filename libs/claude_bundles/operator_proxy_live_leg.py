@@ -573,20 +573,43 @@ def _turn_number(turn: dict) -> int:
         return 0
 
 
+def _lane_hop_boundary(
+    lane: str,
+    *,
+    hop_boundary_by_lane: dict[str, int] | None,
+    lane_watermarks: dict[str, int] | None,
+) -> int:
+    if hop_boundary_by_lane and lane in hop_boundary_by_lane:
+        return hop_boundary_by_lane[lane]
+    if lane_watermarks:
+        return lane_watermarks.get(lane, 0)
+    return 0
+
+
 def _filter_live_leg_items(
     items: list[OpenItem],
     *,
     inflight_work_keys: frozenset[str] | None,
-    hop_boundary_turn: int | None,
+    hop_boundary_by_lane: dict[str, int] | None,
+    lane_watermarks: dict[str, int] | None = None,
 ) -> list[OpenItem]:
-    """L23: IN FLIGHT keys win; else only rows newer than the previous hop."""
+    """L23: IN FLIGHT keys win; else only rows newer than that lane's hop floor."""
     if inflight_work_keys is None:
         return items
     if inflight_work_keys:
         return [item for item in items if item.key in inflight_work_keys]
-    if hop_boundary_turn is not None and hop_boundary_turn > 0:
-        return [item for item in items if item.turn > hop_boundary_turn]
-    return []
+    if hop_boundary_by_lane is None:
+        return []
+    kept: list[OpenItem] = []
+    for item in items:
+        boundary = _lane_hop_boundary(
+            item.lane,
+            hop_boundary_by_lane=hop_boundary_by_lane,
+            lane_watermarks=lane_watermarks,
+        )
+        if boundary > 0 and item.turn > boundary:
+            kept.append(item)
+    return kept
 
 
 def project_live_leg(
@@ -598,7 +621,7 @@ def project_live_leg(
     fold_state_load: FoldStateStore | None = None,
     fold_state_save: FoldStateSaver | None = None,
     inflight_work_keys: frozenset[str] | None = None,
-    hop_boundary_turn: int | None = None,
+    hop_boundary_by_lane: dict[str, int] | None = None,
 ) -> LiveLeg:
     """Query each lane and merge open items."""
     resolve = _wrap_fetch_turns(fetch_turns)
@@ -620,6 +643,10 @@ def project_live_leg(
             state_mut = dict(loaded)
             state_writable = True
 
+    lane_watermarks_for_filter = {
+        lane_id: st.watermark for lane_id, st in state_mut.items()
+    }
+
     for lane in lanes:
         try:
             lane_state = state_mut.get(lane) if state_writable else None
@@ -628,19 +655,6 @@ def project_live_leg(
                 parsed = _carried_open_items(lane_state)
                 if parsed is None:
                     lane_state = None
-                elif inflight_work_keys is not None:
-                    if inflight_work_keys:
-                        carried = [
-                            item for item in parsed if item.key in inflight_work_keys
-                        ]
-                    elif hop_boundary_turn is not None and hop_boundary_turn > 0:
-                        carried = [
-                            item
-                            for item in parsed
-                            if item.turn > hop_boundary_turn
-                        ]
-                    else:
-                        carried = []
                 else:
                     carried = parsed
             warm = bool(lane_state and lane_state.watermark > 0)
@@ -684,7 +698,8 @@ def project_live_leg(
     leg.items = _filter_live_leg_items(
         leg.items,
         inflight_work_keys=inflight_work_keys,
-        hop_boundary_turn=hop_boundary_turn,
+        hop_boundary_by_lane=hop_boundary_by_lane,
+        lane_watermarks=lane_watermarks_for_filter,
     )
     if state_writable:
         if fold_state_save is not None:

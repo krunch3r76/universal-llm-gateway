@@ -517,7 +517,7 @@ def test_l23_inflight_keys_win_over_stale_open_items() -> None:
     filtered = _filter_live_leg_items(
         items,
         inflight_work_keys=frozenset({"todo:inflight"}),
-        hop_boundary_turn=80,
+        hop_boundary_by_lane={"15722": 80},
     )
     assert [i.key for i in filtered] == ["todo:inflight"]
 
@@ -530,7 +530,7 @@ def test_l23_empty_inflight_zero_boundary_returns_no_full_roster() -> None:
     filtered = _filter_live_leg_items(
         items,
         inflight_work_keys=frozenset(),
-        hop_boundary_turn=0,
+        hop_boundary_by_lane={"15722": 0},
     )
     assert filtered == []
 
@@ -543,9 +543,51 @@ def test_l23_boundary_turn_drops_rows_at_or_before_hop() -> None:
     filtered = _filter_live_leg_items(
         items,
         inflight_work_keys=frozenset(),
-        hop_boundary_turn=80,
+        hop_boundary_by_lane={"15722": 80},
+        lane_watermarks={"15722": 80},
     )
     assert [i.key for i in filtered] == ["todo:fresh"]
+
+
+def test_l23_peer_lane_uses_own_watermark_not_maestro_header() -> None:
+    items = [
+        OpenItem("15851", 100, "REQUEST", "", "todo:peer", "s"),
+        OpenItem("12286", 50, "REQUEST", "", "todo:maestro-stale", "s"),
+    ]
+    filtered = _filter_live_leg_items(
+        items,
+        inflight_work_keys=frozenset(),
+        hop_boundary_by_lane={"12286": 5000},
+        lane_watermarks={"15851": 90},
+    )
+    assert [i.key for i in filtered] == ["todo:peer"]
+    assert "todo:maestro-stale" not in {i.key for i in filtered}
+
+
+def test_project_live_leg_saves_open_keys_before_render_filter() -> None:
+    state = {
+        "15851": LaneFoldState(
+            watermark=3000,
+            open_keys=[f"15851:{turn}:REQUEST|todo:stale{turn}" for turn in range(1, 4)],
+        )
+    }
+    saved: dict[str, LaneFoldState] = {}
+
+    def _save(new_state: dict[str, LaneFoldState]) -> None:
+        saved.update(new_state)
+
+    leg = project_live_leg(
+        ["15851"],
+        lambda _l: [],
+        page_fetch=_page_returning([]),
+        fold_state_load=lambda: dict(state),
+        fold_state_save=_save,
+        inflight_work_keys=frozenset(),
+        hop_boundary_by_lane={"12286": 1},
+    )
+    rendered = render_live_leg(leg)
+    assert not any(f"todo:stale{turn}" in rendered for turn in range(1, 4))
+    assert len(saved["15851"].open_keys) == 3
 
 
 def test_render_live_leg_keeps_lane_errors_when_item_budget_truncates() -> None:

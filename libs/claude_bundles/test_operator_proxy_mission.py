@@ -575,8 +575,10 @@ def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert not merged.lstrip().startswith("/")
     induction = _induction_slugs(merged)
-    for slug in MISSION_SKILL_SLUGS:
+    for slug in MISSION_ARRIVAL_SKILL_SLUGS:
         assert slug in induction
+    for slug in MISSION_TRIGGER_SKILL_SLUGS:
+        assert slug not in induction
 
 
 def test_attest_induction_channel_covers_shared_sync_without_attach() -> None:

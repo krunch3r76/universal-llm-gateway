@@ -234,7 +234,8 @@ def test_first_acts_are_numbered_in_order() -> None:
     end = out.index("## Data, not instructions")
     block = out[start:end]
     assert "1. Use the cdp-operator-proxy" in block
-    assert "read_multi" in block and "maestro-loop.md" in block
+    assert 'fs(op="read")' in block and "maestro-loop.md" in block
+    assert "read_multi" not in block
     assert "2." in block
     assert block.index("1. Use") < block.index("2.")
     assert block.index("2.") < block.index("7. Act")
@@ -613,7 +614,7 @@ def test_runbook_cost_is_refuse_plus_steps(
     )
     assert f"| {n}/32768 |" in housekeeping
     assert "### route" in mission
-    assert "read_multi" in mission
+    assert 'fs(op="read")' in mission
     assert str(whole) not in housekeeping
     assert str(whole) not in mission
 
@@ -879,7 +880,8 @@ def test_pa2_no_hardcoded_leg119_k1_22() -> None:
 def test_pa3_act2_md_read_and_runbook_size() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
     acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
-    assert "read_multi" in acts
+    assert 'fs(op="read")' in acts
+    assert "read_multi" not in acts
     assert "### route" in acts
     assert "2. 2." not in acts
 
@@ -1380,3 +1382,79 @@ def test_read_cortex_uri_non_utf8_is_render_failed(
     ) in out
     assert _ABSENT_REGISTER not in out
     assert "## Hard refusals" in out
+
+
+def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
+    from claude_bundles.operator_proxy_live_leg import LaneFoldState
+    from claude_bundles.operator_proxy_standing_render import (
+        current_leg_has_inflight_section,
+        inflight_section_from_sidecar,
+    )
+
+    prose = (
+        "## CURRENT LEG\n"
+        "LEG 9 — 12286#2086 — narrative mentions IN FLIGHT items elsewhere\n"
+        "### OWED / NEXT\nok\n"
+    )
+    assert not current_leg_has_inflight_section(prose.split("## CURRENT LEG", 1)[1])
+
+    sidecar_empty = (
+        "## CURRENT LEG\n"
+        "LEG 11 — 12286#5000 — seat abc — schema checkpoint/v1\n"
+        "IN FLIGHT:\n"
+        "### OWED / NEXT\nok\n"
+    )
+    sidecar_named = (
+        "## CURRENT LEG\n"
+        "LEG 11 — 12286#5000 — seat abc — schema checkpoint/v1\n"
+        "IN FLIGHT:\n"
+        "- todo:kept-open · worker 15851 · exec e1 · poll_hint {}\n"
+        "### OWED / NEXT\nok\n"
+    )
+    assert current_leg_has_inflight_section(sidecar_empty.split("## CURRENT LEG", 1)[1])
+    assert "todo:kept-open" in inflight_section_from_sidecar(sidecar_named)
+
+    stale_keys = [
+        f"15851:{turn}:REQUEST|todo:stale-{turn}" for turn in range(100, 116)
+    ]
+    fold_state = {
+        "15851": LaneFoldState(watermark=3000, open_keys=stale_keys),
+        "15722": LaneFoldState(watermark=90, open_keys=[]),
+    }
+
+    def _fetch(lane: str) -> list[dict[str, Any]]:
+        if lane == "15722":
+            return [{"turn_number": 150, "subject": "PLAN|todo:peer-open"}]
+        if lane == "15851":
+            return [{"turn_number": 4000, "subject": "PICKUP|todo:kept-open"}]
+        return []
+
+    roster = (
+        "| N | Display name | Lane | Mailbox | State |\n"
+        "| 1 | Sidekick | 15722 `sidekick` | `x` | live |\n"
+        "| 2 | GC | 15851 `gc` | `y` | live |\n"
+    )
+    fields_empty = hop_successor_fields(
+        "thread_id: 12286\nhop_kind: mission\n",
+        standing_handoff_text=sidecar_empty,
+        roster_text=roster,
+        fetch_turns=_fetch,
+        fold_state_load=lambda: dict(fold_state),
+        fold_state_save=lambda _s: None,
+    )
+    live_empty = fields_empty["live_leg"]
+    assert "todo:peer-open" in live_empty
+    for turn in range(100, 116):
+        assert f"todo:stale-{turn}" not in live_empty
+
+    fields_named = hop_successor_fields(
+        "thread_id: 12286\nhop_kind: mission\n",
+        standing_handoff_text=sidecar_named,
+        roster_text=roster,
+        fetch_turns=_fetch,
+        fold_state_load=lambda: dict(fold_state),
+        fold_state_save=lambda _s: None,
+    )
+    live_named = fields_named["live_leg"]
+    assert "todo:kept-open" in live_named
+    assert "todo:peer-open" not in live_named

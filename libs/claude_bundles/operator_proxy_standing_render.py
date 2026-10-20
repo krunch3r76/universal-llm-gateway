@@ -75,12 +75,11 @@ def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
 
 
 def hop_house_rules_pointer(lane: str) -> str:
-    """226 B house-rules slot for hop render (L5); not an inline of the rules file."""
+    """House-rules slot for hop render (L5); not an inline of the rules file."""
     return (
         f'House rules (do not inline): `fs(op="read", '
         f'path="cortex://notes/system/threads/{lane}-house-rules.md")` '
-        f"and quote `read_sha256`. Live file is 8134 B "
-        f"(`sha256:3b5ee38cc7a8451651f61e37646314819b137be6ac06292ed7f4287fc5f3d28b`).\n"
+        f"and quote `read_sha256` from that read.\n"
     )
 
 
@@ -100,8 +99,22 @@ def hop_boundary_turn_from_header(header: str) -> int:
     return max(refs) if refs else 0
 
 
+_INFLIGHT_PLAIN_LINE_RE = re.compile(r"^IN FLIGHT:\s*$", re.IGNORECASE)
+
+
+def current_leg_has_inflight_section(current_leg_block: str) -> bool:
+    """True when CURRENT LEG has a structured IN FLIGHT section (not prose mention)."""
+    block = current_leg_block or ""
+    if re.search(r"^###\s+IN FLIGHT\s*$", block, re.MULTILINE):
+        return True
+    for line in block.splitlines():
+        if _INFLIGHT_PLAIN_LINE_RE.match(line.strip()):
+            return True
+    return False
+
+
 def inflight_section_from_sidecar(sidecar: str) -> str:
-    """Return the ### IN FLIGHT body from a standing-handoff sidecar."""
+    """Return the IN FLIGHT body from a standing-handoff sidecar (h3 or plain line)."""
     current = _extract_current_leg_block(sidecar)
     if not current:
         return ""
@@ -160,6 +173,10 @@ def _parse_h3_sections(block: str) -> dict[str, str]:
         m = re.match(r"^###\s+(.+?)\s*$", line)
         if m:
             current_key = m.group(1).strip()
+            sections[current_key] = [line]
+            continue
+        if _INFLIGHT_PLAIN_LINE_RE.match(line.strip()):
+            current_key = "IN FLIGHT"
             sections[current_key] = [line]
             continue
         if current_key is None:
@@ -942,6 +959,7 @@ __all__ = [
     "assess_render_budget_and_identity",
     "cap_utf8_for_hop",
     "compute_preamble_over_inflight_flag",
+    "current_leg_has_inflight_section",
     "extract_inflight_work_keys",
     "hop_boundary_turn_from_header",
     "hop_house_rules_pointer",

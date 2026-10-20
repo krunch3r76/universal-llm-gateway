@@ -447,7 +447,7 @@ def stage_cdp_prompt_with_skills(
         prepend_cdp_dispatch_skills,
     )
     from claude_bundles.operator_proxy_mission import (
-        MISSION_SKILL_SLUGS,
+        MISSION_ARRIVAL_SKILL_SLUGS,
         ensure_operator_proxy_mission_prompt,
         is_operator_proxy_mission_purpose,
         purpose_implies_mission,
@@ -533,7 +533,7 @@ def stage_cdp_prompt_with_skills(
     omit_slash = mission_window or bool(slash_slugs)
     if mission_window:
         have = {s.lstrip("/").lower() for s in effective}
-        for slug in reversed(MISSION_SKILL_SLUGS):
+        for slug in reversed(MISSION_ARRIVAL_SKILL_SLUGS):
             if slug.lower() not in have:
                 effective.insert(0, slug)
     try:
