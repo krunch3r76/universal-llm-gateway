@@ -50,13 +50,14 @@ freeform prompt another seat will act on: `Use the retrieval-before-authoring
 skill` (retrieve, then author). Firing `contract=freeform` with an already-authored
 body does not re-trigger.
 
-Child packet (`packet_shape` Job → Evidence ≤10 URI+sha → Constraints; ¬ transcript):
+Child packet carries:
 
 - work key (`todo:…` / `friction:…` / greenfield key)
 - `files_expected`
-- numbered AC
+- one-line bounded scope
+- numbered acceptance criteria
 - skill Use-lines the child needs
-- closeout envelope: changed files, verification lines, residue
+- return shape — closeout envelope: changed files, verification commands run, one-line residue
 
 `implement_admission.packet_is_sufficient` is the floor; a packet that fails it
 is not ready to send.
@@ -72,7 +73,7 @@ line; the ladder still names the default reviewer duty.
 
 ## Cursor IDE tabs — `team_dispatch` (`seat=cursor-sdk`), not native `Task` subagents
 
-In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and have gaps (cold start without GIW worktree isolation, `resolve_prompt_preamble` harness injection, or closeout sidecars) that a proper `team_dispatch` does not; transitively, `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
+In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and have gaps (cold start without GIW worktree isolation, `resolve_prompt_preamble` harness injection, or closeout sidecars) that a proper `team_dispatch` does not; transitively, `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`, `cursor/muse-wonder-1.0`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
 
 ## Grok Bot seats
 

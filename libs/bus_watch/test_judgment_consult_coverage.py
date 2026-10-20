@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from bus_watch.judgment_consult_coverage import (
@@ -49,6 +52,19 @@ def test_is_binding_turn_rejects_partial_payload() -> None:
         )
         is False
     )
+
+
+def test_module_imports_only_stdlib() -> None:
+    path = Path(__file__).resolve().parent / "judgment_consult_coverage.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    allowed = {"__future__", "re", "typing"}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                assert root in allowed, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module in allowed, node.module
 
 
 def test_parse_consult_record_crlf_and_duplicate_lines() -> None:
@@ -147,6 +163,18 @@ def test_packet_lean_ok_rejects_oversize_evidence_and_transcript_paste() -> None
     ok4, reason4 = packet_lean_ok(transcript)
     assert ok4 is False
     assert reason4 == "transcript_paste"
+
+
+def test_packet_lean_ok_accepts_constraints_body_line_ending_with_colon() -> None:
+    body = f"""Job: bind
+Evidence:
+- cortex://notes/x.md read_sha256={_SHA}
+Constraints:
+- note: forward_only applies here:
+"""
+    ok, reason = packet_lean_ok(body)
+    assert ok is True
+    assert reason == "ok"
 
 
 def test_coverage_ok_accepts_valid_binding() -> None:

@@ -45,7 +45,7 @@ def test_build_ide_hop_message_default_includes_argon_confer_line() -> None:
     assert "cursor/gemini-4-argon" in msg
 
 
-def test_build_ide_hop_message_in_seat_judgment_override() -> None:
+def test_in_seat_posture_keeps_in_seat_ladder() -> None:
     msg = build_ide_hop_message(
         "18460",
         row="R1 test row",
@@ -53,10 +53,58 @@ def test_build_ide_hop_message_in_seat_judgment_override() -> None:
         register="attended",
         judgment_posture="in_seat",
     )
-    assert "outsource regular judgment" not in msg
-    assert "IN-SEAT" in msg
     assert "judgment_posture=in_seat" in msg
+    assert "no Argon confer" in msg
+    assert "outsource regular judgment/design/advice" not in msg
     assert "§ Peer-house:" in msg
+
+
+def test_hop_message_distributed_binds_argon_and_opus_check() -> None:
+    msg = build_ide_hop_message(
+        "18291",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+        judgment_posture="distributed",
+    )
+    assert "cursor/grok-4.7 (effort=xhigh)" in msg
+    assert "cursor/gemini-4-argon" in msg
+    assert "cdp/opus-5.5" in msg
+    assert "muse-wonder" not in msg
+
+
+def test_hop_message_carries_divergent_degraded_exception() -> None:
+    msg = build_ide_hop_message(
+        "18291",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+    )
+    assert "divergent_ideation_degraded_18362" in msg
+    assert "consult_ref" in msg
+
+
+def test_hop_message_ladder_drops_cdp_opus_5_design_route() -> None:
+    msg = build_ide_hop_message(
+        "18291",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+    )
+    assert "cdp/opus-5 (design/judgment)" not in msg
+    assert "cdp/opus-5.5" in msg
+
+
+def test_build_ide_hop_message_is_deterministic() -> None:
+    kwargs = {
+        "row": "R1 test row",
+        "arm_labels": ["watcher-18291"],
+        "register": "attended",
+        "tip_cp_ordinal": 42,
+    }
+    first = build_ide_hop_message("18291", **kwargs)
+    second = build_ide_hop_message("18291", **kwargs)
+    assert first == second
 
 
 def test_policy_judgment_posture_defaults_to_distributed_without_tick_state(

@@ -111,8 +111,6 @@ def _section_header(line: str) -> str | None:
         return "evidence"
     if low.startswith("constraints:"):
         return "constraints"
-    if stripped.endswith(":"):
-        return "other"
     return None
 
 

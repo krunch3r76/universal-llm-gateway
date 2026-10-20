@@ -26,7 +26,8 @@ Birth when the house is missing is the **Attended lowering** — whether the ope
 `/orchestrate`, or opened the tab with a durable objective. `checkpoint` is `checkpoint-discipline` lean fire,
 not birth.
 
-`liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work; the Impresario (liaison seat) **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
+`liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
+the Impresario (liaison seat) **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
 ¬ implement what a live dispatch owns (`in-flight-work-guard`). Consolidated name for *coordinator*;
 Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor = session to a designed stop),
 `decision:conductor-attended-vs-unattended-routing`.
@@ -40,7 +41,8 @@ This binding wins over the dispatch ladder, Seat stays, and a digest one-step th
 | Sketch or `contract=implement` from this tab on a house row | One conductor admit; harvest its closeout |
 | CDP generate on the house thread as the play | Conductor lane parented to the house |
 
-**Not the same as** `runbook:liaison-seat-on-a-lane` — foreign-lane voice/web liaison; this skill is the **IDE house seat** on a continuity root.
+**Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
+this skill is the **IDE house seat** on a continuity root.
 
 ## FOL pipeline
 
@@ -55,7 +57,7 @@ played(row) ∧ landed(master) ⇒ todo-close ≺ add_next_ungated ∧ play
 register=attended ∨ autonomous ⇒ land_on_green; HOLD_MERGE ⇔ operator_explicit_hold
 go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left) ⇒ ide-hop (¬go_under)
 ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
-orchestrate ⇒ cursor/grok-4.7 (xhigh); judgment ⇒ cursor/gemini-4-argon after retrieval-before-authoring; land_gate ⇒ cdp/opus-5.5 (K40)
+below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (anthropic/* API admitted when credit-healthy, not the first wire)
 same_fix_failed_twice ⇒ REPEATED_FAILURE ∧ ¬third_variant
 open_fork(design ∨ strategy ∨ retry_same_AC) ∧ ¬mechanical ⇒ pipeline(divergent-ideation-v1) ≺ bind
 outbound_prose(high_stakes) ⇒ outbound-voice-spec ≺ pipeline(divergent-ideation-v1) ≺ pipeline(writer-specialist-v1)
@@ -99,7 +101,7 @@ Wake source: `AGENT_LOOP_TICK_liaison <json>` from `scripts/liaison-monitor-loop
 
 **Operator `hop` / CONTEXT_BUDGET:** On `hop` · `ide-hop` · `hop now`, or `budget.stop_class=CONTEXT_BUDGET` (≥35 tool calls or ≥55% window), CHECKPOINT then `scripts/liaison-ide-hop.py --root <R> --row "<NOW>" --transcript-id <uuid> --gui-host :8 --force` (operator-requested ⇒ `--force`). Default interface = Xvfb `:8` (`127.0.0.1:9338`).
 
-**BRIDGE_WAKE / `--set now_row`:** Read `budget.stop_class` every push wake and every `--set`. Open fork ⇒ same turn: divergent-ideation-v1 then Argon (`consult_ref`) + Opus check, or falsifying probe — ¬ partial read, ¬ wait for nudge.
+**BRIDGE_WAKE / `--set now_row`:** Read `budget.stop_class` every push wake and every `--set`. Live probe contradicts a hypothesis or architecture forks stay open ⇒ same turn: enumerate (`hypothesize-simulate` / `pipeline(op=run, pipeline_id=divergent-ideation-v1)`) and consult `cdp/opus-5.5`, `cdp/fable-5.1`, or `cursor/grok-4.7`, or run the falsifying check — ¬ partial read, ¬ wait for nudge.
 
 House wakes, cheapest first:
 1. Finish signals (`closeout turn=` / `consult complete`) — one harvest. Conductor tail = `watch-supervise.sh tail --until-finish`. `stall-pop:` on already-relayed closeout ≠ wake (§ Seat stays)
