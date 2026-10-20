@@ -45,17 +45,36 @@ _ASSERTION_UPDATE_ACCEPTED_KEYS: frozenset[str] = frozenset(
     }
 )
 
+_SUPERSEDE_ACCEPTED_KEYS: frozenset[str] = frozenset(
+    {
+        "evidence_uris",
+        "valid_from",
+        "derivation_type",
+        "reasoning_summary",
+        "seeded_by",
+        "chunk_id",
+        "confidence_score",
+        "acknowledge_audit_gaps",
+        "attributes",
+        "predicate_form",
+        "revision_type",
+    }
+)
+
 
 def _dropped_dispatch_key_warnings(
     dropped_keys: list[str],
+    *,
+    op_name: str,
+    accepted_keys: frozenset[str],
 ) -> list[dict[str, str]]:
-    accepted = ", ".join(sorted(_ASSERTION_UPDATE_ACCEPTED_KEYS))
+    accepted = ", ".join(sorted(accepted_keys))
     return [
         {
             "category": "dispatch",
             "field": key,
             "message": (
-                f"Key {key!r} is not accepted by assertion_update and was "
+                f"Key {key!r} is not accepted by {op_name} and was "
                 f"discarded. Accepted keys: {accepted}."
             ),
         }
@@ -64,14 +83,20 @@ def _dropped_dispatch_key_warnings(
 
 
 def _attach_dropped_key_warnings(
-    result: dict[str, Any], dropped_keys: list[str]
+    result: dict[str, Any],
+    dropped_keys: list[str],
+    *,
+    op_name: str = "assertion_update",
+    accepted_keys: frozenset[str] = _ASSERTION_UPDATE_ACCEPTED_KEYS,
 ) -> dict[str, Any]:
     if not dropped_keys:
         return result
     existing = result.get("validation_warnings") or []
     result["validation_warnings"] = [
         *existing,
-        *_dropped_dispatch_key_warnings(dropped_keys),
+        *_dropped_dispatch_key_warnings(
+            dropped_keys, op_name=op_name, accepted_keys=accepted_keys
+        ),
     ]
     return result
 
@@ -190,8 +215,11 @@ def _op_supersede(
     acknowledge_audit_gaps: list[str] | None = None,
     force: bool = False,
     attributes: dict | None = None,
-    **_: object,
+    predicate_form: Any = _UNSET,
+    revision_type: str | None = None,
+    **extra: object,
 ) -> dict[str, Any]:
+    dropped_keys = sorted(extra.keys())
     missing = collect_missing_required(
         {
             "old_assertion_id": old_assertion_id,
@@ -202,7 +230,12 @@ def _op_supersede(
         }
     )
     if missing:
-        return validation_error_response(missing)
+        return _attach_dropped_key_warnings(
+            validation_error_response(missing),
+            dropped_keys,
+            op_name="supersede",
+            accepted_keys=_SUPERSEDE_ACCEPTED_KEYS,
+        )
     body: dict[str, Any] = {
         "old_assertion_id": old_assertion_id,
         "entity_id": entity_id,
@@ -233,6 +266,10 @@ def _op_supersede(
     # from the prior row; stuffing None here would clear that carryover.
     if attributes is not None:
         body["attributes"] = attributes
+    if predicate_form is not _UNSET:
+        body["predicate_form"] = predicate_form
+    if revision_type is not None:
+        body["revision_type"] = revision_type
     if force:
         body["force"] = True
     projection_tag = None
@@ -256,13 +293,23 @@ def _op_supersede(
             normalize_payload=result.get("predicate_form_normalize"),
             session_id=session_id,
         )
-        if result.get("validation_warnings"):
+        audit_warnings = [
+            w
+            for w in (result.get("validation_warnings") or [])
+            if w.get("category") != "dispatch"
+        ]
+        if audit_warnings:
             result["_next"] = (
                 "auditor-validatability warnings present on superseded assertion — "
                 "review and fix or pass acknowledge_audit_gaps=[...] to suppress "
                 "(see agent_skill:auditor-validatable-confidence)"
             )
-    return result
+    return _attach_dropped_key_warnings(
+        result,
+        dropped_keys,
+        op_name="supersede",
+        accepted_keys=_SUPERSEDE_ACCEPTED_KEYS,
+    )
 
 
 __all__ = ["_op_assertion_get", "_op_assertion_update", "_op_supersede"]

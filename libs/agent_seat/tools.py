@@ -115,7 +115,7 @@ _CORTEX_OPS_DOC = (
     "  staging_list (source_uri?, limit?)\n"
     "  staging_reject (staging_id?, reviewer?)\n"
     "  stats ()\n"
-    "  supersede (old_assertion_id, entity_id, claim, confidence, evidence, evidence_uris?, valid_from?, derivation_type?, reasoning_summary?, seeded_by?, chunk_id?, confidence_score?, session_id?, agent?, acknowledge_audit_gaps?, force?, attributes?)\n"
+    "  supersede (old_assertion_id, entity_id, claim, confidence, evidence, evidence_uris?, valid_from?, derivation_type?, reasoning_summary?, seeded_by?, chunk_id?, confidence_score?, session_id?, agent?, acknowledge_audit_gaps?, force?, attributes?, predicate_form?, revision_type?)\n"
     "  surface_forms (entity_id?, mention?, mention_type?, limit?)\n"
     "  tag_assign (tag_name, entity_id, assertion_id, agent, resolve_aliases?, raw_id?)\n"
     "  tag_list (entity_id, resolve_aliases?, raw_id?)\n"

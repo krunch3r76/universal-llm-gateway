@@ -358,3 +358,96 @@ def test_op_supersede_persists_live_verify_attributes(
     stored = json.loads(row["attributes"])
     assert stored["kind"] == "live_verify"
     assert stored["operator_ruling"] == "accepted"
+
+
+def _patch_op_supersede_route(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> None:
+    class _NoCloseConn:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.cortex_conn",
+        lambda: _NoCloseConn(conn),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.enrich_old_assertion_events",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.reindex_assertion_fts",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.dispatch_assertion_enrichment_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.dispatch_predicate_extract_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede._embed_assertion_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.recompute_entity_substantiation_status",
+        lambda *a, **kw: None,
+    )
+
+    class _FakeImpact:
+        likely_supersedes: list[int] = []
+        touched_assertions: list[object] = []
+
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.analyze_assertion_impact",
+        lambda *a, **kw: _FakeImpact(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.vector_store",
+        type(
+            "VS",
+            (),
+            {
+                "is_initialized": staticmethod(lambda: False),
+                "delete_assertion_embedding": staticmethod(lambda _id: None),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_update.record",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_update._emit_predicate_form_normalize_events",
+        lambda *a, **k: None,
+    )
+
+
+def test_op_supersede_forwards_predicate_form_and_revision_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatch _op_supersede must forward predicate_form and revision_type."""
+    conn = _make_conn()
+    old_id = _insert(conn, claim="Prior archived status claim.")
+    _patch_op_supersede_route(monkeypatch, conn)
+    predicate = f"status({_ENTITY}, archived, current)"
+    result = _op_supersede(
+        old_assertion_id=old_id,
+        entity_id=_ENTITY,
+        claim="Prior archived status claim.",
+        confidence="believed",
+        evidence="evidence",
+        predicate_form=predicate,
+        revision_type="status_update",
+    )
+    assert "error" not in result, result
+    normalize = result.get("predicate_form_normalize")
+    assert normalize is not None
+    assert normalize.get("canonical_form") == predicate
+    assert result["new"]["attributes"]["revision_type"] == "status_update"
