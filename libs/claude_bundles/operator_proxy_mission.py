@@ -45,6 +45,18 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "retrieval-before-authoring",
 )
 
+# Hop arrival profile (C1): first act names these four; the other four load on trigger.
+MISSION_ARRIVAL_SKILL_SLUGS: tuple[str, ...] = MISSION_SKILL_SLUGS[:4]
+MISSION_TRIGGER_SKILL_SLUGS: tuple[str, ...] = MISSION_SKILL_SLUGS[4:]
+
+
+def _skill_slug_list_phrase(slugs: tuple[str, ...]) -> str:
+    if not slugs:
+        return ""
+    if len(slugs) == 1:
+        return slugs[0]
+    return ", ".join(slugs[:-1]) + " and " + slugs[-1]
+
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
 # (A9). Not generated — update this frozenset when the YAML primary set moves.
 # Shared primaries (cortex, fs, agent_bus, …) are code-only; both connectors
@@ -142,7 +154,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 ## Your first acts, in order
 
-1. Use the cdp-operator-proxy, lean-dispatch, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+1. Use the {mission_arrival_skills} skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Call 1: cortex `fs(op="read_multi")` of `{lane}-house-rules.md` and `{lane}-standing-handoff.md`; quote each file's `read_sha256`. Call 2: `fs(op="md_read", section="### route")` on cortex `maestro-loop.md`; quote its full-file `read_sha256`. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
 3. The checkpoint and in-flight rows above are the arrival projection; use the live leg for bus-derived open items. House rules are not inlined — read them per the pointer above.
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
@@ -236,6 +248,7 @@ _FIELD_ORDER = (
     "successor_birth_id",
     "execution_clause",
     "running_now_line",
+    "mission_arrival_skills",
 )
 _LATE_FIELD_ORDER = (
     "house_rules_verbatim",
@@ -258,7 +271,11 @@ def _substitute_hop_template_part(
 ) -> str:
     """Replace named field tokens in one unfilled template segment."""
     for key in _FIELD_ORDER:
-        part = part.replace("{" + key + "}", fields[key])
+        if key == "mission_arrival_skills":
+            value = fields.get(key) or _skill_slug_list_phrase(MISSION_ARRIVAL_SKILL_SLUGS)
+        else:
+            value = fields[key]
+        part = part.replace("{" + key + "}", value)
     for key in late_field_order:
         part = part.replace("{" + key + "}", fields.get(key, ""))
     return part
@@ -361,6 +378,9 @@ def ensure_operator_proxy_mission_prompt(
         fold_state_save=fold_state_save,
     )
     fields["act2_runbook_line"] = maestro_runbook_act2_line()
+    fields["mission_arrival_skills"] = _skill_slug_list_phrase(
+        MISSION_ARRIVAL_SKILL_SLUGS
+    )
     if "fetch_last" not in fields:
         fields["fetch_last"] = "3"
     for key in ("checkpoint_block", "inflight_block", "budgets_table"):
@@ -406,7 +426,9 @@ def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> b
 __all__ = [
     "LIFE_SURFACE_FORBIDDEN_TOOLS",
     "LIFE_SURFACE_LEGAL_TOOLS",
+    "MISSION_ARRIVAL_SKILL_SLUGS",
     "MISSION_SKILL_SLUGS",
+    "MISSION_TRIGGER_SKILL_SLUGS",
     "ULG_CODE_PRIMARY_TOOLS",
     "ULG_CODE_PRIMARY_UI_TITLES",
     "OPERATOR_PROXY_MISSION_PURPOSES",

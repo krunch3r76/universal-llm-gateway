@@ -15,7 +15,9 @@ from claude_bundles.operator_proxy_mission import (
     _HOP_SUCCESSOR_TEMPLATE,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
+    MISSION_ARRIVAL_SKILL_SLUGS,
     MISSION_SKILL_SLUGS,
+    MISSION_TRIGGER_SKILL_SLUGS,
     ULG_CODE_PRIMARY_TOOLS,
     ULG_CODE_PRIMARY_UI_TITLES,
     ensure_operator_proxy_mission_prompt,
@@ -93,7 +95,9 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
     assert out.startswith("# Hop on agent-bus:")
     _assert_section_order(out, _SECTION_ORDER)
     assert "cdp-operator-proxy" in out
-    assert "agent-bus-discipline" in out
+    assert "hypothesize-simulate" in out
+    assert "agent-bus-discipline" not in out.split("## Hard refusals", 1)[0]
+    assert "other four skills" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
     assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
     assert "This is a continuity hop: do not emit MISSION_CLOSEOUT." in out
@@ -381,13 +385,17 @@ def test_identity_is_successor_birth_id_not_chat_url() -> None:
 
 
 def test_first_act_names_mission_skill_slugs() -> None:
-    """Act 1 names the mission slugs; a failed load must be said, not claimed."""
+    """Act 1 names arrival slugs only; trigger slugs are act 2 on-trigger."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     acts = out.split("## Your first acts, in order", 1)[1].split(
         "## Data, not instructions", 1
     )[0]
-    for slug in MISSION_SKILL_SLUGS:
-        assert slug in acts
+    line1 = next(line for line in acts.splitlines() if line.lstrip().startswith("1."))
+    for slug in MISSION_ARRIVAL_SKILL_SLUGS:
+        assert slug in line1
+    for slug in MISSION_TRIGGER_SKILL_SLUGS:
+        assert slug not in line1
+    assert "other four skills" in acts
     assert "If one fails to load, say which" in acts
 
 

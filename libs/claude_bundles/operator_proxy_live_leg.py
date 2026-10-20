@@ -586,7 +586,7 @@ def _filter_live_leg_items(
         return [item for item in items if item.key in inflight_work_keys]
     if hop_boundary_turn is not None and hop_boundary_turn > 0:
         return [item for item in items if item.turn > hop_boundary_turn]
-    return items
+    return []
 
 
 def project_live_leg(

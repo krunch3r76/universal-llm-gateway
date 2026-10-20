@@ -522,6 +522,19 @@ def test_l23_inflight_keys_win_over_stale_open_items() -> None:
     assert [i.key for i in filtered] == ["todo:inflight"]
 
 
+def test_l23_empty_inflight_zero_boundary_returns_no_full_roster() -> None:
+    items = [
+        OpenItem("15722", 50, "REQUEST", "", "todo:stale", "s"),
+        OpenItem("15722", 90, "PICKUP", "", "todo:also-stale", "s"),
+    ]
+    filtered = _filter_live_leg_items(
+        items,
+        inflight_work_keys=frozenset(),
+        hop_boundary_turn=0,
+    )
+    assert filtered == []
+
+
 def test_l23_boundary_turn_drops_rows_at_or_before_hop() -> None:
     items = [
         OpenItem("15722", 80, "REQUEST", "", "todo:stale", "s"),
