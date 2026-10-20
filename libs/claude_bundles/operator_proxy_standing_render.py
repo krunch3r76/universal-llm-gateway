@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from claude_bundles.runbook_excerpt import extract_sections
 
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
-CHECKPOINT_HOP_INLINE_B = 2400
+CHECKPOINT_HOP_INLINE_B = CHECKPOINT_BUDGET_B
 HOP_RENDER_MAX_B = 12_000
 HOP_RUNNING_NOW_CAP_B = 200
 HOP_INFLIGHT_CAP_B = 400
@@ -860,6 +861,19 @@ def render_checkpoint_block(
     inflight_section = sections.get("IN FLIGHT", "")
     meta["inflight_rows"] = parse_inflight_rows(inflight_section)
 
+    if (
+        hop_inline
+        and current
+        and sidecar
+        and _utf8_len(current) <= CHECKPOINT_BUDGET_B
+        and not any(
+            str(f).startswith("[budget_exceeded checkpoint") for f in meta["flags"]
+        )
+    ):
+        digest = hashlib.sha256(sidecar.encode("utf-8")).hexdigest()
+        sha_line = f"handoff sha256 {digest}"
+        body = f"{sha_line}\n\n{body}" if body else sha_line
+
     prefix = "## CURRENT LEG (rendered checkpoint)\n"
     if meta["flags"]:
         body = "\n".join(meta["flags"]) + ("\n\n" + body if body else "")
@@ -917,6 +931,29 @@ def runbook_refuse_steps_bytes(body: str | None) -> int | None:
     except ValueError:
         return None
     return _utf8_len(excerpt)
+
+
+def first_act_call1_line(*, lane: str, checkpoint_block: str) -> str:
+    """Act-2 call-1 wording: handoff fs read only when the checkpoint flags budget."""
+    needs_handoff_read = "[budget_exceeded" in (checkpoint_block or "")
+    call2 = (
+        'Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; '
+        "quote `read_sha256` from that md_read. On trigger only, `md_read` the "
+        "other four skills from their SKILL bodies — not at arrival."
+    )
+    if needs_handoff_read:
+        call1 = (
+            f'Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and '
+            f'`{lane}-standing-handoff.md`; quote each file\'s `read_sha256` from that read.'
+        )
+    else:
+        call1 = (
+            f'Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and quote its '
+            f'`read_sha256` from that read; quote the standing handoff `read_sha256` from '
+            f"the `handoff sha256` line in the rendered checkpoint above "
+            f'(do not `fs(op="read")` `{lane}-standing-handoff.md`).'
+        )
+    return f"{call1} {call2}"
 
 
 def maestro_runbook_act2_line() -> str:
@@ -1077,6 +1114,7 @@ __all__ = [
     "compute_preamble_over_inflight_flag",
     "current_leg_has_inflight_section",
     "extract_inflight_work_keys",
+    "first_act_call1_line",
     "hop_boundary_turn_from_header",
     "hop_house_rules_pointer",
     "inflight_section_from_sidecar",

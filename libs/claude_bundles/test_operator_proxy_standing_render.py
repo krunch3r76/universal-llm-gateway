@@ -7,6 +7,8 @@ import re
 import pytest
 
 from claude_bundles.operator_proxy_standing_render import (
+    CHECKPOINT_BUDGET_B,
+    CHECKPOINT_HOP_INLINE_B,
     RULES_BUDGET_B,
     SECTION_OWED_CAP_B,
     assess_render_budget_and_identity,
@@ -678,3 +680,44 @@ def test_friction_39828_suffixed_heading_and_probe_oserror() -> None:
     assert f'section="{_LANE_16416_RULES_HEADING}"' in rules_u
     assert "existence unverified" in rules_u
     assert "[render_failed house_rules:" not in unverified
+
+
+def test_checkpoint_hop_inline_b_follows_checkpoint_budget_b() -> None:
+    assert CHECKPOINT_HOP_INLINE_B == CHECKPOINT_BUDGET_B
+
+
+def test_hop_inline_mid_size_checkpoint_has_no_checkpoint_budget_flag() -> None:
+    """2401–8192 B CURRENT LEG must not emit [budget_exceeded checkpoint …]."""
+    sidecar = "## CURRENT LEG\nLEG 1\n### OWED / NEXT\n" + ("o" * 3000) + "\n"
+    body, _meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+        hop_inline=True,
+    )
+    assert "[budget_exceeded checkpoint" not in body
+    assert "handoff sha256" in body
+
+
+def test_hop_inline_in_cap_checkpoint_includes_handoff_sha256() -> None:
+    sidecar = "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nsmall\n"
+    body, _meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+        hop_inline=True,
+    )
+    assert "handoff sha256" in body
+    assert "[budget_exceeded" not in body
+
+
+def test_hop_inline_over_8192_current_leg_keeps_checkpoint_budget_flag() -> None:
+    sidecar = "## CURRENT LEG\n" + ("p" * 9000) + "\n### OWED / NEXT\nx\n"
+    body, meta = render_checkpoint_block(
+        sidecar,
+        lane="12286",
+        inline_house_rules=None,
+        hop_inline=True,
+    )
+    assert "[budget_exceeded checkpoint" in body
+    assert meta["budget"] == "exceeded"

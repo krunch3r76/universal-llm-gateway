@@ -888,6 +888,39 @@ def test_pa3_act2_md_read_and_runbook_size() -> None:
     assert "2. 2." not in acts
 
 
+def test_first_act_handoff_read_conditional_on_budget_marker() -> None:
+    small = "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nok\n"
+    out_ok = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=small,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    acts_ok = out_ok.split("## Your first acts", 1)[1].split(
+        "## Data, not instructions", 1
+    )[0]
+    assert "12286-house-rules.md" in acts_ok
+    assert "do not `fs(op=\"read\")` `12286-standing-handoff.md`" in acts_ok
+    assert "12286-standing-handoff.md`;" not in acts_ok
+
+    big = _checkpoint_fixture_20kb()
+    out_big = ensure_operator_proxy_mission_prompt(
+        "thread_id: 12286\n",
+        standing_handoff_text=big,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    acts_big = out_big.split("## Your first acts", 1)[1].split(
+        "## Data, not instructions", 1
+    )[0]
+    assert "`12286-standing-handoff.md`;" in acts_big or (
+        "12286-standing-handoff.md`;" in acts_big
+    )
+    assert "[budget_exceeded" in out_big.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
+        "## Lessons in force", 1
+    )[0]
+
+
 def test_act2_md_read_section_exists_in_maestro_runbook() -> None:
     import re
 

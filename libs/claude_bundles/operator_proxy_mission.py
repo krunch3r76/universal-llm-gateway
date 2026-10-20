@@ -17,6 +17,7 @@ from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
 from claude_bundles.operator_proxy_standing_render import (
     compute_preamble_over_inflight_flag,
+    first_act_call1_line,
     maestro_runbook_act2_line,
 )
 from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
@@ -155,7 +156,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 ## Your first acts, in order
 
 1. Use the {mission_arrival_skills} skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
-2. Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and `{lane}-standing-handoff.md`; quote each file's `read_sha256` from that read. Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; quote `read_sha256` from that md_read. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
+2. {first_act_call1_line}
 3. The checkpoint and in-flight rows above are the arrival projection; use the live leg for bus-derived open items. House rules are not inlined — read them per the pointer above.
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. `agent_bus_read` fetch thread {lane}, last {fetch_last}, compact. Then `mark_read` through the latest turn with agent web-anthropic only.
@@ -258,6 +259,7 @@ _LATE_FIELD_ORDER = (
     "inflight_block",
     "live_leg",
     "pointers",
+    "first_act_call1_line",
     "act2_runbook_line",
     "fetch_last",
 )
@@ -279,6 +281,62 @@ def _substitute_hop_template_part(
     for key in late_field_order:
         part = part.replace("{" + key + "}", fields.get(key, ""))
     return part
+
+
+_CHECKPOINT_RENDER_PREFIX = "## CURRENT LEG (rendered checkpoint)\n"
+
+
+def _enforce_hop_render_max(
+    fields: dict[str, str],
+    *,
+    caller_body: str,
+    hop_kind: str,
+    standing_handoff_text: str | None,
+) -> None:
+    """Keep the hop UTF-8 envelope under HOP_RENDER_MAX_B without trimming an in-cap leg."""
+    if hop_kind != "mission":
+        return
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        HOP_RENDER_MAX_B,
+        _extract_current_leg_block,
+        _truncate_utf8,
+        first_act_call1_line,
+    )
+
+    def _total_bytes() -> int:
+        return len(
+            render_hop_successor_briefing(
+                fields, caller_body=caller_body, hop_kind=hop_kind
+            ).encode()
+        )
+
+    if _total_bytes() <= HOP_RENDER_MAX_B:
+        return
+
+    current = _extract_current_leg_block(standing_handoff_text or "") or ""
+    leg_bytes = len(current.encode("utf-8"))
+    protected_floor = CHECKPOINT_BUDGET_B if leg_bytes <= CHECKPOINT_BUDGET_B else 0
+
+    while _total_bytes() > HOP_RENDER_MAX_B:
+        checkpoint = fields.get("checkpoint_block") or ""
+        if not checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX):
+            break
+        body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) :]
+        size = len(body.encode("utf-8"))
+        if size <= protected_floor:
+            break
+        shrink = max(128, (size - protected_floor) // 5)
+        target = max(protected_floor, size - shrink)
+        if target >= size:
+            break
+        fields["checkpoint_block"] = (
+            _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
+        )
+        fields["first_act_call1_line"] = first_act_call1_line(
+            lane=fields["lane"],
+            checkpoint_block=fields["checkpoint_block"],
+        )
 
 
 def render_hop_successor_briefing(
@@ -408,7 +466,18 @@ def ensure_operator_proxy_mission_prompt(
             ).strip()
             + "\n"
         )
-    return rendered
+    _enforce_hop_render_max(
+        fields,
+        caller_body=rest_body,
+        hop_kind=hop_kind,
+        standing_handoff_text=standing_handoff_text,
+    )
+    return (
+        render_hop_successor_briefing(
+            fields, caller_body=rest_body, hop_kind=hop_kind
+        ).strip()
+        + "\n"
+    )
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:

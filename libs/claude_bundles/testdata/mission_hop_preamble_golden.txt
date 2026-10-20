@@ -9,6 +9,8 @@ House rules (do not inline): `fs(op="read", path="cortex://notes/system/threads/
 
 
 ## CURRENT LEG (rendered checkpoint)
+handoff sha256 e9179145abcad981831d28dcdb6459e1ea0bf223f7f8b5088fac47c30223d8ee
+
 ### OWED / NEXT
 fixture owed line
 
@@ -35,7 +37,7 @@ declared_in_flight: 0
 ## Your first acts, in order
 
 1. Use the cdp-operator-proxy, lean-dispatch, reasoning-posture and hypothesize-simulate skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
-2. Call 1: cortex `fs(op="read")` on `12286-house-rules.md` and `12286-standing-handoff.md`; quote each file's `read_sha256` from that read. Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; quote `read_sha256` from that md_read. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
+2. Call 1: cortex `fs(op="read")` on `12286-house-rules.md` and quote its `read_sha256` from that read; quote the standing handoff `read_sha256` from the `handoff sha256` line in the rendered checkpoint above (do not `fs(op="read")` `12286-standing-handoff.md`). Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; quote `read_sha256` from that md_read. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
 3. The checkpoint and in-flight rows above are the arrival projection; use the live leg for bus-derived open items. House rules are not inlined — read them per the pointer above.
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. `agent_bus_read` fetch thread 12286, last 3, compact. Then `mark_read` through the latest turn with agent web-anthropic only.

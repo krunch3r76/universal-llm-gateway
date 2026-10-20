@@ -46,6 +46,7 @@ from claude_bundles.operator_proxy_standing_render import (
     _extract_current_leg_block,
     cap_utf8_for_hop,
     current_leg_has_inflight_section,
+    first_act_call1_line,
     extract_inflight_work_keys,
     hop_boundary_turn_from_header,
     hop_house_rules_pointer,
@@ -475,6 +476,12 @@ def hop_successor_fields(
             running_now, HOP_RUNNING_NOW_CAP_B, label="running_now"
         )
 
+    call1_line = (
+        first_act_call1_line(lane=lane, checkpoint_block=checkpoint_block)
+        if hop_kind == "mission"
+        else ""
+    )
+
     return {
         "hop_kind": hop_kind,
         "lane": lane,
@@ -489,6 +496,7 @@ def hop_successor_fields(
         "register_card": journal_fields["register_card"],
         "live_leg": live_leg,
         "pointers": pointers,
+        "first_act_call1_line": call1_line,
         "fetch_last": str(fetch_last),
         "budgets_table": budgets_table,
     }
