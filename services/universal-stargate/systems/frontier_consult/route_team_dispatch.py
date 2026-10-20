@@ -94,7 +94,7 @@ async def team_dispatch(
     admit_provenance = build_team_dispatch_admit_provenance(body, request_id=request_id)
     if admit_provenance is not None:
         emit_admit_provenance_missing_event(admit_provenance)
-    if body.op in ("claim", "claim_release", "occupancy"):
+    if body.op in ("claim", "claim_release", "occupancy", "ledger"):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
         holder = (getattr(body, "caller_agent", None) or "").strip()
@@ -118,6 +118,8 @@ async def team_dispatch(
             claim_id=getattr(body, "claim_id", None),
             outcome=getattr(body, "outcome", None),
             ttl_s=getattr(body, "ttl_s", None),
+            limit=getattr(body, "limit", None),
+            window_hours=getattr(body, "window_hours", None),
         )
         if not ok:
             status_code = int(

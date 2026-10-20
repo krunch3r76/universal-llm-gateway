@@ -399,6 +399,33 @@ def test_t7_claimed_invisible_to_open_holder_consumers() -> None:
     assert _status(ledger, first["claim_id"]) == "claimed"
 
 
+def test_claim_post_still_delegates_to_claim_module_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ledger route registration must not alter claim() delegation (ACK #5)."""
+    seen: list[str] = []
+
+    def _spy_claim(**kwargs: object) -> dict:
+        seen.append(str(kwargs.get("work_key")))
+        return {"claim_id": "claim-spy", "work_key": kwargs.get("work_key")}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_claim.claim",
+        _spy_claim,
+    )
+    client = _client()
+    resp = client.post(
+        "/api/v1/cursor/claim",
+        json={
+            "work_key": _KEY,
+            "holder_agent": "seat-a",
+            "thread_id": "16006",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen == [_KEY]
+
+
 def test_t8_occupancy_without_bus_and_projection_table() -> None:
     ledger = _ledger()
     client = _client()
