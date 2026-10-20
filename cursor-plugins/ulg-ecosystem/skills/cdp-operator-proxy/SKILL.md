@@ -138,7 +138,7 @@ The window classification tells you only what recovery to expect:
 
 Tooling MCP restart ⇒ continuity protocol (not warm follow-up). Ordered sequence:
 
-1. Land, then `manage` `sync_restart` from this seat after porcelain (never `force` on `git_integration_worker`; do not fire `contract:propagate`). 2. `wait_healthy`. 3. Hop continuity on the same lane (`desired_model=cdp/opus-5.5-extra`).
+1. Land, then `manage` `sync_restart` from this seat after porcelain (never `force` on `git_integration_worker`; do not fire `contract:propagate`). 2. `wait_healthy`. 3. After mcp is healthy, hop only when this leg needs a skill chip that changed. If calls still work and that chip did not change, do not hop.
 
 Continuity before healthy is a defect.
 
@@ -220,7 +220,7 @@ When blocked on a fact this seat cannot settle from tools alone:
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 
-**Code-seat ops = step 2** via ulg-code `team_dispatch`. Restarts are `manage` `sync_restart` from this seat. Never `force` on `git_integration_worker`. Do not fire `contract:propagate`. Tooling: healthy → hop (`desired_model=cdp/opus-5.5-extra`). Operator gates: credentials, irreversible, Authorize-triggers (inv 21), Reload Window. Manage recycle / unwired `guarded_manage_reexec` is inv 39, not an operator gate.
+**Code-seat ops = step 2** via ulg-code `team_dispatch`. Restarts are `manage` `sync_restart` from this seat. Never `force` on `git_integration_worker`. Do not fire `contract:propagate`. After mcp is healthy, hop only when this leg needs a skill chip that changed; if calls still work and that chip did not change, do not hop. Operator gates: credentials, irreversible, Authorize-triggers (inv 21), Reload Window. Manage recycle / unwired `guarded_manage_reexec` is inv 39, not an operator gate.
 
 **Forbidden:** a prose halt that waits for a human without firing Ask/push, a cursor DIRECTIVE, **or** an attended `send` (inv 40).
 **Packet authors:** if the episode may need (2)/(3), do **not** seal `¬ clarifying questions` —
