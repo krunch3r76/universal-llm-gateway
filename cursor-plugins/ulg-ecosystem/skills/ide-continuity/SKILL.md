@@ -58,7 +58,7 @@ register=attended ∨ autonomous ⇒ land_on_green; HOLD_MERGE ⇔ operator_expl
 go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left) ⇒ ide-hop (¬go_under)
 ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
 below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (anthropic/* API admitted when credit-healthy, not the first wire)
-same_fix_failed_twice ⇒ REPEATED_FAILURE ∧ ¬third_variant
+same_input_failed_twice ⇒ ¬retry(same_input); one attempt(different_kind: resolve ∨ replace_input) before REPEATED_FAILURE
 open_fork(design ∨ strategy ∨ retry_same_AC) ∧ ¬mechanical ⇒ pipeline(divergent-ideation-v1) ≺ bind
 outbound_prose(high_stakes) ⇒ outbound-voice-spec ≺ pipeline(divergent-ideation-v1) ≺ pipeline(writer-specialist-v1)
 ```
@@ -229,7 +229,7 @@ Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout 
 
 Reasoning strength low→high: `cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`, `cdp/fable-5`. Walk `high` → `extra` → `max` inside a rung before next wire.
 
-Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. `anthropic/*` API is admitted when the credit gate is healthy (prohibition retired 2026-10-18); it is not the default judgment wire. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
+Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. `anthropic/*` API is admitted when the credit gate is healthy (prohibition retired 2026-10-18); it is not the default judgment wire. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ no more retries of that input; one attempt of a different kind (resolve or replace the input) is allowed before REPEATED_FAILURE; a third retry of the same input is forbidden.
 
 ## Economy gears
 
@@ -259,7 +259,7 @@ Shift takes effect at **next** hop. Live `--loop` absorbs `--set` / `--mark-*` o
 | Disposition | **Ticker first spawn = row-bind hop**, not Composer house generate. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining (LOW = implement lane B + later apply-all review; TRIO sketch default `cdp/opus-5.5` when no `todo:{slug}`). `--mark-friction` records disposition. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, does not skip review+apply+land |
 | Close-back | **on the assertion**: `cortex(tool="friction_close", …)`. Superseded ⇒ leaves next harvest. `todo-minted`/`declined` still open = `state=close_pending` |
 | Ticker | newest forcing ∧ unlatched → `attention` (`kind=friction`) — **one per tick**, none once `friction_dispatch_cap` (default 3) latched tonight; one spawn per assertion id. Sit leftover on forcing friction: row-bind posts class then **STOP**; ticker fires LOW/TRIO — never Composer house successor on bind leg. Review harvest: ticker applies ALL suggestions as one lane-B house generate (`job=freeform` + apply-all) — ¬ page ¬ come-up ¬ park |
-| REPEATED_FAILURE | second `direct-first` on same row ⇒ `state=repeated_failure`: consult then todo-minted \| declined; never third variant |
+| REPEATED_FAILURE | same input failed twice on row ⇒ no more retries of that input; one attempt of a different kind (resolve or replace the input) is allowed before REPEATED_FAILURE; then consult → todo-minted \| declined; ¬ third retry(same_input) |
 
 ## Gate swap
 
@@ -273,7 +273,7 @@ Covered by § Seat stays 3. Same-turn: `friction()` → card row → swap NOW �
 | `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar committing others · fleet-wide restart — **only when armed** via `--operator-gate <row>` (`source=operator`) | CHECKPOINT + page + park **that row**. Clear with `--operator-gate clear`. Seat prose / `now_row` containing `OPERATOR_GATE` ≠ gate |
 | `HOLD_MERGE` | operator **explicitly** asked to hold merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` ≠ hold |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
-| `REPEATED_FAILURE` | same fix failed twice | friction + house row; if gate, swap NOW and play. Page only when gate is `OPERATOR_GATE` |
+| `REPEATED_FAILURE` | same input failed twice | no more retries of that input; one attempt of a different kind (resolve or replace the input) is allowed before REPEATED_FAILURE; friction + house row; if gate, swap NOW and play. Page only when gate is `OPERATOR_GATE` |
 | `SPEND_CAP` | **only when** positive `policy.max_dispatches_per_night` set — then dispatch count ≥ cap or dispatch > 2h | pause new dispatches, page |
 | `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` (headless) or `source=ide.transcript` (attended; vs `policy.ide_window_tokens`, default 256k). `checkpoint_due` at 60% | attended + work left: CHECKPOINT → **`liaison-ide-hop.py`**; empty NOW: STAY/PARK; `--go-under` only overnight/departure; headless `sdk:`: CHECKPOINT → release, ticker spawns |
 
