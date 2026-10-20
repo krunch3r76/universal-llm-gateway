@@ -6,6 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
+
 import pytest
 
 from services.git_integration_worker.admission import WorkAdmissionController
@@ -18,13 +19,13 @@ from services.git_integration_worker.cursor_sdk_park_for_restart import (
     reset_park_marks,
     signal_park,
 )
+from services.git_integration_worker.cursor_sdk_park_http import park_one_dispatch
 from services.git_integration_worker.cursor_sdk_park_ledger import (
     load_park_row,
     mark_parked,
     open_park_rows,
     park_projection,
 )
-from services.git_integration_worker.cursor_sdk_park_http import park_one_dispatch
 from services.git_integration_worker.cursor_sdk_park_preflight import (
     REFUSAL_HTTP,
     SELF_CLEARING_REFUSALS,
