@@ -273,7 +273,10 @@ def test_policy_defaults_grok_successor_and_row_bind() -> None:
     policy = effective_policy({"policy": {}})
     assert policy["successor_model"] == POLICY_DEFAULTS["successor_model"]
     assert policy["successor_model"] == "cursor/grok-4.7"
-    assert policy["successor_model_knobs"] == {"effort": "high", "fast": "false"}
+    assert policy["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
+    assert policy["critic_model"] == "cursor/gemini-4-argon"
+    assert policy["hop_model_query"] == "Grok 4.7"
+    assert policy["under_pattern"] == "grok-confer-argon"
     assert policy["row_bind_model"] == "cursor/grok-4.7"
     assert policy["row_bind_model_knobs"] == {"effort": "high", "fast": "false"}
 
@@ -284,7 +287,7 @@ def test_gear_three_presets_grok_successor() -> None:
     )
     preset_only = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
     assert preset_only["successor_model"] == "cursor/grok-4.7"
-    assert preset_only["successor_model_knobs"] == {"effort": "high", "fast": "false"}
+    assert preset_only["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
     assert preset_only["successor_model_source"] == "gear_preset"
     bound = effective_policy(
         {

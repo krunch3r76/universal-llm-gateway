@@ -19,7 +19,7 @@ impresario:
     - cursor-sdk
     - grok-bot
     - hybrid
-  driver: {model: cursor/grok-4.7, effort: high}
+  driver: {model: cursor/grok-4.7, effort: xhigh}
   mechanical: {model: cursor/composer-2.5, effort: medium}
   critic: {model: cursor/gemini-4-argon, effort: high}
   critic_roles:

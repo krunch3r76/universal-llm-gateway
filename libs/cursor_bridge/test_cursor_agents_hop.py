@@ -48,6 +48,7 @@ def test_launch_cursor_agents_tab_ok() -> None:
             "transport": "cdp_cursor_agents",
             "page_title": "Cursor Agents",
             "editor_agent_id": "ed-1",
+            "model_query": "Grok 4.7",
             "send_fallback_clicked": False,
         }
 
@@ -55,9 +56,10 @@ def test_launch_cursor_agents_tab_ok() -> None:
         patch("cursor_bridge.cursor_agents_hop.list_pages", return_value=[page]),
         patch("cursor_bridge.cursor_agents_hop.asyncio.run", side_effect=_run),
     ):
-        out = launch_cursor_agents_tab("resume 10479")
+        out = launch_cursor_agents_tab("resume 10479", model_query="Grok 4.7")
     assert out["ok"] is True
     assert out["transport"] == "cdp_cursor_agents"
+    assert out["model_query"] == "Grok 4.7"
 
 
 def test_archive_cursor_agents_tab_empty_id() -> None:

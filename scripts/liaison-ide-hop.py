@@ -167,7 +167,7 @@ def main() -> int:
         "--model-query",
         default=None,
         help=(
-            "override policy.hop_model_query for this hop (default: 'Gemini 4 Argon'; "
+            "override policy.hop_model_query for this hop (default: 'Grok 4.7'; "
             "pass '' to keep last-used model)"
         ),
     )

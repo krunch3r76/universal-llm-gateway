@@ -445,6 +445,13 @@ def _critic_model_if_live(policy: dict | None) -> str | None:
     return None
 
 
+def _critic_dispatch_knob_suffix(policy: dict | None) -> str:
+    knobs = (policy or {}).get("critic_model_knobs")
+    if not isinstance(knobs, dict) or not knobs:
+        return ""
+    return ", " + ", ".join(f"{k}={v}" for k, v in knobs.items())
+
+
 def _judgment_consult(policy: dict | None, successor_model: str | None) -> str:
     """Who a below-Opus hop asks before it binds.
 
@@ -453,7 +460,11 @@ def _judgment_consult(policy: dict | None, successor_model: str | None) -> str:
     """
     if model_paused(policy, "cdp/opus-5.5"):
         if named := _critic_model_if_live(policy):
-            return named
+            knob_txt = _critic_dispatch_knob_suffix(policy)
+            return (
+                "retrieval-before-authoring → team_dispatch(op=generate, "
+                f"seat=cursor-sdk, contract=freeform, lane=B, model={named}{knob_txt})"
+            )
         named = str(successor_model or "").strip() or "the house successor"
         return named
     return "cdp/opus-5.5"

@@ -28,15 +28,15 @@ _IDE_BUDGET_RATIO_THRESHOLD = 0.55
 _IDE_TOOL_CALLS_THRESHOLD = 35
 
 # Gear-3 preset successors allowed to spawn without an operator --set override.
-# 10534 blocked implicit *premium* models. Grok 4.7 high / non-fast is the
-# judgment hop (f44e71b1); Composer stays off this list until a mechanical hop exists.
+# 10534 blocked implicit *premium* models. Grok 4.7 xhigh / non-fast is the
+# Impresario driver (f44e71b1); Composer stays off this list until a mechanical hop exists.
 GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset({"cursor/grok-4.7"})
 
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
-    # House successor still judges (STAY / classify / dispatch). High, non-fast.
+    # House successor still judges (STAY / classify / dispatch). xhigh, non-fast.
     "successor_model": "cursor/grok-4.7",
-    "successor_model_knobs": {"effort": "high", "fast": "false"},
+    "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
     "row_bind_model": "cursor/grok-4.7",
     "row_bind_model_knobs": {"effort": "high", "fast": "false"},
     "successor_cost_intent": None,
@@ -68,6 +68,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # Pattern A critic when cdp/opus-5.5 is paused (liaison policy key: critic_model).
     "critic_model": "cursor/gemini-4-argon",
     "critic_model_knobs": {"effort": "high", "fast": "false"},
+    "hop_model_query": "Grok 4.7",
+    "under_pattern": "grok-confer-argon",
 }
 # Gear name kept so a stored policy fails closed instead of falling through
 # to POLICY_DEFAULTS (that fall-through would silently spawn grok).
@@ -84,7 +86,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         # Judgment hop. Premium presets stay blocked (10534). Composer is not
         # allowlisted until a mechanical hop exists.
         "successor_model": "cursor/grok-4.7",
-        "successor_model_knobs": {"effort": "high", "fast": "false"},
+        "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
@@ -94,7 +96,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "4-cdp-liaison": {
         "successor_seat": "cursor-sdk",
         "successor_model": "cursor/grok-4.7",
-        "successor_model_knobs": {"effort": "high", "fast": "false"},
+        "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
         "successor_cost_intent": None,
         "successor_job": "conductor",
         "ready": False,

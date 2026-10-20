@@ -81,22 +81,98 @@ def launch_cursor_agents_tab(
     message: str,
     *,
     debug_url: str = "http://127.0.0.1:9338",
+    model_query: str = "",
     timeout_s: float = 15.0,
 ) -> dict[str, Any]:
     """Open a new agent via CDP, paste ``message``, and submit."""
     try:
         pages = list_pages(debug_url, timeout_s=min(timeout_s, 5.0))
     except OSError as exc:
-        return {"ok": False, "reason": "debug_unreachable", "detail": type(exc).__name__}
+        return {
+            "ok": False,
+            "reason": "debug_unreachable",
+            "detail": type(exc).__name__,
+            "model_query": model_query,
+        }
     page = pick_chat_page(pages, surface="cursor")
     if page is None:
-        return {"ok": False, "reason": "no_page", "pages": len(pages)}
+        return {"ok": False, "reason": "no_page", "pages": len(pages), "model_query": model_query}
     ws_url = page["web_socket_debugger_url"]
-    return asyncio.run(_launch_async(ws_url, message, page, timeout_s=timeout_s))
+    return asyncio.run(
+        _launch_async(
+            ws_url, message, page, timeout_s=timeout_s, model_query=model_query
+        )
+    )
+
+
+async def _dispatch_ctrl_slash(ws: Any, mid: int, timeout_s: float) -> None:
+    for phase in ("keyDown", "keyUp"):
+        await ws.send(
+            json.dumps(
+                {
+                    "id": mid,
+                    "method": "Input.dispatchKeyEvent",
+                    "params": {
+                        "type": phase,
+                        "modifiers": 2,
+                        "key": "/",
+                        "code": "Slash",
+                        "windowsVirtualKeyCode": 191,
+                        "nativeVirtualKeyCode": 191,
+                    },
+                }
+            )
+        )
+        await asyncio.wait_for(_recv_id(ws, mid), timeout_s)
+        mid += 1
+
+
+async def _try_select_model_query(
+    ws: Any, model_query: str, *, timeout_s: float, start_id: int
+) -> dict[str, Any]:
+    query = str(model_query or "").strip()
+    if not query:
+        return {"ok": True, "skipped": True}
+    mid = start_id
+    try:
+        await _dispatch_ctrl_slash(ws, mid, timeout_s)
+        mid += 2
+        await ws.send(
+            json.dumps({"id": mid, "method": "Input.insertText", "params": {"text": query}})
+        )
+        await asyncio.wait_for(_recv_id(ws, mid), timeout_s)
+        mid += 1
+        for phase in ("keyDown", "keyUp"):
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": mid,
+                        "method": "Input.dispatchKeyEvent",
+                        "params": {
+                            "type": phase,
+                            "key": "Enter",
+                            "code": "Enter",
+                            "windowsVirtualKeyCode": 13,
+                            "nativeVirtualKeyCode": 13,
+                        },
+                    }
+                )
+            )
+            await asyncio.wait_for(_recv_id(ws, mid), timeout_s)
+            mid += 1
+        await asyncio.sleep(0.2)
+        return {"ok": True, "model_query": query}
+    except Exception as exc:  # noqa: BLE001 — best-effort; paste flow continues
+        return {"ok": False, "reason": "model_query_failed", "detail": type(exc).__name__}
 
 
 async def _launch_async(
-    ws_url: str, message: str, page: dict[str, str], *, timeout_s: float
+    ws_url: str,
+    message: str,
+    page: dict[str, str],
+    *,
+    timeout_s: float,
+    model_query: str = "",
 ) -> dict[str, Any]:
     import websockets
 
@@ -104,12 +180,26 @@ async def _launch_async(
         click = await _eval(ws, 1, _NEW_AGENT_CLICK_JS, timeout_s)
         if not (isinstance(click, dict) and click.get("ok")):
             reason = click.get("reason") if isinstance(click, dict) else "new_agent_click_failed"
-            return {"ok": False, "reason": reason, "click": click}
+            return {
+                "ok": False,
+                "reason": reason,
+                "click": click,
+                "model_query": model_query,
+            }
         await asyncio.sleep(0.25)
+        model_pick = await _try_select_model_query(
+            ws, model_query, timeout_s=timeout_s, start_id=10
+        )
         focus = await _eval(ws, 2, _COMPOSER_FOCUS_JS, timeout_s)
         if not (isinstance(focus, dict) and focus.get("ok")):
             reason = focus.get("reason") if isinstance(focus, dict) else "composer_focus_failed"
-            return {"ok": False, "reason": reason, "focus": focus}
+            return {
+                "ok": False,
+                "reason": reason,
+                "focus": focus,
+                "model_query": model_query,
+                "model_pick": model_pick,
+            }
         await ws.send(
             json.dumps({"id": 3, "method": "Input.insertText", "params": {"text": message}})
         )
@@ -148,6 +238,8 @@ async def _launch_async(
         "transport": "cdp_cursor_agents",
         "page_title": page.get("title"),
         "editor_agent_id": editor_id,
+        "model_query": model_query,
+        "model_pick": model_pick,
         "send_fallback_clicked": bool(
             isinstance(fallback, dict) and fallback.get("send_fallback_clicked")
         ),

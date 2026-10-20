@@ -79,7 +79,7 @@ KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 # qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
-DEFAULT_HOP_MODEL_QUERY = "Gemini 4 Argon"
+DEFAULT_HOP_MODEL_QUERY = "Grok 4.7"
 _CHECKPOINT_TIMEOUT_S = 15.0
 _WAIT_SLICE_S = 55.0
 
@@ -108,7 +108,7 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
 
 
 def policy_hop_model_query(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
-    """``policy.hop_model_query`` — Ctrl+/ filter after Glass ``Ctrl+N``; default Argon.
+    """``policy.hop_model_query`` — Ctrl+/ filter after Glass ``Ctrl+N``; default Grok 4.7.
 
     Missing key → ``DEFAULT_HOP_MODEL_QUERY``. An explicit empty string in policy
     disables ``--model-query`` so the tab keeps the operator's last model pick.
@@ -265,8 +265,10 @@ def build_ide_hop_message(
         "LOAD liaison-cursor. Repo write on this seat → "
         "team_dispatch(seat=cursor-sdk, job=implement, lane=B). "
         "life repo-write → life_dispatch. "
-        "Explore recon in-tab · design/judgment → cdp/fable-5.1 · "
-        "independent check → cdp/opus-5. Before any STAY verdict. "
+        "Explore recon in-tab · outsource regular judgment/design/advice → "
+        "cursor/gemini-4-argon (effort=high, fast=false) after retrieval-before-authoring "
+        "(rag scopes + targeted reads → retrieval report) · critical review → "
+        "cursor/muse-wonder-1.0 · independent check → cdp/opus-5.5. Before any STAY verdict. "
         "STAY = no hop, never = no dispatch.",
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
@@ -727,7 +729,9 @@ def fire_ide_hop(
     hop_record: dict[str, Any] | None = None
     try:
         if is_cursor_xvfb_host(resolved_gui_host):
-            keystroke = launch_cursor_agents_tab(message)
+            keystroke = launch_cursor_agents_tab(
+                message, model_query=resolved_model_query
+            )
             if not keystroke.get("ok"):
                 return {"ok": False, "phase": "keystroke", "keystroke": keystroke, **result}
         else:
