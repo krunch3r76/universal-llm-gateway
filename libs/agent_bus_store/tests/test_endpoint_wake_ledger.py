@@ -764,6 +764,94 @@ def test_web_anthropic_wake_not_skipped_already_read_when_turn_stamped(
     assert claimed["wake_id"] is not None
 
 
+def test_pair_mark_read_skips_peer_pending_wake_ledger(db: TestClient) -> None:
+    from agent_bus_store.db.turns import bulk_mark_read_state
+
+    detail = create_thread(thread_id=None, slug="l20-pair-mark-read-skip")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="VERDICT|pair-skip",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "web-anthropic",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:30:00",
+    )
+    marked = bulk_mark_read_state(
+        thread=thread, through_turn=t_n, agent="maestro"
+    )
+    assert marked == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "already_read"
+    claimed = claim_due_wakes(now="2020-01-01 17:30:01")
+    assert claimed["wake_id"] is None
+
+
+def test_web_anthropic_reply_skips_maestro_wake_already_answered(
+    db: TestClient,
+) -> None:
+    detail = create_thread(thread_id=None, slug="l20-web-answers-maestro")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|cross-seat",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:35:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject=f"ACK|re #{t_n}",
+        body="done",
+    )
+    skipped = claim_due_wakes(now="2020-01-01 17:35:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_answered"
+
+
 def test_maestro_wake_still_skipped_already_answered(db: TestClient) -> None:
     detail = create_thread(thread_id=None, slug="l20-maestro-answered")
     assert detail is not None

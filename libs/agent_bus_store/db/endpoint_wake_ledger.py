@@ -17,6 +17,7 @@ from .lane_associations import get_current_lane
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
+_MAESTRO_WEB_SQL = ", ".join(f"'{a}'" for a in sorted(MAESTRO_WEB_ALIAS_PAIR))
 
 
 def _mailbox_agent_sql(left: str, right: str) -> str:
@@ -99,7 +100,11 @@ def _same_wake_agent(left: str, right: str) -> bool:
     b = normalize_bus_address(right)
     if a == b:
         return True
-    return a in STAGE_MANAGER_ADDRESSES and b in STAGE_MANAGER_ADDRESSES
+    if a in STAGE_MANAGER_ADDRESSES and b in STAGE_MANAGER_ADDRESSES:
+        return True
+    return _wake_ledger_read_cursor_agent(left) and _wake_ledger_read_cursor_agent(
+        right
+    )
 
 
 def _references_wake_turn(
@@ -126,6 +131,36 @@ def _wake_ledger_read_cursor_agent(agent: str) -> bool:
     if raw in MAESTRO_WEB_ALIAS_PAIR:
         return True
     return normalize_bus_address(agent) in MAESTRO_WEB_ALIAS_PAIR
+
+
+def skip_pending_wakes_on_pair_mark_read(
+    *,
+    thread_id: str,
+    seat: str,
+    turn_ids: list[int],
+    conn: sqlite3.Connection | None = None,
+    now: str | None = None,
+) -> int:
+    """Skip alias-pair pending ledger rows when L2 mark_read stamps turns."""
+    if not turn_ids or not _wake_ledger_read_cursor_agent(seat):
+        return 0
+    stamp = _now(now)
+
+    def _apply(connection: sqlite3.Connection) -> int:
+        placeholders = ",".join("?" * len(turn_ids))
+        cur = connection.execute(
+            f"UPDATE endpoint_wake_ledger SET state='skipped', reason='already_read', "
+            f"finished_at=? WHERE thread_id=? AND state='pending' "
+            f"AND turn_id IN ({placeholders}) "
+            f"AND lower(trim(agent)) IN ({_MAESTRO_WEB_SQL})",
+            (stamp, thread_id, *turn_ids),
+        )
+        return int(cur.rowcount)
+
+    if conn is not None:
+        return _apply(conn)
+    with write_connect() as owned:
+        return _apply(owned)
 
 
 def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:

@@ -630,3 +630,46 @@ def test_assemble_is_read_only_and_orders_block(bus_db) -> None:
         },
     )
     assert not any("memos_to_check" in step for step in quiet["handoff"]["steps"])
+
+
+def test_web_anthropic_seat_sees_memo_addressed_to_maestro(bus_db) -> None:
+    thread_id = "18469"
+    create_thread(thread_id=thread_id, slug="pair-memo-seat")
+    prev_id = _turn(
+        thread_id,
+        sender="cursor",
+        to="cursor",
+        subject="CHECKPOINT",
+        body="prev",
+    )
+    _turn(
+        thread_id,
+        sender="cursor",
+        to="maestro",
+        subject="MEMO: for maestro inbox",
+        body="successor",
+    )
+    tip_id = _turn(
+        thread_id,
+        sender="web-anthropic",
+        to="cursor",
+        subject="CHECKPOINT",
+        body="tip",
+        supersedes_turn=prev_id,
+    )
+    with connect() as conn:
+        prev_row = conn.execute(
+            "SELECT turn_number FROM turns WHERE id = ?", (prev_id,)
+        ).fetchone()
+        tip_row = conn.execute(
+            "SELECT turn_number FROM turns WHERE id = ?", (tip_id,)
+        ).fetchone()
+    block = build_memos_to_check(
+        thread_id,
+        tip_turn=int(tip_row["turn_number"]),
+        tip_from_agent="web-anthropic",
+        supersedes_turn=prev_id,
+    )
+    subjects = [item["subject"] for item in block["items"]]
+    assert "MEMO: for maestro inbox" in subjects
+    assert block["counts"]["not_addressed"] == 0

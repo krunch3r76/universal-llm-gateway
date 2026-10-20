@@ -336,3 +336,31 @@ def test_consume_token_expired_unit() -> None:
         candidate_ids=["001"],
     )
     assert status == "expired"
+
+
+def test_triage_mark_read_includes_maestro_unread_for_web_anthropic_seat(
+    tmp_path,
+) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        thread_id = _new_thread(
+            client,
+            slug="tri-maestro-unread",
+            frm="cursor",
+            to="maestro",
+            subject="stale for pair",
+            body="body",
+        )
+        _backdate_unread(thread_id, days=10)
+        resp = _triage(
+            client,
+            **{
+                "from": "web-anthropic",
+                "older_than": "7d",
+                "action": "mark_read",
+                "dry_run": True,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total_candidates"] == 1
+        assert data["candidates"][0]["id"] == thread_id

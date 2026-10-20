@@ -13,6 +13,7 @@ from ..recipients import (
     turn_mark_read_eligible,
 )
 from .connection import connect, now, write_connect
+from .endpoint_wake_ledger import skip_pending_wakes_on_pair_mark_read
 from .threads import _next_auto_id
 
 
@@ -477,6 +478,18 @@ def get_turns(
                     f"UPDATE turns SET read_at = ? WHERE id IN ({placeholders})",
                     [ts, *unread_ids],
                 )
+                by_thread: dict[str, list[int]] = {}
+                for row in mark_window:
+                    if row["id"] in unread_ids:
+                        by_thread.setdefault(str(row["thread"]), []).append(row["id"])
+                for tid, ids in by_thread.items():
+                    skip_pending_wakes_on_pair_mark_read(
+                        thread_id=tid,
+                        seat=read_seat,
+                        turn_ids=ids,
+                        conn=conn,
+                        now=ts,
+                    )
                 for row in mark_window:
                     if row["read_at"] is None:
                         row["read_at"] = ts
@@ -661,6 +674,14 @@ def mark_sender_unread_in_thread(
             [ts, *to_mark],
         )
         marked = max(cur.rowcount, 0)
+        if marked:
+            skip_pending_wakes_on_pair_mark_read(
+                thread_id=thread,
+                seat=from_agent,
+                turn_ids=to_mark,
+                conn=conn,
+                now=ts,
+            )
     if marked:
         _maybe_close_generate_thread_on_read(thread)
     return marked
@@ -676,26 +697,57 @@ def bulk_mark_read_state(
     """Bulk mark read — enumerated turn_numbers XOR through_turn+agent."""
     ts = now()
     with write_connect() as conn:
+        marked_turn_ids: list[int] = []
         if turn_numbers is not None:
             placeholders = ",".join("?" * len(turn_numbers))
-            cur = conn.execute(
-                f"UPDATE turns SET read_at = ? "
-                f"WHERE thread = ? AND turn_number IN ({placeholders}) "
-                f"AND read_at IS NULL",
-                [ts, thread, *turn_numbers],
-            )
+            marked_turn_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    f"SELECT id FROM turns "
+                    f"WHERE thread = ? AND turn_number IN ({placeholders}) "
+                    f"AND read_at IS NULL",
+                    [thread, *turn_numbers],
+                ).fetchall()
+            ]
+            if marked_turn_ids:
+                id_placeholders = ",".join("?" * len(marked_turn_ids))
+                cur = conn.execute(
+                    f"UPDATE turns SET read_at = ? WHERE id IN ({id_placeholders})",
+                    [ts, *marked_turn_ids],
+                )
+            else:
+                cur = conn.execute("SELECT 0")  # no-op; rowcount 0
         else:
             if agent is None or through_turn is None:
                 raise ValueError("through_turn requires agent")
             mark_clause, mark_params = sender_auto_mark_clause(agent)
-            cur = conn.execute(
-                f"UPDATE turns SET read_at = ? "
-                f"WHERE thread = ? AND {mark_clause} "
-                f"AND turn_number <= ? AND read_at IS NULL "
-                f"AND status != 'superseded'",
-                [ts, thread, *mark_params, through_turn],
-            )
+            marked_turn_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    f"SELECT id FROM turns "
+                    f"WHERE thread = ? AND {mark_clause} "
+                    f"AND turn_number <= ? AND read_at IS NULL "
+                    f"AND status != 'superseded'",
+                    [thread, *mark_params, through_turn],
+                ).fetchall()
+            ]
+            if marked_turn_ids:
+                id_placeholders = ",".join("?" * len(marked_turn_ids))
+                cur = conn.execute(
+                    f"UPDATE turns SET read_at = ? WHERE id IN ({id_placeholders})",
+                    [ts, *marked_turn_ids],
+                )
+            else:
+                cur = conn.execute("SELECT 0")
         marked = max(cur.rowcount, 0)
+        if marked and agent is not None:
+            skip_pending_wakes_on_pair_mark_read(
+                thread_id=thread,
+                seat=agent,
+                turn_ids=marked_turn_ids,
+                conn=conn,
+                now=ts,
+            )
     if marked:
         _maybe_close_generate_thread_on_read(thread)
     return marked

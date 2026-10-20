@@ -11,8 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from agent_seat.registry import expand_recipient_slugs
-
+from ..recipients import _inbox_recipient_slugs
 from ..turns_models import (
     _BROADCAST_TO_AGENTS,
     TRIAGE_CONFIRM_TTL_SECONDS,
@@ -722,7 +721,7 @@ def delete_thread(thread_id: str, *, force: bool = False) -> dict[str, Any]:
 def _triage_owned_recipients(agent: str) -> list[str]:
     return [
         slug
-        for slug in expand_recipient_slugs(agent)
+        for slug in _inbox_recipient_slugs(agent)
         if slug not in _BROADCAST_TO_AGENTS
     ]
 

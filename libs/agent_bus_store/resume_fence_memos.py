@@ -10,9 +10,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from agent_seat.registry import expand_recipient_slugs
-
 from .bus_notice import classify_unread_turn
+from .recipients import _inbox_recipient_slugs
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 from .db.connection import connect
 
@@ -229,7 +228,7 @@ def build_memos_to_check(
                 "mark_read": [],
                 "note": _NO_SEAT_NOTE,
             }
-        seat_slugs = set(expand_recipient_slugs(seat))
+        seat_slugs = set(_inbox_recipient_slugs(seat))
         root_rows, root_hit = _fetch_root(
             db, thread_id, prev_turn=prev_turn, limit=_SCAN_LIMIT
         )
