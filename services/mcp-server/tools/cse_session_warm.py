@@ -254,3 +254,80 @@ def relay_followup(
         receipt=result.get("receipt"),
     )
     return result
+
+
+_MAESTRO_OBS_WAKE_PROMPT = (
+    "TYPE: DIRECTIVE\n"
+    "observability: owed_wake — unread milestone or restart completion pending on this lane.\n"
+    "Action: read agent_bus unread for this house and continue the arc.\n"
+)
+
+
+def dispatch_cse_holder_followup(*, holder: dict[str, Any]) -> bool:
+    """One mechanical followup for a driving/dormant CSE holder (producer 1/2)."""
+    result = relay_followup(
+        chat_url=str(holder.get("chat_url") or "") or None,
+        registration_id=str(holder.get("registration_id") or "") or None,
+        execution_id=str(holder.get("execution_id") or "") or None,
+        cdp_url=None,
+        prompt_text=_MAESTRO_OBS_WAKE_PROMPT,
+        prompt_uri=None,
+        prompt_path=None,
+        purpose="owed_wake",
+        timeout_s=30.0,
+        reattach=True,
+        retain_lane=True,
+        min_receipt="dom_paste",
+        parent_thread=str(holder.get("lane_thread_id") or "") or None,
+        envelope="free",
+    )
+    return bool(result.get("ok")) or result.get("send_verified") is True
+
+
+def dispatch_bridge_wake(
+    *,
+    lane_thread_id: str | None,
+    context: dict[str, Any] | None = None,
+) -> bool:
+    """BRIDGE_WAKE path for :8 Cursor occupants when already wired on the lane."""
+    import asyncio
+    import concurrent.futures
+
+    lane = (lane_thread_id or "").strip()
+    if not lane:
+        return False
+    refs = (context or {}).get("turn_refs") or []
+    turn_numbers = [
+        int(ref["turn_number"])
+        for ref in refs
+        if isinstance(ref, dict) and ref.get("turn_number") is not None
+    ]
+    try:
+        from cursor_bridge.wake_delivery import deliver_wake
+
+        turn_arg: object = turn_numbers[0] if len(turn_numbers) == 1 else turn_numbers
+
+        async def _deliver() -> dict[str, Any]:
+            return await deliver_wake(
+                display="8",
+                app="cursor",
+                thread=lane,
+                turn=turn_arg if turn_numbers else 0,
+            )
+
+        def _run_coro() -> dict[str, Any]:
+            return asyncio.run(_deliver())
+
+        try:
+            asyncio.get_running_loop()
+            in_running_loop = True
+        except RuntimeError:
+            in_running_loop = False
+        if in_running_loop:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(_run_coro).result(timeout=60.0)
+        else:
+            result = asyncio.run(_deliver())
+        return bool(result.get("ok"))
+    except Exception:
+        return False

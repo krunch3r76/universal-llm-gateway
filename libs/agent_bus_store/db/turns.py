@@ -818,6 +818,14 @@ def mark_turn_read(turn_id: int, *, seat: str | None = None) -> str | None:
 
     if thread_id is not None:
         _maybe_close_generate_thread_on_read(thread_id)
+        try:
+            from agent_bus_store.operator_observability_hooks import (
+                after_lane_mark_read,
+            )
+
+            after_lane_mark_read(thread_id=thread_id)
+        except Exception:
+            pass
     return ts
 
 

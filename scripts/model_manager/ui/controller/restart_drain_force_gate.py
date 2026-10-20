@@ -20,6 +20,14 @@ from .restart_drain_force_notice import (
 
 logger = get_logger(__name__)
 
+
+def _schedule_force_gate_notice(**kwargs: Any) -> None:
+    _schedule_force_gate_notice(**kwargs)
+    from .owed_wake_ledger import maybe_flush_pending_owed_wakes
+
+    maybe_flush_pending_owed_wakes()
+
+
 REFUSE_REASON = "force_requires_reason"
 REFUSE_IN_FLIGHT = "force_refused_in_flight"
 
@@ -77,7 +85,7 @@ async def refuse_force_without_reason(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force refused ({service} {action})",
         body=body,
@@ -131,7 +139,7 @@ async def audit_and_notice_forced_restart(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force restart ({service} {action})",
         body=body,
@@ -226,7 +234,7 @@ async def refuse_force_in_flight(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force refused ({service} {action})",
         body=body,
@@ -290,6 +298,9 @@ async def enforce_force_reason_if_needed(
     if service in force_exempt_services():
         return None
     entry = await g1_busy_report_entry(gate, service)
+    from .owed_wake_ledger import maybe_flush_pending_owed_wakes
+
+    maybe_flush_pending_owed_wakes()
     if not g1_blocks_force_without_reason(entry):
         return None
     if service != "mcp":

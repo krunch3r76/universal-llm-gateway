@@ -111,28 +111,38 @@ async def supervise_until_lifecycle(
             drained_reason = _clip(reason_code(IDLE_OBSERVED, last_cause))
         else:
             drained_reason = IDLE_OBSERVED
-        from_status = STATUS_FORCE_REQUESTED if escalated else STATUS_PENDING_DRAIN
-        if not _cas(
-            store,
-            intent_id,
-            from_status=from_status,
-            to_status=STATUS_DRAINED_RESTARTING,
-            reason=drained_reason,
-        ):
-            return
+        current = store.get(intent_id)
+        already_drained = (
+            getattr(current, "status", None) == STATUS_DRAINED_RESTARTING
+        )
+        if not already_drained:
+            from_status = (
+                STATUS_FORCE_REQUESTED if escalated else STATUS_PENDING_DRAIN
+            )
+            if not _cas(
+                store,
+                intent_id,
+                from_status=from_status,
+                to_status=STATUS_DRAINED_RESTARTING,
+                reason=drained_reason,
+            ):
+                return
         phase = "lifecycle"
         message = await lifecycle()
         phase = "completed"
         completed = drained_reason
         if message and str(message).strip():
             completed = f"{drained_reason}; {message}"
-        _cas(
+        if _cas(
             store,
             intent_id,
             from_status=STATUS_DRAINED_RESTARTING,
             to_status=STATUS_COMPLETED,
             reason=_clip(reason_code(LIFECYCLE_COMPLETED, completed)),
-        )
+        ):
+            from .restart_terminal_owed_wake import maybe_producer2_after_terminal
+
+            maybe_producer2_after_terminal(store, store.get(intent_id))
         if escalated:
             logger.info(
                 "stargate drain supervisor completed after idle-ceiling force "

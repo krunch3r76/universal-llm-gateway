@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from universal_logging import get_logger
 
@@ -51,6 +51,9 @@ from .restart_window_store import (
 from .service_config import GATEWAY_DIR
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from .owed_wake_ledger import OwedWakeRow
 
 
 class ArmResultKind(StrEnum):
@@ -112,6 +115,8 @@ class Intent:
     park_summary: dict[str, Any] | None = None
     wait_for_boundary: bool = False
     caller_agent: str | None = None
+    caller_thread_id: str | None = None
+    arming_lanes: list[str] | None = None
     armed_at: str | None = None
     expires_at: str | None = None
     status_reason: str | None = None
@@ -171,6 +176,10 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         if "wait_for_boundary" in keys
         else False,
         caller_agent=row["caller_agent"] if "caller_agent" in keys else None,
+        caller_thread_id=row["caller_thread_id"] if "caller_thread_id" in keys else None,
+        arming_lanes=_decode_arming_lanes(row["arming_lanes"])
+        if "arming_lanes" in keys
+        else None,
         armed_at=row["armed_at"] if "armed_at" in keys else None,
         expires_at=row["expires_at"] if "expires_at" in keys else None,
         created_at=row["created_at"],
@@ -179,6 +188,22 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         status_changed_at=transition_fields(row)[1],
         transitions=transition_fields(row)[2],
     )
+
+
+def _decode_arming_lanes(raw: Any) -> list[str] | None:
+    from .owed_wake_ledger import decode_arming_lanes
+
+    lanes = decode_arming_lanes(raw)
+    return lanes or None
+
+
+def _encode_arming_lanes(lanes: list[str] | None) -> str | None:
+    if not lanes:
+        return None
+    cleaned = [str(x).strip() for x in lanes if str(x).strip()]
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, separators=(",", ":"))
 
 
 def _decode_park_summary(raw: Any) -> dict[str, Any] | None:
@@ -228,6 +253,8 @@ class RestartIntentStore:
         wait_for_boundary: bool = False,
         intent_ttl_s: float | None = None,
         caller_agent: str | None = None,
+        caller_thread_id: str | None = None,
+        joiner_thread_id: str | None = None,
     ) -> Intent:
         """INSERT ``pending_drain``, or refresh the existing row's window.
 
@@ -262,10 +289,24 @@ class RestartIntentStore:
                     prior_expires_at=prior.expires_at,
                     now=clock,
                 )
+                merged_lanes = _merge_arming_lanes(
+                    _decode_arming_lanes(existing["arming_lanes"])
+                    if "arming_lanes" in existing.keys()
+                    else [],
+                    prior.caller_thread_id,
+                    joiner_thread_id or caller_thread_id,
+                )
                 conn.execute(
                     "UPDATE restart_intents SET armed_at=?, expires_at=?, "
-                    "wait_for_boundary=?, updated_at=? WHERE intent_id=?",
-                    (armed, expires, 1 if wfb else 0, armed, existing["intent_id"]),
+                    "wait_for_boundary=?, arming_lanes=?, updated_at=? WHERE intent_id=?",
+                    (
+                        armed,
+                        expires,
+                        1 if wfb else 0,
+                        _encode_arming_lanes(merged_lanes),
+                        armed,
+                        existing["intent_id"],
+                    ),
                 )
                 row = conn.execute(
                     "SELECT * FROM restart_intents WHERE intent_id=?",
@@ -283,12 +324,13 @@ class RestartIntentStore:
             )
             intent_id = str(uuid.uuid4())
             now = _now()
+            initial_lanes = _merge_arming_lanes([], None, caller_thread_id)
             conn.execute(
                 "INSERT INTO restart_intents "
                 "(intent_id, service, action, status, last_seen_event_seq, reason, "
-                " park_live, wait_for_boundary, caller_agent, armed_at, expires_at, "
-                " created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " park_live, wait_for_boundary, caller_agent, caller_thread_id, "
+                " arming_lanes, armed_at, expires_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     intent_id,
                     service,
@@ -298,6 +340,8 @@ class RestartIntentStore:
                     1 if park_live else 0,
                     1 if wait_for_boundary else 0,
                     agent,
+                    (caller_thread_id or "").strip() or None,
+                    _encode_arming_lanes(initial_lanes),
                     armed,
                     expires,
                     now,
@@ -674,6 +718,209 @@ class RestartIntentStore:
         self, service: str, *, now: datetime | None = None
     ) -> RestartWindowView | None:
         return self._windows.service_projection(service, now=now)
+
+    def coalesce_owed_wake_milestone(
+        self,
+        *,
+        holder_id: str,
+        lane_thread_id: str | None,
+        turn_ref: dict[str, Any],
+    ) -> tuple[OwedWakeRow, bool]:
+        """At most one open owed_wake row per holder; append turn_ref when coalescing."""
+        from .owed_wake_ledger import (
+            PRODUCER_MILESTONE,
+            decode_turn_refs,
+            encode_turn_refs,
+        )
+
+        hid = (holder_id or "").strip()
+        if not hid:
+            raise ValueError("holder_id required")
+        now = _now()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM owed_wake WHERE holder_id=? AND closed_at IS NULL",
+                (hid,),
+            ).fetchone()
+            if existing is not None:
+                refs = decode_turn_refs(existing["turn_refs"])
+                refs.append(turn_ref)
+                conn.execute(
+                    "UPDATE owed_wake SET turn_refs=?, updated_at=? WHERE row_id=?",
+                    (encode_turn_refs(refs), now, existing["row_id"]),
+                )
+                conn.commit()
+                refreshed = conn.execute(
+                    "SELECT * FROM owed_wake WHERE row_id=?", (existing["row_id"],)
+                ).fetchone()
+                return self._row_to_owed_wake(refreshed), False
+            row_id = str(uuid.uuid4())
+            refs = [turn_ref]
+            conn.execute(
+                "INSERT INTO owed_wake "
+                "(row_id, holder_id, producer, lane_thread_id, turn_refs, "
+                " arming_lanes, restart_intent_id, dispatched_at, closed_at, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, '[]', NULL, NULL, NULL, ?, ?)",
+                (
+                    row_id,
+                    hid,
+                    PRODUCER_MILESTONE,
+                    (lane_thread_id or "").strip() or None,
+                    encode_turn_refs(refs),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        row = self.get_owed_wake(row_id)
+        assert row is not None
+        return row, True
+
+    def create_owed_wake_drain_complete(
+        self,
+        *,
+        holder_id: str,
+        restart_intent_id: str,
+        arming_lanes: list[str],
+        lane_thread_id: str | None,
+        turn_ref: dict[str, Any],
+    ) -> tuple[OwedWakeRow, bool]:
+        """At most one open owed_wake row per holder; append turn_ref when coalescing."""
+        from .owed_wake_ledger import (
+            PRODUCER_DRAIN_COMPLETE,
+            decode_turn_refs,
+            encode_turn_refs,
+        )
+
+        hid = (holder_id or "").strip()
+        if not hid:
+            raise ValueError("holder_id required")
+        now = _now()
+        lanes_json = _encode_arming_lanes(arming_lanes) or "[]"
+        lane = (lane_thread_id or "").strip() or None
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM owed_wake WHERE holder_id=? AND closed_at IS NULL",
+                (hid,),
+            ).fetchone()
+            if existing is not None:
+                refs = decode_turn_refs(existing["turn_refs"])
+                refs.append(turn_ref)
+                conn.execute(
+                    "UPDATE owed_wake SET turn_refs=?, arming_lanes=?, "
+                    "restart_intent_id=?, lane_thread_id=COALESCE(?, lane_thread_id), "
+                    "updated_at=? WHERE row_id=?",
+                    (
+                        encode_turn_refs(refs),
+                        lanes_json,
+                        restart_intent_id,
+                        lane,
+                        now,
+                        existing["row_id"],
+                    ),
+                )
+                conn.commit()
+                refreshed = conn.execute(
+                    "SELECT * FROM owed_wake WHERE row_id=?", (existing["row_id"],)
+                ).fetchone()
+                return self._row_to_owed_wake(refreshed), False
+            row_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO owed_wake "
+                "(row_id, holder_id, producer, lane_thread_id, turn_refs, "
+                " arming_lanes, restart_intent_id, dispatched_at, closed_at, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                (
+                    row_id,
+                    hid,
+                    PRODUCER_DRAIN_COMPLETE,
+                    lane,
+                    encode_turn_refs([turn_ref]),
+                    lanes_json,
+                    restart_intent_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        row = self.get_owed_wake(row_id)
+        assert row is not None
+        return row, True
+
+    def get_owed_wake(self, row_id: str) -> OwedWakeRow | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM owed_wake WHERE row_id=?", (row_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_owed_wake(row)
+
+    def list_open_undispatched_owed_wakes(self) -> list[OwedWakeRow]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM owed_wake WHERE closed_at IS NULL "
+                "AND dispatched_at IS NULL ORDER BY created_at"
+            ).fetchall()
+        return [self._row_to_owed_wake(r) for r in rows]
+
+    def close_owed_wake_for_holder(self, holder_id: str) -> int:
+        now = _now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE owed_wake SET closed_at=?, updated_at=? "
+                "WHERE holder_id=? AND closed_at IS NULL",
+                (now, now, holder_id),
+            )
+            conn.commit()
+            return int(cur.rowcount)
+
+    def mark_owed_wake_dispatched(self, row_id: str, *, outcome: str) -> None:
+        terminal = outcome in {"dispatched", "held_no_live_seat", "skipped"}
+        stamp = _now() if terminal else None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE owed_wake SET dispatched_at=?, updated_at=? WHERE row_id=?",
+                (stamp, _now(), row_id),
+            )
+
+    def _row_to_owed_wake(
+        self, row: sqlite3.Row, *, turn_refs: list[dict[str, Any]] | None = None
+    ) -> OwedWakeRow:
+        from .owed_wake_ledger import OwedWakeRow, decode_arming_lanes, decode_turn_refs
+
+        refs = turn_refs if turn_refs is not None else decode_turn_refs(row["turn_refs"])
+        return OwedWakeRow(
+            row_id=row["row_id"],
+            holder_id=row["holder_id"],
+            producer=row["producer"],
+            lane_thread_id=row["lane_thread_id"],
+            turn_refs=refs,
+            arming_lanes=decode_arming_lanes(row["arming_lanes"]),
+            restart_intent_id=row["restart_intent_id"],
+            dispatched_at=row["dispatched_at"],
+            closed_at=row["closed_at"],
+        )
+
+
+def _merge_arming_lanes(
+    existing: list[str] | None,
+    prior_caller_thread: str | None,
+    new_lane: str | None,
+) -> list[str]:
+    out: list[str] = []
+    for candidate in (
+        *(existing or []),
+        (prior_caller_thread or "").strip(),
+        (new_lane or "").strip(),
+    ):
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
 
 
 # Re-export status constants for backward compatibility.

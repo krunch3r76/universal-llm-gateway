@@ -999,6 +999,9 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
         entry["active_work_summary"] = format_active_work_summary(
             entry.get("active_work")
         )
+    from .controller.owed_wake_ledger import maybe_flush_pending_owed_wakes
+
+    maybe_flush_pending_owed_wakes(store=store)
     if service:
         from .controller.busy_service_scope import project_service_busy
 
@@ -1041,6 +1044,9 @@ async def _restart_intent_status(
         raise ValueError("restart_intent_status requires 'intent_id' or 'service'")
     if intent is None:
         return {"restart_intent": None}
+    from .controller.owed_wake_ledger import maybe_flush_pending_owed_wakes
+
+    maybe_flush_pending_owed_wakes(store=store)
     return {"restart_intent": project_restart_intent_consumer(intent, now=now)}
 
 

@@ -84,9 +84,30 @@ def _ensure_kill_cas_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+_OWED_WAKE_DDL = """
+CREATE TABLE IF NOT EXISTS owed_wake (
+    row_id              TEXT PRIMARY KEY,
+    holder_id           TEXT NOT NULL,
+    producer            TEXT NOT NULL CHECK (producer IN ('milestone', 'drain_complete')),
+    lane_thread_id      TEXT,
+    turn_refs           TEXT NOT NULL DEFAULT '[]',
+    arming_lanes        TEXT NOT NULL DEFAULT '[]',
+    restart_intent_id   TEXT,
+    dispatched_at       TEXT,
+    closed_at           TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_owed_wake_open_holder
+    ON owed_wake(holder_id)
+    WHERE closed_at IS NULL;
+"""
+
+
 def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     """Ensure restart-intent table matches the current CHECK and columns."""
     conn.executescript(_DDL)
+    conn.executescript(_OWED_WAKE_DDL)
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
     ).fetchone()
@@ -136,6 +157,17 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     _ensure_arm_columns(conn)
     _ensure_transition_columns(conn)
     _ensure_kill_cas_indexes(conn)
+    _ensure_arming_lanes_column(conn)
+
+
+def _ensure_arming_lanes_column(conn: sqlite3.Connection) -> None:
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    }
+    if "arming_lanes" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN arming_lanes TEXT")
+    if "caller_thread_id" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN caller_thread_id TEXT")
 
 
 def _ensure_arm_columns(conn: sqlite3.Connection) -> None:

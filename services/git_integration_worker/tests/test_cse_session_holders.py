@@ -309,3 +309,31 @@ def test_seat_successor_relaunches_dormant_window(ledger: CursorDispatchLedger) 
     assert len(driving) == 1
     assert driving[0]["holder_id"] == "cse_0135zweUWn6uF4Hx7mWXGdSJ"
     assert pred is not None and pred["seat_state"] == "superseded"
+
+
+def test_close_owed_wake_on_lane_activity_closes_open_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+    from services.git_integration_worker.cse_session_holders import (
+        close_owed_wake_on_lane_activity,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    monkeypatch.setattr(
+        RestartIntentStore,
+        "instance",
+        classmethod(lambda cls: store),
+    )
+    store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        turn_ref={"thread_id": "18460", "turn_number": 1, "subject": "MILESTONE|x"},
+    )
+    close_owed_wake_on_lane_activity(
+        lane_thread_id="18460",
+        holder_id="holder-maestro",
+    )
+    assert store.close_owed_wake_for_holder("holder-maestro") == 0
