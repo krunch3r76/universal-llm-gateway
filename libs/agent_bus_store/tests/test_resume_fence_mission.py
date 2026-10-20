@@ -884,3 +884,24 @@ def test_all_notices_fall_back_to_letter(bus_db) -> None:
     assert mission["tape_tail"] == []
     assert mission["tape_tail_source"] == "letter"
     assert "letter.where_we_left_off" in mission["tape_left_off_gap"]
+
+
+_RELATIVE_MEMOS_IMPORT = "from .resume_fence_memos import build_memos_to_check"
+
+_MEMOS_IMPORT_MODULES = (
+    "resume_fence_mission.py",
+    "resume_fence_pour.py",
+)
+
+
+def test_resume_fence_memos_import_is_absolute() -> None:
+    """c08572c7: pour/mission must import build_memos_to_check via agent_bus_store."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    hits: list[str] = []
+    for name in _MEMOS_IMPORT_MODULES:
+        text = (root / name).read_text(encoding="utf-8")
+        if _RELATIVE_MEMOS_IMPORT in text:
+            hits.append(name)
+    assert hits == []
