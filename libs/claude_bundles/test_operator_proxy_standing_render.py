@@ -487,3 +487,121 @@ def test_ac5_live_leg_line_registration_id_matches() -> None:
         superseded_registration_id="a0af518d57e84064bc86d0ee53e74636",
     )
     assert meta["identity"] == "match"
+
+
+def test_cap_utf8_for_hop_drops_the_line_that_does_not_fit() -> None:
+    """A hop slot over budget keeps whole lines only (friction:39828)."""
+    from claude_bundles.operator_proxy_standing_render import cap_utf8_for_hop
+
+    body = "alpha line stays\n" + ("beta " * 30) + "\n"
+    capped = cap_utf8_for_hop(body, max_bytes=80, label="pointers")
+    source_lines = set(body.splitlines())
+    assert capped.endswith("]")
+    assert "[hop_budget_exceeded pointers " in capped
+    assert len(capped.encode("utf-8")) <= 80
+    for line in capped.splitlines():
+        if line.startswith("[hop_budget_exceeded "):
+            continue
+        assert line in source_lines
+    assert "alpha line stays" in capped
+    assert "beta beta" not in capped
+
+
+def test_cap_utf8_for_hop_does_not_slice_a_heading_or_bullet() -> None:
+    from claude_bundles.operator_proxy_standing_render import cap_utf8_for_hop
+
+    lessons = cap_utf8_for_hop("Q" * 80, max_bytes=40, label="lessons")
+    assert lessons == "[hop_budget_exceeded lessons 80/40]"
+    pointers = cap_utf8_for_hop(
+        "- Prior LEG blocks stay whole\n"
+        "- K-row rulings runbook Appendix continues well past this cap",
+        max_bytes=80,
+        label="pointers",
+    )
+    assert "Appendix" not in pointers
+    assert "Prior LEG blocks stay whole" in pointers
+    assert "[hop_budget_exceeded pointers " in pointers
+
+
+def test_cap_utf8_for_hop_live_leg_keeps_a_word_boundary_prefix() -> None:
+    from claude_bundles.operator_proxy_standing_render import cap_utf8_for_hop
+
+    line = (
+        "- lane 15722 #86 PICKUP|todo:maestro-computed-hop — "
+        "R3: read DONE / FAILED / QUESTION and nothing in between"
+    )
+    capped = cap_utf8_for_hop(line, max_bytes=90, label="live_leg")
+    assert "todo:maestro-computed-hop" in capped
+    assert "nothing in between" not in capped
+    assert "[hop_budget_exceeded live_leg " in capped
+    assert len(capped.encode("utf-8")) <= 90
+
+
+def test_hop_house_rules_pointer_cites_handoff_when_file_is_absent() -> None:
+    from claude_bundles.operator_proxy_standing_render import hop_house_rules_pointer
+
+    text = hop_house_rules_pointer(
+        "16416", rules_file_exists=False, handoff_has_rules=True
+    )
+    assert 'section="HOUSE RULES"' in text
+    assert "16416-standing-handoff.md" in text
+    assert 'path="cortex://notes/system/threads/16416-house-rules.md"' not in text
+    assert "16416-house-rules.md" in text
+    assert "is absent" in text
+
+
+def test_hop_house_rules_pointer_keeps_file_read_when_present_or_unprobed() -> None:
+    from claude_bundles.operator_proxy_standing_render import hop_house_rules_pointer
+
+    present = hop_house_rules_pointer(
+        "12286", rules_file_exists=True, handoff_has_rules=True
+    )
+    unprobed = hop_house_rules_pointer("1")
+    assert 'path="cortex://notes/system/threads/12286-house-rules.md"' in present
+    assert "1-house-rules.md" in unprobed
+    absent = hop_house_rules_pointer(
+        "16416", rules_file_exists=False, handoff_has_rules=False
+    )
+    assert "no HOUSE RULES section" in absent
+    assert 'op="read"' not in absent
+    assert 'op="md_read"' not in absent
+
+
+def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
+    """Missing house-rules file is not a required read; lane overflow keeps sha."""
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+    )
+
+    sidecar = (
+        "## HOUSE RULES\n- K1 the rules live in this handoff\n\n## CURRENT LEG\nLEG 1\n"
+    )
+    rows = [f"| {i} | Bot | {10000 + i} | box | live |" for i in range(1, 30)]
+    roster = "| N | Display name | Lane | Mailbox | State |\n" + "\n".join(rows)
+
+    def _exists(path: str) -> bool:
+        return not str(path).endswith("16416-house-rules.md")
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 16416\n",
+        standing_handoff_text=sidecar,
+        roster_text=roster,
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+        archive_path_exists=_exists,
+    )
+    rules = out.split("## CURRENT LEG (rendered checkpoint)", 1)[0]
+    assert 'section="HOUSE RULES"' in rules
+    assert "16416-standing-handoff.md" in rules
+    assert 'path="cortex://notes/system/threads/16416-house-rules.md"' not in rules
+    running = out.split("## What is running now", 1)[1].split("\n\n", 1)[0]
+    assert "handoff sha256 " in running
+    assert "[hop_budget_exceeded running_now " in running
+    sha_line = running.splitlines()[0]
+    assert "handoff sha256 " in sha_line
+    assert "on lanes" not in sha_line
+    for line in running.splitlines():
+        if line.startswith("[hop_budget_exceeded "):
+            continue
+        assert not line.endswith(" h")
