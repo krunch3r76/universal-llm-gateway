@@ -210,13 +210,38 @@ def park_harvest_owed(
     return True
 
 
+def _summoning_thread_uses_xvfb_push_wake(thread_id: str) -> bool:
+    """True when the summoning house is subscribed on Cursor display :8."""
+    try:
+        from agent_bus_store.db.endpoint_subscriptions import resolve_endpoint
+
+        resolved = resolve_endpoint("cursor", str(thread_id).strip())
+    except Exception:  # noqa: BLE001 — best-effort classification
+        return False
+    if resolved is None:
+        return False
+    _route, row = resolved
+    return (
+        str(row.get("surface") or "") == "cursor"
+        and str(row.get("display") or "") in {"8", ":8"}
+        and str(row.get("state") or "") == "subscribed"
+    )
+
+
 def build_park_harvest_arm_recipe(
     *,
     row: dict[str, Any],
     summoning_thread_id: str,
     closeout_turn: int | None = None,
+    push_wake_only: bool = False,
 ) -> str:
     """Arm recipe for attended watcher (Phase A) on summoning thread."""
+    if push_wake_only:
+        return (
+            "park-harvest: :8 push-wake house — do not arm watch-supervise.sh or "
+            "watch-bus-consult-and-page.py. Wait for endpoint_wake_dispatcher -> "
+            "display-chat-wake (BRIDGE_WAKE) on the subscribed tab; harvest on wake."
+        )
     work_key = str(row.get("work_key") or "mission")
     label = f"{work_key}-harvest"
     thread_id = summoning_thread_id
@@ -302,10 +327,12 @@ async def fire_park_harvest(
     closeout_turn = rec.get("closeout_turn")
     turn_i = int(closeout_turn) if isinstance(closeout_turn, int) else None
 
+    push_wake_only = _summoning_thread_uses_xvfb_push_wake(summoning_thread_id)
     body = build_park_harvest_arm_recipe(
         row=row,
         summoning_thread_id=summoning_thread_id,
         closeout_turn=turn_i,
+        push_wake_only=push_wake_only,
     )
     if poster is not None:
         try:

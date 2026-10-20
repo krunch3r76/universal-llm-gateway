@@ -73,6 +73,7 @@ from bus_watch.liaison_stops import (
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.now_row_bind import maybe_bind_now_row
+from bus_watch.cursor_xvfb_subscription import subscribe_cursor_xvfb_from_holder
 from bus_watch.spawn_on_wake import (
     attended_tick_due,
     is_overnight_quiet,
@@ -332,6 +333,14 @@ def main() -> int:
                 args.holder, pid=None, root_id=root_for_lock
             )  # operator override
         )
+        if args.claim and result.get("ok"):
+            sub = subscribe_cursor_xvfb_from_holder(
+                root_for_lock,
+                args.holder,
+                bound_by="liaison-tick-claim",
+                evidence="scripts/liaison-tick.py --claim",
+            )
+            result = {**result, "xvfb_subscription": sub}
         print(json.dumps(result))
         return 0 if result.get("ok") else 3
 

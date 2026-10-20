@@ -52,9 +52,9 @@ GOAL_RELEASE = (
     "before the RETIRED line. If a native Cursor goal is active on this tab, "
     'CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"}) '
     "after liaison-ide-hop.py ok — leftover continuation-wake only "
-    "(11912 / 12088). Successor skips CreateGoal; attaches `tail --label` per ARM label + "
-    "`liaison-arm-loop.sh` then `liaison-monitor-loop.sh` (`--heartbeat 1200`) — "
-    "agent Shell must not be the --loop PID (a:38446)."
+    "(11912 / 12088). Successor skips CreateGoal. On :8 Xvfb, rely on "
+    "endpoint_wake_dispatcher -> display-chat-wake (BRIDGE_WAKE) only — do NOT "
+    "spawn or attach watch-supervise.sh / watch-bus-consult-and-page.py shells."
 )
 
 

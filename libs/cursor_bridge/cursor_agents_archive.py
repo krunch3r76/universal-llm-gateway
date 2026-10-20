@@ -100,9 +100,54 @@ def _list_root_sidebar_rows_js(root_id: str) -> str:
         " const agent_id = rowAgentId(el);"
         " const meta = rowMeta(el, agent_id);"
         " out.push({agent_id, title, active: rowActive(el), streaming: rowStreaming(el),"
-        " created_at: meta.createdAt});"
+        " created_at: meta.createdAt, sidebar_index: out.length});"
         " } return out; })()"
     )
+
+
+def _rename_agent_title_js(agent_id: str, new_title: str) -> str:
+    aid = json.dumps(agent_id.strip())
+    title = json.dumps(new_title.strip())
+    return (
+        f"(() => {{ const target = {aid}; const nextTitle = {title};"
+        f"{_GLASS_ROW_PROBE_JS}"
+        " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
+        " if (rowAgentId(el) !== target) continue;"
+        " if (rowStreaming(el)) return {ok: false, reason: 'agent_streaming', agent_id: target};"
+        " const titled = el.querySelector('[class*=\"agent-item__title\"]');"
+        " const trig = el.querySelector('.ui-sidebar-menu-button-trigger[role=\"button\"]');"
+        " if (titled) { titled.textContent = nextTitle; }"
+        " if (trig) { trig.textContent = nextTitle; }"
+        " return {ok: true, renamed: target, title: nextTitle};"
+        " } return {ok: false, reason: 'row_not_found'}; })()"
+    )
+
+
+def rename_cursor_agents_sidebar_title(
+    agent_id: str,
+    new_title: str,
+    *,
+    debug_url: str = "http://127.0.0.1:9338",
+    timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    """Rename one Glass sidebar row (best-effort DOM title sync)."""
+    if not str(agent_id or "").strip() or not str(new_title or "").strip():
+        return {"ok": False, "reason": "empty_agent_id_or_title"}
+    ws_url, err = _cursor_agents_ws_url(debug_url, timeout_s)
+    if err:
+        return err
+    assert ws_url is not None
+    return _hop.asyncio.run(_rename_title_async(ws_url, agent_id.strip(), new_title.strip(), timeout_s))
+
+
+async def _rename_title_async(
+    ws_url: str, agent_id: str, new_title: str, *, timeout_s: float
+) -> dict[str, Any]:
+    import websockets
+
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        result = await _hop._eval(ws, 1, _rename_agent_title_js(agent_id, new_title), timeout_s)
+        return result if isinstance(result, dict) else {"ok": False, "result": result}
 
 
 def _cursor_agents_ws_url(
@@ -191,6 +236,7 @@ def prune_cursor_agents_predecessors(
     *,
     active_agent_id: str = "",
     departing_agent_id: str = "",
+    holder_agent_id: str = "",
     keep_recent_predecessors: int = 2,
     debug_url: str = "http://127.0.0.1:9338",
     timeout_s: float = 10.0,
@@ -211,6 +257,7 @@ def prune_cursor_agents_predecessors(
             root,
             active_agent_id=active_agent_id,
             departing_agent_id=departing_agent_id,
+            holder_agent_id=holder_agent_id,
             keep_recent_predecessors=keep_recent_predecessors,
             timeout_s=timeout_s,
             wait_until_idle_s=wait_until_idle_s,
@@ -225,6 +272,7 @@ async def _prune_predecessors_async(
     *,
     active_agent_id: str,
     departing_agent_id: str,
+    holder_agent_id: str = "",
     keep_recent_predecessors: int,
     timeout_s: float,
     wait_until_idle_s: float,
@@ -234,6 +282,7 @@ async def _prune_predecessors_async(
 
     active_aid = str(active_agent_id or "").strip()
     departing = str(departing_agent_id or "").strip()
+    holder_aid = str(holder_agent_id or "").strip()
     archived: list[str] = []
     skipped: list[dict[str, Any]] = []
     eval_mid = 1
@@ -242,6 +291,7 @@ async def _prune_predecessors_async(
         eval_mid += 1
         if not isinstance(raw_rows, list):
             return {"ok": False, "reason": "list_rows_failed", "result": raw_rows}
+        departing_sidebar_index: int | None = None
         row_by_aid: dict[str, dict[str, Any]] = {}
         for row in raw_rows:
             if not isinstance(row, dict):
@@ -249,6 +299,10 @@ async def _prune_predecessors_async(
             aid = str(row.get("agent_id") or "").strip()
             if aid:
                 row_by_aid[aid] = row
+                if departing and aid == departing:
+                    idx = row.get("sidebar_index")
+                    if isinstance(idx, int):
+                        departing_sidebar_index = idx
         if active_aid and active_aid in row_by_aid and not row_by_aid[active_aid].get("active"):
             await _hop._eval(ws, eval_mid, _select_agent_js(active_aid), timeout_s)
             eval_mid += 1
@@ -276,8 +330,25 @@ async def _prune_predecessors_async(
         if departing:
             predecessors = [departing] + [a for a in predecessors if a != departing]
         kept_predecessors = predecessors[: max(0, keep_recent_predecessors)]
+        protected = {active_aid, departing, holder_aid} - {""}
         for aid in predecessors[max(0, keep_recent_predecessors) :]:
+            if aid in protected:
+                skipped.append(
+                    {"agent_id": aid, "ok": False, "reason": "protected_agent_id"}
+                )
+                continue
             row = row_by_aid.get(aid, {})
+            if departing_sidebar_index is not None:
+                idx = row.get("sidebar_index")
+                if isinstance(idx, int) and idx < departing_sidebar_index:
+                    skipped.append(
+                        {
+                            "agent_id": aid,
+                            "ok": False,
+                            "reason": "newer_than_departing",
+                        }
+                    )
+                    continue
             if row.get("streaming") is True:
                 skipped.append(
                     {

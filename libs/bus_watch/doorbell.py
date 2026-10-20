@@ -556,11 +556,22 @@ def _compose_successor_wake(
             f"Use the {liaison_slug} skill. "
             f"LOAD the {liaison_slug} skill body; do not skim."
         )
-    if _seat_has_jupiter_shell(seat):
+    gui_host = str((policy or {}).get("gui_host") or ":8")
+    from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+    xvfb_push_wake = is_cursor_xvfb_host(gui_host)
+    if _seat_has_jupiter_shell(seat) and not xvfb_push_wake:
         lines.append("LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).")
         lines.append(
             f"ARM house finish pollers as house-{root_id}-<dispatch_id> (both --label "
             "occurrences); <dispatch_id> is the auto id you mint at dispatch."
+        )
+    elif xvfb_push_wake:
+        lines.append(
+            "WAKE: Push-driven via endpoint_wake_dispatcher -> display-chat-wake "
+            "(BRIDGE_WAKE). Do NOT spawn or attach watch-supervise.sh / "
+            "watch-bus-consult-and-page.py background shells — end the turn idle "
+            "after admit so this tab receives push wakes."
         )
     lines.extend(
         [

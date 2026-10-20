@@ -66,6 +66,9 @@ def test_goal_release_documents_retired_tab_suffix() -> None:
     assert "(retired)" in GOAL_RELEASE
     assert "rename_chat" in GOAL_RELEASE
     assert RETIRED_TAB_SUFFIX == " (retired)"
+    assert "do NOT spawn or attach watch-supervise.sh" in GOAL_RELEASE
+    assert "display-chat-wake" in GOAL_RELEASE
+    assert "tail --label" not in GOAL_RELEASE
 
 
 def test_supervise_tail_match_skips_forever() -> None:

@@ -31,6 +31,7 @@ from tools._continuity_relays import (
     _continuity_resume_release,
     _continuity_tape_read,
 )
+from tools.continuity_ops import maybe_subscribe_cursor_xvfb_on_resume
 from tools._cortex_relay import cx
 from tools._restart_probe import annotate_unreachable_error
 from tools.pipeline import STARGATE_URL, _pipeline_result
@@ -340,12 +341,18 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                         "message": "op=resume requires thread",
                     }
                 }
-            return _continuity_resume(
+            resume_out = _continuity_resume(
                 thread=thread,
                 transcript_id=transcript_id,
                 pool=pool,
                 source="mcp",
                 surface=surface,
+            )
+            return maybe_subscribe_cursor_xvfb_on_resume(
+                thread=thread,
+                transcript_id=transcript_id,
+                surface=surface,
+                resume_result=resume_out,
             )
 
         if op == "resume_release":

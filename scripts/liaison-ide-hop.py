@@ -41,6 +41,7 @@ from bus_watch.ide_hop import (
     DEFAULT_REMOTE_REPO,
     build_hop_preamble,
     build_ide_hop_message,
+    finalize_xvfb_hop_sidebar,
     find_transcript_id,
     fire_ide_hop,
     live_watcher_labels,
@@ -58,10 +59,7 @@ from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
-from cursor_bridge.cursor_agents_hop import (
-    is_cursor_xvfb_host,
-    prune_cursor_agents_predecessors,
-)
+from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
 
 def _jsonl_turn_count(transcript_id: str) -> int | None:
@@ -343,43 +341,20 @@ def main() -> int:
             )
             gui = args.gui_host or policy_gui_host(args.root)
             landed_tid = str(out.get("landed_transcript_id") or "")
-            if is_cursor_xvfb_host(gui) and landed_tid:
-                try:
-                    with _bus() as client:
-                        sub_resp = client.post(
-                            "/endpoint-subscriptions",
-                            json={
-                                "agent": "cursor",
-                                "thread_scope": args.root,
-                                "surface": "cursor",
-                                "display": "8",
-                                "agent_id": landed_tid,
-                                "title": f"{args.root} ",
-                            },
-                        )
-                    out["subscription_update"] = {
-                        "ok": sub_resp.status_code < 400,
-                        "status_code": sub_resp.status_code,
-                        "agent_id": landed_tid,
-                    }
-                except Exception as exc:  # noqa: BLE001 — must not abort retire
-                    out["subscription_update"] = {
-                        "ok": False,
-                        "reason": f"subscription_exception:{type(exc).__name__}",
-                    }
             if is_cursor_xvfb_host(gui) and args.transcript_id:
+                slug_fragment = " ".join(str(row or "").split()[:6]).strip()
                 try:
-                    out["archived_departing_tab"] = prune_cursor_agents_predecessors(
+                    xvfb_out = finalize_xvfb_hop_sidebar(
                         args.root,
-                        active_agent_id=landed_tid,
                         departing_agent_id=args.transcript_id,
-                        keep_recent_predecessors=2,
-                        wait_until_idle_s=0.0,
+                        landed_agent_id=landed_tid,
+                        slug_fragment=slug_fragment,
                     )
+                    out.update(xvfb_out)
                 except Exception as exc:  # noqa: BLE001 — must not abort retire
-                    out["archived_departing_tab"] = {
+                    out["xvfb_finalize"] = {
                         "ok": False,
-                        "reason": f"archive_exception:{type(exc).__name__}",
+                        "reason": f"finalize_exception:{type(exc).__name__}",
                     }
     elif out.get("phase") == "expired":
         # Quiesce already ran via on_fired; never re-fire.

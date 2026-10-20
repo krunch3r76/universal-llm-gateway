@@ -862,3 +862,42 @@ def fire_ide_hop(
     finally:
         release_window_mutex(resolved_gui_host, focus_title)
         release_hop_mutex(root_id)
+
+
+def finalize_xvfb_hop_sidebar(
+    root_id: str,
+    *,
+    departing_agent_id: str,
+    landed_agent_id: str,
+    slug_fragment: str = "",
+) -> dict[str, Any]:
+    """Rename departing :8 sidebar row, subscribe successor, prune predecessors."""
+    from bus_watch.cursor_xvfb_subscription import subscribe_cursor_xvfb_house
+    from cursor_bridge.cursor_agents_hop import (
+        prune_cursor_agents_predecessors,
+        rename_cursor_agents_sidebar_title,
+    )
+
+    out: dict[str, Any] = {"ok": True, "root_id": root_id}
+    if landed_agent_id:
+        out["subscription_update"] = subscribe_cursor_xvfb_house(
+            root_id,
+            landed_agent_id,
+            bound_by="ide-hop-finalize",
+            evidence="libs/bus_watch/ide_hop.finalize_xvfb_hop_sidebar",
+        )
+    if departing_agent_id:
+        retired_title = f"[retired] {root_id} {slug_fragment}".strip()
+        out["renamed_departing_tab"] = rename_cursor_agents_sidebar_title(
+            departing_agent_id,
+            retired_title,
+        )
+        out["archived_departing_tab"] = prune_cursor_agents_predecessors(
+            root_id,
+            active_agent_id=landed_agent_id,
+            departing_agent_id=departing_agent_id,
+            holder_agent_id=departing_agent_id,
+            keep_recent_predecessors=1,
+            wait_until_idle_s=0.0,
+        )
+    return out

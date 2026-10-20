@@ -92,7 +92,8 @@ async def validate_wake_lane(
             reason=(
                 "call-shape error, not model availability: "
                 f"wake_lane admit-path probe failed: {exc}. "
-                "Omit wake_lane; closeout wake is runbook:bus-consult-watcher. "
+                "Omit wake_lane; :8 houses use endpoint_wake_dispatcher -> "
+                "display-chat-wake (BRIDGE_WAKE), not background watcher shells. "
                 "Shape: consult-routing § Cursor-sdk generate shape."
             ),
             status_code=503,

@@ -441,9 +441,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "Numeric role:root thread. On seat=cursor-sdk generate, omit "
                     "it: the admit path probes the thread synchronously, and "
                     "wake_lane_unavailable / ReadTimeout is a call-shape error, "
-                    "not model availability. Closeout wake is "
-                    "runbook:bus-consult-watcher. Shape: consult-routing "
-                    "§ Cursor-sdk generate shape. Distinct from parent_thread."
+                    "not model availability. :8 Cursor houses wake via "
+                    "endpoint_wake_dispatcher -> display-chat-wake (BRIDGE_WAKE), "
+                    "not watch-supervise / bus-consult watcher shells. Shape: "
+                    "consult-routing § Cursor-sdk generate shape. Distinct from "
+                    "parent_thread."
                 ),
             ),
         ] = None,

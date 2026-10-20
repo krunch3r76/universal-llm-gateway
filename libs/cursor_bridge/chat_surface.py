@@ -184,7 +184,9 @@ def wake_decision(
     state = str(surface.get("state") or "unknown")
     titles = list(surface.get("titles") or [])
     title_counts = dict(surface.get("title_counts") or {})
-    if expected and title_counts.get(expected, 0) > 1:
+    agent_ids = dict(surface.get("agent_ids") or {})
+    ambiguous_title = bool(expected and title_counts.get(expected, 0) > 1)
+    if ambiguous_title and not (aid and aid in agent_ids):
         logger.warning(
             "wake_decision ambiguous_title expected=%r count=%s",
             expected,
@@ -213,7 +215,6 @@ def wake_decision(
         }
     active_aid = str(surface.get("active_agent_id") or "").strip()
     active_title = str(surface.get("active_title") or "").strip()
-    agent_ids = dict(surface.get("agent_ids") or {})
     if aid:
         if (
             active_aid != aid
@@ -342,7 +343,7 @@ async def select_sidebar_target(
     const title = rowTitle(el);
     if (targetTitle && title === targetTitle) titleMatches += 1;
   }
-  if (targetTitle && titleMatches > 1) {
+  if (targetTitle && titleMatches > 1 && !targetId) {
     return {clicked: false, reason: 'ambiguous_title'};
   }
   for (const el of rowNodes()) {

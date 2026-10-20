@@ -298,6 +298,19 @@ def test_build_park_harvest_arm_recipe_uses_record_closeout_turn() -> None:
     assert "--after-turn 48" in body
 
 
+def test_build_park_harvest_arm_recipe_push_wake_only() -> None:
+    body = build_park_harvest_arm_recipe(
+        row={"work_key": "todo:x"},
+        summoning_thread_id="18374",
+        push_wake_only=True,
+    )
+    assert "do not arm watch-supervise.sh" in body
+    assert "watch-bus-consult-and-page.py" in body
+    assert "display-chat-wake" in body
+    assert "BRIDGE_WAKE" in body
+    assert "start --label" not in body
+
+
 def test_build_park_harvest_arm_recipe_includes_supervise_start() -> None:
     """B-6 / W3: nudge body includes watch-supervise.sh start arm recipe."""
     row = {

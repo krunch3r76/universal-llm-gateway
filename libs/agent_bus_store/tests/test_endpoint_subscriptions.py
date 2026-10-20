@@ -113,6 +113,38 @@ def test_exact_beats_wildcard_and_tombstone_falls_through(client: TestClient) ->
     assert resolve_endpoint("grok-bot-gc1", thread)[0] == "wildcard"
 
 
+def test_subscribe_supersedes_prior_agent_id(client: TestClient) -> None:
+    thread = _thread("xvfb-supersede")
+    first = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} ",
+        agent_id="11111111-1111-1111-1111-111111111111",
+    )
+    assert first.status_code == 200
+    second = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} ",
+        agent_id="22222222-2222-2222-2222-222222222222",
+    )
+    assert second.status_code == 200
+    assert second.json()["appended"] is True
+    prior = second.json()["prior"]
+    assert prior is not None
+    assert prior["state"] == "unsubscribed"
+    assert prior["agent_id"] == "11111111-1111-1111-1111-111111111111"
+    row = second.json()["row"]
+    assert row["state"] == "subscribed"
+    assert row["agent_id"] == "22222222-2222-2222-2222-222222222222"
+
+
 def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) -> None:
     thread = _thread("idem")
     with patch("agent_bus_store.routes.threads.subscriptions.emit_endpoint_subscribed") as sub_emit:

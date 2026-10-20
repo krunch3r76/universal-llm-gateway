@@ -166,6 +166,20 @@ def test_wake_decision_ambiguous_title() -> None:
         ],
     )
     out = wake_decision(surface, title="16416 continuity", agent_id="a1")
+    assert out["ok"] is True
+    assert out["reason"] == "match"
+
+
+@pytest.mark.offline
+def test_wake_decision_ambiguous_title_without_agent_id() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "a1"},
+            {"text": "16416 continuity", "selected": False, "agent_id": "a2"},
+        ],
+    )
+    out = wake_decision(surface, title="16416 continuity")
     assert out["ok"] is False
     assert out["reason"] == "ambiguous_title"
 

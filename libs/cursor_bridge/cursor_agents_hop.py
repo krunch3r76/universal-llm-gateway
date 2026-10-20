@@ -185,9 +185,12 @@ from cursor_bridge.cursor_agents_archive import (  # noqa: E402
     _cursor_agents_ws_url,
     _list_root_sidebar_rows_js,
     _prune_predecessors_async,
+    _rename_agent_title_js,
+    _rename_title_async,
     _select_agent_js,
     archive_cursor_agents_tab,
     prune_cursor_agents_predecessors,
+    rename_cursor_agents_sidebar_title,
 )
 
 __all__ = [
@@ -207,4 +210,6 @@ __all__ = [
     "list_pages",
     "pick_chat_page",
     "prune_cursor_agents_predecessors",
+    "rename_cursor_agents_sidebar_title",
+    "_rename_agent_title_js",
 ]

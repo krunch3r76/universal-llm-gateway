@@ -40,11 +40,11 @@ Land proof: resume-fence `armed` (preferred) then transcript fallback (≥600s w
 **Script cues:** `liaison-ide-hop.py` JSON field `goal_release`; stderr `LIAISON_HOP_TAB_GOAL_RELEASE` (see
 `libs/bus_watch/ide_hop_retire.GOAL_RELEASE`). Quiesce cue: `LIAISON_HOP_TAB_QUIESCE`.
 
-**Successor:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
-`block_until_ms 0`, no `notify_on_output`) — **no** idle `--heartbeat` liaison loop
-(event-only seat wake: `event-only-seat-wake_ulg.mdc`). Do not `CreateGoal`. House
-pollers survive retire; tab tails die with the departing tab. The finish-watcher's
-shell completion is the harvest turn.
+**Successor:** **Jupiter / COSMIC:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
+`block_until_ms 0`, no `notify_on_output`). **Cursor-on-Xvfb `:8`:** push-wake only — rely on
+`endpoint_wake_dispatcher` -> `display-chat-wake` (`BRIDGE_WAKE`); do **not** spawn or attach
+`watch-supervise.sh` / `watch-bus-consult-and-page.py`. Do not `CreateGoal`. House pollers survive
+retire; tab tails die with the departing tab on Jupiter hops only.
 
 **Anti-pattern:** Minting `CreateGoal` so the Goals panel is non-empty — Cursor then injects unthrottled
 continuation wakes. Primary house wake is the watcher tail's shell completion, not a pattern notify (friction 37400).

@@ -138,6 +138,38 @@ def subscribe_endpoint(
         current_d = _row(current)
         if current_d is not None and _same(current_d, proposed):
             return {"appended": False, "row": current_d, "prior": None}
+        prior_for_response = current_d
+        if (
+            current_d is not None
+            and current_d.get("state") == "subscribed"
+            and (
+                current_d.get("agent_id") != agent_id
+                or current_d.get("surface") != surface_n
+            )
+        ):
+            conn.execute(
+                "INSERT INTO agent_endpoint_subscriptions "
+                "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    canon,
+                    scope,
+                    "unsubscribed",
+                    current_d["surface"],
+                    current_d["display"],
+                    current_d["title"],
+                    current_d["agent_id"],
+                    bound_by,
+                    evidence or "superseded_agent_id",
+                ),
+            )
+            prior_for_response = _row(
+                conn.execute(
+                    "SELECT * FROM agent_endpoint_subscriptions "
+                    "WHERE agent=? AND thread_scope=? ORDER BY id DESC LIMIT 1",
+                    (canon, scope),
+                ).fetchone()
+            )
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
@@ -161,7 +193,7 @@ def subscribe_endpoint(
             ).fetchone()
         )
     assert row is not None
-    return {"appended": True, "row": row, "prior": current_d}
+    return {"appended": True, "row": row, "prior": prior_for_response}
 
 
 def unsubscribe_endpoint(
