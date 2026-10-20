@@ -39,7 +39,7 @@ from .send_prep import (
 )
 
 
-def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
+def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | None]:
     """E4 send path: thread id → sidecar write → turn insert."""
     from cortex_store.dispatch_ops._thread_sidecar import (
         SidecarWriteError,
@@ -134,20 +134,23 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                     created_dt = datetime.fromisoformat(created_at)
                 else:
                     created_dt = created_at
-                return TurnSendCreated(
-                    send_path="new_thread",
-                    thread=_thread_detail(thread_row),
-                    turn=build_turn_created(
-                        PreparedBody(body=str(existing.get("body") or "")),
-                        turn_id=int(existing["id"]),
-                        thread=thread_id,
-                        turn_number=int(existing["turn_number"]),
-                        created_at=created_dt,
-                        from_agent=str(existing.get("from_agent") or body.from_agent),
-                        to_agent=str(existing.get("to_agent") or body.to),
-                        subject=str(existing.get("subject") or body.subject),
+                return (
+                    TurnSendCreated(
+                        send_path="new_thread",
+                        thread=_thread_detail(thread_row),
+                        turn=build_turn_created(
+                            PreparedBody(body=str(existing.get("body") or "")),
+                            turn_id=int(existing["id"]),
+                            thread=thread_id,
+                            turn_number=int(existing["turn_number"]),
+                            created_at=created_dt,
+                            from_agent=str(existing.get("from_agent") or body.from_agent),
+                            to_agent=str(existing.get("to_agent") or body.to),
+                            subject=str(existing.get("subject") or body.subject),
+                        ),
+                        idempotent_replay=True,
                     ),
-                    idempotent_replay=True,
+                    None,
                 )
         _bind_lane_on_send(body=body, thread_id=thread_id)
     else:
@@ -389,12 +392,27 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
-    return TurnSendCreated(
-        send_path=send_path,  # type: ignore[arg-type]
-        thread=_thread_detail(thread_row),
-        turn=turn_created,
-        marked_read=marked_read,
-        sidecar_uri=response_sidecar_uri,
-        sidecar_sha256=response_sidecar_sha,
-        idempotent_replay=idempotent_replay,
+    producer1_result = None
+    if send_path == "continue" and not idempotent_replay:
+        from ...operator_observability_hooks import after_turn_created
+
+        producer1_result = after_turn_created(
+            thread_id=thread_id,
+            to_agent=body.to,
+            from_agent=body.from_agent,
+            subject=body.subject,
+            turn_number=turn_number,
+            user_agent=body.user_agent,
+        )
+    return (
+        TurnSendCreated(
+            send_path=send_path,  # type: ignore[arg-type]
+            thread=_thread_detail(thread_row),
+            turn=turn_created,
+            marked_read=marked_read,
+            sidecar_uri=response_sidecar_uri,
+            sidecar_sha256=response_sidecar_sha,
+            idempotent_replay=idempotent_replay,
+        ),
+        producer1_result,
     )

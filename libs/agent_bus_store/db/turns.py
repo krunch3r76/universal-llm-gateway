@@ -794,7 +794,7 @@ def bulk_mark_read_state(
                 after_lane_mark_read,
             )
 
-            after_lane_mark_read(thread_id=thread)
+            after_lane_mark_read(thread_id=thread, seat_agent=agent)
         except Exception:
             pass
     return marked
@@ -831,7 +831,7 @@ def mark_turn_read(turn_id: int, *, seat: str | None = None) -> str | None:
                 after_lane_mark_read,
             )
 
-            after_lane_mark_read(thread_id=thread_id)
+            after_lane_mark_read(thread_id=thread_id, seat_agent=seat)
         except Exception:
             pass
     return ts

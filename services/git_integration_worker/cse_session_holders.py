@@ -663,12 +663,19 @@ def lane_thread_uses_bridge_wake(lane_thread_id: str) -> bool:
         return False
 
 
+_HOLDER_SEAT_AGENT = "maestro"
+
+
 def close_owed_wake_on_lane_activity(
     *,
     lane_thread_id: str | None,
     holder_id: str | None = None,
+    seat_agent: str | None = None,
 ) -> None:
-    """Close open owed_wake rows when the holder marks read or posts on the lane."""
+    """Close open owed_wake rows when the holder seat marks read or posts on the lane."""
+    agent = (seat_agent or "").strip().lower()
+    if agent != _HOLDER_SEAT_AGENT:
+        return
     from scripts.model_manager.ui.controller.restart_intent_store import (
         RestartIntentStore,
     )
@@ -694,6 +701,7 @@ def on_house_milestone_to_maestro(
     """Producer 1 entry — allowlisted house milestone posts to maestro."""
     from scripts.model_manager.ui.controller.owed_wake_ledger import (
         maybe_producer1_milestone,
+        producer1_cse_dispatch_enabled,
     )
     from scripts.model_manager.ui.controller.restart_intent_store import (
         RestartIntentStore,
@@ -704,7 +712,7 @@ def on_house_milestone_to_maestro(
     if not holder_id:
         return {"recorded": False, "reason": "no_holder_for_lane"}
     store = RestartIntentStore.instance()
-    return maybe_producer1_milestone(
+    result = maybe_producer1_milestone(
         store,
         subject=subject,
         to_agent=to_agent,
@@ -714,27 +722,28 @@ def on_house_milestone_to_maestro(
         holder_id=holder_id,
         lane_thread_id=lane,
         user_agent=user_agent,
-        deps=build_owed_wake_deps(),
+        deps=None,
     )
+    if (
+        result.get("recorded")
+        and result.get("created")
+        and producer1_cse_dispatch_enabled()
+    ):
+        result["needs_deferred_dispatch"] = True
+    return result
 
 
 def _import_cse_session_warm_module():
-    try:
-        from tools import cse_session_warm
+    import sys
+    from pathlib import Path
 
-        return cse_session_warm
-    except ImportError:
-        import sys
-        from pathlib import Path
+    mcp_root = Path(__file__).resolve().parents[1] / "mcp-server"
+    mcp_str = str(mcp_root)
+    if mcp_str not in sys.path:
+        sys.path.insert(0, mcp_str)
+    from tools import cse_session_warm
 
-        mcp_root = (
-            Path(__file__).resolve().parents[1].parent / "mcp-server"
-        )
-        if str(mcp_root) not in sys.path:
-            sys.path.insert(0, str(mcp_root))
-        from tools import cse_session_warm
-
-        return cse_session_warm
+    return cse_session_warm
 
 
 def build_owed_wake_deps():
@@ -792,10 +801,39 @@ def build_owed_wake_deps():
     )
 
 
+def dispatch_owed_wake_producer1_row(row_id: str) -> None:
+    """Run CSE follow-up for one stored producer-1 row (off the HTTP request path)."""
+    from scripts.model_manager.ui.controller.owed_wake_ledger import (
+        attempt_dispatch,
+        producer1_cse_dispatch_enabled,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    if not producer1_cse_dispatch_enabled():
+        return
+    store = RestartIntentStore.instance()
+    row = store.get_owed_wake(row_id)
+    if row is None:
+        return
+    try:
+        deps = build_owed_wake_deps()
+    except Exception:
+        logger.warning(
+            "owed_wake producer1 dispatch skipped row_id=%s (deps unavailable)",
+            row_id,
+            exc_info=True,
+        )
+        return
+    attempt_dispatch(store, row, deps=deps)
+
+
 __all__ = [
     "boot_reconcile",
     "build_owed_wake_deps",
     "close_owed_wake_on_lane_activity",
+    "dispatch_owed_wake_producer1_row",
     "ensure_schema",
     "get_driving_holder_for_lane",
     "get_holder",

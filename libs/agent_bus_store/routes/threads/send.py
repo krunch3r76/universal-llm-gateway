@@ -74,7 +74,21 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     _raise_if_unexpanded_file_token(body.body)
     _raise_if_unexpanded_file_token(body.sidecar_content)
     if body.sidecar_content is not None:
-        created = await asyncio.to_thread(_send_with_sidecar, body)
+        created, producer1_result = await asyncio.to_thread(_send_with_sidecar, body)
+        if producer1_result and producer1_result.get("needs_deferred_dispatch"):
+            try:
+                from ...operator_observability_hooks import (
+                    schedule_producer1_dispatch_from_result,
+                )
+
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(
+                    None,
+                    schedule_producer1_dispatch_from_result,
+                    producer1_result,
+                )
+            except Exception:
+                pass
         if created.idempotent_replay:
             content = created.model_dump(mode="json")
             content["idempotent_replay"] = True
@@ -358,9 +372,12 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             exc_info=True,
         )
     try:
-        from ...operator_observability_hooks import after_turn_created
+        from ...operator_observability_hooks import (
+            after_turn_created,
+            schedule_producer1_dispatch_from_result,
+        )
 
-        await asyncio.to_thread(
+        producer1_result = await asyncio.to_thread(
             after_turn_created,
             thread_id=thread_id,
             to_agent=body.to,
@@ -369,6 +386,16 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             turn_number=turn_number,
             user_agent=body.user_agent,
         )
+        if producer1_result and producer1_result.get("needs_deferred_dispatch"):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(
+                    None,
+                    schedule_producer1_dispatch_from_result,
+                    producer1_result,
+                )
+            except Exception:
+                pass
     except Exception:
         from universal_logging import get_logger
 

@@ -21,6 +21,17 @@ def _bus_app(tmp_path):
     return app
 
 
+def _sidecar_app(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    return _bus_app(tmp_path), cortex_root
+
+
 def _bind_store(tmp_path, monkeypatch: pytest.MonkeyPatch) -> RestartIntentStore:
     store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
     monkeypatch.setattr(
@@ -35,19 +46,21 @@ def _bind_store(tmp_path, monkeypatch: pytest.MonkeyPatch) -> RestartIntentStore
     return store
 
 
+def test_build_owed_wake_deps_imports_without_stub() -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        build_owed_wake_deps,
+    )
+
+    deps = build_owed_wake_deps()
+    assert deps.post_bus_turn is not None
+    assert deps.endpoint_wake is not None
+
+
 def test_send_route_milestone_to_maestro_records_owed_wake_row(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from scripts.model_manager.ui.controller.tests.test_owed_wake_ledger import (
-        _deps,
-    )
-
     store = _bind_store(tmp_path, monkeypatch)
     monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
-    monkeypatch.setattr(
-        "services.git_integration_worker.cse_session_holders.build_owed_wake_deps",
-        lambda: _deps(),
-    )
     with TestClient(_bus_app(tmp_path)) as client:
         create = client.post(
             "/threads/with-turn",
@@ -75,6 +88,64 @@ def test_send_route_milestone_to_maestro_records_owed_wake_row(
     open_rows = store.list_open_undispatched_owed_wakes()
     assert len(open_rows) == 1
     assert open_rows[0].holder_id == "holder-maestro"
+
+
+def test_on_house_milestone_records_row_when_deps_import_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        on_house_milestone_to_maestro,
+    )
+
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.build_owed_wake_deps",
+        MagicMock(side_effect=ImportError("broken")),
+    )
+    out = on_house_milestone_to_maestro(
+        subject="MILESTONE|decision:operator-observability-ledger|deps-fail",
+        to_agent="maestro",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=3,
+        lane_thread_id="18460",
+    )
+    assert out["recorded"] is True
+    assert len(store.list_open_undispatched_owed_wakes()) == 1
+
+
+def test_sidecar_continue_send_milestone_records_owed_wake_row(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    app, _ = _sidecar_app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-sidecar-continue",
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "bootstrap",
+                "body": "seed",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "MILESTONE|decision:operator-observability-ledger|sidecar",
+                "body": "pointer only",
+                "sidecar_content": "## Milestone body\n",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+    assert len(store.list_open_undispatched_owed_wakes()) == 1
 
 
 def test_second_drain_coalesce_does_not_add_open_row(
@@ -127,7 +198,7 @@ def test_second_drain_coalesce_does_not_add_open_row(
     assert n == 1
 
 
-def test_bulk_mark_read_closes_open_owed_wake_row(
+def test_holder_bulk_mark_read_closes_open_owed_wake_row(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = _bind_store(tmp_path, monkeypatch)
@@ -137,7 +208,7 @@ def test_bulk_mark_read_closes_open_owed_wake_row(
             json={
                 "slug": "owed-bulk-read",
                 "from": "cursor",
-                "to": "web",
+                "to": "maestro",
                 "subject": "seed",
                 "body": "body",
             },
@@ -158,11 +229,50 @@ def test_bulk_mark_read_closes_open_owed_wake_row(
         )
         resp = client.patch(
             f"/threads/{thread_id}/turns/read-state",
-            json={"turn_numbers": [1], "agent": "cursor"},
+            json={"turn_numbers": [1], "agent": "maestro"},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["marked_read"] >= 1
     assert store.close_owed_wake_for_holder("holder-maestro") == 0
+
+
+def test_non_holder_bulk_mark_read_leaves_owed_wake_row_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    with TestClient(_bus_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-non-holder-read",
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        store.coalesce_owed_wake_milestone(
+            holder_id="holder-maestro",
+            lane_thread_id=thread_id,
+            turn_ref={
+                "thread_id": thread_id,
+                "turn_number": 1,
+                "subject": "MILESTONE|x",
+            },
+        )
+        resp = client.patch(
+            f"/threads/{thread_id}/turns/read-state",
+            json={"turn_numbers": [1], "agent": "cursor"},
+        )
+        assert resp.status_code == 200, resp.text
+    with store._connect() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM owed_wake "
+            "WHERE holder_id=? AND closed_at IS NULL",
+            ("holder-maestro",),
+        ).fetchone()["c"]
+    assert n == 1
 
 
 def test_manage_notice_does_not_close_open_owed_wake_row(

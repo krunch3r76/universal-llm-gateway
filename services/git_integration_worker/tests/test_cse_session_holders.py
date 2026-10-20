@@ -335,5 +335,6 @@ def test_close_owed_wake_on_lane_activity_closes_open_row(
     close_owed_wake_on_lane_activity(
         lane_thread_id="18460",
         holder_id="holder-maestro",
+        seat_agent="maestro",
     )
     assert store.close_owed_wake_for_holder("holder-maestro") == 0

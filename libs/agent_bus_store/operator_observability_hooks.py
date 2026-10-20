@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,11 +17,11 @@ def after_turn_created(
     subject: str,
     turn_number: int,
     user_agent: str | None = None,
-) -> None:
-    """Close open owed_wake rows on lane posts; arm producer 1 for maestro milestones."""
+) -> dict[str, Any] | None:
+    """Close on holder posts; record producer 1 milestones (dispatch is deferred)."""
     lane = (thread_id or "").strip()
     if not lane:
-        return
+        return None
     try:
         from services.git_integration_worker.cse_session_holders import (
             close_owed_wake_on_lane_activity,
@@ -27,8 +29,11 @@ def after_turn_created(
         )
 
         if (from_agent or "").strip().lower() != "manage":
-            close_owed_wake_on_lane_activity(lane_thread_id=lane)
-        on_house_milestone_to_maestro(
+            close_owed_wake_on_lane_activity(
+                lane_thread_id=lane,
+                seat_agent=from_agent,
+            )
+        return on_house_milestone_to_maestro(
             subject=subject,
             to_agent=to_agent,
             from_agent=from_agent,
@@ -44,10 +49,11 @@ def after_turn_created(
             turn_number,
             exc_info=True,
         )
+        return None
 
 
-def after_lane_mark_read(*, thread_id: str) -> None:
-    """Close open owed_wake rows when a holder marks read on the lane thread."""
+def after_lane_mark_read(*, thread_id: str, seat_agent: str | None = None) -> None:
+    """Close open owed_wake rows when the holder seat marks read on the lane thread."""
     lane = (thread_id or "").strip()
     if not lane:
         return
@@ -56,10 +62,27 @@ def after_lane_mark_read(*, thread_id: str) -> None:
             close_owed_wake_on_lane_activity,
         )
 
-        close_owed_wake_on_lane_activity(lane_thread_id=lane)
+        close_owed_wake_on_lane_activity(
+            lane_thread_id=lane,
+            seat_agent=seat_agent,
+        )
     except Exception:
         logger.warning(
             "owed_wake after_lane_mark_read failed thread=%s",
             lane,
             exc_info=True,
         )
+
+
+def schedule_producer1_dispatch_from_result(result: dict[str, Any] | None) -> None:
+    """Fire-and-forget producer-1 CSE follow-up when a row was just created."""
+    if not result or not result.get("needs_deferred_dispatch"):
+        return
+    row_id = result.get("row_id")
+    if not isinstance(row_id, str) or not row_id.strip():
+        return
+    from services.git_integration_worker.cse_session_holders import (
+        dispatch_owed_wake_producer1_row,
+    )
+
+    dispatch_owed_wake_producer1_row(row_id.strip())
