@@ -158,6 +158,7 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     _ensure_transition_columns(conn)
     _ensure_kill_cas_indexes(conn)
     _ensure_arming_lanes_column(conn)
+    _ensure_owed_wake_attempt_columns(conn)
 
 
 def _ensure_arming_lanes_column(conn: sqlite3.Connection) -> None:
@@ -225,6 +226,16 @@ def _ensure_transition_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE restart_intents ADD COLUMN transitions TEXT NOT NULL DEFAULT '[]'"
         )
+
+
+def _ensure_owed_wake_attempt_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(owed_wake)").fetchall()}
+    if "attempt_count" not in cols:
+        conn.execute(
+            "ALTER TABLE owed_wake ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "next_attempt_at" not in cols:
+        conn.execute("ALTER TABLE owed_wake ADD COLUMN next_attempt_at TEXT")
 
 
 def _ensure_wait_for_boundary_column(conn: sqlite3.Connection) -> None:

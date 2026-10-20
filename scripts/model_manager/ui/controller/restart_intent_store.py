@@ -176,7 +176,9 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         if "wait_for_boundary" in keys
         else False,
         caller_agent=row["caller_agent"] if "caller_agent" in keys else None,
-        caller_thread_id=row["caller_thread_id"] if "caller_thread_id" in keys else None,
+        caller_thread_id=row["caller_thread_id"]
+        if "caller_thread_id" in keys
+        else None,
         arming_lanes=_decode_arming_lanes(row["arming_lanes"])
         if "arming_lanes" in keys
         else None,
@@ -460,9 +462,7 @@ class RestartIntentStore:
             reason=reason,
         )
 
-    def cas_force_preempt_from_pending(
-        self, intent_id: str, *, reason: str
-    ) -> int:
+    def cas_force_preempt_from_pending(self, intent_id: str, *, reason: str) -> int:
         """CAS ``pending_drain`` → ``force_requested`` (S1 escape hatch)."""
         return self._advance_if_status_in_core(
             intent_id,
@@ -745,6 +745,20 @@ class RestartIntentStore:
             ).fetchone()
             if existing is not None:
                 refs = decode_turn_refs(existing["turn_refs"])
+                thread_id = str(turn_ref.get("thread_id") or "").strip()
+                turn_number = turn_ref.get("turn_number")
+                if thread_id and turn_number is not None:
+                    try:
+                        tn = int(turn_number)
+                    except (TypeError, ValueError):
+                        tn = None
+                    if tn is not None and any(
+                        str(ref.get("thread_id") or "").strip() == thread_id
+                        and int(ref.get("turn_number") or -1) == tn
+                        for ref in refs
+                    ):
+                        conn.commit()
+                        return self._row_to_owed_wake(existing), False
                 refs.append(turn_ref)
                 conn.execute(
                     "UPDATE owed_wake SET turn_refs=?, updated_at=? WHERE row_id=?",
@@ -880,7 +894,12 @@ class RestartIntentStore:
             return int(cur.rowcount)
 
     def mark_owed_wake_dispatched(self, row_id: str, *, outcome: str) -> None:
-        terminal = outcome in {"dispatched", "held_no_live_seat", "skipped"}
+        terminal = outcome in {
+            "dispatched",
+            "held_no_live_seat",
+            "skipped",
+            "held_retry_exhausted",
+        }
         stamp = _now() if terminal else None
         with self._connect() as conn:
             conn.execute(
@@ -888,12 +907,40 @@ class RestartIntentStore:
                 (stamp, _now(), row_id),
             )
 
+    def record_owed_wake_failure(self, row_id: str) -> int:
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE owed_wake SET attempt_count=attempt_count+1, updated_at=? "
+                "WHERE row_id=?",
+                (now, row_id),
+            )
+            row = conn.execute(
+                "SELECT attempt_count FROM owed_wake WHERE row_id=?", (row_id,)
+            ).fetchone()
+            conn.commit()
+        return int(row["attempt_count"]) if row is not None else 0
+
+    def set_owed_wake_next_attempt(self, row_id: str, next_attempt_at: str) -> None:
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE owed_wake SET next_attempt_at=?, updated_at=? WHERE row_id=?",
+                (next_attempt_at, now, row_id),
+            )
+            conn.commit()
+
     def _row_to_owed_wake(
         self, row: sqlite3.Row, *, turn_refs: list[dict[str, Any]] | None = None
     ) -> OwedWakeRow:
         from .owed_wake_ledger import OwedWakeRow, decode_arming_lanes, decode_turn_refs
 
-        refs = turn_refs if turn_refs is not None else decode_turn_refs(row["turn_refs"])
+        refs = (
+            turn_refs if turn_refs is not None else decode_turn_refs(row["turn_refs"])
+        )
+        keys = row.keys()
+        attempt_count = int(row["attempt_count"]) if "attempt_count" in keys else 0
+        next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in keys else None
         return OwedWakeRow(
             row_id=row["row_id"],
             holder_id=row["holder_id"],
@@ -904,6 +951,8 @@ class RestartIntentStore:
             restart_intent_id=row["restart_intent_id"],
             dispatched_at=row["dispatched_at"],
             closed_at=row["closed_at"],
+            attempt_count=attempt_count,
+            next_attempt_at=next_attempt_at,
         )
 
 

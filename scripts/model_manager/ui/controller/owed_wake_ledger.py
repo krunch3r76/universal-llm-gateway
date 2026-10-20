@@ -8,11 +8,12 @@ No timer or poller; undispatched rows flush on the next gate read or post.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from universal_logging import get_logger
@@ -43,6 +44,13 @@ PRODUCER_DRAIN_COMPLETE = "drain_complete"
 
 PRODUCER1_TO_AGENTS: frozenset[str] = frozenset({"maestro", "web-anthropic"})
 DEFAULT_MILESTONE_BACKSTOP_AGE_S = 900.0
+
+OWED_WAKE_MAX_DISPATCH_ATTEMPTS = 5
+OWED_WAKE_RETRY_BASE_S = 30
+OWED_WAKE_RETRY_CAP_S = 240
+
+_owed_wake_flush_task: asyncio.Task[None] | None = None
+_OWED_WAKE_FLUSH_TASKS: set[asyncio.Task[None]] = set()
 
 
 def producer1_cse_dispatch_enabled() -> bool:
@@ -118,12 +126,12 @@ class OwedWakeRow:
     restart_intent_id: str | None
     dispatched_at: str | None
     closed_at: str | None
+    attempt_count: int = 0
+    next_attempt_at: str | None = None
 
 
 class BusPoster(Protocol):
-    def __call__(
-        self, *, thread_id: str, subject: str, body: str
-    ) -> bool: ...
+    def __call__(self, *, thread_id: str, subject: str, body: str) -> bool: ...
 
 
 class EndpointWakeDriver(Protocol):
@@ -222,6 +230,37 @@ def producer2_on_restart_terminal(
         "arming_lanes": lanes,
         "created": created,
     }
+
+
+def schedule_owed_wake_flush(*, store: Any | None = None) -> None:
+    """Run owed-wake flush off the event loop (single-flight when a loop is running)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        maybe_flush_pending_owed_wakes(store=store)
+        return
+
+    global _owed_wake_flush_task
+    if _owed_wake_flush_task is not None and not _owed_wake_flush_task.done():
+        return
+
+    async def _owed_wake_flush_worker() -> None:
+        try:
+            await asyncio.to_thread(maybe_flush_pending_owed_wakes, store=store)
+        except Exception:
+            logger.debug("owed-wake-flush task failed", exc_info=True)
+
+    task = loop.create_task(_owed_wake_flush_worker(), name="owed-wake-flush")
+    _owed_wake_flush_task = task
+    _OWED_WAKE_FLUSH_TASKS.add(task)
+
+    def _clear_leader(done: asyncio.Task[None]) -> None:
+        global _owed_wake_flush_task
+        if _owed_wake_flush_task is done:
+            _owed_wake_flush_task = None
+
+    task.add_done_callback(_OWED_WAKE_FLUSH_TASKS.discard)
+    task.add_done_callback(_clear_leader)
 
 
 def maybe_flush_pending_owed_wakes(*, store: Any | None = None) -> int:
@@ -324,14 +363,16 @@ def _fetch_turns_for_lane(thread_id: str) -> list[dict[str, Any]]:
         with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
             resp = client.get(
                 "/turns",
-                params={"thread": lane, "last": 100},
+                params={"thread": lane, "last": 100, "compact": "true"},
                 headers=headers or None,
             )
             if resp.status_code >= 400:
                 return []
             payload = resp.json()
     except Exception:
-        logger.debug("fetch turns for stale projection failed lane=%s", lane, exc_info=True)
+        logger.debug(
+            "fetch turns for stale projection failed lane=%s", lane, exc_info=True
+        )
         return []
     turns = payload.get("turns") if isinstance(payload, dict) else None
     if not isinstance(turns, list):
@@ -360,10 +401,9 @@ def producer1_turn_already_dispatched(
         if row["dispatched_at"] is None:
             continue
         for ref in decode_turn_refs(row["turn_refs"]):
-            if (
-                str(ref.get("thread_id") or "") == lane
-                and int(ref.get("turn_number") or -1) == int(turn_number)
-            ):
+            if str(ref.get("thread_id") or "") == lane and int(
+                ref.get("turn_number") or -1
+            ) == int(turn_number):
                 return True
     return False
 
@@ -413,6 +453,17 @@ def project_stale_unread_milestone_owed_wakes(store: Any) -> int:
     return projected
 
 
+def _owed_wake_retry_due(next_attempt_at: str | None, *, now: datetime) -> bool:
+    if next_attempt_at is None or not str(next_attempt_at).strip():
+        return True
+    parsed = _parse_turn_timestamp(next_attempt_at)
+    if parsed is None:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return now >= parsed.astimezone(UTC)
+
+
 def flush_pending_owed_wakes(store: Any, *, deps: OwedWakeDeps) -> int:
     """Backstop: project stale unread milestones, then retry dispatch for open rows."""
     try:
@@ -420,11 +471,25 @@ def flush_pending_owed_wakes(store: Any, *, deps: OwedWakeDeps) -> int:
     except Exception:
         logger.debug("stale milestone projection failed", exc_info=True)
     count = 0
+    now = datetime.now(UTC)
     for row in store.list_open_undispatched_owed_wakes():
         if row.producer == PRODUCER_MILESTONE and not producer1_cse_dispatch_enabled():
             continue
+        if not _owed_wake_retry_due(row.next_attempt_at, now=now):
+            continue
         if attempt_dispatch(store, row, deps=deps):
             count += 1
+            continue
+        new_count = store.record_owed_wake_failure(row.row_id)
+        if new_count >= OWED_WAKE_MAX_DISPATCH_ATTEMPTS:
+            store.mark_owed_wake_dispatched(row.row_id, outcome="held_retry_exhausted")
+        else:
+            delay_s = min(
+                OWED_WAKE_RETRY_BASE_S * (2 ** (new_count - 1)),
+                OWED_WAKE_RETRY_CAP_S,
+            )
+            next_at = (now + timedelta(seconds=delay_s)).isoformat()
+            store.set_owed_wake_next_attempt(row.row_id, next_at)
     return count
 
 
@@ -445,17 +510,20 @@ def attempt_dispatch(store: Any, row: OwedWakeRow, *, deps: OwedWakeDeps) -> boo
         return True
 
     bus_ok = True
-    lanes = row.arming_lanes or (
-        [row.lane_thread_id] if row.lane_thread_id else []
-    )
+    lanes = row.arming_lanes or ([row.lane_thread_id] if row.lane_thread_id else [])
     if row.producer == PRODUCER_DRAIN_COMPLETE:
         for lane in lanes:
             lane_id = str(lane).strip()
             if not lane_id:
                 continue
-            subject = f"FACT|restart_intent terminal — owed wake ({row.restart_intent_id})"
+            subject = (
+                f"FACT|restart_intent terminal — owed wake ({row.restart_intent_id})"
+            )
             body = json.dumps(
-                {"owed_wake_row_id": row.row_id, "restart_intent_id": row.restart_intent_id},
+                {
+                    "owed_wake_row_id": row.row_id,
+                    "restart_intent_id": row.restart_intent_id,
+                },
                 separators=(",", ":"),
             )
             if not deps.post_bus_turn(thread_id=lane_id, subject=subject, body=body):

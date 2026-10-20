@@ -749,9 +749,9 @@ class RestartDrainGate:
                 "determination": determination,
                 "active_work": detail,
             }
-        from .owed_wake_ledger import maybe_flush_pending_owed_wakes
+        from .owed_wake_ledger import schedule_owed_wake_flush
 
-        maybe_flush_pending_owed_wakes()
+        schedule_owed_wake_flush()
         return report
 
 

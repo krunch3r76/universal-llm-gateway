@@ -25,9 +25,9 @@ logger = get_logger(__name__)
 
 def _schedule_force_gate_notice(**kwargs: Any) -> None:
     _schedule_force_gate_notice_impl(**kwargs)
-    from .owed_wake_ledger import maybe_flush_pending_owed_wakes
+    from .owed_wake_ledger import schedule_owed_wake_flush
 
-    maybe_flush_pending_owed_wakes()
+    schedule_owed_wake_flush()
 
 
 REFUSE_REASON = "force_requires_reason"
@@ -46,9 +46,7 @@ def force_reason_accepted(force_reason: str | None) -> bool:
     return bool(force_reason and str(force_reason).strip())
 
 
-async def g1_busy_report_entry(
-    gate: RestartDrainGate, service: str
-) -> dict[str, Any]:
+async def g1_busy_report_entry(gate: RestartDrainGate, service: str) -> dict[str, Any]:
     report = await gate.busy_report([service])
     entry = report.get(service)
     return entry if isinstance(entry, dict) else {}
@@ -300,9 +298,6 @@ async def enforce_force_reason_if_needed(
     if service in force_exempt_services():
         return None
     entry = await g1_busy_report_entry(gate, service)
-    from .owed_wake_ledger import maybe_flush_pending_owed_wakes
-
-    maybe_flush_pending_owed_wakes()
     if not g1_blocks_force_without_reason(entry):
         return None
     if service != "mcp":
