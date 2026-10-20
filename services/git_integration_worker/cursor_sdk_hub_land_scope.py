@@ -162,6 +162,14 @@ def _ff_ready(
         return None
     if int(ahead.stdout.strip()) < 1:
         return None
+    gitignored_path = _lane_history_gitignored_addition(hub, branch)
+    if gitignored_path:
+        logger.info(
+            "hub land refuse hub_lane_gitignored_path branch=%s path=%s",
+            branch,
+            gitignored_path,
+        )
+        return "hub_lane_gitignored_path"
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
         return None
@@ -187,6 +195,38 @@ def _lane_land_path_names(hub: Path, branch: str) -> frozenset[str] | None:
     if proc.returncode != 0:
         return None
     return frozenset(line.strip() for line in proc.stdout.splitlines() if line.strip())
+
+
+def _path_gitignored(hub: Path, rel_path: str) -> bool:
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        _path_gitignored as capture_path_gitignored,
+    )
+
+    return capture_path_gitignored(hub, rel_path)
+
+
+def _lane_history_gitignored_addition(hub: Path, branch: str) -> str | None:
+    """First gitignored path added on any commit in ``master..branch``."""
+    rev = _git_capture(hub, "rev-list", f"master..{branch}")
+    if rev.returncode != 0:
+        return None
+    for commit in (ln.strip() for ln in rev.stdout.splitlines() if ln.strip()):
+        proc = _git_capture(
+            hub, "diff-tree", "--no-commit-id", "--name-status", "-r", commit
+        )
+        if proc.returncode != 0:
+            continue
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status = parts[0].strip()
+            if not status.startswith("A"):
+                continue
+            path = parts[-1].strip()
+            if path and _path_gitignored(hub, path):
+                return path
+    return None
 
 
 def _blob_at_branch(hub: Path, branch: str, rel_path: str) -> bytes | None:

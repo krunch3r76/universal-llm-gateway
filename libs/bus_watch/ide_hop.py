@@ -291,6 +291,42 @@ _IN_SEAT_JUDGMENT = (
     "work is reviewed out-of-seat by a fresh non-author seat before land; "
     "independent check → cdp/opus-5.5 still applies. "
 )
+_PEER_HOUSE_DISTRIBUTED = (
+    "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
+    "cursor-sdk; life repo-write → life_dispatch; orchestration stays in-tab on "
+    "cursor/grok-4.7 (effort=xhigh); then cursor/gemini-4-argon (effort=high, "
+    "design/judgment/advice, after retrieval-before-authoring) → cdp/opus-5.5 "
+    "(independent check); cursor/grok-4.7 for live checkout; "
+    "¬ cursor/claude-*; page human only on "
+    "OPERATOR_GATE after that ladder. ¬ hop away unreconciled."
+)
+_PEER_HOUSE_IN_SEAT = (
+    "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
+    "cursor-sdk; life repo-write → life_dispatch; orchestration and judgment "
+    "stay in-tab on cursor/grok-4.7 (effort=xhigh) → cdp/opus-5.5 "
+    "(independent check); cursor/grok-4.7 for live checkout; "
+    "¬ cursor/claude-*; page human only on "
+    "OPERATOR_GATE after that ladder. ¬ hop away unreconciled."
+)
+_DIVERGENT_DISTRIBUTED = (
+    "DIVERGENT / WRITING DEFAULT: On open design/architecture/strategy forks, "
+    "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
+    "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
+    "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
+    "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: hand the "
+    "retrieval report + 2-3 rival frames to cursor/gemini-4-argon under "
+    "exception: divergent_ideation_degraded_18362, record consult_ref, proceed. "
+    "Skip only on closed-spec mechanical/trivial first passes."
+)
+_DIVERGENT_IN_SEAT = (
+    "DIVERGENT / WRITING DEFAULT: On open design/architecture/strategy forks, "
+    "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
+    "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
+    "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
+    "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: bind "
+    "in-seat on cursor/grok-4.7 (effort=xhigh), record the retrieval report, proceed. "
+    "Skip only on closed-spec mechanical/trivial first passes."
+)
 
 
 def build_ide_hop_message(
@@ -323,8 +359,12 @@ def build_ide_hop_message(
     tip = f" tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else ""
     if judgment_posture == "in_seat":
         judgment_line = _IN_SEAT_JUDGMENT
+        peer_house_line = _PEER_HOUSE_IN_SEAT
+        divergent_line = _DIVERGENT_IN_SEAT
     else:
         judgment_line = _DISTRIBUTED_JUDGMENT
+        peer_house_line = _PEER_HOUSE_DISTRIBUTED
+        divergent_line = _DIVERGENT_DISTRIBUTED
     host_label = str(gui_host or ":8").strip() or ":8"
     hop_query = policy_hop_model_query(root_id)
     hop_knobs_json = json.dumps(policy_hop_model_knobs(root_id), separators=(",", ":"))
@@ -361,22 +401,9 @@ def build_ide_hop_message(
         "→ STAY — do not hop.",
         "LOAD AND EXECUTE: runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
-        "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
-        "cursor-sdk; life repo-write → life_dispatch; orchestration stays in-tab on "
-        "cursor/grok-4.7 (effort=xhigh); then cursor/gemini-4-argon (effort=high, "
-        "design/judgment/advice, after retrieval-before-authoring) → cdp/opus-5.5 "
-        "(independent check); cursor/grok-4.7 for live checkout; "
-        "¬ cursor/claude-*; page human only on "
-        "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
+        peer_house_line,
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
-        "DIVERGENT / WRITING DEFAULT: On open design/architecture/strategy forks, "
-        "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
-        "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
-        "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
-        "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: hand the "
-        "retrieval report + 2-3 rival frames to cursor/gemini-4-argon under "
-        "exception: divergent_ideation_degraded_18362, record consult_ref, proceed. "
-        "Skip only on closed-spec mechanical/trivial first passes.",
+        divergent_line,
         f"NOW: {row}",
         *arm_lines,
         "WAKE: Push-driven via endpoint_wake_dispatcher -> display-chat-wake "

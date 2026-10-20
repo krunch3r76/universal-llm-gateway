@@ -60,6 +60,7 @@ def test_in_seat_posture_keeps_in_seat_ladder() -> None:
     assert "no Argon confer" in msg
     assert "outsource regular judgment/design/advice" not in msg
     assert "§ Peer-house:" in msg
+    assert "cursor/gemini-4-argon" not in msg
 
 
 def test_hop_message_distributed_binds_argon_and_opus_check() -> None:
@@ -74,6 +75,7 @@ def test_hop_message_distributed_binds_argon_and_opus_check() -> None:
     assert "cursor/gemini-4-argon" in msg
     assert "cdp/opus-5.5" in msg
     assert "muse-wonder" not in msg
+    assert "divergent_ideation_degraded_18362" in msg
 
 
 def test_hop_message_carries_divergent_degraded_exception() -> None:
