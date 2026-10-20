@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -1643,3 +1644,117 @@ def test_standing_handoff_label_table_plain_inflight_section_bounds(
         assert fragment not in inflight, (
             f"{case_id}: {fragment!r} leaked into IN FLIGHT body"
         )
+
+
+_PLAIN_LEG_LABEL_PRODUCTION_RE = re.compile(
+    r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps)\b(?:\s*\([^)\n]*\))?\s*:",
+    re.IGNORECASE,
+)
+_PLAIN_LEG_LABEL_WEAK_OPEN_ONLY_RE = re.compile(
+    r"^OPEN\b(?:\s*\([^)\n]*\))?\s*:",
+    re.IGNORECASE,
+)
+_PLAIN_LEG_LABEL_WEAK_NO_PAREN_RE = re.compile(
+    r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps)\b\s*:",
+    re.IGNORECASE,
+)
+_PLAIN_LEG_LABEL_WEAK_NO_CARRIED_RE = re.compile(
+    r"^(?:OPEN|FRICTION|NEXT|Traps)\b(?:\s*\([^)\n]*\))?\s*:",
+    re.IGNORECASE,
+)
+_INFLIGHT_BULLET_GUARDS = (
+    "Opening note: prose must not terminate plain IN FLIGHT",
+    "Nextcloud: path mention must not terminate",
+)
+
+
+def _sidecar_with_first_terminator_line(
+    label: str,
+    *,
+    inline_text_after_colon: bool,
+    sentinel: str,
+) -> tuple[str, str]:
+    """Sidecar where `label` is the first line after IN FLIGHT bullets."""
+    bullets = (
+        "- (16416, decision:x) · worker 15851 · exec e1 · poll_hint {}",
+        f"- {_INFLIGHT_BULLET_GUARDS[0]}",
+        f"- {_INFLIGHT_BULLET_GUARDS[1]}",
+    )
+    if inline_text_after_colon:
+        stem = label[:-1] if label.endswith(":") else label
+        terminator_line = f"{stem}: {sentinel}-inline"
+    else:
+        terminator_line = label
+    body = "\n".join(
+        [
+            "## CURRENT LEG",
+            "LEG first-terminator — 12286#5000 — schema checkpoint/v1",
+            "IN FLIGHT:",
+            *bullets,
+            terminator_line,
+            sentinel,
+        ]
+    )
+    return body, terminator_line
+
+
+def _inflight_first_terminator_after_bullets_rows() -> list[
+    tuple[str, str, str, str]
+]:
+    rows: list[tuple[str, str, str, str]] = []
+    for label in _INFLIGHT_PLAIN_TERMINATORS:
+        slug = (
+            label.replace(" ", "_")
+            .replace("(", "")
+            .replace(")", "")
+            .replace(":", "")
+        )
+        for inline in (False, True):
+            variant = "inline" if inline else "alone"
+            sentinel = f"SENTINEL_FIRST_{slug}_{variant}"
+            sidecar, terminator_line = _sidecar_with_first_terminator_line(
+                label,
+                inline_text_after_colon=inline,
+                sentinel=sentinel,
+            )
+            case_id = f"{slug}_{variant}"
+            rows.append((case_id, sidecar, terminator_line, sentinel))
+    return rows
+
+
+def test_inflight_plain_terminator_first_line_after_bullets() -> None:
+    """Each leg terminator may end plain IN FLIGHT when it follows bullets first."""
+    from claude_bundles.operator_proxy_standing_render import (
+        inflight_section_from_sidecar,
+    )
+
+    rows = _inflight_first_terminator_after_bullets_rows()
+    assert len(rows) == 12
+
+    weak_open_only_misses: list[str] = []
+    weak_no_paren_misses: list[str] = []
+    weak_no_carried_misses: list[str] = []
+
+    for case_id, sidecar, terminator_line, sentinel in rows:
+        inflight = inflight_section_from_sidecar(sidecar)
+        assert inflight, f"{case_id}: expected plain IN FLIGHT section"
+        for guard in _INFLIGHT_BULLET_GUARDS:
+            assert guard in inflight, f"{case_id}: guard bullet {guard!r} missing"
+        assert terminator_line not in inflight, (
+            f"{case_id}: terminator line leaked into IN FLIGHT"
+        )
+        assert sentinel not in inflight, f"{case_id}: sentinel leaked into IN FLIGHT"
+        stripped = terminator_line.strip()
+        assert _PLAIN_LEG_LABEL_PRODUCTION_RE.match(stripped), (
+            f"{case_id}: production regex must match terminator {stripped!r}"
+        )
+        if not _PLAIN_LEG_LABEL_WEAK_OPEN_ONLY_RE.match(stripped):
+            weak_open_only_misses.append(case_id)
+        if not _PLAIN_LEG_LABEL_WEAK_NO_PAREN_RE.match(stripped):
+            weak_no_paren_misses.append(case_id)
+        if not _PLAIN_LEG_LABEL_WEAK_NO_CARRIED_RE.match(stripped):
+            weak_no_carried_misses.append(case_id)
+
+    assert weak_open_only_misses, "OPEN-only pattern must fail at least one row"
+    assert weak_no_paren_misses, "no-paren pattern must fail at least one row"
+    assert weak_no_carried_misses, "no-CARRIED pattern must fail at least one row"
