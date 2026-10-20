@@ -126,6 +126,7 @@ def fs_impl(
     thread: str | None = None,
     since: str = "",
     include_worktrees: bool = False,
+    size_only: bool = False,
 ) -> dict[str, Any]:
     if not op:
         return {"error": "'op' is required"}
@@ -255,6 +256,7 @@ def fs_impl(
                     position=position,
                     target=target,
                     all_occurrences=all_occurrences,
+                    size_only=size_only,
                 )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -277,6 +279,7 @@ def fs_impl(
             position=position,
             target=target,
             all_occurrences=all_occurrences,
+            size_only=size_only,
         )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)

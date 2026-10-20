@@ -334,6 +334,7 @@ def _build_server(
         thread: str | None = None,
         since: str = "",
         include_worktrees: bool = False,
+        size_only: bool = False,
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -364,6 +365,7 @@ def _build_server(
                 thread=thread,
                 since=since,
                 include_worktrees=include_worktrees,
+                size_only=size_only,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
