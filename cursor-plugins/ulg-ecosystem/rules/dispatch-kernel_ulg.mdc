@@ -33,7 +33,7 @@ detail: skill `consult-routing` § Dispatch kernel — relocated prose.
 - Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
 - Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.
-- Same fix failed twice ⇒ stop; consult — never a third variant.
+- Same input failed twice ⇒ no more retries of that input; one attempt of a different kind (replace the input) is allowed before REPEATED_FAILURE; a third retry of the same input is forbidden.
 - `operator_names(param) ∧ ¬admits(param) ⇒ report(failure) ∧ wait`.
 
 ## Runbook binding

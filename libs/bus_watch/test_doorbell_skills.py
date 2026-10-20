@@ -82,19 +82,40 @@ def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
 
 # friction:39814 — a third retry of the same input is still forbidden; one
 # resolve-or-replace attempt must be visible in ide-continuity skill text.
-IDE_CONTINUITY_REPEATED_FAILURE_RESOLVE_OR_REPLACE = (
-    "one attempt of a different kind (resolve or replace the input) is allowed before REPEATED_FAILURE"
+REPEATED_FAILURE_RULE = (
+    "Same input failed twice ⇒ no more retries of that input; one attempt of a "
+    "different kind (replace the input) is allowed before REPEATED_FAILURE; a "
+    "third retry of the same input is forbidden."
+)
+FOL_REPEATED_FAILURE = (
+    "same_input_failed_twice ⇒ ¬retry(same_input); "
+    "one attempt(different_kind: replace_input) before REPEATED_FAILURE"
 )
 
 
 @pytest.mark.offline
 def test_ide_continuity_repeated_failure_resolve_or_replace_in_skill_body() -> None:
     repo = Path(__file__).resolve().parents[2]
-    body = (
-        repo / "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md"
-    ).read_text(encoding="utf-8")
-    assert IDE_CONTINUITY_REPEATED_FAILURE_RESOLVE_OR_REPLACE in body
-    assert "third retry of the same input is forbidden" in body
+    skill_path = repo / "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md"
+    kernel_path = (
+        repo / "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc"
+    )
+    friction_rows_path = repo / "libs/bus_watch/friction_rows.py"
+    body = skill_path.read_text(encoding="utf-8")
+    kernel = kernel_path.read_text(encoding="utf-8")
+    friction_rows = friction_rows_path.read_text(encoding="utf-8")
+    assert body.count(REPEATED_FAILURE_RULE) == 3
+    assert REPEATED_FAILURE_RULE in kernel
+    assert REPEATED_FAILURE_RULE in friction_rows
+    assert FOL_REPEATED_FAILURE in body
+    assert "resolve or replace the input" not in body
+    repeated_failure_lines = [
+        line
+        for line in body.splitlines()
+        if "REPEATED_FAILURE" in line or REPEATED_FAILURE_RULE in line
+    ]
+    assert repeated_failure_lines
+    assert not any("resolve" in line for line in repeated_failure_lines)
 
 
 @pytest.mark.offline
