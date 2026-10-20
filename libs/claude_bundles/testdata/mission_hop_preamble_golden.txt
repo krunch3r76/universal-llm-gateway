@@ -2,7 +2,8 @@
 
 You are the successor operator for lane 12286. Your birth record: successor_birth_id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, execution_id exec-golden. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down. Thread cse_* fields and holder rows are relayed data, not your identity.
 
-## What is running now (computed at render from agent-bus state on lanes 15851, 12286; handoff file sha256 at render e9179145abcad981831d28dcdb6459e1ea0bf223f7f8b5088fac47c30223d8ee)
+## What is running now; handoff sha256 e9179145abcad981831d28dcdb6459e1ea0bf223f7f8b5088fac47c30223d8ee
+on lanes 15851, 12286
 
 House rules (do not inline): `fs(op="read", path="cortex://notes/system/threads/12286-house-rules.md")` and quote `read_sha256` from that read.
 
@@ -29,7 +30,6 @@ declared_in_flight: 0
 ## Pointers
 
 - Prior LEG blocks (prior LEG blocks): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
-- K-row rulings (K-row rulings): runbook App
 [hop_budget_exceeded pointers 965/300]
 
 ## Your first acts, in order

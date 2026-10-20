@@ -62,23 +62,118 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
     return cut.decode("utf-8", errors="ignore")
 
 
+def _prefix_on_word_boundary(line: str, room: int) -> str:
+    """Prefix of *line* that fits in *room* and does not end mid-token."""
+    if room <= 0:
+        return ""
+    window = _truncate_utf8(line, room)
+    if _utf8_len(window) == _utf8_len(line):
+        return line
+    cut = window.rfind(" ")
+    if cut <= 0:
+        return ""
+    return window[:cut].rstrip()
+
+
+_LIVE_LEG_RULE_MARK = " — "
+
+
+def _prefix_live_leg_head(line: str, room: int) -> str:
+    """Keep the live-leg key head. Do not continue into the governing-rule prose.
+
+    The rule text is `` — `` plus a verb-only sentence. A word cut inside that
+    sentence reads as a different rule. If the mark fits, stop before it. If
+    the room ends in the head, use a word boundary there.
+    """
+    if room <= 0:
+        return ""
+    window = _truncate_utf8(line, room)
+    if _utf8_len(window) == _utf8_len(line):
+        return line
+    mark = window.find(_LIVE_LEG_RULE_MARK)
+    if mark > 0:
+        return window[:mark].rstrip()
+    return _prefix_on_word_boundary(line, room)
+
+
 def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
-    """Truncate hop slot text and append a budget flag when over *max_bytes*."""
+    """Truncate hop slot text on a line boundary and flag when over *max_bytes*.
+
+    Complete lines that fit are kept. A later line that does not fit is dropped
+    whole, so a heading or pointer bullet is not sliced mid-sentence. The
+    ``live_leg`` slot keeps the item head before `` — `` (word boundary only
+    inside that head) so the work key stays visible and the rule text is not
+    cut mid-sentence. The flag is reserved inside the cap.
+    """
     body = text or ""
     size = _utf8_len(body)
     if size <= max_bytes:
         return body
     flag = f"[hop_budget_exceeded {label} {size}/{max_bytes}]"
     room = max(0, max_bytes - _utf8_len(flag) - 1)
-    trimmed = _truncate_utf8(body, room).rstrip()
+    kept: list[str] = []
+    used = 0
+    for line in body.splitlines():
+        newline = 0 if not kept else 1
+        extra = _utf8_len(line) + newline
+        if used + extra > room:
+            if label == "live_leg":
+                prefix = _prefix_live_leg_head(line, room - used - newline)
+                if prefix:
+                    kept.append(prefix)
+            break
+        kept.append(line)
+        used += extra
+    trimmed = "\n".join(kept).rstrip()
     return f"{trimmed}\n{flag}" if trimmed else flag
 
 
-def hop_house_rules_pointer(lane: str) -> str:
-    """House-rules slot for hop render (L5); not an inline of the rules file."""
+def hop_house_rules_pointer(
+    lane: str,
+    *,
+    rules_file_exists: bool | None = None,
+    rules_heading: str | None = None,
+    existence_unverified: bool = False,
+) -> str:
+    """House-rules slot for hop render (L5); not an inline of the rules.
+
+    ``rules_file_exists is None`` keeps the dedicated-file read (callers that
+    do not probe). ``False`` does not instruct a read of the missing file:
+    ``md_read`` uses *rules_heading* (the handoff's real heading, suffixes
+    included) when that heading is present, otherwise an absence line.
+    ``existence_unverified`` is a failed probe: cite the heading when known,
+    else the unprobed file read.
+    """
+    file_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
+    heading = (rules_heading or "").replace('"', "'").strip()
+    if existence_unverified:
+        if not heading:
+            rules_file_exists = None
+        else:
+            handoff = standing_handoff_uri(lane)
+            return (
+                "House rules (do not inline): "
+                f'`fs(op="md_read", section="{heading}", path="{handoff}")` '
+                "and quote `read_sha256` from that read. "
+                f"`{file_uri}` existence unverified.\n"
+            )
+    if rules_file_exists is False and heading:
+        handoff = standing_handoff_uri(lane)
+        return (
+            "House rules (do not inline): "
+            f'`fs(op="md_read", section="{heading}", path="{handoff}")` '
+            "and quote `read_sha256` from that read. "
+            f"`{file_uri}` is absent.\n"
+        )
+    if rules_file_exists is False and not heading:
+        return (
+            "House rules (do not inline): "
+            f"`{file_uri}` is absent and the standing handoff has no "
+            "HOUSE RULES section.\n"
+        )
     return (
         f'House rules (do not inline): `fs(op="read", '
-        f'path="cortex://notes/system/threads/{lane}-house-rules.md")` '
+        f'path="{file_uri}")` '
         f"and quote `read_sha256` from that read.\n"
     )
 

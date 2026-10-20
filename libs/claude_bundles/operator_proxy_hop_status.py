@@ -158,6 +158,14 @@ def house_rules_section(text: str) -> str | None:
     return None
 
 
+def house_rules_heading(text: str) -> str | None:
+    """Heading text of the HOUSE RULES block, including any suffix."""
+    for heading, _body in _heading_sections(text or ""):
+        if _HOUSE_RULES_HEADING in heading:
+            return heading
+    return None
+
+
 def handoff_file_sha256(text: str) -> str:
     """sha256 of the whole sidecar text, not of the extracted section."""
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
@@ -340,7 +348,19 @@ def hop_successor_fields(
         elif not sidecar:
             house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
         elif hop_kind == "mission":
-            house_rules_verbatim = hop_house_rules_pointer(lane)
+            rules_file_exists: bool | None = None
+            existence_unverified = False
+            if archive_path_exists is not None:
+                try:
+                    rules_file_exists = bool(archive_path_exists(rules_uri))
+                except OSError:
+                    existence_unverified = True
+            house_rules_verbatim = hop_house_rules_pointer(
+                lane,
+                rules_file_exists=rules_file_exists,
+                rules_heading=house_rules_heading(sidecar) if sidecar else None,
+                existence_unverified=existence_unverified,
+            )
         else:
             house_rules_verbatim, _rules_budget = render_house_rules_block(
                 lane=lane,
@@ -372,23 +392,19 @@ def hop_successor_fields(
 
     if handoff_failure:
         digest = ""
-        running_now = (
-            "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; {roster_clause}{handoff_failure})"
-        )
+        detail = handoff_failure
     elif sidecar:
         digest = handoff_file_sha256(sidecar)
-        running_now = (
-            "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; {roster_clause}handoff file sha256 at render "
-            f"{digest})"
-        )
+        detail = f"handoff sha256 {digest}"
     else:
         digest = ""
-        running_now = (
-            "## What is running now (computed at render from agent-bus state on "
-            f"lanes {lane_list}; {roster_clause}standing handoff file absent)"
-        )
+        detail = "standing handoff file absent"
+    # Sha (or absence) stays on the first line, under HOP_RUNNING_NOW_CAP_B,
+    # so a long lane list drops as a whole following line. One combined line
+    # used to exceed the cap and the byte cut ate the sha (friction:39828).
+    running_now = (
+        f"## What is running now; {roster_clause}{detail}\non lanes {lane_list}"
+    )
 
     pointers = render_pointers_block(
         checkpoint_preamble=checkpoint_header,
