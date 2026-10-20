@@ -81,6 +81,38 @@ def test_hub_land_refuses_gitignored_path_added_then_removed_at_tip(
     assert _master(repo) == before
 
 
+def test_hub_land_refuses_gitignored_path_added_then_removed_when_one_behind(
+    tmp_path: Path,
+) -> None:
+    repo = _init_hub(tmp_path)
+    (repo / ".gitignore").write_text("ignored/\n**/*.wiki.md\n", encoding="utf-8")
+    assert _git(repo, "add", ".gitignore").returncode == 0
+    assert _git(repo, "commit", "-m", "gitignore wiki").returncode == 0
+    branch = "cursor-sdk/lane-gitignore-behind"
+    assert _git(repo, "checkout", "-b", branch).returncode == 0
+    rel = "docs/foo.wiki.md"
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text("ignored body\n", encoding="utf-8")
+    assert _git(repo, "add", "-f", rel).returncode == 0
+    assert _git(repo, "commit", "-m", "add gitignored path").returncode == 0
+    assert _git(repo, "rm", "--cached", rel).returncode == 0
+    assert _git(repo, "commit", "-m", "untrack at tip").returncode == 0
+    assert _git(repo, "checkout", "master").returncode == 0
+    (repo / "peer.md").write_text("peer\n", encoding="utf-8")
+    assert _git(repo, "add", "peer.md").returncode == 0
+    assert _git(repo, "commit", "-m", "peer on master").returncode == 0
+    assert hub_land_precondition_reason(repo, branch_name=branch) == (
+        "hub_lane_gitignored_path"
+    )
+    before = _master(repo)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name=branch, holder_op_id="d-gitignore-behind"
+    )
+    assert result.landed is False
+    assert result.refuse_reason == "hub_lane_gitignored_path"
+    assert _master(repo) == before
+
+
 def test_hub_land_paths_unknown_when_branch_diff_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
