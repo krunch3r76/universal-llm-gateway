@@ -12,7 +12,7 @@ _GLASS_ROW_PROBE_JS = (
     "if(t){const x=(t.textContent||'').replace(/\\s+/g,' ').trim();if(x)return x;}"
     "const b=el.querySelector('button[data-agent-id]');"
     "if(b&&b.getAttribute('aria-label'))return b.getAttribute('aria-label').split(',')[0].trim();"
-    "return(el.innerText||'').trim().split('\\n')[0].trim();};"
+    "return(el.innerText||'').trim().split('\\\\n')[0].trim();};"
     "const rowActive=(el)=>el.getAttribute('data-active')==='true'"
     "||!!el.querySelector('.ui-sidebar-menu-button-trigger[aria-current=\"page\"]')"
     "||el.getAttribute('aria-selected')==='true'||el.getAttribute('aria-current')==='true'"
@@ -88,7 +88,7 @@ def _archive_agent_js(agent_id: str) -> str:
         " const btn = el.querySelector('button[aria-label=\"Archive\"]');"
         " if (!btn) return {ok: false, reason: 'no_archive_btn'};"
         " btn.click(); return {ok: true, archived: target, method: 'dom_click'};"
-        " } return {ok: false, reason: 'row_not_found'}; }})()"
+        " } return {ok: false, reason: 'row_not_found'}; })()"
     )
 
 
@@ -150,7 +150,9 @@ def rename_agent_row_in_sidebar(
     if err:
         return err
     assert ws_url is not None
-    return _hop.asyncio.run(_rename_title_async(ws_url, agent_id.strip(), new_title.strip(), timeout_s))
+    return _hop.asyncio.run(
+        _rename_title_async(ws_url, agent_id.strip(), new_title.strip(), timeout_s=timeout_s)
+    )
 
 
 async def _rename_title_async(
