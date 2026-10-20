@@ -67,10 +67,10 @@ async def _pinned_reader_witness(
 ]:
     """Probe only the pinned execution_id, at most once, for this snapshot.
 
-    Unpinned ``producers[]`` rows stay on the admit-grace path. Probing every
-    past-grace link made ``wait`` cost grow with N, one GIW call each, using
-    the probe's existing timeout. Awaits the async GIW probe so a hung peer
-    cannot pin the uvicorn thread. Does not write ``terminal_status``.
+    A pinned snapshot does not list those other links. Probing every past-grace
+    link made ``wait`` cost grow with N, one GIW call each, using the probe's
+    existing timeout. Awaits the async GIW probe so a hung peer cannot pin the
+    uvicorn thread. Does not write ``terminal_status``.
     """
     if not execution_id:
         return None, None
@@ -158,11 +158,17 @@ async def _snapshot(
         after_turn=after_turn,
         turns=turns,
     )
-    producers = project_thread_producers(
-        dispatch_links,
-        now=clock,
-        liveness_witnesses=witness_map,
-    )
+    # A pinned probe asks for one producer. Listing every dispatch link
+    # (~70 rows, ~14 KB on role:root 16416) tripped KERNEL-H (a:39827).
+    # The thread-wide registry remains the unpinned wait.
+    if execution_id:
+        producers = [producer]
+    else:
+        producers = project_thread_producers(
+            dispatch_links,
+            now=clock,
+            liveness_witnesses=witness_map,
+        )
     return {
         "thread_id": thread_id,
         "complete": complete,

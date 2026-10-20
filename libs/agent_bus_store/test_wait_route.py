@@ -340,6 +340,68 @@ def test_wait_proof_reply_from_specimen_347_complete(tmp_path) -> None:
         assert body["qualifying_reply_turn"] == 2
 
 
+def test_wait_pinned_execution_id_omits_sibling_producers(tmp_path) -> None:
+    """Pinned wait=0 returns only the named producer (a:39827).
+
+    The break is a thread with many dispatch links: the snapshot used to
+    list every link beside the pin (~14 KB, KERNEL-H). Sibling rows must
+    be absent whether the pin is linked or missing.
+    """
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-pinned-siblings",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        for execution_id in ("exec-pin", "exec-sib-1", "exec-sib-2"):
+            admit_dispatch(
+                thread_id=thread_id,
+                execution_id=execution_id,
+                pipeline_id="cursor-sdk-generate",
+            )
+        pinned = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from"
+            "&from_agent=web-anthropic&execution_id=exec-pin"
+        )
+        assert pinned.status_code == 200
+        pinned_body = pinned.json()
+        assert pinned_body["producers"] == [pinned_body["producer"]]
+        assert pinned_body["producer"]["execution_id"] == "exec-pin"
+        missing = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from"
+            "&from_agent=web-anthropic&execution_id=exec-missing"
+        )
+        assert missing.status_code == 200
+        missing_body = missing.json()
+        assert [row["execution_id"] for row in missing_body["producers"]] == [
+            "exec-missing"
+        ]
+        assert missing_body["producer"]["state"] == "unlinked"
+        unpinned = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from"
+            "&from_agent=web-anthropic"
+        )
+        assert unpinned.status_code == 200
+        assert {row["execution_id"] for row in unpinned.json()["producers"]} == {
+            "exec-pin",
+            "exec-sib-1",
+            "exec-sib-2",
+        }
+
+
 def test_wait_producer_unlinked_when_execution_id_has_no_row(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         created = client.post(
@@ -482,8 +544,8 @@ def test_wait_producers_orders_in_flight_before_recent_terminal(tmp_path) -> Non
 def test_wait_probes_only_pinned_past_grace_link(tmp_path, monkeypatch) -> None:
     """N past-grace links: wait probes the pinned execution_id once.
 
-    Unpinned producers[] rows stay on the grace path (unknown /
-    no_liveness_signal) and terminal_status is not written.
+    producers[] is that one producer. Sibling links are not listed, and
+    terminal_status is not written.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -540,11 +602,8 @@ def test_wait_probes_only_pinned_past_grace_link(tmp_path, monkeypatch) -> None:
         assert body["producer"]["state"] == "in_flight"
         assert body["producer"]["liveness_reason"] == "witness_live"
         assert body["producer"]["terminal_status"] is None
-        by_id = {row["execution_id"]: row for row in body["producers"]}
-        assert by_id["exec-0"]["state"] == "in_flight"
-        assert by_id["exec-0"]["liveness_reason"] == "witness_live"
-        assert by_id["exec-1"]["state"] == "unknown"
-        assert by_id["exec-1"]["liveness_reason"] == "no_liveness_signal"
+        assert body["producers"] == [body["producer"]]
+        assert [row["execution_id"] for row in body["producers"]] == ["exec-0"]
         with connect() as conn:
             stored = conn.execute(
                 "SELECT terminal_status FROM thread_dispatch_links WHERE thread_id = ?",
