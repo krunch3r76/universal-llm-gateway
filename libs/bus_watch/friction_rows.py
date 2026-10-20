@@ -31,9 +31,12 @@ Row lifecycle (one row = one friction assertion, id ``a:<assertion_id>``)
    ``commit:<sha>``). A closed friction is superseded and leaves the harvest.
 4. **Guards** — charter scope; ``policy.friction_dispatch_cap`` ticker-minted
    friction spawns per night (``current_night_id`` = UTC day; default 3); the
-   conductor's REPEATED_FAILURE rule — a second ``direct-first`` mark on the
-   same row flags ``repeated_failure``: consult, then ``todo-minted | declined``,
-   never a third variant.
+   conductor's REPEATED_FAILURE rule — two ``direct-first`` marks on the same
+   row stay ``in_flight`` (one replace-input attempt allowed); a third
+   ``direct-first`` marks ``repeated_failure``: consult, then
+   ``todo-minted | declined``. Same input failed twice ⇒ no more retries of
+   that input; one attempt of a different kind (replace the input) is allowed
+   before REPEATED_FAILURE; a third retry of the same input is forbidden.
 
 Non-goals: no spawn-predicate change, no pipeline change, no ticker change.
 """
@@ -49,7 +52,10 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 DISPOSITIONS = ("direct-first", "todo-minted", "declined")
 DEFAULT_FRICTION_DISPATCH_CAP = 3
-REPEATED_FAILURE_ATTEMPTS = 2
+REPEATED_FAILURE_ATTEMPTS = 3
+REPEATED_FAILURE_RULE = (
+    "Same input failed twice ⇒ no more retries of that input; one attempt of a different kind (replace the input) is allowed before REPEATED_FAILURE; a third retry of the same input is forbidden."
+)
 # Mirrors cortex_store.dispatch_ops._shared._FRICTION_CATEGORIES minus ``feature``:
 # a feature friction is an ask (cortex ``actionable=false``) and a liaison has no
 # authority to commission work, so it never becomes a score row.
@@ -171,9 +177,10 @@ def _parse_row(raw: dict[str, Any], owner: str) -> dict[str, Any] | None:
 
 
 def _row_state(mark: dict[str, Any] | None) -> str:
-    """``open`` (needs a disposition) · ``in_flight`` (direct-first, first or second
-    attempt) · ``repeated_failure`` (a direct-first re-mark: consult, no third
-    variant) · ``close_pending`` (todo-minted/declined but not yet closed on the
+    """``open`` (needs a disposition) · ``in_flight`` (direct-first, attempts below
+    ``REPEATED_FAILURE_ATTEMPTS``) · ``repeated_failure`` (third direct-first on
+    the same row: consult, then todo-minted/declined per ``REPEATED_FAILURE_RULE``)
+    · ``close_pending`` (todo-minted/declined but not yet closed on the
     assertion)."""
     if not mark:
         return "open"
@@ -330,9 +337,9 @@ def mark_friction(
 ) -> dict[str, Any]:
     """Bind a disposition on a row (operator key ``friction_dispositions``).
 
-    Each ``direct-first`` mark counts one attempt; the second flips the row to
-    ``repeated_failure``. ``todo-minted`` / ``declined`` reset attempts — the
-    row now waits for its ``friction_close``.
+    Each ``direct-first`` mark counts one attempt; at ``REPEATED_FAILURE_ATTEMPTS``
+    the row flips to ``repeated_failure``. ``todo-minted`` / ``declined`` reset
+    attempts — the row now waits for its ``friction_close``.
     """
     marks = dict(state.get("friction_dispositions") or {})
     prior = marks.get(rid) or {}
@@ -368,7 +375,7 @@ def now_row(digest: dict[str, Any]) -> str:
         return (
             f"{head} — REPEATED_FAILURE (direct-first ×{attempts}): consult, then "
             f"--mark-friction {row['id']}:todo-minted|declined + friction_close; "
-            "never a third variant"
+            f"{REPEATED_FAILURE_RULE}"
         )
     return (
         f"{head} «{row['note'][:_EVENT_NOTE_CHARS]}» → disposition direct-first | "

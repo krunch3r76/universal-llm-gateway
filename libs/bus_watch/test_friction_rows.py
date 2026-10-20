@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bus_watch.friction_rows import (
+    REPEATED_FAILURE_RULE,
     build_rows,
     dispatched_tonight,
     fold_fingerprint,
@@ -166,8 +167,9 @@ def test_record_spawn_service_latches_friction_items() -> None:
 
 
 def test_disposition_states_and_repeated_failure() -> None:
-    """direct-first → in flight (not forcing); a second direct-first → REPEATED_FAILURE
-    (forcing again, consult); todo-minted → waits for friction_close."""
+    """direct-first → in flight (not forcing); second direct-first still in flight;
+    third direct-first → REPEATED_FAILURE (forcing, consult); todo-minted → waits
+    for friction_close."""
     state: dict = {}
     at = f"{_NIGHT}T09:00:00Z"
     assert mark_friction(state, "a:33355", "direct-first", at=at)["attempts"] == 1
@@ -177,8 +179,12 @@ def test_disposition_states_and_repeated_failure() -> None:
     assert by_id["a:32873"]["forcing"]
     mark_friction(state, "a:33355", "direct-first", at=at)
     rows = build_rows({"service:agent-bus": _RECORDED}, state)
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["a:33355"]["state"] == "in_flight" and not by_id["a:33355"]["forcing"]
+    mark_friction(state, "a:33355", "direct-first", at=at)
+    rows = build_rows({"service:agent-bus": _RECORDED}, state)
     assert rows[0]["state"] == "repeated_failure" and rows[0]["forcing"]
-    assert "never a third variant" in now_row({"frictions": rows})
+    assert REPEATED_FAILURE_RULE in now_row({"frictions": rows})
     mark_friction(state, "a:33355", "todo-minted", at=at)
     rows = build_rows({"service:agent-bus": _RECORDED}, state)
     assert rows[0]["state"] == "close_pending" and not rows[0]["forcing"]
