@@ -14,12 +14,13 @@ from fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from request_profile import bind_request  # noqa: E402
+
 from tools import agent_bus as agent_bus_module  # noqa: E402
 from tools._agent_bus_post_guard import reconcile_send_arguments  # noqa: E402
+from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 from tools.agent_bus import register_agent_bus_tools  # noqa: E402
 from tools.agent_bus._arg_rewrite import reconcile_dispatch_arguments  # noqa: E402
-from request_profile import bind_request  # noqa: E402
-from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 
 
 @pytest.fixture

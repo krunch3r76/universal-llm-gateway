@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
 from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
