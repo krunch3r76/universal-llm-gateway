@@ -564,6 +564,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         position: str = "",
         target: str = "",
         all_occurrences: bool = False,
+        size_only: bool = False,
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
@@ -616,6 +617,20 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 return {"error": err}
             read_sha256 = _read_sha256_for_file(resolved)
             if op == "list_sections":
+                if size_only:
+                    record(
+                        "mcp.tool.markdown.sections.listed",
+                        path=path,
+                        sandbox=sandbox,
+                        count=0,
+                        size_only=True,
+                    )
+                    return {
+                        "path": path,
+                        "sandbox": sandbox,
+                        "total_chars": len(text),
+                        "read_sha256": read_sha256,
+                    }
                 try:
                     sections = md_list_sections(text)
                 except SectionError as e:
