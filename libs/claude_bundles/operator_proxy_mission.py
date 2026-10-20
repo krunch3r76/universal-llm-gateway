@@ -296,12 +296,13 @@ def _enforce_hop_render_max(
     """Keep the hop UTF-8 envelope under HOP_RENDER_MAX_B without trimming an in-cap leg."""
     if hop_kind != "mission":
         return
+    from hop_handoff.standing_handoff import standing_handoff_uri
+
     from claude_bundles.operator_proxy_standing_render import (
         CHECKPOINT_BUDGET_B,
         HOP_RENDER_MAX_B,
-        _extract_current_leg_block,
         _truncate_utf8,
-        first_act_call1_line,
+        measure_checkpoint_budget_bytes,
     )
 
     def _total_bytes() -> int:
@@ -314,9 +315,15 @@ def _enforce_hop_render_max(
     if _total_bytes() <= HOP_RENDER_MAX_B:
         return
 
-    current = _extract_current_leg_block(standing_handoff_text or "") or ""
-    leg_bytes = len(current.encode("utf-8"))
-    protected_floor = CHECKPOINT_BUDGET_B if leg_bytes <= CHECKPOINT_BUDGET_B else 0
+    leg_bytes = measure_checkpoint_budget_bytes(standing_handoff_text or "")
+    protected_floor = (
+        CHECKPOINT_BUDGET_B
+        if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B
+        else 0
+    )
+
+    initial_size: int | None = None
+    last_target: int | None = None
 
     while _total_bytes() > HOP_RENDER_MAX_B:
         checkpoint = fields.get("checkpoint_block") or ""
@@ -330,9 +337,25 @@ def _enforce_hop_render_max(
         target = max(protected_floor, size - shrink)
         if target >= size:
             break
-        fields["checkpoint_block"] = (
-            _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
+        if target < size:
+            if initial_size is None:
+                initial_size = size
+            last_target = target
+            fields["checkpoint_block"] = (
+                _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
+            )
+            fields["first_act_call1_line"] = first_act_call1_line(
+                lane=fields["lane"],
+                checkpoint_block=fields["checkpoint_block"],
+            )
+
+    if last_target is not None and initial_size is not None:
+        uri = standing_handoff_uri(fields["lane"])
+        flag = (
+            f"[budget_exceeded checkpoint {initial_size}/{last_target} "
+            f"\u2014 read {uri}]"
         )
+        fields["checkpoint_block"] = fields["checkpoint_block"] + "\n" + flag
         fields["first_act_call1_line"] = first_act_call1_line(
             lane=fields["lane"],
             checkpoint_block=fields["checkpoint_block"],
