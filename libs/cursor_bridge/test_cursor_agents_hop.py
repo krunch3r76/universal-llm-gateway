@@ -18,6 +18,7 @@ from cursor_bridge.cursor_agents_archive import (
 from cursor_bridge.cursor_agents_hop import (
     _archive_agent_js,
     _archive_async,
+    _launch_async,
     _prune_predecessors_async,
     _root_row_pattern,
     archive_cursor_agents_tab,
@@ -85,7 +86,12 @@ def test_submit_wake_line_js_generating_clears_draft() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "status === 'generating'" in js
     assert "clearContent" in js
+    assert "composerUtilsService.clearText" in js
+    assert "setContent" not in js
+    assert "updateComposerData" not in js
     assert "skipClearInput: true" not in js
+    assert "richText: text" in js
+    assert " finally {" in js
     idle = js.split("} else {", 1)[1]
     assert "submitChatMaybeAbortCurrent" in idle
     assert idle.index("clearContent") > idle.index("submitChatMaybeAbortCurrent")
@@ -96,6 +102,16 @@ def test_launch_tab_js_extracts_created_header_id() -> None:
     assert "created.header && created.header.id" in js
     assert "created._inner && created._inner.agentId" in js
     assert "created.stableId" in js
+    assert "__ulgPendingLaunchPromise" in js
+    assert "already_created" in js
+
+
+def test_launch_tab_js_requested_agent_id_idempotent() -> None:
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    js = launch_new_agent_tab_js("hello", "", requested_agent_id=rid)
+    assert rid in js
+    assert "getAgentHeader" in js
+    assert "composerId: requestedAgentId" in js
 
 
 def test_launch_tab_js_uses_glass_services_not_input() -> None:
@@ -106,6 +122,8 @@ def test_launch_tab_js_uses_glass_services_not_input() -> None:
     assert "setModelConfigForComposer" in js
     assert "submitChatMaybeAbortCurrent" in js
     assert "steerIntent" in js
+    assert "prompt.editor.commands.setContent" not in js
+    assert "updateComposerData(handle, { text, richText: text })" not in js
     assert "Input.dispatchKeyEvent" not in js
     assert "Input.insertText" not in js
     assert "entries.entries()" in js
@@ -202,6 +220,44 @@ def test_session_unreachable_xvfb_returns_none() -> None:
     assert ide_hop.session_unreachable(":8") is None
 
 
+@pytest.mark.asyncio
+async def test_launch_async_recovers_after_promise_collected() -> None:
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            raise RuntimeError("Uncaught (in promise) Promise was collected")
+        if mid == 90:
+            return {"ok": True, "agent_id": rid, "method": "recovered_after_gc"}
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "resume 10479",
+            page,
+            timeout_s=5.0,
+            model_query="Grok 4.7",
+            requested_agent_id=rid,
+        )
+    assert out["ok"] is True
+    assert out["editor_agent_id"] == rid
+    assert out["glass_launch"]["method"] == "recovered_after_gc"
+
+
 def test_launch_cursor_agents_tab_ok() -> None:
     page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
 
@@ -268,13 +324,15 @@ def test_archive_agent_js_streaming_guard() -> None:
     assert '[aria-label="In progress"], .ui-dot-grid-loader' in js
     assert "agent_streaming" in js
     assert "meta.unknown" in js
+    assert "archiveAgent" in js
     assert "btn.click()" in js
     assert "getComposerBackgroundWork" in js
     assert "backgroundWorkService" in js
     assert "in_progress" in js
     assert "getAgentHeader" in js
-    # streaming check precedes archive click
-    assert js.index("agent_streaming") < js.index("btn.click()")
+    # streaming check precedes archive paths
+    assert js.index("agent_streaming") < js.index("archiveAgent")
+    assert js.index("archiveAgent") < js.index("btn.click()")
 
 
 @pytest.mark.asyncio
@@ -296,7 +354,7 @@ async def test_archive_async_polls_until_idle() -> None:
 
     with (
         patch("websockets.connect", return_value=_WsCtx()),
-        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval),
         patch("cursor_bridge.cursor_agents_hop.asyncio.sleep", new_callable=AsyncMock),
     ):
         out = await _archive_async(
@@ -323,7 +381,7 @@ async def test_archive_async_streaming_timeout() -> None:
             return None
 
     with patch("websockets.connect", return_value=_WsCtx()), patch(
-        "cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval
+        "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval
     ):
         out = await _archive_async(
             "ws://fake",
@@ -845,9 +903,11 @@ async def test_prune_skips_newer_than_departing_by_sidebar_index() -> None:
 
 def test_finalize_xvfb_hop_sidebar_prune_before_rename() -> None:
     calls: list[str] = []
+    prune_kwargs: dict[str, object] = {}
 
     def fake_prune(*a, **k):  # type: ignore[no-untyped-def]
         calls.append("prune")
+        prune_kwargs.update(k)
         return {"ok": True}
 
     def fake_rename(*a, **k):  # type: ignore[no-untyped-def]
@@ -870,6 +930,66 @@ def test_finalize_xvfb_hop_sidebar_prune_before_rename() -> None:
             slug_fragment="slug",
         )
     assert calls == ["prune", "rename"]
+    assert prune_kwargs.get("keep_recent_predecessors") == 0
+
+
+@pytest.mark.asyncio
+async def test_prune_only_retired_accepts_paren_retired_suffix() -> None:
+    list_result = [
+        {
+            "agent_id": "holder",
+            "title": "10479 live",
+            "active": True,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 300,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "paren-retired",
+            "title": "10479 slug (retired)",
+            "active": False,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 100,
+            "sidebar_index": 1,
+        },
+    ]
+    archived: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archived.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="holder",
+            departing_agent_id="",
+            holder_agent_id="holder",
+            keep_recent_predecessors=0,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+            select_active=False,
+            only_retired=True,
+        )
+    assert "paren-retired" in archived
 
 
 def test_archive_cursor_agents_tab_row_not_found() -> None:

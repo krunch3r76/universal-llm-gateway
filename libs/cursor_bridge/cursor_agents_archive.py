@@ -72,15 +72,23 @@ def _root_row_pattern(root_id: str) -> str:
 def _archive_agent_js(agent_id: str) -> str:
     aid = json.dumps(agent_id.strip())
     return (
-        f"(() => {{ const target = {aid};"
+        f"(async () => {{ const target = {aid};"
         f"{_GLASS_ROW_PROBE_JS}"
         " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
         " if (rowAgentId(el) !== target) continue;"
         " if (rowStreaming(el)) return {ok: false, reason: 'agent_streaming', agent_id: target};"
+        " const svc = glassServices(el);"
+        " if (svc.agentRepositoryService"
+        " && typeof svc.agentRepositoryService.archiveAgent === 'function') {"
+        " try {"
+        " await svc.agentRepositoryService.archiveAgent(target);"
+        " return {ok: true, archived: target, method: 'archiveAgent'};"
+        " } catch (e) { /* fall through to DOM */ }"
+        " }"
         " const btn = el.querySelector('button[aria-label=\"Archive\"]');"
         " if (!btn) return {ok: false, reason: 'no_archive_btn'};"
-        " btn.click(); return {ok: true, archived: target};"
-        " } return {ok: false, reason: 'row_not_found'}; })()"
+        " btn.click(); return {ok: true, archived: target, method: 'dom_click'};"
+        " } return {ok: false, reason: 'row_not_found'}; }})()"
     )
 
 
@@ -210,7 +218,7 @@ async def _archive_on_ws(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + max(0.0, wait_until_idle_s)
     while True:
-        result = await _hop._eval(ws, eval_id, _archive_agent_js(agent_id), timeout_s)
+        result = await _hop._eval_await(ws, eval_id, _archive_agent_js(agent_id), timeout_s)
         if isinstance(result, dict):
             if result.get("ok") or result.get("reason") != "agent_streaming":
                 return result
@@ -378,7 +386,13 @@ async def _prune_predecessors_async(
             row = row_by_aid.get(aid, {})
             if only_retired:
                 title = str(row.get("title") or "")
-                if not title.startswith("[retired]") and aid not in retired_ids:
+                tl = title.lower()
+                is_retired = (
+                    title.startswith("[retired")
+                    or title.endswith("(retired)")
+                    or "(retired)" in tl
+                )
+                if not is_retired and aid not in retired_ids:
                     skipped.append(
                         {"id": aid, "agent_id": aid, "reason": "not_marked_retired"}
                     )

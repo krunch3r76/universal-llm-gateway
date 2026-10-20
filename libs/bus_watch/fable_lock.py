@@ -258,10 +258,17 @@ def claim_fable_lock(
         attended = holder.startswith("ide:")
         may_preempt = attended and (live_holder.startswith("sdk:") or take_over)
         if may_preempt:
-            current["preempt_by"] = holder
-            path.write_text(json.dumps(current, indent=2), encoding="utf-8")
-            return {"ok": False, "reason": "held_preempt_requested", "lock": current}
-        return {"ok": False, "reason": "held", "lock": current}
+            ide_to_ide_takeover = (
+                take_over
+                and holder.startswith("ide:")
+                and live_holder.startswith("ide:")
+            )
+            if not ide_to_ide_takeover:
+                current["preempt_by"] = holder
+                path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+                return {"ok": False, "reason": "held_preempt_requested", "lock": current}
+        else:
+            return {"ok": False, "reason": "held", "lock": current}
     hops = _hops_for_night(current, night) + (1 if hop else 0)
     by_night = dict(current.get("hops_by_night") or {})
     by_night[night] = hops

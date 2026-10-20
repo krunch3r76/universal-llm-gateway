@@ -29,6 +29,7 @@ import os
 import shlex
 import subprocess
 import time
+import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -833,12 +834,19 @@ def fire_ide_hop(
     try:
         if is_cursor_xvfb_host(resolved_gui_host):
             debug_url = cursor_debug_url_for_gui_host(resolved_gui_host)
+            requested_agent_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"ulg-ide-hop:{root_id}:{tip_cp}:{seal.get('bus_turn')}",
+                )
+            )
             keystroke = launch_cursor_agents_tab(
                 message,
                 model_query=resolved_model_query,
                 model_knobs=resolved_hop_knobs,
                 debug_url=debug_url,
                 gui_host=resolved_gui_host,
+                requested_agent_id=requested_agent_id,
             )
             if not keystroke.get("ok"):
                 return {
@@ -1023,7 +1031,7 @@ def finalize_xvfb_hop_sidebar(
             active_agent_id=landed_agent_id,
             departing_agent_id=departing_agent_id,
             holder_agent_id=holder_aid,
-            keep_recent_predecessors=1,
+            keep_recent_predecessors=0,
             wait_until_idle_s=0.0,
             debug_url=debug_url,
         )
@@ -1067,7 +1075,7 @@ def cleanup_xvfb_sidebar_on_holder_claim(
             keep_recent_predecessors=0,
             wait_until_idle_s=0.0,
             select_active=False,
-            only_retired=True,
+            only_retired=False,
             retired_agent_ids=retired_agent_ids,
             debug_url=debug_url,
         )

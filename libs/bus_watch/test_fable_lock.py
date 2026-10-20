@@ -188,15 +188,14 @@ def test_second_attended_tab_is_held_without_take_over(watch_dir: Path) -> None:
 
 
 def test_take_over_preempts_live_attended_holder(watch_dir: Path) -> None:
-    """Operator's word (resume on another workstation) requests preempt; claim succeeds after release."""
+    """``ide:`` hop resume transfers the lock immediately; departing tab does not poll ``preempt_by``."""
     assert fl.claim_fable_lock("ide:tab-a", hop=False, root_id="10479")["ok"]
     requested = fl.claim_fable_lock(
         "ide:tab-b", hop=False, root_id="10479", take_over=True
     )
-    assert requested["reason"] == "held_preempt_requested"
-    assert fl.read_lock("10479").get("preempt_by") == "ide:tab-b"
-    assert fl.release_fable_lock("ide:tab-a", root_id="10479")["ok"]
-    assert fl.claim_fable_lock("ide:tab-b", hop=False, root_id="10479")["ok"] is True
+    assert requested["ok"] is True
+    assert fl.read_lock("10479").get("holder") == "ide:tab-b"
+    assert fl.read_lock("10479").get("preempt_by") is None
 
 
 def test_release_refused_from_another_process_unless_operator(
