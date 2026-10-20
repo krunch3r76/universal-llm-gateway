@@ -1411,12 +1411,12 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     )
 
     _leg_tail = (
-        "OPEN:\n"
-        "- none\n"
-        "NEXT:\n"
-        "- ok\n"
-        "Traps:\n"
-        "- none\n"
+        "OPEN: 15851#2298 reds unowned; a:39707 needs owner on bus\n"
+        "CARRIED (not re-read): prior leg fold keys only\n"
+        "Carried: lowercase label still terminates\n"
+        "NEXT: (1) ok step\n"
+        "Traps: none listed\n"
+        "FRICTION: none blocking\n"
     )
 
     prose = (
@@ -1437,15 +1437,36 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
         "LEG 11 — 12286#5000 — seat abc — schema checkpoint/v1\n"
         "IN FLIGHT:\n"
         "- (16416, decision:x) · worker 15851 · exec e1 · poll_hint {}\n"
+        "- Opening note: prose must not terminate plain IN FLIGHT\n"
+        "- Nextcloud: path mention must not terminate\n"
         + _leg_tail
     )
     assert current_leg_has_inflight_section(sidecar_empty.split("## CURRENT LEG", 1)[1])
     inflight_named = inflight_section_from_sidecar(sidecar_named)
     assert "OPEN:" not in inflight_named
-    assert "decision:x" in extract_inflight_work_keys(inflight_named)
+    assert "CARRIED" not in inflight_named
+    assert "Carried:" not in inflight_named
+    keys_named = extract_inflight_work_keys(inflight_named)
+    assert "decision:x" in keys_named
+    assert "a:39707" not in keys_named
 
     stale_keys = [
-        f"15851:{turn}:REQUEST|todo:stale-{turn}" for turn in range(100, 116)
+        "15851:1560:REQUEST|freeform|decision:anthropic-api-credits-use-A — stargate path check: does pid 1555855 (43013d190) load any path changed in 43013d190..b23846d77? Read-only, FACT back",
+        "15851:1577:REQUEST|freeform|decision:anthropic-api-credits-use-C1 — did RULING #1570 reach cc1? Name cc1's worker thread and work_key for the harness fix leg (read-only)",
+        "15851:1613:PLAN|friction:39550 r2 sha f94b1b05 — VERDICT PASS_WITH_NITS (2cb8d764fd86-542620b1)",
+        "15851:1631:PLAN|friction:39330|cc of #1630 (lane 17905)",
+        "15851:1798:PICKUP|friction:39610 #1793 items 1-2 dispatched; #1790 relays out; restarts per Kaywan (re #1790, #1793, #1794)",
+        "15851:1853:PICKUP|friction:39550 house 16416 (cursor) under f94b1b05; 39516 step-0 probe + 39330 c9d6e983 folded (re #1849)",
+        "15851:1854:PICKUP|friction:39614 residue investigate routed to house 16416 (read-only leg first) (re #1852)",
+        "15851:1983:PLAN|todo:cursor-sdk-token-efficiency-lean-a-d|Shape A PLAN ready for K43 xhigh review via gc1 (sha 7d367208; queued behind #1902 / 39668 / 39638)",
+        "15851:1998:PLAN|a:39687 G1+G2 implement proposal 2/2: tests and gates (re RULING #1996)",
+        "15851:2037:REQUEST|a:39707 needs owner; fable-5-1 consult on floor enforcement first",
+        "15851:2080:REQUEST|freeform|friction:39707: relay one question to Kaywan; the 2026-10-07 composer retirement exists only as a runbook changelog line",
+        "15851:2081:PLAN|todo:conductor-admit-pipeline-options-shape-a r-next^2",
+        "15851:2083:REQUEST|freeform|friction:39668: child 4 (child 3 refused step1_mcp_not_exception_b on operator streams); route a:39712; route K43s on #2081 and #2082",
+        "15851:2091:REQUEST|freeform|friction:39710 range forward fixes (K46 18302 REQUEST_CHANGES)",
+        "15851:2281:REQUEST|freeform|friction:30054 — co-sign or rule: K43 bar amendment per fork D (VERDICT line binds; envelope capture class informational); ACK 16416#863",
+        "15851:2300:REQUEST|freeform|todo:conductor-admit-pipeline-options-shape-a — stargate sync_restart on G1-G3 to load bb75af8b",
     ]
     fold_state = {
         "15851": LaneFoldState(watermark=3000, open_keys=stale_keys),
@@ -1474,8 +1495,9 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     )
     live_empty = fields_empty["live_leg"]
     assert "todo:peer-open" in live_empty
-    for turn in range(100, 116):
-        assert f"todo:stale-{turn}" not in live_empty
+    assert "a:39707" not in live_empty
+    assert "fable-5-1 consult on floor enforcement" not in live_empty
+    assert "conductor-admit-pipeline-options-shape-a — stargate" not in live_empty
 
     fields_named = hop_successor_fields(
         "thread_id: 12286\nhop_kind: mission\n",
@@ -1488,3 +1510,5 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     live_named = fields_named["live_leg"]
     assert "decision:x" in live_named
     assert "todo:peer-open" not in live_named
+    assert "a:39707" not in live_named
+    assert "needs owner" not in live_named

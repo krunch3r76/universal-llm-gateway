@@ -104,7 +104,7 @@ def hop_boundary_turn_from_header(header: str) -> int:
 
 _INFLIGHT_PLAIN_LINE_RE = re.compile(r"^IN FLIGHT:\s*$", re.IGNORECASE)
 _PLAIN_LEG_LABEL_RE = re.compile(
-    r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps|Carried)\s*:?\s*$",
+    r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps)\b(?:\s*\([^)\n]*\))?\s*:",
     re.IGNORECASE,
 )
 _TRAILING_WORK_KEY_PUNCT_RE = re.compile(r"[,;.:)\]}>]+$")
