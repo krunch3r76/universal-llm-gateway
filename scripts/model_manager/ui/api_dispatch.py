@@ -28,6 +28,7 @@ from .controller.restart_drain import (
     BackgroundFailedHook,
     LocalServiceDrainSupervisor,
     StargateIdleDrainSupervisor,
+    arm_agent_bus_busy_drain,
     run_gated,
     run_gated_deferred,
     run_gated_drain_supervised,
@@ -148,9 +149,7 @@ async def execute(
                 raise ValueError("fleet_liveness services must be a list")
             projection = params.get("projection")
             if projection is not None and projection != "compact":
-                raise ValueError(
-                    'fleet_liveness projection must be "compact" when set'
-                )
+                raise ValueError('fleet_liveness projection must be "compact" when set')
             return await asyncio.to_thread(
                 build_snapshot,
                 ctl.root,
@@ -240,9 +239,7 @@ async def execute(
             )
             if refused is not None:
                 return refused
-            preempted = await preempt_stargate_idle_drain_if_needed(
-                ctl, service, force
-            )
+            preempted = await preempt_stargate_idle_drain_if_needed(ctl, service, force)
             if preempted is not None:
                 return preempted
             return await run_gated(
@@ -386,6 +383,30 @@ async def execute(
                     row_id=_optional_attr_str(params, "row_id"),
                     caller_agent=caller_agent_from_manage_request(params),
                 )
+            if service == "agent_bus" and not force:
+                armed = await arm_agent_bus_busy_drain(
+                    ctl.restart_gate,
+                    store=ctl.restart_intent_store,
+                    supervisor=LocalServiceDrainSupervisor(
+                        gate=ctl.restart_gate,
+                        service="agent_bus",
+                        store=ctl.restart_intent_store,
+                        lifecycle=lambda: _lifecycle_with_restart_window(
+                            ctl,
+                            service,
+                            "sync_restart",
+                            lambda: _sync_restart(ctl, service),
+                        ),
+                        exclude_job_id=caller_job_id,
+                    ),
+                    reason="manage sync_restart (agent_bus busy drain)",
+                    exclude_job_id=caller_job_id,
+                    code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                    row_id=_optional_attr_str(params, "row_id"),
+                    caller_agent=caller_agent_from_manage_request(params),
+                )
+                if armed is not None:
+                    return armed
             if not force and caller_dispatch_id:
                 work = await ctl.restart_gate.probe(service)
                 if work.busy and sole_busy_holder_matches(
@@ -426,9 +447,7 @@ async def execute(
             )
             if refused is not None:
                 return refused
-            preempted = await preempt_stargate_idle_drain_if_needed(
-                ctl, service, force
-            )
+            preempted = await preempt_stargate_idle_drain_if_needed(ctl, service, force)
             if preempted is not None:
                 return preempted
             before_release = rag_start_settle_hook(service)

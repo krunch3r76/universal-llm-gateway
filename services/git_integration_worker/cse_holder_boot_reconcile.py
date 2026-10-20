@@ -17,6 +17,34 @@ from services.git_integration_worker.cse_session_holders import (
 )
 
 
+def live_registry_urls() -> set[str] | None:
+    """Chat URLs in the CDP registry, or None when the snapshot cannot be read.
+
+    An empty set is a real empty snapshot (do not reap). None is a failed read.
+    """
+    try:
+        from claude_bundles.cdp_registry.dormant import list_dormant
+        from claude_bundles.cdp_registry.session_address import (
+            chat_url_for_registration,
+            list_active,
+        )
+    except Exception:
+        return None
+    try:
+        urls: set[str] = set()
+        for reg in list_active():
+            url = (chat_url_for_registration(reg.registration_id) or "").strip()
+            if url:
+                urls.add(normalize_cse_url(url))
+        for seat in list_dormant():
+            url = normalize_cse_url(str(seat.chat_url or ""))
+            if url:
+                urls.add(url)
+        return urls
+    except Exception:
+        return None
+
+
 def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
     """Reconcile holder seat fields from registry; GIW wins lane fields."""
     from claude_bundles.cdp_registry.dormant import list_dormant
@@ -125,4 +153,4 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
     return summary
 
 
-__all__ = ["boot_reconcile"]
+__all__ = ["boot_reconcile", "live_registry_urls"]

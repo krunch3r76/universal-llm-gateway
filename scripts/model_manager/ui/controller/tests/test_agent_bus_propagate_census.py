@@ -170,6 +170,26 @@ def test_run_gated_proceeds_when_self_is_sole_occupant() -> None:
     assert calls == ["ran"]
 
 
+def test_execute_foreign_agent_bus_busy_returns_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wiring: a busy agent_bus census returns the armed drain, not run_gated."""
+
+    async def _arm(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {
+            "status": "deferred",
+            "state": "draining",
+            "restart_intent_id": "intent-foreign",
+        }
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.api_dispatch.arm_agent_bus_busy_drain", _arm
+    )
+    result = _run(execute(MagicMock(), "sync_restart", "agent_bus", {}))
+    assert result["restart_intent_id"] == "intent-foreign"
+    assert result["state"] == "draining"
+
+
 def test_execute_forwards_caller_job_id_only_for_agent_bus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -186,6 +206,11 @@ def test_execute_forwards_caller_job_id_only_for_agent_bus(
         AsyncMock(return_value=None),
     )
     ctl = MagicMock()
+
+    async def _probe(_service: str) -> ActiveWork:
+        return ActiveWork(busy=True, detail=_self_only_payload())
+
+    ctl.restart_gate.probe = _probe
     result = _run(
         execute(
             ctl,

@@ -13,7 +13,9 @@ import pytest
 
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
+    DrainOutcome,
     RestartDrainGate,
+    arm_agent_bus_busy_drain,
     run_gated,
     run_gated_drain_supervised,
     run_gated_self_holder_drain_supervised,
@@ -205,6 +207,88 @@ def test_self_holder_busy_mints_restart_intent(
     assert _AGENT_BUS in probe_live_calls
 
 
+def test_deferred_body_counts_cse_holders_instead_of_listing_them() -> None:
+    """A deferred manage body must not carry the cse_holders row list."""
+    rows = [{"holder_id": f"cse_{i}", "state": "driving"} for i in range(3)]
+    outcome = DrainOutcome(
+        state="busy",
+        service="agent_bus",
+        reason="in flight",
+        active_work={"busy": True, "cse_holders": rows, "active_count": 1},
+    )
+    rendered = outcome.to_result()
+    assert "cse_holders" not in rendered["active_work"]
+    assert rendered["active_work"]["cse_holder_count"] == 3
+    assert rendered["active_work"]["active_count"] == 1
+    assert outcome.active_work["cse_holders"] == rows
+
+
+def test_agent_bus_foreign_busy_mints_restart_intent(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Foreign lane-B busy must arm restart_intent_id, not soft-defer."""
+    stub_process_live_probe(monkeypatch)
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-agent-bus.db")
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(
+                    busy=True,
+                    detail=_self_holder_active_work(_FOREIGN_DISPATCH),
+                )
+            )
+        }
+    )
+    supervisor = _RecordingSupervisor()
+
+    async def _arm() -> dict[str, Any] | None:
+        result = await arm_agent_bus_busy_drain(
+            gate,
+            store=store,
+            supervisor=supervisor,
+            reason="test foreign agent_bus arm",
+        )
+        supervisor._block.set()
+        await asyncio.sleep(0)
+        return result
+
+    result = _run(_arm())
+    assert result is not None
+    assert result["status"] == "deferred"
+    assert result["state"] == "draining"
+    assert result["restart_intent_id"]
+    assert store.active_for_service(_AGENT_BUS) is not None
+    assert len(supervisor.intents) == 1
+
+
+def test_agent_bus_idle_after_caller_exclusion_does_not_arm(tmp_path: Any) -> None:
+    """The propagating job alone is idle and must not mint an intent."""
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-self-job.db")
+    detail = {
+        "busy": True,
+        "active_count": 1,
+        "active_ops": [{"kind": "cursor-auto", "op_id": _SELF_DISPATCH}],
+    }
+    gate = RestartDrainGate(
+        probes={_AGENT_BUS: _StaticBusyProbe(ActiveWork(busy=True, detail=detail))}
+    )
+    supervisor = _RecordingSupervisor()
+    result = _run(
+        arm_agent_bus_busy_drain(
+            gate,
+            store=store,
+            supervisor=supervisor,
+            reason="test self job",
+            exclude_job_id=_SELF_DISPATCH,
+        )
+    )
+    assert result is None
+    assert store.active_for_service(_AGENT_BUS) is None
+    assert not supervisor.intents
+
+
 def test_foreign_holder_busy_still_soft_defer_without_intent(tmp_path: Any) -> None:
     """Foreign holder busy must stay state=busy with no restart_intent_id."""
     store = RestartIntentStore(db_path=tmp_path / "restart-intents-foreign.db")
@@ -264,6 +348,41 @@ def test_run_gated_foreign_holder_busy_without_caller_id(tmp_path: Any) -> None:
     assert result["status"] == "deferred"
     assert result["state"] == "busy"
     assert "restart_intent_id" not in result
+
+
+class _DownProbe:
+    async def snapshot(self) -> ActiveWork:
+        raise OSError("giw down")
+
+
+def test_agent_bus_probe_error_falls_through_to_run_gated() -> None:
+    """GIW down must defer via run_gated, not escape the arm as JSON-RPC -32000."""
+    gate = RestartDrainGate(probes={_AGENT_BUS: _DownProbe()})
+
+    armed = _run(
+        arm_agent_bus_busy_drain(
+            gate,
+            store=None,
+            supervisor=None,
+            reason="probe down",
+        )
+    )
+    assert armed is None
+
+    async def _lifecycle() -> str:
+        raise AssertionError("must not restart on a failed probe")
+
+    deferred = _run(
+        run_gated(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            force=False,
+            lifecycle=_lifecycle,
+        )
+    )
+    assert deferred["status"] == "deferred"
+    assert deferred["state"] == "probe_error"
 
 
 def test_busy_soft_defer_path_gone_for_force_false_evaluate(

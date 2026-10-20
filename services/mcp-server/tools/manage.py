@@ -300,7 +300,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
-                   until the caller exits; foreign holders still get state=busy.
+                   until the caller exits. agent_bus also mints restart_intent_id when
+                   other holders are still busy (durable idle-wait); it does not
+                   return state=busy with no intent.
         caller_thread_id: agent-bus thread for force-gate notices (defaults to
                    ULG_DISPATCH_THREAD_ID env when set).
         intent_id: required for cancel_restart_intent (restart-intent retraction)
@@ -452,12 +454,17 @@ def register_manage_tools(mcp: FastMCP) -> None:
         {"status":"deferred","state","service","reason","retry_after_s",
         "active_work","active_work_summary"} where state ∈ {busy, in_progress,
         probe_error, draining}. Prefer active_work_summary for a one-line holder
-        identity; dig into active_work only when you need structure. Honor
+        identity; dig into active_work only when you need structure. Deferred
+        active_work omits the cse_holders row list and carries cse_holder_count
+        instead (the rows are occupancy, not the drain decision). Honor
         retry_after_s and retry, or pass force=true with force_reason to preempt
         in-flight work while Gate 1 is busy.
         Self-holder busy-skip: when caller_dispatch_id matches the sole write-lease
         holder, sync_restart returns state=draining with restart_intent_id (post-exit
-        execution) instead of state=busy without an intent.
+        execution) instead of state=busy without an intent. agent_bus sync_restart
+        does the same whenever the census is still busy after dropping
+        caller_job_id, so a land can exit with restart_intent_id while other
+        lane-B work drains.
 
         Self-restart (mcp): sync_restart/rebuild returns status=ok immediately
         (manage.sock defers container stop to a background task). The triggering
