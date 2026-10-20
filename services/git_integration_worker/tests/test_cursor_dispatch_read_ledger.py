@@ -233,6 +233,47 @@ def test_work_key_ledger_route_empty_work_key_422() -> None:
     assert resp.status_code == 422
 
 
+def test_work_key_ledger_route_work_key_over_256_rejected() -> None:
+    """Oversized work_key must fail Query validation before ledger serialization (C1)."""
+    app = FastAPI()
+    app.include_router(claim_router)
+    client = TestClient(app)
+    long_key = "todo:" + "x" * 252
+    assert len(long_key.encode("utf-8")) == 257
+    resp = client.get("/api/v1/cursor/work-key-ledger", params={"work_key": long_key})
+    assert resp.status_code == 422
+
+
+def test_live_count_reflects_full_live_rows_when_budget_trims_list() -> None:
+    """live_count stays pre-trim total while live_dispatches shrinks under budget (C2)."""
+    live_rows = [
+        {
+            "dispatch_id": f"live-{i:03d}",
+            "status": "running",
+            "model": "cursor/grok-4.7",
+        }
+        for i in range(80)
+    ]
+    filler = "z" * 4000
+    pre_payload: dict = {
+        "work_key": _KEY,
+        "limit": 5,
+        "window_hours": 24,
+        "dispatches": [{"dispatch_id": "disp-fill", "filler": filler}],
+        "total_dispatches": 1,
+        "house_rollup": {
+            "live_dispatches": list(live_rows),
+            "live_count": len(live_rows),
+            "model_mix_24h": [],
+            "usage_24h": {"rows_covered": 0, "rows_total": 0},
+        },
+    }
+    result = _enforce_5kb_budget(pre_payload)
+    returned_live = result["house_rollup"]["live_dispatches"]
+    assert result["house_rollup"]["live_count"] == 80
+    assert len(returned_live) < 80
+
+
 def test_claim_guard_ledger_route_does_not_invoke_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     """Claim admit path stays isolated from ledger reads (ACK #5)."""
     calls: list[dict] = []

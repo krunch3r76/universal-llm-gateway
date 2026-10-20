@@ -421,6 +421,7 @@ def _enforce_5kb_budget(payload: dict[str, Any]) -> dict[str, Any]:
     total_dispatches = int(payload.get("total_dispatches") or len(dispatches))
     house: dict[str, Any] = dict(payload.get("house_rollup") or {})
     live_dispatches = list(house.get("live_dispatches") or [])
+    live_count_full = len(live_dispatches)
     model_mix = list(house.get("model_mix_24h") or [])
     usage_24h = dict(house.get("usage_24h") or {})
     shell = {
@@ -437,7 +438,7 @@ def _enforce_5kb_budget(payload: dict[str, Any]) -> dict[str, Any]:
             "total_dispatches": total_dispatches,
             "house_rollup": {
                 "live_dispatches": live_dispatches,
-                "live_count": len(live_dispatches),
+                "live_count": live_count_full,
                 "model_mix_24h": model_mix,
                 "usage_24h": usage_24h,
             },

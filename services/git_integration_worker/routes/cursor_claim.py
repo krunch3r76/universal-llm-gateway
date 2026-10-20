@@ -116,7 +116,7 @@ def get_occupancy(
 
 @router.get("/work-key-ledger", response_model=None)
 def get_work_key_ledger(
-    work_key: str = Query(..., min_length=1),
+    work_key: str = Query(..., min_length=1, max_length=256),
     limit: int = Query(5, ge=1, le=10),
     window_hours: int = Query(24, ge=1, le=168),
 ) -> Any:
