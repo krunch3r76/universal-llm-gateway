@@ -233,10 +233,14 @@ def live_watcher_labels(
 
 
 _DISTRIBUTED_JUDGMENT = (
-    "Explore recon in-tab · outsource regular judgment/design/advice → "
-    "cursor/gemini-4-argon (effort=high, fast=false) after retrieval-before-authoring "
-    "(rag scopes + targeted reads → retrieval report) · critical review → "
-    "cursor/muse-wonder-1.0 · independent check → cdp/opus-5.5. Before any STAY verdict. "
+    "Explore recon in-tab · orchestrate in-tab on cursor/grok-4.7 (effort=xhigh) · "
+    "outsource regular judgment/design/advice → cursor/gemini-4-argon "
+    "(effort=high, fast=false) after retrieval-before-authoring (rag scopes + "
+    "targeted reads → retrieval report) · independent check → cdp/opus-5.5 "
+    "(checker ≠ author ≠ advisor). divergent-ideation-v1 failure at operator_split "
+    "⇒ ¬ block: pass the retrieval report + 2-3 rival frames straight to "
+    "cursor/gemini-4-argon under exception: divergent_ideation_degraded_18362; "
+    "consult_ref is still required. Before any STAY verdict. "
 )
 _IN_SEAT_JUDGMENT = (
     "Explore recon in-tab · Judgment forks bind IN-SEAT under the house's explicit "
@@ -304,8 +308,10 @@ def build_ide_hop_message(
         "LOAD AND EXECUTE: runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
         "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
-        "cursor-sdk; life repo-write → life_dispatch; then cdp/opus-5.5 (check) → "
-        "cdp/opus-5 (design/judgment); cursor/grok-4.7 for live checkout; "
+        "cursor-sdk; life repo-write → life_dispatch; orchestration stays in-tab on "
+        "cursor/grok-4.7 (effort=xhigh); then cursor/gemini-4-argon (effort=high, "
+        "design/judgment/advice, after retrieval-before-authoring) → cdp/opus-5.5 "
+        "(independent check); cursor/grok-4.7 for live checkout; "
         "¬ cursor/claude-*; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
@@ -313,7 +319,10 @@ def build_ide_hop_message(
         "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
         "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
         "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
-        "outbound-voice-spec. Skip only on closed-spec mechanical/trivial first passes.",
+        "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: hand the "
+        "retrieval report + 2-3 rival frames to cursor/gemini-4-argon under "
+        "exception: divergent_ideation_degraded_18362, record consult_ref, proceed. "
+        "Skip only on closed-spec mechanical/trivial first passes.",
         f"NOW: {row}",
         *arm_lines,
         "WAKE: Push-driven via endpoint_wake_dispatcher -> display-chat-wake "
