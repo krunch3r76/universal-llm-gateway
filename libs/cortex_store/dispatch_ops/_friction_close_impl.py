@@ -119,16 +119,47 @@ def _build_close_claim(
 
 
 def _commit_touched_set(repo: str, sha: str) -> set[str] | None:
-    """Paths modified by ``sha``, or None when git diff-tree fails."""
-    proc = subprocess.run(
-        ["git", "-C", repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+    """Paths modified by ``sha`` against its first parent, or None when git fails."""
+    parent = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"{sha}^"],
         capture_output=True,
         text=True,
         timeout=5.0,
     )
+    if parent.returncode == 0 and parent.stdout.strip():
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo,
+                "diff",
+                "--name-only",
+                parent.stdout.strip(),
+                sha,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    else:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                sha,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
     if proc.returncode != 0:
         return None
-    return set(proc.stdout.strip().splitlines())
+    return {line for line in proc.stdout.splitlines() if line}
 
 
 def _path_touched_by_commit(path: str, touched: set[str]) -> bool:
