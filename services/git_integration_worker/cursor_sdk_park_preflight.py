@@ -83,28 +83,57 @@ class ParkPreflight:
     row: dict[str, Any] | None
     already_parked: bool = False
     detail: str | None = None
+    ambiguous_dispatch_ids: tuple[str, ...] = ()
 
 
-def _execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
+@dataclass(frozen=True, slots=True)
+class SubmittedIdResolution:
+    """Result of mapping a route ``dispatch_id`` path segment to one ledger row."""
+
+    row: dict[str, Any] | None
+    dispatch_id: str | None = None
+    ambiguous: bool = False
+    candidate_dispatch_ids: tuple[str, ...] = ()
+
+
+def execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
     conn = CursorDispatchLedger.instance()._connect()
     cur = conn.execute(
-        "SELECT * FROM cursor_sdk_dispatches WHERE execution_id=?",
+        "SELECT rowid AS _rowid, * FROM cursor_sdk_dispatches WHERE execution_id=?",
         (execution_id,),
     )
     return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
 
 
-def _resolve_row_for_submitted_id(submitted_id: str) -> dict[str, Any] | None:
-    """Map generate-admission ``execution_id`` (or prefixed form) to a ledger row."""
+def _lineage_head(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Park-resume lineage tip: no resume child in-set, else newest ``rowid``."""
+    if not candidates:
+        return None
+    ids = {str(c["dispatch_id"]) for c in candidates}
+    heads = [
+        c
+        for c in candidates
+        if str(c.get("park_resumed_by") or "") not in ids
+    ]
+    if not heads:
+        return None
+    if len(heads) == 1:
+        return heads[0]
+    return max(heads, key=lambda c: int(c.get("_rowid") or 0))
+
+
+def resolve_submitted_park_id(submitted_id: str) -> SubmittedIdResolution:
+    """Map generate-admission ``execution_id`` (or prefixed form) to one ledger row."""
     stripped = submitted_id.removeprefix(_CURSOR_SDK_DISPATCH_PREFIX)
     row = load_park_candidate_row(stripped)
     if row is not None:
-        return row
-    candidates = _execution_id_candidates(stripped)
+        return SubmittedIdResolution(row=row, dispatch_id=str(row["dispatch_id"]))
+    candidates = execution_id_candidates(stripped)
     if not candidates:
-        return None
+        return SubmittedIdResolution(row=None)
     if len(candidates) == 1:
-        return candidates[0]
+        c = candidates[0]
+        return SubmittedIdResolution(row=c, dispatch_id=str(c["dispatch_id"]))
     non_terminal = [
         c
         for c in candidates
@@ -116,10 +145,23 @@ def _resolve_row_for_submitted_id(submitted_id: str) -> dict[str, Any] | None:
         if is_dispatch_live(dispatch_id=str(c["dispatch_id"]))
     ]
     if len(live) == 1:
-        return live[0]
+        c = live[0]
+        return SubmittedIdResolution(row=c, dispatch_id=str(c["dispatch_id"]))
     if len(non_terminal) == 1:
-        return non_terminal[0]
-    return None
+        c = non_terminal[0]
+        return SubmittedIdResolution(row=c, dispatch_id=str(c["dispatch_id"]))
+    if not non_terminal:
+        head = _lineage_head(candidates)
+        if head is not None:
+            return SubmittedIdResolution(
+                row=head, dispatch_id=str(head["dispatch_id"])
+            )
+    if len(non_terminal) >= 2 or len(live) > 1:
+        ids = tuple(sorted(str(c["dispatch_id"]) for c in non_terminal or candidates))
+        return SubmittedIdResolution(
+            row=None, ambiguous=True, candidate_dispatch_ids=ids
+        )
+    return SubmittedIdResolution(row=None)
 
 
 def load_park_candidate_row(dispatch_id: str) -> dict[str, Any] | None:
@@ -189,11 +231,25 @@ def preflight_park(
     ``execution_id`` (bare or ``cursor-sdk:dispatch:``-prefixed).
     """
     discard = mode == "discard"
-    resolved = _resolve_row_for_submitted_id(dispatch_id)
-    if resolved is None:
+    resolution = resolve_submitted_park_id(dispatch_id)
+    if resolution.ambiguous:
+        return ParkPreflight(
+            refusal=ParkRefusal.NOT_LIVE_HERE,
+            row=None,
+            detail=(
+                "ambiguous execution_id: "
+                f"{', '.join(resolution.candidate_dispatch_ids)}"
+            ),
+            ambiguous_dispatch_ids=resolution.candidate_dispatch_ids,
+        )
+    if resolution.row is None or resolution.dispatch_id is None:
         return ParkPreflight(refusal=ParkRefusal.NOT_FOUND, row=None)
-    dispatch_id = str(resolved["dispatch_id"])
-    row = load_park_candidate_row(dispatch_id)
+    dispatch_id = resolution.dispatch_id
+    row = (
+        resolution.row
+        if "_nest_parent_status" in resolution.row
+        else load_park_candidate_row(dispatch_id)
+    )
     if row is None:
         return ParkPreflight(refusal=ParkRefusal.NOT_FOUND, row=None)
     status = str(row.get("status") or "")
@@ -269,6 +325,9 @@ __all__ = [
     "TERMINAL_RUN_STATUSES",
     "ParkPreflight",
     "ParkRefusal",
+    "SubmittedIdResolution",
+    "execution_id_candidates",
     "load_park_candidate_row",
     "preflight_park",
+    "resolve_submitted_park_id",
 ]
