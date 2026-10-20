@@ -250,6 +250,40 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             turn_number,
             exc_info=True,
         )
+    try:
+        from ..operator_observability_hooks import (
+            after_turn_created,
+            schedule_producer1_dispatch_from_result,
+        )
+
+        producer1_result = await asyncio.to_thread(
+            after_turn_created,
+            thread_id=turn.thread,
+            to_agent=turn.to,
+            from_agent=turn.from_agent,
+            subject=turn.subject,
+            turn_number=turn_number,
+            user_agent=turn.user_agent,
+        )
+        if producer1_result and producer1_result.get("needs_deferred_dispatch"):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(
+                    None,
+                    schedule_producer1_dispatch_from_result,
+                    producer1_result,
+                )
+            except Exception:
+                pass
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "owed_wake after turn create failed: thread=%s turn=%s",
+            turn.thread,
+            turn_number,
+            exc_info=True,
+        )
     return await asyncio.to_thread(
         build_turn_created,
         prepared,

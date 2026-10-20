@@ -671,16 +671,272 @@ from services.git_integration_worker.cse_holder_boot_reconcile import (  # noqa:
     boot_reconcile,
 )
 
+
+def _ledger_conn():
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    return CursorDispatchLedger.instance()._connect()
+
+
+def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None:
+    """Return driving/dormant holder id for a continuity lane, if any."""
+    lane = (lane_thread_id or "").strip()
+    if not lane:
+        return None
+    with _ledger_conn() as conn:
+        ensure_schema(conn)
+        row = get_driving_holder_for_lane(conn, lane)
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM cse_session_holders "
+                "WHERE lane_thread_id=? AND seat_state IN ('driving', 'dormant') "
+                "ORDER BY last_transition_at DESC LIMIT 1",
+                (lane,),
+            ).fetchone()
+            row = _row_to_dict(row)
+    if row is None:
+        return None
+    return str(row.get("holder_id") or "") or None
+
+
+def resolve_holder_by_registration(
+    conn: sqlite3.Connection, registration_id: str
+) -> dict[str, Any] | None:
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    row = conn.execute(
+        "SELECT * FROM cse_session_holders WHERE registration_id=? "
+        "ORDER BY last_transition_at DESC LIMIT 1",
+        (reg,),
+    ).fetchone()
+    return _row_to_dict(row)
+
+
+def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:
+    hid = (holder_id or "").strip()
+    if not hid:
+        return None
+    with _ledger_conn() as conn:
+        ensure_schema(conn)
+        return get_holder(conn, hid)
+
+
+def resolve_superseded_holder_live(registration_id: str) -> dict[str, Any] | None:
+    with _ledger_conn() as conn:
+        ensure_schema(conn)
+        row = resolve_holder_by_registration(conn, registration_id)
+        if row is None:
+            return None
+        state = str(row.get("seat_state") or "")
+        if state in {"driving", "dormant"}:
+            return row
+    return None
+
+
+def lane_thread_uses_bridge_wake(lane_thread_id: str) -> bool:
+    try:
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (  # noqa: E501
+            _summoning_thread_uses_xvfb_push_wake,
+        )
+
+        return _summoning_thread_uses_xvfb_push_wake(str(lane_thread_id))
+    except Exception:
+        return False
+
+
+def agent_bus_request_headers() -> dict[str, str]:
+    """Bearer + JSON headers for agent_bus UDS/HTTP clients (matches _post_bus)."""
+    import os
+
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def close_owed_wake_on_lane_activity(
+    *,
+    lane_thread_id: str | None,
+    holder_id: str | None = None,
+    seat_agent: str | None = None,
+) -> None:
+    """Close open owed_wake rows when the addressed holder seat marks read or posts."""
+    from scripts.model_manager.ui.controller.owed_wake_ledger import (
+        producer1_to_agent_qualifies,
+    )
+
+    agent = (seat_agent or "").strip().lower()
+    if not producer1_to_agent_qualifies(agent):
+        return
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    store = RestartIntentStore.instance()
+    hid = (holder_id or "").strip()
+    if not hid and lane_thread_id:
+        hid = resolve_maestro_holder_id_for_lane(lane_thread_id) or ""
+    if hid:
+        store.close_owed_wake_for_holder(hid)
+
+
+def on_house_milestone_to_maestro(
+    *,
+    subject: str,
+    to_agent: str,
+    from_agent: str,
+    thread_id: str,
+    turn_number: int,
+    lane_thread_id: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    """Producer 1 entry — allowlisted house milestone posts to maestro."""
+    from scripts.model_manager.ui.controller.owed_wake_ledger import (
+        maybe_producer1_milestone,
+        producer1_cse_dispatch_enabled,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    lane = (lane_thread_id or thread_id or "").strip()
+    holder_id = resolve_maestro_holder_id_for_lane(lane)
+    if not holder_id:
+        return {"recorded": False, "reason": "no_holder_for_lane"}
+    store = RestartIntentStore.instance()
+    result = maybe_producer1_milestone(
+        store,
+        subject=subject,
+        to_agent=to_agent,
+        from_agent=from_agent,
+        thread_id=thread_id,
+        turn_number=turn_number,
+        holder_id=holder_id,
+        lane_thread_id=lane,
+        user_agent=user_agent,
+        deps=None,
+    )
+    if (
+        result.get("recorded")
+        and result.get("created")
+        and producer1_cse_dispatch_enabled()
+    ):
+        result["needs_deferred_dispatch"] = True
+    return result
+
+
+def _import_cse_session_warm_module():
+    import sys
+    from pathlib import Path
+
+    mcp_root = Path(__file__).resolve().parents[1] / "mcp-server"
+    mcp_str = str(mcp_root)
+    if mcp_str not in sys.path:
+        sys.path.insert(0, mcp_str)
+    from tools import cse_session_warm
+
+    return cse_session_warm
+
+
+def build_owed_wake_deps():
+    from scripts.model_manager.ui.controller.owed_wake_ledger import OwedWakeDeps
+
+    cse_session_warm = _import_cse_session_warm_module()
+
+    def _post_bus(*, thread_id: str, subject: str, body: str) -> bool:
+        try:
+            from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+            headers = agent_bus_request_headers()
+            payload = {
+                "thread": thread_id,
+                "from": "manage",
+                "to": "cursor",
+                "subject": subject,
+                "body": body,
+                "status": "open",
+            }
+            with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+                resp = client.post("/turns", json=payload, headers=headers)
+                return 200 <= resp.status_code < 300
+        except Exception:
+            return False
+
+    def _endpoint_wake(
+        *,
+        holder_id: str,
+        lane_thread_id: str | None,
+        wake_kind: str,
+        context: dict[str, Any],
+    ) -> bool:
+        if wake_kind == "bridge_wake":
+            return cse_session_warm.dispatch_bridge_wake(
+                lane_thread_id=lane_thread_id,
+                context=context,
+            )
+        holder = context.get("holder") or lookup_holder_for_owed_wake(holder_id)
+        if not isinstance(holder, dict):
+            return False
+        return cse_session_warm.dispatch_cse_holder_followup(holder=holder)
+
+    return OwedWakeDeps(
+        post_bus_turn=_post_bus,
+        endpoint_wake=_endpoint_wake,
+        holder_lookup=lookup_holder_for_owed_wake,
+        resolve_superseded_holder=resolve_superseded_holder_live,
+        lane_uses_bridge_wake=lane_thread_uses_bridge_wake,
+    )
+
+
+def dispatch_owed_wake_producer1_row(row_id: str) -> None:
+    """Run CSE follow-up for one stored producer-1 row (off the HTTP request path)."""
+    from scripts.model_manager.ui.controller.owed_wake_ledger import (
+        attempt_dispatch,
+        producer1_cse_dispatch_enabled,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    if not producer1_cse_dispatch_enabled():
+        return
+    store = RestartIntentStore.instance()
+    row = store.get_owed_wake(row_id)
+    if row is None:
+        return
+    try:
+        deps = build_owed_wake_deps()
+    except Exception:
+        logger.warning(
+            "owed_wake producer1 dispatch skipped row_id=%s (deps unavailable)",
+            row_id,
+            exc_info=True,
+        )
+        return
+    attempt_dispatch(store, row, deps=deps)
+
+
 __all__ = [
     "boot_reconcile",
+    "build_owed_wake_deps",
+    "close_owed_wake_on_lane_activity",
+    "dispatch_owed_wake_producer1_row",
     "ensure_schema",
     "get_driving_holder_for_lane",
     "get_holder",
+    "lookup_holder_for_owed_wake",
     "occupy_holder_on_hop",
+    "on_house_milestone_to_maestro",
     "occupancy_projections",
     "reap_stale_driving_holders",
     "reap_stale_driving_holders_fail_open",
+    "resolve_maestro_holder_id_for_lane",
     "resolve_nest_parent",
+    "resolve_superseded_holder_live",
     "seat_successor_on_lane",
     "transition_seat_state",
     "release_holder_for_registration",

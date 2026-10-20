@@ -316,12 +316,20 @@ async def run_activation_verify(
                         code_ref_relation=relation,
                         identity_measurement=identity,
                     ):
-                        store.advance_if_status(
-                            intent_id,
-                            from_status=STATUS_VERIFYING_ACTIVATION,
-                            to_status=STATUS_COMPLETED,
-                            reason=reason_code(ACTIVATION_VALIDATED),
-                        )
+                        if (
+                            store.advance_if_status(
+                                intent_id,
+                                from_status=STATUS_VERIFYING_ACTIVATION,
+                                to_status=STATUS_COMPLETED,
+                                reason=reason_code(ACTIVATION_VALIDATED),
+                            )
+                            == 1
+                        ):
+                            from .restart_terminal_owed_wake import (
+                                maybe_producer2_after_terminal,
+                            )
+
+                            maybe_producer2_after_terminal(store, store.get(intent_id))
                         publish_activation_event(
                             ManageRestartActivationValidated(
                                 intent_id=intent_id,

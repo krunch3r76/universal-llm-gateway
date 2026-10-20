@@ -234,3 +234,27 @@ def test_followup_no_prompt(
     tool_fn = _tool_fn(cse_session_module)
     result = tool_fn(op="followup", registration_id="reg-1")
     assert result == {"ok": False, "error": "no_prompt"}
+
+
+def test_dispatch_cse_holder_followup_relays_mechanical_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.cse_session_warm as warm
+
+    captured: dict = {}
+
+    def _relay_followup(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "send_verified": True}
+
+    monkeypatch.setattr(warm, "relay_followup", _relay_followup)
+    ok = warm.dispatch_cse_holder_followup(
+        holder={
+            "chat_url": "https://claude.ai/c/x",
+            "registration_id": "reg-1",
+            "lane_thread_id": "18460",
+        }
+    )
+    assert ok is True
+    assert captured["purpose"] == "owed_wake"
+    assert "owed_wake" in captured["prompt_text"]
