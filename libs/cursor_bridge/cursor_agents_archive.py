@@ -82,7 +82,7 @@ def _archive_agent_js(agent_id: str) -> str:
         " && typeof svc.agentRepositoryService.archiveAgent === 'function') {"
         " try {"
         " await svc.agentRepositoryService.archiveAgent(target);"
-        " return {ok: true, archived: target, method: 'archiveAgent'};"
+        " if (!el.isConnected) return {ok: true, archived: target, method: 'archiveAgent'};"
         " } catch (e) { /* fall through to DOM */ }"
         " }"
         " const btn = el.querySelector('button[aria-label=\"Archive\"]');"
