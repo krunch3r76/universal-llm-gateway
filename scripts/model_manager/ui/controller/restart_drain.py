@@ -1223,11 +1223,11 @@ async def run_gated_self_holder_drain_supervised(
         outcome = await gate.evaluate(service, force=False)
         if outcome is not None:
             return outcome.to_result()
-        return {
-            "status": "error",
-            "service": service,
-            "reason": "self_holder_drain_precondition_failed",
-        }
+        try:
+            message = await supervisor.lifecycle()
+        finally:
+            await gate.release(service)
+        return {"status": "ok", "message": message}
 
     outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:

@@ -51,22 +51,84 @@ async def reconcile_pending_restart_intents(controller: ServiceController) -> No
                 continue
             if intent.status not in (STATUS_PENDING_DRAIN, STATUS_DRAINED_RESTARTING):
                 continue
-            if intent.action == "recycle_giw":
-                supervisor = controller.build_git_worker_drain_supervisor(
-                    kill=controller.git_worker_kill_for(intent.action),
-                    action=intent.action,
-                    idle_escalate_s=recycle_idle_s(),
-                    deadline_s=recycle_deadline_s(),
-                    park_first=True,
+            service = intent.service
+            if service == "git_integration_worker":
+                if intent.action == "recycle_giw":
+                    supervisor = controller.build_git_worker_drain_supervisor(
+                        kill=controller.git_worker_kill_for(intent.action),
+                        action=intent.action,
+                        idle_escalate_s=recycle_idle_s(),
+                        deadline_s=recycle_deadline_s(),
+                        park_first=True,
+                    )
+                else:
+                    supervisor = controller.build_git_worker_drain_supervisor(
+                        kill=controller.git_worker_kill_for(intent.action),
+                        action=intent.action,
+                    )
+            elif service == "stargate":
+                from scripts.model_manager.ui.api_dispatch import (
+                    _lifecycle_with_restart_window,
+                    _sync_restart,
+                )
+
+                from ..restart_drain import StargateIdleDrainSupervisor
+
+                supervisor = StargateIdleDrainSupervisor(
+                    gate=controller._restart_gate,
+                    store=controller._restart_intent_store,
+                    lifecycle=lambda: _lifecycle_with_restart_window(
+                        controller,
+                        "stargate",
+                        intent.action,
+                        lambda: _sync_restart(controller, "stargate"),
+                    ),
+                )
+            elif service == "agent_bus":
+                from scripts.model_manager.ui.api_dispatch import (
+                    _lifecycle_with_restart_window,
+                    _sync_restart,
+                )
+
+                from ..restart_drain import LocalServiceDrainSupervisor
+
+                supervisor = LocalServiceDrainSupervisor(
+                    gate=controller._restart_gate,
+                    service="agent_bus",
+                    store=controller._restart_intent_store,
+                    lifecycle=lambda: _lifecycle_with_restart_window(
+                        controller,
+                        "agent_bus",
+                        intent.action,
+                        lambda: _sync_restart(controller, "agent_bus"),
+                    ),
+                )
+            elif service == "mcp":
+                from scripts.model_manager.ui.api_dispatch import _mcp_deferred_lifecycle
+
+                from ..restart_drain import LocalServiceDrainSupervisor
+
+                supervisor = LocalServiceDrainSupervisor(
+                    gate=controller._restart_gate,
+                    service="mcp",
+                    store=controller._restart_intent_store,
+                    lifecycle=lambda: _mcp_deferred_lifecycle(
+                        controller, no_cache=False
+                    ),
                 )
             else:
-                supervisor = controller.build_git_worker_drain_supervisor(
-                    kill=controller.git_worker_kill_for(intent.action),
-                    action=intent.action,
+                store.advance(
+                    intent.intent_id,
+                    status="failed",
+                    reason=reason_code(
+                        RECONCILE_RESUME_FAILED,
+                        f"unsupported_service:{service}",
+                    ),
                 )
+                continue
             await resume_drain_supervision(
                 controller._restart_gate,
-                intent.service,
+                service,
                 supervisor=supervisor,
                 intent=intent,
             )

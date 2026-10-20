@@ -289,6 +289,50 @@ def test_agent_bus_idle_after_caller_exclusion_does_not_arm(tmp_path: Any) -> No
     assert not supervisor.intents
 
 
+class _IdleLifecycleSupervisor:
+    """Records a direct lifecycle run (self-holder idle / precondition miss path)."""
+
+    def __init__(self) -> None:
+        self.lifecycle_calls = 0
+
+    async def lifecycle(self) -> str:
+        self.lifecycle_calls += 1
+        return "restarted ok"
+
+
+def test_self_holder_idle_probe_runs_lifecycle_and_releases_slot(
+    tmp_path: Any,
+) -> None:
+    """Idle probe through self-holder path must run lifecycle and release the gate."""
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-idle-self.db")
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(busy=False, detail={"busy": False})
+            )
+        }
+    )
+    supervisor = _IdleLifecycleSupervisor()
+
+    async def _run_path() -> dict[str, Any]:
+        return await run_gated_self_holder_drain_supervised(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            store=store,
+            supervisor=supervisor,
+            reason="test idle self-holder",
+            caller_dispatch_id=_SELF_DISPATCH,
+        )
+
+    result = _run(_run_path())
+    assert result["status"] == "ok"
+    assert result["message"] == "restarted ok"
+    assert supervisor.lifecycle_calls == 1
+    assert gate.restart_in_progress(_AGENT_BUS) is False
+    assert store.active_for_service(_AGENT_BUS) is None
+
+
 def test_foreign_holder_busy_still_soft_defer_without_intent(tmp_path: Any) -> None:
     """Foreign holder busy must stay state=busy with no restart_intent_id."""
     store = RestartIntentStore(db_path=tmp_path / "restart-intents-foreign.db")
