@@ -88,7 +88,7 @@ def test_submit_wake_line_js_generating_clears_draft() -> None:
     assert "clearContent" in js
     assert "composerUtilsService.clearText" in js
     assert "setContent" not in js
-    assert "updateComposerData(handle, { text, richText: text })" in js
+    assert "updateComposerData" not in js
     assert "skipClearInput: true" not in js
     assert "richText: text" in js
     assert " finally {" in js
@@ -123,7 +123,7 @@ def test_launch_tab_js_uses_glass_services_not_input() -> None:
     assert "submitChatMaybeAbortCurrent" in js
     assert "steerIntent" in js
     assert "prompt.editor.commands.setContent" not in js
-    assert "updateComposerData(handle, { text, richText: text })" in js
+    assert "updateComposerData(handle, { text, richText: text })" not in js
     assert "hasDomEditor" in js
     assert "Input.dispatchKeyEvent" not in js
     assert "Input.insertText" not in js
