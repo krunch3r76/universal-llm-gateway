@@ -32,6 +32,16 @@ function glassServiceMap(startEl) {
 
 RESOLVE_WORKSPACE_SERVICES_FN = r"""
 function resolveWorkspaceServices(rootMap, agentId) {
+  const extractEnv = (h) => (h && ((h.environment && h.environment._value) || h.environment
+    || (h.location && h.location.environment) || h.workspaceIdentifier)) || null;
+  const isUlgEnv = (env) => String((env && env.uri && (env.uri.fsPath || env.uri.path)) || '')
+    .includes('universal-llm-gateway');
+  const instPath = (inst) => {
+    const wi = inst && inst.workspaceIdentifier;
+    const uri = wi && wi.uri;
+    return String((uri && (uri.fsPath || uri.path)) || inst.folderUri || inst.displayName
+      || inst.name || '');
+  };
   const repo = rootMap.get('agentRepositoryService');
   const wcs = rootMap.get('workspaceCollectionService');
   const glassActive = rootMap.get('glassActiveAgentService');
@@ -49,52 +59,66 @@ function resolveWorkspaceServices(rootMap, agentId) {
     }
   }
   const resolvedAgentId = String(agentId || activeId || '').trim();
+  const explicitAgentId = String(agentId || '').trim();
   let targetEnv = null;
-  if (repo && resolvedAgentId && typeof repo.getAgentHeader === 'function') {
+  let matchedInst = null;
+  if (explicitAgentId && repo && typeof repo.getAgentHeader === 'function') {
     try {
-      const h = repo.getAgentHeader(resolvedAgentId);
-      if (h && h.workspaceIdentifier) targetEnv = h.workspaceIdentifier;
-    } catch (e) {}
-  }
-  if (!targetEnv && repo && activeId && typeof repo.getAgentHeader === 'function') {
-    try {
-      const h = repo.getAgentHeader(activeId);
-      if (h && h.workspaceIdentifier) targetEnv = h.workspaceIdentifier;
+      const env = extractEnv(repo.getAgentHeader(explicitAgentId));
+      if (env) targetEnv = env;
     } catch (e) {}
   }
   if (!targetEnv && wcs && typeof wcs.getWorkspaceInstances === 'function') {
     try {
       const instances = wcs.getWorkspaceInstances();
       const list = Array.isArray(instances) ? instances : (instances ? [...instances] : []);
-      for (const inst of list) {
-        const id = inst && (inst.workspaceIdentifier || inst.identifier);
-        const folder = String(inst && (inst.folderUri || inst.name || '') || '');
-        if (id && folder.includes('universal-llm-gateway')) {
-          targetEnv = id;
-          break;
-        }
+      const ulg = list.filter((inst) => isUlgEnv(inst && inst.workspaceIdentifier)
+        || instPath(inst).includes('universal-llm-gateway'));
+      if (ulg.length > 0) {
+        matchedInst = ulg.find((inst) => {
+          const uri = inst && inst.workspaceIdentifier && inst.workspaceIdentifier.uri;
+          return uri && uri.scheme === 'vscode-remote';
+        }) || ulg.find((inst) => {
+          const uri = inst && inst.workspaceIdentifier && inst.workspaceIdentifier.uri;
+          return !uri || uri.scheme !== 'empty-window';
+        }) || ulg[0];
+        targetEnv = matchedInst && (matchedInst.workspaceIdentifier || matchedInst.identifier);
       }
-      if (!targetEnv && list.length > 0) {
-        const first = list[0];
-        targetEnv = first && (first.workspaceIdentifier || first.identifier || first.environment);
+      if (!targetEnv && repo && activeId && typeof repo.getAgentHeader === 'function') {
+        try {
+          const env = extractEnv(repo.getAgentHeader(activeId));
+          if (env) targetEnv = env;
+        } catch (e) {}
+      }
+      if (!targetEnv) {
+        const nonEmpty = list.find((inst) => {
+          const wi = inst && inst.workspaceIdentifier;
+          return wi && wi.id !== 'empty-window';
+        });
+        if (nonEmpty) {
+          matchedInst = nonEmpty;
+          targetEnv = nonEmpty.workspaceIdentifier || nonEmpty.identifier;
+        }
       }
     } catch (e) {}
   }
   let merged = rootMap;
-  if (wcs && targetEnv && typeof wcs.getWorkspaceInstance === 'function') {
-    try {
-      const wsInst = wcs.getWorkspaceInstance(targetEnv);
-      const entries = wsInst && wsInst.instantiationService
-        && wsInst.instantiationService._services
-        && wsInst.instantiationService._services._entries;
-      if (entries && typeof entries.entries === 'function') {
-        merged = new Map(rootMap);
-        for (const [k, ent] of entries.entries()) {
-          const inst = ent && (ent.instance !== undefined ? ent.instance : ent);
-          merged.set(String(k), inst);
-        }
+  const mergeFromInst = (wsInst) => {
+    const entries = wsInst && wsInst.instantiationService
+      && wsInst.instantiationService._services
+      && wsInst.instantiationService._services._entries;
+    if (entries && typeof entries.entries === 'function') {
+      merged = new Map(rootMap);
+      for (const [k, ent] of entries.entries()) {
+        const inst = ent && (ent.instance !== undefined ? ent.instance : ent);
+        merged.set(String(k), inst);
       }
-    } catch (e) {}
+    }
+  };
+  if (matchedInst && matchedInst.instantiationService) {
+    try { mergeFromInst(matchedInst); } catch (e) {}
+  } else if (wcs && targetEnv && typeof wcs.getWorkspaceInstance === 'function') {
+    try { mergeFromInst(wcs.getWorkspaceInstance(targetEnv)); } catch (e) {}
   }
   return { services: merged, targetEnv, agentId: resolvedAgentId };
 }
@@ -246,7 +270,9 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
         "      },\n"
         "    );\n"
         "    const agentId = (typeof created === 'string' ? created\n"
-        "      : (created && (created.agentId || created.composerId || created.id))) || '';\n"
+        "      : (created && ((created.header && created.header.id)\n"
+        "        || (created._inner && created._inner.agentId) || created.agentId\n"
+        "        || created.composerId || created.id || created.stableId))) || '';\n"
         "    if (!agentId) return {ok: false, reason: 'no_agent_id'};\n"
         "    if (glassActiveAgentService && typeof glassActiveAgentService.setActiveAgentId === 'function') {\n"
         "      await glassActiveAgentService.setActiveAgentId(agentId);\n"

@@ -26,7 +26,11 @@ from cursor_bridge.cursor_agents_hop import (
     launch_cursor_agents_tab,
     prune_cursor_agents_predecessors,
 )
-from cursor_bridge.glass_services_js import _resolve_catalog_js, launch_new_agent_tab_js
+from cursor_bridge.glass_services_js import (
+    RESOLVE_WORKSPACE_SERVICES_FN,
+    _resolve_catalog_js,
+    launch_new_agent_tab_js,
+)
 from cursor_bridge.wake_delivery import normalize_target
 
 pytestmark = pytest.mark.offline
@@ -54,6 +58,25 @@ def test_cursor_debug_url_for_orion_and_eight() -> None:
     assert cursor_debug_url_for_gui_host(":8") == "http://127.0.0.1:9338"
     assert normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
     assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
+
+
+def test_resolve_workspace_services_prefers_vscode_remote_ulg() -> None:
+    fn = RESOLVE_WORKSPACE_SERVICES_FN
+    assert "uri.scheme === 'vscode-remote'" in fn
+    assert "uri.fsPath || uri.path" in fn
+    assert "universal-llm-gateway" in fn
+    assert "extractEnv" in fn
+    assert "mergeFromInst(matchedInst)" in fn
+    assert "isUlgEnv" in fn
+    assert "empty-window" in fn
+    assert "h.environment._value" in fn or "h.environment && h.environment._value" in fn
+
+
+def test_launch_tab_js_extracts_created_header_id() -> None:
+    js = launch_new_agent_tab_js("hello", "")
+    assert "created.header && created.header.id" in js
+    assert "created._inner && created._inner.agentId" in js
+    assert "created.stableId" in js
 
 
 def test_launch_tab_js_uses_glass_services_not_input() -> None:
