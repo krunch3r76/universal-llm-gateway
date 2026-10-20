@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import (
     _build_close_claim,
+    _commit_touched_set,
     _validate_commit_resolution,
     close_friction_assertion,
     format_resolution_kind_catalog,
@@ -104,6 +108,89 @@ def _patch_supersede(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) 
 def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
     _seed_service_entity(migrated_conn)
     return migrated_conn
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_commit_touched_set_first_parent_diff_for_merge_and_single_parent() -> None:
+    """Merge land SHAs: first-parent paths only; ordinary commits unchanged."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _run_git(repo, "init", "-b", "main")
+        _run_git(repo, "config", "user.email", "t@test")
+        _run_git(repo, "config", "user.name", "Test")
+
+        (repo / "libs" / "a").mkdir(parents=True)
+        (repo / "libs" / "a" / "shared.py").write_text("v1\n", encoding="utf-8")
+        _run_git(repo, "add", ".")
+        _run_git(repo, "commit", "-m", "c0")
+
+        _run_git(repo, "branch", "feat")
+        _run_git(repo, "checkout", "feat")
+        (repo / "libs" / "a" / "shared.py").write_text("v2\n", encoding="utf-8")
+        from_branch = "libs/a/from_branch.py"
+        (repo / from_branch).write_text("branch\n", encoding="utf-8")
+        _run_git(repo, "add", ".")
+        _run_git(repo, "commit", "-m", "c_feat")
+
+        _run_git(repo, "checkout", "main")
+        first_parent_only = "libs/a/first.py"
+        (repo / first_parent_only).write_text("main\n", encoding="utf-8")
+        _run_git(repo, "add", ".")
+        _run_git(repo, "commit", "-m", "c_main")
+
+        _run_git(repo, "merge", "feat", "-m", "merge")
+        merge_sha = (
+            subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+        )
+
+        merge_touched = _commit_touched_set(str(repo), merge_sha)
+        assert merge_touched is not None
+        assert from_branch in merge_touched
+        assert first_parent_only not in merge_touched
+
+        single_path = "libs/a/single.py"
+        (repo / single_path).write_text("one\n", encoding="utf-8")
+        _run_git(repo, "add", single_path)
+        _run_git(repo, "commit", "-m", "single")
+        single_sha = (
+            subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+        )
+        single_touched = _commit_touched_set(str(repo), single_sha)
+        assert single_touched == {single_path}
+
+        old_path = "libs/a/old.py"
+        new_path = "libs/a/new.py"
+        (repo / old_path).write_text("old\n", encoding="utf-8")
+        _run_git(repo, "add", old_path)
+        _run_git(repo, "commit", "-m", "add-old")
+        _run_git(repo, "mv", old_path, new_path)
+        _run_git(repo, "commit", "-m", "rename")
+        rename_sha = (
+            subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+        )
+        rename_touched = _commit_touched_set(str(repo), rename_sha)
+        assert rename_touched is not None
+        assert old_path in rename_touched
+        assert new_path in rename_touched
+
+        assert _commit_touched_set(str(repo), "not-a-valid-sha") is None
 
 
 def test_validate_resolution_kind_accepts_uncommitted() -> None:
