@@ -1077,7 +1077,10 @@ def cleanup_xvfb_sidebar_on_holder_claim(
     *,
     retired_agent_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Archive idle ``[retired]`` root rows when a new ``ide:`` holder claims the lock."""
+    """Archive only idle root rows already marked retired when a new ``ide:`` holder claims.
+
+    Idle live seats (not retired) stay visible in the sidebar.
+    """
     from cursor_bridge.cursor_agents_hop import prune_cursor_agents_predecessors
 
     from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
@@ -1102,7 +1105,7 @@ def cleanup_xvfb_sidebar_on_holder_claim(
             keep_recent_predecessors=0,
             wait_until_idle_s=0.0,
             select_active=False,
-            only_retired=False,
+            only_retired=True,
             retired_agent_ids=retired_agent_ids,
             debug_url=debug_url,
         )

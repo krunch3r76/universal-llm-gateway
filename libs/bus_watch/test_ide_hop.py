@@ -386,3 +386,4 @@ def test_cleanup_xvfb_sidebar_passes_orion_debug_url() -> None:
     ):
         cleanup_xvfb_sidebar_on_holder_claim("18528", f"ide:{_TID}")
     assert mock_prune.call_args.kwargs["debug_url"] == "http://127.0.0.1:19338"
+    assert mock_prune.call_args.kwargs["only_retired"] is True
