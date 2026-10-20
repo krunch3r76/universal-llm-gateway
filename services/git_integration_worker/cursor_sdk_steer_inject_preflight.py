@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_park_preflight import (
     _TERMINAL_ROW_STATUSES,
+    execution_id_candidates,
     load_park_candidate_row,
 )
 
@@ -58,15 +58,6 @@ def _preflight_one_row(row: dict[str, Any]) -> InjectPreflight:
     return InjectPreflight(refusal=None, row=row)
 
 
-def _execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
-    conn = CursorDispatchLedger.instance()._connect()
-    cur = conn.execute(
-        "SELECT * FROM cursor_sdk_dispatches WHERE execution_id=?",
-        (execution_id,),
-    )
-    return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
-
-
 def preflight_inject(submitted_id: str) -> InjectPreflight:
     """Decide inject refusal for *submitted_id* without mutating state.
 
@@ -80,7 +71,7 @@ def preflight_inject(submitted_id: str) -> InjectPreflight:
     row = load_park_candidate_row(stripped)
     if row is not None:
         return _preflight_one_row(row)
-    candidates = _execution_id_candidates(stripped)
+    candidates = execution_id_candidates(stripped)
     if not candidates:
         return InjectPreflight(refusal=InjectRefusal.NOT_FOUND, row=None)
     passed: list[dict[str, Any]] = []

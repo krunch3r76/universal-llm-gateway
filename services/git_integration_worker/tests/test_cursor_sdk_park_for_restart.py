@@ -19,6 +19,7 @@ from services.git_integration_worker.cursor_sdk_park_for_restart import (
     reset_park_marks,
     signal_park,
 )
+from services.git_integration_worker.cursor_sdk_park_http import park_one_dispatch
 from services.git_integration_worker.cursor_sdk_park_ledger import (
     load_park_row,
     mark_parked,
@@ -414,6 +415,279 @@ def test_steer_park_accepts_generate_admission_execution_id(
     )
     assert result.refusal is not ParkRefusal.NOT_FOUND
     assert result.dispatch_id == dispatch_id
+
+
+@pytest.mark.asyncio
+async def test_park_route_execution_id_discard_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Breaks when park HTTP loads/finalizes by submitted execution_id, not dispatch_id."""
+    dispatch_id = "disp-discard-eid"
+    ledger = CursorDispatchLedger.instance()
+    req = _req(
+        dispatch_id,
+        thread_id="18506",
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id="18506",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path),
+        lease_key=str(tmp_path),
+    )
+    controller = WorkAdmissionController(
+        ledger=ledger, worker_id="w", pid=0, worker_started_at="b"
+    )
+    finalize_calls: list[dict[str, Any]] = []
+
+    async def _capture_finalize(**kw: Any) -> None:
+        finalize_calls.append(kw)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_park_http.finalize_discard_idle",
+        _capture_finalize,
+    )
+    status, body = await park_one_dispatch(
+        dispatch_id=_GENERATE_ADMIT_EXEC_ID,
+        intent_id=None,
+        drain_epoch=None,
+        actor="cursor",
+        reason="mistaken admit",
+        controller=controller,
+        mode="discard",
+        source_repo=tmp_path,
+    )
+    assert status == 200 and body.get("park_state") == "discard_requested"
+    assert body["dispatch_id"] == dispatch_id
+    assert len(finalize_calls) == 1
+    assert finalize_calls[0]["dispatch_id"] == dispatch_id
+
+
+@pytest.mark.asyncio
+async def test_park_route_execution_id_cancel_live(
+    tmp_path: Path, events: list[Any]
+) -> None:
+    """Breaks when bridge convergence keys parked_ids on execution_id."""
+    dispatch_id = "disp-cancel-eid"
+    ledger = CursorDispatchLedger.instance()
+    req = _req(
+        dispatch_id,
+        thread_id="18506",
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id="18506",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path / "repo"),
+        lease_key=str(tmp_path / "lease"),
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
+    ledger.record_sdk_identity(
+        dispatch_id=dispatch_id, agent_id="agent-1", run_id="r"
+    )
+    run = FakeCancellableRun(id="run-eid", agent_id="agent-1")
+    _register(dispatch_id, thread_id="18506", run=run)
+    converge_op_ids: list[str] = []
+
+    class _Ctl:
+        def create_tracked_task(self, coro, *, op_id: str) -> None:
+            converge_op_ids.append(op_id)
+            coro.close()
+
+    status, body = await park_one_dispatch(
+        dispatch_id=_GENERATE_ADMIT_EXEC_ID,
+        intent_id=_INTENT,
+        drain_epoch=2,
+        actor="manage",
+        reason="deploy",
+        controller=_Ctl(),  # type: ignore[arg-type]
+        mode="cancel",
+    )
+    assert status == 202 and body.get("park_state") == "park_requested"
+    assert body["dispatch_id"] == dispatch_id
+    assert run.cancel_calls == 1
+    assert park_mark(dispatch_id) is not None
+    assert park_mark(_GENERATE_ADMIT_EXEC_ID) is None
+    assert converge_op_ids == [f"park-converge:{dispatch_id}"]
+
+
+def test_signal_park_prefixed_execution_id_cancel_live(
+    tmp_path: Path, events: list[Any]
+) -> None:
+    """Breaks when park keys marks on submitted cursor-sdk:dispatch:{E}."""
+    dispatch_id = "disp-prefix-eid"
+    exec_id = "exec-prefix-live"
+    _admit_running(dispatch_id, thread_id="18506", tmp_path=tmp_path)
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET execution_id=? WHERE dispatch_id=?",
+            (exec_id, dispatch_id),
+        )
+    run = FakeCancellableRun(id="run-prefix", agent_id="agent-1")
+    _register(dispatch_id, thread_id="18506", run=run)
+    submitted = f"cursor-sdk:dispatch:{exec_id}"
+    result = signal_park(
+        submitted,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+    )
+    assert result.requested
+    assert run.cancel_calls == 1
+    assert park_mark(dispatch_id) is not None
+    assert park_mark(exec_id) is None
+    assert park_mark(submitted) is None
+
+
+def test_signal_park_execution_id_not_live_is_not_found_not_live_here(
+    tmp_path: Path,
+) -> None:
+    """Regression: orphan running row by execution_id must refuse NOT_LIVE_HERE."""
+    dispatch_id = "disp-orphan-eid"
+    exec_id = "exec-orphan-eid"
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id, thread_id="18506", execution_id=exec_id)
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=exec_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id="18506",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path / "repo"),
+        lease_key=str(tmp_path / "lease"),
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+    ledger.record_sdk_identity(
+        dispatch_id=dispatch_id, agent_id="agent-1", run_id="r"
+    )
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
+    result = signal_park(
+        exec_id,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="a",
+        reason="r",
+    )
+    assert result.refusal is ParkRefusal.NOT_LIVE_HERE
+    assert result.refusal is not ParkRefusal.NOT_FOUND
+    assert result.dispatch_id == dispatch_id
+
+
+def test_signal_park_terminal_lineage_already_parked_by_execution_id(
+    tmp_path: Path,
+) -> None:
+    """P parked + P-r1 parked: re-park by execution_id is idempotent 200."""
+    exec_id = "exec-lineage-parked"
+    parent = "P"
+    child = "P-r1"
+    ledger = CursorDispatchLedger.instance()
+    req_p = _req(parent, thread_id="18506", execution_id=exec_id)
+    ledger.admit(
+        req=req_p,
+        fingerprint=ledger.fingerprint(req_p),
+        execution_id=exec_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent,
+            thread_id="18506",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path / "repo"),
+        lease_key=str(tmp_path / f"lease-{parent}"),
+    )
+    ledger.mark_running(dispatch_id=parent)
+    ledger.record_sdk_identity(dispatch_id=parent, agent_id="a", run_id="r")
+    mark_parked(
+        dispatch_id=parent,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="a",
+        reason="r",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    req_c = _req(child, thread_id="18506-r1", execution_id=exec_id)
+    ledger.admit(
+        req=req_c,
+        fingerprint=ledger.fingerprint(req_c),
+        execution_id=exec_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=child,
+            thread_id="18506-r1",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path / "repo"),
+        lease_key=str(tmp_path / f"lease-{child}"),
+    )
+    ledger.mark_running(dispatch_id=child)
+    ledger.record_sdk_identity(dispatch_id=child, agent_id="a", run_id="r")
+    mark_parked(
+        dispatch_id=child,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="a",
+        reason="r",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_resumed_by=? WHERE dispatch_id=?",
+            (child, parent),
+        )
+    result = signal_park(
+        exec_id,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="a",
+        reason="r",
+    )
+    assert result.refusal is ParkRefusal.ALREADY_TERMINAL
+    assert result.already_parked
+    assert result.dispatch_id == child
 
 
 # ------------------------------------------------------------------ AC-SR-3

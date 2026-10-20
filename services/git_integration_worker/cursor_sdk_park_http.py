@@ -91,21 +91,22 @@ async def park_one_dispatch(
         reason=reason,
         mode=mode,  # type: ignore[arg-type]
     )
+    resolved_id = result.dispatch_id
     if result.idle_discard:
-        row = await asyncio.to_thread(_load_dispatch_row, dispatch_id)
+        row = await asyncio.to_thread(_load_dispatch_row, resolved_id)
         if row is None:
             return 404, error_envelope(
                 code="not_found",
-                message=f"dispatch_id {dispatch_id!r} not found",
+                message=f"dispatch_id {resolved_id!r} not found",
                 source=_SOURCE,
                 retryable=False,
-                data={"dispatch_id": dispatch_id},
+                data={"dispatch_id": resolved_id},
             )
         thread_id = str(row.get("thread_id") or "")
         reply_to = str(row.get("caller_agent") or "cursor")
         bus = CursorBusClient()
         await finalize_discard_idle(
-            dispatch_id=dispatch_id,
+            dispatch_id=resolved_id,
             thread_id=thread_id,
             execution_id=row.get("execution_id"),
             reply_to=reply_to,
@@ -119,11 +120,11 @@ async def park_one_dispatch(
     if result.requested:
         controller.create_tracked_task(
             converge_bridges_after_park(
-                parked_ids=[dispatch_id],
+                parked_ids=[resolved_id],
                 intent_id=intent_id,
                 controller=controller,
             ),
-            op_id=f"park-converge:{dispatch_id}",
+            op_id=f"park-converge:{resolved_id}",
         )
     return park_dispatch_response(result)
 
