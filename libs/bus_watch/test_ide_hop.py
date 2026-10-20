@@ -13,7 +13,12 @@ import pytest
 
 from bus_watch.digest_budget import POLICY_DEFAULTS
 from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
-from bus_watch.ide_hop import build_ide_hop_message, fire_ide_hop, policy_gui_host
+from bus_watch.ide_hop import (
+    build_ide_hop_message,
+    fire_ide_hop,
+    policy_gui_host,
+    policy_judgment_posture,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -23,6 +28,51 @@ _TID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 def test_policy_defaults_gui_host_is_xvfb_eight() -> None:
     assert POLICY_DEFAULTS["gui_host"] == ":8"
+
+
+def test_policy_defaults_judgment_posture_is_distributed() -> None:
+    assert POLICY_DEFAULTS["judgment_posture"] == "distributed"
+
+
+def test_build_ide_hop_message_default_includes_argon_confer_line() -> None:
+    msg = build_ide_hop_message(
+        "18291",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+    )
+    assert "outsource regular judgment/design/advice" in msg
+    assert "cursor/gemini-4-argon" in msg
+
+
+def test_build_ide_hop_message_in_seat_judgment_override() -> None:
+    msg = build_ide_hop_message(
+        "18460",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+        judgment_posture="in_seat",
+    )
+    assert "outsource regular judgment" not in msg
+    assert "IN-SEAT" in msg
+    assert "judgment_posture=in_seat" in msg
+    assert "§ Peer-house:" in msg
+
+
+def test_policy_judgment_posture_defaults_to_distributed_without_tick_state(
+    tmp_path: Path,
+) -> None:
+    with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
+        assert policy_judgment_posture("18291") == "distributed"
+
+
+def test_policy_judgment_posture_reads_override_from_tick_file(tmp_path: Path) -> None:
+    (tmp_path / "liaison-18460.tick.json").write_text(
+        json.dumps({"policy": {"judgment_posture": "in_seat"}}),
+        encoding="utf-8",
+    )
+    with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
+        assert policy_judgment_posture("18460", watch_dir=tmp_path) == "in_seat"
 
 
 def test_policy_gui_host_defaults_to_eight_without_tick_state(tmp_path: Path) -> None:

@@ -70,6 +70,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "critic_model_knobs": {"effort": "high", "fast": "false"},
     "hop_model_query": "Grok 4.7",
     "under_pattern": "grok-confer-argon",
+    # Default distributed posture (operator ruling 2026-10-19); explicit house override only.
+    "judgment_posture": "distributed",
 }
 # Gear name kept so a stored policy fails closed instead of falling through
 # to POLICY_DEFAULTS (that fall-through would silently spawn grok).

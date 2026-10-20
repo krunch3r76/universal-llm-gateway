@@ -97,6 +97,18 @@ def tick_register(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
     return str(state.get("register") or "attended")
 
 
+def policy_judgment_posture(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
+    """``policy.judgment_posture`` from liaison tick state; ``distributed`` when unset."""
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    val = effective_policy(state).get("judgment_posture")
+    if not val:
+        return "distributed"
+    normalized = str(val).strip()
+    if normalized == "in_seat":
+        return "in_seat"
+    return "distributed"
+
+
 def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     """``policy.hop_focus_title`` — operator override of the compositor title substring.
 
@@ -220,6 +232,20 @@ def live_watcher_labels(
     return labels
 
 
+_DISTRIBUTED_JUDGMENT = (
+    "Explore recon in-tab · outsource regular judgment/design/advice → "
+    "cursor/gemini-4-argon (effort=high, fast=false) after retrieval-before-authoring "
+    "(rag scopes + targeted reads → retrieval report) · critical review → "
+    "cursor/muse-wonder-1.0 · independent check → cdp/opus-5.5. Before any STAY verdict. "
+)
+_IN_SEAT_JUDGMENT = (
+    "Explore recon in-tab · Judgment forks bind IN-SEAT under the house's explicit "
+    "judgment_posture=in_seat override (no Argon confer, no CDP consult to decide); "
+    "work is reviewed out-of-seat by a fresh non-author seat before land; "
+    "independent check → cdp/opus-5.5 still applies. "
+)
+
+
 def build_ide_hop_message(
     root_id: str,
     *,
@@ -228,6 +254,7 @@ def build_ide_hop_message(
     tip_cp_ordinal: int | None = None,
     workspace: str = "universal-llm-gateway",
     register: str = "attended",
+    judgment_posture: str = "distributed",
 ) -> str:
     """First user message of the successor tab; ``resume <R>`` first so the fence hook fires.
 
@@ -246,6 +273,10 @@ def build_ide_hop_message(
             f"(`scripts/liaison-tick.py --root {root_id} --once`)."
         ]
     tip = f" tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else ""
+    if judgment_posture == "in_seat":
+        judgment_line = _IN_SEAT_JUDGMENT
+    else:
+        judgment_line = _DISTRIBUTED_JUDGMENT
     lines = [
         f"resume {root_id}",
         "",
@@ -265,10 +296,7 @@ def build_ide_hop_message(
         "LOAD liaison-cursor. Repo write on this seat → "
         "team_dispatch(seat=cursor-sdk, job=implement, lane=B). "
         "life repo-write → life_dispatch. "
-        "Explore recon in-tab · outsource regular judgment/design/advice → "
-        "cursor/gemini-4-argon (effort=high, fast=false) after retrieval-before-authoring "
-        "(rag scopes + targeted reads → retrieval report) · critical review → "
-        "cursor/muse-wonder-1.0 · independent check → cdp/opus-5.5. Before any STAY verdict. "
+        f"{judgment_line}"
         "STAY = no hop, never = no dispatch.",
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "

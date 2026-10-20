@@ -46,6 +46,7 @@ from bus_watch.ide_hop import (
     fire_ide_hop,
     live_watcher_labels,
     policy_gui_host,
+    policy_judgment_posture,
     seal_hop_window,
     tick_register,
 )
@@ -305,6 +306,7 @@ def main() -> int:
         arm_labels=labels,
         tip_cp_ordinal=tip_cp,
         register=tick_register(args.root),
+        judgment_posture=policy_judgment_posture(args.root),
     )
 
     def _on_fired() -> dict:
