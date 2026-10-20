@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _MCP_SERVER_ROOT = Path(__file__).resolve().parents[1]
 _root = str(_MCP_SERVER_ROOT)
 if _root in sys.path:
@@ -24,3 +26,13 @@ if _mcp_events is not None:
     _events_file = (getattr(_mcp_events, "__file__", None) or "").replace("\\", "/")
     if "mcp-server" not in _events_file:
         del sys.modules["mcp_events"]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_liaison_watch_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Same isolation as ``libs/bus_watch/conftest`` for continuity Xvfb policy tests."""
+    from bus_watch.conftest import apply_xvfb_policy_test_isolation
+
+    return apply_xvfb_policy_test_isolation(tmp_path, monkeypatch)
