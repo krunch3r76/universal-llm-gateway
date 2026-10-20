@@ -197,6 +197,10 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
             "use_line": "Use the `lean-dispatch` skill",
         },
         {
+            "slug": "ide-continuity",
+            "use_line": "Use the `ide-continuity` skill",
+        },
+        {
             "slug": "outbound-voice-spec",
             "use_line": "Use the `outbound-voice-spec` skill",
         },
@@ -246,7 +250,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
         ).fetchone()
     assert poured_row is not None
     poured_payload = json.loads(str(poured_row["payload_json"]))
-    assert poured_payload["skills_to_use_count"] == 3
+    assert poured_payload["skills_to_use_count"] == 4
     folded = fold_fence(bundle["fence"]["fence_id"])
     assert folded is not None
     assert folded.state == "released"

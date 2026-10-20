@@ -15,6 +15,7 @@ from bus_watch.digest_budget import POLICY_DEFAULTS
 from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 from bus_watch.ide_hop import (
     build_ide_hop_message,
+    cleanup_xvfb_sidebar_on_holder_claim,
     fire_ide_hop,
     policy_gui_host,
     policy_judgment_posture,
@@ -274,3 +275,17 @@ def test_check_cursor_ide_context_hops_passes_orion_gui_host(
     mark: dict[str, float] = {}
     check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
     mock_hop.assert_called_once_with("18291", _TID, gui_host="orion-node")
+
+
+def test_cleanup_xvfb_sidebar_passes_orion_debug_url() -> None:
+    with (
+        patch("bus_watch.ide_hop.is_cursor_xvfb_host", return_value=True),
+        patch("bus_watch.ide_hop.policy_gui_host", return_value="orion-node"),
+        patch("bus_watch.ide_hop.read_lock", return_value={"holder": f"ide:{_TID}"}),
+        patch(
+            "cursor_bridge.cursor_agents_hop.prune_cursor_agents_predecessors",
+            return_value={"ok": True},
+        ) as mock_prune,
+    ):
+        cleanup_xvfb_sidebar_on_holder_claim("18528", f"ide:{_TID}")
+    assert mock_prune.call_args.kwargs["debug_url"] == "http://127.0.0.1:19338"

@@ -250,7 +250,8 @@ def test_mission_marker_preview_is_subset(bus_db) -> None:
     assert preview["highlight"] == "hi"
     assert preview["clone_mode"] == "B"
     assert preview["skills_to_use"] == [
-        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"}
+        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"},
+        {"slug": "ide-continuity", "use_line": "Use the `ide-continuity` skill"},
     ]
     assert "handoff" not in preview
     assert "residue" not in preview
@@ -283,6 +284,10 @@ def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
         {
             "slug": "lean-dispatch",
             "use_line": "Use the `lean-dispatch` skill",
+        },
+        {
+            "slug": "ide-continuity",
+            "use_line": "Use the `ide-continuity` skill",
         },
         {
             "slug": "outbound-voice-spec",
@@ -420,7 +425,8 @@ def test_mission_no_skills_section_empty_list_no_step(bus_db) -> None:
         fence_id="rf-noskills",
     )
     assert mission["skills_to_use"] == [
-        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"}
+        {"slug": "lean-dispatch", "use_line": "Use the `lean-dispatch` skill"},
+        {"slug": "ide-continuity", "use_line": "Use the `ide-continuity` skill"},
     ]
     assert mission["card_has_directives"] is False
     assert any("skills_to_use" in step for step in mission["handoff"]["steps"])

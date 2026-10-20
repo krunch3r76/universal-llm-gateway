@@ -81,7 +81,9 @@ def test_resume_path_subscribe_before_cleanup_on_failure() -> None:
         return {"ok": True}
 
     with (
+        patch("tools.continuity_ops.policy_gui_host", return_value=":8"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch("tools.continuity_ops.claim_fable_lock", return_value={"ok": True}),
         patch(
             "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
             side_effect=_cleanup,

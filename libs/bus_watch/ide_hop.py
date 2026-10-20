@@ -775,7 +775,12 @@ def fire_ide_hop(
                 gui_host=resolved_gui_host,
             )
             if not keystroke.get("ok"):
-                return {"ok": False, "phase": "keystroke", "keystroke": keystroke, **result}
+                return {
+                    "ok": False,
+                    "phase": "keystroke",
+                    "keystroke": keystroke,
+                    **result,
+                }
         else:
             try:
                 proc = subprocess.run(
@@ -982,8 +987,12 @@ def cleanup_xvfb_sidebar_on_holder_claim(
         active_aid = parse_ide_holder_agent_id(holder) or ""
         if not active_aid:
             return {"ok": True, "skipped": "holder_not_ide_uuid"}
+        host = policy_gui_host(root_id)
+        debug_url = cursor_debug_url_for_gui_host(host)
         lock = read_lock(root_id)
-        holder_aid = parse_ide_holder_agent_id(str(lock.get("holder") or "")) or active_aid
+        holder_aid = (
+            parse_ide_holder_agent_id(str(lock.get("holder") or "")) or active_aid
+        )
         return prune_cursor_agents_predecessors(
             root_id,
             active_agent_id=active_aid,
@@ -994,6 +1003,7 @@ def cleanup_xvfb_sidebar_on_holder_claim(
             select_active=False,
             only_retired=True,
             retired_agent_ids=retired_agent_ids,
+            debug_url=debug_url,
         )
     except (Exception, SystemExit) as exc:
         return {"ok": False, "reason": f"cleanup_failed:{type(exc).__name__}"}

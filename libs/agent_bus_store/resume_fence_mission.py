@@ -57,7 +57,7 @@ _REJECTED_REVIEW_STATUS = "rejected"
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROOT_SKILLS: tuple[str, ...] = ("lean-dispatch",)
+DEFAULT_ROOT_SKILLS: tuple[str, ...] = ("lean-dispatch", "ide-continuity")
 
 _STANDING_RULES_STEP = (
     "Load mission.standing_rules (verbatim rows and resolved claims) "
