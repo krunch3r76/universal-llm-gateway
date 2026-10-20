@@ -67,6 +67,7 @@ def test_resolve_prompt_mission_fallback_prepends_arrival_skills_only(
         MISSION_ARRIVAL_SKILL_SLUGS,
         MISSION_TRIGGER_SKILL_SLUGS,
     )
+
     from cdp_ask.runner import resolve_prompt
 
     _hermetic_operator_proxy_resolve(monkeypatch, tmp_path)
