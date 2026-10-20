@@ -322,6 +322,9 @@ def _enforce_hop_render_max(
         else 0
     )
 
+    initial_size: int | None = None
+    last_target: int | None = None
+
     while _total_bytes() > HOP_RENDER_MAX_B:
         checkpoint = fields.get("checkpoint_block") or ""
         if not checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX):
@@ -334,15 +337,25 @@ def _enforce_hop_render_max(
         target = max(protected_floor, size - shrink)
         if target >= size:
             break
-        truncated = _truncate_utf8(body, target)
         if target < size:
-            uri = standing_handoff_uri(fields["lane"])
-            flag = f"[budget_exceeded checkpoint {size}/{target} \u2014 read {uri}]"
+            if initial_size is None:
+                initial_size = size
+            last_target = target
             fields["checkpoint_block"] = (
-                _CHECKPOINT_RENDER_PREFIX + truncated + "\n" + flag
+                _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
             )
-        else:
-            fields["checkpoint_block"] = _CHECKPOINT_RENDER_PREFIX + truncated
+            fields["first_act_call1_line"] = first_act_call1_line(
+                lane=fields["lane"],
+                checkpoint_block=fields["checkpoint_block"],
+            )
+
+    if last_target is not None and initial_size is not None:
+        uri = standing_handoff_uri(fields["lane"])
+        flag = (
+            f"[budget_exceeded checkpoint {initial_size}/{last_target} "
+            f"\u2014 read {uri}]"
+        )
+        fields["checkpoint_block"] = fields["checkpoint_block"] + "\n" + flag
         fields["first_act_call1_line"] = first_act_call1_line(
             lane=fields["lane"],
             checkpoint_block=fields["checkpoint_block"],

@@ -445,6 +445,65 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     assert "Sleep at most 290" not in refusals
 
 
+def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop() -> (
+    None
+):
+    """Hop cap trim stops at 8 KB leg floor; budget_exceeded marker follows the loop."""
+    from hop_handoff.standing_handoff import standing_handoff_uri
+
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        measure_checkpoint_budget_bytes,
+        render_checkpoint_block,
+    )
+
+    lane = "18585"
+    notes_len = 8150
+    sidecar = (
+        "## CURRENT LEG\nLEG 1\n"
+        "### OWED / NEXT\nx\n"
+        "### NOTES\n" + ("n" * notes_len) + "\n"
+    )
+    mb = measure_checkpoint_budget_bytes(sidecar)
+    assert mb is not None and mb <= CHECKPOINT_BUDGET_B
+
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
+    pre_render, _meta = render_checkpoint_block(
+        sidecar,
+        lane=lane,
+        inline_house_rules=None,
+        hop_inline=True,
+    )
+    initial_size = len(pre_render[len(prefix) :].encode("utf-8"))
+    assert initial_size > CHECKPOINT_BUDGET_B
+    assert "handoff sha256" in pre_render
+    assert "[budget_exceeded checkpoint" not in pre_render
+
+    out = ensure_operator_proxy_mission_prompt(
+        f"thread_id: {lane}\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    ck_section = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    marker = "[budget_exceeded checkpoint "
+    assert ck_section.count(marker) == 1
+    before, rest = ck_section.split(marker, 1)
+    assert len(before.rstrip("\n").encode("utf-8")) == CHECKPOINT_BUDGET_B
+    uri = standing_handoff_uri(lane)
+    flag_line = marker + rest.split("\n", 1)[0]
+    assert (
+        flag_line
+        == f"[budget_exceeded checkpoint {initial_size}/{CHECKPOINT_BUDGET_B} "
+        f"\u2014 read {uri}]"
+    )
+    acts = out.split("## Your first acts", 1)[1].split("## Data", 1)[0]
+    assert f"{lane}-standing-handoff.md" in acts
+    assert f"{lane}-house-rules.md" in acts
+
+
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
     """Cut 6 falsifier: rendered hop UTF-8 stays at or under 12_000 B."""
     from claude_bundles.operator_proxy_standing_render import HOP_RENDER_MAX_B
