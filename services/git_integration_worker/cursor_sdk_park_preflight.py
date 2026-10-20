@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_supersede import (
 
 TERMINAL_RUN_STATUSES = frozenset({"finished", "error", "cancelled", "expired"})
 _TERMINAL_ROW_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_CURSOR_SDK_DISPATCH_PREFIX = "cursor-sdk:dispatch:"
 
 
 class ParkRefusal(StrEnum):
@@ -82,6 +83,43 @@ class ParkPreflight:
     row: dict[str, Any] | None
     already_parked: bool = False
     detail: str | None = None
+
+
+def _execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
+    conn = CursorDispatchLedger.instance()._connect()
+    cur = conn.execute(
+        "SELECT * FROM cursor_sdk_dispatches WHERE execution_id=?",
+        (execution_id,),
+    )
+    return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
+
+
+def _resolve_row_for_submitted_id(submitted_id: str) -> dict[str, Any] | None:
+    """Map generate-admission ``execution_id`` (or prefixed form) to a ledger row."""
+    stripped = submitted_id.removeprefix(_CURSOR_SDK_DISPATCH_PREFIX)
+    row = load_park_candidate_row(stripped)
+    if row is not None:
+        return row
+    candidates = _execution_id_candidates(stripped)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    non_terminal = [
+        c
+        for c in candidates
+        if str(c.get("status") or "") not in _TERMINAL_ROW_STATUSES
+    ]
+    live = [
+        c
+        for c in non_terminal
+        if is_dispatch_live(dispatch_id=str(c["dispatch_id"]))
+    ]
+    if len(live) == 1:
+        return live[0]
+    if len(non_terminal) == 1:
+        return non_terminal[0]
+    return None
 
 
 def load_park_candidate_row(dispatch_id: str) -> dict[str, Any] | None:
@@ -146,8 +184,15 @@ def preflight_park(
 
     ``BOUNDARY_HOLDER`` is decided in ``park_for_restart_sweep`` (arm holder /
     conductor while a boundary drain is armed), not here.
+
+    *dispatch_id* may be the ledger ``dispatch_id`` or the generate-admit
+    ``execution_id`` (bare or ``cursor-sdk:dispatch:``-prefixed).
     """
     discard = mode == "discard"
+    resolved = _resolve_row_for_submitted_id(dispatch_id)
+    if resolved is None:
+        return ParkPreflight(refusal=ParkRefusal.NOT_FOUND, row=None)
+    dispatch_id = str(resolved["dispatch_id"])
     row = load_park_candidate_row(dispatch_id)
     if row is None:
         return ParkPreflight(refusal=ParkRefusal.NOT_FOUND, row=None)

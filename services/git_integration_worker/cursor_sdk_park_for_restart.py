@@ -175,7 +175,13 @@ def signal_park(
     (``mode=cancel``) never stamps a Lane-B disposition; discard
     (``mode=discard``) finalizes with disposition + prune instead of resume.
     """
-    pre = preflight_park(dispatch_id, intent_id=intent_id, mode=mode)
+    submitted_id = dispatch_id
+    pre = preflight_park(submitted_id, intent_id=intent_id, mode=mode)
+    dispatch_id = (
+        str(pre.row["dispatch_id"])
+        if pre.row is not None
+        else submitted_id
+    )
     thread_id = (
         str(pre.row.get("thread_id")) if pre.row and pre.row.get("thread_id") else None
     )

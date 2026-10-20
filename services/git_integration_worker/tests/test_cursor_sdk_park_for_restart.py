@@ -365,6 +365,57 @@ def test_preflight_orders_not_live_before_nest_chain(tmp_path: Path) -> None:
     assert preflight_park("pw").refusal is ParkRefusal.NOT_LIVE_HERE
 
 
+_GENERATE_ADMIT_EXEC_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+
+def test_steer_park_accepts_generate_admission_execution_id(
+    tmp_path: Path,
+) -> None:
+    """Breaks when steer park keys only ledger dispatch_id, not admit execution_id.
+
+    Callers holding a generate 202 use ``execution_id``; bare 404
+    ``CURSOR_PARK_NOT_FOUND`` is the failure mode.
+    """
+    dispatch_id = "disp-l34-admit"
+    ledger = CursorDispatchLedger.instance()
+    req = _req(
+        dispatch_id,
+        thread_id="18499",
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=_GENERATE_ADMIT_EXEC_ID,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id="18499",
+            model_id="m",
+        ),
+        source_repo=str(tmp_path),
+        lease_key=str(tmp_path),
+        contract="implement",
+        worker_instance="worker-a",
+    )
+    pre = preflight_park(_GENERATE_ADMIT_EXEC_ID)
+    assert pre.refusal is not ParkRefusal.NOT_FOUND
+    assert pre.row is not None
+    assert pre.row["dispatch_id"] == dispatch_id
+
+    result = signal_park(
+        _GENERATE_ADMIT_EXEC_ID,
+        intent_id=_INTENT,
+        drain_epoch=1,
+        actor="cursor",
+        reason="stop mistaken admit",
+    )
+    assert result.refusal is not ParkRefusal.NOT_FOUND
+    assert result.dispatch_id == dispatch_id
+
+
 # ------------------------------------------------------------------ AC-SR-3
 
 
