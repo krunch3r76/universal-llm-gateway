@@ -33,7 +33,8 @@ def _numeric_root_subscriptions(rows: list[dict[str, Any]]) -> list[dict[str, An
         scope = str(row.get("thread_scope") or "").strip()
         if not _ROOT_SCOPE_RE.match(scope):
             continue
-        if str(row.get("display") or "") not in ("8", ":8"):
+        disp = str(row.get("display") or "").strip()
+        if disp not in ("8", ":8", "orion-node"):
             continue
         out.append(row)
     return out
@@ -79,7 +80,9 @@ def _budget_for_root(root_id: str) -> dict[str, Any] | None:
     return budget
 
 
-def _run_ide_hop(root_id: str, transcript_id: str) -> subprocess.CompletedProcess[str]:
+def _run_ide_hop(
+    root_id: str, transcript_id: str, *, gui_host: str = ":8"
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -89,7 +92,7 @@ def _run_ide_hop(root_id: str, transcript_id: str) -> subprocess.CompletedProces
             "--transcript-id",
             transcript_id,
             "--gui-host",
-            ":8",
+            gui_host,
             "--force",
         ],
         cwd=str(_REPO),
@@ -136,8 +139,12 @@ def check_cursor_ide_context_hops(
         if not _transcript_cooled(root_id, transcript_id, hop_mark, now=mono):
             continue
         hop_mark[_cooldown_key(root_id, transcript_id)] = mono
+        sub_display = str(sub.get("display") or ":8").strip() or ":8"
+        gui_host = sub_display if sub_display.startswith(":") else sub_display
+        if gui_host == "8":
+            gui_host = ":8"
         try:
-            proc = _run_ide_hop(root_id, transcript_id)
+            proc = _run_ide_hop(root_id, transcript_id, gui_host=gui_host)
         except subprocess.TimeoutExpired:
             logger.warning(
                 "ide_context_hop_monitor: hop timeout root=%s transcript=%s",

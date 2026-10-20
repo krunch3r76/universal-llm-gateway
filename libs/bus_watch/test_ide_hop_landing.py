@@ -376,11 +376,10 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
     _write_transcript(
         tmp_path, departing, _wrapped_land_line("15420", 17), time.time() - 90
     )
-    proc = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
     with (
         patch("bus_watch.ide_hop.durable_write_text"),
         patch("bus_watch.ide_hop.session_unreachable", return_value=None),
-        patch("bus_watch.ide_hop.subprocess.run", return_value=proc) as run_mock,
+        patch("bus_watch.ide_hop.subprocess.run") as run_mock,
         patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
         patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
         patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
@@ -395,6 +394,10 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
             "bus_watch.ide_hop.mark_expired",
             return_value={"root": "15420", "state": "expired"},
         ),
+        patch(
+            "bus_watch.ide_hop.launch_cursor_agents_tab",
+            return_value={"ok": True, "transport": "cdp_cursor_agents"},
+        ) as launch_mock,
     ):
         out = fire_ide_hop(
             message,
@@ -407,7 +410,9 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
         )
     assert out["ok"] is False
     assert out["phase"] == "expired"
-    run_mock.assert_called_once()
+    run_mock.assert_not_called()
+    launch_mock.assert_called_once()
+    assert launch_mock.call_args.kwargs["debug_url"] == "http://127.0.0.1:19338"
 
 
 def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
@@ -468,11 +473,10 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
-    proc = MagicMock(returncode=0, stdout='{"ok": true, "phase": "glass-launch"}', stderr="")
     with (
         patch("bus_watch.ide_hop.durable_write_text"),
         patch("bus_watch.ide_hop.session_unreachable", return_value=None),
-        patch("bus_watch.ide_hop.subprocess.run", return_value=proc),
+        patch("bus_watch.ide_hop.subprocess.run") as run_mock,
         patch(
             "bus_watch.ide_hop.wait_for_landed_transcript",
             return_value=(None, {"needles": [], "matches": 0}),
@@ -499,6 +503,10 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
             "bus_watch.ide_hop.mark_landed",
             return_value={"root": "15420", "state": "landed", "proof": "transcript"},
         ),
+        patch(
+            "bus_watch.ide_hop.launch_cursor_agents_tab",
+            return_value={"ok": True, "transport": "cdp_cursor_agents"},
+        ) as launch_mock,
     ):
         out = fire_ide_hop(
             message,
@@ -512,6 +520,9 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     assert out["landed_via"] == "find_transcript"
     assert "glass-launch" not in (out.get("fix") or "")
     toplevels_mock.assert_not_called()
+    run_mock.assert_not_called()
+    launch_mock.assert_called_once()
+    assert launch_mock.call_args.kwargs["debug_url"] == "http://127.0.0.1:19338"
 
 
 def test_real_d195e491_first_line_matches_when_present() -> None:

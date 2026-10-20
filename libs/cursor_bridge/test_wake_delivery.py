@@ -14,11 +14,14 @@ from cursor_bridge import wake_delivery as wd
 from cursor_bridge.chat_surface import classify_surface
 from cursor_bridge.chat_target import wake_line
 from cursor_bridge.composer_witness import composer_witness_expression
+from cursor_bridge.glass_services_js import submit_wake_line_js
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
     _is_stale_wake_draft,
     _paste,
+    _paste_cursor_services,
     deliver_wake,
+    normalize_target,
 )
 
 _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
@@ -308,7 +311,7 @@ async def test_deliver_wake_cursor_pastes_on_agents_page(monkeypatch: pytest.Mon
     monkeypatch.setattr(wd, "probe_surface", _probe)
     monkeypatch.setattr(
         wd,
-        "_paste",
+        "_paste_cursor_services",
         AsyncMock(return_value={"ok": True, "send_fallback_clicked": False}),
     )
 
@@ -322,8 +325,38 @@ async def test_deliver_wake_cursor_pastes_on_agents_page(monkeypatch: pytest.Mon
 
     assert out.get("reason") != "composer_not_empty"
     assert out.get("pasted") is True
-    wd._paste.assert_awaited_once()
-    assert wd._paste.await_args.args[1] == wd._COMPOSER_JS["cursor"]
+    wd._paste_cursor_services.assert_awaited_once()
+
+
+def test_normalize_target_orion_node_cursor() -> None:
+    out = normalize_target("orion-node", "cursor")
+    assert out["ok"] is True
+    assert out["origin"] == "http://127.0.0.1:19338"
+
+
+def test_submit_wake_line_js_no_input_events() -> None:
+    js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
+    assert "setContent" in js
+    assert "submitChatMaybeAbortCurrent" in js
+    assert "Input.insertText" not in js
+    assert "Input.dispatchKeyEvent" not in js
+
+
+@pytest.mark.asyncio
+async def test_paste_cursor_services_evaluates_glass_js(monkeypatch: pytest.MonkeyPatch) -> None:
+    line = "BRIDGE_WAKE thread=15851 turn=290"
+    inbox = [_cdp_msg(1, {"ok": True, "agent_id": "agent-1"})]
+    fake = _FakeWS(inbox)
+
+    def _connect(_url: str, **_kw: Any) -> _FakeWS:
+        return fake
+
+    monkeypatch.setattr("websockets.connect", _connect)
+    out = await _paste_cursor_services("ws://fake", line, agent_id="agent-1")
+    assert out == {"ok": True, "send_fallback_clicked": False}
+    expr = fake.sent[0]["params"]["expression"]
+    assert "submitChatMaybeAbortCurrent" in expr
+    assert "Input.insertText" not in expr
 
 
 def test_cursor_stale_draft_same_treatment_as_grok() -> None:

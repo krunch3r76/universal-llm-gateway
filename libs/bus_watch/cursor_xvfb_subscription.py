@@ -18,24 +18,34 @@ def parse_ide_holder_agent_id(holder: str) -> str | None:
     return m.group("uuid") if m else None
 
 
+def cursor_xvfb_display_for_gui_host(gui_host: str | None) -> str:
+    """Endpoint subscription display label for a Glass GUI host."""
+    key = str(gui_host or "").strip().lstrip(":").lower()
+    if key == "orion-node":
+        return "orion-node"
+    return "8"
+
+
 def cursor_xvfb_subscription_body(
     *,
     thread_scope: str,
     agent_id: str,
+    display: str = "8",
     title: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
 ) -> dict[str, Any]:
-    """JSON body for ``POST /endpoint-subscriptions`` on display :8."""
+    """JSON body for ``POST /endpoint-subscriptions`` on a Glass display."""
     root = str(thread_scope).strip()
     aid = str(agent_id).strip()
+    disp = str(display or "8").strip() or "8"
     if not root or not aid:
         raise ValueError("thread_scope and agent_id required")
     return {
         "agent": "cursor",
         "thread_scope": root,
         "surface": "cursor",
-        "display": "8",
+        "display": disp,
         "agent_id": aid,
         "title": title if title is not None else f"{root} ",
         "bound_by": bound_by,
@@ -47,15 +57,17 @@ def subscribe_cursor_xvfb_house(
     thread_scope: str,
     agent_id: str,
     *,
+    display: str = "8",
     title: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
-    """Upsert ``cursor`` / display ``8`` subscription for one continuity root."""
+    """Upsert ``cursor`` Glass subscription for one continuity root."""
     body = cursor_xvfb_subscription_body(
         thread_scope=thread_scope,
         agent_id=agent_id,
+        display=display,
         title=title,
         bound_by=bound_by,
         evidence=evidence,
@@ -116,6 +128,7 @@ def subscribe_cursor_xvfb_from_holder(
 
 
 __all__ = [
+    "cursor_xvfb_display_for_gui_host",
     "cursor_xvfb_subscription_body",
     "parse_ide_holder_agent_id",
     "subscribe_cursor_xvfb_from_holder",

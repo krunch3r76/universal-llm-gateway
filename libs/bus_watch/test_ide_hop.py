@@ -245,5 +245,32 @@ def test_check_cursor_ide_context_hops_triggers_liaison_hop(
     ]
     mark: dict[str, float] = {}
     check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
-    mock_hop.assert_called_once_with("18291", _TID)
+    mock_hop.assert_called_once_with("18291", _TID, gui_host=":8")
     assert mark.get("check:18291") == 1000.0
+
+
+@patch("bus_watch.ide_context_hop_monitor._run_ide_hop")
+@patch("bus_watch.ide_context_hop_monitor._budget_for_root")
+def test_check_cursor_ide_context_hops_passes_orion_gui_host(
+    mock_budget: MagicMock,
+    mock_hop: MagicMock,
+) -> None:
+    mock_budget.return_value = {
+        "stop_class": "CONTEXT_BUDGET",
+        "transcript_id": _TID,
+    }
+    mock_hop.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout='{"ok": true}', stderr=""
+    )
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": "18291",
+            "display": "orion-node",
+            "state": "subscribed",
+        }
+    ]
+    mark: dict[str, float] = {}
+    check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
+    mock_hop.assert_called_once_with("18291", _TID, gui_host="orion-node")
