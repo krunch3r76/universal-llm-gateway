@@ -658,9 +658,6 @@ def test_web_anthropic_seat_sees_memo_addressed_to_maestro(bus_db) -> None:
         supersedes_turn=prev_id,
     )
     with connect() as conn:
-        prev_row = conn.execute(
-            "SELECT turn_number FROM turns WHERE id = ?", (prev_id,)
-        ).fetchone()
         tip_row = conn.execute(
             "SELECT turn_number FROM turns WHERE id = ?", (tip_id,)
         ).fetchone()

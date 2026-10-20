@@ -11,6 +11,8 @@ from typing import Any
 from cortex_store.transcript_cp_anchors import window_anchors_from_text
 from cortex_store.transcript_projection_membership import extract_cp_object
 
+from agent_bus_store.resume_fence_memos import build_memos_to_check
+
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
 from .continuity_card_scratchboards import extract_card_rule_rows, extract_card_skills
 from .db.connection import connect
@@ -21,7 +23,6 @@ from .house_route_control import (
     parse_route_control_envelope,
 )
 from .recipients import MEMO_NOTE_SUBJECT_RE
-from agent_bus_store.resume_fence_memos import build_memos_to_check
 from .tape_verbal import (
     TAPE_LEFT_OFF_GAP,
     TAPE_LEFT_OFF_LETTER,

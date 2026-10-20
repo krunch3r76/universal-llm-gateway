@@ -14,12 +14,13 @@ from fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from request_profile import bind_request  # noqa: E402
+
 from tools import agent_bus as agent_bus_module  # noqa: E402
 from tools._agent_bus_post_guard import reconcile_send_arguments  # noqa: E402
+from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 from tools.agent_bus import register_agent_bus_tools  # noqa: E402
 from tools.agent_bus._arg_rewrite import reconcile_dispatch_arguments  # noqa: E402
-from request_profile import bind_request  # noqa: E402
-from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 
 
 @pytest.fixture
@@ -524,6 +525,7 @@ def test_get_mark_read_true_patches_read(agent_bus_read_fn) -> None:
 
     assert "error" not in result
     assert any("PATCH /turns/99/read" in p for p in paths)
+    assert any("mark_read_seat=" in p for p in paths)
 
 
 def test_threads_limit_maps_to_last(agent_bus_fn) -> None:
