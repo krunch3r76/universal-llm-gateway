@@ -127,6 +127,8 @@ def get_work_key_ledger(
 
     if not validate_work_key_scheme(work_key):
         return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")
+    if len(work_key.encode("utf-8")) > 256:
+        return _invalid("INVALID_WORK_KEY", "work_key exceeds 256 UTF-8 bytes")
     return work_key_ledger_projection(
         work_key,
         limit=limit,

@@ -244,6 +244,31 @@ def test_work_key_ledger_route_work_key_over_256_rejected() -> None:
     assert resp.status_code == 422
 
 
+def test_work_key_ledger_route_work_key_over_256_utf8_bytes_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multibyte key under Query max_length must not reach projection or SQL (C1b)."""
+    projection_calls: list[str] = []
+
+    def _fake_projection(work_key: str, **kwargs: object) -> dict:
+        projection_calls.append(work_key)
+        return {}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_dispatch_read.work_key_ledger_projection",
+        _fake_projection,
+    )
+    app = FastAPI()
+    app.include_router(claim_router)
+    client = TestClient(app)
+    long_key = "todo:" + "é" * 126
+    assert len(long_key) < 256
+    assert len(long_key.encode("utf-8")) == 257
+    resp = client.get("/api/v1/cursor/work-key-ledger", params={"work_key": long_key})
+    assert resp.status_code == 422
+    assert projection_calls == []
+
+
 def test_live_count_reflects_full_live_rows_when_budget_trims_list() -> None:
     """live_count stays pre-trim total while live_dispatches shrinks under budget (C2)."""
     live_rows = [
