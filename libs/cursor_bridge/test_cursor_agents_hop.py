@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,7 +26,7 @@ from cursor_bridge.cursor_agents_hop import (
     launch_cursor_agents_tab,
     prune_cursor_agents_predecessors,
 )
-from cursor_bridge.glass_services_js import launch_new_agent_tab_js
+from cursor_bridge.glass_services_js import _resolve_catalog_js, launch_new_agent_tab_js
 from cursor_bridge.wake_delivery import normalize_target
 
 pytestmark = pytest.mark.offline
@@ -54,6 +58,8 @@ def test_cursor_debug_url_for_orion_and_eight() -> None:
 
 def test_launch_tab_js_uses_glass_services_not_input() -> None:
     js = launch_new_agent_tab_js("hello", "Grok 4.7 Extra High")
+    assert "agentRepositoryService" in js
+    assert "createAgent" in js
     assert "createComposer" in js
     assert "setModelConfigForComposer" in js
     assert "submitChatMaybeAbortCurrent" in js
@@ -61,6 +67,44 @@ def test_launch_tab_js_uses_glass_services_not_input() -> None:
     assert "Input.dispatchKeyEvent" not in js
     assert "Input.insertText" not in js
     assert "entries.entries()" in js
+
+
+def test_launch_tab_js_gemini_create_agent_path() -> None:
+    js = launch_new_agent_tab_js("resume 18528", "Gemini 4 Argon Low")
+    assert "agentRepositoryService" in js
+    assert "createAgent" in js
+    assert "glassActiveAgentService" in js
+    assert "setActiveAgentId" in js
+    assert "gemini-4-argon" in js
+    assert "reasoning_effort" in js
+    assert "Input.dispatchKeyEvent" not in js
+    assert "Input.insertText" not in js
+
+
+def test_resolve_catalog_js_maps_display_names_to_slugs() -> None:
+    cat_js = _resolve_catalog_js()
+    assert "gemini-4-argon" in cat_js
+    assert "grok-4.7" in cat_js
+    assert "reasoning_effort" in cat_js
+    assert "mapFromLabel" in cat_js or "slugShape" in cat_js
+
+
+def test_cursor_agents_archive_imports_without_circular_error() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    libs = str(repo_root / "libs")
+    env = {**os.environ, "PYTHONPATH": libs}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import cursor_bridge.cursor_agents_archive",
+        ],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_glass_row_probe_iterates_map_entries() -> None:

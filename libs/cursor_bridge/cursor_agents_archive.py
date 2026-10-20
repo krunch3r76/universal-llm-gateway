@@ -7,8 +7,6 @@ import re
 import time
 from typing import Any
 
-import cursor_bridge.cursor_agents_hop as _hop
-
 _GLASS_ROW_PROBE_JS = (
     "const rowTitle=(el)=>{const t=el.querySelector('[class*=\"agent-item__title\"]');"
     "if(t){const x=(t.textContent||'').replace(/\\s+/g,' ').trim();if(x)return x;}"
@@ -434,3 +432,6 @@ async def _prune_predecessors_async(
         "archived": archived,
         "skipped": skipped,
     }
+
+
+import cursor_bridge.cursor_agents_hop as _hop  # noqa: E402

@@ -30,32 +30,142 @@ function glassServiceMap(startEl) {
 """
 
 
+RESOLVE_WORKSPACE_SERVICES_FN = r"""
+function resolveWorkspaceServices(rootMap, agentId) {
+  const repo = rootMap.get('agentRepositoryService');
+  const wcs = rootMap.get('workspaceCollectionService');
+  const glassActive = rootMap.get('glassActiveAgentService');
+  let activeId = '';
+  if (glassActive && typeof glassActive.getActiveAgentId === 'function') {
+    try { activeId = String(glassActive.getActiveAgentId() || '').trim(); } catch (e) {}
+  }
+  if (!activeId) {
+    const activeRow = document.querySelector('[data-perf-id="glass-sidebar-agent-row"][data-active="true"]')
+      || document.querySelector('.ui-sidebar-menu-button-trigger[aria-current="page"]')
+        ?.closest('[data-perf-id="glass-sidebar-agent-row"]');
+    if (activeRow) {
+      activeId = (activeRow.getAttribute('data-sidebar-file-drop-agent-id')
+        || activeRow.getAttribute('data-agent-id') || '').trim();
+    }
+  }
+  const resolvedAgentId = String(agentId || activeId || '').trim();
+  let targetEnv = null;
+  if (repo && resolvedAgentId && typeof repo.getAgentHeader === 'function') {
+    try {
+      const h = repo.getAgentHeader(resolvedAgentId);
+      if (h && h.workspaceIdentifier) targetEnv = h.workspaceIdentifier;
+    } catch (e) {}
+  }
+  if (!targetEnv && repo && activeId && typeof repo.getAgentHeader === 'function') {
+    try {
+      const h = repo.getAgentHeader(activeId);
+      if (h && h.workspaceIdentifier) targetEnv = h.workspaceIdentifier;
+    } catch (e) {}
+  }
+  if (!targetEnv && wcs && typeof wcs.getWorkspaceInstances === 'function') {
+    try {
+      const instances = wcs.getWorkspaceInstances();
+      const list = Array.isArray(instances) ? instances : (instances ? [...instances] : []);
+      for (const inst of list) {
+        const id = inst && (inst.workspaceIdentifier || inst.identifier);
+        const folder = String(inst && (inst.folderUri || inst.name || '') || '');
+        if (id && folder.includes('universal-llm-gateway')) {
+          targetEnv = id;
+          break;
+        }
+      }
+      if (!targetEnv && list.length > 0) {
+        const first = list[0];
+        targetEnv = first && (first.workspaceIdentifier || first.identifier || first.environment);
+      }
+    } catch (e) {}
+  }
+  let merged = rootMap;
+  if (wcs && targetEnv && typeof wcs.getWorkspaceInstance === 'function') {
+    try {
+      const wsInst = wcs.getWorkspaceInstance(targetEnv);
+      const entries = wsInst && wsInst.instantiationService
+        && wsInst.instantiationService._services
+        && wsInst.instantiationService._services._entries;
+      if (entries && typeof entries.entries === 'function') {
+        merged = new Map(rootMap);
+        for (const [k, ent] of entries.entries()) {
+          const inst = ent && (ent.instance !== undefined ? ent.instance : ent);
+          merged.set(String(k), inst);
+        }
+      }
+    } catch (e) {}
+  }
+  return { services: merged, targetEnv, agentId: resolvedAgentId };
+}
+"""
+
+
 def _resolve_catalog_js() -> str:
     return r"""
 async function resolveCatalog(modelConfigService, label) {
   const q = String(label || '').trim();
   if (!q) return null;
+  const slugShape = (id) => typeof id === 'string' && id.length > 0 && !/\s/.test(id);
+  const parseEffort = (text) => {
+    const lower = text.toLowerCase();
+    if (/\bxhigh\b|extra\s+high/.test(lower)) return 'xhigh';
+    if (/\bhigh\b/.test(lower)) return 'high';
+    if (/\bmedium\b/.test(lower)) return 'medium';
+    if (/\blow\b/.test(lower)) return 'low';
+    return null;
+  };
+  const mapFromLabel = (labelStr) => {
+    const lower = labelStr.toLowerCase();
+    const effort = parseEffort(lower);
+    if (lower.includes('gemini') && lower.includes('4') && lower.includes('argon')) {
+      return {
+        modelId: 'gemini-4-argon',
+        parameters: [{ id: 'reasoning_effort', value: effort || 'low' }],
+      };
+    }
+    if (lower.includes('grok') && lower.includes('4.7')) {
+      return {
+        modelId: 'grok-4.7',
+        parameters: [
+          { id: 'context', value: '256k' },
+          { id: 'reasoning_effort', value: effort || 'xhigh' },
+          { id: 'fast', value: 'false' },
+        ],
+      };
+    }
+    if (lower.includes('composer') && lower.includes('2.5')) {
+      return { modelId: 'composer-2.5', parameters: [] };
+    }
+    const stripped = labelStr.replace(/\s+(extra\s+high|xhigh|high|medium|low|fast)$/i, '').trim();
+    const slug = stripped.toLowerCase().replace(/\s+/g, '-');
+    if (slugShape(slug)) {
+      const params = effort ? [{ id: 'reasoning_effort', value: effort }] : [];
+      return { modelId: slug, parameters: params };
+    }
+    return null;
+  };
   if (modelConfigService && typeof modelConfigService.resolveModelNameToCatalog === 'function') {
     try {
       const cat = await modelConfigService.resolveModelNameToCatalog(q);
-      if (cat && (cat.modelId || cat.modelName)) {
-        return {
-          modelId: cat.modelId || cat.modelName,
-          parameters: cat.parameters || [],
-        };
+      if (cat && typeof cat === 'object') {
+        if (slugShape(cat.modelId)) {
+          return { modelId: cat.modelId, parameters: cat.parameters || [] };
+        }
+        if (slugShape(cat.modelName)) {
+          return { modelId: cat.modelName, parameters: cat.parameters || [] };
+        }
+        const mapped = mapFromLabel(q);
+        if (mapped) return mapped;
+      }
+      if (typeof cat === 'string') {
+        if (slugShape(cat)) return { modelId: cat, parameters: [] };
+        const mapped = mapFromLabel(q) || mapFromLabel(cat);
+        if (mapped) return mapped;
       }
     } catch (e) { /* fall through */ }
   }
-  const lower = q.toLowerCase();
-  if (lower.includes('grok') && lower.includes('4.7')) {
-    const params = [
-      { id: 'context', value: '256k' },
-      { id: 'reasoning_effort', value: 'xhigh' },
-      { id: 'fast', value: 'false' },
-    ];
-    return { modelId: 'grok-4.7', parameters: params };
-  }
-  return { modelId: q, parameters: [] };
+  return mapFromLabel(q) || { modelId: q, parameters: [] };
 }
 """
 
@@ -67,6 +177,7 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
     return (
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
+        f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"{_resolve_catalog_js()}\n"
         "  const text = "
         f"{msg};\n"
@@ -77,10 +188,47 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
         "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"
         "  const byId = glassServiceMap(anchor);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
+        "  const agentRepositoryService = byId.get('agentRepositoryService');\n"
+        "  const glassActiveAgentService = byId.get('glassActiveAgentService');\n"
         "  const composerService = byId.get('composerService');\n"
         "  const composerDataService = byId.get('composerDataService');\n"
         "  const modelConfigService = byId.get('modelConfigService');\n"
         "  const composerChatService = byId.get('composerChatService');\n"
+        "  let modelConfig = null;\n"
+        "  if (modelLabel && modelConfigService) {\n"
+        "    const cat = await resolveCatalog(modelConfigService, modelLabel);\n"
+        "    if (cat && cat.modelId) {\n"
+        "      modelConfig = {\n"
+        "        modelName: cat.modelId,\n"
+        "        maxMode: false,\n"
+        "        selectedModels: [{ modelId: cat.modelId, parameters: cat.parameters || [] }],\n"
+        "      };\n"
+        "    }\n"
+        "  }\n"
+        "  const { targetEnv } = resolveWorkspaceServices(byId, '');\n"
+        "  if (agentRepositoryService && typeof agentRepositoryService.createAgent === 'function'"
+        " && targetEnv) {\n"
+        "    const created = await agentRepositoryService.createAgent(\n"
+        "      text,\n"
+        "      { type: 'existing', environment: targetEnv },\n"
+        "      {\n"
+        "        modelConfig,\n"
+        "        destination: { type: 'local' },\n"
+        "        promptPreview: text.slice(0, 120),\n"
+        "        richText: text,\n"
+        "        unifiedMode: 'agent',\n"
+        "        skipFocusAfterSubmission: false,\n"
+        "      },\n"
+        "    );\n"
+        "    const agentId = (typeof created === 'string' ? created\n"
+        "      : (created && (created.agentId || created.composerId || created.id))) || '';\n"
+        "    if (!agentId) return {ok: false, reason: 'no_agent_id'};\n"
+        "    if (glassActiveAgentService && typeof glassActiveAgentService.setActiveAgentId === 'function') {\n"
+        "      await glassActiveAgentService.setActiveAgentId(agentId);\n"
+        "    }\n"
+        "    return {ok: true, agent_id: agentId, editor_agent_id: agentId,\n"
+        "      transport: 'cdp_glass_services', method: 'createAgent'};\n"
+        "  }\n"
         "  if (!composerService || !composerDataService || !composerChatService) {\n"
         "    return {ok: false, reason: 'missing_services'};\n"
         "  }\n"
@@ -149,6 +297,7 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
     return (
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
+        f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"  const text = {text};\n"
         f"  const scopedId = {aid};\n"
         "  let agentId = scopedId;\n"
@@ -168,13 +317,14 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "  if (!prompt) return {ok: false, reason: 'no_composer'};\n"
         "  const byId = glassServiceMap(prompt);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
-        "  const composerDataService = byId.get('composerDataService');\n"
-        "  const composerChatService = byId.get('composerChatService');\n"
-        "  if (!composerDataService || !composerChatService) {\n"
-        "    return {ok: false, reason: 'missing_services'};\n"
-        "  }\n"
         "  if (!agentId) {\n"
         "    agentId = (prompt.getAttribute('data-sidebar-file-drop-editor-agent-id') || '').trim();\n"
+        "  }\n"
+        "  const { services } = resolveWorkspaceServices(byId, agentId);\n"
+        "  const composerDataService = services.get('composerDataService');\n"
+        "  const composerChatService = services.get('composerChatService');\n"
+        "  if (!composerDataService || !composerChatService) {\n"
+        "    return {ok: false, reason: 'missing_services'};\n"
         "  }\n"
         "  if (!agentId) return {ok: false, reason: 'no_agent_id'};\n"
         "  const handle = await composerDataService.getComposerHandleById(agentId);\n"
@@ -213,6 +363,7 @@ def rename_composer_title_js(agent_id: str, title: str) -> str:
     return (
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
+        f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"  const target = {aid};\n"
         f"  const newTitle = {new_title};\n"
         "  const row = Array.from(document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]'))\n"
@@ -222,8 +373,9 @@ def rename_composer_title_js(agent_id: str, title: str) -> str:
         "  if (!anchor) return {ok: false, reason: 'row_not_found'};\n"
         "  const byId = glassServiceMap(anchor);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
-        "  const composerService = byId.get('composerService');\n"
-        "  const composerDataService = byId.get('composerDataService');\n"
+        "  const { services } = resolveWorkspaceServices(byId, target);\n"
+        "  const composerService = services.get('composerService');\n"
+        "  const composerDataService = services.get('composerDataService');\n"
         "  if (!composerService || !composerDataService) {\n"
         "    return {ok: false, reason: 'missing_services'};\n"
         "  }\n"
