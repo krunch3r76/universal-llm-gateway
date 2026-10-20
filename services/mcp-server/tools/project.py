@@ -62,6 +62,11 @@ from .filesystem._ops_search import (
     search_in_text,
 )
 from .filesystem._paths import SANDBOX_ROOT, trash_destination
+from .filesystem._search_helpers import (
+    WORKTREE_PATH_PARTS,
+    find_workspaces_files,
+    path_has_worktree_below_scope,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -685,6 +690,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         max_results: int = DEFAULT_MAX_RESULTS,
         include_untracked: bool = True,
         mode: str = "auto",
+        include_worktrees: bool = False,
     ) -> dict[str, Any]:
         """Search for an exact regex pattern across project files.
 
@@ -720,19 +726,23 @@ def register_project_tools(mcp: FastMCP) -> None:
         """
         directory = normalize_directory_arg(directory)
         mode = mode or "auto"
+        if max_results <= 0:
+            max_results = DEFAULT_MAX_RESULTS
         if mode == "filename":
-            result = find_project_files(
-                pattern,
-                directory,
+            result = find_workspaces_files(
+                pattern=pattern,
+                directory=directory,
+                include_worktrees=include_worktrees,
                 max_results=max_results,
             )
             if isinstance(result, dict) and "error" not in result:
                 result["explicit_mode"] = "filename"
             return result
         if mode == "auto" and _looks_like_literal_filename(pattern):
-            result = find_project_files(
-                pattern,
-                directory,
+            result = find_workspaces_files(
+                pattern=pattern,
+                directory=directory,
+                include_worktrees=include_worktrees,
                 max_results=max_results,
             )
             if isinstance(result, dict) and "error" not in result:
@@ -813,12 +823,19 @@ def register_project_tools(mcp: FastMCP) -> None:
         state = SearchBudgetState()
         deadline = state.budget_start + SEARCH_WALL_BUDGET_S
         enum_truncated = False
+        scope_inside_worktree = bool(
+            directory
+            and any(part in WORKTREE_PATH_PARTS for part in Path(directory).parts)
+        )
+        listing_skip_dirs = SEARCH_SKIP_DIRS
+        if not include_worktrees and not scope_inside_worktree:
+            listing_skip_dirs = SEARCH_SKIP_DIRS | WORKTREE_PATH_PARTS
         if include_untracked:
             candidates, _, enum_truncated = _filesystem_listing(
                 directory,
                 skip_binary=False,
                 cap=None,
-                extra_skip_dirs=SEARCH_SKIP_DIRS,
+                extra_skip_dirs=listing_skip_dirs,
                 deadline=deadline,
             )
         else:
@@ -831,6 +848,11 @@ def register_project_tools(mcp: FastMCP) -> None:
         wall_truncated = enum_truncated
 
         for rel_path in candidates:
+            if (
+                not include_worktrees
+                and path_has_worktree_below_scope(rel_path, directory)
+            ):
+                continue
             if state.wall_exceeded():
                 wall_truncated = True
                 truncated = True
