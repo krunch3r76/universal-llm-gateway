@@ -537,11 +537,28 @@ def test_cap_utf8_for_hop_live_leg_keeps_a_word_boundary_prefix() -> None:
     assert len(capped.encode("utf-8")) <= 90
 
 
+def test_cap_utf8_for_hop_live_leg_stops_before_rule_text() -> None:
+    """A room that reaches into the rule must not emit a partial rule."""
+    from claude_bundles.operator_proxy_standing_render import cap_utf8_for_hop
+
+    line = (
+        "- lane 15722 #86 PICKUP|todo:maestro-computed-hop — "
+        "R3: read DONE / FAILED / QUESTION and nothing in between"
+    )
+    head = "- lane 15722 #86 PICKUP|todo:maestro-computed-hop"
+    # Flag plus a room that includes the em dash and the start of R3.
+    capped = cap_utf8_for_hop(line, max_bytes=len(head.encode()) + 40, label="live_leg")
+    assert "todo:maestro-computed-hop" in capped
+    assert "R3:" not in capped
+    assert "DONE" not in capped
+    assert len(capped.encode("utf-8")) <= len(head.encode()) + 40
+
+
 def test_hop_house_rules_pointer_cites_handoff_when_file_is_absent() -> None:
     from claude_bundles.operator_proxy_standing_render import hop_house_rules_pointer
 
     text = hop_house_rules_pointer(
-        "16416", rules_file_exists=False, handoff_has_rules=True
+        "16416", rules_file_exists=False, rules_heading="HOUSE RULES"
     )
     assert 'section="HOUSE RULES"' in text
     assert "16416-standing-handoff.md" in text
@@ -554,17 +571,30 @@ def test_hop_house_rules_pointer_keeps_file_read_when_present_or_unprobed() -> N
     from claude_bundles.operator_proxy_standing_render import hop_house_rules_pointer
 
     present = hop_house_rules_pointer(
-        "12286", rules_file_exists=True, handoff_has_rules=True
+        "12286", rules_file_exists=True, rules_heading="HOUSE RULES"
     )
     unprobed = hop_house_rules_pointer("1")
     assert 'path="cortex://notes/system/threads/12286-house-rules.md"' in present
     assert "1-house-rules.md" in unprobed
-    absent = hop_house_rules_pointer(
-        "16416", rules_file_exists=False, handoff_has_rules=False
-    )
+    absent = hop_house_rules_pointer("16416", rules_file_exists=False)
     assert "no HOUSE RULES section" in absent
     assert 'op="read"' not in absent
     assert 'op="md_read"' not in absent
+
+
+_LANE_16416_RULES_HEADING = "HOUSE RULES (by assertion id; extend, never drop)"
+
+
+def test_hop_house_rules_pointer_uses_suffixed_16416_heading() -> None:
+    from claude_bundles.operator_proxy_standing_render import hop_house_rules_pointer
+
+    text = hop_house_rules_pointer(
+        "16416",
+        rules_file_exists=False,
+        rules_heading=_LANE_16416_RULES_HEADING,
+    )
+    assert f'section="{_LANE_16416_RULES_HEADING}"' in text
+    assert 'section="HOUSE RULES"' not in text
 
 
 def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
@@ -605,3 +635,46 @@ def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
         if line.startswith("[hop_budget_exceeded "):
             continue
         assert not line.endswith(" h")
+
+
+def test_friction_39828_suffixed_heading_and_probe_oserror() -> None:
+    """Suffixed heading is the md_read section; a probe OSError does not fail the block."""
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+    )
+
+    sidecar = f"## {_LANE_16416_RULES_HEADING}\n- K24 stay\n\n## CURRENT LEG\nLEG 1\n"
+
+    def _missing(_path: str) -> bool:
+        return False
+
+    def _boom(_path: str) -> bool:
+        raise OSError("cortex root unreadable")
+
+    absent = ensure_operator_proxy_mission_prompt(
+        "thread_id: 16416\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+        archive_path_exists=_missing,
+    )
+    rules = absent.split("## CURRENT LEG (rendered checkpoint)", 1)[0]
+    assert f'section="{_LANE_16416_RULES_HEADING}"' in rules
+    assert 'section="HOUSE RULES"' not in rules
+    assert "is absent" in rules
+
+    unverified = ensure_operator_proxy_mission_prompt(
+        "thread_id: 16416\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=lambda _lane: [],
+        journal_text="",
+        register_text="",
+        archive_path_exists=_boom,
+    )
+    rules_u = unverified.split("## CURRENT LEG (rendered checkpoint)", 1)[0]
+    assert f'section="{_LANE_16416_RULES_HEADING}"' in rules_u
+    assert "existence unverified" in rules_u
+    assert "[render_failed house_rules:" not in unverified

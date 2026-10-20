@@ -129,9 +129,12 @@ def test_computed_hop_rendering() -> None:
     assert "decision:maestro-hop-model-fable" not in out
     assert "recover-maestro-houses" not in out
 
-    for verb in ("REQUEST", "PICKUP", "PLAN"):
+    for verb in ("REQUEST", "PLAN"):
         if verb in GOVERNING_RULE:
             assert GOVERNING_RULE[verb].split(":")[0] in out
+    # The PICKUP row is the one the live-leg cap cuts. The key stays; the
+    # governing-rule sentence is dropped whole rather than sliced (friction:39828).
+    assert "R3:" not in out
 
     assert "live leg unavailable for 15857" in out
     assert "consolidated section not found" not in out

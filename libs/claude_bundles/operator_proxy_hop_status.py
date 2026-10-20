@@ -158,6 +158,14 @@ def house_rules_section(text: str) -> str | None:
     return None
 
 
+def house_rules_heading(text: str) -> str | None:
+    """Heading text of the HOUSE RULES block, including any suffix."""
+    for heading, _body in _heading_sections(text or ""):
+        if _HOUSE_RULES_HEADING in heading:
+            return heading
+    return None
+
+
 def handoff_file_sha256(text: str) -> str:
     """sha256 of the whole sidecar text, not of the extracted section."""
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
@@ -341,12 +349,17 @@ def hop_successor_fields(
             house_rules_verbatim = MISSING_HANDOFF_INSTRUCTION
         elif hop_kind == "mission":
             rules_file_exists: bool | None = None
+            existence_unverified = False
             if archive_path_exists is not None:
-                rules_file_exists = bool(archive_path_exists(rules_uri))
+                try:
+                    rules_file_exists = bool(archive_path_exists(rules_uri))
+                except OSError:
+                    existence_unverified = True
             house_rules_verbatim = hop_house_rules_pointer(
                 lane,
                 rules_file_exists=rules_file_exists,
-                handoff_has_rules=bool(inline_rules and inline_rules.strip()),
+                rules_heading=house_rules_heading(sidecar) if sidecar else None,
+                existence_unverified=existence_unverified,
             )
         else:
             house_rules_verbatim, _rules_budget = render_house_rules_block(

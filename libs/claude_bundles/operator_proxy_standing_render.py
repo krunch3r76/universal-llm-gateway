@@ -75,14 +75,35 @@ def _prefix_on_word_boundary(line: str, room: int) -> str:
     return window[:cut].rstrip()
 
 
+_LIVE_LEG_RULE_MARK = " — "
+
+
+def _prefix_live_leg_head(line: str, room: int) -> str:
+    """Keep the live-leg key head. Do not continue into the governing-rule prose.
+
+    The rule text is `` — `` plus a verb-only sentence. A word cut inside that
+    sentence reads as a different rule. If the mark fits, stop before it. If
+    the room ends in the head, use a word boundary there.
+    """
+    if room <= 0:
+        return ""
+    window = _truncate_utf8(line, room)
+    if _utf8_len(window) == _utf8_len(line):
+        return line
+    mark = window.find(_LIVE_LEG_RULE_MARK)
+    if mark > 0:
+        return window[:mark].rstrip()
+    return _prefix_on_word_boundary(line, room)
+
+
 def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
     """Truncate hop slot text on a line boundary and flag when over *max_bytes*.
 
     Complete lines that fit are kept. A later line that does not fit is dropped
     whole, so a heading or pointer bullet is not sliced mid-sentence. The
-    ``live_leg`` slot is the exception: the overflowing item keeps a
-    word-boundary prefix so its work key stays visible. The flag is reserved
-    inside the cap.
+    ``live_leg`` slot keeps the item head before `` — `` (word boundary only
+    inside that head) so the work key stays visible and the rule text is not
+    cut mid-sentence. The flag is reserved inside the cap.
     """
     body = text or ""
     size = _utf8_len(body)
@@ -97,7 +118,7 @@ def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
         extra = _utf8_len(line) + newline
         if used + extra > room:
             if label == "live_leg":
-                prefix = _prefix_on_word_boundary(line, room - used - newline)
+                prefix = _prefix_live_leg_head(line, room - used - newline)
                 if prefix:
                     kept.append(prefix)
             break
@@ -111,25 +132,40 @@ def hop_house_rules_pointer(
     lane: str,
     *,
     rules_file_exists: bool | None = None,
-    handoff_has_rules: bool = False,
+    rules_heading: str | None = None,
+    existence_unverified: bool = False,
 ) -> str:
     """House-rules slot for hop render (L5); not an inline of the rules.
 
     ``rules_file_exists is None`` keeps the dedicated-file read (callers that
     do not probe). ``False`` does not instruct a read of the missing file:
-    the standing-handoff HOUSE RULES section when that section is present,
-    otherwise an absence line.
+    ``md_read`` uses *rules_heading* (the handoff's real heading, suffixes
+    included) when that heading is present, otherwise an absence line.
+    ``existence_unverified`` is a failed probe: cite the heading when known,
+    else the unprobed file read.
     """
     file_uri = f"cortex://notes/system/threads/{lane}-house-rules.md"
-    if rules_file_exists is False and handoff_has_rules:
+    heading = (rules_heading or "").replace('"', "'").strip()
+    if existence_unverified:
+        if not heading:
+            rules_file_exists = None
+        else:
+            handoff = standing_handoff_uri(lane)
+            return (
+                "House rules (do not inline): "
+                f'`fs(op="md_read", section="{heading}", path="{handoff}")` '
+                "and quote `read_sha256` from that read. "
+                f"`{file_uri}` existence unverified.\n"
+            )
+    if rules_file_exists is False and heading:
         handoff = standing_handoff_uri(lane)
         return (
             "House rules (do not inline): "
-            f'`fs(op="md_read", section="HOUSE RULES", path="{handoff}")` '
+            f'`fs(op="md_read", section="{heading}", path="{handoff}")` '
             "and quote `read_sha256` from that read. "
             f"`{file_uri}` is absent.\n"
         )
-    if rules_file_exists is False and not handoff_has_rules:
+    if rules_file_exists is False and not heading:
         return (
             "House rules (do not inline): "
             f"`{file_uri}` is absent and the standing handoff has no "
