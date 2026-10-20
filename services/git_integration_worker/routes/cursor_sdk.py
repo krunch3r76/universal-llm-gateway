@@ -182,6 +182,7 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 from services.git_integration_worker.cursor_sdk_gate import (
     SdkSlotAcquireStallError,
     acquire_sdk_dispatch_slot,
+    force_release_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
     sdk_dispatch_lane,
 )
@@ -917,9 +918,7 @@ def _resolve_prompt(
     lane_worktree_str = str(lane_worktree.resolve()) if lane_worktree else None
     from reasoning_posture_contracts import resolve_delegation_tier
 
-    handoff_contract = (
-        ctx.handoff_contract if ctx is not None else req.handoff_contract
-    )
+    handoff_contract = ctx.handoff_contract if ctx is not None else req.handoff_contract
     delegation_tier = resolve_delegation_tier(
         handoff_contract,
         model=req.model,
@@ -1665,7 +1664,17 @@ async def _mark_terminal_and_promote(
         )
 
         await asyncio.to_thread(record_memo_closeout, dispatch_id, memo_facts)
-    disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        admit_nest_parent_resume,
+        nest_resume_parent_id,
+    )
+
+    nest_parent = nest_resume_parent_id(dispatch_id)
+    if nest_parent is not None:
+        await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+        disposition = "nest_pending"
+    else:
+        disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
     ledger = CursorDispatchLedger.instance()
     lease_key = await asyncio.to_thread(
         ledger.mark_terminal,
@@ -1775,6 +1784,19 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         source_repo=cfg.source_repo,
     )
+    if disposition == "nest_pending":
+        # Child is terminal. Seal the exited parent and admit resume_of.
+        # A successful admit owns the lease, so FIFO promote must not run.
+        # An ineligible or refused admit still seals the parent cancelled
+        # and falls through so the park cannot hold the lease.
+        resumed = await admit_nest_parent_resume(
+            nest_parent,
+            child_id=dispatch_id,
+            controller=controller,
+            cfg=_config(request) if request is not None else _CONFIG,
+        )
+        if resumed:
+            return
     if disposition == "restored":
         # Parked parent regained capacity — siblings stay queued (Q4).
         return
@@ -3135,6 +3157,18 @@ async def _run_sdk_dispatch_gated(
         return
 
     try:
+        from services.git_integration_worker.cursor_sdk_nest_resume import (
+            defer_finished_parent_for_live_nest,
+        )
+
+        if await defer_finished_parent_for_live_nest(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            reply_to=reply_to,
+            bus=bus,
+            closeout_body=outcome.body or "",
+        ):
+            return
         await _finalize_success(
             req=req,
             source_repo=ctx.hub,
@@ -4333,9 +4367,7 @@ async def admit_cursor_dispatch(
                 "holder_kind": exc.holder_kind,
                 "steer": exc.steer,
                 **(
-                    {"holder_surface": exc.holder_surface}
-                    if exc.holder_surface
-                    else {}
+                    {"holder_surface": exc.holder_surface} if exc.holder_surface else {}
                 ),
                 **(
                     {"lease_epoch": exc.lease_epoch}
