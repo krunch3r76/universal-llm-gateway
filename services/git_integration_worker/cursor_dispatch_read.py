@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -37,11 +39,12 @@ from services.git_integration_worker.relay.episode_residue import (
 _BUDGET_BYTES = 5120
 _MAX_VERDICT_BYTES = 160
 _MAX_PATH_SAMPLE = 8
+_ON_MASTER_CHECK_CAP = 10
+_ON_MASTER_GIT_TIMEOUT_S = 2.0
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _LIVE_STATUSES = ("queued", "admitted", "running", "parked_waiting")
 _CLAIM_CONTRACT = "claim"
-_MILESTONE_TURN_IDS_REASON = (
-    "milestone_turn_ids not projected on work-key ledger reads"
-)
+_MILESTONE_TURN_IDS_REASON = "milestone_turn_ids not projected on work-key ledger reads"
 
 
 def _is_conductor_row(row: dict[str, Any]) -> bool:
@@ -183,7 +186,9 @@ def _structured_closeout(row: dict[str, Any]) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _verdict_from_closeout(row: dict[str, Any], structured: dict[str, Any] | None) -> str | None:
+def _verdict_from_closeout(
+    row: dict[str, Any], structured: dict[str, Any] | None
+) -> str | None:
     candidates: list[str] = []
     if structured is not None:
         for key in ("closeout_body", "verdict"):
@@ -208,15 +213,76 @@ def _verdict_from_closeout(row: dict[str, Any], structured: dict[str, Any] | Non
     return None
 
 
-def _land_from_closeout(structured: dict[str, Any] | None) -> dict[str, Any]:
-    if structured is None:
-        return {"head_sha": None, "landed": None}
-    head = structured.get("head_sha")
-    landed = structured.get("landed")
-    return {
-        "head_sha": head if isinstance(head, str) else None,
-        "landed": landed if isinstance(landed, bool) else None,
+def _on_master_from_git(
+    row: dict[str, Any],
+    head: str | None,
+    git_budget: dict[str, int],
+) -> tuple[bool | None, str | None]:
+    """Live ancestor check. Exit 1 is not-on-master; other failures are null."""
+    if not isinstance(head, str) or not head.strip():
+        return None, "closeout head_sha absent"
+    sha = head.strip()
+    if _SHA_RE.fullmatch(sha) is None:
+        return None, "closeout head_sha not a sha"
+    source_repo = row.get("source_repo")
+    if source_repo is None or not str(source_repo).strip():
+        return None, "source_repo absent"
+    repo = Path(str(source_repo))
+    if not repo.is_dir():
+        return None, "source_repo missing"
+    if git_budget.get("remaining", 0) <= 0:
+        return None, "on_master check cap"
+    git_budget["remaining"] = git_budget.get("remaining", 0) - 1
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "merge-base",
+                "--is-ancestor",
+                sha,
+                "master",
+            ],
+            capture_output=True,
+            timeout=_ON_MASTER_GIT_TIMEOUT_S,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "git merge-base timeout"
+    except OSError:
+        return None, "git merge-base os error"
+    if proc.returncode == 0:
+        return True, None
+    if proc.returncode == 1:
+        return False, None
+    return None, f"git merge-base exit {proc.returncode}"
+
+
+def _land_from_closeout(
+    row: dict[str, Any],
+    structured: dict[str, Any] | None,
+    *,
+    git_budget: dict[str, int],
+) -> dict[str, Any]:
+    head: str | None = None
+    landed: bool | None = None
+    if structured is not None:
+        raw_head = structured.get("head_sha")
+        raw_landed = structured.get("landed")
+        head = raw_head if isinstance(raw_head, str) else None
+        landed = raw_landed if isinstance(raw_landed, bool) else None
+    on_master, reason = _on_master_from_git(row, head, git_budget)
+    out: dict[str, Any] = {
+        "closeout_head_sha": head,
+        "closeout_landed": landed,
+        "basis": "closeout",
+        "on_master": on_master,
     }
+    if on_master is None:
+        out["on_master_reason"] = reason
+    return out
 
 
 def _sha_closeout_from_structured(structured: dict[str, Any] | None) -> str | None:
@@ -258,7 +324,11 @@ def _paths_from_structured(structured: dict[str, Any] | None) -> dict[str, Any] 
     }
 
 
-def _project_dispatch_row(row: dict[str, Any]) -> dict[str, Any]:
+def _project_dispatch_row(
+    row: dict[str, Any],
+    *,
+    git_budget: dict[str, int],
+) -> dict[str, Any]:
     rec = _record_json_dict(row)
     structured = _structured_closeout(row)
     usage_cost, usage_reason = _project_usage_cost(row, rec)
@@ -274,7 +344,7 @@ def _project_dispatch_row(row: dict[str, Any]) -> dict[str, Any]:
         "status": row.get("status"),
         "usage_cost": usage_cost,
         "verdict": _verdict_from_closeout(row, structured),
-        "land": _land_from_closeout(structured),
+        "land": _land_from_closeout(row, structured, git_budget=git_budget),
         "milestone_turn_ids_reason": _MILESTONE_TURN_IDS_REASON,
     }
     if usage_reason is not None:
@@ -540,7 +610,10 @@ def work_key_ledger_projection(
     in_window.sort(key=_sort_key, reverse=True)
     total_dispatches = len(in_window)
     window_rows = list(in_window)
-    projected = [_project_dispatch_row(row) for row in in_window[:limit_i]]
+    git_budget = {"remaining": _ON_MASTER_CHECK_CAP}
+    projected = [
+        _project_dispatch_row(row, git_budget=git_budget) for row in in_window[:limit_i]
+    ]
 
     live = _live_dispatches(mapped)
     payload: dict[str, Any] = {

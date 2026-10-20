@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -34,7 +35,9 @@ def _ledger_check_predicate(payload: dict) -> bool:
         return False
     land = dispatches[0].get("land") or {}
     budget = payload.get("budget") or {}
-    return land.get("landed") is True and int(budget.get("actual_bytes") or 0) <= 5120
+    return (
+        land.get("on_master") is True and int(budget.get("actual_bytes") or 0) <= 5120
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -100,11 +103,68 @@ def _write_sidecar(
     path.write_text(f"{STRUCTURED_CLOSEOUT_FULL_HEADING}\n\n{body}\n", encoding="utf-8")
 
 
-def test_ledger_check_predicate_true_and_false() -> None:
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip()
+
+
+def _init_repo(path: Path) -> None:
+    subprocess.run(
+        ["git", "init", "-b", "master", str(path)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "t@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_file(repo: Path, name: str, content: str) -> str:
+    (repo / name).write_text(content, encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", name],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-qm", name],
+        check=True,
+        capture_output=True,
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_ledger_check_predicate_true_and_false(tmp_path: Path) -> None:
     ledger = CursorDispatchLedger.instance()
-    repo = Path("/tmp/ledger-check-repo")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    master_sha = _commit_file(repo, "on-master.txt", "on master\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "side"],
+        check=True,
+        capture_output=True,
+    )
+    side_sha = _commit_file(repo, "side.txt", "side\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "master"],
+        check=True,
+        capture_output=True,
+    )
     structured_ok = {
-        "head_sha": "a" * 40,
+        "head_sha": master_sha,
         "landed": True,
         "status": "complete",
     }
@@ -127,10 +187,37 @@ def test_ledger_check_predicate_true_and_false() -> None:
     _write_sidecar(
         repo,
         "disp-check-bad",
-        {"head_sha": "b" * 40, "landed": False, "status": "partial"},
+        {"head_sha": side_sha, "landed": False, "status": "partial"},
     )
     bad_payload = work_key_ledger_projection(_KEY, limit=1, ledger=ledger)
     assert _ledger_check_predicate(bad_payload) is False
+    assert bad_payload["dispatches"][0]["land"]["on_master"] is False
+
+
+def test_on_master_true_when_closeout_says_landed_false(tmp_path: Path) -> None:
+    """Closeout landed false must not hide a head that master already contains."""
+    ledger = CursorDispatchLedger.instance()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    master_sha = _commit_file(repo, "landed.txt", "on master\n")
+    _insert_dispatch(
+        ledger,
+        dispatch_id="disp-closeout-false-on-master",
+        source_repo=repo,
+    )
+    _write_sidecar(
+        repo,
+        "disp-closeout-false-on-master",
+        {"head_sha": master_sha, "landed": False, "status": "partial"},
+    )
+    payload = work_key_ledger_projection(_KEY, ledger=ledger)
+    land = payload["dispatches"][0]["land"]
+    assert land["closeout_landed"] is False
+    assert land["closeout_head_sha"] == master_sha
+    assert land["basis"] == "closeout"
+    assert land["on_master"] is True
+    assert _ledger_check_predicate(payload) is True
 
 
 def test_fifty_dispatches_two_hundred_paths_stays_within_budget() -> None:
@@ -299,7 +386,9 @@ def test_live_count_reflects_full_live_rows_when_budget_trims_list() -> None:
     assert len(returned_live) < 80
 
 
-def test_claim_guard_ledger_route_does_not_invoke_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claim_guard_ledger_route_does_not_invoke_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Claim admit path stays isolated from ledger reads (ACK #5)."""
     calls: list[dict] = []
 
