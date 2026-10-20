@@ -30,6 +30,8 @@ from cursor_bridge.glass_services_js import (
     RESOLVE_WORKSPACE_SERVICES_FN,
     _resolve_catalog_js,
     launch_new_agent_tab_js,
+    probe_glass_composer_budget_js,
+    submit_wake_line_js,
 )
 from cursor_bridge.wake_delivery import normalize_target
 
@@ -70,6 +72,20 @@ def test_resolve_workspace_services_prefers_vscode_remote_ulg() -> None:
     assert "isUlgEnv" in fn
     assert "empty-window" in fn
     assert "h.environment._value" in fn or "h.environment && h.environment._value" in fn
+
+
+def test_probe_glass_composer_budget_js_reads_composer_fields() -> None:
+    js = probe_glass_composer_budget_js("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert "getComposerHandleById" in js
+    assert "contextTokensUsed" in js
+    assert "summarized_conversation" in js
+
+
+def test_submit_wake_line_js_generating_clears_draft() -> None:
+    js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
+    assert "status === 'generating'" in js
+    assert "clearContent" in js
+    assert "skipClearInput: true" not in js
 
 
 def test_launch_tab_js_extracts_created_header_id() -> None:

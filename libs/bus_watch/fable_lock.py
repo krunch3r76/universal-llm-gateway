@@ -16,7 +16,20 @@ from typing import Any
 
 from bus_watch.events import emit_night_id_reset
 
-_REPO = Path(__file__).resolve().parents[2]
+
+def bus_watch_repo_root() -> Path:
+    """ULG checkout root — honors container ``PROJECT_ROOT=/data/project`` mounts."""
+    project_root = Path(os.environ.get("PROJECT_ROOT", "")).expanduser()
+    if project_root.is_dir():
+        nested = project_root / "universal-llm-gateway"
+        if nested.is_dir():
+            return nested
+        if (project_root / "libs" / "bus_watch").is_dir():
+            return project_root
+    return Path(__file__).resolve().parents[2]
+
+
+_REPO = bus_watch_repo_root()
 WATCH_DIR = _REPO / "tmp" / "watchers"
 HOUSE_LABEL_PREFIX = "house-"
 FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"  # legacy constant; never read or written

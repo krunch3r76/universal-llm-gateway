@@ -309,6 +309,12 @@ def seat_budget(
                 tool_calls=ide["tool_calls"],
                 transcript_bytes=ide["bytes"],
                 tokens_per_tool_call=ide["tokens_per_tool_call"],
+                glass_context_percent=ide.get("glass_context_percent"),
+                glass_status=ide.get("glass_status"),
+                glass_model=ide.get("glass_model"),
+                glass_summarized_tokens=ide.get("glass_summarized_tokens"),
+                glass_headers_count=ide.get("glass_headers_count"),
+                budget_probe=ide.get("budget_probe"),
             ),
             pct,
         )
@@ -357,12 +363,14 @@ def build_budget_block(
     )
     over_ratio = ratio >= ratio_threshold
     over_tools = source == "ide.transcript" and tool_calls >= _IDE_TOOL_CALLS_THRESHOLD
+    glass_summarized = int(basis.get("glass_summarized_tokens") or 0)
+    over_summarized = source == "ide.transcript" and glass_summarized > 0
     stop_class = (
         "CONTEXT_BUDGET"
         if window_limit_tokens
         and source in _SEAT_SCOPED_SOURCES
         and ide_bound
-        and (over_ratio or over_tools)
+        and (over_ratio or over_tools or over_summarized)
         else None
     )
     return {

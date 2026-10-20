@@ -48,7 +48,12 @@ from transport_utils import (
 
 from bus_watch.digest_budget import agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
-from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR, read_lock
+from bus_watch.fable_lock import (
+    HOUSE_LABEL_PREFIX,
+    WATCH_DIR,
+    bus_watch_repo_root,
+    read_lock,
+)
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_land import (
     DEFAULT_LANDING_TIMEOUT_S,
@@ -73,7 +78,7 @@ from bus_watch.ide_hop_mutex import (
 from bus_watch.liaison_digest import effective_policy
 from bus_watch.state import read_state
 
-_REPO = Path(__file__).resolve().parents[2]
+_REPO = bus_watch_repo_root()
 HANDOFF_MSG_DIR = WATCH_DIR / "handoff-messages"
 KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 # predicate_unmet is not terminal — CDP consults sit there until the first
@@ -260,6 +265,7 @@ def build_ide_hop_message(
     workspace: str = "universal-llm-gateway",
     register: str = "attended",
     judgment_posture: str = "distributed",
+    gui_host: str = ":8",
 ) -> str:
     """First user message of the successor tab; ``resume <R>`` first so the fence hook fires.
 
@@ -282,6 +288,7 @@ def build_ide_hop_message(
         judgment_line = _IN_SEAT_JUDGMENT
     else:
         judgment_line = _DISTRIBUTED_JUDGMENT
+    host_label = str(gui_host or ":8").strip() or ":8"
     lines = [
         f"resume {root_id}",
         "",
@@ -290,9 +297,11 @@ def build_ide_hop_message(
         (
             "HOP: When the operator tells this tab to hop (`hop`, `ide-hop`, `hop now`) "
             "or when budget.stop_class == 'CONTEXT_BUDGET' (tool_calls >= 35 or "
-            "used_tokens >= 55%), immediately seal and hop on this Xvfb (:8) interface "
+            "used_tokens >= 55%), immediately seal and hop on this Glass "
+            f"({host_label}) interface "
             f'via: "$HOME/.venvs/universal/bin/python" scripts/liaison-ide-hop.py '
-            f'--root {root_id} --row "{row}" --transcript-id <uuid> --gui-host :8 --force '
+            f'--root {root_id} --row "{row}" --transcript-id <uuid> '
+            f"--gui-host {host_label} --force "
             "(include --force when the operator explicitly requested the hop)."
         ),
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read

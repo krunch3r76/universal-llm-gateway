@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from bus_watch.digest_budget import (
     GEAR_PRESETS,
@@ -207,6 +208,54 @@ def test_retired_hop_transcript_excluded_from_newest_resume(tmp_path: Path) -> N
     assert ide["excluded_resume_ids"] == [_OLD]
 
 
+def test_glass_summarized_tokens_raises_context_budget() -> None:
+    budget = build_budget_block(
+        used_tokens=10_000,
+        window_limit_tokens=200_000,
+        model="ide-tab",
+        source=IDE_BUDGET_SOURCE,
+        scope="liaison_seat",
+        epoch=_TID,
+        as_of="2026-10-20T12:00:00Z",
+        transcript_id=_TID,
+        holder_basis="seat_lock",
+        tool_calls=1,
+        glass_summarized_tokens=3651,
+    )
+    assert budget["stop_class"] == "CONTEXT_BUDGET"
+
+
+def test_measure_ide_tab_overrides_from_glass_probe(tmp_path: Path) -> None:
+    path = _write_transcript(
+        tmp_path, _TID, first_user="resume 10479", tool_calls=5, mtime=5.0
+    )
+    glass = {
+        "contextTokensUsed": 126246,
+        "contextTokenLimit": 200000,
+        "contextUsagePercent": 63.123,
+        "status": "completed",
+        "model": "gemini-4-argon",
+        "glass_summarized_tokens": 3651,
+        "glass_headers_count": 201,
+    }
+    with patch(
+        "bus_watch.ide_budget.probe_glass_composer_budget", return_value=glass
+    ):
+        ide = measure_ide_tab(
+            "10479",
+            {"holder": f"ide:{_TID}"},
+            {"gui_host": ":8", "ide_window_tokens": 256_000},
+            transcripts_dir=tmp_path,
+            watch_dir=tmp_path / "watchers",
+        )
+    assert ide is not None
+    assert ide["used_tokens"] == 126246
+    assert ide["window_limit_tokens"] == 200_000
+    assert ide["glass_summarized_tokens"] == 3651
+    assert ide["budget_probe"] == "glass.cdp"
+    assert path.is_file()
+
+
 def test_digest_estimate_never_raises_stop_class() -> None:
     budget = build_budget_block(
         used_tokens=3_500_000,
@@ -303,7 +352,7 @@ def test_gear_three_presets_grok_successor() -> None:
 
 def test_tip_cp_needle_requires_resume_root_and_digit_boundary(tmp_path: Path) -> None:
     """a:38474 — bare tip_cp=N refuses; tip_cp=7 must not parse as 75."""
-    from bus_watch.ide_budget import first_line_matches, _TIP_CP_RE
+    from bus_watch.ide_budget import _TIP_CP_RE, first_line_matches
     from bus_watch.ide_hop import find_transcript_id
 
     stale = "06712639-0000-0000-0000-000000000001"
@@ -323,6 +372,5 @@ def test_tip_cp_needle_requires_resume_root_and_digit_boundary(tmp_path: Path) -
     assert _TIP_CP_RE.search("tip_cp=75 and more").group(1) == "75"
     assert _TIP_CP_RE.search("tip_cp=7 ").group(1) == "7"
     assert _TIP_CP_RE.search("tip_cp=7x") is None or _TIP_CP_RE.search("tip_cp=7x").group(1) == "7"
-    seven_line = "resume 15441 tip_cp=75 buried"  # tip_cp=7 must not match 75
     assert _TIP_CP_RE.search("Liaison IDE hop tip_cp=7. LOAD").group(1) == "7"
     assert int(_TIP_CP_RE.search("Liaison IDE hop tip_cp=75. LOAD").group(1)) == 75

@@ -7,18 +7,17 @@ import re
 import subprocess
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from bus_watch.digest_budget import _utcnow, effective_policy, seat_budget
 from bus_watch.endpoint_wake_transport import StoreClient
-from bus_watch.fable_lock import WATCH_DIR, read_lock
+from bus_watch.fable_lock import WATCH_DIR, bus_watch_repo_root, read_lock
 from bus_watch.ide_budget import active_budget_excludes, measure_ide_tab
 from bus_watch.tick_state import load_state
 
 logger = logging.getLogger(__name__)
 
-_REPO = Path(__file__).resolve().parents[2]
+_REPO = bus_watch_repo_root()
 _HOP_SCRIPT = _REPO / "scripts" / "liaison-ide-hop.py"
 _ROOT_SCOPE_RE = re.compile(r"^\d+$")
 _HOP_CHECK_INTERVAL_S = 60.0
@@ -129,6 +128,8 @@ def check_cursor_ide_context_hops(
             )
             continue
         if not budget or budget.get("stop_class") != "CONTEXT_BUDGET":
+            continue
+        if budget.get("glass_status") == "generating":
             continue
         transcript_id = str(budget.get("transcript_id") or "")
         if not transcript_id:

@@ -341,6 +341,47 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
     )
 
 
+def probe_glass_composer_budget_js(transcript_id: str) -> str:
+    """CDP expression: read live composer context budget fields for one tab."""
+    tid = json.dumps(str(transcript_id or "").strip())
+    return (
+        "(async () => {\n"
+        f"{GLASS_SERVICE_MAP_FN}\n"
+        f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
+        f"  const agentId = {tid};\n"
+        "  const anchor = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"]')"
+        " || document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');\n"
+        "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"
+        "  const byId = glassServiceMap(anchor);\n"
+        "  if (!byId) return {ok: false, reason: 'no_services'};\n"
+        "  const { services } = resolveWorkspaceServices(byId, agentId);\n"
+        "  const composerDataService = services.get('composerDataService');\n"
+        "  if (!composerDataService) return {ok: false, reason: 'missing_services'};\n"
+        "  const handle = await composerDataService.getComposerHandleById(agentId);\n"
+        "  if (!handle) return {ok: false, reason: 'no_handle'};\n"
+        "  const data = handle.data || {};\n"
+        "  let summarized = 0;\n"
+        "  const cats = (((data.promptTokenBreakdown || {}).categories) || []);\n"
+        "  for (const cat of cats) {\n"
+        "    if (cat && cat.id === 'summarized_conversation') {\n"
+        "      summarized = Number(cat.estimatedTokens || 0) || 0;\n"
+        "    }\n"
+        "  }\n"
+        "  const headers = data.fullConversationHeadersOnly || [];\n"
+        "  return {\n"
+        "    ok: true,\n"
+        "    contextTokensUsed: Number(data.contextTokensUsed || 0) || 0,\n"
+        "    contextTokenLimit: Number(data.contextTokenLimit || 0) || 0,\n"
+        "    contextUsagePercent: Number(data.contextUsagePercent || 0) || 0,\n"
+        "    status: String(data.status || ''),\n"
+        "    model: String((data.modelConfig && data.modelConfig.modelName) || ''),\n"
+        "    glass_summarized_tokens: summarized,\n"
+        "    glass_headers_count: Array.isArray(headers) ? headers.length : 0,\n"
+        "  };\n"
+        "})()"
+    )
+
+
 def submit_wake_line_js(line: str, agent_id: str = "") -> str:
     """CDP expression: paste a wake line into the active or scoped composer."""
     text = json.dumps(line)
@@ -394,9 +435,10 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "    await composerChatService.submitChatMaybeAbortCurrent(agentId, text, {\n"
         "      steerIntent: true,\n"
         "      skipFocusAfterSubmission: true,\n"
-        "      skipClearInput: true,\n"
         "      ignoreQueuing: true,\n"
         "    });\n"
+        "    prompt.editor.commands.clearContent();\n"
+        "    composerDataService.updateComposerData(handle, { text: '', richText: '' });\n"
         "  } else {\n"
         "    await composerChatService.submitChatMaybeAbortCurrent(agentId, text, {\n"
         "      skipFocusAfterSubmission: true,\n"

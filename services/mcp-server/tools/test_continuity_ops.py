@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -44,7 +44,7 @@ def test_maybe_subscribe_on_resume() -> None:
         return {"ok": True}
 
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch("tools.continuity_ops.claim_fable_lock", side_effect=_claim),
         patch(
@@ -72,7 +72,7 @@ def test_maybe_subscribe_on_resume() -> None:
 
 def test_maybe_subscribe_display_orion_node() -> None:
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value="orion-node"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value="orion-node"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch("tools.continuity_ops.claim_fable_lock", return_value={"ok": True}),
         patch(
@@ -95,7 +95,7 @@ def test_maybe_subscribe_display_orion_node() -> None:
 
 def test_maybe_subscribe_claim_failure_still_subscribes() -> None:
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch(
             "tools.continuity_ops.claim_fable_lock",
@@ -125,7 +125,7 @@ def test_maybe_subscribe_claim_failure_still_subscribes() -> None:
 
 def test_maybe_subscribe_claim_fable_lock_args() -> None:
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch(
             "tools.continuity_ops.claim_fable_lock",
@@ -166,7 +166,7 @@ def test_maybe_subscribe_cleanup_failure_still_subscribes() -> None:
         raise TimeoutError("cdp")
 
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch("tools.continuity_ops.claim_fable_lock", return_value={"ok": True}),
         patch(
@@ -205,7 +205,7 @@ def test_maybe_subscribe_skips_non_xvfb_host() -> None:
 
 def test_maybe_subscribe_on_checkpoint() -> None:
     with (
-        patch("tools.continuity_ops.policy_gui_host", return_value="orion-node"),
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value="orion-node"),
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch(
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
@@ -223,6 +223,7 @@ def test_maybe_subscribe_on_checkpoint() -> None:
         "18528",
         _TID,
         display="orion-node",
+        title=ANY,
         bound_by="continuity-checkpoint",
         evidence="continuity(op=checkpoint)",
     )

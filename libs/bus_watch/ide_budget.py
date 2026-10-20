@@ -15,11 +15,19 @@ results. The seat's own usage reading wins when it has one.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
 from pathlib import Path
 from typing import Any
+
+from cursor_bridge.cdp_pages import list_pages
+from cursor_bridge.cursor_agents_hop import (
+    cursor_debug_url_for_gui_host,
+    pick_chat_page,
+)
+from cursor_bridge.glass_services_js import probe_glass_composer_budget_js
 
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_budget_exclude import (
@@ -151,6 +159,70 @@ def measure_transcript(path: Path) -> dict[str, Any]:
     return out
 
 
+async def _probe_glass_composer_budget_async(
+    transcript_id: str,
+    gui_host: str,
+    *,
+    timeout_s: float = 2.5,
+) -> dict[str, Any] | None:
+    import websockets
+
+    origin = cursor_debug_url_for_gui_host(gui_host)
+    try:
+        pages = await asyncio.to_thread(list_pages, origin, timeout_s=min(timeout_s, 2.0))
+    except OSError:
+        return None
+    page = pick_chat_page(pages)
+    ws_url = (page or {}).get("web_socket_debugger_url") or ""
+    if not ws_url:
+        return None
+    expression = probe_glass_composer_budget_js(transcript_id)
+    try:
+        async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": 1,
+                        "method": "Runtime.evaluate",
+                        "params": {
+                            "expression": expression,
+                            "awaitPromise": True,
+                            "returnByValue": True,
+                        },
+                    }
+                )
+            )
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
+    except (TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    payload = json.loads(raw)
+    value = ((payload.get("result") or {}).get("result") or {}).get("value")
+    if not isinstance(value, dict) or not value.get("ok"):
+        return None
+    used = int(value.get("contextTokensUsed") or 0)
+    limit = int(value.get("contextTokenLimit") or 0)
+    if used <= 0 or limit <= 0:
+        return None
+    return value
+
+
+def probe_glass_composer_budget(
+    transcript_id: str,
+    gui_host: str,
+    *,
+    timeout_s: float = 2.5,
+) -> dict[str, Any] | None:
+    """Live Glass composer budget via CDP; ``None`` when unreachable (tests, mcp-server)."""
+    try:
+        return asyncio.run(
+            _probe_glass_composer_budget_async(
+                transcript_id, gui_host, timeout_s=timeout_s
+            )
+        )
+    except RuntimeError:
+        return None
+
+
 def estimate_tokens(measure: dict[str, Any], *, tokens_per_tool_call: int) -> int:
     """Prose bytes / 4 plus an allowance per tool call for the unstored results."""
     return int(measure.get("bytes") or 0) // 4 + int(
@@ -198,16 +270,30 @@ def measure_ide_tab(
         return None
     measure = measure_transcript(path)
     per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
-    return {
+    window_limit = int(policy.get("ide_window_tokens") or 256_000)
+    used_tokens = estimate_tokens(measure, tokens_per_tool_call=per_call)
+    out: dict[str, Any] = {
         "transcript_id": transcript_id,
         "holder_basis": "seat_lock" if locked else "resume_mtime",
         "resume_match_count": matches,
         "excluded_resume_ids": sorted(excluded),
-        "used_tokens": estimate_tokens(measure, tokens_per_tool_call=per_call),
-        "window_limit_tokens": int(policy.get("ide_window_tokens") or 256_000),
+        "used_tokens": used_tokens,
+        "window_limit_tokens": window_limit,
         "tokens_per_tool_call": per_call,
         **measure,
     }
+    gui_host = str(policy.get("gui_host") or ":8")
+    glass = probe_glass_composer_budget(transcript_id, gui_host)
+    if glass:
+        out["used_tokens"] = int(glass.get("contextTokensUsed") or used_tokens)
+        out["window_limit_tokens"] = int(glass.get("contextTokenLimit") or window_limit)
+        out["glass_context_percent"] = glass.get("contextUsagePercent")
+        out["glass_status"] = glass.get("status")
+        out["glass_model"] = glass.get("model")
+        out["glass_summarized_tokens"] = int(glass.get("glass_summarized_tokens") or 0)
+        out["glass_headers_count"] = int(glass.get("glass_headers_count") or 0)
+        out["budget_probe"] = "glass.cdp"
+    return out
 
 
 def ide_transcript_probe_resolved(
@@ -274,6 +360,7 @@ __all__ = [
     "ide_transcript_probe_resolved",
     "measure_ide_tab",
     "measure_transcript",
+    "probe_glass_composer_budget",
     "newest_resume_transcript",
     "pin_retired_resume_transcript",
     "resume_match_count",

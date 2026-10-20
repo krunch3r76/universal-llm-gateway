@@ -142,6 +142,18 @@ def test_build_ide_hop_message_includes_hop_xvfb_line() -> None:
     assert "--root 18291" in msg
 
 
+def test_build_ide_hop_message_uses_orion_gui_host() -> None:
+    msg = build_ide_hop_message(
+        "18528",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+        gui_host="orion-node",
+    )
+    assert "--gui-host orion-node" in msg
+    assert "(orion-node)" in msg
+
+
 def test_fire_ide_hop_defaults_gui_host_to_eight_dry_run() -> None:
     seal = {"ok": True, "bus_turn": 1}
     with patch("bus_watch.ide_hop.durable_write_text"):
@@ -275,6 +287,32 @@ def test_check_cursor_ide_context_hops_passes_orion_gui_host(
     mark: dict[str, float] = {}
     check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
     mock_hop.assert_called_once_with("18291", _TID, gui_host="orion-node")
+
+
+@patch("bus_watch.ide_context_hop_monitor._run_ide_hop")
+@patch("bus_watch.ide_context_hop_monitor._budget_for_root")
+def test_check_cursor_ide_context_hops_skips_generating_without_hop(
+    mock_budget: MagicMock,
+    mock_hop: MagicMock,
+) -> None:
+    mock_budget.return_value = {
+        "stop_class": "CONTEXT_BUDGET",
+        "transcript_id": _TID,
+        "glass_status": "generating",
+    }
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": "18291",
+            "display": "8",
+            "state": "subscribed",
+        }
+    ]
+    mark: dict[str, float] = {}
+    check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
+    mock_hop.assert_not_called()
+    assert f"hop:18291:{_TID}" not in mark
 
 
 def test_cleanup_xvfb_sidebar_passes_orion_debug_url() -> None:

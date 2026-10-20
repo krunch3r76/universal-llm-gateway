@@ -6,11 +6,37 @@ from typing import Any
 
 from bus_watch.cursor_xvfb_subscription import (
     cursor_xvfb_display_for_gui_host,
+    detect_cursor_gui_host,
+    resolve_subscription_title,
     subscribe_cursor_xvfb_house,
+    sync_policy_gui_host,
 )
 from bus_watch.fable_lock import claim_fable_lock
-from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim, policy_gui_host
+from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
 from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+
+def _subscribe_xvfb_tab(
+    thread: str,
+    tid: str,
+    *,
+    bound_by: str,
+    evidence: str,
+) -> dict[str, Any]:
+    gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
+    if not is_cursor_xvfb_host(gui_host):
+        return {"ok": False, "reason": "not_xvfb_host", "gui_host": gui_host}
+    sync_policy_gui_host(thread, gui_host)
+    display = cursor_xvfb_display_for_gui_host(gui_host)
+    title = resolve_subscription_title(thread)
+    return subscribe_cursor_xvfb_house(
+        thread,
+        tid,
+        display=display,
+        title=title,
+        bound_by=bound_by,
+        evidence=evidence,
+    )
 
 
 def maybe_subscribe_cursor_xvfb_on_resume(
@@ -30,10 +56,9 @@ def maybe_subscribe_cursor_xvfb_on_resume(
         return out
     if resume_result.get("error"):
         return out
-    gui_host = policy_gui_host(thread)
+    gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
     if not is_cursor_xvfb_host(gui_host):
         return out
-    display = cursor_xvfb_display_for_gui_host(gui_host)
     holder_id = str(holder or f"ide:{tid}").strip()
     try:
         out["fable_lock_claim"] = claim_fable_lock(
@@ -44,10 +69,9 @@ def maybe_subscribe_cursor_xvfb_on_resume(
             "ok": False,
             "reason": f"claim_failed:{type(exc).__name__}",
         }
-    sub = subscribe_cursor_xvfb_house(
+    sub = _subscribe_xvfb_tab(
         thread,
         tid,
-        display=display,
         bound_by="continuity-resume",
         evidence="continuity(op=resume)",
     )
@@ -80,14 +104,12 @@ def maybe_subscribe_cursor_xvfb_on_checkpoint(
         return out
     if checkpoint_result.get("error"):
         return out
-    gui_host = policy_gui_host(thread)
+    gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
     if not is_cursor_xvfb_host(gui_host):
         return out
-    display = cursor_xvfb_display_for_gui_host(gui_host)
-    sub = subscribe_cursor_xvfb_house(
+    sub = _subscribe_xvfb_tab(
         thread,
         tid,
-        display=display,
         bound_by="continuity-checkpoint",
         evidence="continuity(op=checkpoint)",
     )

@@ -168,6 +168,25 @@ configured.
 Identify which window you inhabit via `gui_host`, bus `/endpoint-subscriptions`
 `display`, or the CDP port your tools target.
 
+**Environment detection (Impresario / liaison):** `detect_cursor_gui_host` in
+`libs/bus_watch/cursor_xvfb_subscription.py` resolves `orion-node` vs `:8` from
+an explicit override, the process environment (Remote-SSH vs Xvfb `:8`),
+`:8` `state.vscdb` pane keys for a `transcript_id`, then
+`liaison-<root>.tick.json` `policy.gui_host`. Continuity resume/checkpoint and
+`scripts/liaison-tick.py --claim` sync that policy and subscribe with the
+matching `/endpoint-subscriptions` `display`.
+
+**Live Glass context budget:** `measure_ide_tab` probes
+`composerDataService.getComposerHandleById` on `cursor_debug_url_for_gui_host(gui_host)`
+(`contextTokensUsed`, `contextTokenLimit`, `status`, summarized-conversation
+tokens) before falling back to JSONL estimates. `build_budget_block` raises
+`CONTEXT_BUDGET` at ≥55% window use, ≥35 tool calls, or any Glass
+summarization; `ide_context_hop_monitor` defers hops while `glass_status ==
+generating`.
+
+Container note: `bus_watch_repo_root()` honors `PROJECT_ROOT=/data/project` so
+`mcp-server` and host share `tmp/watchers` on the mounted ULG checkout.
+
 ## Operational topology
 
 - Stargate, RAG, Cortex API, agent-bus, and git-integration-worker

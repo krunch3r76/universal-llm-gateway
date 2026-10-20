@@ -337,16 +337,24 @@ def main() -> int:
             )  # operator override
         )
         if args.claim and result.get("ok"):
-            from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
-            from bus_watch.ide_hop import (
-                cleanup_xvfb_sidebar_on_holder_claim,
-                policy_gui_host,
+            from bus_watch.cursor_xvfb_subscription import (
+                cursor_xvfb_display_for_gui_host,
+                detect_cursor_gui_host,
+                parse_ide_holder_agent_id,
+                resolve_subscription_title,
+                sync_policy_gui_host,
             )
+            from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
             from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
             xvfb_extra: dict = {}
-            if is_cursor_xvfb_host(policy_gui_host(root_for_lock)):
-                holder_agent_id = parse_ide_holder_agent_id(args.holder) or ""
+            holder_agent_id = parse_ide_holder_agent_id(args.holder) or ""
+            gui_host = detect_cursor_gui_host(
+                transcript_id=holder_agent_id or None,
+                root_id=root_for_lock,
+            )
+            if is_cursor_xvfb_host(gui_host):
+                sync_policy_gui_host(root_for_lock, gui_host)
                 prev_uuid = parse_ide_holder_agent_id(prev_holder)
                 retired_agent_ids: list[str] | None = None
                 if prev_uuid and prev_uuid != holder_agent_id:
@@ -354,6 +362,8 @@ def main() -> int:
                 sub = subscribe_cursor_xvfb_from_holder(
                     root_for_lock,
                     args.holder,
+                    display=cursor_xvfb_display_for_gui_host(gui_host),
+                    title=resolve_subscription_title(root_for_lock),
                     bound_by="liaison-tick-claim",
                     evidence="scripts/liaison-tick.py --claim",
                 )
@@ -484,10 +494,11 @@ def main() -> int:
                 now_row = str(policy_out.get("now_row") or "hop")
                 tid = str(budget.get("transcript_id") or "")
                 payload["stop_class"] = "CONTEXT_BUDGET"
+                hop_gui = str(policy_out.get("gui_host") or ":8")
                 payload["hop_command"] = (
                     f'"$HOME/.venvs/universal/bin/python" scripts/liaison-ide-hop.py '
                     f"--root {root} --row {shlex.quote(now_row)} "
-                    f"--transcript-id {tid} --gui-host :8"
+                    f"--transcript-id {tid} --gui-host {shlex.quote(hop_gui)}"
                 )
             print(json.dumps(payload))
             return 0

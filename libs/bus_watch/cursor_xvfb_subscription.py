@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from bus_watch.digest_budget import _bus
+from bus_watch.digest_budget import _bus, _get
+from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.tick_state import update_state
 
 _HOLDER_RE = re.compile(r"^ide:(?P<uuid>[0-9a-f-]{36})$", re.I)
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
+_VSCDB_CANDIDATES: tuple[Path, ...] = (
+    Path.home() / ".gateway/cursor-io/User/globalStorage/state.vscdb",
+    Path("/home/io/.gateway/cursor-io/User/globalStorage/state.vscdb"),
+    Path("/home/mcp/.gateway/cursor-io/User/globalStorage/state.vscdb"),
+)
 
 
 def parse_ide_holder_agent_id(holder: str) -> str | None:
@@ -110,6 +124,8 @@ def subscribe_cursor_xvfb_from_holder(
     root_id: str,
     holder: str,
     *,
+    display: str = "8",
+    title: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
     client: httpx.Client | None = None,
@@ -121,16 +137,161 @@ def subscribe_cursor_xvfb_from_holder(
     return subscribe_cursor_xvfb_house(
         root_id,
         aid,
+        display=display,
+        title=title,
         bound_by=bound_by,
         evidence=evidence,
         client=client,
     )
 
 
+def _normalize_gui_host(gui_host: str | None) -> str:
+    key = str(gui_host or "").strip().lstrip(":").lower()
+    if key == "orion-node":
+        return "orion-node"
+    return ":8"
+
+
+def _gui_host_from_process_env() -> str | None:
+    vscode_agent = os.environ.get("VSCODE_AGENT_FOLDER", "")
+    ripgrep = os.environ.get("CURSOR_RIPGREP_PATH", "")
+    if ".cursor-server" in vscode_agent or ".cursor-server" in ripgrep:
+        return "orion-node"
+    if os.environ.get("SSH_CONNECTION", "").strip():
+        return "orion-node"
+    if os.environ.get("DISPLAY", "").strip() == ":8":
+        return ":8"
+    cursor_data = os.environ.get("CURSOR_DATA_DIR", "")
+    if "cursor-io" in cursor_data:
+        return ":8"
+    return None
+
+
+def _readable_vscdb() -> Path | None:
+    for path in _VSCDB_CANDIDATES:
+        if path.is_file():
+            return path
+    return None
+
+
+def _vscdb_has_pane_key(db_path: Path, transcript_id: str) -> bool:
+    key = f"glass.agentConversationPanes.{transcript_id}"
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM ItemTable WHERE key = ? LIMIT 1", (key,)
+        ).fetchone()
+    return row is not None
+
+
+def _vscdb_has_any_glass_pane(db_path: Path) -> bool:
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM ItemTable WHERE key LIKE 'glass.agentConversationPanes.%' LIMIT 1"
+        ).fetchone()
+    return row is not None
+
+
+def _gui_host_from_vscdb(transcript_id: str) -> str | None:
+    db_path = _readable_vscdb()
+    if db_path is None:
+        return None
+    try:
+        if _vscdb_has_pane_key(db_path, transcript_id):
+            return ":8"
+        if _vscdb_has_any_glass_pane(db_path):
+            return "orion-node"
+    except sqlite3.Error:
+        return None
+    return None
+
+
+def detect_cursor_gui_host(
+    *,
+    transcript_id: str | None = None,
+    root_id: str | None = None,
+    explicit_gui_host: str | None = None,
+) -> str:
+    """Resolve ``orion-node`` vs ``:8`` for wake subscription and CDP probes."""
+    from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+    if explicit_gui_host and is_cursor_xvfb_host(explicit_gui_host):
+        return _normalize_gui_host(explicit_gui_host)
+    env_host = _gui_host_from_process_env()
+    if env_host:
+        return env_host
+    tid = str(transcript_id or "").strip()
+    if tid and _UUID_RE.match(tid):
+        vscdb_host = _gui_host_from_vscdb(tid)
+        if vscdb_host:
+            return vscdb_host
+    if root_id:
+        from bus_watch.ide_hop import policy_gui_host
+
+        return policy_gui_host(str(root_id))
+    return ":8"
+
+
+def _fetch_thread_slug(
+    root_id: str, *, client: httpx.Client | None = None
+) -> str | None:
+    owns = client is None
+    try:
+        if owns:
+            with _bus() as bus:
+                row = _get(bus, f"/threads/{root_id}")
+        else:
+            row = _get(client, f"/threads/{root_id}")  # type: ignore[arg-type]
+    except (Exception, SystemExit):
+        return None
+    if not row or row.get("_error"):
+        return None
+    slug = row.get("slug")
+    return str(slug).strip() if slug else None
+
+
+def resolve_subscription_title(
+    root_id: str,
+    *,
+    slug: str | None = None,
+    existing_title: str | None = None,
+    client: httpx.Client | None = None,
+) -> str:
+    """Preserve a non-empty title or build ``<root> <slug>`` when slug is known."""
+    root = str(root_id).strip()
+    existing = str(existing_title or "").strip()
+    bare = f"{root} "
+    if existing and existing not in {bare, root}:
+        return existing
+    slug_val = str(slug or "").strip() or _fetch_thread_slug(root, client=client)
+    if slug_val:
+        return f"{root} {slug_val}"
+    return bare
+
+
+def sync_policy_gui_host(
+    root_id: str,
+    gui_host: str,
+    *,
+    watch_dir: Path = WATCH_DIR,
+) -> None:
+    """Persist detected ``gui_host`` on ``liaison-<root>.tick.json`` policy."""
+    path = watch_dir / f"liaison-{root_id}.tick.json"
+
+    def mutate(state: dict[str, Any]) -> None:
+        policy = dict(state.get("policy") or {})
+        policy["gui_host"] = _normalize_gui_host(gui_host)
+        state["policy"] = policy
+
+    update_state(path, mutate)
+
+
 __all__ = [
     "cursor_xvfb_display_for_gui_host",
     "cursor_xvfb_subscription_body",
+    "detect_cursor_gui_host",
     "parse_ide_holder_agent_id",
+    "resolve_subscription_title",
     "subscribe_cursor_xvfb_from_holder",
     "subscribe_cursor_xvfb_house",
+    "sync_policy_gui_host",
 ]
