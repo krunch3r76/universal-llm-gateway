@@ -109,7 +109,7 @@ def project_lessons_in_force(
         return "## Lessons in force\n\n(none)\n"
     blocks: list[str] = ["## Lessons in force", ""]
     for heading, line in projected:
-        blocks.append(f"### {heading}")
+        blocks.append(f"## {heading}")
         blocks.append(line)
         blocks.append("")
     return "\n".join(blocks).rstrip() + "\n"
