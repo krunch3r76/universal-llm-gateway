@@ -66,7 +66,7 @@ Falsifier: on that step: deliverable without three trace fields.
 | `wide` | 3 axes + mandatory stack-killer + F1–F3 |
 | `frontier` | defer L0 to `path-sim`, then run |
 
-**Multi-family divergent substrate (`wide` / `frontier` ∨ `retry(same_AC)`):** When `pipeline` MCP is available and detent ∈ {`wide`, `frontier`} or attachment (b) (`retry(same_AC)`) fires, call `pipeline(op="run", pipeline_id="divergent-ideation-v1", body=<question + constraints + incumbent>)` to seed clean-room multi-family rival axes before Step 5 simulation (skip on closed/mechanical first passes).
+**Multi-family divergent substrate (`wide` / `frontier` ∨ `retry(same_AC)`):** When `pipeline` MCP is available and detent ∈ {`wide`, `frontier`} or attachment (b) (`retry(same_AC)`) fires, call `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON: question + constraints + incumbent>"}])` to seed clean-room multi-family rival axes before Step 5 simulation (skip on closed/mechanical first passes).
 
 ## Falsifier
 

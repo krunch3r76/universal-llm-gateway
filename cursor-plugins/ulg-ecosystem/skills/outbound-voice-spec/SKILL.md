@@ -57,7 +57,7 @@ None of these assign model identity.
 
 L7 is spec maintenance, not relationship drama.
 
-**Ideation + specialist writer pipeline (when `pipeline` MCP is available on high-stakes outbound):** After binding `OUTBOUND SPEC` + `PRE-DRAFT LEDGER`, run `pipeline(op="run", pipeline_id="divergent-ideation-v1", body=...)` to explore strategic angles and kill weak frames, then pass the bound angle + `OUTBOUND SPEC` into `pipeline(op="run", pipeline_id="writer-specialist-v1", body=...)` for multi-weight draft + critique synthesis.
+**Ideation + specialist writer pipeline (when `pipeline` MCP is available on high-stakes outbound):** After binding `OUTBOUND SPEC` + `PRE-DRAFT LEDGER`, run `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON>"}])` to explore strategic angles and kill weak frames, then pass the bound angle + `OUTBOUND SPEC` into `pipeline(op="run", pipeline_id="writer-specialist-v1", messages=[{"role": "user", "content": "<bound angle + OUTBOUND SPEC>"}])` for multi-weight draft + critique synthesis.
 
 ## Kaywan / tAIm voice (Signer = Kaywan)
 

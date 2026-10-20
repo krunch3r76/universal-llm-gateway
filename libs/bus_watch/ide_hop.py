@@ -281,7 +281,7 @@ def build_ide_hop_message(
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         "DIVERGENT / WRITING DEFAULT: On open design/architecture/strategy forks, "
         "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
-        "pipeline_id='divergent-ideation-v1', body=...) before binding; on high-stakes "
+        "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
         "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
         "outbound-voice-spec. Skip only on closed-spec mechanical/trivial first passes.",
         f"NOW: {row}",
