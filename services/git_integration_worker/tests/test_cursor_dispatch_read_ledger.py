@@ -36,7 +36,8 @@ def _ledger_check_predicate(payload: dict) -> bool:
     land = dispatches[0].get("land") or {}
     budget = payload.get("budget") or {}
     return (
-        land.get("on_master") is True and int(budget.get("actual_bytes") or 0) <= 5120
+        land.get("landed_now") is True
+        and int(budget.get("actual_bytes") or 0) <= 5120
     )
 
 
@@ -166,6 +167,7 @@ def test_ledger_check_predicate_true_and_false(tmp_path: Path) -> None:
     structured_ok = {
         "head_sha": master_sha,
         "landed": True,
+        "commits_ahead": 1,
         "status": "complete",
     }
     _insert_dispatch(
@@ -217,7 +219,95 @@ def test_on_master_true_when_closeout_says_landed_false(tmp_path: Path) -> None:
     assert land["closeout_head_sha"] == master_sha
     assert land["basis"] == "closeout"
     assert land["on_master"] is True
+    assert land["landed_now"] is None
+    assert land["commits_ahead"] is None
+    assert _ledger_check_predicate(payload) is False
+
+
+def test_landed_now_true_when_commits_ahead_one_on_master_head(
+    tmp_path: Path,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    master_sha = _commit_file(repo, "advance.txt", "landed commit\n")
+    _insert_dispatch(
+        ledger,
+        dispatch_id="disp-commits-ahead-one",
+        source_repo=repo,
+    )
+    _write_sidecar(
+        repo,
+        "disp-commits-ahead-one",
+        {
+            "head_sha": master_sha,
+            "landed": True,
+            "commits_ahead": 1,
+            "status": "complete",
+        },
+    )
+    payload = work_key_ledger_projection(_KEY, ledger=ledger)
+    land = payload["dispatches"][0]["land"]
+    assert land["on_master"] is True
+    assert land["commits_ahead"] == 1
+    assert land["landed_now"] is True
     assert _ledger_check_predicate(payload) is True
+
+
+def test_landed_now_false_when_commits_ahead_zero_at_branch_point(
+    tmp_path: Path,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    branch_point_sha = _commit_file(repo, "initial.txt", "branch point\n")
+    _insert_dispatch(
+        ledger,
+        dispatch_id="disp-commits-ahead-zero",
+        source_repo=repo,
+    )
+    _write_sidecar(
+        repo,
+        "disp-commits-ahead-zero",
+        {
+            "head_sha": branch_point_sha,
+            "landed": True,
+            "commits_ahead": 0,
+            "status": "complete",
+        },
+    )
+    payload = work_key_ledger_projection(_KEY, ledger=ledger)
+    land = payload["dispatches"][0]["land"]
+    assert land["on_master"] is True
+    assert land["commits_ahead"] == 0
+    assert land["landed_now"] is False
+    assert _ledger_check_predicate(payload) is False
+
+
+def test_landed_now_null_when_commits_ahead_missing(tmp_path: Path) -> None:
+    ledger = CursorDispatchLedger.instance()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    master_sha = _commit_file(repo, "no-meter.txt", "on master\n")
+    _insert_dispatch(
+        ledger,
+        dispatch_id="disp-no-commits-ahead",
+        source_repo=repo,
+    )
+    _write_sidecar(
+        repo,
+        "disp-no-commits-ahead",
+        {"head_sha": master_sha, "landed": True, "status": "complete"},
+    )
+    payload = work_key_ledger_projection(_KEY, ledger=ledger)
+    land = payload["dispatches"][0]["land"]
+    assert land["on_master"] is True
+    assert land["commits_ahead"] is None
+    assert land["landed_now"] is None
+    assert _ledger_check_predicate(payload) is False
 
 
 def test_fifty_dispatches_two_hundred_paths_stays_within_budget() -> None:
