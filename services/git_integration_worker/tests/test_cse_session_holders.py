@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from claude_bundles.cse_url import normalize_cse_url
 
 from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
     ensure_schema,
     get_holder,
     occupy_holder_on_hop,
+    reap_stale_driving_holders,
     resolve_nest_parent,
     seat_successor_on_lane,
     transition_seat_state,
@@ -309,3 +312,50 @@ def test_seat_successor_relaunches_dormant_window(ledger: CursorDispatchLedger) 
     assert len(driving) == 1
     assert driving[0]["holder_id"] == "cse_0135zweUWn6uF4Hx7mWXGdSJ"
     assert pred is not None and pred["seat_state"] == "superseded"
+
+
+def _backdate(conn, holder_id: str, *, days: int = 30) -> None:
+    bound = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    conn.execute(
+        "UPDATE cse_session_holders SET bound_at=? WHERE holder_id=?",
+        (bound, holder_id),
+    )
+
+
+def test_reap_releases_old_holder_absent_from_registry(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """A month-old driving leftover not in a non-empty registry is released."""
+    stale_url = "https://claude.ai/cowork/cse_THROW6885falsifier001"
+    young_url = "https://claude.ai/cowork/cse_youngkeep"
+    live_url = "https://claude.ai/cowork/cse_livekeep"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        stale = upsert_holder(conn, chat_url=stale_url, lane_thread_id="1")
+        young = upsert_holder(conn, chat_url=young_url, lane_thread_id="2")
+        live = upsert_holder(conn, chat_url=live_url, lane_thread_id="3")
+        _backdate(conn, str(stale["holder_id"]))
+        _backdate(conn, str(live["holder_id"]))
+        released = reap_stale_driving_holders(
+            conn, registry_urls={normalize_cse_url(live_url)}
+        )
+        stale_row = get_holder(conn, str(stale["holder_id"]))
+        young_row = get_holder(conn, str(young["holder_id"]))
+        live_row = get_holder(conn, str(live["holder_id"]))
+    assert released == 1
+    assert stale_row is not None and stale_row["seat_state"] == "released"
+    assert young_row is not None and young_row["seat_state"] == "driving"
+    assert live_row is not None and live_row["seat_state"] == "driving"
+
+
+def test_reap_empty_registry_releases_nothing(ledger: CursorDispatchLedger) -> None:
+    """An empty registry snapshot must not mass-release driving rows."""
+    stale_url = "https://claude.ai/cowork/cse_ttl0"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        stale = upsert_holder(conn, chat_url=stale_url, lane_thread_id="9")
+        _backdate(conn, str(stale["holder_id"]))
+        released = reap_stale_driving_holders(conn, registry_urls=set())
+        row = get_holder(conn, str(stale["holder_id"]))
+    assert released == 0
+    assert row is not None and row["seat_state"] == "driving"

@@ -13,7 +13,9 @@ import pytest
 
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
+    DrainOutcome,
     RestartDrainGate,
+    arm_agent_bus_busy_drain,
     run_gated,
     run_gated_drain_supervised,
     run_gated_self_holder_drain_supervised,
@@ -203,6 +205,88 @@ def test_self_holder_busy_mints_restart_intent(
     assert bus_probe.snapshot_calls >= 1
     assert live_http == []
     assert _AGENT_BUS in probe_live_calls
+
+
+def test_deferred_body_counts_cse_holders_instead_of_listing_them() -> None:
+    """A deferred manage body must not carry the cse_holders row list."""
+    rows = [{"holder_id": f"cse_{i}", "state": "driving"} for i in range(3)]
+    outcome = DrainOutcome(
+        state="busy",
+        service="agent_bus",
+        reason="in flight",
+        active_work={"busy": True, "cse_holders": rows, "active_count": 1},
+    )
+    rendered = outcome.to_result()
+    assert "cse_holders" not in rendered["active_work"]
+    assert rendered["active_work"]["cse_holder_count"] == 3
+    assert rendered["active_work"]["active_count"] == 1
+    assert outcome.active_work["cse_holders"] == rows
+
+
+def test_agent_bus_foreign_busy_mints_restart_intent(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Foreign lane-B busy must arm restart_intent_id, not soft-defer."""
+    stub_process_live_probe(monkeypatch)
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-agent-bus.db")
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(
+                    busy=True,
+                    detail=_self_holder_active_work(_FOREIGN_DISPATCH),
+                )
+            )
+        }
+    )
+    supervisor = _RecordingSupervisor()
+
+    async def _arm() -> dict[str, Any] | None:
+        result = await arm_agent_bus_busy_drain(
+            gate,
+            store=store,
+            supervisor=supervisor,
+            reason="test foreign agent_bus arm",
+        )
+        supervisor._block.set()
+        await asyncio.sleep(0)
+        return result
+
+    result = _run(_arm())
+    assert result is not None
+    assert result["status"] == "deferred"
+    assert result["state"] == "draining"
+    assert result["restart_intent_id"]
+    assert store.active_for_service(_AGENT_BUS) is not None
+    assert len(supervisor.intents) == 1
+
+
+def test_agent_bus_idle_after_caller_exclusion_does_not_arm(tmp_path: Any) -> None:
+    """The propagating job alone is idle and must not mint an intent."""
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-self-job.db")
+    detail = {
+        "busy": True,
+        "active_count": 1,
+        "active_ops": [{"kind": "cursor-auto", "op_id": _SELF_DISPATCH}],
+    }
+    gate = RestartDrainGate(
+        probes={_AGENT_BUS: _StaticBusyProbe(ActiveWork(busy=True, detail=detail))}
+    )
+    supervisor = _RecordingSupervisor()
+    result = _run(
+        arm_agent_bus_busy_drain(
+            gate,
+            store=store,
+            supervisor=supervisor,
+            reason="test self job",
+            exclude_job_id=_SELF_DISPATCH,
+        )
+    )
+    assert result is None
+    assert store.active_for_service(_AGENT_BUS) is None
+    assert not supervisor.intents
 
 
 def test_foreign_holder_busy_still_soft_defer_without_intent(tmp_path: Any) -> None:

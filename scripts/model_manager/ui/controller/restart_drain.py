@@ -91,6 +91,21 @@ def describe_probe_exc(exc: BaseException) -> str:
     return f"{name}: {text}" if text else name
 
 
+def _deferred_active_work(active_work: dict[str, Any]) -> dict[str, Any]:
+    """Copy a probe payload for a deferred manage body.
+
+    ``cse_holders`` is occupancy, not a drain decision, and a few hundred
+    driving leftovers blow the MCP result ceiling (friction:39833). The
+    caller keeps ``active_work_summary`` plus ``cse_holder_count``.
+    """
+    rendered = dict(active_work)
+    holders = rendered.get("cse_holders")
+    if isinstance(holders, list):
+        rendered["cse_holder_count"] = len(holders)
+        del rendered["cse_holders"]
+    return rendered
+
+
 def holder_dispatch_id_from_active_work(active_work: dict[str, Any]) -> str | None:
     """Extract the active write-lease holder dispatch id from a probe payload."""
     lease = active_work.get("write_lease")
@@ -316,13 +331,14 @@ class DrainOutcome:
         """Render the JSON-RPC result dict returned over manage.sock."""
         from .busy_work_summary import format_active_work_summary
 
+        active_work = _deferred_active_work(self.active_work)
         result = {
             "status": "deferred",
             "state": self.state,
             "service": self.service,
             "reason": self.reason,
             "retry_after_s": self.retry_after_s,
-            "active_work": self.active_work,
+            "active_work": active_work,
             "active_work_summary": format_active_work_summary(self.active_work),
         }
         determination = _DETERMINATION_BY_STATE.get(self.state)
@@ -766,9 +782,7 @@ async def run_gated(
         if before_release is not None:
             pid = starting_pid_from_lifecycle_message(message)
             if pid is not None:
-                gate.set_restart_hold_context(
-                    service, {"in_flight_pid": pid}
-                )
+                gate.set_restart_hold_context(service, {"in_flight_pid": pid})
             await before_release(message)
     finally:
         await gate.release(service)
@@ -914,7 +928,11 @@ def _spawn_supervised(
 
 @dataclass(slots=True, kw_only=True)
 class LocalServiceDrainSupervisor:
-    """Wait for a self-holder cursor-sdk dispatch to exit, then run lifecycle."""
+    """Wait until the service probe is idle, then run lifecycle.
+
+    ``exclude_job_id`` drops the propagating cursor-auto job from the idle
+    check so that job is not the occupant the drain waits on.
+    """
 
     gate: RestartDrainGate
     service: str
@@ -922,15 +940,26 @@ class LocalServiceDrainSupervisor:
     lifecycle: Callable[[], Awaitable[str]]
     deadline_s: float = 604800.0
     poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
+    exclude_job_id: str | None = None
 
     async def supervise(self, intent: Any) -> None:
         from .restart_drain_supervise import supervise_until_lifecycle
+
+        exclude = (self.exclude_job_id or "").strip()
+
+        def _idle(work: ActiveWork) -> bool:
+            if not exclude:
+                return not work.busy
+            filtered = exclude_caller_from_agent_bus_census(
+                work.detail, exclude_job_id=exclude
+            )
+            return not filtered.busy
 
         await supervise_until_lifecycle(
             store=self.store,
             intent=intent,
             probe=lambda: self.gate.probe(self.service),
-            is_idle=lambda work: not work.busy,
+            is_idle=_idle,
             lifecycle=self.lifecycle,
             deadline_s=self.deadline_s,
             poll_interval_s=self.poll_interval_s,
@@ -1014,10 +1043,7 @@ async def run_gated_stargate_idle_drain_supervised(
     orphaned: list[dict[str, Any]] = []
     try:
         probed = await probe_stargate_active_work(gate)
-        if (
-            not probed.busy
-            and probed.detail.get("probe") == "econnrefused"
-        ):
+        if not probed.busy and probed.detail.get("probe") == "econnrefused":
             return await run_gated(
                 gate,
                 action,
@@ -1074,6 +1100,45 @@ async def run_gated_stargate_idle_drain_supervised(
         "Query restart_intent_status or fleet_liveness after converge."
     )
     return result
+
+
+async def arm_agent_bus_busy_drain(
+    gate: RestartDrainGate,
+    *,
+    store: Any,
+    supervisor: Any,
+    reason: str,
+    exclude_job_id: str | None = None,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+    caller_agent: str | None = None,
+) -> dict[str, Any] | None:
+    """Arm a durable agent_bus drain when foreign work is still busy.
+
+    Returns None when the census is idle (caller should restart now). A busy
+    census — including holders other than the caller — mints
+    ``restart_intent_id`` and lets the supervisor wait until idle. Soft
+    ``state=busy`` without an intent drops the restart when the caller exits
+    (friction:39833).
+    """
+    work = await gate.probe("agent_bus")
+    if isinstance(exclude_job_id, str) and exclude_job_id.strip():
+        work = exclude_caller_from_agent_bus_census(
+            work.detail, exclude_job_id=exclude_job_id
+        )
+    if not work.busy:
+        return None
+    return await run_gated_drain_supervised(
+        gate,
+        "sync_restart",
+        "agent_bus",
+        store=store,
+        supervisor=supervisor,
+        reason=reason,
+        code_ref=code_ref,
+        row_id=row_id,
+        caller_agent=caller_agent,
+    )
 
 
 async def run_gated_self_holder_drain_supervised(
@@ -1286,6 +1351,7 @@ __all__ = [
     "RestartDrainGate",
     "STARGATE_PROBE_URL",
     "agent_bus_restart_would_defer",
+    "arm_agent_bus_busy_drain",
     "describe_probe_exc",
     "exclude_caller_from_agent_bus_census",
     "holder_dispatch_id_from_active_work",

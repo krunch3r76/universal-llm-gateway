@@ -8,7 +8,7 @@ import os
 import sqlite3
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from claude_bundles.cse_url import normalize_cse_url
@@ -19,6 +19,11 @@ logger = get_logger(__name__)
 
 _VALID_NEST_PARENT = frozenset({"driving", "dormant"})
 _OCCUPANCY_STATES = frozenset({"driving", "dormant"})
+# Month-old test leftovers (cse_abc123, cse_THROW*, cse_ttl0) stay driving
+# because boot reconcile only runs at process start and skips an empty
+# registry. Six hours keeps a just-bound row (including unit-test fixtures)
+# and still drops a holder the live registry no longer names.
+_STALE_DRIVING_ABSENT_S = 6 * 3600
 _SEAT_STATES = frozenset({"driving", "dormant", "superseded", "released"})
 
 _DDL = """
@@ -460,6 +465,67 @@ def occupy_holder_on_hop(
     }
 
 
+def _bound_at(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def reap_stale_driving_holders(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+    min_age_s: float = _STALE_DRIVING_ABSENT_S,
+    registry_urls: set[str] | None = None,
+) -> int:
+    """Release driving rows older than ``min_age_s`` that the registry does not name.
+
+    A failed registry read and an empty snapshot release nothing. Young rows
+    stay so a just-bound holder is not raced off the table. Returns the
+    number of rows transitioned to ``released``.
+    """
+    moment = now or datetime.now(UTC)
+    cutoff = moment - timedelta(seconds=min_age_s)
+    rows = conn.execute(
+        "SELECT holder_id, chat_url, bound_at FROM cse_session_holders "
+        "WHERE seat_state='driving'"
+    ).fetchall()
+    stale: list[tuple[str, str]] = []
+    for row in rows:
+        bound = _bound_at(row["bound_at"])
+        if bound is None or bound > cutoff:
+            continue
+        stale.append((str(row["holder_id"]), str(row["chat_url"] or "")))
+    if not stale:
+        return 0
+    if registry_urls is None:
+        from services.git_integration_worker.cse_holder_boot_reconcile import (
+            live_registry_urls,
+        )
+
+        registry_urls = live_registry_urls()
+    if not registry_urls:
+        return 0
+    released = 0
+    for holder_id, chat_url in stale:
+        if normalize_cse_url(chat_url) in registry_urls:
+            continue
+        transition_seat_state(
+            conn,
+            holder_id,
+            to_state="released",
+            reason="stale_driving_absent_registry",
+        )
+        released += 1
+    return released
+
+
 def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Active CSE occupancy rows for ``/active-work`` (never drain-blocking)."""
     rows = conn.execute(
@@ -594,6 +660,7 @@ __all__ = [
     "get_holder",
     "occupy_holder_on_hop",
     "occupancy_projections",
+    "reap_stale_driving_holders",
     "resolve_nest_parent",
     "seat_successor_on_lane",
     "transition_seat_state",
