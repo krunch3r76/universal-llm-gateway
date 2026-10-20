@@ -13,7 +13,7 @@ import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from universal_logging import get_logger
 
@@ -42,6 +42,8 @@ logger = get_logger(__name__)
 
 _BLOCKING_STATUSES = ("admitted", "running", "parked_waiting")
 _TERMINAL = frozenset({"completed", "failed"})
+# Cancelled counts as done for the harvest check. Only ``completed`` is resumed.
+_NEST_CHILD_DONE = frozenset({"completed", "failed", "cancelled"})
 
 ReleaseDisposition = Literal["restored", "released"]
 
@@ -617,14 +619,81 @@ async def _stop_orphan_bridge(dispatch_id: str) -> bool:
     return bool(aborted)
 
 
+def _completed_nest_child_id(
+    ledger: CursorDispatchLedger, *, parent_id: str
+) -> str | None:
+    """Completed nest child to harvest, or None when any nest child is in flight.
+
+    Park restore clears ``park_child_dispatch_id``, so the link is the child's
+    ``nest_under``. A failed or cancelled sibling does not block harvest. A
+    child that is still running returns None so the caller keeps the fail path.
+    """
+    completed: str | None = None
+    for child_id in ledger.list_nested_children(parent_dispatch_id=parent_id):
+        status = ledger.dispatch_status_by_id(dispatch_id=child_id)
+        state = str((status or {}).get("status") or "")
+        if state not in _NEST_CHILD_DONE:
+            return None
+        if state == "completed":
+            completed = child_id
+    return completed
+
+
+async def _resume_completed_nest_parent(
+    *,
+    dispatch_id: str,
+    child_id: str,
+    lease_key: str | None,
+    controller: Any,
+    cfg: Any,
+) -> str | None:
+    """Seal a restored parent through nest resume instead of an orphan fail.
+
+    Aborts the stale bridge and frees the capacity slot, then admits
+    ``resume_of`` via ``admit_nest_parent_resume``. Does not emit
+    ``frontier.sdk.worker.orphaned`` and does not mark the parent failed.
+    Returns None when the resume admit owns the lease. Returns ``lease_key``
+    when the parent was sealed cancelled and queued writers may promote.
+    """
+    await _stop_orphan_bridge(dispatch_id)
+    await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        admit_nest_parent_resume,
+    )
+
+    resumed = await admit_nest_parent_resume(
+        dispatch_id,
+        child_id=child_id,
+        controller=controller,
+        cfg=cfg,
+    )
+    if resumed:
+        return None
+    logger.warning(
+        "completed nest child resume refused parent=%s child=%s",
+        dispatch_id,
+        child_id,
+    )
+    return lease_key
+
+
 async def reclaim_orphan_holder(
-    ledger: CursorDispatchLedger, *, dispatch_id: str
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    controller: Any | None = None,
+    cfg: Any | None = None,
 ) -> str | None:
     """Stop an orphan holder's bridge, then fail the row and free its lease.
 
-    Parked and non-parked holders both abort then OS-reap before the row is
-    marked failed or the slot is force-released. Returns the lease key for
-    FIFO promotion, or None when the row is missing or already terminal.
+    Parked holders and still-running nest children abort then OS-reap before
+    the row is marked failed or the slot is force-released. A blocking parent
+    whose nest child is already completed is not failed and does not emit
+    ``frontier.sdk.worker.orphaned`` with ``timeout_s`` 0.0: the child commit
+    is harvested through ``admit_nest_parent_resume``. ``controller`` and
+    ``cfg`` are required for that admit; without them the parent stays on the
+    fail path. Returns the lease key for FIFO promotion, or None when the row
+    is missing, already terminal, or a resume admit now owns the lease.
     """
     with ledger._connect() as conn:
         row = conn.execute(
@@ -685,6 +754,15 @@ async def reclaim_orphan_holder(
                 terminal_status="failed",
             )
         return key
+    completed_child = _completed_nest_child_id(ledger, parent_id=dispatch_id)
+    if completed_child is not None and controller is not None and cfg is not None:
+        return await _resume_completed_nest_parent(
+            dispatch_id=dispatch_id,
+            child_id=completed_child,
+            lease_key=key,
+            controller=controller,
+            cfg=cfg,
+        )
     bridge_aborted = await _stop_orphan_bridge(dispatch_id)
     holder = load_ledger_row(ledger, dispatch_id=dispatch_id)
     if holder is not None:

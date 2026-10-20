@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -239,3 +240,95 @@ async def test_reclaim_parked_child_abort_error_still_reaps(
             ("child-o",),
         ).fetchone()
     assert row["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_reclaim_completed_nest_child_resumes_instead_of_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when park restore left the parent running and the nest child completed.
+
+    That state used to emit ``frontier.sdk.worker.orphaned`` with ``timeout_s``
+    0.0 and set the parent ``terminal_status`` to failed. Reclaim must admit
+    ``resume_of`` so the child commit is harvested. A still-running child is
+    the parked-child test above, which still fails that child.
+    """
+    ledger = CursorDispatchLedger.instance()
+    repo = "/tmp/repo-reclaim-completed-child"
+    parent = _req(dispatch_id="parent-done", execution_id="e-p", message="parent")
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=_admission(parent),
+        source_repo=repo,
+    )
+    ledger.mark_running(dispatch_id="parent-done")
+    child = _req(
+        dispatch_id="child-done",
+        execution_id="e-c",
+        message="child",
+        nest_under="parent-done",
+        thread_id="t-c",
+    )
+    ledger.admit(
+        req=child,
+        fingerprint=ledger.fingerprint(child),
+        execution_id=child.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=_admission(child),
+        source_repo=repo,
+        nest_under="parent-done",
+    )
+    ledger.mark_terminal(dispatch_id="child-done", terminal_status="completed")
+    assert ledger.restore_from_park(parent_id="parent-done") == repo
+    with _connect() as conn:
+        restored = conn.execute(
+            "SELECT status, park_child_dispatch_id, terminal_status "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("parent-done",),
+        ).fetchone()
+    assert restored["status"] == "running"
+    assert restored["park_child_dispatch_id"] is None
+    assert restored["terminal_status"] is None
+
+    _proc, _client, captured = _install_bridge(
+        monkeypatch, "parent-done", fail_close=False
+    )
+    admitted = AsyncMock(return_value=type("Resp", (), {"status_code": 200})())
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+        admitted,
+    )
+
+    class _Ctl:
+        worker_id = "w"
+
+    key = await reclaim_orphan_holder(
+        ledger,
+        dispatch_id="parent-done",
+        controller=_Ctl(),
+        cfg=object(),
+    )
+    assert key is None
+    assert _orphan_events(captured) == []
+    admitted.assert_awaited()
+    req = admitted.await_args.args[0]
+    assert req.resume_of == "parent-done"
+    assert req.dispatch_id == "parent-done-nr1"
+    with _connect() as conn:
+        parent_row = conn.execute(
+            "SELECT status, terminal_status FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            ("parent-done",),
+        ).fetchone()
+        child_row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("child-done",),
+        ).fetchone()
+    assert parent_row["status"] == "cancelled"
+    assert parent_row["terminal_status"] == "cancelled"
+    assert child_row["status"] == "completed"

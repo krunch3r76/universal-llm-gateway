@@ -2036,7 +2036,12 @@ async def reconcile_stale_leases(
         orphan_row = await asyncio.to_thread(
             load_ledger_row, ledger, dispatch_id=dispatch_id
         )
-        lease_key = await reclaim_orphan_holder(ledger, dispatch_id=dispatch_id)
+        lease_key = await reclaim_orphan_holder(
+            ledger,
+            dispatch_id=dispatch_id,
+            controller=controller,
+            cfg=cfg,
+        )
         if lease_key:
             repos.add(lease_key)
             prune_result = await asyncio.to_thread(
@@ -2054,8 +2059,18 @@ async def reconcile_stale_leases(
                     prune_result.salvaged,
                     prune_result.branch_retained,
                 )
+            # A completed nest child seals the parent cancelled and must not
+            # be restamped orphaned. Survivor emit stays for rows still blocking.
             if orphan_row is not None and not terminal_emitted(dispatch_id):
-                emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
+                fresh = await asyncio.to_thread(
+                    load_ledger_row, ledger, dispatch_id=dispatch_id
+                )
+                if fresh is not None and fresh.status in (
+                    "admitted",
+                    "running",
+                    "parked_waiting",
+                ):
+                    emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
             emit_write_lease_released(
                 dispatch_id=dispatch_id,
                 source_repo=lease_key,
