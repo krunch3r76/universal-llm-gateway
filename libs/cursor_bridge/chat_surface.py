@@ -88,7 +88,17 @@ _PROBE_JS = r"""
       if (items.length >= 40) break;
     }
   }
-  const promptEl = document.querySelector('[aria-label="Prompt"][contenteditable="true"]');
+  let activeAgentId = '';
+  for (const row of items) {
+    if (row.selected && row.agent_id) {
+      activeAgentId = String(row.agent_id || '').trim();
+      break;
+    }
+  }
+  const promptSel = activeAgentId
+    ? '[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="' + activeAgentId + '"]'
+    : '[aria-label="Prompt"][contenteditable="true"]';
+  const promptEl = document.querySelector(promptSel);
   const composerDraft = promptEl ? (promptEl.innerText || '').trim() : '';
   const generating = !!Array.from(document.querySelectorAll('button')).find((b) => {
     const lbl = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().toLowerCase();

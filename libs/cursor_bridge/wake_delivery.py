@@ -30,6 +30,7 @@ from cursor_bridge.chat_target import wake_line
 
 _TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
+    ("cursor", "orion-node"): "http://127.0.0.1:19338",
     ("grok", "9"): "http://127.0.0.1:9339",
     ("grok", "10"): "http://127.0.0.1:9340",
 }
@@ -277,7 +278,14 @@ async def _deliver_locked(
     if composer is None:
         return {**verdict, "ok": False, "reason": "composer_unconfirmed", "pasted": False, "delivered": False, "selected": selected}
     try:
-        paste_res = await _paste(ws_url, composer, line)
+        if app == "cursor":
+            paste_res = await _paste_cursor_services(
+                ws_url,
+                line,
+                agent_id=str(verdict.get("expected_agent_id") or surface.get("active_agent_id") or ""),
+            )
+        else:
+            paste_res = await _paste(ws_url, composer, line)
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _refuse(
             "paste_failed",
@@ -315,6 +323,37 @@ async def _deliver_locked(
         "app": app,
         "wake": line,
     }
+
+
+async def _paste_cursor_services(
+    ws_url: str, line: str, *, agent_id: str = ""
+) -> dict[str, Any]:
+    """Submit a wake line through Glass composer services (no Input.*)."""
+    import websockets
+
+    from cursor_bridge.glass_services_js import submit_wake_line_js
+
+    expression = submit_wake_line_js(line, agent_id)
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": expression,
+                        "awaitPromise": True,
+                        "returnByValue": True,
+                    },
+                }
+            )
+        )
+        raw = await asyncio.wait_for(_response(ws, 1), 5.0)
+    value = ((raw.get("result") or {}).get("result") or {}).get("value")
+    if not isinstance(value, dict) or not value.get("ok"):
+        reason = value.get("reason") if isinstance(value, dict) else "paste_failed"
+        return {"ok": False, "reason": reason}
+    return {"ok": True, "send_fallback_clicked": False}
 
 
 async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:

@@ -17,21 +17,57 @@ from cursor_bridge.cursor_agents_hop import (
     _prune_predecessors_async,
     _root_row_pattern,
     archive_cursor_agents_tab,
+    cursor_debug_url_for_gui_host,
     is_cursor_xvfb_host,
     launch_cursor_agents_tab,
     prune_cursor_agents_predecessors,
 )
+from cursor_bridge.glass_services_js import launch_new_agent_tab_js
+from cursor_bridge.wake_delivery import normalize_target
 
 pytestmark = pytest.mark.offline
 
 
 @pytest.mark.parametrize(
     "host",
-    [":8", "8", "io:8", "127.0.0.1:9338", "http://127.0.0.1:9338"],
+    [
+        ":8",
+        "8",
+        "io:8",
+        "127.0.0.1:9338",
+        "http://127.0.0.1:9338",
+        "orion-node",
+        "http://127.0.0.1:19338",
+    ],
 )
 def test_is_cursor_xvfb_host(host: str) -> None:
     assert is_cursor_xvfb_host(host) is True
     assert is_cursor_xvfb_host("jupiter") is False
+
+
+def test_cursor_debug_url_for_orion_and_eight() -> None:
+    assert cursor_debug_url_for_gui_host("orion-node") == "http://127.0.0.1:19338"
+    assert cursor_debug_url_for_gui_host(":8") == "http://127.0.0.1:9338"
+    assert normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+    assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
+
+
+def test_launch_tab_js_uses_glass_services_not_input() -> None:
+    js = launch_new_agent_tab_js("hello", "Grok 4.7 Extra High")
+    assert "createComposer" in js
+    assert "setModelConfigForComposer" in js
+    assert "submitChatMaybeAbortCurrent" in js
+    assert "steerIntent" in js
+    assert "Input.dispatchKeyEvent" not in js
+    assert "Input.insertText" not in js
+    assert "entries.entries()" in js
+
+
+def test_glass_row_probe_iterates_map_entries() -> None:
+    from cursor_bridge.cursor_agents_archive import _GLASS_ROW_PROBE_JS
+
+    assert "entries.entries()" in _GLASS_ROW_PROBE_JS
+    assert "Object.values(entries)" not in _GLASS_ROW_PROBE_JS
 
 
 def test_session_unreachable_xvfb_returns_none() -> None:
@@ -92,7 +128,9 @@ def test_root_row_pattern_matches_retired_prefix() -> None:
 def test_rename_agent_row_js_skips_streaming_refusal() -> None:
     js = _rename_agent_row_js("agent-x", "[retired] 10479 slug")
     assert "agent_streaming" not in js
-    assert "persist_path" in js and "dom_only" in js
+    assert "renameComposer" in js
+    assert "manuallyPersistComposerOrThrow" in js
+    assert "dom_only" not in js
     assert "updateAgentName" not in js
     assert "setAgentName" not in js
 

@@ -30,8 +30,8 @@ _GLASS_ROW_PROBE_JS = (
     "const entries=mp&&mp.value&&mp.value.workspace&&mp.value.workspace.instantiationService"
     "&&mp.value.workspace.instantiationService._services"
     "&&mp.value.workspace.instantiationService._services._entries;"
-    "if(entries){let agentRepositoryService=null,backgroundWorkService=null;"
-    "for(const ent of Object.values(entries)){const inst=ent&&(ent.instance||ent);"
+    "if(entries&&typeof entries.entries==='function'){let agentRepositoryService=null,backgroundWorkService=null;"
+    "for(const [,ent] of entries.entries()){const inst=ent&&(ent.instance!==undefined?ent.instance:ent);"
     "if(!inst)continue;"
     "if(typeof inst.getAgentHeader==='function')agentRepositoryService=inst;"
     "if(typeof inst.getComposerBackgroundWork==='function')backgroundWorkService=inst;}"
@@ -118,21 +118,9 @@ def _list_root_sidebar_rows_js(root_id: str) -> str:
 
 
 def _rename_departing_agent_js(agent_id: str, new_title: str) -> str:
-    aid = json.dumps(agent_id.strip())
-    title = json.dumps(new_title.strip())
-    return (
-        f"(() => {{ const target = {aid}; const newTitle = {title};"
-        f"{_GLASS_ROW_PROBE_JS}"
-        " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
-        " if (rowAgentId(el) !== target) continue;"
-        " const labelEl = el.querySelector('[class*=\"agent-item__title\"]');"
-        " const prevTitle = labelEl ? (labelEl.textContent || '').trim() : '';"
-        " if (labelEl) { labelEl.textContent = newTitle; }"
-        " el.setAttribute('title', newTitle);"
-        " return {ok: true, id: target, previous_title: prevTitle, new_title: newTitle,"
-        " persist_path: 'dom_only'};"
-        " } return {ok: false, reason: 'row_not_found'}; })()"
-    )
+    from cursor_bridge.glass_services_js import rename_composer_title_js
+
+    return rename_composer_title_js(agent_id, new_title)
 
 
 def _rename_agent_row_js(agent_id: str, new_title: str) -> str:
@@ -165,7 +153,9 @@ async def _rename_title_async(
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        result = await _hop._eval(ws, 1, _rename_agent_row_js(agent_id, new_title), timeout_s)
+        result = await _hop._eval_await(
+            ws, 1, _rename_agent_row_js(agent_id, new_title), timeout_s
+        )
         return result if isinstance(result, dict) else {"ok": False, "result": result}
 
 

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from bus_watch.cursor_xvfb_subscription import (
+    cursor_xvfb_display_for_gui_host,
     cursor_xvfb_subscription_body,
     parse_ide_holder_agent_id,
     subscribe_cursor_xvfb_from_holder,
@@ -28,6 +29,16 @@ def test_subscription_body_title_default() -> None:
     )
     assert body["display"] == "8"
     assert body["title"] == "18374 "
+
+
+def test_subscription_body_orion_display() -> None:
+    body = cursor_xvfb_subscription_body(
+        thread_scope="18374",
+        agent_id="db36e9f8-e76f-49e7-bd57-c9c4ffa88195",
+        display="orion-node",
+    )
+    assert body["display"] == "orion-node"
+    assert cursor_xvfb_display_for_gui_host("orion-node") == "orion-node"
 
 
 def test_subscribe_cursor_xvfb_house_posts() -> None:

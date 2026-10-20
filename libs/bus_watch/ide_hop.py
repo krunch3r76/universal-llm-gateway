@@ -35,6 +35,7 @@ from typing import Any
 
 import httpx
 from cursor_bridge.cursor_agents_hop import (
+    cursor_debug_url_for_gui_host,
     is_cursor_xvfb_host,
     launch_cursor_agents_tab,
 )
@@ -766,8 +767,12 @@ def fire_ide_hop(
     hop_record: dict[str, Any] | None = None
     try:
         if is_cursor_xvfb_host(resolved_gui_host):
+            debug_url = cursor_debug_url_for_gui_host(resolved_gui_host)
             keystroke = launch_cursor_agents_tab(
-                message, model_query=resolved_model_query
+                message,
+                model_query=resolved_model_query,
+                debug_url=debug_url,
+                gui_host=resolved_gui_host,
             )
             if not keystroke.get("ok"):
                 return {"ok": False, "phase": "keystroke", "keystroke": keystroke, **result}
@@ -911,23 +916,31 @@ def finalize_xvfb_hop_sidebar(
     departing_agent_id: str,
     landed_agent_id: str,
     slug_fragment: str = "",
+    gui_host: str | None = None,
 ) -> dict[str, Any]:
-    """Prune predecessors, rename departing :8 row, subscribe successor."""
+    """Prune predecessors, rename departing Glass row, subscribe successor."""
     from cursor_bridge.cursor_agents_hop import (
+        cursor_debug_url_for_gui_host,
         prune_cursor_agents_predecessors,
         rename_agent_row_in_sidebar,
     )
 
     from bus_watch.cursor_xvfb_subscription import (
+        cursor_xvfb_display_for_gui_host,
         parse_ide_holder_agent_id,
         subscribe_cursor_xvfb_house,
     )
 
-    out: dict[str, Any] = {"ok": True, "root_id": root_id}
+    resolved_host = str(gui_host or policy_gui_host(root_id) or ":8").strip() or ":8"
+    display = cursor_xvfb_display_for_gui_host(resolved_host)
+    debug_url = cursor_debug_url_for_gui_host(resolved_host)
+
+    out: dict[str, Any] = {"ok": True, "root_id": root_id, "display": display}
     if landed_agent_id:
         out["subscription_update"] = subscribe_cursor_xvfb_house(
             root_id,
             landed_agent_id,
+            display=display,
             bound_by="ide-hop-finalize",
             evidence="libs/bus_watch/ide_hop.finalize_xvfb_hop_sidebar",
         )
@@ -941,11 +954,13 @@ def finalize_xvfb_hop_sidebar(
             holder_agent_id=holder_aid,
             keep_recent_predecessors=1,
             wait_until_idle_s=0.0,
+            debug_url=debug_url,
         )
         retired_title = f"[retired] {root_id} {slug_fragment}".strip()
         out["renamed_departing_tab"] = rename_agent_row_in_sidebar(
             departing_agent_id,
             retired_title,
+            debug_url=debug_url,
         )
     return out
 
