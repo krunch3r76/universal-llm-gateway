@@ -94,11 +94,12 @@ def land_lane_branch_onto_hub_master(
             moved, ff_reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
             if not moved:
                 refuse_reason = ff_reason
-                moved, merge_reason = _clean_merge_onto_hub_master(
-                    repo, branch_name=branch_name
-                )
-                if not moved:
-                    refuse_reason = merge_reason or refuse_reason or "not_ff"
+                if ff_reason == "not_ff":
+                    moved, merge_reason = _clean_merge_onto_hub_master(
+                        repo, branch_name=branch_name
+                    )
+                    if not moved:
+                        refuse_reason = merge_reason or refuse_reason or "not_ff"
         except Exception:
             logger.error(
                 "lane land actuator failed lease_key=%s branch=%s holder=%s",
@@ -406,6 +407,14 @@ def _clean_merge_onto_hub_master(
         return False, None
     if int(behind.stdout.strip()) < 1:
         return False, None
+    gitignored_path = _lane_history_gitignored_addition(hub, branch)
+    if gitignored_path:
+        logger.info(
+            "hub land refuse hub_lane_gitignored_path branch=%s path=%s",
+            branch,
+            gitignored_path,
+        )
+        return False, "hub_lane_gitignored_path"
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
         return False, None
