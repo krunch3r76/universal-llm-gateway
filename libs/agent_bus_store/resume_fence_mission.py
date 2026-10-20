@@ -21,7 +21,7 @@ from .house_route_control import (
     parse_route_control_envelope,
 )
 from .recipients import MEMO_NOTE_SUBJECT_RE
-from .resume_fence_memos import build_memos_to_check
+from agent_bus_store.resume_fence_memos import build_memos_to_check
 from .tape_verbal import (
     TAPE_LEFT_OFF_GAP,
     TAPE_LEFT_OFF_LETTER,

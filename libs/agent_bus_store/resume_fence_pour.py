@@ -17,7 +17,7 @@ from deploy_identity.code_version import resolve_code_version
 
 from .resume_envelope import build_resume_envelope
 from .resume_fence_letter import load_tip_letter
-from .resume_fence_memos import build_memos_to_check
+from agent_bus_store.resume_fence_memos import build_memos_to_check
 from .resume_fence_mission import (
     build_mission_block,
     build_rulings_block,
