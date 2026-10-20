@@ -36,6 +36,7 @@ from .controller.restart_drain import (
     run_gated_self_holder_drain_supervised,
     run_gated_stargate_idle_drain_supervised,
     sole_busy_holder_matches,
+    sole_cdp_self_holder_matches,
 )
 from .controller.restart_drain_force_gate import enforce_force_reason_if_needed
 from .controller.restart_intent_consumer import project_restart_intent_consumer
@@ -1398,6 +1399,76 @@ def _mcp_background_hooks(
     return on_complete, on_failed
 
 
+async def _mcp_self_holder_drain_if_sole_cdp(
+    ctl: ServiceController,
+    *,
+    action: str,
+    caller_dispatch_id: str,
+    no_cache: bool,
+    on_ok: BackgroundCompleteHook | None,
+    on_fail: BackgroundFailedHook | None,
+    caller_agent: str,
+    code_ref: str,
+    row_id: str | None,
+) -> dict[str, Any] | None:
+    """Arm a drain intent when this caller is the only restart-gate CDP execution.
+
+    Returns None when the probe does not show that shape, so the ordinary
+    deferred path still fail-closes. Force is not this path.
+    """
+    import httpx
+
+    try:
+        work = await ctl.restart_gate.probe("mcp")
+    except (httpx.HTTPError, ValueError, OSError):
+        return None
+    if not work.busy or not sole_cdp_self_holder_matches(
+        work.detail, caller_dispatch_id
+    ):
+        return None
+
+    async def lifecycle() -> str:
+        t0 = time.monotonic()
+        try:
+            message = await _mcp_deferred_lifecycle(ctl, no_cache=no_cache)
+        except Exception as exc:
+            if on_fail is not None:
+                await on_fail(str(exc), time.monotonic() - t0)
+            raise
+        if on_ok is not None:
+            await on_ok(message, time.monotonic() - t0)
+        return message
+
+    supervisor = LocalServiceDrainSupervisor(
+        gate=ctl.restart_gate,
+        service="mcp",
+        store=ctl.restart_intent_store,
+        lifecycle=lifecycle,
+    )
+    result = await run_gated_self_holder_drain_supervised(
+        ctl.restart_gate,
+        action,
+        "mcp",
+        store=ctl.restart_intent_store,
+        supervisor=supervisor,
+        reason=(f"manage sync_restart (cdp self-holder, caller={caller_dispatch_id})"),
+        caller_dispatch_id=caller_dispatch_id,
+        code_ref=code_ref,
+        row_id=row_id,
+        caller_agent=caller_agent,
+    )
+    if result.get("restart_intent_id"):
+        result["reason"] = (
+            "self-holder cdp stream; restart fires when that execution ends "
+            "and the mcp probe is idle"
+        )
+        result["guidance"] = (
+            "Exit this CSE stream so the armed MCP restart can run. "
+            "After healthy, recover via continuity. Query restart_intent_status."
+        )
+    return result
+
+
 async def _mcp_deferred_sync_restart(
     ctl: ServiceController,
     event_bus: EventBus | None,
@@ -1412,6 +1483,21 @@ async def _mcp_deferred_sync_restart(
     """Deferred MCP sync+restart (shared by sync_restart, rebuild, and restart alias)."""
     on_ok, on_fail = _mcp_background_hooks(event_bus, method)
     ctx = force_context or {}
+    caller_dispatch_id = ctx.get("caller_dispatch_id")
+    if not force and isinstance(caller_dispatch_id, str) and caller_dispatch_id.strip():
+        armed = await _mcp_self_holder_drain_if_sole_cdp(
+            ctl,
+            action=gate_action or method,
+            caller_dispatch_id=caller_dispatch_id.strip(),
+            no_cache=no_cache,
+            on_ok=on_ok,
+            on_fail=on_fail,
+            caller_agent=caller_agent_from_manage_request(ctx),
+            code_ref=_optional_attr_str(ctx, "code_ref") or "HEAD",
+            row_id=_optional_attr_str(ctx, "row_id"),
+        )
+        if armed is not None:
+            return armed
     return await run_gated_deferred(
         ctl.restart_gate,
         gate_action or method,

@@ -156,6 +156,56 @@ def sole_busy_holder_matches(
     return True
 
 
+def sole_cdp_self_holder_matches(
+    active_work: dict[str, Any], caller_dispatch_id: str
+) -> bool:
+    """True when the only restart-gate CDP execution is this caller.
+
+    MCP's composite probe nests ``/drain-state`` under ``cdp_ask``. The
+    write-lease matcher never sees that execution id, so a seated operator
+    stream deferred ``sync_restart`` with no intent (friction 39848).
+    Followups are already absent from ``holders``. A second execution, a
+    foreign unseated id, or an unreadable registry stays unmatched.
+    """
+    caller = caller_dispatch_id.strip()
+    if not caller:
+        return False
+    cdp = active_work.get("cdp_ask")
+    if not isinstance(cdp, dict):
+        return False
+    if cdp.get("registry_error"):
+        return False
+    if cdp.get("drain_busy_reason") != "in_flight_recorded":
+        return False
+    holders = cdp.get("holders")
+    if not isinstance(holders, list) or len(holders) != 1:
+        return False
+    holder = holders[0]
+    if not isinstance(holder, dict):
+        return False
+    op_id = holder.get("op_id")
+    if not isinstance(op_id, str) or op_id.strip() != caller:
+        return False
+    unseated = cdp.get("unseated_pending")
+    if isinstance(unseated, list):
+        for item in unseated:
+            if isinstance(item, str) and item.strip() and item.strip() != caller:
+                return False
+    effective = cdp.get("effective_count")
+    if isinstance(effective, int) and effective != 1:
+        return False
+    return True
+
+
+def sole_self_holder_matches(
+    active_work: dict[str, Any], caller_dispatch_id: str
+) -> bool:
+    """Write-lease self-holder or the sole restart-gate CDP execution."""
+    return sole_busy_holder_matches(
+        active_work, caller_dispatch_id
+    ) or sole_cdp_self_holder_matches(active_work, caller_dispatch_id)
+
+
 _CALLER_ID_KEYS = ("op_id", "job_id", "dispatch_id")
 
 
@@ -1166,7 +1216,7 @@ async def run_gated_self_holder_drain_supervised(
 ) -> dict[str, Any]:
     """Arm a durable restart intent when the sole busy holder is the caller dispatch."""
     work = await gate.probe(service)
-    if not work.busy or not sole_busy_holder_matches(work.detail, caller_dispatch_id):
+    if not work.busy or not sole_self_holder_matches(work.detail, caller_dispatch_id):
         outcome = await gate.evaluate(service, force=False)
         if outcome is not None:
             return outcome.to_result()
@@ -1374,6 +1424,8 @@ __all__ = [
     "run_gated_self_holder_drain_supervised",
     "run_gated_stargate_idle_drain_supervised",
     "sole_busy_holder_matches",
+    "sole_cdp_self_holder_matches",
+    "sole_self_holder_matches",
     "cdp_legs_orphaned_from_active_work",
     "probe_stargate_active_work",
     "stargate_idle_from_active_work",

@@ -460,11 +460,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
         retry_after_s and retry, or pass force=true with force_reason to preempt
         in-flight work while Gate 1 is busy.
         Self-holder busy-skip: when caller_dispatch_id matches the sole write-lease
-        holder, sync_restart returns state=draining with restart_intent_id (post-exit
-        execution) instead of state=busy without an intent. agent_bus sync_restart
-        does the same whenever the census is still busy after dropping
-        caller_job_id, so a land can exit with restart_intent_id while other
-        lane-B work drains.
+        holder, or the sole restart-gate CDP execution on mcp, sync_restart returns
+        state=draining with restart_intent_id (fires after that holder exits)
+        instead of state=busy without an intent. Force still refuses cdp_ask_live.
+        agent_bus sync_restart does the same whenever the census is still busy
+        after dropping caller_job_id, so a land can exit with restart_intent_id
+        while other lane-B work drains.
 
         Self-restart (mcp): sync_restart/rebuild returns status=ok immediately
         (manage.sock defers container stop to a background task). The triggering
