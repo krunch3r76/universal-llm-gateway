@@ -90,7 +90,10 @@ def extract_inflight_work_keys(inflight_section: str) -> frozenset[str]:
     """Work keys named in CURRENT LEG IN FLIGHT (L23)."""
     from claude_bundles.operator_proxy_live_leg import _WORK_KEY_IN_SUBJECT_RE
 
-    return frozenset(_WORK_KEY_IN_SUBJECT_RE.findall(inflight_section or ""))
+    return frozenset(
+        _normalize_inflight_work_key(k)
+        for k in _WORK_KEY_IN_SUBJECT_RE.findall(inflight_section or "")
+    )
 
 
 def hop_boundary_turn_from_header(header: str) -> int:
@@ -100,6 +103,15 @@ def hop_boundary_turn_from_header(header: str) -> int:
 
 
 _INFLIGHT_PLAIN_LINE_RE = re.compile(r"^IN FLIGHT:\s*$", re.IGNORECASE)
+_PLAIN_LEG_LABEL_RE = re.compile(
+    r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps|Carried)\s*:?\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_WORK_KEY_PUNCT_RE = re.compile(r"[,;.:)\]}>]+$")
+
+
+def _normalize_inflight_work_key(key: str) -> str:
+    return _TRAILING_WORK_KEY_PUNCT_RE.sub("", key)
 
 
 def current_leg_has_inflight_section(current_leg_block: str) -> bool:
@@ -169,16 +181,25 @@ def _parse_h3_sections(block: str) -> dict[str, str]:
     preamble_lines: list[str] = []
     sections: dict[str, list[str]] = {}
     current_key: str | None = None
+    inflight_plain_active = False
     for line in lines:
         m = re.match(r"^###\s+(.+?)\s*$", line)
         if m:
+            inflight_plain_active = False
             current_key = m.group(1).strip()
             sections[current_key] = [line]
             continue
         if _INFLIGHT_PLAIN_LINE_RE.match(line.strip()):
+            inflight_plain_active = True
             current_key = "IN FLIGHT"
             sections[current_key] = [line]
             continue
+        if inflight_plain_active and current_key == "IN FLIGHT":
+            if _PLAIN_LEG_LABEL_RE.match(line.strip()) or _ATX_HEADING_RE.match(line):
+                inflight_plain_active = False
+                current_key = None
+                preamble_lines.append(line)
+                continue
         if current_key is None:
             preamble_lines.append(line)
         else:

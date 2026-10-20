@@ -613,7 +613,7 @@ def test_runbook_cost_is_refuse_plus_steps(
         register_text="",
     )
     assert f"| {n}/32768 |" in housekeeping
-    assert "### route" in mission
+    assert 'section="Trigger"' in mission
     assert 'fs(op="read")' in mission
     assert str(whole) not in housekeeping
     assert str(whole) not in mission
@@ -882,8 +882,26 @@ def test_pa3_act2_md_read_and_runbook_size() -> None:
     acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
     assert 'fs(op="read")' in acts
     assert "read_multi" not in acts
-    assert "### route" in acts
+    assert 'section="Trigger"' in acts
+    assert "from `fs(op=\"read\")` on that file" not in acts
     assert "2. 2." not in acts
+
+
+def test_act2_md_read_section_exists_in_maestro_runbook() -> None:
+    import re
+
+    from claude_bundles.maestro_runbook_load import load_maestro_runbook
+
+    out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
+    acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
+    match = re.search(r'section="([^"]+)"', acts)
+    assert match is not None
+    section_name = match.group(1)
+    body, err = load_maestro_runbook()
+    assert not err and body
+    assert re.search(
+        rf"^#{{1,3}}\s+{re.escape(section_name)}\s*$", body, re.MULTILINE
+    )
 
 
 def _running_now_segment(out: str) -> str:
@@ -1388,7 +1406,17 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     from claude_bundles.operator_proxy_live_leg import LaneFoldState
     from claude_bundles.operator_proxy_standing_render import (
         current_leg_has_inflight_section,
+        extract_inflight_work_keys,
         inflight_section_from_sidecar,
+    )
+
+    _leg_tail = (
+        "OPEN:\n"
+        "- none\n"
+        "NEXT:\n"
+        "- ok\n"
+        "Traps:\n"
+        "- none\n"
     )
 
     prose = (
@@ -1402,17 +1430,19 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
         "## CURRENT LEG\n"
         "LEG 11 — 12286#5000 — seat abc — schema checkpoint/v1\n"
         "IN FLIGHT:\n"
-        "### OWED / NEXT\nok\n"
+        + _leg_tail
     )
     sidecar_named = (
         "## CURRENT LEG\n"
         "LEG 11 — 12286#5000 — seat abc — schema checkpoint/v1\n"
         "IN FLIGHT:\n"
-        "- todo:kept-open · worker 15851 · exec e1 · poll_hint {}\n"
-        "### OWED / NEXT\nok\n"
+        "- (16416, decision:x) · worker 15851 · exec e1 · poll_hint {}\n"
+        + _leg_tail
     )
     assert current_leg_has_inflight_section(sidecar_empty.split("## CURRENT LEG", 1)[1])
-    assert "todo:kept-open" in inflight_section_from_sidecar(sidecar_named)
+    inflight_named = inflight_section_from_sidecar(sidecar_named)
+    assert "OPEN:" not in inflight_named
+    assert "decision:x" in extract_inflight_work_keys(inflight_named)
 
     stale_keys = [
         f"15851:{turn}:REQUEST|todo:stale-{turn}" for turn in range(100, 116)
@@ -1426,7 +1456,7 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
         if lane == "15722":
             return [{"turn_number": 150, "subject": "PLAN|todo:peer-open"}]
         if lane == "15851":
-            return [{"turn_number": 4000, "subject": "PICKUP|todo:kept-open"}]
+            return [{"turn_number": 4000, "subject": "PICKUP|decision:x"}]
         return []
 
     roster = (
@@ -1456,5 +1486,5 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
         fold_state_save=lambda _s: None,
     )
     live_named = fields_named["live_leg"]
-    assert "todo:kept-open" in live_named
+    assert "decision:x" in live_named
     assert "todo:peer-open" not in live_named

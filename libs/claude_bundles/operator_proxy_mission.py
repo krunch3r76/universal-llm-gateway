@@ -155,7 +155,7 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 ## Your first acts, in order
 
 1. Use the {mission_arrival_skills} skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
-2. Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and `{lane}-standing-handoff.md`; quote each file's `read_sha256` from that read. Call 2: `fs(op="md_read", section="### route")` on cortex `maestro-loop.md`; quote its full-file `read_sha256` from `fs(op="read")` on that file. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
+2. Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and `{lane}-standing-handoff.md`; quote each file's `read_sha256` from that read. Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; quote `read_sha256` from that md_read. On trigger only, `md_read` the other four skills from their SKILL bodies — not at arrival.
 3. The checkpoint and in-flight rows above are the arrival projection; use the live leg for bus-derived open items. House rules are not inlined — read them per the pointer above.
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. `agent_bus_read` fetch thread {lane}, last {fetch_last}, compact. Then `mark_read` through the latest turn with agent web-anthropic only.
