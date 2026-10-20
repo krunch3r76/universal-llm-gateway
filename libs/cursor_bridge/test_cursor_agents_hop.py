@@ -86,6 +86,9 @@ def test_submit_wake_line_js_generating_clears_draft() -> None:
     assert "status === 'generating'" in js
     assert "clearContent" in js
     assert "skipClearInput: true" not in js
+    idle = js.split("} else {", 1)[1]
+    assert "submitChatMaybeAbortCurrent" in idle
+    assert idle.index("clearContent") > idle.index("submitChatMaybeAbortCurrent")
 
 
 def test_launch_tab_js_extracts_created_header_id() -> None:

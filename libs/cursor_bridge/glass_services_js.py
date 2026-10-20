@@ -420,7 +420,12 @@ def probe_glass_composer_budget_js(transcript_id: str) -> str:
 
 
 def submit_wake_line_js(line: str, agent_id: str = "") -> str:
-    """CDP expression: paste a wake line into the active or scoped composer."""
+    """CDP expression: submit a wake line, then clear the composer draft.
+
+    ``submitChatMaybeAbortCurrent`` sends its text argument and leaves
+    ``setContent`` in the editor. Clearing after both the generating and
+    idle branches drops that trailing unsent paste.
+    """
     text = json.dumps(line)
     aid = json.dumps(str(agent_id or "").strip())
     return (
@@ -474,13 +479,15 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "      skipFocusAfterSubmission: true,\n"
         "      ignoreQueuing: true,\n"
         "    });\n"
-        "    prompt.editor.commands.clearContent();\n"
-        "    composerDataService.updateComposerData(handle, { text: '', richText: '' });\n"
         "  } else {\n"
         "    await composerChatService.submitChatMaybeAbortCurrent(agentId, text, {\n"
         "      skipFocusAfterSubmission: true,\n"
         "    });\n"
         "  }\n"
+        "  // submit sends the text argument and leaves setContent in the editor.\n"
+        "  // That leftover is the trailing unsent wake paste.\n"
+        "  prompt.editor.commands.clearContent();\n"
+        "  composerDataService.updateComposerData(handle, { text: '', richText: '' });\n"
         "  return {ok: true, agent_id: agentId};\n"
         "})()"
     )
