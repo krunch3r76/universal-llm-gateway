@@ -44,6 +44,7 @@ from ._rag_search_exec import (
     STARGATE_URL,
     run_rag_search,
 )
+from ._rag_search_projection import project_rag_search_envelope
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -70,7 +71,11 @@ def rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, An
     return _rag_post_http(STARGATE_URL, path, body, timeout=timeout)
 
 
-def _attach_rag_search(search_id: str) -> dict[str, Any]:
+def _attach_rag_search(
+    search_id: str,
+    *,
+    projection: str | None = None,
+) -> dict[str, Any]:
     """Serve a ``search_id`` poll: the finished envelope, ``in_flight`` again, or
     an ``error`` envelope when the handle was never issued or has expired."""
     try:
@@ -83,9 +88,10 @@ def _attach_rag_search(search_id: str) -> dict[str, Any]:
             )
         }
     try:
-        return ticket.stamp(ticket.wait())
+        envelope = ticket.stamp(ticket.wait())
     except SearchInFlightError as pending:
         return pending.envelope()
+    return project_rag_search_envelope(envelope, projection=projection)
 
 
 def _normalize_scope_override(
@@ -325,6 +331,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         catalog_retry_enabled: bool | None = None,
         step_overrides: dict[str, Any] | None = None,
         skip_steps: list[str] | None = None,
+        projection: str | None = None,
     ) -> dict[str, Any]:
         """PRIMARY (and only) agent surface for MCP RAG retrieval. Returns raw
         context chunks with source labels for the agent to cite, gate (lawyer-stance),
@@ -370,9 +377,14 @@ def register_rag_tools(mcp: FastMCP) -> None:
             mapped: When True, try exact (scope, query) durable-pack lookup
                 first; on miss, run live rag-search.
             search_id: Poll handle from an earlier ``in_flight`` envelope. When
-                given, every other argument is ignored and the call attaches to
-                that search (result, still ``in_flight``, or ``error`` if the
-                handle is unknown/expired).
+                given, every other argument is ignored except ``projection``; the
+                call attaches to that search (result, still ``in_flight``, or
+                ``error`` if the handle is unknown/expired).
+            projection: ``full`` (default) returns assembled chunk ``context``;
+                ``compact`` omits full ``context`` and returns a ≤4500-byte JSON
+                envelope with ``context_preview``, ``weak_match``, and
+                ``top_relevance`` — re-issue with ``projection=full`` (or the
+                same ``search_id``) for chunk text.
 
         Returns:
             On success: {"status": "ok", "pipeline": "rag-search",
@@ -389,11 +401,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
             On error:   {"error": "<message>", "search_id"?} (+ ``scope_note`` when unscoped)
         """
         if search_id:
-            return _attach_rag_search(search_id)
+            return _attach_rag_search(search_id, projection=projection)
         if mapped:
             hit = resolve_mapped_pack(query, scope)
             if hit is not None:
-                return hit
+                return project_rag_search_envelope(hit, projection=projection)
 
         scope_override, scope_error = _normalize_scope_override(scope)
         prefixes, prefix_error = _normalize_prefix_override(prefix)
@@ -434,9 +446,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         ticket = admit_search(search_key(query, pipeline_options), _start)
         try:
-            return ticket.stamp(ticket.wait())
+            envelope = ticket.stamp(ticket.wait())
         except SearchInFlightError as pending:
             return pending.envelope()
+        return project_rag_search_envelope(envelope, projection=projection)
 
     @mcp.tool(title="RAG: Search Preview")
     def rag_search_preview(
