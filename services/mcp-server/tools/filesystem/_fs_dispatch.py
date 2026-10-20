@@ -159,6 +159,7 @@ CONTRACT_PARAMS: tuple[str, ...] = (
     "all_occurrences",
     "mode",
     "include_worktrees",
+    "size_only",
 )
 
 # Accepted values for the search `mode` selector (empty string == "auto").
@@ -176,6 +177,7 @@ PARAM_PURPOSE: dict[str, str] = {
     "include_worktrees": (
         "when true, fs find includes .worktrees and ulg-arc-worktrees paths"
     ),
+    "size_only": "size-only list_sections flag for md_list",
 }
 
 # unified op -> confusable params it actually consumes
@@ -197,7 +199,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
     "delete": frozenset(),
-    "md_list": frozenset(),
+    "md_list": frozenset({"size_only"}),
     "md_read": frozenset({"section"}),
     "md_to_dict": frozenset(),
     "md_replace": frozenset({"section", "target", "all_occurrences"}),
@@ -263,7 +265,7 @@ def _param_provided(name: str, value: Any) -> bool:
     """True when a contract param carries a non-default (caller-supplied) value."""
     if name in ("line", "level"):
         return bool(value)  # int sentinel is 0
-    if name in ("all_occurrences", "include_worktrees"):
+    if name in ("all_occurrences", "include_worktrees", "size_only"):
         return value is True
     if name == "section":
         return bool(str(value).strip())

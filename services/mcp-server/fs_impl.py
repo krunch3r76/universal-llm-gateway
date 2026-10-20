@@ -216,6 +216,7 @@ def fs_impl(
             "all_occurrences": all_occurrences,
             "mode": mode,
             "include_worktrees": include_worktrees,
+            "size_only": size_only,
         },
     )
     if contract_error is not None:

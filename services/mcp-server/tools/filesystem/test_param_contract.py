@@ -25,6 +25,8 @@ _DEFAULTS: dict[str, object] = {
     "position": "",
     "all_occurrences": False,
     "mode": "",
+    "include_worktrees": False,
+    "size_only": False,
 }
 
 # A non-default value per contract param, for the "provided" assertions.
@@ -37,6 +39,8 @@ _PROVIDED: dict[str, object] = {
     "position": "after",
     "all_occurrences": True,
     "mode": "content",
+    "include_worktrees": True,
+    "size_only": True,
 }
 
 
