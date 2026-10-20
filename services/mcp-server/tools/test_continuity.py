@@ -457,3 +457,44 @@ def test_status_watermark_ignores_unseeded_rows() -> None:
         result = _continuity_status_watermark("root-x")
 
     assert result["watermark"] is None
+
+
+def test_tick_op_delegates_to_liaison_tick(continuity_fn) -> None:
+    digest = {"root": {"id": "18595"}, "changed_since_last_tick": False}
+    with patch(
+        "tools.continuity_ops.liaison_tick_once",
+        return_value=digest,
+    ) as tick:
+        result = continuity_fn(
+            op="tick",
+            thread="18595",
+            register="attended",
+            holder="ide:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        )
+    assert result == digest
+    tick.assert_called_once_with(
+        "18595",
+        register="attended",
+        holder="ide:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+
+
+def test_hop_op_delegates_to_liaison_ide_hop(continuity_fn) -> None:
+    hop_out = {"ok": True, "phase": "landed"}
+    with patch(
+        "tools.continuity_ops.liaison_ide_hop",
+        return_value=hop_out,
+    ) as hop:
+        result = continuity_fn(
+            op="hop",
+            thread="18595",
+            transcript_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            row="R1 test",
+            force=True,
+        )
+    assert result == hop_out
+    hop.assert_called_once()
+    kwargs = hop.call_args.kwargs
+    assert kwargs["transcript_id"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert kwargs["row"] == "R1 test"
+    assert kwargs["force"] is True

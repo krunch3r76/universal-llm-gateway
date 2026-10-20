@@ -13,6 +13,7 @@ from bus_watch.cursor_xvfb_subscription import (
 )
 from bus_watch.fable_lock import claim_fable_lock
 from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
+from bus_watch.liaison_continuity import liaison_ide_hop, liaison_tick_once
 from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
 
@@ -117,7 +118,56 @@ def maybe_subscribe_cursor_xvfb_on_checkpoint(
     return out
 
 
+def continuity_liaison_tick(
+    *,
+    thread: str,
+    register: str | None = None,
+    holder: str | None = None,
+) -> dict[str, Any]:
+    """MCP ``continuity(op=tick)`` — one liaison digest for a continuity root."""
+    try:
+        return liaison_tick_once(
+            thread,
+            register=register,
+            holder=holder,
+        )
+    except (Exception, SystemExit) as exc:
+        if isinstance(exc, OSError):
+            detail = str(exc)[:200]
+        else:
+            detail = f"{type(exc).__name__}: {exc}"[:200]
+        return {"ok": False, "reason": "tick_failed", "detail": detail}
+
+
+def continuity_liaison_hop(
+    *,
+    thread: str,
+    transcript_id: str | None = None,
+    row: str | None = None,
+    gui_host: str | None = None,
+    tip_cp: int | None = None,
+    find_transcript: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    model_query: str | None = None,
+) -> dict[str, Any]:
+    """MCP ``continuity(op=hop)`` — attended IDE hop for a continuity root."""
+    return liaison_ide_hop(
+        thread,
+        transcript_id=transcript_id,
+        row=row,
+        gui_host=gui_host,
+        tip_cp=tip_cp,
+        find_transcript=find_transcript,
+        dry_run=dry_run,
+        force=force,
+        model_query=model_query,
+    )
+
+
 __all__ = [
+    "continuity_liaison_hop",
+    "continuity_liaison_tick",
     "maybe_subscribe_cursor_xvfb_on_checkpoint",
     "maybe_subscribe_cursor_xvfb_on_resume",
 ]
