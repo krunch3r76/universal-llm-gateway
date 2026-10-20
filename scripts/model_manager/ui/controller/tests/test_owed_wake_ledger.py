@@ -82,6 +82,26 @@ def test_checkpoint_subject_not_allowlisted() -> None:
     assert is_chrome_bus_subject("CHECKPOINT 18460 abc")
 
 
+def test_fact_cdp_reply_in_subject_is_not_chrome() -> None:
+    assert not is_chrome_bus_subject("FACT|cdp reply latency fixed")
+    assert subject_qualifies_producer1("FACT|cdp reply latency fixed")
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "CHECKPOINT",
+        "LANE CLOSEOUT",
+        "cdp generate",
+        "cdp reply",
+        "cursor-sdk generate",
+    ],
+)
+def test_chrome_markers_match_prefix_only(subject: str) -> None:
+    assert is_chrome_bus_subject(subject)
+    assert is_chrome_bus_subject(subject.upper())
+
+
 def test_allowlisted_subject_qualifies() -> None:
     assert subject_qualifies_producer1("MILESTONE|decision:foo|bar")
 
@@ -316,6 +336,38 @@ def test_stale_unread_milestone_projected_on_lazy_flush(
     rows = store.list_open_undispatched_owed_wakes()
     assert len(rows) == 1
     assert rows[0].turn_refs[0]["turn_number"] == 5
+
+
+def test_stale_projection_skips_turn_already_dispatched(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        turn_ref={
+            "thread_id": "18460",
+            "turn_number": 5,
+            "subject": "MILESTONE|stale|backstop",
+        },
+    )
+    store.mark_owed_wake_dispatched(row.row_id, outcome="dispatched")
+    stale = _stale_turn(turn_number=5, age_minutes=16)
+    monkeypatch.setattr(
+        owed_wake_mod, "_lanes_for_stale_projection", lambda: ["18460"]
+    )
+    monkeypatch.setattr(
+        owed_wake_mod, "_fetch_turns_for_lane", lambda _lane: [stale]
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        lambda _lane: "holder-maestro",
+    )
+    assert project_stale_unread_milestone_owed_wakes(store) == 0
+    fetched = store.get_owed_wake(row.row_id)
+    assert fetched is not None
+    assert len(fetched.turn_refs) == 1
 
 
 def test_stale_unread_younger_than_15_min_not_projected(

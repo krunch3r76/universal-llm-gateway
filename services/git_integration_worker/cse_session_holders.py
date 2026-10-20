@@ -663,7 +663,15 @@ def lane_thread_uses_bridge_wake(lane_thread_id: str) -> bool:
         return False
 
 
-_HOLDER_SEAT_AGENT = "maestro"
+def agent_bus_request_headers() -> dict[str, str]:
+    """Bearer + JSON headers for agent_bus UDS/HTTP clients (matches _post_bus)."""
+    import os
+
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def close_owed_wake_on_lane_activity(
@@ -672,9 +680,13 @@ def close_owed_wake_on_lane_activity(
     holder_id: str | None = None,
     seat_agent: str | None = None,
 ) -> None:
-    """Close open owed_wake rows when the holder seat marks read or posts on the lane."""
+    """Close open owed_wake rows when the addressed holder seat marks read or posts."""
+    from scripts.model_manager.ui.controller.owed_wake_ledger import (
+        producer1_to_agent_qualifies,
+    )
+
     agent = (seat_agent or "").strip().lower()
-    if agent != _HOLDER_SEAT_AGENT:
+    if not producer1_to_agent_qualifies(agent):
         return
     from scripts.model_manager.ui.controller.restart_intent_store import (
         RestartIntentStore,
@@ -753,14 +765,9 @@ def build_owed_wake_deps():
 
     def _post_bus(*, thread_id: str, subject: str, body: str) -> bool:
         try:
-            import os
-
             from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
-            token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-            headers: dict[str, str] = {"Content-Type": "application/json"}
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
+            headers = agent_bus_request_headers()
             payload = {
                 "thread": thread_id,
                 "from": "manage",

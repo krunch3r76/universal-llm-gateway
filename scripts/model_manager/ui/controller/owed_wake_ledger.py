@@ -82,15 +82,12 @@ def subject_qualifies_producer1(subject: str) -> bool:
 
 
 def is_chrome_bus_subject(subject: str) -> bool:
-    """Chrome turns must never arm producer 1."""
+    """Chrome turns must never arm producer 1 (case-insensitive prefix only)."""
     text = (subject or "").strip()
     if not text:
         return True
-    upper = text.upper()
-    if upper.startswith("CHECKPOINT") or upper.startswith("LANE CLOSEOUT"):
-        return True
     lowered = text.lower()
-    return any(marker in lowered for marker in _CHROME_SUBJECT_MARKERS)
+    return any(lowered.startswith(marker.lower()) for marker in _CHROME_SUBJECT_MARKERS)
 
 
 def is_house_authored_turn(*, from_agent: str, user_agent: str | None = None) -> bool:
@@ -319,8 +316,17 @@ def _fetch_turns_for_lane(thread_id: str) -> list[dict[str, Any]]:
     try:
         from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
+        from services.git_integration_worker.cse_session_holders import (
+            agent_bus_request_headers,
+        )
+
+        headers = agent_bus_request_headers()
         with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
-            resp = client.get("/turns", params={"thread": lane, "last": 100})
+            resp = client.get(
+                "/turns",
+                params={"thread": lane, "last": 100},
+                headers=headers or None,
+            )
             if resp.status_code >= 400:
                 return []
             payload = resp.json()
@@ -331,6 +337,35 @@ def _fetch_turns_for_lane(thread_id: str) -> list[dict[str, Any]]:
     if not isinstance(turns, list):
         return []
     return [t for t in turns if isinstance(t, dict)]
+
+
+def producer1_turn_already_dispatched(
+    store: Any, *, holder_id: str, thread_id: str, turn_number: int
+) -> bool:
+    """True when this bus turn already has a dispatched owed_wake reference."""
+    hid = (holder_id or "").strip()
+    lane = (thread_id or "").strip()
+    if not hid or not lane:
+        return False
+    try:
+        with store._connect() as conn:
+            rows = conn.execute(
+                "SELECT turn_refs, dispatched_at FROM owed_wake WHERE holder_id=?",
+                (hid,),
+            ).fetchall()
+    except Exception:
+        logger.debug("producer1_turn_already_dispatched lookup failed", exc_info=True)
+        return False
+    for row in rows:
+        if row["dispatched_at"] is None:
+            continue
+        for ref in decode_turn_refs(row["turn_refs"]):
+            if (
+                str(ref.get("thread_id") or "") == lane
+                and int(ref.get("turn_number") or -1) == int(turn_number)
+            ):
+                return True
+    return False
 
 
 def project_stale_unread_milestone_owed_wakes(store: Any) -> int:
@@ -353,6 +388,13 @@ def project_stale_unread_milestone_owed_wakes(store: Any) -> int:
                 continue
             turn_number = turn.get("turn_number")
             if turn_number is None:
+                continue
+            if producer1_turn_already_dispatched(
+                store,
+                holder_id=holder_id,
+                thread_id=lane,
+                turn_number=int(turn_number),
+            ):
                 continue
             out = maybe_producer1_milestone(
                 store,

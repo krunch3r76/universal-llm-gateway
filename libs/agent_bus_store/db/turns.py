@@ -539,6 +539,16 @@ def get_turns(
             for row in rows:
                 row["attachments"] = att_map.get(row["id"])
 
+    if mark_read and close_candidates and read_seat is not None:
+        try:
+            from agent_bus_store.operator_observability_hooks import (
+                after_lane_mark_read,
+            )
+
+            for affected in close_candidates:
+                after_lane_mark_read(thread_id=affected, seat_agent=read_seat)
+        except Exception:
+            pass
     for affected in close_candidates:
         _maybe_close_generate_thread_on_read(affected)
     return rows
@@ -639,6 +649,16 @@ def get_unread_thread_toc(
             if marked:
                 close_candidates = [str(r["thread"]) for r in rows]
         result = rows, marked, total_threads, total_turns, truncated
+    if mark_read and close_candidates:
+        try:
+            from agent_bus_store.operator_observability_hooks import (
+                after_lane_mark_read,
+            )
+
+            for thread_id in close_candidates:
+                after_lane_mark_read(thread_id=thread_id, seat_agent=to)
+        except Exception:
+            pass
     for thread_id in close_candidates:
         _maybe_close_generate_thread_on_read(thread_id)
     return result
