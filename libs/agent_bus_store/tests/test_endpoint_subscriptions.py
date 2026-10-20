@@ -147,6 +147,33 @@ def test_subscribe_supersedes_prior_agent_id(client: TestClient) -> None:
     assert row["agent_id"] == "22222222-2222-2222-2222-222222222222"
 
 
+def test_resubscribe_same_agent_id_no_prior_subscription_id(client: TestClient) -> None:
+    thread = _thread("xvfb-same-agent")
+    agent_id = "33333333-3333-3333-3333-333333333333"
+    first = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} ",
+        agent_id=agent_id,
+    )
+    assert first.status_code == 200
+    second = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} updated",
+        agent_id=agent_id,
+    )
+    assert second.status_code == 200
+    assert second.json()["prior_subscription_id"] is None
+    assert second.json()["prior"] is None
+
+
 def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) -> None:
     thread = _thread("idem")
     with patch("agent_bus_store.routes.threads.subscriptions.emit_endpoint_subscribed") as sub_emit:
@@ -156,7 +183,8 @@ def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) ->
         assert again.json()["appended"] is False
         changed = _sub(client, thread_scope=thread, title="renamed")
         assert changed.json()["appended"] is True
-        assert changed.json()["prior"]["id"] == first.json()["row"]["id"]
+        assert changed.json()["prior"] is None
+        assert changed.json()["prior_subscription_id"] is None
         assert sub_emit.call_count == 2
     with patch("agent_bus_store.routes.threads.subscriptions.emit_endpoint_unsubscribed") as unsub:
         once = client.post(

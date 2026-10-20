@@ -909,24 +909,35 @@ def finalize_xvfb_hop_sidebar(
     return out
 
 
-def cleanup_xvfb_sidebar_on_holder_claim(root_id: str, holder: str) -> dict[str, Any]:
+def cleanup_xvfb_sidebar_on_holder_claim(
+    root_id: str,
+    holder: str,
+    *,
+    retired_agent_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Archive idle ``[retired]`` root rows when a new ``ide:`` holder claims the lock."""
     from cursor_bridge.cursor_agents_hop import prune_cursor_agents_predecessors
 
     from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
 
-    if not is_cursor_xvfb_host(policy_gui_host(root_id)):
-        return {"ok": True, "skipped": "not_xvfb_host"}
-    active_aid = parse_ide_holder_agent_id(holder) or ""
-    if not active_aid:
-        return {"ok": True, "skipped": "holder_not_ide_uuid"}
-    lock = read_lock(root_id)
-    holder_aid = parse_ide_holder_agent_id(str(lock.get("holder") or "")) or active_aid
-    return prune_cursor_agents_predecessors(
-        root_id,
-        active_agent_id=active_aid,
-        departing_agent_id="",
-        holder_agent_id=holder_aid,
-        keep_recent_predecessors=0,
-        wait_until_idle_s=0.0,
-    )
+    try:
+        if not is_cursor_xvfb_host(policy_gui_host(root_id)):
+            return {"ok": True, "skipped": "not_xvfb_host"}
+        active_aid = parse_ide_holder_agent_id(holder) or ""
+        if not active_aid:
+            return {"ok": True, "skipped": "holder_not_ide_uuid"}
+        lock = read_lock(root_id)
+        holder_aid = parse_ide_holder_agent_id(str(lock.get("holder") or "")) or active_aid
+        return prune_cursor_agents_predecessors(
+            root_id,
+            active_agent_id=active_aid,
+            departing_agent_id="",
+            holder_agent_id=holder_aid,
+            keep_recent_predecessors=0,
+            wait_until_idle_s=0.0,
+            select_active=False,
+            only_retired=True,
+            retired_agent_ids=retired_agent_ids,
+        )
+    except (Exception, SystemExit) as exc:
+        return {"ok": False, "reason": f"cleanup_failed:{type(exc).__name__}"}

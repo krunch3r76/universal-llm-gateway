@@ -24,16 +24,26 @@ def test_maybe_subscribe_skips_without_transcript_id() -> None:
 
 
 def test_maybe_subscribe_on_resume() -> None:
+    call_order: list[str] = []
+
+    def _sub(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("subscribe")
+        return {"ok": True}
+
+    def _cleanup(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("cleanup")
+        return {"ok": True}
+
     with (
         patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
         patch(
             "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
-            return_value={"ok": True},
+            side_effect=_cleanup,
         ),
         patch(
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
-            return_value={"ok": True},
-        ) as sub,
+            side_effect=_sub,
+        ),
     ):
         out = maybe_subscribe_cursor_xvfb_on_resume(
             thread="18374",
@@ -41,8 +51,44 @@ def test_maybe_subscribe_on_resume() -> None:
             surface="cursor",
             resume_result={"fence_id": "f1"},
         )
-    sub.assert_called_once()
+    assert call_order == ["subscribe", "cleanup"]
     assert out["xvfb_subscription"]["ok"] is True
+
+
+def test_maybe_subscribe_cleanup_failure_still_subscribes() -> None:
+    call_order: list[str] = []
+
+    def _sub(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("subscribe")
+        return {"ok": True, "agent_id": "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"}
+
+    def _cleanup(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("cleanup")
+        raise TimeoutError("cdp")
+
+    with (
+        patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch(
+            "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
+            side_effect=_cleanup,
+        ),
+        patch(
+            "tools.continuity_ops.subscribe_cursor_xvfb_house",
+            side_effect=_sub,
+        ),
+    ):
+        out = maybe_subscribe_cursor_xvfb_on_resume(
+            thread="18374",
+            transcript_id="db36e9f8-e76f-49e7-bd57-c9c4ffa88195",
+            surface="cursor",
+            resume_result={"fence_id": "f1"},
+        )
+    assert call_order == ["subscribe", "cleanup"]
+    assert out["xvfb_subscription"]["ok"] is True
+    assert out["xvfb_sidebar_cleanup"] == {
+        "ok": False,
+        "reason": "cleanup_failed:TimeoutError",
+    }
 
 
 def test_maybe_subscribe_skips_non_xvfb_host() -> None:

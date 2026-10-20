@@ -29,7 +29,6 @@ def maybe_subscribe_cursor_xvfb_on_resume(
     if not is_cursor_xvfb_host(policy_gui_host(thread)):
         return out
     holder_id = str(holder or f"ide:{tid}").strip()
-    out["xvfb_sidebar_cleanup"] = cleanup_xvfb_sidebar_on_holder_claim(thread, holder_id)
     sub = subscribe_cursor_xvfb_house(
         thread,
         tid,
@@ -37,6 +36,15 @@ def maybe_subscribe_cursor_xvfb_on_resume(
         evidence="continuity(op=resume)",
     )
     out["xvfb_subscription"] = sub
+    try:
+        out["xvfb_sidebar_cleanup"] = cleanup_xvfb_sidebar_on_holder_claim(
+            thread, holder_id
+        )
+    except (Exception, SystemExit) as exc:
+        out["xvfb_sidebar_cleanup"] = {
+            "ok": False,
+            "reason": f"cleanup_failed:{type(exc).__name__}",
+        }
     return out
 
 

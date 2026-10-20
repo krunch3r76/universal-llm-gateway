@@ -54,6 +54,46 @@ def test_subscribe_from_holder_rejects_non_ide() -> None:
     assert out["reason"] == "holder_not_ide_uuid"
 
 
+def test_resume_path_subscribe_before_cleanup_on_failure() -> None:
+    from unittest.mock import patch
+
+    from tools.continuity_ops import maybe_subscribe_cursor_xvfb_on_resume
+
+    call_order: list[str] = []
+
+    def _cleanup(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("cleanup")
+        raise TimeoutError("sidebar")
+
+    def _sub(*a, **k):  # type: ignore[no-untyped-def]
+        call_order.append("subscribe")
+        return {"ok": True}
+
+    with (
+        patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch(
+            "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
+            side_effect=_cleanup,
+        ),
+        patch(
+            "tools.continuity_ops.subscribe_cursor_xvfb_house",
+            side_effect=_sub,
+        ),
+    ):
+        out = maybe_subscribe_cursor_xvfb_on_resume(
+            thread="18374",
+            transcript_id="db36e9f8-e76f-49e7-bd57-c9c4ffa88195",
+            surface="cursor",
+            resume_result={"fence_id": "f1"},
+        )
+    assert call_order == ["subscribe", "cleanup"]
+    assert out["xvfb_subscription"]["ok"] is True
+    assert out["xvfb_sidebar_cleanup"] == {
+        "ok": False,
+        "reason": "cleanup_failed:TimeoutError",
+    }
+
+
 def test_subscribe_survives_bus_config_failure() -> None:
     from unittest.mock import patch
 

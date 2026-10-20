@@ -320,6 +320,9 @@ def main() -> int:
         if not root_for_lock:
             raise SystemExit("--root (or LIAISON_ROOT) required with --claim/--release")
         policy = effective_policy({"policy": {}})
+        prev_holder = ""
+        if args.claim:
+            prev_holder = str((read_lock(root_for_lock) or {}).get("holder") or "")
         result = (
             claim_fable_lock(
                 args.holder,
@@ -334,6 +337,7 @@ def main() -> int:
             )  # operator override
         )
         if args.claim and result.get("ok"):
+            from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
             from bus_watch.ide_hop import (
                 cleanup_xvfb_sidebar_on_holder_claim,
                 policy_gui_host,
@@ -342,9 +346,11 @@ def main() -> int:
 
             xvfb_extra: dict = {}
             if is_cursor_xvfb_host(policy_gui_host(root_for_lock)):
-                xvfb_extra["xvfb_sidebar_cleanup"] = cleanup_xvfb_sidebar_on_holder_claim(
-                    root_for_lock, args.holder
-                )
+                holder_agent_id = parse_ide_holder_agent_id(args.holder) or ""
+                prev_uuid = parse_ide_holder_agent_id(prev_holder)
+                retired_agent_ids: list[str] | None = None
+                if prev_uuid and prev_uuid != holder_agent_id:
+                    retired_agent_ids = [prev_uuid]
                 sub = subscribe_cursor_xvfb_from_holder(
                     root_for_lock,
                     args.holder,
@@ -352,6 +358,19 @@ def main() -> int:
                     evidence="scripts/liaison-tick.py --claim",
                 )
                 xvfb_extra["xvfb_subscription"] = sub
+                try:
+                    xvfb_extra["xvfb_sidebar_cleanup"] = (
+                        cleanup_xvfb_sidebar_on_holder_claim(
+                            root_for_lock,
+                            args.holder,
+                            retired_agent_ids=retired_agent_ids,
+                        )
+                    )
+                except (Exception, SystemExit) as exc:
+                    xvfb_extra["xvfb_sidebar_cleanup"] = {
+                        "ok": False,
+                        "reason": f"cleanup_failed:{type(exc).__name__}",
+                    }
             result = {**result, **xvfb_extra}
         print(json.dumps(result))
         return 0 if result.get("ok") else 3

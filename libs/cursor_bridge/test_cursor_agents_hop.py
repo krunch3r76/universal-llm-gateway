@@ -90,7 +90,9 @@ def test_root_row_pattern_matches_retired_prefix() -> None:
 def test_rename_agent_row_js_skips_streaming_refusal() -> None:
     js = _rename_agent_row_js("agent-x", "[retired] 10479 slug")
     assert "agent_streaming" not in js
-    assert "updateAgentName" in js or "setAgentName" in js
+    assert "persist_path" in js and "dom_only" in js
+    assert "updateAgentName" not in js
+    assert "setAgentName" not in js
 
 
 def test_archive_agent_js_streaming_guard() -> None:
@@ -361,28 +363,40 @@ async def test_prune_selects_inactive_active_agent_id() -> None:
 async def test_prune_resolves_departing_index_by_agent_id() -> None:
     list_result = [
         {
+            "agent_id": "lock-holder",
+            "title": ". 10479 lock tab",
+            "active": False,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 300,
+            "sidebar_index": 0,
+        },
+        {
             "agent_id": "landed",
             "title": "[retired] 10479 old title",
             "active": False,
             "streaming": False,
+            "unknown": False,
             "created_at": 200,
-            "sidebar_index": 0,
+            "sidebar_index": 1,
         },
         {
             "agent_id": "depart-id",
             "title": "10479 hop",
-            "active": True,
+            "active": False,
             "streaming": False,
+            "unknown": False,
             "created_at": 100,
-            "sidebar_index": 1,
+            "sidebar_index": 2,
         },
         {
             "agent_id": "older",
             "title": ". 10479 ancient",
             "active": False,
             "streaming": False,
+            "unknown": False,
             "created_at": 50,
-            "sidebar_index": 2,
+            "sidebar_index": 3,
         },
     ]
     archived: list[str] = []
@@ -419,7 +433,178 @@ async def test_prune_resolves_departing_index_by_agent_id() -> None:
         )
     assert out["ok"] is True
     assert "lock-holder" not in archived
+    assert any(
+        s.get("id") == "lock-holder" and s.get("reason") == "lock_holder"
+        for s in out["skipped"]
+    )
     assert "depart-id" not in archived or "depart-id" in out.get("kept_predecessors", [])
+
+
+def test_prune_cursor_agents_predecessors_timeout_returns_cleanup_failed() -> None:
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    def _run(coro):  # type: ignore[no-untyped-def]
+        coro.close()
+        raise TimeoutError("cdp eval")
+
+    with (
+        patch("cursor_bridge.cursor_agents_hop.list_pages", return_value=[page]),
+        patch("cursor_bridge.cursor_agents_hop.asyncio.run", side_effect=_run),
+    ):
+        out = prune_cursor_agents_predecessors("10479", active_agent_id="active")
+    assert out == {
+        "ok": False,
+        "reason": "cleanup_failed:TimeoutError",
+        "archived": [],
+        "skipped": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_prune_only_retired_skips_unmarked_and_no_select() -> None:
+    list_result = [
+        {
+            "agent_id": "holder",
+            "title": "10479 live",
+            "active": True,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 300,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "side-tab",
+            "title": ". 10479 operator side",
+            "active": False,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 200,
+            "sidebar_index": 1,
+        },
+        {
+            "agent_id": "retired-row",
+            "title": "[retired] 10479 slug",
+            "active": False,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 100,
+            "sidebar_index": 2,
+        },
+        {
+            "agent_id": "listed-retired",
+            "title": "10479 other",
+            "active": False,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 50,
+            "sidebar_index": 3,
+        },
+    ]
+    archived: list[str] = []
+    eval_calls: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archived.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        eval_calls.append(expression)
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="holder",
+            departing_agent_id="",
+            holder_agent_id="holder",
+            keep_recent_predecessors=0,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+            select_active=False,
+            only_retired=True,
+            retired_agent_ids=["listed-retired"],
+        )
+    assert out["ok"] is True
+    assert "side-tab" not in archived
+    assert set(archived) == {"retired-row", "listed-retired"}
+    assert any(
+        s.get("id") == "side-tab" and s.get("reason") == "not_marked_retired"
+        for s in out["skipped"]
+    )
+    assert not any("el.click()" in expr for expr in eval_calls)
+
+
+@pytest.mark.asyncio
+async def test_prune_skips_unknown_busy_state() -> None:
+    list_result = [
+        {
+            "agent_id": "active",
+            "title": ". 10479 a",
+            "active": True,
+            "streaming": False,
+            "unknown": False,
+            "created_at": 300,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "mystery",
+            "title": ". 10479 mystery",
+            "active": False,
+            "streaming": True,
+            "unknown": True,
+            "created_at": 100,
+            "sidebar_index": 1,
+        },
+    ]
+    archive_calls: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archive_calls.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="active",
+            departing_agent_id="",
+            keep_recent_predecessors=0,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert "mystery" not in archive_calls
+    assert any(
+        s.get("id") == "mystery" and s.get("reason") == "unknown_busy_state"
+        for s in out["skipped"]
+    )
 
 
 @pytest.mark.asyncio

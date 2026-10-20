@@ -141,14 +141,18 @@ def subscribe_endpoint(
                 "appended": False,
                 "row": current_d,
                 "prior": None,
-                "prior_subscription_id": (
-                    int(current_d["id"]) if current_d.get("id") is not None else None
-                ),
+                "prior_subscription_id": None,
             }
-        prior_for_response = current_d
+        prior_subscribed = conn.execute(
+            "SELECT * FROM agent_endpoint_subscriptions "
+            "WHERE agent=? AND thread_scope=? AND state='subscribed' "
+            "AND (agent_id IS NULL OR agent_id != ?) "
+            "ORDER BY id DESC LIMIT 1",
+            (canon, scope, agent_id),
+        ).fetchone()
+        prior_before_supersede = _row(prior_subscribed)
+        prior_for_response: dict[str, Any] | None = None
         prior_subscription_id: int | None = None
-        if current_d is not None and current_d.get("id") is not None:
-            prior_subscription_id = int(current_d["id"])
         if (
             current_d is not None
             and current_d.get("state") == "subscribed"
@@ -174,6 +178,8 @@ def subscribe_endpoint(
                     tomb_evidence,
                 ),
             )
+            if prior_before_supersede is not None and prior_before_supersede.get("id") is not None:
+                prior_subscription_id = int(prior_before_supersede["id"])
             prior_for_response = _row(
                 conn.execute(
                     "SELECT * FROM agent_endpoint_subscriptions "

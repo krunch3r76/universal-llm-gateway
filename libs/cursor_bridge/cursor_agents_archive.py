@@ -38,11 +38,14 @@ _GLASS_ROW_PROBE_JS = (
     "_glassServices={agentRepositoryService,backgroundWorkService};return _glassServices;}}"
     "_glassServices={};return _glassServices;};"
     "const rowMeta=(el,aid)=>{const fk=fiberKey(el);let headerStatus='',createdAt=0,"
-    "hasBg=false,hasSub=false;if(fk){let f=el[fk];"
-    "for(let i=0;i<35&&f;i++,f=f.return){const mp=f.memoizedProps;if(mp&&mp.header){"
-    "headerStatus=(mp.header.status&&mp.header.status.value)||mp.header.status||'';"
-    "createdAt=Number(mp.header.createdAt||0);hasBg=Boolean(mp.hasActiveBackgroundWork);"
-    "hasSub=Boolean(mp.hasRunningSubagentWork);break;}}}"
+    "hasBg=false,hasSub=false,headerFound=false,glassFound=false,domBusy=false;"
+    "if(fk){let f=el[fk];for(let i=0;i<170&&f;i++,f=f.return){const p=f.memoizedProps;"
+    "if(!p)continue;"
+    "if(p.header?.status!==undefined||p.status!==undefined){headerFound=true;"
+    "headerStatus=(p.header&&((p.header.status&&p.header.status.value)||p.header.status))||p.status||'';"
+    "createdAt=Number((p.header&&p.header.createdAt)||0);"
+    "hasBg=Boolean(p.hasActiveBackgroundWork);hasSub=Boolean(p.hasRunningSubagentWork);}"
+    "if(p.backgroundWorkService||p.composerDataService||p.subagentService){glassFound=true;}}}"
     "const svc=glassServices(el);let bgWork=[],svcInProgress=false;"
     "if(aid&&svc.backgroundWorkService"
     "&&typeof svc.backgroundWorkService.getComposerBackgroundWork==='function'){try{"
@@ -51,8 +54,8 @@ _GLASS_ROW_PROBE_JS = (
     "if(aid&&svc.agentRepositoryService&&typeof svc.agentRepositoryService.getAgentHeader==='function'){"
     "try{const h=svc.agentRepositoryService.getAgentHeader(aid);"
     "if(h&&h.status&&h.status.value==='in_progress')svcInProgress=true;}catch(e){}}"
-    "const unknown=!fk&&!headerStatus&&!hasBg&&!hasSub;"
-    "return{headerStatus,createdAt,hasBg,hasSub,bgWork,svcInProgress,unknown};};"
+    "const unknown=!fk||(!headerFound&&!glassFound&&!domBusy);"
+    "return{headerStatus,createdAt,hasBg,hasSub,bgWork,svcInProgress,unknown,headerFound,glassFound};};"
     "const rowStreaming=(el)=>{"
     "if(Boolean(el.querySelector('[aria-label=\"In progress\"], .ui-dot-grid-loader')))return true;"
     "if(el.getAttribute('data-loading')==='true')return true;const aid=rowAgentId(el);"
@@ -109,36 +112,31 @@ def _list_root_sidebar_rows_js(root_id: str) -> str:
         " const agent_id = rowAgentId(el);"
         " const meta = rowMeta(el, agent_id);"
         " out.push({agent_id, title, active: rowActive(el), streaming: rowStreaming(el),"
-        " created_at: meta.createdAt, sidebar_index: out.length});"
+        " unknown: meta.unknown, created_at: meta.createdAt, sidebar_index: out.length});"
         " } return out; })()"
     )
 
 
-def _rename_agent_row_js(agent_id: str, new_title: str) -> str:
+def _rename_departing_agent_js(agent_id: str, new_title: str) -> str:
     aid = json.dumps(agent_id.strip())
     title = json.dumps(new_title.strip())
     return (
-        f"(() => {{ const target = {aid}; const nextTitle = {title};"
+        f"(() => {{ const target = {aid}; const newTitle = {title};"
         f"{_GLASS_ROW_PROBE_JS}"
         " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
         " if (rowAgentId(el) !== target) continue;"
-        " const titled = el.querySelector('[class*=\"agent-item__title\"]');"
-        " const trig = el.querySelector('.ui-sidebar-menu-button-trigger[role=\"button\"]');"
-        " if (titled) { titled.textContent = nextTitle; }"
-        " if (trig) { trig.textContent = nextTitle; }"
-        " const fk=fiberKey(el);"
-        " if(fk){let f=el[fk];for(let i=0;i<60&&f;i++,f=f.return){const mp=f.memoizedProps;"
-        "if(!mp)continue;"
-        "if(mp.header){try{if(mp.header.name!==undefined)mp.header.name=nextTitle;"
-        "if(mp.header.title!==undefined)mp.header.title=nextTitle;}catch(e){}}"
-        "if(typeof mp.setAgentName==='function'){try{mp.setAgentName(nextTitle);}catch(e){}}"
-        "if(typeof mp.onTitleChange==='function'){try{mp.onTitleChange(nextTitle);}catch(e){}}}}"
-        " const svc=glassServices(el);"
-        " if(svc.agentRepositoryService&&typeof svc.agentRepositoryService.updateAgentName==='function'){"
-        " try{svc.agentRepositoryService.updateAgentName(target,nextTitle);}catch(e){}}"
-        " return {ok: true, renamed: target, title: nextTitle};"
+        " const labelEl = el.querySelector('[class*=\"agent-item__title\"]');"
+        " const prevTitle = labelEl ? (labelEl.textContent || '').trim() : '';"
+        " if (labelEl) { labelEl.textContent = newTitle; }"
+        " el.setAttribute('title', newTitle);"
+        " return {ok: true, id: target, previous_title: prevTitle, new_title: newTitle,"
+        " persist_path: 'dom_only'};"
         " } return {ok: false, reason: 'row_not_found'}; })()"
     )
+
+
+def _rename_agent_row_js(agent_id: str, new_title: str) -> str:
+    return _rename_departing_agent_js(agent_id, new_title)
 
 
 _rename_agent_title_js = _rename_agent_row_js
@@ -266,6 +264,9 @@ def prune_cursor_agents_predecessors(
     timeout_s: float = 10.0,
     wait_until_idle_s: float = 0.0,
     poll_interval_s: float = 0.5,
+    select_active: bool = True,
+    only_retired: bool = False,
+    retired_agent_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Archive older root predecessors; keep recent ones active in the sidebar."""
     root = str(root_id or "").strip()
@@ -275,19 +276,30 @@ def prune_cursor_agents_predecessors(
     if err:
         return err
     assert ws_url is not None
-    return _hop.asyncio.run(
-        _prune_predecessors_async(
-            ws_url,
-            root,
-            active_agent_id=active_agent_id,
-            departing_agent_id=departing_agent_id,
-            holder_agent_id=holder_agent_id,
-            keep_recent_predecessors=keep_recent_predecessors,
-            timeout_s=timeout_s,
-            wait_until_idle_s=wait_until_idle_s,
-            poll_interval_s=poll_interval_s,
+    try:
+        return _hop.asyncio.run(
+            _prune_predecessors_async(
+                ws_url,
+                root,
+                active_agent_id=active_agent_id,
+                departing_agent_id=departing_agent_id,
+                holder_agent_id=holder_agent_id,
+                keep_recent_predecessors=keep_recent_predecessors,
+                timeout_s=timeout_s,
+                wait_until_idle_s=wait_until_idle_s,
+                poll_interval_s=poll_interval_s,
+                select_active=select_active,
+                only_retired=only_retired,
+                retired_agent_ids=retired_agent_ids,
+            )
         )
-    )
+    except (Exception, SystemExit) as exc:
+        return {
+            "ok": False,
+            "reason": f"cleanup_failed:{type(exc).__name__}",
+            "archived": [],
+            "skipped": [],
+        }
 
 
 async def _prune_predecessors_async(
@@ -301,6 +313,9 @@ async def _prune_predecessors_async(
     timeout_s: float,
     wait_until_idle_s: float,
     poll_interval_s: float,
+    select_active: bool = True,
+    only_retired: bool = False,
+    retired_agent_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     import websockets
 
@@ -327,7 +342,12 @@ async def _prune_predecessors_async(
                     idx = row.get("sidebar_index")
                     if isinstance(idx, int):
                         departing_sidebar_index = idx
-        if active_aid and active_aid in row_by_aid and not row_by_aid[active_aid].get("active"):
+        if (
+            select_active
+            and active_aid
+            and active_aid in row_by_aid
+            and not row_by_aid[active_aid].get("active")
+        ):
             await _hop._eval(ws, eval_mid, _select_agent_js(active_aid), timeout_s)
             eval_mid += 1
         predecessors: list[str] = []
@@ -355,13 +375,31 @@ async def _prune_predecessors_async(
             predecessors = [departing] + [a for a in predecessors if a != departing]
         kept_predecessors = predecessors[: max(0, keep_recent_predecessors)]
         protected = {active_aid, departing, holder_aid} - {""}
+        retired_ids = set(retired_agent_ids or [])
         for aid in predecessors[max(0, keep_recent_predecessors) :]:
+            if aid == holder_aid:
+                skipped.append(
+                    {"id": aid, "agent_id": aid, "ok": False, "reason": "lock_holder"}
+                )
+                continue
             if aid in protected:
                 skipped.append(
-                    {"agent_id": aid, "ok": False, "reason": "protected_agent_id"}
+                    {"id": aid, "agent_id": aid, "ok": False, "reason": "protected_agent_id"}
                 )
                 continue
             row = row_by_aid.get(aid, {})
+            if only_retired:
+                title = str(row.get("title") or "")
+                if not title.startswith("[retired]") and aid not in retired_ids:
+                    skipped.append(
+                        {"id": aid, "agent_id": aid, "reason": "not_marked_retired"}
+                    )
+                    continue
+            if row.get("unknown") is True:
+                skipped.append(
+                    {"id": aid, "agent_id": aid, "reason": "unknown_busy_state"}
+                )
+                continue
             if departing_sidebar_index is not None:
                 idx = row.get("sidebar_index")
                 if isinstance(idx, int) and idx < departing_sidebar_index:

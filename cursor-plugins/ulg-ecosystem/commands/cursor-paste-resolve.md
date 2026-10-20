@@ -50,4 +50,4 @@ Specimens: `glass orion-node opus cursor_sdk` (or “Glass … Opus on cursor_sd
 
 ## Skills
 
-This command has **no** `agent_skill`. cite `runbook:cursor-paste-resolve` · cite `runbook:bus-consult-watcher` on every cursor_sdk hop · cite `runbook:cursor-bridge-paste` only when Glass/IDE paste is a leftover compose-only second step · Maestro/Grok finalize after admit: Use `paste-resolve-cse-followup` (a:38621).
+This command has **no** `agent_skill`. cite `runbook:cursor-paste-resolve` · cite `runbook:bus-consult-watcher` on every cursor_sdk hop on **non-`:8` Jupiter/COSMIC IDE tabs** (`:8` push-wake houses omit `runbook:bus-consult-watcher`) · cite `runbook:cursor-bridge-paste` only when Glass/IDE paste is a leftover compose-only second step · Maestro/Grok finalize after admit: Use `paste-resolve-cse-followup` (a:38621).
