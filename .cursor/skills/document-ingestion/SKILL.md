@@ -14,13 +14,13 @@ When a `document:` points at an image/PDF binary, readable text may live in a **
 
 | Field | Role |
 |---|---|
-| `source_uri` | Canonical binary |
+| `source_uri` | Canonical binary (hand-minted). Promoted (`cortex://evidence/…/*.extracted.md`): the readable sidecar; binary = bundle `manifest.json` `role: source` |
 | `attributes.ocr_uri` | Readable companion (markdown/plain) |
 | Filename default | `{same_stem}.ocr.md` beside the binary under cortex |
 
-**Discovery order:** (1) `entity_get(intent=card)` → `status_summary.ocr_uri` · (2) full entity `attributes.ocr_uri` · (3) derive `{stem}.ocr.md` next to `source_uri` and `fs` probe · (4) assertion `evidence_uris`.
+**Discovery order:** (1) `entity_get(intent=card)` → `status_summary.ocr_uri` · (2) full entity `attributes.ocr_uri` · (3) promoted `source_uri` (`cortex://evidence/…/*.extracted.md`) → read it, it is the text; else derive `{stem}.ocr.md` next to `source_uri` and `fs` probe · (4) assertion `evidence_uris`.
 
-Convention SoT: `cortex://notes/system/specs/document-ocr-companion-convention.md`. After extraction/promote, set `attributes.ocr_uri` when a readable companion exists. Auto-OCR pipeline redesign is out of scope here — this skill owns discovery + promote wiring.
+Convention SoT: `cortex://notes/system/specs/document-ocr-companion-convention.md`. After extraction, set `attributes.ocr_uri` when a readable companion exists; promote sets none (its `source_uri` is already the sidecar). Auto-OCR pipeline redesign is out of scope here — this skill owns discovery + promote wiring.
 
 ## Decision tree
 
