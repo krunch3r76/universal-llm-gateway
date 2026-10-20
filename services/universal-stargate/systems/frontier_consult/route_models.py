@@ -264,6 +264,15 @@ class TeamDispatchOccupancyBody(_DispatchCommon):
     work_key: str
 
 
+class TeamDispatchLedgerBody(_DispatchCommon):
+    """``team_dispatch`` op ``ledger`` returns recent dispatches for one work_key."""
+
+    op: Literal["ledger"]
+    work_key: str
+    limit: int = Field(default=5, ge=1, le=10)
+    window_hours: int = Field(default=24, ge=1, le=168)
+
+
 class TeamDispatchSteerBody(BaseModel):
     """``team_dispatch`` with ``op="steer"`` — thin GIW park/inject relay."""
 
@@ -337,6 +346,7 @@ TeamDispatchBody = Annotated[
     | TeamDispatchSteerBody
     | TeamDispatchClaimBody
     | TeamDispatchClaimReleaseBody
-    | TeamDispatchOccupancyBody,
+    | TeamDispatchOccupancyBody
+    | TeamDispatchLedgerBody,
     Field(discriminator="op"),
 ]

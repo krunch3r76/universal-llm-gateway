@@ -45,8 +45,10 @@ async def relay_house_claim(
     claim_id: str | None = None,
     outcome: str | None = None,
     ttl_s: int | None = None,
+    limit: int | None = None,
+    window_hours: int | None = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """Forward claim, claim_release, or occupancy to the matching GIW route.
+    """Forward claim, claim_release, occupancy, or ledger to the matching GIW route.
 
     Returns ``(ok, body)``. ``ok`` is true only for HTTP 200. Other GIW
     statuses are the worker envelope with ``status_code`` set.
@@ -72,6 +74,11 @@ async def relay_house_claim(
         method = "GET"
         payload = {}
         ident = work_key or ""
+    elif op == "ledger":
+        path = "/api/v1/cursor/work-key-ledger"
+        method = "GET"
+        payload = {}
+        ident = work_key or ""
     else:
         return False, {
             "status_code": 422,
@@ -83,7 +90,13 @@ async def relay_house_claim(
             worker_base_url(), timeout=_WORKER_TIMEOUT
         ) as client:
             if method == "GET":
-                resp = await client.get(path, params={"work_key": work_key})
+                params: dict[str, Any] = {"work_key": work_key}
+                if op == "ledger":
+                    if limit is not None:
+                        params["limit"] = limit
+                    if window_hours is not None:
+                        params["window_hours"] = window_hours
+                resp = await client.get(path, params=params)
             else:
                 resp = await client.post(path, json=payload)
     except httpx.HTTPError as exc:

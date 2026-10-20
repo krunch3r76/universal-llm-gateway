@@ -300,6 +300,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             "claim",
             "claim_release",
             "occupancy",
+            "ledger",
         ],
         role: str | None = None,
         seat: str | None = None,
@@ -569,16 +570,34 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        limit: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "When op='ledger', max dispatch rows returned (default 5, clamp 1..10)."
+                ),
+            ),
+        ] = None,
+        window_hours: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "When op='ledger', roll-up window in hours (default 24, clamp 1..168)."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch to Stargate. Returns `{execution_id, pipeline, started_at, status}`. Poll `agent_bus(tool="wait")` via `poll_hint`. Role-less one-shots: `pipeline(op="async", pipeline_id="chat-dispatch")`.
 
-        **Ops:** `generate` | `to_thread` | `handoff` | `steer` | `claim` | `claim_release` | `occupancy`.
+        **Ops:** `generate` | `to_thread` | `handoff` | `steer` | `claim` | `claim_release` | `occupancy` | `ledger`.
 
         **claim:** `work_key` + `thread`. Holder is `caller_agent`. 409 `WORK_KEY_HELD`. 422 `INVALID_WORK_KEY` or `INVALID_TTL`.
 
         **claim_release:** `claim_id` + `outcome`∈{completed,failed,withdrawn}. 404 `CLAIM_NOT_FOUND`. 409 `CLAIM_NOT_HELD`. 422 bad outcome.
 
         **occupancy:** `work_key`. 422 `INVALID_WORK_KEY`. Returns occupancy, not progress.
+
+        **ledger:** `work_key`; optional `limit` (default 5) and `window_hours` (default 24). Read-only recent dispatches + house roll-up under 5120 UTF-8 bytes.
 
         **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role). MCP `contract` forwards as Stargate body `job` (generate/to_thread/handoff); `purpose` forwards as body `purpose` on generate only.
 
@@ -670,7 +689,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 record_prefix="mcp.team.steer",
             )
 
-        if op in ("claim", "claim_release", "occupancy"):
+        if op in ("claim", "claim_release", "occupancy", "ledger"):
             if op == "claim" and (not work_key or not thread):
                 return {
                     "error": {
@@ -710,6 +729,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     },
                     "field": "work_key",
                 }
+            if op == "ledger" and not work_key:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "work_key is required when op='ledger'",
+                    },
+                    "field": "work_key",
+                }
             claim_body: dict[str, Any] = {"op": op}
             if work_key is not None:
                 claim_body["work_key"] = work_key
@@ -721,6 +748,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 claim_body["outcome"] = outcome
             if ttl_s is not None and op == "claim":
                 claim_body["ttl_s"] = ttl_s
+            if limit is not None and op == "ledger":
+                claim_body["limit"] = limit
+            if window_hours is not None and op == "ledger":
+                claim_body["window_hours"] = window_hours
             if caller_agent is not None:
                 claim_body["caller_agent"] = caller_agent
             record("mcp.team.claim.called", op=op)

@@ -112,3 +112,23 @@ def get_occupancy(
     if not validate_work_key_scheme(work_key):
         return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")
     return occupancy_projection(work_key)
+
+
+@router.get("/work-key-ledger", response_model=None)
+def get_work_key_ledger(
+    work_key: str = Query(..., min_length=1),
+    limit: int = Query(5, ge=1, le=10),
+    window_hours: int = Query(24, ge=1, le=168),
+) -> Any:
+    """Read-only work-key dispatch ledger (compact JSON, ≤5120 UTF-8 bytes)."""
+    from services.git_integration_worker.cursor_dispatch_read import (
+        work_key_ledger_projection,
+    )
+
+    if not validate_work_key_scheme(work_key):
+        return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")
+    return work_key_ledger_projection(
+        work_key,
+        limit=limit,
+        window_hours=window_hours,
+    )
