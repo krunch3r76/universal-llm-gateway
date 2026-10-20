@@ -861,26 +861,33 @@ def render_checkpoint_block(
     inflight_section = sections.get("IN FLIGHT", "")
     meta["inflight_rows"] = parse_inflight_rows(inflight_section)
 
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
+
+    def _finalize_checkpoint_block(content: str) -> str:
+        merged = content
+        if meta["flags"]:
+            merged = "\n".join(meta["flags"]) + ("\n\n" + content if content else "")
+        if merged:
+            return prefix + merged
+        if meta["flags"]:
+            return prefix + "\n".join(meta["flags"])
+        return ""
+
+    pre_sha_rendered_block = _finalize_checkpoint_block(body)
+
     if (
         hop_inline
         and current
         and sidecar
-        and _utf8_len(current) <= CHECKPOINT_BUDGET_B
-        and not any(
-            str(f).startswith("[budget_exceeded checkpoint") for f in meta["flags"]
-        )
+        and checkpoint_in_budget(sidecar, inline_house_rules, pre_sha_rendered_block)
     ):
         digest = hashlib.sha256(sidecar.encode("utf-8")).hexdigest()
         sha_line = f"handoff sha256 {digest}"
         body = f"{sha_line}\n\n{body}" if body else sha_line
 
-    prefix = "## CURRENT LEG (rendered checkpoint)\n"
-    if meta["flags"]:
-        body = "\n".join(meta["flags"]) + ("\n\n" + body if body else "")
-    if body:
-        return prefix + body, meta
-    if meta["flags"]:
-        return prefix + "\n".join(meta["flags"]), meta
+    finalized = _finalize_checkpoint_block(body)
+    if finalized:
+        return finalized, meta
     return "", meta
 
 
@@ -935,7 +942,10 @@ def runbook_refuse_steps_bytes(body: str | None) -> int | None:
 
 def first_act_call1_line(*, lane: str, checkpoint_block: str) -> str:
     """Act-2 call-1 wording: handoff fs read only when the checkpoint flags budget."""
-    needs_handoff_read = "[budget_exceeded" in (checkpoint_block or "")
+    ck = checkpoint_block or ""
+    needs_handoff_read = not (
+        "handoff sha256 " in ck and "[budget_exceeded" not in ck
+    )
     call2 = (
         'Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; '
         "quote `read_sha256` from that md_read. On trigger only, `md_read` the "
@@ -968,6 +978,22 @@ def maestro_runbook_act2_line() -> str:
     return (
         "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
         f"§ Refuse and § Steps only (runbook {size} bytes)."
+    )
+
+
+def checkpoint_in_budget(
+    sidecar: str,
+    inline_house_rules: str | None,
+    rendered_checkpoint: str,
+) -> bool:
+    """True when measured checkpoint bytes are in cap and render carries no budget flag."""
+    budget_bytes = measure_checkpoint_budget_bytes(
+        sidecar, inline_house_rules=inline_house_rules
+    )
+    return (
+        budget_bytes is not None
+        and budget_bytes <= CHECKPOINT_BUDGET_B
+        and "[budget_exceeded" not in rendered_checkpoint
     )
 
 
