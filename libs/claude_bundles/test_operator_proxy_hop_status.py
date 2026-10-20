@@ -1512,3 +1512,134 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     assert "todo:peer-open" not in live_named
     assert "a:39707" not in live_named
     assert "needs owner" not in live_named
+
+
+_STANDING_HANDOFF_TABLE_LABELS = (
+    "seat =",
+    "WAKES (K55):",
+    "KAYWAN:",
+    "GC1:",
+    "HUB:",
+    "ROUTE:",
+    "REVIEW BAR:",
+    "DONE this seat:",
+    "IN FLIGHT:",
+    "OPEN:",
+    "FRICTION:",
+    "CARRIED (not re-read):",
+    "NEXT:",
+    "Traps:",
+    "Carried:",
+)
+_INFLIGHT_PLAIN_TERMINATORS = (
+    "OPEN:",
+    "FRICTION:",
+    "CARRIED (not re-read):",
+    "NEXT:",
+    "Traps:",
+    "Carried:",
+)
+_LIVE_HANDOFF_TABLE_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "testdata"
+    / "12286-standing-handoff-leg448-table.txt"
+)
+
+
+def _label_table_token(label: str) -> str:
+    slug = (
+        label.replace(" ", "_")
+        .replace("(", "")
+        .replace(")", "")
+        .replace("=", "")
+        .strip("_:")
+    )
+    return f"TABLE_TOKEN_{slug}"
+
+
+def _standing_handoff_label_table_sidecar(*, inline_text_after_colon: bool) -> str:
+    """Synthetic CURRENT LEG mirroring every live handoff line-start label."""
+    lines = [
+        "## CURRENT LEG",
+        "LEG table — 12286#5000 — schema checkpoint/v1",
+    ]
+    for label in _STANDING_HANDOFF_TABLE_LABELS:
+        token = _label_table_token(label)
+        if label == "IN FLIGHT:":
+            lines.append("IN FLIGHT:")
+            lines.append("- table-inflight-bullet-stays")
+            lines.append("- Opening note: prose must not terminate plain IN FLIGHT")
+            lines.append("- Nextcloud: path mention must not terminate")
+            continue
+        if label == "seat =":
+            if inline_text_after_colon:
+                lines.append(f"seat = {token}")
+            else:
+                lines.append("seat =")
+                lines.append(token)
+            continue
+        if inline_text_after_colon:
+            lines.append(f"{label} {token}")
+        else:
+            lines.append(label)
+            lines.append(token)
+    return "\n".join(lines)
+
+
+def _inflight_terminator_table_cases() -> list[tuple[str, str, frozenset[str], frozenset[str]]]:
+    rows: list[tuple[str, str, frozenset[str], frozenset[str]]] = []
+    live_text = _LIVE_HANDOFF_TABLE_FIXTURE.read_text(encoding="utf-8")
+    rows.append(
+        (
+            "live_12286_standing_handoff",
+            live_text,
+            frozenset({"18374 forward fix 3"}),
+            frozenset(
+                {
+                    "15851#2298 reds unowned",
+                    "CARRIED (not re-read):",
+                    "Gateway f15cf0be recon",
+                }
+            ),
+        )
+    )
+    for inline in (False, True):
+        variant = "inline_text" if inline else "label_alone"
+        sidecar = _standing_handoff_label_table_sidecar(inline_text_after_colon=inline)
+        forbidden = frozenset(
+            _label_table_token(label) for label in _INFLIGHT_PLAIN_TERMINATORS
+        )
+        required = frozenset(
+            {
+                "table-inflight-bullet-stays",
+                "Opening note: prose must not terminate plain IN FLIGHT",
+                "Nextcloud: path mention must not terminate",
+            }
+        )
+        rows.append((f"synthetic_{variant}", sidecar, required, forbidden))
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("case_id", "sidecar_text", "required_in_inflight", "forbidden_in_inflight"),
+    _inflight_terminator_table_cases(),
+)
+def test_standing_handoff_label_table_plain_inflight_section_bounds(
+    case_id: str,
+    sidecar_text: str,
+    required_in_inflight: frozenset[str],
+    forbidden_in_inflight: frozenset[str],
+) -> None:
+    """18374#156: every live handoff label; IN FLIGHT ends at leg terminators."""
+    from claude_bundles.operator_proxy_standing_render import (
+        inflight_section_from_sidecar,
+    )
+
+    inflight = inflight_section_from_sidecar(sidecar_text)
+    assert inflight, f"{case_id}: expected a plain IN FLIGHT section"
+    for fragment in required_in_inflight:
+        assert fragment in inflight, f"{case_id}: missing {fragment!r} in IN FLIGHT"
+    for fragment in forbidden_in_inflight:
+        assert fragment not in inflight, (
+            f"{case_id}: {fragment!r} leaked into IN FLIGHT body"
+        )
