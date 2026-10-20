@@ -23,6 +23,9 @@ from services.git_integration_worker.cursor_sdk_closeout_harvest import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     _SIDECAR_DIR,
 )
+from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+    admit_landed_true,
+)
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
 )
@@ -268,17 +271,27 @@ def _land_from_closeout(
 ) -> dict[str, Any]:
     head: str | None = None
     landed: bool | None = None
+    commits_ahead: int | None = None
     if structured is not None:
         raw_head = structured.get("head_sha")
         raw_landed = structured.get("landed")
         head = raw_head if isinstance(raw_head, str) else None
         landed = raw_landed if isinstance(raw_landed, bool) else None
+        raw_commits = structured.get("commits_ahead")
+        if isinstance(raw_commits, int) and not isinstance(raw_commits, bool):
+            commits_ahead = raw_commits
     on_master, reason = _on_master_from_git(row, head, git_budget)
+    landed_now = admit_landed_true(
+        ancestry_on_master=on_master,
+        commits_ahead=commits_ahead,
+    )
     out: dict[str, Any] = {
         "closeout_head_sha": head,
         "closeout_landed": landed,
         "basis": "closeout",
         "on_master": on_master,
+        "commits_ahead": commits_ahead,
+        "landed_now": landed_now,
     }
     if on_master is None:
         out["on_master_reason"] = reason
