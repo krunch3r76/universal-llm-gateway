@@ -696,7 +696,7 @@ def test_hop_inline_mid_size_checkpoint_has_no_checkpoint_budget_flag() -> None:
         hop_inline=True,
     )
     assert "[budget_exceeded checkpoint" not in body
-    assert "handoff sha256" in body
+    assert "handoff sha256" not in body
 
 
 def test_hop_inline_in_cap_checkpoint_includes_handoff_sha256() -> None:
