@@ -519,7 +519,8 @@ muddled average that degrades the primary retrieval signal.
 | `catalog_retry_enabled` | bool\|None | Folded into `step_overrides.fetch_scope_catalog_retry.enabled`. |
 | `step_overrides` | object\|None | Request step enablement for `rag-search` (`{step: {enabled: bool}}`). |
 | `skip_steps` | list\|None | Step names to disable on `rag-search`. |
-| `search_id` | str\|None | Poll handle from an earlier `in_flight` envelope. When given, every other argument is ignored and the call attaches to that search. |
+| `search_id` | str\|None | Poll handle from an earlier `in_flight` envelope. When given, every other argument is ignored except `projection` and the call attaches to that search. |
+| `projection` | str\|None | `full` (default) returns assembled chunk `context`. `compact` omits full `context` and returns a ≤4500-byte JSON envelope with top-three per-chunk `context_preview`, retrieval signals (`weak_match`, `top_relevance`, truncated `retrieval.chunks[]`), and optional `chunks_truncated` when tail chunk rows were dropped for the byte budget — re-issue with the same `search_id` and `projection=full` for chunk text. |
 
 ### Parallel calls and the `in_flight` handle
 

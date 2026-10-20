@@ -37,8 +37,8 @@ Specimen: a:37295 · `cortex://notes/system/threads/12286-reasoning-posture-hop-
 `writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; the operator's own retrieval still runs when the operator authors.
    Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api` from a required LLM-packet retrieve; skipped `skill_compilation` on a skills job; skipped an optional scope with no skip line and reason in the Yields section.
 
-3. **Call shape.** One concept per query (short; do not stack placement + hierarchy + progressive disclosure in one string). Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10,"projection":"compact"}')`.
-   Falsifier: on that step: wrong op, scope omitted, `top_k` other than 10, or a multi-concept query that could have been split.
+3. **Call shape.** One concept per query (short; do not stack placement + hierarchy + progressive disclosure in one string). First call stays compact: `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10,"projection":"compact"}')`. For each scope you will cite in the packet, follow with the same `search_id` and `projection=full` to pull chunk text, and state that full read's UTF-8 JSON byte size in the retrieval report so a KERNEL-H tally can count it.
+   Falsifier: on that step: wrong op, scope omitted, `top_k` other than 10, a multi-concept query that could have been split, or a full fetch whose size was not reported.
 
 4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. A null `weak_match` whose basis is `none` is not a weak corpus. Any `status` other than `ok`, or reason `scope_catalog_unavailable` or `retrieval_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
 
