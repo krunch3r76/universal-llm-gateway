@@ -15,14 +15,16 @@ from .restart_drain import GATED_ACTIONS, RestartDrainGate
 from .restart_drain_force_notice import (
     build_force_gate_notice_body,
     resolve_notice_thread_id,
-    schedule_force_gate_notice,
+)
+from .restart_drain_force_notice import (
+    schedule_force_gate_notice as _schedule_force_gate_notice_impl,
 )
 
 logger = get_logger(__name__)
 
 
 def _schedule_force_gate_notice(**kwargs: Any) -> None:
-    _schedule_force_gate_notice(**kwargs)
+    _schedule_force_gate_notice_impl(**kwargs)
     from .owed_wake_ledger import maybe_flush_pending_owed_wakes
 
     maybe_flush_pending_owed_wakes()

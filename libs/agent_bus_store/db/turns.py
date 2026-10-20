@@ -789,6 +789,14 @@ def bulk_mark_read_state(
             )
     if marked:
         _maybe_close_generate_thread_on_read(thread)
+        try:
+            from agent_bus_store.operator_observability_hooks import (
+                after_lane_mark_read,
+            )
+
+            after_lane_mark_read(thread_id=thread)
+        except Exception:
+            pass
     return marked
 
 

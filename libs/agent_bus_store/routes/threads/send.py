@@ -357,6 +357,27 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             thread_id,
             exc_info=True,
         )
+    try:
+        from ...operator_observability_hooks import after_turn_created
+
+        await asyncio.to_thread(
+            after_turn_created,
+            thread_id=thread_id,
+            to_agent=body.to,
+            from_agent=body.from_agent,
+            subject=body.subject,
+            turn_number=turn_number,
+            user_agent=body.user_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "owed_wake after send create failed: thread=%s turn=%s",
+            thread_id,
+            turn_number,
+            exc_info=True,
+        )
     thread_row = await asyncio.to_thread(get_thread, thread_id) or thread_row
     turn_created = build_turn_created(
         prepared,

@@ -26,7 +26,8 @@ def after_turn_created(
             on_house_milestone_to_maestro,
         )
 
-        close_owed_wake_on_lane_activity(lane_thread_id=lane)
+        if (from_agent or "").strip().lower() != "manage":
+            close_owed_wake_on_lane_activity(lane_thread_id=lane)
         on_house_milestone_to_maestro(
             subject=subject,
             to_agent=to_agent,

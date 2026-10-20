@@ -746,11 +746,10 @@ def build_owed_wake_deps():
         try:
             import os
 
-            import httpx
+            from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
-            base = os.environ.get("AGENT_BUS_URL", "http://127.0.0.1:8088").rstrip("/")
             token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-            headers = {"Content-Type": "application/json"}
+            headers: dict[str, str] = {"Content-Type": "application/json"}
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             payload = {
@@ -759,9 +758,10 @@ def build_owed_wake_deps():
                 "to": "cursor",
                 "subject": subject,
                 "body": body,
+                "status": "open",
             }
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.post(f"{base}/api/v1/turns", json=payload, headers=headers)
+            with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+                resp = client.post("/turns", json=payload, headers=headers)
                 return 200 <= resp.status_code < 300
         except Exception:
             return False
