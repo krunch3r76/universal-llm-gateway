@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 from services.git_integration_worker.cursor_dispatch_read import (
     _BUDGET_BYTES,
     _compact_json_bytes,
+    _enforce_5kb_budget,
     work_key_ledger_projection,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
@@ -157,10 +158,47 @@ def test_fifty_dispatches_two_hundred_paths_stays_within_budget() -> None:
         _write_sidecar(repo, dispatch_id, structured)
 
     payload = work_key_ledger_projection(_KEY, limit=10, ledger=ledger)
-    assert _compact_json_bytes(payload) <= _BUDGET_BYTES
+    final_size = _compact_json_bytes(payload)
+    assert final_size <= _BUDGET_BYTES
+    assert payload["budget"]["actual_bytes"] == final_size
     assert payload["budget"]["truncated"] is True
     assert payload["budget"]["total_dispatches"] == 50
     assert payload["budget"]["returned_dispatches"] < 50
+
+
+def test_budget_block_included_in_byte_cap() -> None:
+    """Pre-budget payload may sit just under 5120; returned JSON must include budget."""
+    shell: dict = {
+        "work_key": _KEY,
+        "limit": 5,
+        "window_hours": 24,
+        "total_dispatches": 1,
+        "house_rollup": {
+            "live_dispatches": [],
+            "live_count": 0,
+            "model_mix_24h": [],
+            "usage_24h": {"rows_covered": 0, "rows_total": 0},
+        },
+    }
+    pre_payload: dict | None = None
+    pre_size = 0
+    for pad in range(4800, 5120):
+        trial = {
+            **shell,
+            "dispatches": [{"dispatch_id": "disp-pad", "filler": "z" * pad}],
+        }
+        size = _compact_json_bytes(trial)
+        if size < _BUDGET_BYTES:
+            pre_payload = trial
+            pre_size = size
+    assert pre_payload is not None
+    assert pre_size >= _BUDGET_BYTES - 120
+
+    result = _enforce_5kb_budget(pre_payload)
+    final_size = _compact_json_bytes(result)
+    assert final_size <= _BUDGET_BYTES
+    assert result["budget"]["actual_bytes"] == final_size
+    assert "budget" in result
 
 
 def test_missing_sidecar_and_corrupt_record_json_do_not_raise() -> None:

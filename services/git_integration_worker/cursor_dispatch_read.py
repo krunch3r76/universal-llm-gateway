@@ -373,45 +373,145 @@ def _usage_24h(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return body
 
 
+def _payload_with_budget(
+    payload: dict[str, Any],
+    *,
+    truncated: bool,
+    total_dispatches: int,
+    returned_dispatches: int,
+) -> dict[str, Any]:
+    """Attach ``budget`` with ``actual_bytes`` equal to the returned JSON size."""
+    out = dict(payload)
+    actual = 0
+    for _ in range(12):
+        out["budget"] = {
+            "actual_bytes": actual,
+            "truncated": truncated,
+            "returned_dispatches": returned_dispatches,
+            "total_dispatches": total_dispatches,
+            "omitted_dispatches": max(0, total_dispatches - returned_dispatches),
+            "max_bytes": _BUDGET_BYTES,
+        }
+        size = _compact_json_bytes(out)
+        if size == actual:
+            break
+        actual = size
+    return out
+
+
+def _serialized_with_budget(
+    payload: dict[str, Any],
+    *,
+    truncated: bool,
+    total_dispatches: int,
+    returned_dispatches: int,
+) -> int:
+    return _compact_json_bytes(
+        _payload_with_budget(
+            payload,
+            truncated=truncated,
+            total_dispatches=total_dispatches,
+            returned_dispatches=returned_dispatches,
+        )
+    )
+
+
 def _enforce_5kb_budget(payload: dict[str, Any]) -> dict[str, Any]:
     dispatches = list(payload.get("dispatches") or [])
     total_dispatches = int(payload.get("total_dispatches") or len(dispatches))
+    house: dict[str, Any] = dict(payload.get("house_rollup") or {})
+    live_dispatches = list(house.get("live_dispatches") or [])
+    model_mix = list(house.get("model_mix_24h") or [])
+    usage_24h = dict(house.get("usage_24h") or {})
+    shell = {
+        k: v
+        for k, v in payload.items()
+        if k not in ("dispatches", "house_rollup", "budget")
+    }
     truncated = False
 
+    def assemble() -> dict[str, Any]:
+        return {
+            **shell,
+            "dispatches": dispatches,
+            "total_dispatches": total_dispatches,
+            "house_rollup": {
+                "live_dispatches": live_dispatches,
+                "live_count": len(live_dispatches),
+                "model_mix_24h": model_mix,
+                "usage_24h": usage_24h,
+            },
+        }
+
     def fits() -> bool:
-        return _compact_json_bytes(payload) <= _BUDGET_BYTES
+        return (
+            _serialized_with_budget(
+                assemble(),
+                truncated=truncated,
+                total_dispatches=total_dispatches,
+                returned_dispatches=len(dispatches),
+            )
+            <= _BUDGET_BYTES
+        )
 
-    if not fits():
-        truncated = True
-        for idx in range(len(dispatches) - 1, -1, -1):
-            row = dispatches[idx]
-            paths = row.get("paths")
-            if isinstance(paths, dict) and paths.get("sample"):
-                paths = dict(paths)
-                paths["sample"] = []
-                paths["omitted_count"] = int(paths.get("total_count") or 0)
-                row = dict(row)
-                row["paths"] = paths
-                dispatches[idx] = row
-                payload = {**payload, "dispatches": dispatches}
-                if fits():
-                    break
+    if fits():
+        return _payload_with_budget(
+            assemble(),
+            truncated=truncated,
+            total_dispatches=total_dispatches,
+            returned_dispatches=len(dispatches),
+        )
 
-    while not fits() and len(dispatches) > 1:
-        truncated = True
+    truncated = True
+
+    for idx in range(len(dispatches) - 1, -1, -1):
+        if fits():
+            break
+        row = dispatches[idx]
+        paths = row.get("paths")
+        if isinstance(paths, dict) and paths.get("sample"):
+            row = dict(row)
+            paths = dict(paths)
+            paths["sample"] = []
+            paths["omitted_count"] = int(paths.get("total_count") or 0)
+            row["paths"] = paths
+            dispatches[idx] = row
+
+    while not fits() and len(dispatches) > 0:
         dispatches = dispatches[:-1]
-        payload = {**payload, "dispatches": dispatches}
 
-    actual = _compact_json_bytes(payload)
-    payload["budget"] = {
-        "actual_bytes": actual,
-        "truncated": truncated,
-        "returned_dispatches": len(dispatches),
-        "total_dispatches": total_dispatches,
-        "omitted_dispatches": max(0, total_dispatches - len(dispatches)),
-        "max_bytes": _BUDGET_BYTES,
-    }
-    return payload
+    while not fits() and live_dispatches:
+        live_dispatches = live_dispatches[:-1]
+
+    while not fits() and model_mix:
+        model_mix = model_mix[:-1]
+
+    usage_trim_keys = (
+        "cache_write_tokens",
+        "cache_read_tokens",
+        "total_tokens",
+        "output_tokens",
+        "input_tokens",
+        "cost_usd",
+        "rows_covered",
+        "rows_total",
+    )
+    while not fits() and usage_24h:
+        removed = False
+        for key in usage_trim_keys:
+            if key in usage_24h:
+                usage_24h = {k: v for k, v in usage_24h.items() if k != key}
+                removed = True
+                break
+        if not removed:
+            usage_24h = {}
+
+    return _payload_with_budget(
+        assemble(),
+        truncated=truncated,
+        total_dispatches=total_dispatches,
+        returned_dispatches=len(dispatches),
+    )
 
 
 def work_key_ledger_projection(
