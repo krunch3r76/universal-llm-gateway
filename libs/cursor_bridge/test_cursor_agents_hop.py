@@ -128,6 +128,36 @@ def test_resolve_catalog_js_maps_display_names_to_slugs() -> None:
     assert "mapFromLabel" in cat_js or "slugShape" in cat_js
 
 
+def test_launch_tab_js_house_knobs_override_grok_effort_to_high() -> None:
+    js = launch_new_agent_tab_js(
+        "resume 18528",
+        "Grok 4.7",
+        {"effort": "high", "fast": "false"},
+    )
+    assert "applyHouseKnobs" in js
+    assert '"effort": "high"' in js
+    assert "setParam('reasoning_effort', knobs.effort)" in js
+
+
+def test_launch_tab_js_default_house_knobs_keep_grok_xhigh() -> None:
+    js = launch_new_agent_tab_js(
+        "resume 18528",
+        "Grok 4.7",
+        {"effort": "xhigh", "fast": "false"},
+    )
+    assert '"effort": "xhigh"' in js
+    assert "applyHouseKnobs" in js
+
+
+def test_launch_tab_js_empty_model_query_skips_house_knobs() -> None:
+    js = launch_new_agent_tab_js(
+        "resume 18528",
+        "",
+        {"effort": "high", "fast": "false"},
+    )
+    assert "const houseKnobs = null" in js
+
+
 def test_resolve_catalog_js_claude_opus_and_sonnet_high() -> None:
     cat_js = _resolve_catalog_js()
     assert "claude-opus-5-5" in cat_js

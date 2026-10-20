@@ -69,6 +69,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "critic_model": "cursor/gemini-4-argon",
     "critic_model_knobs": {"effort": "high", "fast": "false"},
     "hop_model_query": "Grok 4.7",
+    "hop_model_knobs": {"effort": "xhigh", "fast": "false"},
     "under_pattern": "grok-confer-argon",
     # Default distributed posture (operator ruling 2026-10-19); explicit house override only.
     "judgment_posture": "distributed",

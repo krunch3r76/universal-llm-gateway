@@ -46,7 +46,7 @@ from transport_utils import (
     make_sync_client,
 )
 
-from bus_watch.digest_budget import agent_bus_bearer_headers
+from bus_watch.digest_budget import POLICY_DEFAULTS, agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import (
     HOUSE_LABEL_PREFIX,
@@ -136,6 +136,42 @@ def policy_hop_model_query(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
     if val is None:
         return DEFAULT_HOP_MODEL_QUERY
     return str(val).strip()
+
+
+_ALLOWED_HOP_MODEL_EFFORT = frozenset({"low", "medium", "high", "xhigh"})
+
+
+def policy_hop_model_knobs(root_id: str, watch_dir: Path = WATCH_DIR) -> dict[str, str]:
+    """``policy.hop_model_knobs`` — Glass ``createAgent`` effort/fast after catalog resolve.
+
+    Merges per-root tick overrides onto ``POLICY_DEFAULTS`` (xhigh, non-fast). House
+    knobs override label-derived effort and catalog parameters on hop.
+    """
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    defaults_raw = POLICY_DEFAULTS.get("hop_model_knobs") or {
+        "effort": "xhigh",
+        "fast": "false",
+    }
+    merged = {str(k): str(v) for k, v in defaults_raw.items()}
+    raw = effective_policy(state).get("hop_model_knobs")
+    if isinstance(raw, dict):
+        for key, val in raw.items():
+            merged[str(key)] = str(val)
+    return merged
+
+
+def validate_hop_model_knobs(knobs: dict[str, str]) -> str | None:
+    """Return a hop refusal message when ``effort`` is set but not an allowed Glass weight."""
+    effort = knobs.get("effort")
+    if effort is None or str(effort).strip() == "":
+        return None
+    normalized = str(effort).strip().lower()
+    if normalized in _ALLOWED_HOP_MODEL_EFFORT:
+        return None
+    allowed = ", ".join(sorted(_ALLOWED_HOP_MODEL_EFFORT))
+    return (
+        f"policy.hop_model_knobs.effort {effort!r} is invalid; allowed: {allowed}"
+    )
 
 
 TAIL_RECIPE = (
@@ -289,6 +325,8 @@ def build_ide_hop_message(
     else:
         judgment_line = _DISTRIBUTED_JUDGMENT
     host_label = str(gui_host or ":8").strip() or ":8"
+    hop_query = policy_hop_model_query(root_id)
+    hop_knobs_json = json.dumps(policy_hop_model_knobs(root_id), separators=(",", ":"))
     lines = [
         f"resume {root_id}",
         "",
@@ -303,6 +341,11 @@ def build_ide_hop_message(
             f'--root {root_id} --row "{row}" --transcript-id <uuid> '
             f"--gui-host {host_label} --force "
             "(include --force when the operator explicitly requested the hop)."
+        ),
+        (
+            "This house's Glass hop model is policy.hop_model_query "
+            f"({hop_query!r}) plus policy.hop_model_knobs ({hop_knobs_json}), "
+            "applied by createAgent on :8 and orion-node."
         ),
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
@@ -702,6 +745,19 @@ def fire_ide_hop(
     resolved_model_query = (
         policy_hop_model_query(root_id) if model_query is None else model_query
     )
+    resolved_hop_knobs: dict[str, str] | None = None
+    if str(resolved_model_query or "").strip():
+        resolved_hop_knobs = policy_hop_model_knobs(root_id)
+        knob_err = validate_hop_model_knobs(resolved_hop_knobs)
+        if knob_err:
+            return {
+                "ok": False,
+                "phase": "hop_model_knobs_invalid",
+                "error": knob_err,
+                "root": root_id,
+                "model_query": resolved_model_query,
+                "hop_model_knobs": resolved_hop_knobs,
+            }
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
@@ -780,6 +836,7 @@ def fire_ide_hop(
             keystroke = launch_cursor_agents_tab(
                 message,
                 model_query=resolved_model_query,
+                model_knobs=resolved_hop_knobs,
                 debug_url=debug_url,
                 gui_host=resolved_gui_host,
             )

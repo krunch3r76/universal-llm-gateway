@@ -73,10 +73,11 @@ def launch_cursor_agents_tab(
     *,
     debug_url: str | None = None,
     model_query: str = "",
+    model_knobs: dict[str, str] | None = None,
     timeout_s: float = 15.0,
     gui_host: str | None = None,
 ) -> dict[str, Any]:
-    """Open a new agent via Glass services, set model, paste ``message``, and submit."""
+    """Open a new agent via Glass services, set model and house knobs, paste, submit."""
     origin = debug_url or cursor_debug_url_for_gui_host(gui_host)
     try:
         pages = list_pages(origin, timeout_s=min(timeout_s, 5.0))
@@ -93,7 +94,12 @@ def launch_cursor_agents_tab(
     ws_url = page["web_socket_debugger_url"]
     return asyncio.run(
         _launch_async(
-            ws_url, message, page, timeout_s=timeout_s, model_query=model_query
+            ws_url,
+            message,
+            page,
+            timeout_s=timeout_s,
+            model_query=model_query,
+            model_knobs=model_knobs,
         )
     )
 
@@ -105,10 +111,11 @@ async def _launch_async(
     *,
     timeout_s: float,
     model_query: str = "",
+    model_knobs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     import websockets
 
-    expression = launch_new_agent_tab_js(message, model_query)
+    expression = launch_new_agent_tab_js(message, model_query, model_knobs)
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         result = await _eval_await(ws, 1, expression, timeout_s)
         if not isinstance(result, dict):

@@ -218,20 +218,55 @@ async function resolveCatalog(modelConfigService, label) {
 }
 """
 
+APPLY_HOUSE_KNOBS_FN = r"""
+function applyHouseKnobs(cat, knobs) {
+  if (!cat || !cat.modelId || !knobs || typeof knobs !== 'object') return cat;
+  const params = Array.isArray(cat.parameters)
+    ? cat.parameters.map((p) => (p ? { ...p } : p))
+    : [];
+  const setParam = (id, value) => {
+    if (value === undefined || value === null || String(value).trim() === '') return;
+    const s = String(value);
+    const idx = params.findIndex((p) => p && p.id === id);
+    const entry = { id, value: s };
+    if (idx >= 0) params[idx] = entry;
+    else params.push(entry);
+  };
+  if (knobs.effort != null && String(knobs.effort).trim() !== '') {
+    setParam('reasoning_effort', knobs.effort);
+  }
+  if (knobs.fast != null && String(knobs.fast).trim() !== '') {
+    setParam('fast', knobs.fast);
+  }
+  return { modelId: cat.modelId, parameters: params };
+}
+"""
 
-def launch_new_agent_tab_js(message: str, model_query: str) -> str:
-    """CDP expression: create agent tab, set model, paste ``message``, submit."""
+
+def launch_new_agent_tab_js(
+    message: str,
+    model_query: str,
+    model_knobs: dict[str, str] | None = None,
+) -> str:
+    """CDP expression: create agent tab, set model from label plus house knobs, submit."""
     msg = json.dumps(message)
     mq = json.dumps(str(model_query or "").strip())
+    label_set = bool(str(model_query or "").strip())
+    if label_set and model_knobs is not None:
+        knobs_line = f"  const houseKnobs = {json.dumps(model_knobs)};\n"
+    else:
+        knobs_line = "  const houseKnobs = null;\n"
     return (
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"{_resolve_catalog_js()}\n"
+        f"{APPLY_HOUSE_KNOBS_FN}\n"
         "  const text = "
         f"{msg};\n"
         "  const modelLabel = "
         f"{mq};\n"
+        f"{knobs_line}"
         "  const anchor = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"]')"
         " || document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');\n"
         "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"
@@ -245,7 +280,8 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
         "  const composerChatService = byId.get('composerChatService');\n"
         "  let modelConfig = null;\n"
         "  if (modelLabel && modelConfigService) {\n"
-        "    const cat = await resolveCatalog(modelConfigService, modelLabel);\n"
+        "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
+        "    const cat = houseKnobs ? applyHouseKnobs(catRaw, houseKnobs) : catRaw;\n"
         "    if (cat && cat.modelId) {\n"
         "      modelConfig = {\n"
         "        modelName: cat.modelId,\n"
@@ -296,7 +332,8 @@ def launch_new_agent_tab_js(message: str, model_query: str) -> str:
         "  const handle = await composerDataService.getComposerHandleById(agentId);\n"
         "  if (!handle) return {ok: false, reason: 'no_handle', agent_id: agentId};\n"
         "  if (modelLabel && modelConfigService) {\n"
-        "    const cat = await resolveCatalog(modelConfigService, modelLabel);\n"
+        "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
+        "    const cat = houseKnobs ? applyHouseKnobs(catRaw, houseKnobs) : catRaw;\n"
         "    if (cat && cat.modelId) {\n"
         "      modelConfigService.setModelConfigForComposer(handle, {\n"
         "        modelName: cat.modelId,\n"

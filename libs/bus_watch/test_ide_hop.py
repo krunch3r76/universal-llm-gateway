@@ -18,7 +18,9 @@ from bus_watch.ide_hop import (
     cleanup_xvfb_sidebar_on_holder_claim,
     fire_ide_hop,
     policy_gui_host,
+    policy_hop_model_knobs,
     policy_judgment_posture,
+    validate_hop_model_knobs,
 )
 
 pytestmark = pytest.mark.offline
@@ -140,6 +142,61 @@ def test_build_ide_hop_message_includes_hop_xvfb_line() -> None:
     assert "--gui-host :8" in msg
     assert 'budget.stop_class == \'CONTEXT_BUDGET\'' in msg
     assert "--root 18291" in msg
+    assert "policy.hop_model_knobs" in msg
+    assert "createAgent on :8 and orion-node" in msg
+
+
+def test_policy_hop_model_knobs_defaults_xhigh_without_tick(tmp_path: Path) -> None:
+    with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
+        assert policy_hop_model_knobs("18528") == {
+            "effort": "xhigh",
+            "fast": "false",
+        }
+
+
+def test_policy_hop_model_knobs_per_root_override(tmp_path: Path) -> None:
+    (tmp_path / "liaison-18528.tick.json").write_text(
+        json.dumps(
+            {"policy": {"hop_model_knobs": {"effort": "high", "fast": "false"}}}
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "liaison-99999.tick.json").write_text(
+        json.dumps(
+            {"policy": {"hop_model_knobs": {"effort": "low", "fast": "false"}}}
+        ),
+        encoding="utf-8",
+    )
+    with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
+        assert policy_hop_model_knobs("18528", watch_dir=tmp_path) == {
+            "effort": "high",
+            "fast": "false",
+        }
+        assert policy_hop_model_knobs("99999", watch_dir=tmp_path)["effort"] == "low"
+
+
+def test_validate_hop_model_knobs_rejects_unknown_effort() -> None:
+    assert validate_hop_model_knobs({"effort": "turbo", "fast": "false"}) is not None
+
+
+def test_fire_ide_hop_rejects_invalid_hop_knobs_before_launch() -> None:
+    seal = {"ok": True, "bus_turn": 1}
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch(
+            "bus_watch.ide_hop.policy_hop_model_knobs",
+            return_value={"effort": "invalid", "fast": "false"},
+        ),
+    ):
+        out = fire_ide_hop(
+            "resume 18291",
+            root_id="18291",
+            seal=seal,
+            gui_host=":8",
+            dry_run=False,
+        )
+    assert out.get("ok") is False
+    assert out.get("phase") == "hop_model_knobs_invalid"
 
 
 def test_build_ide_hop_message_uses_orion_gui_host() -> None:
