@@ -141,8 +141,8 @@ def test_commit_touched_set_first_parent_diff_for_merge_and_single_parent() -> N
         _run_git(repo, "commit", "-m", "c_feat")
 
         _run_git(repo, "checkout", "main")
-        second_parent_only = "libs/a/first.py"
-        (repo / second_parent_only).write_text("main\n", encoding="utf-8")
+        first_parent_only = "libs/a/first.py"
+        (repo / first_parent_only).write_text("main\n", encoding="utf-8")
         _run_git(repo, "add", ".")
         _run_git(repo, "commit", "-m", "c_main")
 
@@ -157,7 +157,7 @@ def test_commit_touched_set_first_parent_diff_for_merge_and_single_parent() -> N
         merge_touched = _commit_touched_set(str(repo), merge_sha)
         assert merge_touched is not None
         assert from_branch in merge_touched
-        assert second_parent_only not in merge_touched
+        assert first_parent_only not in merge_touched
 
         single_path = "libs/a/single.py"
         (repo / single_path).write_text("one\n", encoding="utf-8")
@@ -171,6 +171,24 @@ def test_commit_touched_set_first_parent_diff_for_merge_and_single_parent() -> N
         )
         single_touched = _commit_touched_set(str(repo), single_sha)
         assert single_touched == {single_path}
+
+        old_path = "libs/a/old.py"
+        new_path = "libs/a/new.py"
+        (repo / old_path).write_text("old\n", encoding="utf-8")
+        _run_git(repo, "add", old_path)
+        _run_git(repo, "commit", "-m", "add-old")
+        _run_git(repo, "mv", old_path, new_path)
+        _run_git(repo, "commit", "-m", "rename")
+        rename_sha = (
+            subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+        )
+        rename_touched = _commit_touched_set(str(repo), rename_sha)
+        assert rename_touched is not None
+        assert old_path in rename_touched
+        assert new_path in rename_touched
 
         assert _commit_touched_set(str(repo), "not-a-valid-sha") is None
 
