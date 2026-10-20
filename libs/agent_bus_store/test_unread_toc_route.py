@@ -6,6 +6,12 @@ from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
+from agent_bus_store.db.connection import connect
+from agent_bus_store.db.endpoint_wake_ledger import (
+    advance_scan,
+    claim_due_wakes,
+    get_cursor,
+)
 
 
 def _app(tmp_path):
@@ -124,6 +130,53 @@ def test_unread_toc_mark_read_clears_inbox(tmp_path) -> None:
         data2 = resp2.json()
         assert data2["threads"] == []
         assert data2["total_unread_turns"] == 0
+
+
+def test_fetch_unread_toc_mark_read_skips_peer_pending_wake(tmp_path) -> None:
+    """fetch_unread(to=maestro, mark_read) uses unread-toc; pair wakes must skip."""
+    with TestClient(_app(tmp_path)) as client:
+        thread = _new_thread(
+            client,
+            slug="fetch-unread-toc-skip",
+            frm="cursor",
+            to="maestro",
+            subject="VERDICT|fetch-unread",
+            body="b",
+        )
+        listed = client.get("/turns", params={"thread": thread})
+        assert listed.status_code == 200, listed.text
+        turn = listed.json()["turns"][0]
+        t_id = int(turn["id"])
+        t_n = int(turn["turn_number"])
+        get_cursor()
+        with connect() as conn:
+            conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            0,
+            t_id,
+            [
+                {
+                    "agent": "maestro",
+                    "thread_id": thread,
+                    "turn_id": t_id,
+                    "turn_number": t_n,
+                }
+            ],
+            now="2020-01-01 18:00:00",
+        )
+        resp = client.get("/turns/unread-toc", params={"to": "maestro", "mark_read": True})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["marked_read"] >= 1
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+                (t_id,),
+            ).fetchone()
+        assert row["state"] == "skipped"
+        assert row["reason"] == "already_read"
+        claimed = claim_due_wakes(now="2020-01-01 18:00:01")
+        assert claimed["wake_id"] is None
 
 
 def test_unread_toc_empty_when_no_unread(tmp_path) -> None:

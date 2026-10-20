@@ -524,6 +524,7 @@ def test_get_mark_read_true_patches_read(agent_bus_read_fn) -> None:
 
     assert "error" not in result
     assert any("PATCH /turns/99/read" in p for p in paths)
+    assert any("mark_read_seat=" in p for p in paths)
 
 
 def test_threads_limit_maps_to_last(agent_bus_fn) -> None:

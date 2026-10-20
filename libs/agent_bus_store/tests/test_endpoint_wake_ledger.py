@@ -764,6 +764,126 @@ def test_web_anthropic_wake_not_skipped_already_read_when_turn_stamped(
     assert claimed["wake_id"] is not None
 
 
+def _seed_maestro_pair_pending_wake(
+    *, slug: str, to_agent: str = "maestro"
+) -> tuple[str, int, int]:
+    detail = create_thread(thread_id=None, slug=slug)
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent=to_agent,
+        subject="VERDICT|pair-skip",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 17:30:00",
+    )
+    return thread, t_id, t_n
+
+
+def test_get_unread_thread_toc_mark_read_skips_peer_pending_wake_ledger(
+    db: TestClient,
+) -> None:
+    from agent_bus_store.db.turns import get_unread_thread_toc
+
+    thread, t_id, _t_n = _seed_maestro_pair_pending_wake(
+        slug="l20-toc-mark-read-skip"
+    )
+    _rows, marked, _tt, _tu, _trunc = get_unread_thread_toc(
+        to="maestro", mark_read=True
+    )
+    assert marked >= 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "already_read"
+    claimed = claim_due_wakes(now="2020-01-01 17:30:01")
+    assert claimed["wake_id"] is None
+    assert thread  # silence unused in strict linters
+
+
+def test_get_mark_read_http_skips_peer_pending_wake_ledger(db: TestClient) -> None:
+    """agent_bus get(mark_read) probes then PATCHes read with mark_read_seat."""
+    thread, t_id, t_n = _seed_maestro_pair_pending_wake(
+        slug="l20-get-mark-read-skip"
+    )
+    probe = db.get(
+        "/turns/by-number",
+        params={"thread": thread, "turn_number": t_n},
+    )
+    assert probe.status_code == 200, probe.text
+    assert probe.json()["read_at"] is None
+    resp = db.patch(f"/turns/{t_id}/read", params={"mark_read_seat": "maestro"})
+    assert resp.status_code == 200, resp.text
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "already_read"
+    claimed = claim_due_wakes(now="2020-01-01 17:30:01")
+    assert claimed["wake_id"] is None
+
+
+def test_mark_turn_read_seat_skips_peer_pending_wake_ledger(db: TestClient) -> None:
+    thread, t_id, _t_n = _seed_maestro_pair_pending_wake(
+        slug="l20-patch-mark-read-skip"
+    )
+    resp = db.patch(f"/turns/{t_id}/read", params={"mark_read_seat": "maestro"})
+    assert resp.status_code == 200, resp.text
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "already_read"
+    claimed = claim_due_wakes(now="2020-01-01 17:30:01")
+    assert claimed["wake_id"] is None
+    assert thread
+
+
+def test_execute_triage_mark_read_skips_peer_pending_wake_ledger(
+    db: TestClient,
+) -> None:
+    from agent_bus_store.db.threads import execute_triage_mark_read
+
+    thread, t_id, _t_n = _seed_maestro_pair_pending_wake(
+        slug="l20-triage-mark-read-skip"
+    )
+    marked = execute_triage_mark_read(agent="web-anthropic", thread_ids=[thread])
+    assert marked == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "already_read"
+    claimed = claim_due_wakes(now="2020-01-01 17:30:01")
+    assert claimed["wake_id"] is None
+
+
 def test_pair_mark_read_skips_peer_pending_wake_ledger(db: TestClient) -> None:
     from agent_bus_store.db.turns import bulk_mark_read_state
 

@@ -398,9 +398,12 @@ async def list_unread_thread_toc(
 
 
 @router.patch("/turns/{turn_id}/read")
-async def mark_turn_read_route(turn_id: int) -> dict[str, str]:
+async def mark_turn_read_route(
+    turn_id: int,
+    mark_read_seat: AgentName | None = Query(None),
+) -> dict[str, str]:
     """Mark a turn read and return the persisted read timestamp."""
-    read_at = mark_turn_read(turn_id)
+    read_at = mark_turn_read(turn_id, seat=mark_read_seat)
     if read_at is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -17,6 +17,38 @@ from .endpoint_wake_ledger import skip_pending_wakes_on_pair_mark_read
 from .threads import _next_auto_id
 
 
+def mark_turn_ids_read_for_seat(
+    conn: sqlite3.Connection,
+    *,
+    seat: str,
+    by_thread: dict[str, list[int]],
+    ts: str | None = None,
+) -> int:
+    """Stamp ``read_at`` and skip maestro/web pending wakes in one transaction."""
+    stamp = ts if ts is not None else now()
+    marked = 0
+    for thread_id, turn_ids in by_thread.items():
+        if not turn_ids:
+            continue
+        placeholders = ",".join("?" * len(turn_ids))
+        cur = conn.execute(
+            f"UPDATE turns SET read_at = ? WHERE id IN ({placeholders}) "
+            f"AND read_at IS NULL",
+            [stamp, *turn_ids],
+        )
+        if cur.rowcount <= 0:
+            continue
+        skip_pending_wakes_on_pair_mark_read(
+            thread_id=thread_id,
+            seat=seat,
+            turn_ids=turn_ids,
+            conn=conn,
+            now=stamp,
+        )
+        marked += int(cur.rowcount)
+    return marked
+
+
 class SlugExists(Exception):  # noqa: N818
     """Raised when strict_slug=True and the requested slug is already taken."""
 
@@ -592,11 +624,18 @@ def get_unread_thread_toc(
         marked = 0
         if mark_read:
             ts = now()
-            cur = conn.execute(
-                f"UPDATE turns SET read_at = ? WHERE {base_where}",
-                [ts, *inbox_params],
+            stamp_rows = conn.execute(
+                f"SELECT id, thread FROM turns WHERE {base_where}",
+                inbox_params,
+            ).fetchall()
+            by_thread: dict[str, list[int]] = {}
+            for stamp_row in stamp_rows:
+                by_thread.setdefault(str(stamp_row["thread"]), []).append(
+                    int(stamp_row["id"])
+                )
+            marked = mark_turn_ids_read_for_seat(
+                conn, seat=to, by_thread=by_thread, ts=ts
             )
-            marked = max(cur.rowcount, 0)
             if marked:
                 close_candidates = [str(r["thread"]) for r in rows]
         result = rows, marked, total_threads, total_turns, truncated
@@ -753,9 +792,10 @@ def bulk_mark_read_state(
     return marked
 
 
-def mark_turn_read(turn_id: int) -> str | None:
+def mark_turn_read(turn_id: int, *, seat: str | None = None) -> str | None:
     """Returns read_at timestamp, or None if turn not found."""
     thread_id: str | None = None
+    ts: str | None = None
     with write_connect() as conn:
         row = conn.execute(
             "SELECT read_at, thread FROM turns WHERE id = ?", (turn_id,)
@@ -764,9 +804,17 @@ def mark_turn_read(turn_id: int) -> str | None:
             return None
         if row["read_at"] is not None:
             return row["read_at"]
-        thread_id = row["thread"]
+        thread_id = str(row["thread"])
         ts = now()
-        conn.execute("UPDATE turns SET read_at = ? WHERE id = ?", (ts, turn_id))
+        if seat is not None:
+            mark_turn_ids_read_for_seat(
+                conn,
+                seat=seat,
+                by_thread={thread_id: [turn_id]},
+                ts=ts,
+            )
+        else:
+            conn.execute("UPDATE turns SET read_at = ? WHERE id = ?", (ts, turn_id))
 
     if thread_id is not None:
         _maybe_close_generate_thread_on_read(thread_id)
