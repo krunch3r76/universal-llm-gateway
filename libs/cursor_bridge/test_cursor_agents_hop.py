@@ -80,6 +80,10 @@ def test_archive_agent_js_streaming_guard() -> None:
     assert '[aria-label="In progress"], .ui-dot-grid-loader' in js
     assert "agent_streaming" in js
     assert "btn.click()" in js
+    assert "getComposerBackgroundWork" in js
+    assert "backgroundWorkService" in js
+    assert "in_progress" in js
+    assert "getAgentHeader" in js
     # streaming check precedes archive click
     assert js.index("agent_streaming") < js.index("btn.click()")
 
@@ -189,6 +193,149 @@ async def test_prune_keeps_departing_archives_older() -> None:
 
 def test_prune_cursor_agents_predecessors_empty_root() -> None:
     assert prune_cursor_agents_predecessors("") == {"ok": False, "reason": "empty_root_id"}
+
+
+@pytest.mark.asyncio
+async def test_prune_skips_streaming_without_archive() -> None:
+    list_result = [
+        {"agent_id": "active", "title": ". 10479 x", "active": True, "streaming": False, "created_at": 0},
+        {"agent_id": "keep", "title": ". 10479 y", "active": False, "streaming": False, "created_at": 100},
+        {"agent_id": "busy", "title": ". 10479 z", "active": False, "streaming": True, "created_at": 50},
+    ]
+    archive_calls: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archive_calls.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="active",
+            departing_agent_id="",
+            keep_recent_predecessors=1,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert out["ok"] is True
+    assert "busy" not in archive_calls
+    assert any(
+        s.get("agent_id") == "busy"
+        and s.get("queued") is True
+        and s.get("reason") == "agent_streaming"
+        for s in out["skipped"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_prune_sorts_by_created_at_desc() -> None:
+    list_result = [
+        {"agent_id": "active", "title": ". 10479 a", "active": True, "streaming": False, "created_at": 300},
+        {"agent_id": "old", "title": ". 10479 old", "active": False, "streaming": False, "created_at": 10},
+        {"agent_id": "mid", "title": ". 10479 mid", "active": False, "streaming": False, "created_at": 100},
+        {"agent_id": "new", "title": ". 10479 new", "active": False, "streaming": False, "created_at": 200},
+    ]
+    archived: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archived.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    eval_calls: list[str] = []
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        eval_calls.append(expression)
+        if len(eval_calls) == 1:
+            return list_result
+        return {"ok": True}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="active",
+            departing_agent_id="",
+            keep_recent_predecessors=2,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert out["ok"] is True
+    assert out["kept_predecessors"] == ["new", "mid"]
+    assert archived == ["old"]
+
+
+@pytest.mark.asyncio
+async def test_prune_selects_inactive_active_agent_id() -> None:
+    list_result = [
+        {
+            "agent_id": "landed",
+            "title": ". 10479 landed",
+            "active": False,
+            "streaming": False,
+            "created_at": 0,
+        },
+    ]
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    eval_calls: list[str] = []
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        eval_calls.append(expression)
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", new_callable=AsyncMock),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="landed",
+            departing_agent_id="",
+            keep_recent_predecessors=2,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert out["ok"] is True
+    assert len(eval_calls) == 2
+    assert "landed" in eval_calls[1]
+    assert "el.click()" in eval_calls[1]
 
 
 def test_archive_cursor_agents_tab_row_not_found() -> None:

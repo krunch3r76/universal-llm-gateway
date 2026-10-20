@@ -373,7 +373,8 @@ def main() -> int:
                         args.root,
                         active_agent_id=landed_tid,
                         departing_agent_id=args.transcript_id,
-                        keep_recent_predecessors=1,
+                        keep_recent_predecessors=2,
+                        wait_until_idle_s=0.0,
                     )
                 except Exception as exc:  # noqa: BLE001 — must not abort retire
                     out["archived_departing_tab"] = {
