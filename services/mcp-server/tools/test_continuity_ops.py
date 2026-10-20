@@ -24,10 +24,17 @@ def test_maybe_subscribe_skips_without_transcript_id() -> None:
 
 
 def test_maybe_subscribe_on_resume() -> None:
-    with patch(
-        "tools.continuity_ops.subscribe_cursor_xvfb_house",
-        return_value={"ok": True},
-    ) as sub:
+    with (
+        patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch(
+            "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
+            return_value={"ok": True},
+        ),
+        patch(
+            "tools.continuity_ops.subscribe_cursor_xvfb_house",
+            return_value={"ok": True},
+        ) as sub,
+    ):
         out = maybe_subscribe_cursor_xvfb_on_resume(
             thread="18374",
             transcript_id="db36e9f8-e76f-49e7-bd57-c9c4ffa88195",
@@ -36,3 +43,14 @@ def test_maybe_subscribe_on_resume() -> None:
         )
     sub.assert_called_once()
     assert out["xvfb_subscription"]["ok"] is True
+
+
+def test_maybe_subscribe_skips_non_xvfb_host() -> None:
+    with patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=False):
+        out = maybe_subscribe_cursor_xvfb_on_resume(
+            thread="18374",
+            transcript_id="db36e9f8-e76f-49e7-bd57-c9c4ffa88195",
+            surface="cursor",
+            resume_result={"fence_id": "f1"},
+        )
+    assert "xvfb_subscription" not in out

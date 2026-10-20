@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -50,13 +51,21 @@ _GLASS_ROW_PROBE_JS = (
     "if(aid&&svc.agentRepositoryService&&typeof svc.agentRepositoryService.getAgentHeader==='function'){"
     "try{const h=svc.agentRepositoryService.getAgentHeader(aid);"
     "if(h&&h.status&&h.status.value==='in_progress')svcInProgress=true;}catch(e){}}"
-    "return{headerStatus,createdAt,hasBg,hasSub,bgWork,svcInProgress};};"
+    "const unknown=!fk&&!headerStatus&&!hasBg&&!hasSub;"
+    "return{headerStatus,createdAt,hasBg,hasSub,bgWork,svcInProgress,unknown};};"
     "const rowStreaming=(el)=>{"
     "if(Boolean(el.querySelector('[aria-label=\"In progress\"], .ui-dot-grid-loader')))return true;"
     "if(el.getAttribute('data-loading')==='true')return true;const aid=rowAgentId(el);"
-    "const meta=rowMeta(el,aid);if(meta.headerStatus==='in_progress'||meta.svcInProgress)return true;"
+    "const meta=rowMeta(el,aid);if(meta.unknown)return true;"
+    "if(meta.headerStatus==='in_progress'||meta.svcInProgress)return true;"
     "if(meta.hasBg||meta.hasSub)return true;if(meta.bgWork.length>0)return true;return false;};"
 )
+
+
+def _root_row_pattern(root_id: str) -> str:
+    """Regex body (no flags) matching root sidebar titles, including ``[retired]`` prefix."""
+    esc = re.escape(str(root_id or "").strip())
+    return rf"(?:\[retired\]\s*)?\.?\s*{esc}\b|^resume\s+{esc}\b"
 
 
 def _archive_agent_js(agent_id: str) -> str:
@@ -89,11 +98,11 @@ def _select_agent_js(agent_id: str) -> str:
 
 def _list_root_sidebar_rows_js(root_id: str) -> str:
     rid = json.dumps(root_id.strip())
+    pattern = json.dumps(_root_row_pattern(root_id))
     return (
         f"(() => {{ const rootId = {rid};"
         f"{_GLASS_ROW_PROBE_JS}"
-        " const esc = rootId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');"
-        " const re = new RegExp('^\\\\.?\\\\s*' + esc + '\\\\b|^resume\\\\s+' + esc + '\\\\b', 'i');"
+        f" const re = new RegExp('^' + {pattern}, 'i');"
         " const out = [];"
         " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
         " const title = rowTitle(el); if (!re.test(title)) continue;"
@@ -105,7 +114,7 @@ def _list_root_sidebar_rows_js(root_id: str) -> str:
     )
 
 
-def _rename_agent_title_js(agent_id: str, new_title: str) -> str:
+def _rename_agent_row_js(agent_id: str, new_title: str) -> str:
     aid = json.dumps(agent_id.strip())
     title = json.dumps(new_title.strip())
     return (
@@ -113,24 +122,36 @@ def _rename_agent_title_js(agent_id: str, new_title: str) -> str:
         f"{_GLASS_ROW_PROBE_JS}"
         " for (const el of document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]')) {"
         " if (rowAgentId(el) !== target) continue;"
-        " if (rowStreaming(el)) return {ok: false, reason: 'agent_streaming', agent_id: target};"
         " const titled = el.querySelector('[class*=\"agent-item__title\"]');"
         " const trig = el.querySelector('.ui-sidebar-menu-button-trigger[role=\"button\"]');"
         " if (titled) { titled.textContent = nextTitle; }"
         " if (trig) { trig.textContent = nextTitle; }"
+        " const fk=fiberKey(el);"
+        " if(fk){let f=el[fk];for(let i=0;i<60&&f;i++,f=f.return){const mp=f.memoizedProps;"
+        "if(!mp)continue;"
+        "if(mp.header){try{if(mp.header.name!==undefined)mp.header.name=nextTitle;"
+        "if(mp.header.title!==undefined)mp.header.title=nextTitle;}catch(e){}}"
+        "if(typeof mp.setAgentName==='function'){try{mp.setAgentName(nextTitle);}catch(e){}}"
+        "if(typeof mp.onTitleChange==='function'){try{mp.onTitleChange(nextTitle);}catch(e){}}}}"
+        " const svc=glassServices(el);"
+        " if(svc.agentRepositoryService&&typeof svc.agentRepositoryService.updateAgentName==='function'){"
+        " try{svc.agentRepositoryService.updateAgentName(target,nextTitle);}catch(e){}}"
         " return {ok: true, renamed: target, title: nextTitle};"
         " } return {ok: false, reason: 'row_not_found'}; })()"
     )
 
 
-def rename_cursor_agents_sidebar_title(
+_rename_agent_title_js = _rename_agent_row_js
+
+
+def rename_agent_row_in_sidebar(
     agent_id: str,
     new_title: str,
     *,
     debug_url: str = "http://127.0.0.1:9338",
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
-    """Rename one Glass sidebar row (best-effort DOM title sync)."""
+    """Rename one Glass sidebar row (DOM + best-effort workbench title sync)."""
     if not str(agent_id or "").strip() or not str(new_title or "").strip():
         return {"ok": False, "reason": "empty_agent_id_or_title"}
     ws_url, err = _cursor_agents_ws_url(debug_url, timeout_s)
@@ -146,8 +167,11 @@ async def _rename_title_async(
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        result = await _hop._eval(ws, 1, _rename_agent_title_js(agent_id, new_title), timeout_s)
+        result = await _hop._eval(ws, 1, _rename_agent_row_js(agent_id, new_title), timeout_s)
         return result if isinstance(result, dict) else {"ok": False, "result": result}
+
+
+rename_cursor_agents_sidebar_title = rename_agent_row_in_sidebar
 
 
 def _cursor_agents_ws_url(

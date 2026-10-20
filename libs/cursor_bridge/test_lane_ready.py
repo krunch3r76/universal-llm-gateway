@@ -185,6 +185,16 @@ def test_wake_decision_ambiguous_title_without_agent_id() -> None:
 
 
 @pytest.mark.offline
+def test_select_sidebar_title_fallback_requires_unique_title() -> None:
+    import inspect
+
+    from cursor_bridge import chat_surface
+
+    src = inspect.getsource(chat_surface.select_sidebar_target)
+    assert "titleMatches === 1" in src
+
+
+@pytest.mark.offline
 def test_tab_alive_refreshes_liveness() -> None:
     now = datetime(2026, 9, 10, 8, 20, 0, tzinfo=UTC)
     turns = [

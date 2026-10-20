@@ -61,14 +61,23 @@ def subscribe_cursor_xvfb_house(
         evidence=evidence,
     )
     owns = client is None
-    bus = client or _bus()
     try:
-        resp = bus.post("/endpoint-subscriptions", json=body)
-    except httpx.HTTPError as exc:
+        if owns:
+            with _bus() as bus:
+                resp = bus.post("/endpoint-subscriptions", json=body)
+        else:
+            resp = client.post("/endpoint-subscriptions", json=body)
+    except (Exception, SystemExit) as exc:
+        if isinstance(exc, httpx.HTTPError):
+            return {
+                "ok": False,
+                "reason": f"subscription_http:{type(exc).__name__}",
+                "detail": str(exc)[:200],
+            }
         return {
             "ok": False,
-            "reason": f"subscription_http:{type(exc).__name__}",
-            "detail": str(exc)[:200],
+            "error": f"{type(exc).__name__}: {exc}"[:200],
+            "reason": f"subscription_failed:{type(exc).__name__}",
         }
     payload: dict[str, Any] = {}
     try:

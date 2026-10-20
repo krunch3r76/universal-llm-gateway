@@ -342,7 +342,7 @@ def main() -> int:
             gui = args.gui_host or policy_gui_host(args.root)
             landed_tid = str(out.get("landed_transcript_id") or "")
             if is_cursor_xvfb_host(gui) and args.transcript_id:
-                slug_fragment = " ".join(str(row or "").split()[:6]).strip()
+                slug_fragment = str(state.get("slug") or "").strip() or str(row or "").strip()
                 try:
                     xvfb_out = finalize_xvfb_hop_sidebar(
                         args.root,

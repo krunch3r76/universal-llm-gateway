@@ -140,6 +140,8 @@ def test_subscribe_supersedes_prior_agent_id(client: TestClient) -> None:
     assert prior is not None
     assert prior["state"] == "unsubscribed"
     assert prior["agent_id"] == "11111111-1111-1111-1111-111111111111"
+    assert prior["evidence"] == "superseded_by:22222222-2222-2222-2222-222222222222"
+    assert second.json()["prior_subscription_id"] == first.json()["row"]["id"]
     row = second.json()["row"]
     assert row["state"] == "subscribed"
     assert row["agent_id"] == "22222222-2222-2222-2222-222222222222"

@@ -359,7 +359,7 @@ async def select_sidebar_target(
       return {clicked: true, matched_by: 'title', title, agent_id: aid};
     }
   }
-  if (targetId && targetTitle) {
+  if (targetId && targetTitle && titleMatches === 1) {
     for (const el of rowNodes()) {
       const btn = rowClickTarget(el);
       const aid = rowAgentId(el, btn);

@@ -39,6 +39,8 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Attended in-flight (binding — operator 2026-09-01 · a:38432):** When the dispatch will outlive this turn, arm **in-session wake** and exit — do not hold this turn on `wait`/`Await`. SoT: **`runbook:bus-consult-watcher`** + **`runbook:bus-consult-watcher-terminal-harness`** (IDE slots unlimited; always leg 2). Purpose: **wake this chat session** when the watched event lands, then relay to the operator. Consult completion is an agent wake, not a Fi page — poller SMS is off by default; `--page` only on an explicit human-wake ask. Awareness pages (tAIm / growth-map) stay on the pager path separately.
 
+   **Cursor-on-Xvfb :8 push-wake (binding — K46 X3):** Houses on display `:8` (Glass Cursor Agents / push-wake routing) **do not** spawn or attach `watch-supervise.sh` / `watch-bus-consult-and-page.py`. End the admit turn **idle** after dispatch admit; `BRIDGE_WAKE` push delivery completes on the `:8` house without a three-leg watcher on that seat.
+
    **Three-leg contract (atomic — ¬ claim “watcher armed” until legs 1–2 complete):**
 
    Vocabulary: `poller_armed` = leg 1 (`start` / `state.json` polling) — watches the bus, **does not** open a turn in this chat. `wake_armed` = leg 2: **this** chat owns a living dedicated background Shell running `watch-supervise.sh tail --label L`. `watcher armed` ⇔ both. `poller_armed ⇏ wake_armed`. Operator-visible Terminal panel is optional and not proof (agent Shells are often invisible). If asked how it will fire, cite this-chat `tail` Shell completion — never the poller alone (specimen agent-bus:15420).

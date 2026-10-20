@@ -44,7 +44,7 @@ Specimens: `glass orion-node opus cursor_sdk` (or “Glass … Opus on cursor_sd
 
 1. Parse kind, id, window, host, notify, investigate, tab; apply attachment for `launch_target`. An unresolved Glass/IDE host is a stop.
 2. `cite(runbook:cursor-paste-resolve)` — execute that runbook. Fire `pipeline(pipeline_id=cursor-paste-resolve, options={kind, assertion_id, window, host, notify, launch_target, investigate, tab_model})` for compose **and** launch. Use `op=async` when investigate or `launch_target=cursor_sdk` will outlive this turn. The pipeline does not call this command.
-3. **Watcher (binding).** Every cursor-sdk hop this command causes — investigate, and `launch_target=cursor_sdk` write — needs `runbook:bus-consult-watcher` on that `--dispatch-id` before this turn exits (legs 1–2). Pipeline wait / `op=run` is not the watcher. Investigate admit ≠ Glass paste.
+3. **Watcher (binding).** Every cursor-sdk hop this command causes — investigate, and `launch_target=cursor_sdk` write — needs `runbook:bus-consult-watcher` on that `--dispatch-id` before this turn exits (legs 1–2). Pipeline wait / `op=run` is not the watcher. Investigate admit ≠ Glass paste. **Exception:** Cursor-on-Xvfb `:8` push-wake houses do **not** spawn or attach `watch-supervise.sh` / `watch-bus-consult-and-page.py`; end the turn idle after admit for `BRIDGE_WAKE` push delivery.
 4. If the pipeline returned compose-only (`launch_target` empty), cite `runbook:cursor-bridge-paste` for Glass/IDE. When `launch_target=glass|ide`, the pipeline already ran the keystroke paste.
 5. Report kind, id, window, host, maestro, `launch_target`, investigate, tab_model, host source (explicit vs context), paste or admit fields from the runbook, and each cursor_sdk `dispatch_id` + watcher label.
 

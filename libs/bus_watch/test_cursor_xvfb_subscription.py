@@ -52,3 +52,12 @@ def test_subscribe_from_holder_rejects_non_ide() -> None:
     out = subscribe_cursor_xvfb_from_holder("18374", "cursor-sdk")
     assert out["ok"] is False
     assert out["reason"] == "holder_not_ide_uuid"
+
+
+def test_subscribe_survives_bus_config_failure() -> None:
+    from unittest.mock import patch
+
+    with patch("bus_watch.cursor_xvfb_subscription._bus", side_effect=SystemExit(1)):
+        out = subscribe_cursor_xvfb_house("18374", "db36e9f8-e76f-49e7-bd57-c9c4ffa88195")
+    assert out["ok"] is False
+    assert "subscription_failed" in out.get("reason", "")

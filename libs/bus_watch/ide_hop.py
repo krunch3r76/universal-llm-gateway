@@ -47,7 +47,7 @@ from transport_utils import (
 
 from bus_watch.digest_budget import agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
-from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR
+from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR, read_lock
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_land import (
     DEFAULT_LANDING_TIMEOUT_S,
@@ -871,11 +871,15 @@ def finalize_xvfb_hop_sidebar(
     landed_agent_id: str,
     slug_fragment: str = "",
 ) -> dict[str, Any]:
-    """Rename departing :8 sidebar row, subscribe successor, prune predecessors."""
-    from bus_watch.cursor_xvfb_subscription import subscribe_cursor_xvfb_house
+    """Prune predecessors, rename departing :8 row, subscribe successor."""
     from cursor_bridge.cursor_agents_hop import (
         prune_cursor_agents_predecessors,
-        rename_cursor_agents_sidebar_title,
+        rename_agent_row_in_sidebar,
+    )
+
+    from bus_watch.cursor_xvfb_subscription import (
+        parse_ide_holder_agent_id,
+        subscribe_cursor_xvfb_house,
     )
 
     out: dict[str, Any] = {"ok": True, "root_id": root_id}
@@ -887,17 +891,42 @@ def finalize_xvfb_hop_sidebar(
             evidence="libs/bus_watch/ide_hop.finalize_xvfb_hop_sidebar",
         )
     if departing_agent_id:
-        retired_title = f"[retired] {root_id} {slug_fragment}".strip()
-        out["renamed_departing_tab"] = rename_cursor_agents_sidebar_title(
-            departing_agent_id,
-            retired_title,
-        )
+        lock = read_lock(root_id)
+        holder_aid = parse_ide_holder_agent_id(str(lock.get("holder") or "")) or ""
         out["archived_departing_tab"] = prune_cursor_agents_predecessors(
             root_id,
             active_agent_id=landed_agent_id,
             departing_agent_id=departing_agent_id,
-            holder_agent_id=departing_agent_id,
+            holder_agent_id=holder_aid,
             keep_recent_predecessors=1,
             wait_until_idle_s=0.0,
         )
+        retired_title = f"[retired] {root_id} {slug_fragment}".strip()
+        out["renamed_departing_tab"] = rename_agent_row_in_sidebar(
+            departing_agent_id,
+            retired_title,
+        )
     return out
+
+
+def cleanup_xvfb_sidebar_on_holder_claim(root_id: str, holder: str) -> dict[str, Any]:
+    """Archive idle ``[retired]`` root rows when a new ``ide:`` holder claims the lock."""
+    from cursor_bridge.cursor_agents_hop import prune_cursor_agents_predecessors
+
+    from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
+
+    if not is_cursor_xvfb_host(policy_gui_host(root_id)):
+        return {"ok": True, "skipped": "not_xvfb_host"}
+    active_aid = parse_ide_holder_agent_id(holder) or ""
+    if not active_aid:
+        return {"ok": True, "skipped": "holder_not_ide_uuid"}
+    lock = read_lock(root_id)
+    holder_aid = parse_ide_holder_agent_id(str(lock.get("holder") or "")) or active_aid
+    return prune_cursor_agents_predecessors(
+        root_id,
+        active_agent_id=active_aid,
+        departing_agent_id="",
+        holder_agent_id=holder_aid,
+        keep_recent_predecessors=0,
+        wait_until_idle_s=0.0,
+    )

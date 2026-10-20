@@ -7,10 +7,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from bus_watch import ide_hop
 
+from cursor_bridge.cursor_agents_archive import (
+    _list_root_sidebar_rows_js,
+    _rename_agent_row_js,
+)
 from cursor_bridge.cursor_agents_hop import (
     _archive_agent_js,
     _archive_async,
     _prune_predecessors_async,
+    _root_row_pattern,
     archive_cursor_agents_tab,
     is_cursor_xvfb_host,
     launch_cursor_agents_tab,
@@ -75,10 +80,24 @@ def test_archive_cursor_agents_tab_ok() -> None:
     assert out == {"ok": True, "archived": "agent-abc"}
 
 
+def test_root_row_pattern_matches_retired_prefix() -> None:
+    pat = _root_row_pattern("10479")
+    assert r"\[retired\]" in pat
+    js = _list_root_sidebar_rows_js("10479")
+    assert "[retired]" in js or "retired" in js
+
+
+def test_rename_agent_row_js_skips_streaming_refusal() -> None:
+    js = _rename_agent_row_js("agent-x", "[retired] 10479 slug")
+    assert "agent_streaming" not in js
+    assert "updateAgentName" in js or "setAgentName" in js
+
+
 def test_archive_agent_js_streaming_guard() -> None:
     js = _archive_agent_js("agent-x")
     assert '[aria-label="In progress"], .ui-dot-grid-loader' in js
     assert "agent_streaming" in js
+    assert "meta.unknown" in js
     assert "btn.click()" in js
     assert "getComposerBackgroundWork" in js
     assert "backgroundWorkService" in js
@@ -336,6 +355,168 @@ async def test_prune_selects_inactive_active_agent_id() -> None:
     assert len(eval_calls) == 2
     assert "landed" in eval_calls[1]
     assert "el.click()" in eval_calls[1]
+
+
+@pytest.mark.asyncio
+async def test_prune_resolves_departing_index_by_agent_id() -> None:
+    list_result = [
+        {
+            "agent_id": "landed",
+            "title": "[retired] 10479 old title",
+            "active": False,
+            "streaming": False,
+            "created_at": 200,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "depart-id",
+            "title": "10479 hop",
+            "active": True,
+            "streaming": False,
+            "created_at": 100,
+            "sidebar_index": 1,
+        },
+        {
+            "agent_id": "older",
+            "title": ". 10479 ancient",
+            "active": False,
+            "streaming": False,
+            "created_at": 50,
+            "sidebar_index": 2,
+        },
+    ]
+    archived: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archived.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="landed",
+            departing_agent_id="depart-id",
+            holder_agent_id="lock-holder",
+            keep_recent_predecessors=1,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert out["ok"] is True
+    assert "lock-holder" not in archived
+    assert "depart-id" not in archived or "depart-id" in out.get("kept_predecessors", [])
+
+
+@pytest.mark.asyncio
+async def test_prune_skips_newer_than_departing_by_sidebar_index() -> None:
+    list_result = [
+        {
+            "agent_id": "active",
+            "title": ". 10479 x",
+            "active": True,
+            "streaming": False,
+            "created_at": 0,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "newer",
+            "title": ". 10479 newer",
+            "active": False,
+            "streaming": False,
+            "created_at": 50,
+            "sidebar_index": 0,
+        },
+        {
+            "agent_id": "depart",
+            "title": ". 10479 depart",
+            "active": False,
+            "streaming": False,
+            "created_at": 100,
+            "sidebar_index": 1,
+        },
+    ]
+    archive_calls: list[str] = []
+
+    async def fake_archive(ws, aid, **kwargs):  # type: ignore[no-untyped-def]
+        archive_calls.append(aid)
+        return {"ok": True, "archived": aid}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        return list_result
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
+        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+    ):
+        out = await _prune_predecessors_async(
+            "ws://fake",
+            "10479",
+            active_agent_id="active",
+            departing_agent_id="depart",
+            holder_agent_id="holder-uuid",
+            keep_recent_predecessors=0,
+            timeout_s=5.0,
+            wait_until_idle_s=0.0,
+            poll_interval_s=0.5,
+        )
+    assert out["ok"] is True
+    assert "newer" not in archive_calls
+    assert any(
+        s.get("agent_id") == "newer" and s.get("reason") == "newer_than_departing"
+        for s in out["skipped"]
+    )
+
+
+def test_finalize_xvfb_hop_sidebar_prune_before_rename() -> None:
+    calls: list[str] = []
+
+    def fake_prune(*a, **k):  # type: ignore[no-untyped-def]
+        calls.append("prune")
+        return {"ok": True}
+
+    def fake_rename(*a, **k):  # type: ignore[no-untyped-def]
+        calls.append("rename")
+        return {"ok": True}
+
+    def fake_sub(*a, **k):  # type: ignore[no-untyped-def]
+        return {"ok": True}
+
+    with (
+        patch("bus_watch.cursor_xvfb_subscription.subscribe_cursor_xvfb_house", fake_sub),
+        patch("cursor_bridge.cursor_agents_hop.prune_cursor_agents_predecessors", fake_prune),
+        patch("cursor_bridge.cursor_agents_hop.rename_agent_row_in_sidebar", fake_rename),
+        patch("bus_watch.ide_hop.read_lock", return_value={"holder": "ide:holder-uuid"}),
+    ):
+        ide_hop.finalize_xvfb_hop_sidebar(
+            "10479",
+            departing_agent_id="dep-1",
+            landed_agent_id="land-1",
+            slug_fragment="slug",
+        )
+    assert calls == ["prune", "rename"]
 
 
 def test_archive_cursor_agents_tab_row_not_found() -> None:

@@ -39,6 +39,7 @@ from pathlib import Path
 
 import bus_watch.doorbell as doorbell_module
 import httpx
+from bus_watch.cursor_xvfb_subscription import subscribe_cursor_xvfb_from_holder
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
@@ -73,7 +74,6 @@ from bus_watch.liaison_stops import (
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.now_row_bind import maybe_bind_now_row
-from bus_watch.cursor_xvfb_subscription import subscribe_cursor_xvfb_from_holder
 from bus_watch.spawn_on_wake import (
     attended_tick_due,
     is_overnight_quiet,
@@ -334,13 +334,25 @@ def main() -> int:
             )  # operator override
         )
         if args.claim and result.get("ok"):
-            sub = subscribe_cursor_xvfb_from_holder(
-                root_for_lock,
-                args.holder,
-                bound_by="liaison-tick-claim",
-                evidence="scripts/liaison-tick.py --claim",
+            from bus_watch.ide_hop import (
+                cleanup_xvfb_sidebar_on_holder_claim,
+                policy_gui_host,
             )
-            result = {**result, "xvfb_subscription": sub}
+            from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+            xvfb_extra: dict = {}
+            if is_cursor_xvfb_host(policy_gui_host(root_for_lock)):
+                xvfb_extra["xvfb_sidebar_cleanup"] = cleanup_xvfb_sidebar_on_holder_claim(
+                    root_for_lock, args.holder
+                )
+                sub = subscribe_cursor_xvfb_from_holder(
+                    root_for_lock,
+                    args.holder,
+                    bound_by="liaison-tick-claim",
+                    evidence="scripts/liaison-tick.py --claim",
+                )
+                xvfb_extra["xvfb_subscription"] = sub
+            result = {**result, **xvfb_extra}
         print(json.dumps(result))
         return 0 if result.get("ok") else 3
 
