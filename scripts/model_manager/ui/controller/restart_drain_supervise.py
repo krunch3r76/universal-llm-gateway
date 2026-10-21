@@ -1,7 +1,9 @@
 """Probe-wait then lifecycle for restart-intent supervisors.
 
-A probe exception is busy (fail closed). The ceiling still runs, so a down
-or wedged Stargate self-preempts instead of dying on the first timeout.
+A probe exception is busy (fail closed). The ceiling still runs for a down
+or wedged probe, so that case self-preempts instead of dying on the first
+timeout. Observed active work (``is_idle`` false) does not: the deadline
+extends and the lifecycle stop waits until the probe is idle.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ async def supervise_until_lifecycle(
     probe_key: str | None = None
     probe_count = 0
     escalated = False
+    saw_active_work = False
     try:
         while True:
             try:
@@ -82,13 +85,17 @@ async def supervise_until_lifecycle(
                 probe_count = 0
                 if is_idle(work):
                     break
+                saw_active_work = True
                 summary = format_active_work_summary(getattr(work, "detail", None))
                 last_cause = reason_code(BLOCKED_BY_JOB, summary or "busy")
                 if last_cause != last_note:
                     _note_if_changed(store, intent_id, last_cause, last_note)
                     last_note = last_cause
             if loop.time() >= deadline:
-                if ceiling == "self_preempt":
+                # Busy self-preempt must not CAS force or fall through to
+                # lifecycle (SIGKILL / short stop). Probe-exception ceilings
+                # still force. No drain re-queue helper accepts job ids.
+                if ceiling == "self_preempt" and not saw_active_work:
                     escalated = True
                     phase = "force_requested"
                     if (
@@ -103,6 +110,7 @@ async def supervise_until_lifecycle(
                         return
                     break
                 deadline = loop.time() + deadline_s
+                saw_active_work = False
             await asyncio.sleep(poll_interval_s)
         phase = "drained_restarting"
         if escalated:

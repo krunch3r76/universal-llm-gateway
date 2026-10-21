@@ -138,10 +138,33 @@ def test_busy_stargate_sync_restart_mints_restart_intent(
 
 
 def test_stargate_supervisor_ceiling_escalates_then_lifecycle(tmp_path: Any) -> None:
+    """Busy ceiling does not force; lifecycle runs after the probe goes idle.
+
+    Breaks when self_preempt at the deadline calls cas_force and the stop
+    while requests_in_flight is still above 0 (this probe stays busy for
+    the first snapshots, deadline_s=0.05).
+    """
     store = RestartIntentStore(db_path=tmp_path / "stargate-ceiling.db")
-    gate = RestartDrainGate(
-        probes={"stargate": _StargateBusyProbe(busy=True, requests_in_flight=2)}
-    )
+
+    class _BusyThenIdle:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def snapshot(self) -> ActiveWork:
+            self.n += 1
+            busy = self.n <= 3
+            inflight = 2 if busy else 0
+            return ActiveWork(
+                busy=busy,
+                detail={
+                    "async_pipelines_running": 0,
+                    "requests_in_flight": inflight,
+                    "total": inflight,
+                    "busy": busy,
+                },
+            )
+
+    gate = RestartDrainGate(probes={"stargate": _BusyThenIdle()})
     lifecycle_calls = 0
 
     async def _lifecycle() -> str:
@@ -179,7 +202,7 @@ def test_stargate_supervisor_ceiling_escalates_then_lifecycle(tmp_path: Any) -> 
     assert got is not None
     assert got.status == STATUS_COMPLETED
     assert lifecycle_calls == 1
-    assert STATUS_FORCE_REQUESTED in statuses
+    assert STATUS_FORCE_REQUESTED not in statuses
 
 
 def _connect_refused_error() -> httpx.ConnectError:
