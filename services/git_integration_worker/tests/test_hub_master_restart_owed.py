@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_sdk_land_lease import (
     release_land_lease,
     try_acquire_land_lease,
 )
+from services.git_integration_worker.tests.land_k43_fixture import exempt_branch
 
 pytestmark = pytest.mark.offline
 
@@ -93,6 +94,7 @@ def test_ff_only_specimen_receipt_names_stargate(
         },
         "specimen paths",
     )
+    exempt_branch(repo, "cursor-sdk/lane-specimen")
     hold_master_land_lease(repo)
     assert ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-specimen") is True
     text = _receipt(repo)
@@ -125,6 +127,7 @@ def test_clean_merge_records_receipt(tmp_path: Path, hold_master_land_lease) -> 
     assert _git(repo, "add", "services/universal-stargate/peer_only.py").returncode == 0
     assert _git(repo, "commit", "-m", "peer stargate").returncode == 0
     assert _git(repo, "checkout", "master").returncode == 0
+    exempt_branch(repo, "peer")
     hold_master_land_lease(repo)
     assert clean_merge_onto_hub_master(repo, branch_name="peer") is True
     text = _receipt(repo)
@@ -143,6 +146,7 @@ def test_ff_records_when_ancestor_probe_is_unknown(
         {"libs/capability_tree/vocabulary.py": "# vocab\n"},
         "vocab",
     )
+    exempt_branch(repo, "cursor-sdk/lane-probe")
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_hub_land_scope."
         "commit_is_ancestor_of_hub_master",
@@ -167,6 +171,7 @@ def test_ff_before_comes_from_updating_line(
         {"libs/capability_tree/vocabulary.py": "# vocab\n"},
         "vocab",
     )
+    exempt_branch(repo, "cursor-sdk/lane-updating")
     real = __import__(
         "services.git_integration_worker.cursor_sdk_hub_land_scope",
         fromlist=["_master_sha"],
@@ -201,6 +206,7 @@ def test_ff_diff_failure_still_lands(
         {"libs/capability_tree/vocabulary.py": "# vocab\n"},
         "vocab",
     )
+    exempt_branch(repo, "cursor-sdk/lane-unreadable")
 
     def _boom(*_args: object, **_kwargs: object) -> list[str]:
         raise OSError("unreadable repo")

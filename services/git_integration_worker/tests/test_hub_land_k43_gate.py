@@ -16,6 +16,8 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CURSOR_SDK_DISPATCH_LEDGER_ENV,
 )
 from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+    clean_merge_onto_hub_master,
+    ff_only_onto_hub_master,
     land_lane_branch_onto_hub_master,
 )
 from services.git_integration_worker.cursor_sdk_land_lease import (
@@ -28,6 +30,9 @@ from services.git_integration_worker.master_review_owed import (
     bind_canonical_verdict,
     land_k43_block_reason,
     record_land_exemption,
+)
+from services.git_integration_worker.record_land_exemption_cli import (
+    main as exemption_cli,
 )
 
 pytestmark = pytest.mark.offline
@@ -298,4 +303,152 @@ def test_legacy_ledger_without_exemption_column_still_refuses(
     }
     migrated.close()
     assert "exemption_ref" in columns
+    assert "exemption_issued_by" in columns
     assert land_k43_block_reason(tip) == "k43_unbound"
+
+
+def _hold(repo: Path, holder: str) -> None:
+    key = master_land_lease_key(repo)
+    assert try_acquire_land_lease(lease_key=key, holder_op_id=holder)
+
+
+def test_ff_only_refuses_without_k43_and_merges_the_resolved_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No row: master stays. APPROVE: merge args are the tip sha, and master becomes it."""
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-ff-sha"
+    tip = _commit_on_branch(repo, branch, "lane\n")
+    _hold(repo, "ff-sha")
+    before = _master(repo)
+    assert ff_only_onto_hub_master(repo, branch_name=branch) is False
+    assert _master(repo) == before
+    _approve(repo, tip)
+    import services.git_integration_worker.cursor_sdk_hub_land_scope as scope
+
+    real = scope._git_capture
+    merges: list[tuple[str, ...]] = []
+
+    def _spy(hub: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "merge":
+            merges.append(args)
+        return real(hub, *args)
+
+    monkeypatch.setattr(scope, "_git_capture", _spy)
+    assert ff_only_onto_hub_master(repo, branch_name=branch) is True
+    assert merges == [("merge", "--ff-only", tip)]
+    assert _master(repo) == tip
+    release_land_lease(lease_key=master_land_lease_key(repo), holder_op_id="ff-sha")
+
+
+def test_clean_merge_refuses_without_k43_and_merges_the_resolved_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behind master with no row does not merge. APPROVE merges the tip sha."""
+    repo = _init_hub(tmp_path)
+    assert _git(repo, "checkout", "-b", "peer").returncode == 0
+    (repo / "peer.md").write_text("peer\n", encoding="utf-8")
+    assert _git(repo, "add", "peer.md").returncode == 0
+    assert _git(repo, "commit", "-m", "peer").returncode == 0
+    assert _git(repo, "checkout", "master").returncode == 0
+    (repo / "hub.md").write_text("hub\n", encoding="utf-8")
+    assert _git(repo, "add", "hub.md").returncode == 0
+    assert _git(repo, "commit", "-m", "hub").returncode == 0
+    tip = _git(repo, "rev-parse", "peer").stdout.strip()
+    _hold(repo, "clean-sha")
+    before = _master(repo)
+    assert clean_merge_onto_hub_master(repo, branch_name="peer") is False
+    assert _master(repo) == before
+    _approve(repo, tip)
+    import services.git_integration_worker.cursor_sdk_hub_land_scope as scope
+
+    real = scope._git_capture
+    merges: list[tuple[str, ...]] = []
+
+    def _spy(hub: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "merge":
+            merges.append(args)
+        return real(hub, *args)
+
+    monkeypatch.setattr(scope, "_git_capture", _spy)
+    assert clean_merge_onto_hub_master(repo, branch_name="peer") is True
+    assert merges == [("merge", "--no-edit", tip)]
+    assert _git(repo, "merge-base", "--is-ancestor", tip, "master").returncode == 0
+    release_land_lease(lease_key=master_land_lease_key(repo), holder_op_id="clean-sha")
+
+
+def test_exemption_cli_requires_citation_and_records_issuer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A non-citation and a blank issuer write nothing. A citation stores the issuer."""
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-cli"
+    tip = _commit_on_branch(repo, branch, "lane\n")
+    base = _parent(repo, tip)
+    assert (
+        exemption_cli(
+            [
+                "--repo",
+                str(repo),
+                "--tip",
+                tip,
+                "--base",
+                base,
+                "--ruling-turn",
+                "note",
+                "--issued-by",
+                "cursor",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().out.strip() == "ruling_turn_not_citation"
+    assert (
+        exemption_cli(
+            [
+                "--repo",
+                str(repo),
+                "--tip",
+                tip,
+                "--base",
+                base,
+                "--ruling-turn",
+                "16416#1631",
+                "--issued-by",
+                "  ",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().out.strip() == "issued_by_empty"
+    assert land_k43_block_reason(tip) == "k43_unbound"
+    assert (
+        exemption_cli(
+            [
+                "--repo",
+                str(repo),
+                "--tip",
+                tip,
+                "--base",
+                base,
+                "--ruling-turn",
+                "16416#1631",
+                "--issued-by",
+                "cursor",
+            ]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.strip() == "recorded"
+    from services.git_integration_worker.master_review_owed import _open_ledger
+
+    conn, reason = _open_ledger(None)
+    assert conn is not None, reason
+    row = conn.execute(
+        "SELECT exemption_ref, exemption_issued_by FROM master_review_owed WHERE tip_sha = ?",
+        (tip.lower(),),
+    ).fetchone()
+    conn.close()
+    assert row["exemption_ref"] == "16416#1631"
+    assert row["exemption_issued_by"] == "cursor"
+    assert land_k43_block_reason(tip) is None

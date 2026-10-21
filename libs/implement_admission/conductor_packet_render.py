@@ -130,9 +130,9 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "- The continuity card ## Skills lists slugs. After resume, read that section "
             "and Use each slug before the first move."
         ),
-        "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
+        "- Run to completion: a land waits for a bound APPROVE on the lane tip.",
         (
-            "- G7 land: after the G6 verdict is PASS, call "
+            "- G7 land: after the G6 verdict is PASS and a bound APPROVE covers the tip, call "
             "land_lane_branch_onto_hub_master once with holder_op_id set to this "
             "dispatch id. Never call ff_only_onto_hub_master or "
             "clean_merge_onto_hub_master directly, and never call any land function "

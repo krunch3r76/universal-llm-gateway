@@ -2,8 +2,8 @@
 
 ``land_lane_branch_onto_hub_master`` fast-forwards or clean-merges a lane
 branch onto hub master only when the tip has an APPROVE K43 or a recorded
-exemption. The silent-land path and the deliberate land actuator are the
-callers. Direct fast-forward helpers do not apply this gate.
+exemption. ``_ff_only_onto_hub_master`` and ``_clean_merge_onto_hub_master``
+run that check on the sha they resolve and merge that sha.
 """
 
 from __future__ import annotations
@@ -330,6 +330,22 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
     return None
 
 
+def _k43_block(tip_sha: str, *, actuator: str) -> str | None:
+    """Return the K43 refuse reason for ``tip_sha``, or ``None`` when it may merge.
+
+    Calls ``land_k43_block_reason``. A block is logged and returned so the
+    caller does not run ``git merge``. Ledger unreadability fails closed.
+    """
+    from services.git_integration_worker.master_review_owed import (
+        land_k43_block_reason,
+    )
+
+    block = land_k43_block_reason(tip_sha)
+    if block:
+        logger.info("hub land refuse %s actuator=%s tip=%s", block, actuator, tip_sha)
+    return block
+
+
 def _refuse_without_land_lease(hub: Path, actuator: str) -> bool:
     """True when this process must not move hub master."""
     from services.git_integration_worker.cursor_sdk_land_lease import (
@@ -349,11 +365,11 @@ def _refuse_without_land_lease(hub: Path, actuator: str) -> bool:
 def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     """Fast-forward the hub ``master`` checkout to ``branch_name``.
 
-    Returns True only when that branch is an ancestor of hub master afterward.
-    A dirty hub tree, a non-fast-forward, a missing ref, or a branch with no
-    commits ahead of master returns False and leaves HEAD where it was.
-    Side effects: ``git merge --ff-only`` on the hub master worktree when the
-    preconditions hold.
+    Returns True only when that branch tip is an ancestor of hub master afterward.
+    Resolves the tip sha, refuses unless that sha has an APPROVE K43 or a
+    recorded exemption, then runs ``git merge --ff-only`` of that sha. A dirty
+    hub tree, a non-fast-forward, a missing ref, a branch with no commits ahead
+    of master, or a K43 refusal returns False and leaves HEAD where it was.
     """
     moved, _reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
     return moved
@@ -371,8 +387,11 @@ def _ff_only_onto_hub_master(
     hub, tip_sha = ready.hub, ready.tip_sha
     if _refuse_without_land_lease(hub, "ff_only_onto_hub_master"):
         return False, None
+    blocked = _k43_block(tip_sha, actuator="ff_only_onto_hub_master")
+    if blocked:
+        return False, blocked
     pre_sha = _master_sha(hub)
-    merged = _git_capture(hub, "merge", "--ff-only", branch)
+    merged = _git_capture(hub, "merge", "--ff-only", tip_sha)
     if merged.returncode != 0:
         return False, "not_ff"
     post_sha = _master_sha(hub)
@@ -389,13 +408,13 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
 
     The fast-forward actuator refuses the ordinary case: master has commits
     the lane does not. This lands that case only when the merge is textual
-    and conflict-free. A dirty hub tree, a missing ref, a non-master checkout,
-    a branch with nothing ahead, or a branch that is not actually behind
-    master returns False and leaves HEAD where it was. A conflict aborts the
+    and conflict-free. Resolves the tip sha, refuses unless that sha has an
+    APPROVE K43 or a recorded exemption, then runs ``git merge --no-edit`` of
+    that sha. A dirty hub tree, a missing ref, a non-master checkout, a branch
+    with nothing ahead, a branch that is not actually behind master, or a K43
+    refusal returns False and leaves HEAD where it was. A conflict aborts the
     merge and leaves HEAD where it was. Returns True only when the branch tip
     is an ancestor of hub master afterward.
-    Side effects: ``git merge --no-edit`` on the hub master worktree when the
-    preconditions hold and the merge does not conflict.
     """
     moved, _reason = _clean_merge_onto_hub_master(repo, branch_name=branch_name)
     return moved
@@ -439,7 +458,10 @@ def _clean_merge_onto_hub_master(
         return False, None
     pre_sha = _master_sha(hub)
     tip_sha = tip.stdout.strip()
-    merged = _git_capture(hub, "merge", "--no-edit", branch)
+    blocked = _k43_block(tip_sha, actuator="clean_merge_onto_hub_master")
+    if blocked:
+        return False, blocked
+    merged = _git_capture(hub, "merge", "--no-edit", tip_sha)
     if merged.returncode != 0:
         _abort_merge_if_started(hub)
         combined = f"{merged.stdout}\n{merged.stderr}"

@@ -195,7 +195,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             fixes_sha TEXT,
             gap_posted_at TEXT,
             notice_tag TEXT,
-            exemption_ref TEXT
+            exemption_ref TEXT,
+            exemption_issued_by TEXT
         )
         """
     )
@@ -228,6 +229,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     }
     if "exemption_ref" not in owed_columns:
         conn.execute("ALTER TABLE master_review_owed ADD COLUMN exemption_ref TEXT")
+    if "exemption_issued_by" not in owed_columns:
+        conn.execute(
+            "ALTER TABLE master_review_owed ADD COLUMN exemption_issued_by TEXT"
+        )
     conn.commit()
 
 
@@ -500,19 +505,27 @@ def record_land_exemption(
     *,
     base_sha: str,
     exemption_ref: str,
+    issued_by: str | None = None,
     mounts_table: list[tuple[str, str]] | None = None,
 ) -> str:
     """Store an explicit land exemption for one commit tip.
 
-    ``exemption_ref`` is the record (a bus turn or ruling id). A blank ref
-    writes nothing and returns ``exemption_ref_empty``. Unknown commits
+    ``exemption_ref`` is the cited ruling (a bus turn). A blank ref writes
+    nothing and returns ``exemption_ref_empty``. ``issued_by`` is who issued
+    the ruling; a blank string writes nothing and returns ``issued_by_empty``.
+    Omit ``issued_by`` only for an in-process test record. Unknown commits
     return ``unresolved_sha``. Ledger open failure returns that reason.
     A later gap notice does not clear the ref. Returns ``recorded`` after
-    the row is committed. Does not move git refs.
+    the row is committed. Does not move git refs. A tip that already has a
+    verdict stays ``tip_already_bound`` on a later verdict write; this
+    function does not change that path.
     """
     ref = (exemption_ref or "").strip()
     if not ref:
         return "exemption_ref_empty"
+    issuer = None if issued_by is None else issued_by.strip()
+    if issuer is not None and not issuer:
+        return "issued_by_empty"
     tip = (tip_sha or "").strip().lower()
     base = (base_sha or "").strip().lower()
     root = Path(repo)
@@ -532,14 +545,21 @@ def record_land_exemption(
         ).fetchone()
         if existing is None:
             conn.execute(
-                "INSERT INTO master_review_owed (tip_sha, base_sha, exemption_ref) "
-                "VALUES (?, ?, ?)",
-                (tip, base, ref),
+                "INSERT INTO master_review_owed ("
+                "tip_sha, base_sha, exemption_ref, exemption_issued_by"
+                ") VALUES (?, ?, ?, ?)",
+                (tip, base, ref, issuer),
             )
-        else:
+        elif issuer is None:
             conn.execute(
                 "UPDATE master_review_owed SET exemption_ref=? WHERE tip_sha=?",
                 (ref, tip),
+            )
+        else:
+            conn.execute(
+                "UPDATE master_review_owed SET exemption_ref=?, exemption_issued_by=? "
+                "WHERE tip_sha=?",
+                (ref, issuer, tip),
             )
         conn.commit()
     except sqlite3.Error:

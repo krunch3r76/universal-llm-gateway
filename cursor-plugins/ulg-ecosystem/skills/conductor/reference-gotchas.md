@@ -30,7 +30,7 @@ implementation on **two checkouts** — master vs working branch split.
 |---|---|
 | Omit `lane=` to "get past" the refusal | Fix the packet / derived `files_expected` so every path is repo-relative under `source_repo`, then re-admit with `lane="B"` |
 | Proceed after admit without reading `active_by_lane` | Confirm Lane B worktree before nesting Composer or editing |
-| Land by `git checkout <branch> -- <paths>` onto master | Hub-land via `land_lane_branch_onto_hub_master` at G7 (see `git-posture`) — the mission's own admit is the standing merge ack; land on green, don't re-ask. The landed range owes a review afterward; a missing review is check debt; `REQUEST_CHANGES` is a forward fix. Land does not wait. |
+| Land by `git checkout <branch> -- <paths>` onto master | Hub-land via `land_lane_branch_onto_hub_master` at G7 (see `git-posture`). A land waits for a bound APPROVE. `REQUEST_CHANGES` is a forward fix. |
 
 Scope refuse usually means an absolute mount path, `cortex://` / non-repo URI, or
 a path outside the gateway checkout leaked into machine-derived file scope.
