@@ -32,7 +32,6 @@ from .detail import _thread_detail
 from .send_prep import (
     _bind_lane_on_send,
     _maybe_auto_bind_lane_on_send,
-    _raise_if_maestro_milestone_body_over_limit,
     _raise_if_turn_body_over_limit,
     _raise_post_mint_http,
     _resolve_send_supersedes,
@@ -74,7 +73,6 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
         )
 
     apply_maestro_compose_reroute(body)
-    _raise_if_maestro_milestone_body_over_limit(body)
 
     has_new_slug = body.new_slug is not None
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None

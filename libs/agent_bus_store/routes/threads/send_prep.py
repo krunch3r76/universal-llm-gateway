@@ -53,6 +53,21 @@ MAESTRO_MILESTONE_PREFIXES = frozenset(
         "COMPLETE",
     }
 )
+_L29B_GATED_MILESTONE_HEADS: frozenset[str] = frozenset(
+    {
+        "PLAN",
+        "VERDICT",
+        "LANDED",
+        "DONE",
+        "FAILED",
+        "BLOCKED",
+        "QUESTION",
+        "RULING",
+        "ACK",
+        "AMEND",
+        "SEAT_REGISTRATION",
+    }
+)
 MAESTRO_MILESTONE_BODY_MAX_CHARS = 2000
 MAESTRO_REROUTE_TO_HOUSE_PREFIXES = frozenset({"PICKUP", "FACT"})
 _MAESTRO_COMPOSE_TARGETS = frozenset({"maestro", "web-anthropic"})
@@ -77,6 +92,13 @@ def is_maestro_milestone_turn(*, to: str, subject: str | None) -> bool:
     return token in MAESTRO_MILESTONE_PREFIXES
 
 
+def is_l29b_gated_milestone_turn(*, to: str, subject: str | None) -> bool:
+    """L29b body cap applies only to the eleven L17 waking milestone heads."""
+    if normalize_bus_address(to) not in _MAESTRO_COMPOSE_TARGETS:
+        return False
+    return maestro_subject_head(subject) in _L29B_GATED_MILESTONE_HEADS
+
+
 def milestone_body_over_limit_envelope() -> dict[str, str]:
     return {
         "code": "milestone_body_over_2000_chars",
@@ -87,6 +109,11 @@ def milestone_body_over_limit_envelope() -> dict[str, str]:
     }
 
 
+def enforce_maestro_milestone_body_cap(body: TurnSendCreate) -> None:
+    """Raise HTTP 422 when an L29b-gated milestone exceeds the inline body cap."""
+    _raise_if_maestro_milestone_body_over_limit(body)
+
+
 def _raise_if_maestro_milestone_body_over_limit(
     body: TurnSendCreate,
 ) -> None:
@@ -94,7 +121,7 @@ def _raise_if_maestro_milestone_body_over_limit(
         return
     if body.sidecar_content is not None:
         return
-    if not is_maestro_milestone_turn(to=body.to or "", subject=body.subject):
+    if not is_l29b_gated_milestone_turn(to=body.to or "", subject=body.subject):
         return
     if len(body.body) <= MAESTRO_MILESTONE_BODY_MAX_CHARS:
         return

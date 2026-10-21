@@ -46,8 +46,8 @@ from claude_bundles.operator_proxy_standing_render import (
     _extract_current_leg_block,
     cap_utf8_for_hop,
     current_leg_has_inflight_section,
-    first_act_call1_line,
     extract_inflight_work_keys,
+    first_act_call1_line,
     hop_boundary_turn_from_header,
     hop_house_rules_pointer,
     inflight_section_from_sidecar,
@@ -330,16 +330,15 @@ def hop_successor_fields(
                 inflight_block = _render_failed("inflight", exc, handoff_uri)
         checkpoint_header = str(ck_meta.get("leg_header") or "")
         current_leg_block = _extract_current_leg_block(sidecar)
-        if (
-            hop_kind == "mission"
-            and current_leg_block
-            and current_leg_has_inflight_section(current_leg_block)
-        ):
-            inflight_section = inflight_section_from_sidecar(sidecar)
-            inflight_work_keys = extract_inflight_work_keys(inflight_section)
+        if hop_kind == "mission" and current_leg_block:
             hop_boundary_by_lane = {
                 lane: hop_boundary_turn_from_header(checkpoint_header)
             }
+            if current_leg_has_inflight_section(current_leg_block):
+                inflight_section = inflight_section_from_sidecar(sidecar)
+                inflight_work_keys = extract_inflight_work_keys(inflight_section)
+            else:
+                inflight_work_keys = frozenset()
         if ck_meta.get("identity") == "stale":
             act5_fetch_last = 5
 

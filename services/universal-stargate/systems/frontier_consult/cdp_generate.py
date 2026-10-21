@@ -508,6 +508,19 @@ async def dispatch_cdp_generate(
             code="cdp_contract_unsupported",
         )
 
+    from .cursor_sdk_generate_prepare_restart_busy import (
+        enforce_restart_busy_scoped_by_work_key,
+    )
+
+    await enforce_restart_busy_scoped_by_work_key(
+        request_id=request_id,
+        work_key=getattr(body, "work_key", None),
+        admit_provenance=admit_provenance,
+        nest_under=getattr(body, "nest_under", None),
+        caller_dispatch_id=getattr(body, "caller_dispatch_id", None),
+        resume_of=getattr(body, "resume_of", None),
+    )
+
     prompt = getattr(body, "prompt", None)
     sidecar_ref = getattr(body, "sidecar_ref", None)
     packet_path = getattr(body, "packet_path", None)

@@ -264,6 +264,9 @@ async def prepare_cursor_sdk_generate(
         request_id=request_id,
         work_key=work_key,
         admit_provenance=admit_provenance,
+        nest_under=nest_under,
+        caller_dispatch_id=caller_dispatch_id,
+        resume_of=resume_of,
     )
     if execution_id is None or dispatch_id is None:
         minted_execution, minted_dispatch = mint_cursor_sdk_ids(request_id=request_id)
