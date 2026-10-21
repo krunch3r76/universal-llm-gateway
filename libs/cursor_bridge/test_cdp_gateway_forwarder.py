@@ -158,9 +158,8 @@ def test_bind_failure_closes_listener_already_opened() -> None:
 
 def test_allowed_peers_only_mcp_server_container() -> None:
     mcp = frozenset({"172.18.0.5"})
-    other = frozenset({"172.18.0.12"})
     assert is_allowed_cdp_peer("172.18.0.5", allowed=mcp)
-    assert not is_allowed_cdp_peer("172.18.0.12", allowed=other)
+    assert not is_allowed_cdp_peer("172.18.0.12", allowed=mcp)
     assert mcp_server_peers_from_inspect("172.18.0.5 172.17.0.2 ") == frozenset(
         {"172.18.0.5", "172.17.0.2"}
     )
