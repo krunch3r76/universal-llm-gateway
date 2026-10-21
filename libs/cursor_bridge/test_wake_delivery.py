@@ -351,6 +351,13 @@ def test_submit_wake_line_js_resolves_workspace_scoped_services() -> None:
     assert "getWorkspaceInstance" in js
 
 
+def test_submit_wake_line_js_race_reports_winner_not_timer_as_delivered() -> None:
+    js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
+    assert "race_winner: raceWinner" in js
+    assert "raceWinner !== 'timer'" in js
+    assert "delivery_unconfirmed" in js
+
+
 @pytest.mark.asyncio
 async def test_paste_cursor_services_evaluates_glass_js(monkeypatch: pytest.MonkeyPatch) -> None:
     line = "BRIDGE_WAKE thread=15851 turn=290"

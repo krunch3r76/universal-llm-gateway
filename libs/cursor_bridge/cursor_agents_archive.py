@@ -12,7 +12,7 @@ _GLASS_ROW_PROBE_JS = (
     "if(t){const x=(t.textContent||'').replace(/\\s+/g,' ').trim();if(x)return x;}"
     "const b=el.querySelector('button[data-agent-id]');"
     "if(b&&b.getAttribute('aria-label'))return b.getAttribute('aria-label').split(',')[0].trim();"
-    "return(el.innerText||'').trim().split('\\\\n')[0].trim();};"
+    "return(el.innerText||'').trim().split('\\n')[0].trim();};"
     "const rowActive=(el)=>el.getAttribute('data-active')==='true'"
     "||!!el.querySelector('.ui-sidebar-menu-button-trigger[aria-current=\"page\"]')"
     "||el.getAttribute('aria-selected')==='true'||el.getAttribute('aria-current')==='true'"

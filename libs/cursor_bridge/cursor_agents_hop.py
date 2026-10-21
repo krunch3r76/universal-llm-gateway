@@ -186,7 +186,7 @@ async def _launch_async(
                 "model_query": model_query,
                 "result": result,
             }
-        if not result.get("ok"):
+        if not result.get("ok") and _launch_failure_recoverable(None, result):
             recovered = await _recover_launch_after_eval_failure(
                 ws,
                 requested_agent_id=requested_agent_id,
@@ -199,6 +199,10 @@ async def _launch_async(
                 result.setdefault("model_query", model_query)
                 result.setdefault("phase", "keystroke")
                 return result
+        if not result.get("ok"):
+            result.setdefault("model_query", model_query)
+            result.setdefault("phase", "keystroke")
+            return result
     editor_id = str(result.get("editor_agent_id") or result.get("agent_id") or "").strip()
     return {
         "ok": True,
@@ -251,10 +255,7 @@ async def _recover_launch_after_eval_failure(
     if not isinstance(snap, dict) or not snap.get("ok"):
         return None
     post_ids = {str(i).strip() for i in (snap.get("ids") or []) if str(i).strip()}
-    new_ids = post_ids - pre_ids
     matched = requested_agent_id if requested_agent_id in post_ids else None
-    if not matched and len(new_ids) == 1:
-        matched = next(iter(new_ids))
     if matched:
         return {
             "ok": True,

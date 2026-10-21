@@ -114,6 +114,13 @@ def test_launch_tab_js_requested_agent_id_idempotent() -> None:
     assert "composerId: requestedAgentId" in js
 
 
+def test_launch_tab_js_submit_race_reports_winner() -> None:
+    js = launch_new_agent_tab_js("hello", "Grok 4.7 Extra High")
+    assert "race_winner: raceWinner" in js
+    assert "raceWinner !== 'timer'" in js
+    assert "delivery_unconfirmed" in js
+
+
 def test_launch_tab_js_uses_glass_services_not_input() -> None:
     js = launch_new_agent_tab_js("hello", "Grok 4.7 Extra High")
     assert "agentRepositoryService" in js
@@ -259,6 +266,45 @@ async def test_launch_async_recovers_after_promise_collected() -> None:
     assert out["glass_launch"]["method"] == "recovered_after_gc"
 
 
+@pytest.mark.asyncio
+async def test_launch_async_skips_recovery_on_composer_not_empty() -> None:
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+    recovery_mids: list[int] = []
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid in (90, 91):
+            recovery_mids.append(mid)
+            return {"ok": True, "agent_id": rid}
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            return {"ok": False, "reason": "composer_not_empty", "agent_id": rid}
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "resume 10479",
+            page,
+            timeout_s=5.0,
+            requested_agent_id=rid,
+        )
+    assert out["ok"] is False
+    assert out["reason"] == "composer_not_empty"
+    assert recovery_mids == []
+
+
 def test_launch_cursor_agents_tab_ok() -> None:
     page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
 
@@ -318,6 +364,25 @@ def test_rename_agent_row_js_skips_streaming_refusal() -> None:
     assert "dom_only" not in js
     assert "updateAgentName" not in js
     assert "setAgentName" not in js
+
+
+def test_archive_agent_js_row_title_splits_on_newline() -> None:
+    from cursor_bridge.cursor_agents_archive import _GLASS_ROW_PROBE_JS
+
+    assert ".split('\\n')" in _GLASS_ROW_PROBE_JS
+    assert ".split('\\\\n')" not in _GLASS_ROW_PROBE_JS
+
+
+def test_archive_agent_js_passes_node_syntax_check(tmp_path: Path) -> None:
+    js = _archive_agent_js("agent-x")
+    path = tmp_path / "archive_probe.js"
+    path.write_text(js, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", "--check", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_archive_agent_js_streaming_guard() -> None:
