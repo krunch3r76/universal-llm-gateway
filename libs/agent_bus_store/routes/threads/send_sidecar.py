@@ -36,6 +36,7 @@ from .send_prep import (
     _raise_post_mint_http,
     _resolve_send_supersedes,
     _validate_lane_bind_pre_mint,
+    apply_maestro_compose_reroute,
 )
 
 
@@ -70,6 +71,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=error_detail,
         )
+
+    apply_maestro_compose_reroute(body)
 
     has_new_slug = body.new_slug is not None
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None

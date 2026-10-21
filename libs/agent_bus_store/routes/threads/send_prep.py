@@ -7,6 +7,7 @@ lives here so those routes share one predicate and one 422 envelope.
 
 from __future__ import annotations
 
+from agent_seat.registry import normalize_bus_address
 from fastapi import HTTPException, status
 
 from ...body_auto_spill import spill_error_http
@@ -30,6 +31,54 @@ from ...turns_models import (
     text_is_unexpanded_file_token,
     turn_body_limit_error,
 )
+
+MAESTRO_MILESTONE_PREFIXES = frozenset(
+    {
+        "PLAN",
+        "VERDICT",
+        "LANDED",
+        "DONE",
+        "FAILED",
+        "BLOCKED",
+        "QUESTION",
+        "RULING",
+        "ACK",
+        "AMEND",
+        "SEAT_REGISTRATION",
+    }
+)
+MAESTRO_REROUTE_TO_HOUSE_PREFIXES = frozenset({"PICKUP", "FACT"})
+_MAESTRO_COMPOSE_TARGETS = frozenset({"maestro", "web-anthropic"})
+
+
+def maestro_subject_head(subject: str | None) -> str:
+    """Subject prefix token before ``|``, first word uppercased (``PLAN r2`` → ``PLAN``)."""
+    head = (subject or "").split("|", 1)[0].strip().upper()
+    if not head:
+        return ""
+    return head.split()[0]
+
+
+def apply_maestro_milestone_reroute(
+    *, to: str, from_agent: str, subject: str | None
+) -> str:
+    """Rewrite ``to=maestro`` / ``web-anthropic`` ``PICKUP``/``FACT`` to the composing house."""
+    if not (from_agent or "").strip():
+        return to
+    if normalize_bus_address(to) not in _MAESTRO_COMPOSE_TARGETS:
+        return to
+    if maestro_subject_head(subject) in MAESTRO_REROUTE_TO_HOUSE_PREFIXES:
+        return from_agent
+    return to
+
+
+def apply_maestro_compose_reroute(body: TurnSendCreate) -> None:
+    """In-place compose-site reroute for maestro milestone policy (L17/L21)."""
+    body.to = apply_maestro_milestone_reroute(
+        to=body.to or "",
+        from_agent=body.from_agent or "",
+        subject=body.subject,
+    )
 
 
 def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> None:

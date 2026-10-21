@@ -218,6 +218,10 @@ def _send_dispatch(
             "missing_fields": [f.split(" ")[0] for f in missing],
         }
 
+    from agent_bus_store.routes.threads.send_prep import apply_maestro_milestone_reroute
+
+    to = apply_maestro_milestone_reroute(to=to, from_agent=from_agent, subject=subject)
+
     if has_new_slug and after_turn > 0:
         return {
             "error": (

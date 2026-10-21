@@ -32,7 +32,6 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "AMEND",
         "DONE",
         "FAILED",
-        "FACT",
         "REVIEW",
         "PLAN",
         "LANDED",
@@ -133,6 +132,24 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     return agent
 
 
+_MAESTRO_CSE_WAKE_TARGETS = frozenset({"maestro", "web-anthropic"})
+
+
+def _maestro_cse_nonwake_head(*, to_agent: str, subject: str, head: str) -> bool:
+    """L17/L19: FACT, PICKUP, and most STATUS to maestro/CSE do not enqueue wakes."""
+    if to_agent not in _MAESTRO_CSE_WAKE_TARGETS:
+        return False
+    if head in {"FACT", "PICKUP"}:
+        return True
+    if head == "STATUS":
+        if to_agent == "web-anthropic" and subject.lower().startswith(
+            "status|ack-batch"
+        ):
+            return False
+        return True
+    return False
+
+
 def peer_operator_wake_from(from_agent: str) -> bool:
     """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not."""
     if from_agent in _ROUTINE_DISPATCH_FROM:
@@ -187,6 +204,8 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         to_agent in STAGE_MANAGER_ADDRESSES
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
+        return False
+    if _maestro_cse_nonwake_head(to_agent=to_agent, subject=subject, head=head):
         return False
     if not peer_operator_wake_from(from_agent) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent
