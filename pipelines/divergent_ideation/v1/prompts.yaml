@@ -8,11 +8,18 @@ prompts:
       <context>
       Target statement: {target_statement}
       Hard constraints: {hard_constraints}
-      Terms that must not appear in the abstract restatement: {domain_terms_to_strip}
+      Terms that must not appear anywhere in the abstract restatement (including inside hard_constraints paraphrases): {domain_terms_to_strip}
+      Prior leak hits from the last attempt (remove these terms and near-synonyms): {prior_leak_hits}
       </context>
       <task>
-      Produce a JSON object with structural_goal, actors, resources, constraints, invariants.
-      Do not name any specific product market or industry from the target statement.
+      Produce a JSON object with:
+      - structural_goal (string)
+      - actors (array of objects each with role, capability strings — not bare strings)
+      - resources (array of objects each with name, scarce, transferable booleans)
+      - constraints (array of objects each with id, statement, derived_from strings)
+      - invariants (array of strings)
+      Strip every domain_terms_to_strip token even when it appears inside hard_constraints wording.
+      Do not name any specific product, market, or industry from the target statement.
       </task>
 
   ideate:

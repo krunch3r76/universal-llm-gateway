@@ -13,6 +13,12 @@ options:
   max_leak_retries: 2
   briefs_per_model: 3
   min_auditors: 2
+  run_seed:
+    type: integer
+    default: 0
+  initial_prior_leak_hits:
+    type: array
+    default: []
   pool_manifest:
     - model: qwen3-5-9b-q8-0-131072
       family: qwen
@@ -27,14 +33,27 @@ steps:
     handler_inputs:
       source: sourceNs.text
 
+  - name: problem_defaults
+    type: problem_defaults_v1
+    reads_from:
+      - step: load_problem
+        fields: [json]
+    handler_inputs:
+      problem: load_problem.json
+      default_run_seed: optionsNs.run_seed
+
   - name: decontextualize_0
     type: generate
     model_ref: decontextualize
     prompt_ref: divergent_ideation.v1.decontextualize
+    reads_from:
+      - step: problem_defaults
+        fields: [json]
     handler_inputs:
-      target_statement: load_problem.json.target_statement
-      hard_constraints: load_problem.json.hard_constraints
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      target_statement: problem_defaults.json.target_statement
+      hard_constraints: problem_defaults.json.hard_constraints
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
+      prior_leak_hits: optionsNs.initial_prior_leak_hits
     generation_parameters:
       temperature: 0.3
       response_format:
@@ -49,7 +68,7 @@ steps:
     type: leak_check_v1
     handler_inputs:
       abstract_problem: parse_decontextualize_0.json
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
       decontextualizer_model: decontextualize_0.model_id
 
   - name: decontextualize_1
@@ -57,10 +76,14 @@ steps:
     model_ref: decontextualize
     condition: "leak_check_0.json.get('leak_report', {}).get('passed') is False"
     prompt_ref: divergent_ideation.v1.decontextualize
+    reads_from:
+      - step: leak_check_0
+        fields: [json]
     handler_inputs:
-      target_statement: load_problem.json.target_statement
-      hard_constraints: load_problem.json.hard_constraints
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      target_statement: problem_defaults.json.target_statement
+      hard_constraints: problem_defaults.json.hard_constraints
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
+      prior_leak_hits: leak_check_0.json.leak_report.hits
     generation_parameters:
       temperature: 0.3
       response_format:
@@ -77,7 +100,7 @@ steps:
     condition: "parse_decontextualize_1.json.get('_skipped') is not True"
     handler_inputs:
       abstract_problem: parse_decontextualize_1.json
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
       decontextualizer_model: decontextualize_1.model_id
 
   - name: decontextualize_2
@@ -85,10 +108,14 @@ steps:
     model_ref: decontextualize
     condition: "leak_check_1.json.get('leak_report', {}).get('passed') is False"
     prompt_ref: divergent_ideation.v1.decontextualize
+    reads_from:
+      - step: leak_check_1
+        fields: [json]
     handler_inputs:
-      target_statement: load_problem.json.target_statement
-      hard_constraints: load_problem.json.hard_constraints
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      target_statement: problem_defaults.json.target_statement
+      hard_constraints: problem_defaults.json.hard_constraints
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
+      prior_leak_hits: leak_check_1.json.leak_report.hits
     generation_parameters:
       temperature: 0.3
       response_format:
@@ -105,7 +132,7 @@ steps:
     condition: "parse_decontextualize_2.json.get('_skipped') is not True"
     handler_inputs:
       abstract_problem: parse_decontextualize_2.json
-      domain_terms_to_strip: load_problem.json.domain_terms_to_strip
+      domain_terms_to_strip: problem_defaults.json.domain_terms_to_strip
       decontextualizer_model: decontextualize_2.model_id
 
   - name: leak_check_final
@@ -132,7 +159,7 @@ steps:
     handler_inputs:
       operators: retrieve_operators.json
       pool_manifest: optionsNs.pool_manifest
-      run_seed: load_problem.json.run_seed
+      run_seed: problem_defaults.json.run_seed
 
   - name: map_ideate
     type: generate
@@ -163,8 +190,8 @@ steps:
     map_over:
       ideation: map_ideate.*
     handler_inputs:
-      target_statement: load_problem.json.target_statement
-      hard_constraints: load_problem.json.hard_constraints
+      target_statement: problem_defaults.json.target_statement
+      hard_constraints: problem_defaults.json.hard_constraints
     map_inputs:
       model_ref: mapNs.iteration.value.model_id
       abstract_briefs: mapNs.iteration.value.json.briefs
@@ -179,7 +206,7 @@ steps:
     handler_inputs:
       briefs: re_instantiate.*
       pool_manifest: optionsNs.pool_manifest
-      run_seed: load_problem.json.run_seed
+      run_seed: problem_defaults.json.run_seed
       min_auditors: optionsNs.min_auditors
 
   - name: map_audit
@@ -191,7 +218,7 @@ steps:
     map_over:
       item: audit_assign.json.audit_assignments
     handler_inputs:
-      hard_constraints: load_problem.json.hard_constraints
+      hard_constraints: problem_defaults.json.hard_constraints
     map_inputs:
       model_ref: mapNs.iteration.value.model_ref
       brief: mapNs.iteration.value.brief
@@ -203,7 +230,7 @@ steps:
   - name: collate
     type: collate_v1
     handler_inputs:
-      problem: load_problem.json
+      problem: problem_defaults.json
       pool_manifest: optionsNs.pool_manifest
       leak_report: leak_check_final.json.leak_report
       operators: retrieve_operators.json

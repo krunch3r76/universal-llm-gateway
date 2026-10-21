@@ -241,6 +241,7 @@ class WritingAssembleHandler(BaseHandler):
             "pin_ledger": pins,
             "documents_block": documents,
             "brief_block": brief_block,
+            "verbatim_notes_block": "",
             "packet": packet,
             "writer_seat": seats["writer_seat"],
             "reviewer_seat": seats["reviewer_seat"],
