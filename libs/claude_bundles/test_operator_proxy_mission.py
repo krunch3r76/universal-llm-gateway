@@ -379,7 +379,11 @@ _POLL_INSTRUCTION_RE = re.compile(
     r"keep polling|"
     r"`wait` until CLOSEOUT follows the `poll_hint`|"
     r"before holding `wait`|"
-    r"polled by that call's `poll_hint`"
+    r"polled by that call's `poll_hint`|"
+    r"poll\s*,|"
+    r"followup:\s*poll|"
+    r"poll agent-bus|"
+    r"poll/"
 )
 
 

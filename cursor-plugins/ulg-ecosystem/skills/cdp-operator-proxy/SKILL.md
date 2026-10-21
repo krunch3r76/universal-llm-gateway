@@ -458,11 +458,11 @@ even when `TYPE: MISSION_CLOSEOUT` is correct (inv 30).
 
 ```markdown
 ## Work beyond this close
-- D10 B-iii thin spec — collector: web-anthropic (this seat) · followup: poll agent-bus:6576 after status:done
+- D10 B-iii thin spec — collector: web-anthropic (this seat) · followup: harvest closeout wake on agent-bus:6576 after status:done
 ```
 
 or `none` when nothing will produce a result after close. Pager compact line (required on the
-`mission-debrief` notify): `Beyond this close: D10 — collector: this-seat · followup: poll 6576
+`mission-debrief` notify): `Beyond this close: D10 — collector: this-seat · followup: harvest closeout wake on 6576
 after done`, or `Beyond this close: none`.
 
 ## Architecture-bind chain (BINDING)
@@ -556,14 +556,14 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2 **C
 
 ### Deciding-moment test (BINDING — inv 30)
 
-Read **after** landing a roadmap row / posting a DISPOSITION / completing a work unit / writing a status report — **before** emitting `TYPE: MISSION_CLOSEOUT`, ending the Cowork stream, **or going quiet** (ending the tool loop with no further poll/commission):
+Read **after** landing a roadmap row / posting a DISPOSITION / completing a work unit / writing a status report — **before** emitting `TYPE: MISSION_CLOSEOUT`, ending the Cowork stream, **or going quiet** (ending the tool loop with no further closeout-wake harvest/commission):
 
 1. Is this private `request` lane **persistent** (tag `bus_lifecycle:persistent`, or equivalent standing long-lived operator-proxy lane) **and** is this CSE the continuing **long-lived operator** for that lane?
 2. **YES → carve-out:** stop only for arc end, forced refresh, or operator gate; else Leg.
 3. **One-shot wake only:** if a named job is still in flight when the tool loop ends, arm one one-shot `send_later` (≤15 min) for that harvest. Do not arm Monitor. Do not re-arm as a heartbeat. Delete only trigger ids this seat recorded; never delete all `send_later`.
 4. **NO → episodic exit-as-default stands**.
 
-**Concrete:** landed row + urge to rest ⇒ Leg; poll, harvest, or commission next; one-shot wake only when a named job is still in flight.
+**Concrete:** landed row + urge to rest ⇒ Leg; harvest on closeout wake, or commission next; one-shot wake only when a named job is still in flight.
 
 ### Self-scheduled wake (depth — guide `cortex://notes/system/specs/cdp-seat-wake-heartbeat.md`)
 
