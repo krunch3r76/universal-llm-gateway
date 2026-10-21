@@ -44,39 +44,81 @@ async def gather_impresario_ear_context(
         except Exception as exc:  # noqa: BLE001
             bundle["tape"] = {"error": type(exc).__name__}
 
+    policy: dict[str, Any] = {}
     try:
+        from bus_watch.digest_budget import effective_policy
+        from bus_watch.fable_lock import WATCH_DIR, read_lock
         from bus_watch.ide_budget import measure_ide_tab
+        from bus_watch.tick_state import load_state
 
+        state_path = WATCH_DIR / f"liaison-{root_thread}.tick.json"
+        state = load_state(state_path)
+        policy = effective_policy(state)
+        lock = read_lock(root_thread)
         bundle["jsonl"] = await asyncio.to_thread(
-            measure_ide_tab, root_thread, register="attended"
+            measure_ide_tab, root_thread, lock, policy
         )
+    except TypeError:
+        raise
     except Exception as exc:  # noqa: BLE001
         bundle["jsonl"] = {"error": type(exc).__name__}
 
     bundle["continuity"] = {"checkpoint_present": True}
 
-    probe = cdp_probe
-    if probe is None:
-        async def _default_probe() -> dict[str, Any]:
-            from cursor_bridge.glass_services_js import probe_glass_composer_budget_js
+    if cdp_probe is not None:
+        bundle["cdp"]["attempted"] = True
+        try:
+            cdp_out = await cdp_probe()
+            bundle["cdp"] = {"attempted": True, "ok": True, "payload": cdp_out}
+        except Exception as exc:  # noqa: BLE001
+            bundle["cdp"] = {
+                "attempted": True,
+                "ok": False,
+                "error": type(exc).__name__,
+            }
+    else:
+        jsonl = bundle["jsonl"]
+        transcript_id = (
+            str((jsonl or {}).get("transcript_id") or "")
+            if isinstance(jsonl, dict)
+            else ""
+        )
+        gui_host = str(policy.get("gui_host") or ":8")
+        if not transcript_id:
+            bundle["cdp"] = {
+                "attempted": False,
+                "ok": False,
+                "error": "no_transcript_id",
+            }
+        else:
+            bundle["cdp"]["attempted"] = True
+            try:
+                from bus_watch.ide_budget import probe_glass_composer_budget
 
-            return await asyncio.wait_for(
-                asyncio.to_thread(probe_glass_composer_budget_js, root_thread),
-                timeout=_CDP_BUDGET_S,
-            )
-
-        probe = _default_probe
-
-    bundle["cdp"]["attempted"] = True
-    try:
-        cdp_out = await probe()
-        bundle["cdp"] = {"attempted": True, "ok": True, "payload": cdp_out}
-    except Exception as exc:  # noqa: BLE001
-        bundle["cdp"] = {
-            "attempted": True,
-            "ok": False,
-            "error": type(exc).__name__,
-        }
+                cdp_out = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        probe_glass_composer_budget, transcript_id, gui_host
+                    ),
+                    timeout=_CDP_BUDGET_S,
+                )
+                if cdp_out is None:
+                    bundle["cdp"] = {
+                        "attempted": True,
+                        "ok": False,
+                        "error": "unreachable",
+                    }
+                else:
+                    bundle["cdp"] = {
+                        "attempted": True,
+                        "ok": True,
+                        "payload": cdp_out,
+                    }
+            except Exception as exc:  # noqa: BLE001
+                bundle["cdp"] = {
+                    "attempted": True,
+                    "ok": False,
+                    "error": type(exc).__name__,
+                }
     return bundle
 
 

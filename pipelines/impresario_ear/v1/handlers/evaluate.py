@@ -55,7 +55,19 @@ def _build_evaluate_prompt(
     trigger: str,
     gather: dict[str, Any],
 ) -> str:
-    gather_json = json.dumps({"mode": mode, "gather": gather}, default=str)[:12000]
+    gather_for_prompt = gather
+    if isinstance(gather, dict):
+        ordered: dict[str, Any] = {}
+        for key in ("jsonl", "cdp"):
+            if key in gather:
+                ordered[key] = gather[key]
+        for key, value in gather.items():
+            if key not in ordered:
+                ordered[key] = value
+        gather_for_prompt = ordered
+    gather_json = json.dumps(
+        {"mode": mode, "gather": gather_for_prompt}, default=str
+    )[:12000]
     instructions = (
         "You are the Impresario Ear critic evaluating house continuity.\n"
         f"Thread: {root_thread}\n"
