@@ -92,8 +92,6 @@ def _holder_view(
         url = str(raw).strip() if raw else None
     if not reg_id and not url:
         return None
-    from claude_bundles.cse_url import normalize_cse_url
-
     return {"registration_id": reg_id, "chat_url": normalize_cse_url(url or "") or url}
 
 
@@ -134,6 +132,13 @@ def finalize_lane_current_body(
         if "superseded_registry_row" not in (page.get("claims") or [])
         or "seat_holder" in (page.get("claims") or [])
     ]
+    active_candidates.sort(
+        key=lambda p: (
+            0 if p.get("in_flight") is True else (1 if p.get("in_flight") is None else 2),
+            0 if "registry_row" in (p.get("claims") or []) else 1,
+            str(p.get("chat_url") or ""),
+        )
+    )
     body["candidates"] = [dict(p) for p in active_candidates]
 
     if _wire_bytes(body) >= max_ambiguous_bytes and body.get("unclaimed_cse_urls"):
@@ -144,17 +149,17 @@ def finalize_lane_current_body(
         body["candidates"] = [_compact_candidate(c) for c in body["candidates"]]
 
     if _wire_bytes(body) >= max_ambiguous_bytes:
-        body["candidates_truncated"] = True
-        while body["candidates"] and _wire_bytes(body) >= max_ambiguous_bytes:
-            body["candidates"].pop()
-
-    if _wire_bytes(body) >= max_ambiguous_bytes:
         holder = body.get("seat_holder")
         if isinstance(holder, dict):
             body["seat_holder"] = {
                 "registration_id": holder.get("registration_id"),
                 "chat_url": holder.get("chat_url"),
             }
+
+    if _wire_bytes(body) >= max_ambiguous_bytes:
+        body["candidates_truncated"] = True
+        while body["candidates"] and _wire_bytes(body) >= max_ambiguous_bytes:
+            body["candidates"].pop()
 
     return body
 

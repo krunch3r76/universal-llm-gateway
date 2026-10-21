@@ -1581,9 +1581,6 @@ def test_l12_superseded_count_and_wire_cap_with_unclaimed() -> None:
 
     reg_urls = {f"act-{i}": active_urls[i] for i in range(2)}
 
-    class _Active:
-        pass
-
     active_regs = [_reg_row("act-0"), _reg_row("act-1")] + superseded
 
     def chat_url_for_registration(rid: str) -> str | None:
@@ -1751,3 +1748,45 @@ def test_l12_refused_to_http_body_ambiguous_attended_wire_cap() -> None:
         )
     )
     assert len(json.dumps(body).encode("utf-8")) < 1024
+
+
+def test_l12_refused_to_http_body_ambiguous_attended_with_conflict_wire_cap() -> None:
+    from cdp_ask.attended_operator import AttendedResolveRefused, refused_to_http_body
+
+    conflict_candidates = [
+        {
+            "registration_id": f"conflict-reg-{i:02d}",
+            "chat_url": _cse_url(100 + i),
+            "purpose": "operator-proxy",
+            "provenance": {"parent_thread_claim": LANE, "reason": "x" * 200},
+        }
+        for i in range(18)
+    ]
+    conflict = {
+        "chat_url": _cse_url(99),
+        "candidate_count": 18,
+        "candidates": conflict_candidates,
+        "provenance": {"source": "purpose_filtered_url_conflicts"},
+    }
+    candidates = [
+        {
+            "registration_id": f"reg-{i:02d}",
+            "chat_url": _cse_url(i),
+            "purpose": "operator-proxy",
+            "provenance": {"parent_thread_claim": LANE, "reason": "y" * 200},
+        }
+        for i in range(10)
+    ]
+    shadow = [_cse_url(800 + i) for i in range(12)]
+    body = refused_to_http_body(
+        AttendedResolveRefused(
+            code="ambiguous_attended",
+            candidates=candidates,
+            shadow_urls=shadow,
+            conflict=conflict,
+        )
+    )
+    assert len(json.dumps(body).encode("utf-8")) < 1024
+    assert body["conflict"]["candidate_count"] == 18
+    assert len(body["conflict"]["registration_ids"]) == 2
+    assert len(body["candidates"]) > 0

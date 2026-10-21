@@ -348,6 +348,13 @@ def test_successor_identity_lines_in_continuity_body() -> None:
     )
     assert "successor_registration_id: reg-abc" in body
     assert "successor_chat_url: https://claude.ai/cowork/cse_01test" in body
+    lines = body.splitlines()
+    reg_i = lines.index("successor_registration_id: reg-abc")
+    url_i = lines.index("successor_chat_url: https://claude.ai/cowork/cse_01test")
+    birth_id = parse_successor_birth_id(body)
+    assert birth_id is not None
+    birth_i = lines.index(f"successor_birth_id: {birth_id}")
+    assert reg_i < birth_i and url_i < birth_i and reg_i < url_i
     null_body = _cadence_body(
         successor_registration_id=None,
         successor_chat_url="",
@@ -364,6 +371,11 @@ def test_operator_proxy_mission_no_resolve_attended_at_boot() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     assert 'cse_session(op="resolve_attended") at boot' in out
     assert "Hard refusals" in out
+    parts = out.split("## Hard refusals")
+    assert len(parts) == 2
+    needle = 'cse_session(op="resolve_attended")'
+    assert needle in parts[0]
+    assert needle in parts[1]
 
 
 def _mcp_tools_on_path() -> None:

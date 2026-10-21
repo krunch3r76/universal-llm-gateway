@@ -17,6 +17,8 @@ from claude_bundles.cse_idle_probe import probe_page_liveness_sync
 from claude_bundles.cse_url import normalize_cse_url
 
 from cdp_ask.lane_current_cse_cap import (
+    PageProbe,
+    PurposeFor,
     _harvested_holder,
     _holder_view,
     _iso_utc,
@@ -27,10 +29,8 @@ from cdp_ask.lane_current_cse_cap import (
     select_lane_current,
 )
 
-PageProbe = Callable[[int, str], tuple[dict[str, Any] | None, bool]]
 ProvenanceFor = Callable[[str], dict[str, Any] | None]
 ListPages = Callable[[], Iterator[tuple[int, str, str | None]]]
-PurposeFor = Callable[[str], str | None]
 
 
 def enumerate_live_cse_pages() -> Iterator[tuple[int, str, str | None]]:
@@ -208,7 +208,6 @@ def _resolve(
         chat_url_for_registration=chat_url_for_registration,
         purpose_for_registration=purpose_for_registration,
     )
-    superseded_anon_pages = 0
     claimed, unclaimed = collect_claimed_pages(
         lane=lane,
         grouped=grouped,
@@ -259,16 +258,12 @@ def _resolve(
     for page in claimed:
         if "superseded_registry_row" not in (page.get("claims") or []):
             continue
-        page_rids = page.get("registration_ids") or []
-        if page_rids:
-            for prid in page_rids:
-                s = str(prid or "").strip()
-                if s:
-                    superseded_reg_ids.add(s)
-        else:
-            superseded_anon_pages += 1
+        for prid in page.get("registration_ids") or []:
+            s = str(prid or "").strip()
+            if s:
+                superseded_reg_ids.add(s)
 
-    superseded_count = len(superseded_reg_ids) + superseded_anon_pages
+    superseded_count = len(superseded_reg_ids)
 
     body: dict[str, Any] = {
         "parent_thread": lane,
