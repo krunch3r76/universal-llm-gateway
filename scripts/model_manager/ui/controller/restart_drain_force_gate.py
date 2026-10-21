@@ -23,19 +23,11 @@ from .restart_drain_force_notice import (
 logger = get_logger(__name__)
 
 
-def schedule_force_gate_notice(**kwargs: Any) -> None:
-    """Post the force-gate notice, then flush owed wakes.
-
-    The public name is what tests patch. ``_schedule_force_gate_notice`` is
-    the same function so the owed-wake wrapper stays one hop.
-    """
+def _schedule_force_gate_notice(**kwargs: Any) -> None:
     _schedule_force_gate_notice_impl(**kwargs)
     from .owed_wake_ledger import schedule_owed_wake_flush
 
     schedule_owed_wake_flush()
-
-
-_schedule_force_gate_notice = schedule_force_gate_notice
 
 
 REFUSE_REASON = "force_requires_reason"
@@ -93,7 +85,7 @@ async def refuse_force_without_reason(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force refused ({service} {action})",
         body=body,
@@ -147,7 +139,7 @@ async def audit_and_notice_forced_restart(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force restart ({service} {action})",
         body=body,
@@ -242,7 +234,7 @@ async def refuse_force_in_flight(
         caller_dispatch_id=caller_dispatch_id,
         holder=holder,
     )
-    schedule_force_gate_notice(
+    _schedule_force_gate_notice(
         thread_id=thread_id,
         subject=f"manage force refused ({service} {action})",
         body=body,

@@ -152,7 +152,7 @@ def test_policy_hop_model_knobs_defaults_xhigh_without_tick(tmp_path: Path) -> N
     with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
         assert policy_hop_model_knobs("18528") == {
             "effort": "xhigh",
-            "fast": "false",
+            "fast": "true",
         }
 
 

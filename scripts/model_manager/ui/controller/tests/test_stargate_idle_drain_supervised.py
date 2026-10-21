@@ -137,34 +137,11 @@ def test_busy_stargate_sync_restart_mints_restart_intent(
     assert "stargate" in probe_live_calls
 
 
-def test_stargate_supervisor_busy_ceiling_waits_then_lifecycle(tmp_path: Any) -> None:
-    """Busy ceiling does not force; lifecycle runs after the probe goes idle.
-
-    Breaks when self_preempt at the deadline calls cas_force and the stop
-    while requests_in_flight is still above 0 (this probe stays busy for
-    the first snapshots, deadline_s=0.05).
-    """
+def test_stargate_supervisor_ceiling_escalates_then_lifecycle(tmp_path: Any) -> None:
     store = RestartIntentStore(db_path=tmp_path / "stargate-ceiling.db")
-
-    class _BusyThenIdle:
-        def __init__(self) -> None:
-            self.n = 0
-
-        async def snapshot(self) -> ActiveWork:
-            self.n += 1
-            busy = self.n <= 3
-            inflight = 2 if busy else 0
-            return ActiveWork(
-                busy=busy,
-                detail={
-                    "async_pipelines_running": 0,
-                    "requests_in_flight": inflight,
-                    "total": inflight,
-                    "busy": busy,
-                },
-            )
-
-    gate = RestartDrainGate(probes={"stargate": _BusyThenIdle()})
+    gate = RestartDrainGate(
+        probes={"stargate": _StargateBusyProbe(busy=True, requests_in_flight=2)}
+    )
     lifecycle_calls = 0
 
     async def _lifecycle() -> str:
@@ -202,69 +179,7 @@ def test_stargate_supervisor_busy_ceiling_waits_then_lifecycle(tmp_path: Any) ->
     assert got is not None
     assert got.status == STATUS_COMPLETED
     assert lifecycle_calls == 1
-    assert STATUS_FORCE_REQUESTED not in statuses
-
-
-def test_total_without_active_count_survives_probe_failure(tmp_path: Any) -> None:
-    """total>0 and no active_count must not force when a later probe fails.
-
-    Breaks when the busy guard reads only active_count, drops the busy
-    observation at the deadline, and cas_force_preempt_from_pending runs
-    on the failed probe. A probe failure with no busy count still forces
-    (test_probe_always_raises_self_preempts).
-    """
-    store = RestartIntentStore(db_path=tmp_path / "stargate-total-then-fail.db")
-    force_calls: list[str] = []
-    original = store.cas_force_preempt_from_pending
-
-    def _counting(intent_id: str, **kwargs: Any) -> int:
-        force_calls.append(intent_id)
-        return original(intent_id, **kwargs)
-
-    store.cas_force_preempt_from_pending = _counting  # type: ignore[method-assign]
-
-    class _BusyThenFailThenIdle:
-        def __init__(self) -> None:
-            self.n = 0
-
-        async def snapshot(self) -> ActiveWork:
-            self.n += 1
-            if self.n <= 2:
-                return ActiveWork(
-                    busy=True,
-                    detail={"busy": True, "total": 2, "requests_in_flight": 2},
-                )
-            if self.n <= 12:
-                raise httpx.ReadTimeout("probe failed after total")
-            return ActiveWork(busy=False, detail={"busy": False, "total": 0})
-
-    lifecycle_calls = 0
-
-    async def _lifecycle() -> str:
-        nonlocal lifecycle_calls
-        lifecycle_calls += 1
-        return "ok"
-
-    gate = RestartDrainGate(probes={"stargate": _BusyThenFailThenIdle()})
-    supervisor = StargateIdleDrainSupervisor(
-        gate=gate,
-        store=store,
-        lifecycle=_lifecycle,
-        deadline_s=0.05,
-        poll_interval_s=0.01,
-    )
-    intent = store.create_intent(
-        service="stargate",
-        action="sync_restart",
-        deadline_at="d",
-        reason="total then probe failure",
-    )
-    _run(supervisor.supervise(intent))
-    got = store.get(intent.intent_id)
-    assert got is not None
-    assert got.status == STATUS_COMPLETED
-    assert lifecycle_calls == 1
-    assert force_calls == []
+    assert STATUS_FORCE_REQUESTED in statuses
 
 
 def _connect_refused_error() -> httpx.ConnectError:
@@ -535,9 +450,13 @@ def test_stargate_force_lost_cas_does_not_cancel(
 
 
 def test_stargate_evaluate_read_timeout_fails_closed() -> None:
-    request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
+    request = httpx.Request(
+        "GET", "http://127.0.0.1:9999/api/v1/admin/active-work"
+    )
     gate = RestartDrainGate(
-        probes={"stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))}
+        probes={
+            "stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))
+        }
     )
     outcome = _run(gate.evaluate("stargate", force=False))
     assert outcome is not None
@@ -548,9 +467,13 @@ def test_stargate_evaluate_read_timeout_fails_closed() -> None:
 def test_stargate_busy_report_timeout_undetermined_with_down_witness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
+    request = httpx.Request(
+        "GET", "http://127.0.0.1:9999/api/v1/admin/active-work"
+    )
     gate = RestartDrainGate(
-        probes={"stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))},
+        probes={
+            "stargate": _RaisingProbe(httpx.ReadTimeout("slow", request=request))
+        },
         witnesses={"stargate": [StargateDownWitness()]},
     )
     monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: False)

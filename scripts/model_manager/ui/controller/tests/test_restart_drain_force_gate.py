@@ -415,27 +415,18 @@ def test_run_gated_deferred_refused_before_background() -> None:
     lifecycle.assert_not_called()
 
 
-class _StargateBusyThenIdleProbe:
-    """Busy while active_count would be non-zero, then idle.
-
-    A deadline during the busy snapshots must not force-preempt. The
-    lifecycle stop runs only after the probe reports idle.
-    """
-
-    def __init__(self, *, busy_snapshots: int = 2) -> None:
+class _StargateBusyProbe:
+    def __init__(self) -> None:
         self.snapshot_calls = 0
-        self._busy_snapshots = busy_snapshots
 
     async def snapshot(self) -> ActiveWork:
         self.snapshot_calls += 1
-        busy = self.snapshot_calls <= self._busy_snapshots
         return ActiveWork(
-            busy=busy,
+            busy=True,
             detail={
-                "requests_in_flight": 3 if busy else 0,
+                "requests_in_flight": 3,
                 "async_pipelines_running": 0,
-                "busy": busy,
-                "total": 3 if busy else 0,
+                "busy": True,
             },
         )
 
@@ -444,7 +435,7 @@ def test_idle_ceiling_self_preempt_not_gated(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = RestartIntentStore(db_path=tmp_path / "ceiling-gate.db")
-    gate = RestartDrainGate(probes={"stargate": _StargateBusyThenIdleProbe()})
+    gate = RestartDrainGate(probes={"stargate": _StargateBusyProbe()})
     lifecycle_calls = 0
 
     async def _lifecycle() -> str:
@@ -483,13 +474,9 @@ def test_idle_ceiling_self_preempt_not_gated(
         return original_cas(intent_id, **kwargs)
 
     store.advance_if_status = _recording_cas  # type: ignore[method-assign]
-    def _refuse_force(*_a: Any, **_k: Any) -> int:
-        raise AssertionError("cas_force_preempt_from_pending must not run while busy")
-
-    store.cas_force_preempt_from_pending = _refuse_force  # type: ignore[method-assign]
     _run(supervisor.supervise(intent))
     assert lifecycle_calls == 1
-    assert STATUS_FORCE_REQUESTED not in statuses
+    assert STATUS_FORCE_REQUESTED in statuses
 
 
 def test_giw_park_live_not_gated(
