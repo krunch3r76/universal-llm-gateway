@@ -47,7 +47,7 @@ agent_id: <uuid>
 root_thread: <root-thread>
 card_uri: notes/checkpoints/<house>.md
 verify_lane: <verify-lane>
-transcribed_ref: notes/system/tape/pours/<surface>/<transcript_id>.messages.json
+transcribed_ref: notes/system/checkpoints/grok/<agent>/<n>.messages.json
 transcribed_sha256: <sha256>
 bus_identity: <bus-identity>
 verifier: <verifier>
@@ -58,7 +58,7 @@ opened_at: "2026-01-01T00:00:00Z"
 
 Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`, uuid-shaped, and equal to `agent_id` for grok. Mint a uuid5 when the platform native id is not a uuid. Mismatch refuses `admit.transcript_id_mismatch`.
 
-Canonical pour: `notes/system/tape/pours/<surface>/<transcript_id>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`.
+Canonical checkpoint transcription: `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`. `raw_ref` is the seal-mode slot for a pour whose `meta.provenance` is `raw`. It is not the verbatim export.
 
 ## Writing the handoff letter
 
@@ -68,7 +68,9 @@ Canonical pour: `notes/system/tape/pours/<surface>/<transcript_id>.messages.json
 
 `state` should be one string. The pipeline normalises objects (dict or list) into a single string; the sha is over the normalised form. Mission stays one line: a string mission that contains a newline still refuses. `next_acts` is a non-empty list of the first acts the successor takes; at least one act must be non-blank (`""`, `[""]` and whitespace-only acts refuse `next_acts`). `in_flight`, `rulings`, and `files` are author guidance and are not checked. `load_bearing` MUST carry the standing rules a successor cannot infer: dispatch lane/model conventions, land gate, scope and off-limits, send/outbound rules, and operator-gated items. An empty list still needs a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB, checked at admit and again after the binding stamp (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
 
-The harvest needs a Grok Bot seat (`ReadTranscript`; executors and subagents cannot page). Store the verbatim export at `notes/system/checkpoints/grok/<agent>/<n>.raw.json` and the `ulg.continuity.messages/1` transcription (structured `tool_use`, `tool_result`, and `thinking` blocks) at `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. `raw_ref` / `raw_sha256` point at the raw file. Do not write `notes/system/tape/captures/grok` or `notes/system/tape/pours/grok`. Electron page scrape is only `fallback=electron`, and that branch also writes under `checkpoints/grok/`. A tape path without that fallback refuses `harvest.tape_refused`. Worked recipe: cortex `runbook:grokbot-checkpoint-caller` § Harvest needs a Grok Bot seat. `verify_resume` needs `expected_card_sha256`. A Cursor-era card with no checkpoint log gets that header on `n=1` in the same sha-guarded write; `n` greater than 1 without a log still refuses `card.body_invalid`.
+The harvest needs a Grok Bot seat (`ReadTranscript`; executors and subagents cannot page). Write each page with `write_to_file` into `notes/system/checkpoints/grok/<agent>/<n>.pages/p{lo:06d}-{hi:06d}.txt`. Do not hand-assemble the pages. `harvest_seal` stitches that folder. It writes verbatim bytes to `notes/system/checkpoints/grok/<agent>/<n>.raw.json` (a later n is a byte prefix extension of `<n-1>.raw.json`) and the `ulg.continuity.messages/1` transcription at `<n>.messages.json`. A later checkpoint pages only forward of `<n-1>.messages.json` `meta.sources[0].window.hi`. Do not write `notes/system/tape/captures/grok` or `notes/system/tape/pours/grok`. Refusals include `harvest.raw_conflict`, `harvest.page_gap`, `harvest.page_total`, `harvest.page_overlap`, and `harvest.no_prior`.
+
+A personal seat with no agent-bus house sets `houseless: true` (or `house: none`) on `mode: harvest_seal`. Without that opt-in, a missing house still refuses `admit.house`. The opt-in writes the same `<n>.raw.json` and `<n>.messages.json`. It skips envelope, seal, card, CHECKPOINT, FACT, await_verify, and verify_resume. It does not require `dispatch_thread_id`, `verify_lane`, or `verifier`. The result sets `houseless: true` and `skipped_steps`. Omit `n` and the pipeline uses one past the highest `<n>.raw.json` or `<n>.messages.json` already in that agent folder. A supplied `n` greater than that next index refuses `admit.n`. Setting both a house name and `houseless: true` refuses `admit.houseless_conflict`. Electron page scrape is only `fallback=electron`, and that branch also writes under `checkpoints/grok/`. A tape path without that fallback refuses `harvest.tape_refused`. Worked recipe: cortex `runbook:grokbot-checkpoint-caller` § Harvest needs a Grok Bot seat. `verify_resume` needs `expected_card_sha256`. A Cursor-era card with no checkpoint log gets that header on `n=1` in the same sha-guarded write; `n` greater than 1 without a log still refuses `card.body_invalid`.
 
 A stale letter refuses `post.handoff_stale` at the envelope step, before any snapshot, seal, card row, CHECKPOINT, or FACT. Re-run with a corrected letter for the same n. The transcript wins on facts. The letter wins on intent.
 

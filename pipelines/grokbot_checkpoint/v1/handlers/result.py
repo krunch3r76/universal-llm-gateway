@@ -69,9 +69,16 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             verify_ok = None
             if verify_resume and not verify_resume.get("_skipped"):
                 verify_ok = verify_resume.get("refused") is None
+            cap_kind = "grok_export"
+            if isinstance(cap, dict) and cap.get("kind"):
+                cap_kind = str(cap["kind"])
+            raw_field = str(
+                harvest_normalise.get("raw_ref") or harvest_normalise.get("l0_ref")
+            )
             harvest_record = format_harvest_record(
-                l0_ref=str(harvest_normalise.get("l0_ref")),
+                l0_ref=raw_field,
                 l0_sha256=str(harvest_normalise.get("l0_sha256")),
+                capture_kind=cap_kind,
                 pages=int(harvest_normalise.get("pages") or 0),
                 l0_bytes=int(harvest_normalise.get("l0_bytes") or 0),
                 truncated_parts=int(source.get("truncated_parts") or 0),
@@ -137,6 +144,20 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "warnings": warnings,
         "notices": notices,
         "harvest_record": harvest_record,
+        "houseless": bool(admit.get("houseless")),
+        "skipped_steps": (
+            [
+                "envelope",
+                "seal",
+                "card",
+                "post",
+                "fact",
+                "await_verify",
+                "verify_resume",
+            ]
+            if admit.get("houseless")
+            else []
+        ),
     }
 
 

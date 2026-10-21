@@ -170,6 +170,13 @@ def _render_key(
             return chat_id
         dispatch_thread_id = getattr(pipeline_context, "dispatch_thread_id", None)
         if not dispatch_thread_id:
+            opts = getattr(pipeline_context, "runtime_options", None)
+            if isinstance(opts, dict):
+                house = str(opts.get("house") or "").strip().lower()
+                houseless = opts.get("houseless") is True or house == "none"
+                agent = str(opts.get("agent_id") or "").strip()
+                if houseless and agent:
+                    return f"houseless:{agent}"
             raise ValueError(
                 f"Pipeline {pipeline.id!r}: concurrency.key references "
                 f"{{context.dispatch_thread_id}} but request did not provide "

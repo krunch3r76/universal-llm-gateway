@@ -12,7 +12,10 @@ from ._harvest import stage_grok_pour
 
 
 async def run_harvest_pour(
-    options: dict[str, Any], adapter: dict[str, Any], fs: Any
+    options: dict[str, Any],
+    adapter: dict[str, Any],
+    fs: Any,
+    normalise: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if adapter.get("refused"):
         return refuse("envelope.upstream_skipped", "adapter refused")
@@ -25,7 +28,20 @@ async def run_harvest_pour(
         return refuse("pour.schema", "adapter produced no envelope")
     n = int(options.get("n") or 1)
     l0_ref = str(options.get("l0_ref") or "").strip()
-    raw_bytes = await fs.read(l0_ref) if l0_ref else None
+    from .harvest_normalise import load_raw_for_pour
+
+    loaded = await load_raw_for_pour(options, fs)
+    if isinstance(loaded, dict) and loaded.get("refused"):
+        return loaded
+    raw_bytes = loaded if isinstance(loaded, bytes) else None
+    if raw_bytes is None:
+        return refuse("source.missing", f"L0 capture {l0_ref} absent")
+    from ._clients import file_sha256
+
+    digest = file_sha256(raw_bytes)
+    sealed = str((normalise or {}).get("l0_sha256") or "").strip()
+    if sealed and digest != sealed:
+        return refuse("source.sha_mismatch", f"{digest} != {sealed}")
     return await stage_grok_pour(
         fs,
         agent_id,
@@ -45,5 +61,6 @@ class GrokbotCheckpointHarvestPourHandler(BaseHandler):
         options = dict(getattr(context, "options", {}) or {})
         outputs = getattr(context, "outputs", {}) or {}
         adapter = step_output_json(outputs, "harvest_adapter")
-        payload = await run_harvest_pour(options, adapter, fs_of(context))
+        normalise = step_output_json(outputs, "harvest_normalise")
+        payload = await run_harvest_pour(options, adapter, fs_of(context), normalise)
         return StepOutput(raw="", json=payload)

@@ -23,6 +23,7 @@ class MemFs:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.writes: list[str] = []
+        self.dirs: set[str] = set()
 
     async def read(self, rel: str) -> bytes | None:
         return self.files.get(rel)
@@ -52,6 +53,19 @@ class MemFs:
         self.files[rel] = data
         self.writes.append(rel)
         return {"ok": True, "conflict": False, "sha256": file_sha256(data)}
+
+    async def list(self, rel: str) -> list[str] | None:
+        prefix = rel.removeprefix("cortex://").removeprefix("workspaces://").rstrip("/")
+        if prefix in self.files:
+            return None
+        kids = [
+            key
+            for key in self.files
+            if key.startswith(prefix + "/") and "/" not in key[len(prefix) + 1 :]
+        ]
+        if not kids and not getattr(self, "dirs", set()).__contains__(prefix):
+            return None
+        return sorted(kids)
 
 
 @pytest.fixture

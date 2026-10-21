@@ -22,6 +22,29 @@ _PATH_KEYS = (
 )
 
 
+def _checkpoint_prefix(agent_id: str) -> str:
+    return f"notes/system/checkpoints/grok/{agent_id.strip()}/"
+
+
+async def _max_n(fs: Any, agent_id: str) -> int:
+    import re
+
+    names = await fs.list(_checkpoint_prefix(agent_id).rstrip("/"))
+    best = 0
+    if not names:
+        return 0
+    for name in names:
+        base = name.rsplit("/", 1)[-1]
+        match = re.fullmatch(r"(\d+)\.(?:raw|messages)\.json", base)
+        if match:
+            best = max(best, int(match.group(1)))
+    return best
+
+
+async def _next_n(fs: Any, agent_id: str) -> int:
+    return await _max_n(fs, agent_id) + 1
+
+
 def fact_subject(options: dict[str, Any]) -> str:
     house = str(options.get("house") or "")
     n = options.get("n")
@@ -52,15 +75,33 @@ async def run_admit(
             f"mode {mode!r} not in light|seal|verify_resume|harvest_seal",
         )
     house = str(options.get("house") or "").strip()
-    if not house:
+    houseless = options.get("houseless") is True or house.lower() == "none"
+    if houseless and mode != "harvest_seal":
+        return refuse("admit.houseless_mode", "houseless is only valid in harvest_seal")
+    if houseless and house and house.lower() != "none":
+        return refuse("admit.houseless_conflict", "house and houseless both set")
+    if not houseless and not house:
         return refuse("admit.house", "house required")
+    if houseless:
+        house = ""
+        options["house"] = ""
     n = options.get("n")
+    if n is None and houseless and fs is not None:
+        n = await _next_n(fs, str(options.get("agent_id") or ""))
+        options["n"] = n
     if isinstance(n, bool) or not isinstance(n, int) or n < 1:
         return refuse("admit.n", "n must be an int >= 1")
+    if houseless and fs is not None:
+        have = await _max_n(fs, str(options.get("agent_id") or ""))
+        if n > have + 1:
+            return refuse("admit.n", f"n {n} skips checkpoint {have + 1}")
     for path in _paths(options):
         if not rel_path_ok(path):
             return refuse("admit.path_escape", f"refused path {path}")
-    if mode in ("seal", "harvest_seal") and not str(options.get("agent_id") or "").strip():
+    if (
+        mode in ("seal", "harvest_seal")
+        and not str(options.get("agent_id") or "").strip()
+    ):
         return refuse("admit.agent_id", "agent_id required in seal mode")
     if mode == "harvest_seal" and not str(options.get("l0_ref") or "").strip():
         return refuse("source.no_pour", "harvest_seal requires l0_ref")
@@ -128,6 +169,7 @@ async def run_admit(
             "n": n,
             "mode": mode,
             "agent_id": agent_id,
+            "houseless": houseless,
             "completed_steps": ["admit"],
             **advisory,
         }
@@ -138,6 +180,7 @@ async def run_admit(
         "n": n,
         "mode": mode,
         "agent_id": agent_id,
+        "houseless": houseless,
         **advisory,
     }
 
@@ -147,7 +190,13 @@ class GrokbotCheckpointAdmitHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
-        if not str(getattr(context, "dispatch_thread_id", "") or "").strip():
+        options_peek = dict(getattr(context, "options", {}) or {})
+        house_peek = str(options_peek.get("house") or "").strip().lower()
+        houseless_peek = options_peek.get("houseless") is True or house_peek == "none"
+        if (
+            not houseless_peek
+            and not str(getattr(context, "dispatch_thread_id", "") or "").strip()
+        ):
             return StepOutput(
                 raw="",
                 json=refuse(

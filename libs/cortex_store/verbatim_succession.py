@@ -273,11 +273,15 @@ def build_seal_envelope_meta(
     effective_surface = surface if surface is not None else envelope.meta.surface
     # Only grok keeps its surface; cursor/claude_ai/mixed/empty stay cursor (legacy).
     stamped_surface = "grok" if effective_surface == "grok" else "cursor"
+    # A structured grok envelope already carries tools=openai. Do not stamp
+    # marker over it. The marker default remains for envelopes with no tools.
+    incoming = envelope.meta.tools
+    effective_tools = incoming if incoming not in (None, "", "none") else tools
     meta = envelope.meta.model_copy(
         update={
             "surface": stamped_surface,
             "session_id": session_id,
-            "tools": tools,
+            "tools": effective_tools,
             "sealed_at": sealed_at,
             "messages_sha256": sha,
             "turn_count": envelope.meta.turn_count,

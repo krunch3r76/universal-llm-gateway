@@ -68,7 +68,17 @@ class ChatCompletionRequest(BaseModel):
     def model_post_init(self, __context) -> None:
         """Validate that either messages or prompt is provided"""
         if not self.messages and not self.prompt:
-            raise ValueError("Either 'messages' or 'prompt' field must be provided")
+            extra = self.__pydantic_extra__ or {}
+            po = extra.get("pipeline_options")
+            if not isinstance(po, dict):
+                po = {}
+            harvest = (
+                self.model == "grokbot-checkpoint-v1"
+                and po.get("mode") == "harvest_seal"
+                and str(po.get("l0_ref") or "").strip()
+            )
+            if not harvest:
+                raise ValueError("Either 'messages' or 'prompt' field must be provided")
         if self.messages and self.prompt:
             raise ValueError("Cannot provide both 'messages' and 'prompt' fields")
 

@@ -128,14 +128,10 @@ async def stage_grok_pour(
         return refuse("harvest.tape_refused", uri)
     if raw_bytes is not None:
         raw_uri = checkpoint_raw_uri(agent_id, n)
-        bare_l0 = l0_ref.removeprefix("cortex://").removeprefix("workspaces://")
         raw_written = await fs.write(raw_uri, raw_bytes, if_absent=True)
         if not raw_written.get("ok"):
             existing_raw = await fs.read(raw_uri)
-            same = existing_raw == raw_bytes or (
-                bare_l0 == raw_uri and existing_raw is not None
-            )
-            if not same:
+            if existing_raw != raw_bytes:
                 return refuse("harvest.raw_conflict", "raw checkpoint bytes differ")
     raw = dumps(envelope)
     existing = await fs.read(uri)
@@ -222,6 +218,7 @@ def format_harvest_record(
     source_sha256: str,
     adapter_read_sha256: str,
     capture_sha256: str,
+    capture_kind: str = "grok_export",
     session_id: str | None = None,
     cp_turn: Any = None,
     fact_turn: Any = None,
@@ -234,7 +231,8 @@ def format_harvest_record(
         f"messages {l1_ref}@{l1_sha256} messages_sha256={messages_sha256} "
         f"source_sha256={source_sha256} coverage=full · "
         f"adapter {adapter_read_sha256} · "
-        f"capture:dom_harvest@{cap12}~pseudo"
+        f"capture:{capture_kind}@{cap12}"
+        + ("~pseudo" if capture_kind == "dom_harvest" else "")
     )
     if session_id:
         vr = verify_resume_ok if verify_resume_ok is not None else False

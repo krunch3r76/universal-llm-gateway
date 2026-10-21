@@ -80,3 +80,16 @@ def test_seal_stamps_digest_session_and_time_unchanged() -> None:
     assert sealed.meta.session_id == _SESSION_ID
     assert sealed.meta.sealed_at == _SEALED_AT
     assert sealed.meta.message_count == len(_MESSAGES)
+    assert sealed.meta.tools == "marker"
+
+
+def test_structured_grok_keeps_openai_over_marker_stamp() -> None:
+    env = _envelope(surface="grok")
+    env.meta.tools = "openai"
+    block = [{"type": "thinking", "thinking": "x"}, {"type": "tool_use", "id": "t", "name": "n", "input": {}}]
+    env.messages = [{"role": "assistant", "content": block}]
+    sealed = build_seal_envelope_meta(
+        env, session_id=_SESSION_ID, sealed_at=_SEALED_AT, tools="marker"
+    )
+    assert sealed.meta.tools == "openai"
+    assert sealed.messages[0]["content"] == block

@@ -274,3 +274,19 @@ async def test_dispatch_thread_id_placeholder_resolves() -> None:
         assert backend._gates.get("dispatch:arc-42") is not None  # noqa: SLF001
 
     assert backend.gates_alive == 0
+
+
+@pytest.mark.asyncio
+async def test_houseless_key_without_dispatch_thread() -> None:
+    pipeline = _make_pipeline(
+        concurrency={"key": "grokbot-cp:{context.dispatch_thread_id}"}
+    )
+    context = _make_context(chat_id=None, dispatch_thread_id=None)
+    context.runtime_options = {
+        "houseless": True,
+        "agent_id": "68757fe5-d68e-43f6-8708-6abd160bf205",
+        "mode": "harvest_seal",
+    }
+    backend = InProcessConcurrencyBackend()
+    async with maybe_concurrency_gate(pipeline, context, backend):
+        assert any(key.startswith("grokbot-cp:houseless:") for key in backend._gates)

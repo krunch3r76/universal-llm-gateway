@@ -104,6 +104,21 @@ class RootFs:
             return None
         return path.read_bytes()
 
+    async def list(self, rel: str) -> list[str] | None:
+        """Cortex-relative file paths under ``rel``, or None when it is not a directory."""
+        try:
+            path = _share_path(rel if "://" in rel else f"cortex://{rel}")
+            root = _share_path("cortex://")
+        except (ValueError, OSError) as exc:
+            raise FsClientMissingError(str(exc)) from exc
+        if not path.is_dir():
+            return None
+        found: list[str] = []
+        for child in path.iterdir():
+            if child.is_file():
+                found.append(str(child.relative_to(root)))
+        return sorted(found)
+
     async def write(
         self,
         rel: str,

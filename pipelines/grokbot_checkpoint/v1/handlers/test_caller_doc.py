@@ -118,5 +118,7 @@ def test_caller_doc_letter_guidance() -> None:
 def test_caller_doc_paths() -> None:
     text = _doc()
     assert "notes/system/seals/<sid>.messages.json" in text
-    assert "tape/pours/<surface>/<transcript_id>.messages.json" in text
+    assert "notes/system/checkpoints/grok/<agent>/<n>.messages.json" in text
+    assert "tape/pours/<surface>/<transcript_id>.messages.json" not in text
+    assert "houseless: true" in text
     assert "notes/system/transcripts/" not in text
