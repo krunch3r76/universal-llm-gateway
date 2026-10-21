@@ -541,6 +541,10 @@ def test_outcome_table() -> None:
     assert classify_display(200, {"ok": False, "pasted": True, "delivered": False}, None)[0] == "unknown"
     assert classify_display(200, {"ok": False, "reason": "paste_failed", "pasted": False}, None)[0] == "unknown"
     assert classify_display(200, {"ok": False, "reason": "active_chat_busy", "pasted": False}, None)[0] == "pending"
+    assert classify_display(200, {"ok": False, "reason": "no_composer", "pasted": False}, None) == (
+        "pending",
+        "no_composer",
+    )
     assert classify_display(500, {"ok": False}, None)[0] == "unknown"
     err = httpx.ConnectError("down")
     assert classify_display(0, None, err)[0] == "pending"
@@ -1002,3 +1006,377 @@ def test_supervise_respawns_after_connect_error() -> None:
     asyncio.run(run())
 
 
+def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """18460#176 specimen: exact cursor route + subscribed agent_id + no_composer -> pending & unsubscribed."""
+    from unittest.mock import AsyncMock, patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from cursor_bridge import wake_delivery as wd
+    from cursor_bridge.chat_surface import classify_surface
+    from cursor_bridge.wake_delivery import deliver_wake
+
+    from bus_watch import ide_hop_land
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=18460, slug="maestro-general-work")
+    assert detail is not None
+    thread = str(detail["id"])
+    dead_agent_id = "4a3412d2-dd68-4510-9953-e92fe72cd720"
+    title = f"{thread} maestro-general-work"
+    sub_res = subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=title,
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    sub_row = sub_res["row"]
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REQUEST|freeform|decision:operator-observability-ledger — K43 of record",
+        body="TYPE: REQUEST\nBody",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [{"agent": "cursor", "thread_id": thread, "turn_id": turn_id, "turn_number": number}],
+        now="2026-10-20 22:59:56",
+    )
+    claimed = claim_due_wakes(now="2026-10-20 22:59:57")
+    assert claimed["wake_id"]
+
+    # Verify wake_delivery normalizes missing Glass composer handle to reason=no_composer
+    surface_match = classify_surface(
+        [],
+        [{"text": title, "selected": True, "agent_id": dead_agent_id}],
+        composer_draft="",
+    )
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(wd, "probe_surface", AsyncMock(return_value=surface_match))
+
+    class _NoHandleWS:
+        async def send(self, _raw: str) -> None:
+            return None
+
+        async def recv(self) -> str:
+            return '{"id": 1, "result": {"result": {"value": {"ok": false, "reason": "no_handle"}}}}'
+
+        async def __aenter__(self) -> _NoHandleWS:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *_a, **_kw: _NoHandleWS())
+    wake_out = asyncio.run(
+        deliver_wake(
+            display="8",
+            app="cursor",
+            thread=thread,
+            title=title,
+            agent_id=dead_agent_id,
+            turn=number,
+        )
+    )
+    assert wake_out["ok"] is False
+    assert wake_out["reason"] == "no_composer"
+    assert wake_out["expected_agent_id"] == dead_agent_id
+
+    unsub_calls: list[tuple[str, str, str | None, str | None]] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope, bound_by, evidence))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now="2026-10-20 22:59:57",
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=classify_display(200, wake_out, None),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+
+    with connect() as conn:
+        ledger_row = conn.execute(
+            "SELECT state, reason, route, subscription_id, finished_at "
+            "FROM endpoint_wake_ledger WHERE wake_id=?",
+            (claimed["wake_id"],),
+        ).fetchone()
+    assert ledger_row is not None
+    assert ledger_row["state"] == "pending"
+    assert ledger_row["reason"] == "no_composer"
+    assert ledger_row["route"] == "exact"
+    assert ledger_row["subscription_id"] == sub_row["id"]
+    assert ledger_row["finished_at"] == "2026-10-20 22:59:57"
+
+    assert len(unsub_calls) == 1
+    assert unsub_calls[0][0] == "cursor"
+    assert unsub_calls[0][1] == thread
+    assert resolve_endpoint("cursor", thread) is None
+    cur_sub = current_subscription("cursor", thread)
+    assert cur_sub is not None
+    assert cur_sub["state"] == "unsubscribed"
+
+
+def test_fired_hop_past_deadline_with_null_landed_transcript_drops_dead_agent_subscription(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fired hop with landed_transcript_id=None past deadline expires and unsubscribes dead agent_id."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+
+    from bus_watch import ide_hop_land
+    from bus_watch.ide_hop_land import (
+        expire_overdue_hop,
+        mark_fired,
+        read_hop_land,
+    )
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=18460, slug="maestro-general-work")
+    assert detail is not None
+    thread = str(detail["id"])
+    dead_agent_id = "4a3412d2-dd68-4510-9953-e92fe72cd720"
+    departing_id = "cded3450-5686-44c8-af7c-c1c7c4c43618"
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} maestro-general-work",
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    mark_fired(
+        root=thread,
+        tip_cp=153,
+        seal_bus_turn=153,
+        departing_transcript_id=departing_id,
+        fired_at=1000.0,
+        deadline_s=600.0,
+        message_path="liaison-18460-20261020T194538Z.md",
+        watch_dir=tmp_path,
+    )
+    # Before deadline (t=1500 < 1600): still fired, subscription still intact.
+    assert expire_overdue_hop(thread, now=1500.0, watch_dir=tmp_path) is None
+    assert resolve_endpoint("cursor", thread) is not None
+
+    # Past deadline (t=2000 >= 1600) with landed_transcript_id=None: expires and drops dead agent_id.
+    expired = expire_overdue_hop(thread, now=2000.0, watch_dir=tmp_path)
+    assert expired is not None
+    assert expired["state"] == "expired"
+    assert expired["landed_transcript_id"] is None
+    persisted = read_hop_land(thread, watch_dir=tmp_path)
+    assert persisted is not None and persisted["state"] == "expired"
+    assert resolve_endpoint("cursor", thread) is None
+    cur_sub = current_subscription("cursor", thread)
+    assert cur_sub is not None
+    assert cur_sub["state"] == "unsubscribed"
+
+    # Also verify scan_once reaps an overdue fired hop before resolving delivery route.
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} maestro-general-work",
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    mark_fired(
+        root=thread,
+        tip_cp=153,
+        seal_bus_turn=153,
+        departing_transcript_id=departing_id,
+        fired_at=1000.0,
+        deadline_s=10.0,
+        message_path="liaison-18460-20261020T194538Z.md",
+        watch_dir=tmp_path,
+    )
+
+    class ScanStore:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 166000,
+                    "to_agent": "cursor",
+                    "from_agent": "maestro",
+                    "thread": thread,
+                    "turn_number": 176,
+                    "subject": "REQUEST|freeform|decision:operator-observability-ledger",
+                }
+            ]
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+        ) -> dict:
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+            )
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = ScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+    assert resolve_endpoint("cursor", thread) is None
+    assert read_hop_land(thread, watch_dir=tmp_path)["state"] == "expired"  # type: ignore[index]
+
+
+def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wildcard Grok route with no_composer records pending and does not unsubscribe '*'."""
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+
+    from bus_watch import ide_hop_land
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=None, slug="grok-no-composer")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="stage-manager",
+        thread_scope="*",
+        surface="grok",
+        display="9",
+        title="Stage Manager",
+    )
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|sync",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [{"agent": "stage-manager", "thread_id": thread, "turn_id": turn_id, "turn_number": number}],
+        now="2026-10-20 23:00:00",
+    )
+    claimed = claim_due_wakes(now="2026-10-20 23:00:01")
+    assert claimed["wake_id"]
+    unsub_calls: list[tuple[str, str]] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now="2026-10-20 23:00:01",
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("pending", "no_composer"),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+
+    assert unsub_calls == []
+    assert resolve_endpoint("stage-manager", thread) is not None
