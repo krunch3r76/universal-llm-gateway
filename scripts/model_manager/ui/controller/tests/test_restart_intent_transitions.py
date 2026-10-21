@@ -207,29 +207,106 @@ def test_probe_always_raises_self_preempts(tmp_path: Any) -> None:
 
 
 def test_busy_until_ceiling_names_last_cause(tmp_path: Any) -> None:
+    """Busy past the ceiling keeps waiting; idle is what starts lifecycle.
+
+    Breaks when a non-idle probe at the deadline force-preempts: the
+    transition list gains force_requested / idle_ceiling_reached and the
+    stop runs with active_count still above 0.
+    """
     store = _store(tmp_path)
     intent = _arm(store)
     busy = ActiveWork(
         busy=True,
         detail={"busy": True, "total": 2, "requests_in_flight": 2},
     )
-    probe = _ScriptedProbe([busy] * 20)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+    seen: dict[str, str] = {}
+
+    class _BusyThenIdle:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def snapshot(self) -> ActiveWork:
+            self.n += 1
+            if self.n == 8:
+                row = store.get(intent.intent_id)
+                assert row is not None
+                seen["status_reason"] = row.status_reason or ""
+                return idle
+            return busy
 
     async def _lifecycle() -> str:
-        return "forced restart"
+        return "restart after idle"
 
-    supervisor = _supervisor(probe, _lifecycle, deadline_s=0.05)
+    supervisor = _supervisor(_BusyThenIdle(), _lifecycle, deadline_s=0.05)  # type: ignore[arg-type]
     supervisor.store = store
     _run(supervisor.supervise(intent))
     row = store.get(intent.intent_id)
     assert row is not None
-    force = next(
-        item
-        for item in row.transitions or []
-        if item["status"] == STATUS_FORCE_REQUESTED
+    assert row.status == STATUS_COMPLETED
+    reasons = [item["reason"] for item in row.transitions or []]
+    assert not any(
+        item["status"] == STATUS_FORCE_REQUESTED for item in row.transitions or []
     )
-    assert force["reason"].startswith("idle_ceiling_reached")
-    assert "active_count=2" in force["reason"]
+    assert not any(reason.startswith("idle_ceiling_reached") for reason in reasons)
+    assert "active_count=2" in seen["status_reason"]
+    assert "deadline_extended job_ids=none" in seen["status_reason"]
+    assert any(reason.startswith("idle_observed") for reason in reasons)
+
+
+def test_busy_extend_records_payload_job_ids(tmp_path: Any) -> None:
+    """A busy extend writes job_id values already on the payload.
+
+    Breaks when the extend invents ids, drops the ones present, or calls
+    cas_force_preempt_from_pending while active_count is above 0.
+    """
+    store = _store(tmp_path)
+    intent = _arm(store)
+    busy = ActiveWork(
+        busy=True,
+        detail={
+            "busy": True,
+            "active_count": 2,
+            "active_ops": [
+                {"job_id": "job-a"},
+                {"job_id": "job-b"},
+                {"op_id": "not-a-job"},
+            ],
+        },
+    )
+    idle = ActiveWork(busy=False, detail={"busy": False, "active_count": 0})
+    seen: dict[str, str] = {}
+    force_calls: list[str] = []
+    original = store.cas_force_preempt_from_pending
+
+    def _counting(intent_id: str, **kwargs: Any) -> int:
+        force_calls.append(intent_id)
+        return original(intent_id, **kwargs)
+
+    store.cas_force_preempt_from_pending = _counting  # type: ignore[method-assign]
+
+    class _BusyThenIdle:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def snapshot(self) -> ActiveWork:
+            self.n += 1
+            if self.n == 8:
+                row = store.get(intent.intent_id)
+                assert row is not None
+                seen["status_reason"] = row.status_reason or ""
+                return idle
+            return busy
+
+    async def _lifecycle() -> str:
+        return "restart after idle"
+
+    supervisor = _supervisor(_BusyThenIdle(), _lifecycle, deadline_s=0.05)  # type: ignore[arg-type]
+    supervisor.store = store
+    _run(supervisor.supervise(intent))
+    assert force_calls == []
+    assert "job_ids=job-a,job-b" in seen["status_reason"]
+    assert "job_ids=job-a,job-b,not-a-job" not in seen["status_reason"]
 
 
 def test_lifecycle_raise_names_phase_and_class(tmp_path: Any) -> None:
@@ -379,7 +456,10 @@ async def test_fired_reason_keeps_ceiling_cause(tmp_path: Any) -> None:
     async def _lifecycle() -> str:
         return "forced restart"
 
-    supervisor = _supervisor(_ScriptedProbe([busy] * 30), _lifecycle, deadline_s=0.05)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+    supervisor = _supervisor(
+        _ScriptedProbe([busy] * 8 + [idle]), _lifecycle, deadline_s=0.05
+    )
     supervisor.store = store
     await supervisor.supervise(intent)
     gate = RestartDrainGate(
@@ -392,7 +472,8 @@ async def test_fired_reason_keeps_ceiling_cause(tmp_path: Any) -> None:
     ctl.restart_gate = gate
     last = (await _busy_status(ctl, service="stargate"))["restart_intent_last"]
     assert last["status"] == "fired"
-    assert last["reason"].startswith("lifecycle_completed:idle_ceiling_reached")
+    assert last["reason"].startswith("lifecycle_completed:idle_observed")
+    assert "idle_ceiling_reached" not in last["reason"]
 
 
 @pytest.mark.asyncio
