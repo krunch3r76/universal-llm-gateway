@@ -361,25 +361,54 @@ def git_blob_sha(root: Path, commit: str | None, path: str) -> str | None:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def code_ref_changed_paths(root: Path, code_ref: str) -> list[str] | None:
+    """Return paths a commit changed against its first parent.
+
+    Fleet liveness uses the list to tell an ancestry yes from code a service
+    never imports. ``None`` means git could not resolve the ref, which is not
+    an empty change. Merge commits follow the first parent only, so files that
+    parent already contained are not treated as this commit's load surface.
+    """
+    parent = git(root, "rev-parse", "--verify", "--quiet", f"{code_ref}^1")
+    if parent:
+        text = git(root, "diff", "--name-only", parent, code_ref)
+    else:
+        text = git(
+            root,
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            code_ref,
+        )
+    if text is None:
+        return None
+    seen: dict[str, None] = {}
+    for line in text.splitlines():
+        path = line.strip()
+        if path:
+            seen.setdefault(path, None)
+    return list(seen)
+
+
 def manage_loaded_code_evidence(code_version: str | None) -> dict[str, Any]:
     """Describe how the manage RPC process sealed its loaded-code label at import.
 
     A valid 40-hex ``code_version`` means ``deploy_identity`` resolved a Git
     ancestry label when this interpreter imported the module, not a live re-read
     of the checkout. Any other value (including ``unknown``) is temporal evidence
-    only: the probe does not treat process start time as a SHA and leaves
-    ``answers_equal`` null so readers never infer equality from a timestamp.
+    only: the probe does not treat process start time as a SHA. Equality with
+    an observed code version is decided later, where both values exist.
     """
     if code_version and is_valid_sha40(code_version):
         return {
             "kind": "imported_code",
             "sha": code_version.strip().lower(),
-            "answers_equal": None,
         }
     return {
         "kind": "temporal",
         "sha": None,
-        "answers_equal": None,
     }
 
 
@@ -410,6 +439,7 @@ __all__ = [
     "container_sha",
     "container_start",
     "clock_observation",
+    "code_ref_changed_paths",
     "git_blob_sha",
     "manage_loaded_code_evidence",
     "mcp_reported_version",

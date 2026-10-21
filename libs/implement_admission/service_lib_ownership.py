@@ -372,6 +372,12 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             }
         ),
     ),
+    "manage": ServiceOwnership(
+        # Host process. This prefix is the load surface for its own tree.
+        # Lib serving stays on slugs that already declare serves_libs.
+        path_prefix="scripts/model_manager/",
+        owned_libs=frozenset(),
+    ),
 }
 
 
