@@ -82,9 +82,10 @@ def test_checkpoint_subject_not_allowlisted() -> None:
     assert is_chrome_bus_subject("CHECKPOINT 18460 abc")
 
 
-def test_fact_cdp_reply_in_subject_is_not_chrome() -> None:
-    assert not is_chrome_bus_subject("FACT|cdp reply latency fixed")
-    assert subject_qualifies_producer1("FACT|cdp reply latency fixed")
+def test_milestone_cdp_reply_in_subject_is_not_chrome() -> None:
+    assert not is_chrome_bus_subject("MILESTONE|cdp reply latency fixed")
+    assert subject_qualifies_producer1("MILESTONE|cdp reply latency fixed")
+    assert not subject_qualifies_producer1("FACT|cdp reply latency fixed")
 
 
 @pytest.mark.parametrize(
@@ -256,7 +257,7 @@ def test_producer1_unset_dispatches(tmp_path, monkeypatch) -> None:
     deps.endpoint_wake = lambda **kw: endpoint_calls.append(kw) or True  # type: ignore[method-assign]
     out = maybe_producer1_milestone(
         store,
-        subject="FACT|decision:operator-observability-ledger|gap",
+        subject="MILESTONE|decision:operator-observability-ledger|gap",
         to_agent="maestro",
         from_agent="cursor",
         thread_id="18460",
@@ -283,7 +284,7 @@ def test_producer1_explicit_off_writes_row_without_dispatch(
     deps.endpoint_wake = lambda **kw: endpoint_calls.append(kw) or True  # type: ignore[method-assign]
     out = maybe_producer1_milestone(
         store,
-        subject="FACT|decision:operator-observability-ledger|gap",
+        subject="MILESTONE|decision:operator-observability-ledger|gap",
         to_agent="maestro",
         from_agent="cursor",
         thread_id="18460",

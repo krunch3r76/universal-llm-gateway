@@ -113,6 +113,31 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=True,
     )
+    assert qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "grok-bot-gc1",
+            "subject": "STATUS | ack-batch | leg1",
+        },
+        cse=True,
+    )
+    assert not qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "cursor",
+            "subject": "STATUS|ack-batch|leg1",
+        },
+        cse=True,
+    )
+    for subj in ("FACT r2|x", "PICKUP r2|x", "STATUS r2|x"):
+        assert not qualifies(
+            {
+                "to_agent": "maestro",
+                "from_agent": "grok-bot-gc1",
+                "subject": subj,
+            },
+            cse=True,
+        )
     assert not qualifies(
         {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"},
         cse=True,

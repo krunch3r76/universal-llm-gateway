@@ -24,7 +24,6 @@ MILESTONE_SUBJECT_PREFIXES: tuple[str, ...] = (
     "MILESTONE|",
     "PLAN|",
     "ASK|",
-    "FACT|",
     "READY|",
     "DONE|",
     "VERDICT|",

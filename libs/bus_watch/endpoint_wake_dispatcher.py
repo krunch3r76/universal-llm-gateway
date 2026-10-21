@@ -135,15 +135,23 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
 _MAESTRO_CSE_WAKE_TARGETS = frozenset({"maestro", "web-anthropic"})
 
 
-def _maestro_cse_nonwake_head(*, to_agent: str, subject: str, head: str) -> bool:
+def _maestro_cse_nonwake_head(
+    *, to_agent: str, from_agent: str, subject: str, head: str
+) -> bool:
     """L17/L19: FACT, PICKUP, and most STATUS to maestro/CSE do not enqueue wakes."""
     if to_agent not in _MAESTRO_CSE_WAKE_TARGETS:
         return False
-    if head in {"FACT", "PICKUP"}:
+    token = head.split()[0] if head else ""
+    if head in {"FACT", "PICKUP"} or token in {"FACT", "PICKUP"}:
         return True
-    if head == "STATUS":
-        if to_agent == "web-anthropic" and subject.lower().startswith(
-            "status|ack-batch"
+    if head == "STATUS" or token == "STATUS":
+        parts = [p.strip().lower() for p in (subject or "").split("|")]
+        if (
+            len(parts) >= 2
+            and parts[0] == "status"
+            and parts[1] == "ack-batch"
+            and to_agent == "web-anthropic"
+            and from_agent == "grok-bot-gc1"
         ):
             return False
         return True
@@ -205,7 +213,9 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
         return False
-    if _maestro_cse_nonwake_head(to_agent=to_agent, subject=subject, head=head):
+    if _maestro_cse_nonwake_head(
+        to_agent=to_agent, from_agent=from_agent, subject=subject, head=head
+    ):
         return False
     if not peer_operator_wake_from(from_agent) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent
