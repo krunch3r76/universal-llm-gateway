@@ -10,6 +10,7 @@ from agent_bus_store.quiet_with_wip import (
     QuietWithWipSnapshot,
     evaluate_quiet_with_wip,
     seat_holding_execution_id,
+    seat_registered_execution_ids,
 )
 
 NOW = datetime(2026, 8, 7, 1, 0, 0, tzinfo=UTC)
@@ -444,10 +445,7 @@ def test_seat_holding_id_from_turn_3383_inline_line() -> None:
             body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3383_ID_LINE}\n",
         ),
     )
-    assert (
-        seat_holding_execution_id(turns)
-        == "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
-    )
+    assert seat_holding_execution_id(turns) == "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
 
 
 def test_seat_holding_id_from_turn_3373_inline_line() -> None:
@@ -464,10 +462,7 @@ def test_seat_holding_id_from_turn_3373_inline_line() -> None:
             body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3373_ID_LINE}\n",
         ),
     )
-    assert (
-        seat_holding_execution_id(turns)
-        == "b488b712-5807-4b20-8422-b76d50d1825f"
-    )
+    assert seat_holding_execution_id(turns) == "b488b712-5807-4b20-8422-b76d50d1825f"
 
 
 def test_latest_stamp_without_execution_id_returns_none() -> None:
@@ -509,3 +504,137 @@ def test_seat_holding_id_accepts_equals_separator() -> None:
         ),
     )
     assert seat_holding_execution_id(turns) == "exec-eq-1"
+
+
+def test_superseded_predecessor_complete_does_not_closeout_unharvested() -> None:
+    """Predecessor generate completes after successor SEAT_REGISTRATION ⇒ no WIP.
+
+    Breaks when only the latest registration id is excluded from unharvested scan.
+    """
+    predecessor = "b488b712-5807-4b20-8422-b76d50d1825f"
+    successor = "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id=predecessor,
+                terminal_status="completed",
+                terminal_at=_ts(THRESHOLD_S / 2),
+                pipeline_id="cdp-generate",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="predecessor seated",
+                body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3373_ID_LINE}\n",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent=SEAT,
+                created_at=_ts(THRESHOLD_S),
+                subject="successor seated",
+                body=_registration_body(successor),
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is False
+    assert verdict.skip_reason == "no_wip"
+    assert verdict.wip_execution_ids == ()
+
+
+def test_commissioned_worker_still_closeout_beside_superseded_predecessor() -> None:
+    """Commissioned cursor-sdk closeout still alarms when predecessor link completes.
+
+    Breaks when predecessor exclusion removes every terminal link from WIP scan.
+    """
+    predecessor = "b488b712-5807-4b20-8422-b76d50d1825f"
+    successor = "eb3ea111-3615-4c77-906f-34ee4ce2ef1d"
+    commissioned = "exec-sdk-worker"
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id=predecessor,
+                terminal_status="completed",
+                terminal_at=_ts(THRESHOLD_S / 2),
+                pipeline_id="cdp-generate",
+            ),
+            DispatchLinkView(
+                execution_id=commissioned,
+                terminal_status="completed",
+                terminal_at=_ts(THRESHOLD_S / 2),
+                pipeline_id="cursor-sdk-generate",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="commission",
+                body="go",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S - 50),
+                subject="predecessor seated",
+                body=f"TYPE: SEAT_REGISTRATION\n{_TURN_3373_ID_LINE}\n",
+            ),
+            LaneTurnView(
+                turn_number=3,
+                from_agent="cursor-auto",
+                created_at=_ts(THRESHOLD_S),
+                subject="TYPE: SEAT_REGISTRATION — successor",
+                body=_registration_body(successor),
+            ),
+            LaneTurnView(
+                turn_number=4,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S),
+                subject="cursor-sdk dispatch complete",
+                body="status: complete",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "closeout_unharvested"
+    assert verdict.wip_execution_ids == (commissioned,)
+
+
+def test_seat_registered_execution_ids_collects_all_stamps() -> None:
+    """All registration and stand-down execution_id tokens appear in the frozenset.
+
+    Breaks when only the latest stamp or only SEAT_REGISTRATION is scanned.
+    """
+    reg_a = "exec-reg-a"
+    reg_b = "exec-reg-b"
+    stand = "exec-stand-c"
+    turns = (
+        LaneTurnView(
+            turn_number=1,
+            from_agent=SEAT,
+            created_at=_ts(900),
+            body=_registration_body(reg_a),
+        ),
+        LaneTurnView(
+            turn_number=2,
+            from_agent=SEAT,
+            created_at=_ts(800),
+            body=(
+                "TYPE: SEAT_STAND_DOWN\n"
+                f"execution_id: {stand}\n"
+                "reason: hop to successor\n"
+            ),
+        ),
+        LaneTurnView(
+            turn_number=3,
+            from_agent=SEAT,
+            created_at=_ts(700),
+            body=_registration_body(reg_b),
+        ),
+    )
+    assert seat_registered_execution_ids(turns) == frozenset({reg_a, reg_b, stand})
