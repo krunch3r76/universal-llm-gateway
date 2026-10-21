@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
-from bus_watch.digest_budget import build_budget_block
+from bus_watch.digest_budget import build_budget_block, seat_budget
 
 pytestmark = pytest.mark.offline
 
@@ -59,3 +61,26 @@ def test_giw_sdk_stream_keeps_080_ratio() -> None:
         as_of="2026-10-18T00:00:00Z",
     )
     assert low["stop_class"] is None
+
+
+def test_seat_budget_tolerates_raw_glass_probe_keys() -> None:
+    raw_glass = {"contextTokensUsed": 42_000, "contextTokenLimit": 200_000}
+    lock = {"holder": "ide:f19ca60c-27d7-43b0-bf7e-4e7d29a9eb03"}
+    with patch(
+        "bus_watch.liaison_digest._measure_ide_tab", return_value=raw_glass
+    ):
+        budget, pct = seat_budget(
+            est=0,
+            successor_model="ide-tab",
+            usage_live=None,
+            holder_dispatch="",
+            register="attended",
+            lock=lock,
+            policy={"ide_window_tokens": 256_000},
+            root_id="10479",
+            digest_ts="2026-10-21T16:44:58Z",
+            epoch="",
+        )
+    assert budget["used_tokens"] == 42_000
+    assert budget["window_limit_tokens"] == 200_000
+    assert pct == 21.0

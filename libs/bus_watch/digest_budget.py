@@ -170,6 +170,7 @@ def _get(client: httpx.Client, path: str, **params: Any) -> dict[str, Any] | Non
 
 
 def health_probe(url: str) -> str:
+    """GET ``url`` for liaison digest health lines; ``ok`` or a short failure tag."""
     try:
         r = httpx.get(url, timeout=3.0)
     except httpx.HTTPError as exc:
@@ -263,7 +264,12 @@ def seat_budget(
     digest_ts: str,
     epoch: str,
 ) -> tuple[dict[str, Any], float]:
-    """Window from the model card for an sdk hop; 256k only for an unread picker."""
+    """Seat window for digest: GIW stream, IDE tab measure, or digest estimate fallback.
+
+    IDE measures may omit normalized keys; raw Glass ``contextTokensUsed`` /
+    ``contextTokenLimit`` and zero defaults for tool counts are accepted without
+    raising. SDK hops use the model card window; unread picker defaults to 256k.
+    """
     from bus_watch.ide_budget import IDE_BUDGET_SOURCE, ide_holder_transcript
 
     if usage_live:
@@ -294,23 +300,42 @@ def seat_budget(
     if (register != "autonomous" or ide_holder_transcript(lock)) and (
         ide := _measure_ide_tab(root_id, lock, policy)
     ):
-        pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
+        used_tokens = ide.get("used_tokens")
+        if used_tokens is None:
+            used_tokens = int(ide.get("contextTokensUsed") or 0)
+        else:
+            used_tokens = int(used_tokens)
+        window_limit = ide.get("window_limit_tokens")
+        if window_limit is None:
+            window_limit = int(
+                ide.get("contextTokenLimit")
+                or policy.get("ide_window_tokens")
+                or 256_000
+            )
+        else:
+            window_limit = int(window_limit)
+        transcript_id = str(ide.get("transcript_id") or "")
+        pct = round(100.0 * used_tokens / max(window_limit, 1), 1)
         return (
             build_budget_block(
-                used_tokens=ide["used_tokens"],
-                window_limit_tokens=ide["window_limit_tokens"],
+                used_tokens=used_tokens,
+                window_limit_tokens=window_limit,
                 model=str(policy.get("ide_model") or "ide-tab"),
                 source=IDE_BUDGET_SOURCE,
                 scope=_BUDGET_SCOPE,
-                epoch=ide["transcript_id"],
+                epoch=transcript_id,
                 as_of=digest_ts,
-                transcript_id=ide["transcript_id"],
-                holder_basis=ide["holder_basis"],
+                transcript_id=transcript_id or None,
+                holder_basis=ide.get("holder_basis"),
                 resume_match_count=ide.get("resume_match_count"),
                 excluded_resume_ids=ide.get("excluded_resume_ids") or [],
-                tool_calls=ide["tool_calls"],
-                transcript_bytes=ide["bytes"],
-                tokens_per_tool_call=ide["tokens_per_tool_call"],
+                tool_calls=int(ide.get("tool_calls") or 0),
+                transcript_bytes=int(ide.get("bytes") or 0),
+                tokens_per_tool_call=int(
+                    ide.get("tokens_per_tool_call")
+                    or policy.get("ide_tokens_per_tool_call")
+                    or 1500
+                ),
                 glass_context_percent=ide.get("glass_context_percent"),
                 glass_status=ide.get("glass_status"),
                 glass_model=ide.get("glass_model"),

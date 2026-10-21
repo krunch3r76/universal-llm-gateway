@@ -275,7 +275,12 @@ def test_measure_ide_tab_returns_probe_when_jsonl_absent(tmp_path: Path) -> None
             transcripts_dir=tmp_path,
             watch_dir=tmp_path / "watchers",
         )
-    assert ide == glass
+    assert ide["used_tokens"] == 42_000
+    assert ide["window_limit_tokens"] == 200_000
+    assert ide["budget_probe"] == "glass.cdp"
+    assert ide["tool_calls"] == 0
+    assert ide["bytes"] == 0
+    assert ide["transcript_id"] == _TID
 
 
 def test_measure_ide_tab_none_when_jsonl_absent_and_probe_fails(tmp_path: Path) -> None:

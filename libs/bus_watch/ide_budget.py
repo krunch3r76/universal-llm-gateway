@@ -230,6 +230,26 @@ def estimate_tokens(measure: dict[str, Any], *, tokens_per_tool_call: int) -> in
     ) * int(tokens_per_tool_call)
 
 
+def apply_glass_probe_to_budget(
+    budget: dict[str, Any],
+    glass: dict[str, Any],
+    *,
+    used_tokens_fallback: int,
+    window_limit_fallback: int,
+) -> None:
+    """Merge live Glass CDP fields onto a normalized IDE budget dict in place."""
+    budget["used_tokens"] = int(glass.get("contextTokensUsed") or used_tokens_fallback)
+    budget["window_limit_tokens"] = int(
+        glass.get("contextTokenLimit") or window_limit_fallback
+    )
+    budget["glass_context_percent"] = glass.get("contextUsagePercent")
+    budget["glass_status"] = glass.get("status")
+    budget["glass_model"] = glass.get("model")
+    budget["glass_summarized_tokens"] = int(glass.get("glass_summarized_tokens") or 0)
+    budget["glass_headers_count"] = int(glass.get("glass_headers_count") or 0)
+    budget["budget_probe"] = "glass.cdp"
+
+
 def measure_ide_tab(
     root_id: str,
     lock: dict[str, Any],
@@ -242,9 +262,13 @@ def measure_ide_tab(
     """Resolve the live IDE tab for ``root_id`` and estimate its window use.
 
     Returns ``None`` when no tab transcript can be found (headless-only house).
-    ``window_limit_tokens`` is ``policy.ide_window_tokens`` — the operator picks the
-    tab model in the picker, so the harness cannot read it; the default is the
-    256k class the house has been running on (Grok 4.7).
+    When the JSONL is missing but Glass CDP succeeds, returns a normalized budget
+    dict (transcript metadata, ``tool_calls=0``, ``bytes=0``, Glass token fields,
+    ``budget_probe=glass.cdp``) — not the raw probe payload.
+
+    ``window_limit_tokens`` is ``policy.ide_window_tokens`` when Glass is absent —
+    the operator picks the tab model in the picker, so the harness cannot read it;
+    the default is the 256k class the house has been running on (Grok 4.7).
 
     Seat-lock ``ide:<uuid>`` is the budget identity. Resume-mtime is display-only
     fallback and must not drive CONTEXT_BUDGET when multiple resume tabs exist
@@ -267,16 +291,33 @@ def measure_ide_tab(
         return None
     path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
     gui_host = str(policy.get("gui_host") or ":8")
+    per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
+    window_limit = int(policy.get("ide_window_tokens") or 256_000)
     if not path.is_file():
         glass = probe_glass_composer_budget(transcript_id, gui_host)
         if glass:
-            return glass
+            out: dict[str, Any] = {
+                "transcript_id": transcript_id,
+                "holder_basis": "seat_lock" if locked else "resume_mtime",
+                "resume_match_count": matches,
+                "excluded_resume_ids": sorted(excluded),
+                "tokens_per_tool_call": per_call,
+                "tool_calls": 0,
+                "bytes": 0,
+                "used_tokens": 0,
+                "window_limit_tokens": window_limit,
+            }
+            apply_glass_probe_to_budget(
+                out,
+                glass,
+                used_tokens_fallback=0,
+                window_limit_fallback=window_limit,
+            )
+            return out
         return None
     measure = measure_transcript(path)
-    per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
-    window_limit = int(policy.get("ide_window_tokens") or 256_000)
     used_tokens = estimate_tokens(measure, tokens_per_tool_call=per_call)
-    out: dict[str, Any] = {
+    out = {
         "transcript_id": transcript_id,
         "holder_basis": "seat_lock" if locked else "resume_mtime",
         "resume_match_count": matches,
@@ -288,14 +329,12 @@ def measure_ide_tab(
     }
     glass = probe_glass_composer_budget(transcript_id, gui_host)
     if glass:
-        out["used_tokens"] = int(glass.get("contextTokensUsed") or used_tokens)
-        out["window_limit_tokens"] = int(glass.get("contextTokenLimit") or window_limit)
-        out["glass_context_percent"] = glass.get("contextUsagePercent")
-        out["glass_status"] = glass.get("status")
-        out["glass_model"] = glass.get("model")
-        out["glass_summarized_tokens"] = int(glass.get("glass_summarized_tokens") or 0)
-        out["glass_headers_count"] = int(glass.get("glass_headers_count") or 0)
-        out["budget_probe"] = "glass.cdp"
+        apply_glass_probe_to_budget(
+            out,
+            glass,
+            used_tokens_fallback=used_tokens,
+            window_limit_fallback=window_limit,
+        )
     return out
 
 
