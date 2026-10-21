@@ -11,6 +11,7 @@ Per-root lock alone does not serialize two houses into one Agents window
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -23,6 +24,9 @@ from bus_watch.fable_lock import WATCH_DIR
 
 DEFAULT_TTL_S = 120.0
 DEFAULT_WINDOW_TTL_S = 600.0
+# Unreadable payload younger than this may be a writer mid-create. Older than
+# this is stale and must not refuse later hops forever.
+UNREADABLE_LOCK_GRACE_S = 2.0
 _SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
@@ -78,7 +82,7 @@ def _read_lock_raw(path: Path) -> dict[str, Any]:
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return raw if isinstance(raw, dict) else {}
 
@@ -94,38 +98,66 @@ def _try_acquire(
 ) -> dict[str, Any]:
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     t = time.time() if now is None else now
-    for _attempt in range(3):
+    guard = path.with_name(path.name + ".guard")
+    gfd = os.open(guard, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(gfd, fcntl.LOCK_EX)
+        for _attempt in range(3):
+            raw = _read_lock_raw(path)
+            if raw:
+                refusal = _lock_refusal(
+                    path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
+                )
+                if refusal is not None:
+                    return refusal
+                path.unlink(missing_ok=True)
+            elif path.is_file():
+                try:
+                    age = t - path.stat().st_mtime
+                except OSError:
+                    age = 0.0
+                if age <= UNREADABLE_LOCK_GRACE_S:
+                    return {
+                        "ok": False,
+                        "phase": phase,
+                        "path": str(path),
+                        "fix": (
+                            "unreadable hop lock within "
+                            f"{UNREADABLE_LOCK_GRACE_S:.0f}s grace"
+                        ),
+                    }
+                path.unlink(missing_ok=True)
+            payload = {"pid": os.getpid(), "started_at": t, **payload_extra}
+            blob = (json.dumps(payload) + "\n").encode("utf-8")
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                continue
+            try:
+                os.write(fd, blob)
+            finally:
+                os.close(fd)
+            return {
+                "ok": True,
+                "path": str(path),
+                "pid": payload["pid"],
+                "started_at": t,
+            }
         raw = _read_lock_raw(path)
-        if raw:
-            refusal = _lock_refusal(
-                path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
-            )
-            if refusal is not None:
-                return refusal
-            path.unlink(missing_ok=True)
-        payload = {"pid": os.getpid(), "started_at": t, **payload_extra}
-        blob = (json.dumps(payload) + "\n").encode("utf-8")
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            continue
-        try:
-            os.write(fd, blob)
-        finally:
-            os.close(fd)
-        return {"ok": True, "path": str(path), "pid": payload["pid"], "started_at": t}
-    raw = _read_lock_raw(path)
-    refusal = _lock_refusal(
-        path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
-    )
-    if refusal is not None:
-        return refusal
-    return {
-        "ok": False,
-        "phase": phase,
-        "path": str(path),
-        "fix": "exclusive lock create lost race after retries",
-    }
+        refusal = _lock_refusal(
+            path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
+        )
+        if refusal is not None:
+            return refusal
+        return {
+            "ok": False,
+            "phase": phase,
+            "path": str(path),
+            "fix": "exclusive lock create lost race after retries",
+        }
+    finally:
+        fcntl.flock(gfd, fcntl.LOCK_UN)
+        os.close(gfd)
 
 
 def _release(path: Path, *, pid: int | None = None) -> dict[str, Any]:
@@ -139,7 +171,12 @@ def _release(path: Path, *, pid: int | None = None) -> dict[str, Any]:
     holder = int(raw.get("pid") or 0)
     mine = os.getpid() if pid is None else pid
     if holder and holder != mine:
-        return {"ok": False, "released": False, "reason": "not_owner", "holder_pid": holder}
+        return {
+            "ok": False,
+            "released": False,
+            "reason": "not_owner",
+            "holder_pid": holder,
+        }
     path.unlink(missing_ok=True)
     return {"ok": True, "released": True, "reason": "ok"}
 

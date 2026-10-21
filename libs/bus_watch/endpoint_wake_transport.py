@@ -156,7 +156,13 @@ class StoreClient:
         ]
         if not candidates:
             return None
-        best = min(candidates, key=lambda r: (_rank(str(r.get("thread_scope") or "")), -int(r.get("id") or 0)))
+        best = min(
+            candidates,
+            key=lambda r: (
+                _rank(str(r.get("thread_scope") or "")),
+                -int(r.get("id") or 0),
+            ),
+        )
         scope = str(best.get("thread_scope") or "")
         if scope == thread_id:
             kind = "exact"
@@ -185,6 +191,7 @@ class StoreClient:
         *,
         bound_by: str = "endpoint-wake-dispatcher",
         evidence: str | None = None,
+        expected_agent_id: str | None = None,
     ) -> dict[str, Any]:
         return self._bus(
             "POST",
@@ -194,5 +201,6 @@ class StoreClient:
                 "thread_scope": thread_scope,
                 "bound_by": bound_by,
                 "evidence": evidence,
+                "expected_agent_id": expected_agent_id,
             },
         )

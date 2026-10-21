@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from unittest.mock import patch
 
@@ -84,6 +85,49 @@ def test_exclusive_acquire_race_only_one_ok(tmp_path, monkeypatch) -> None:
     oks = [r for r in results if r.get("ok")]
     assert len(oks) == 1
     mutex_mod.release_hop_mutex("16951")
+
+
+def test_unreadable_lock_past_grace_is_stale(tmp_path, monkeypatch) -> None:
+    """An unreadable lock older than the grace period must not block later hops."""
+    monkeypatch.setattr(mutex_mod, "WATCH_DIR", tmp_path)
+    path = mutex_mod.hop_mutex_path("15420")
+    path.write_bytes(b"\xff\xfe not json")
+    stale_at = 1_700_000_000.0
+    os_utime = stale_at - mutex_mod.UNREADABLE_LOCK_GRACE_S - 5.0
+    os.utime(path, (os_utime, os_utime))
+    young = mutex_mod.try_acquire_hop_mutex("15420", ttl_s=120.0, now=os_utime + 0.5)
+    assert young["ok"] is False
+    late = mutex_mod.try_acquire_hop_mutex("15420", ttl_s=120.0, now=stale_at)
+    assert late["ok"] is True
+    mutex_mod.release_hop_mutex("15420")
+
+
+def test_expired_lock_race_only_one_acquires(tmp_path, monkeypatch) -> None:
+    """Two threads reclaiming one expired lock — only one acquires it."""
+    monkeypatch.setattr(mutex_mod, "WATCH_DIR", tmp_path)
+    path = mutex_mod.hop_mutex_path("16952")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"pid": 0, "started_at": 1.0, "root": "16952"}) + "\n",
+        encoding="utf-8",
+    )
+    results: list[dict] = []
+    barrier = threading.Barrier(2)
+
+    def _worker() -> None:
+        barrier.wait()
+        results.append(
+            mutex_mod.try_acquire_hop_mutex("16952", ttl_s=30.0, now=1_000_000.0)
+        )
+
+    threads = [threading.Thread(target=_worker) for _ in range(2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=5.0)
+    assert len(results) == 2
+    assert len([r for r in results if r.get("ok")]) == 1
+    mutex_mod.release_hop_mutex("16952")
 
 
 def test_overlapping_hop_second_refuses_before_seal(tmp_path, monkeypatch) -> None:

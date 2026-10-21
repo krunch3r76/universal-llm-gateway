@@ -178,7 +178,10 @@ def subscribe_endpoint(
                     tomb_evidence,
                 ),
             )
-            if prior_before_supersede is not None and prior_before_supersede.get("id") is not None:
+            if (
+                prior_before_supersede is not None
+                and prior_before_supersede.get("id") is not None
+            ):
                 prior_subscription_id = int(prior_before_supersede["id"])
             prior_for_response = _row(
                 conn.execute(
@@ -224,10 +227,16 @@ def unsubscribe_endpoint(
     thread_scope: str,
     bound_by: str | None = None,
     evidence: str | None = None,
+    expected_agent_id: str | None = None,
 ) -> dict[str, Any]:
-    """Append an unsubscribed tombstone, or no-op when already tombstoned."""
+    """Append an unsubscribed tombstone, or no-op when already tombstoned.
+
+    When ``expected_agent_id`` is set, tombstone only the row that still names
+    that id. A subscription replaced before this write keeps the new row.
+    """
     canon = normalize_bus_address(agent)
     scope = thread_scope.strip()
+    expected = (expected_agent_id or "").strip() or None
     with write_connect() as conn:
         current = conn.execute(
             "SELECT * FROM agent_endpoint_subscriptions "
@@ -236,6 +245,11 @@ def unsubscribe_endpoint(
         ).fetchone()
         current_d = _row(current)
         if current_d is None or current_d["state"] == "unsubscribed":
+            return {"appended": False, "row": current_d, "prior": current_d}
+        if (
+            expected is not None
+            and str(current_d.get("agent_id") or "").strip() != expected
+        ):
             return {"appended": False, "row": current_d, "prior": current_d}
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "

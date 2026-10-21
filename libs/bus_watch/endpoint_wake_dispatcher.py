@@ -122,7 +122,10 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     if agent == "dispatch" and _CURSOR_GATE_WAKE_RE.search(text):
         return "cursor"
     if agent == "conductor-hop" and _CURSOR_GATE_WAKE_RE.search(text):
-        if "contract=conductor" in text.lower() and "caller=conductor-hop" in text.lower():
+        if (
+            "contract=conductor" in text.lower()
+            and "caller=conductor-hop" in text.lower()
+        ):
             return agent
         return "cursor"
     return agent
@@ -428,6 +431,7 @@ def _drop_dead_agent_subscription(
                 scope,
                 bound_by="endpoint-wake-dispatcher",
                 evidence=evidence,
+                expected_agent_id=dead_agent_id,
             )
         except Exception:
             logger.exception(
@@ -453,6 +457,7 @@ def _drop_dead_agent_subscription(
                     thread_scope=scope,
                     bound_by="endpoint-wake-dispatcher",
                     evidence=evidence,
+                    expected_agent_id=dead_agent_id,
                 )
         except Exception:
             logger.exception(
@@ -562,7 +567,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         return claimed
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
     turn_arg: int | str = (
-        turn_numbers[0] if len(turn_numbers) == 1 else ",".join(str(n) for n in turn_numbers)
+        turn_numbers[0]
+        if len(turn_numbers) == 1
+        else ",".join(str(n) for n in turn_numbers)
     )
     state, reason = _display_post(rows[0], sub, turn_arg)
     if reason == "no_composer" and str(sub.get("surface") or "") == "cursor":
@@ -593,9 +600,7 @@ async def run_dispatcher() -> None:
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             await asyncio.to_thread(fire_due_wakes, store)
-            await asyncio.to_thread(
-                check_cursor_ide_context_hops, store, mark=hop_mark
-            )
+            await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
         except Exception:
             logger.exception("endpoint_wake_dispatcher pass failed")
         await asyncio.sleep(_POLL_S)

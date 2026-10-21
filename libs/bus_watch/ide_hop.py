@@ -170,9 +170,7 @@ def validate_hop_model_knobs(knobs: dict[str, str]) -> str | None:
     if normalized in _ALLOWED_HOP_MODEL_EFFORT:
         return None
     allowed = ", ".join(sorted(_ALLOWED_HOP_MODEL_EFFORT))
-    return (
-        f"policy.hop_model_knobs.effort {effort!r} is invalid; allowed: {allowed}"
-    )
+    return f"policy.hop_model_knobs.effort {effort!r} is invalid; allowed: {allowed}"
 
 
 TAIL_RECIPE = (
@@ -871,7 +869,6 @@ def fire_ide_hop(
     pre_existing: set[str] | None = None
     if tip_cp is None and land_root:
         pre_existing = list_resume_transcript_ids(land_root, AGENT_TRANSCRIPTS)
-    fired_at = time.time()
     hop_record: dict[str, Any] | None = None
     release_root_mutex = True
     try:
@@ -935,6 +932,10 @@ def fire_ide_hop(
             # read it). Parse the whole payload; fall back to the last line for a remote
             # that ever emits single-line JSON.
             keystroke = _parse_keystroke_stdout(proc.stdout)
+        # Deadline starts when the wait starts. A clock taken before the
+        # keystroke lets the dispatcher expire the hop while this call is
+        # still inside ``wait_for_landed_transcript``.
+        fired_at = time.time()
         hop_record = mark_fired(
             root=root_id,
             tip_cp=tip_cp,

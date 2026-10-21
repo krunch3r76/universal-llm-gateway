@@ -46,7 +46,9 @@ def write_hop_land(record: dict[str, Any], *, watch_dir: Path | None = None) -> 
     return path
 
 
-def read_hop_land(root_id: str, *, watch_dir: Path | None = None) -> dict[str, Any] | None:
+def read_hop_land(
+    root_id: str, *, watch_dir: Path | None = None
+) -> dict[str, Any] | None:
     path = hop_land_path(root_id, _resolve_watch_dir(watch_dir))
     if not path.is_file():
         return None
@@ -173,6 +175,7 @@ def _drop_dead_hop_subscription(
                             root,
                             bound_by="ide-hop-land",
                             evidence=f"hop_expired:{sub_agent_id}",
+                            expected_agent_id=sub_agent_id,
                         )
                         dropped = True
                     except Exception:
@@ -195,12 +198,11 @@ def _drop_dead_hop_subscription(
                         thread_scope=root,
                         bound_by="ide-hop-land",
                         evidence=f"hop_expired:{cur_agent_id}",
+                        expected_agent_id=cur_agent_id,
                     )
                     dropped = True
         except Exception:
-            logger.exception(
-                "ide_hop_land: local unsubscribe failed root=%s", root
-            )
+            logger.exception("ide_hop_land: local unsubscribe failed root=%s", root)
     return dropped
 
 
@@ -258,9 +260,13 @@ def expire_overdue_hops(
         root_id = name[len("liaison-") : -len(".hop-land.json")].strip()
         if not root_id:
             continue
-        updated = expire_overdue_hop(
-            root_id, store=store, now=now, watch_dir=target_dir
-        )
+        try:
+            updated = expire_overdue_hop(
+                root_id, store=store, now=now, watch_dir=target_dir
+            )
+        except OSError:
+            logger.exception("ide_hop_land: expire overdue hop failed root=%s", root_id)
+            continue
         if updated is not None:
             expired.append(updated)
     return expired
