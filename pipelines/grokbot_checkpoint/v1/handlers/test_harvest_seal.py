@@ -645,21 +645,8 @@ async def test_evil_prior_raw_does_not_enter_messages(fs: MemFs) -> None:
     assert pour.get("refused") is None, pour
     fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"] = b"EVIL\n"
     folder2 = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
-    options2 = {**options, "n": 2, "l0_ref": folder2}
-    norm2 = await run_harvest_normalise(options2, fs)
-    assert norm2.get("refused") is None, norm2
-    adapter2 = await run_harvest_adapter(options2, norm2, fs)
-    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
-    assert pour2.get("refused") is None, pour2
-    texts = []
-    for message in pour2["envelope"]["messages"]:
-        content = message["content"]
-        if isinstance(content, list):
-            texts.append(content[0].get("text"))
-        else:
-            texts.append(content)
-    assert texts == ["a", "b"]
-    assert "EVIL" not in texts
+    refused = await run_harvest_normalise({**options, "n": 2, "l0_ref": folder2}, fs)
+    assert (refused.get("refused") or {}).get("code") == "harvest.no_prior"
 
 
 @pytest.mark.asyncio
@@ -716,6 +703,32 @@ async def test_not_prefix_and_window_mismatch(fs: MemFs) -> None:
     mismatch = await run_harvest_normalise({**options, "n": 2, "l0_ref": nxt}, fs)
     assert (mismatch.get("refused") or {}).get("code") == "harvest.no_prior"
     assert "window.hi" in (mismatch.get("refused") or {}).get("message", "")
+
+
+@pytest.mark.asyncio
+async def test_pour_refuses_edited_prior_message(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
+    msg = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
+    payload = json.loads(fs.files[msg].decode())
+    payload["messages"][0]["content"][0]["text"] = "Z"
+    fs.files[msg] = json.dumps(payload).encode()
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": nxt}
+    norm2 = await run_harvest_normalise(options2, fs)
+    assert norm2.get("refused") is None, norm2
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
+    assert (pour2.get("refused") or {}).get("code") == "harvest.not_prefix"
 
 
 def test_grok_export_record_has_no_pseudo() -> None:

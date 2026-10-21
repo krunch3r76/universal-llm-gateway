@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
-from continuity_tape.extract_grokbot_jsonl import TranscriptPageError
+from continuity_tape.extract_grokbot_jsonl import (
+    TranscriptPageError,
+    reassemble_pages,
+)
 from continuity_tape.normalize_grokbot_l0_pages import (
     L0NormalizeError,
     normalize_grokbot_l0_pages,
@@ -113,6 +116,18 @@ async def _folder_bytes(
             return refuse(
                 "harvest.no_prior",
                 f"prior normalized lines {len(prior_lines)} != window.hi {_next}",
+            )
+        try:
+            aligned, _stats = normalize_grokbot_l0_pages(
+                prior.decode("utf-8"), anchor_total=prior_total
+            )
+            round_trip, _info = reassemble_pages(aligned)
+        except (L0NormalizeError, TranscriptPageError, UnicodeDecodeError) as exc:
+            return refuse("harvest.no_prior", str(exc))
+        if round_trip != prior_lines:
+            return refuse(
+                "harvest.no_prior",
+                "prior raw does not match the sealed normalized lines",
             )
     refusal = check_pages(parsed, prior_lines=prior_lines, prior_total=prior_total)
     if refusal:
