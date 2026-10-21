@@ -822,6 +822,102 @@ def test_normalize_service_filter_strips_whitespace() -> None:
     assert live.normalize_service_filter(service="  mcp  ") == ("mcp",)
 
 
+def test_normalize_service_filter_manage_accepts_slug() -> None:
+    assert live.normalize_service_filter(service="manage") == ("manage",)
+
+
+_MANAGE_IMPORT_SEAL = "abcdef0123456789abcdef0123456789abcdef01"
+
+
+def test_manage_import_seal_surfaces_sha_full_and_compact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A valid import seal must appear on reported_version, not only load_marker."""
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(live, "resolve_code_version", lambda: _MANAGE_IMPORT_SEAL)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=999
+        ),
+    )
+    full = live.build_snapshot(tmp_path, SimpleNamespace(), service="manage")
+    manage = full["services"][0]
+    assert manage["service"] == "manage"
+    assert manage["reported_version"]["value"] == _MANAGE_IMPORT_SEAL
+    assert (
+        manage["reported_version"]["source"] == "deploy_identity.resolve_code_version"
+    )
+    assert manage["loaded_code_evidence"]["kind"] == "imported_code"
+    assert manage["loaded_code_evidence"]["sha"] == _MANAGE_IMPORT_SEAL
+    assert manage["loaded_code_evidence"]["answers_equal"] is None
+
+    _empty_probe_pair(monkeypatch)
+    compact = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="manage", projection="compact"
+    )
+    row = compact["services"][0]
+    assert row["reported_version"]["value"] == _MANAGE_IMPORT_SEAL
+    assert row["loaded_code_evidence"]["kind"] == "imported_code"
+    assert row["loaded_code_evidence"]["answers_equal"] is None
+
+
+def test_manage_unknown_seal_stays_temporal_without_equality_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Non-sha seals must not promote process start into matches_reported_sha=yes."""
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(live, "resolve_code_version", lambda: "unknown")
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=999
+        ),
+    )
+    full = live.build_snapshot(tmp_path, SimpleNamespace(), service="manage")
+    manage = full["services"][0]
+    assert manage["loaded_code_evidence"]["kind"] == "temporal"
+    assert manage["loaded_code_evidence"]["sha"] is None
+    assert manage["loaded_code_evidence"]["answers_equal"] is None
+    assert manage["reported_version"]["value"] is None
+    assert manage["reported_version"]["error"] == "reported_version_unavailable"
+    assert manage["matches_reported_sha"] != "yes"
+
+    _empty_probe_pair(monkeypatch)
+    compact = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="manage", projection="compact"
+    )
+    row = compact["services"][0]
+    assert row["loaded_code_evidence"]["kind"] == "temporal"
+    assert row["loaded_code_evidence"]["answers_equal"] is None
+    assert row["reported_version"]["value"] is None
+
+
+def test_manage_checker_failure_still_carries_import_seal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Checker RuntimeError must not drop the import-sealed SHA on the manage row."""
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(live, "resolve_code_version", lambda: _MANAGE_IMPORT_SEAL)
+
+    def _boom(_state: object, service: str) -> ServiceInfo:
+        if service == "manage":
+            raise RuntimeError("checker_down")
+        return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
+
+    monkeypatch.setattr(live, "_service_info", _boom)
+    result = live.build_snapshot(tmp_path, SimpleNamespace(), service="manage")
+    manage = result["services"][0]
+    assert manage["service"] == "manage"
+    assert manage["status"] == "unknown"
+    assert manage["probe_errors"] == ["service_probe:RuntimeError"]
+    assert manage["loaded_code_evidence"]["kind"] == "imported_code"
+    assert manage["loaded_code_evidence"]["sha"] == _MANAGE_IMPORT_SEAL
+    assert manage["reported_version"]["value"] == _MANAGE_IMPORT_SEAL
+
+
 def test_service_filter_singular_returns_one_row_plus_porcelain(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -836,12 +932,8 @@ def test_service_filter_singular_returns_one_row_plus_porcelain(
     result = live.build_snapshot(
         tmp_path, SimpleNamespace(), service="git_integration_worker"
     )
-    assert [row["service"] for row in result["services"]] == [
-        "git_integration_worker"
-    ]
-    assert result["service_filter"] == {
-        "services": ["git_integration_worker"]
-    }
+    assert [row["service"] for row in result["services"]] == ["git_integration_worker"]
+    assert result["service_filter"] == {"services": ["git_integration_worker"]}
     assert "checkout" in result
     assert result["checkout"]["head_sha"] == "head"
 
@@ -867,9 +959,7 @@ def test_service_filter_multi_preserves_service_slugs_order(
         "mcp",
         "git_integration_worker",
     ]
-    assert result["service_filter"] == {
-        "services": ["mcp", "git_integration_worker"]
-    }
+    assert result["service_filter"] == {"services": ["mcp", "git_integration_worker"]}
 
 
 def test_unfiltered_preserves_full_fleet(
@@ -884,9 +974,7 @@ def test_unfiltered_preserves_full_fleet(
         ),
     )
     result = live.build_snapshot(tmp_path, SimpleNamespace())
-    assert [row["service"] for row in result["services"]] == list(
-        live.SERVICE_SLUGS
-    )
+    assert [row["service"] for row in result["services"]] == list(live.SERVICE_SLUGS)
     assert result["service_filter"] is None
 
 

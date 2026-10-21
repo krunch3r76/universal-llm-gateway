@@ -1,4 +1,8 @@
-"""Low-level read-only probes used by the fleet liveness manage projection."""
+"""Low-level read-only probes for the fleet liveness manage JSON-RPC projection.
+
+``fleet_liveness.build_snapshot`` imports these helpers; they never mutate checkout
+or running services and keep SERVICE_SLUGS as the fleet allowlist invariant.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from deploy_identity.code_version import is_valid_sha40
 from implement_admission.service_lib_ownership import (
     serving_services_for_lib_path,
     slug_for_service_path,
@@ -28,6 +33,7 @@ SERVICE_SLUGS = (
     "git_integration_worker",
     "cdp_ask",
     "jobs",
+    "manage",
 )
 CONTAINER_SERVICES = {"mcp": ("mcp-server", "/app")}
 CONTAINER_MARKERS = {
@@ -355,6 +361,28 @@ def git_blob_sha(root: Path, commit: str | None, path: str) -> str | None:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def manage_loaded_code_evidence(code_version: str | None) -> dict[str, Any]:
+    """Describe how the manage RPC process sealed its loaded-code label at import.
+
+    A valid 40-hex ``code_version`` means ``deploy_identity`` resolved a Git
+    ancestry label when this interpreter imported the module, not a live re-read
+    of the checkout. Any other value (including ``unknown``) is temporal evidence
+    only: the probe does not treat process start time as a SHA and leaves
+    ``answers_equal`` null so readers never infer equality from a timestamp.
+    """
+    if code_version and is_valid_sha40(code_version):
+        return {
+            "kind": "imported_code",
+            "sha": code_version.strip().lower(),
+            "answers_equal": None,
+        }
+    return {
+        "kind": "temporal",
+        "sha": None,
+        "answers_equal": None,
+    }
+
+
 def container_sha(container: str, path: str) -> str | None:
     """Hash one file at its running container load surface."""
     try:
@@ -383,6 +411,7 @@ __all__ = [
     "container_start",
     "clock_observation",
     "git_blob_sha",
+    "manage_loaded_code_evidence",
     "mcp_reported_version",
     "process_start",
     "tree_probe",
