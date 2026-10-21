@@ -140,6 +140,7 @@ class ModelManagerApp(App):
         self._api_server: ManageAPIServer | None = None
         self._digest_tick_loop: DigestTickLoop | None = None
         self._stargate_health_restart = None
+        self._restart_cadence = None
         self._mcp_edge_probe = None
         self._grokbot_egress_watch = None
         self._armed_record_path = record_path_from_env()
@@ -257,6 +258,22 @@ class ModelManagerApp(App):
             self._stargate_health_restart = None
             self.notify(
                 f"stargate health restart unavailable: {e}",
+                severity="warning",
+                timeout=15,
+            )
+
+        try:
+            from scripts.model_manager.ui.controller.restart_cadence import (
+                RestartCadenceLoop,
+            )
+
+            self._restart_cadence = RestartCadenceLoop(self._service_controller)
+            self._restart_cadence.start()
+        except Exception as e:
+            logger.exception("Failed to start restart cadence loop: %s", e)
+            self._restart_cadence = None
+            self.notify(
+                f"restart cadence unavailable: {e}",
                 severity="warning",
                 timeout=15,
             )
@@ -387,6 +404,12 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping stargate health restart: %s", e)
             self._stargate_health_restart = None
+        if self._restart_cadence is not None:
+            try:
+                await self._restart_cadence.stop()
+            except Exception as e:
+                logger.exception("Error stopping restart cadence: %s", e)
+            self._restart_cadence = None
         if self._mcp_edge_probe is not None:
             try:
                 await self._mcp_edge_probe.stop()
