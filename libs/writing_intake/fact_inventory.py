@@ -16,7 +16,10 @@ _SIGNATURE_MARKERS = (
 )
 _NON_LOAD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
-        re.compile(r"stamp reads|RECEIVED\s+[A-Z]{3}\s+\d", re.I),
+        re.compile(
+            r"stamp reads|RECEIVED\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d",
+            re.I,
+        ),
         "clerical_intake_stamp",
     ),
     (
@@ -57,14 +60,22 @@ _NON_LOAD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 def _strip_non_sworn_body(text: str) -> str:
     lines = text.splitlines()
+    has_sworn_opener = any(
+        re.match(r"^I,\s+.+,\s+state:", ln.strip(), re.I) for ln in lines
+    )
     out: list[str] = []
-    in_sworn = True
+    in_sworn = not has_sworn_opener
     for line in lines:
         stripped = line.strip()
         lower = stripped.lower()
-        if _HEADER.match(stripped) or _NUMBERED_SECTION.match(stripped):
-            if re.match(r"^##?\s*2[\.\s]", stripped):
+        if _HEADER.match(stripped):
+            if re.match(r"^#{1,6}\s*[2-9][\.\s]", stripped):
                 in_sworn = False
+            continue
+        if re.match(r"^I,\s+.+,\s+state:", stripped, re.I):
+            in_sworn = True
+            continue
+        if not in_sworn:
             continue
         if stripped and any(
             marker in lower
@@ -72,13 +83,16 @@ def _strip_non_sworn_body(text: str) -> str:
             if marker != "i declare under penalty"
         ):
             break
-        if lower.startswith("executed on ") or lower.startswith("signature:"):
+        if (
+            lower.startswith("i declare under penalty of perjury under the laws")
+            or lower.startswith("executed on ")
+            or lower.startswith("signature:")
+        ):
             break
-        if not in_sworn and stripped.startswith("##"):
-            continue
         if stripped.startswith("---") or stripped.startswith("***"):
             continue
-        out.append(line)
+        cleaned = _NUMBERED_SECTION.sub("", stripped)
+        out.append(cleaned)
     return "\n".join(out)
 
 
@@ -145,7 +159,7 @@ def build_fact_inventory(
     }
 
 
-_EXHIBIT_TAG = re.compile(r"\(Exhibit\s+\d+\)", re.I)
+_EXHIBIT_TAG = re.compile(r"\(Exhibit\s+\d+\.?\)", re.I)
 _EXHIBIT_LEDGER = re.compile(r"Exhibit\s+(\d+)", re.I)
 
 _DRIFT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -162,8 +176,10 @@ _DRIFT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(
-            r"stamp reads|RECEIVED\s+[A-Z]{3}|bill-created date|\b\d+\s+days after|"
-            r"side office in the building|orally or in writing|envelope it came in|MANSUBI KAYWAN",
+            r"stamp reads|RECEIVED\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d|"
+            r"which the Clerk stamped|Date Filed:\s*\d|bill-created date|\b\d+\s+days after|"
+            r"side office in the building|orally or in writing|envelope it came in|MANSUBI KAYWAN|"
+            r"At \d{1,2}:\d{2}\s+[AP]M that day, I emailed",
             re.I,
         ),
         "clerical_recital",

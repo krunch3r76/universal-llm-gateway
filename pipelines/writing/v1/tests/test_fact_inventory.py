@@ -102,6 +102,27 @@ def test_drift_check_flags_bad_draft() -> None:
     assert out["passed"] is False
     assert out["flagged_sentences"]
 
+    clean_numbered = (
+        "I, Kaywan Joseph Mansubi, state:\n\n"
+        "1. I received the January 16, 2026 notice at 15571 Flintridge Dr close to its date (Exhibit 2).\n\n"
+        "2. I do not know the date I received supplemental tax bills #10059585 and #10059586 (Exhibit 4).\n\n"
+        "3. On May 28, 2026, she emailed me confirming submission (Exhibit 7.).\n"
+    )
+    inv = build_fact_inventory(
+        clean_numbered,
+        purpose="Timeliness hearing",
+        audience="Assessment Appeals Board",
+    )
+    assert len(inv["load_bearing_claims"]) == 3
+    assert inv["dropped_facts"] == []
+    drift_clean = run_drift_check(
+        clean_numbered,
+        channel="filing",
+        pin_ledger=[{"id": "P1", "excerpt": "Exhibit 2, Exhibit 4, Exhibit 7"}],
+    )
+    assert drift_clean["passed"] is True
+    assert drift_clean["flagged_sentences"] == []
+
 
 class _Out:
     def __init__(self, payload: dict[str, Any] | None) -> None:
