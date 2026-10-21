@@ -739,6 +739,7 @@ def fire_ide_hop(
     on_fired: Any | None = None,
     armed_since: Any | None = None,
     model_query: str | None = None,
+    hop_mutex_preheld: bool = False,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -778,6 +779,8 @@ def fire_ide_hop(
         resolved_hop_knobs = policy_hop_model_knobs(root_id)
         knob_err = validate_hop_model_knobs(resolved_hop_knobs)
         if knob_err:
+            if hop_mutex_preheld:
+                release_hop_mutex(root_id)
             return {
                 "ok": False,
                 "phase": "hop_model_knobs_invalid",
@@ -810,9 +813,13 @@ def fire_ide_hop(
         "execution_id": seal.get("execution_id"),
     }
     if dry_run:
+        if hop_mutex_preheld:
+            release_hop_mutex(root_id)
         return {"ok": True, "dry_run": True, **result}
     locked = session_unreachable(resolved_gui_host)
     if locked is not None:
+        if hop_mutex_preheld:
+            release_hop_mutex(root_id)
         return {"ok": False, "phase": "session_locked", **locked, **result}
     marker = hop_header_line(message)
     land_root, tip_cp = hop_land_identity(message, root_id=root_id)
@@ -833,6 +840,8 @@ def fire_ide_hop(
         exclude_ids=exclude,
     )
     if pre_id is not None and pre_id != departing:
+        if hop_mutex_preheld:
+            release_hop_mutex(root_id)
         return {
             "ok": True,
             "phase": "landed",
@@ -844,20 +853,27 @@ def fire_ide_hop(
         }
     # Root mutex TTL covers the long land window so a second fire cannot stack.
     root_ttl = max(120.0, float(landing_timeout_s) + 30.0)
-    mutex = try_acquire_hop_mutex(root_id, ttl_s=root_ttl)
+    acquired_root_here = False
+    if hop_mutex_preheld:
+        mutex = {"ok": True}
+    else:
+        mutex = try_acquire_hop_mutex(root_id, ttl_s=root_ttl)
+        acquired_root_here = mutex.get("ok") is True
     if not mutex.get("ok"):
         return {"ok": False, **mutex, **result}
     window = try_acquire_window_mutex(
         resolved_gui_host, focus_title, root_id=root_id, ttl_s=root_ttl
     )
     if not window.get("ok"):
-        release_hop_mutex(root_id)
+        if hop_mutex_preheld or acquired_root_here:
+            release_hop_mutex(root_id)
         return {"ok": False, **window, **result}
     pre_existing: set[str] | None = None
     if tip_cp is None and land_root:
         pre_existing = list_resume_transcript_ids(land_root, AGENT_TRANSCRIPTS)
     fired_at = time.time()
     hop_record: dict[str, Any] | None = None
+    release_root_mutex = True
     try:
         if is_cursor_xvfb_host(resolved_gui_host):
             debug_url = cursor_debug_url_for_gui_host(resolved_gui_host)
@@ -876,6 +892,7 @@ def fire_ide_hop(
                 requested_agent_id=requested_agent_id,
             )
             if not keystroke.get("ok"):
+                release_root_mutex = False
                 return {
                     "ok": False,
                     "phase": "keystroke",
@@ -899,8 +916,10 @@ def fire_ide_hop(
                     timeout=90,
                 )
             except subprocess.TimeoutExpired:
+                release_root_mutex = False
                 return {"ok": False, "phase": "ssh_timeout", **result}
             if proc.returncode != 0:
+                release_root_mutex = False
                 return {
                     "ok": False,
                     "phase": "keystroke",
@@ -1013,7 +1032,8 @@ def fire_ide_hop(
         }
     finally:
         release_window_mutex(resolved_gui_host, focus_title)
-        release_hop_mutex(root_id)
+        if release_root_mutex and (hop_mutex_preheld or acquired_root_here):
+            release_hop_mutex(root_id)
 
 
 def finalize_xvfb_hop_sidebar(

@@ -332,6 +332,8 @@ async def _deliver_locked(
             selected=selected,
             expected_title=verdict.get("expected_title"),
             active_title=verdict.get("active_title"),
+            expected_agent_id=verdict.get("expected_agent_id"),
+            active_agent_id=verdict.get("active_agent_id"),
         )
     await asyncio.sleep(0.25)
     post = await probe_surface(ws_url)
@@ -393,7 +395,13 @@ async def _paste_cursor_services(
             "send_fallback_clicked": False,
         }
     if not isinstance(value, dict) or not value.get("ok"):
-        reason = value.get("reason") if isinstance(value, dict) else "paste_failed"
+        if not isinstance(value, dict):
+            return {"ok": False, "reason": "paste_failed"}
+        raw_reason = str(value.get("reason") or "").strip()
+        if raw_reason in {"", "no_composer", "no_handle", "no_agent_id", "no_composer_id"}:
+            reason = "no_composer"
+        else:
+            reason = raw_reason
         return {"ok": False, "reason": reason}
     return {"ok": True, "send_fallback_clicked": False}
 

@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     hub_land_precondition_reason,
     land_lane_branch_onto_hub_master,
 )
+from services.git_integration_worker.tests.land_k43_fixture import exempt_branch
 
 pytestmark = pytest.mark.offline
 
@@ -190,7 +191,10 @@ def test_disjoint_dirty_hub_allows_silent_land(tmp_path: Path) -> None:
     foreign = repo / "foreign-wip.md"
     foreign.write_text("peer wip\n", encoding="utf-8")
     wip_before = foreign.read_text(encoding="utf-8")
-    wip_porcelain_before = _git(repo, "status", "--porcelain", "--", "foreign-wip.md").stdout
+    wip_porcelain_before = _git(
+        repo, "status", "--porcelain", "--", "foreign-wip.md"
+    ).stdout
+    exempt_branch(repo, branch)
 
     result = land_lane_branch_onto_hub_master(
         repo, branch_name=branch, holder_op_id="d-disjoint"
@@ -198,7 +202,10 @@ def test_disjoint_dirty_hub_allows_silent_land(tmp_path: Path) -> None:
     assert result.landed is True
     assert _master(repo) != before
     assert foreign.read_text(encoding="utf-8") == wip_before
-    assert _git(repo, "status", "--porcelain", "--", "foreign-wip.md").stdout == wip_porcelain_before
+    assert (
+        _git(repo, "status", "--porcelain", "--", "foreign-wip.md").stdout
+        == wip_porcelain_before
+    )
 
 
 def test_overlapping_dirty_hub_refuses_with_reason(tmp_path: Path) -> None:
@@ -233,7 +240,9 @@ def test_head_not_master_refuses(tmp_path: Path) -> None:
     branch = "cursor-sdk/lane-head"
     _commit_on_branch(repo, branch, "lane.md", "lane\n")
     assert _git(repo, "checkout", branch).returncode == 0
-    assert hub_land_precondition_reason(repo, branch_name=branch) == "hub_head_not_master"
+    assert (
+        hub_land_precondition_reason(repo, branch_name=branch) == "hub_head_not_master"
+    )
 
 
 def test_not_ff_reason_when_ff_fails_without_merge(
@@ -255,6 +264,7 @@ def test_not_ff_reason_when_ff_fails_without_merge(
         "_clean_merge_onto_hub_master",
         lambda *_a, **_k: (False, None),
     )
+    exempt_branch(repo, "cursor-sdk/lane-div")
     result = land_lane_branch_onto_hub_master(
         repo, branch_name="cursor-sdk/lane-div", holder_op_id="d-not-ff"
     )
@@ -272,6 +282,7 @@ def test_merge_conflict_reason(tmp_path: Path) -> None:
     (repo / "both.md").write_text("master side\n", encoding="utf-8")
     assert _git(repo, "add", "both.md").returncode == 0
     assert _git(repo, "commit", "-m", "master").returncode == 0
+    exempt_branch(repo, "cursor-sdk/lane-conflict")
     result = land_lane_branch_onto_hub_master(
         repo, branch_name="cursor-sdk/lane-conflict", holder_op_id="d-conflict"
     )

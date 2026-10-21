@@ -160,6 +160,16 @@ class WorkAdmissionController:
     def is_draining(self) -> bool:
         return self._draining
 
+    def is_armed(self) -> bool:
+        """True while a restart intent is bound but drain has not flipped yet.
+
+        The admit route queues write admits on occupied lanes during this
+        window. ``try_admit`` itself still reserves a ticket; callers that
+        start work must check the fence first. Returns False once draining
+        or after ``release_drain``.
+        """
+        return self._armed
+
     @property
     def drain_epoch(self) -> int:
         return self._drain_epoch
@@ -229,9 +239,10 @@ class WorkAdmissionController:
         ``git_worker.drain.started`` — legacy admit-freeze path.
 
         ``arm="idle"`` or ``arm="holder:<dispatch_id>"`` (a:37197): bind the
-        epoch/intent without flipping ``_draining`` so admits stay open until
-        ``maybe_activate_armed_drain`` / idle activation. Immediate activate when
-        the arm condition already holds (already idle, or named holder absent).
+        epoch/intent without flipping ``_draining``. Write admits on an
+        occupied lane queue until activation (a:39913); other lanes still
+        start. Immediate activate when the arm condition already holds
+        (already idle, or named holder absent).
         """
         if (
             self._intent_id == intent_id
@@ -264,7 +275,8 @@ class WorkAdmissionController:
         self._armed_reason = reason
         self._armed_deadline_s = deadline_s
         logger.info(
-            "drain armed (admits open): intent_id=%s epoch=%s arm=%s holder=%s",
+            "drain armed (blocking-lane admits queue): intent_id=%s epoch=%s "
+            "arm=%s holder=%s",
             intent_id,
             drain_epoch,
             arm_kind,
@@ -371,7 +383,9 @@ class WorkAdmissionController:
 
         Idempotent no-op on mismatch. Does not SIGTERM or mutate tickets; the
         manage cancel path calls this so admission reopens without process death
-        (pairing requirement with store ``cancel``).
+        (pairing requirement with store ``cancel``). The cancel-drain route
+        promotes fence-queued rows after a matching release; this method stays
+        synchronous and does not start them itself.
         """
         matches = self._intent_id == intent_id and self._drain_epoch == drain_epoch
         if matches and (self._draining or self._armed):
