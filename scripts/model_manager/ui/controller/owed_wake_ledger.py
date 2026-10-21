@@ -20,15 +20,34 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-MILESTONE_SUBJECT_PREFIXES: tuple[str, ...] = (
-    "MILESTONE|",
-    "PLAN|",
-    "ASK|",
-    "FACT|",
-    "READY|",
-    "DONE|",
-    "VERDICT|",
-    "LANDED|",
+PRODUCER1_MILESTONE_HEADS: frozenset[str] = frozenset(
+    {
+        "PLAN",
+        "VERDICT",
+        "LANDED",
+        "DONE",
+        "FAILED",
+        "BLOCKED",
+        "QUESTION",
+        "RULING",
+        "AMEND",
+        "SEAT_REGISTRATION",
+        "ESCALATED",
+        "MILESTONE",
+        "ASK",
+        "READY",
+    }
+)
+PRODUCER1_EXCLUDED_HEADS: frozenset[str] = frozenset(
+    {
+        "FACT",
+        "PICKUP",
+        "STATUS",
+        "UPDATE",
+        "HOP",
+        "ROUTE",
+        "ACK",
+    }
 )
 
 _CHROME_SUBJECT_MARKERS: tuple[str, ...] = (
@@ -81,12 +100,27 @@ def milestone_backstop_min_age_s() -> float:
         return DEFAULT_MILESTONE_BACKSTOP_AGE_S
 
 
+def _producer1_subject_head_token(subject: str) -> str:
+    """First token before ``|`` (R3 milestone heads, e.g. ``PLAN r2|…`` → ``PLAN``)."""
+    text = (subject or "").strip()
+    if not text:
+        return ""
+    if "|" in text:
+        head = text.split("|", 1)[0].strip().upper()
+    else:
+        head = text.strip().upper()
+    return head.split()[0] if head else ""
+
+
 def subject_qualifies_producer1(subject: str) -> bool:
-    """True when subject opens with an allowlisted milestone type prefix."""
+    """True when the first subject token is an R3 waking milestone/exception head."""
     text = (subject or "").strip()
     if not text:
         return False
-    return any(text.startswith(prefix) for prefix in MILESTONE_SUBJECT_PREFIXES)
+    token = _producer1_subject_head_token(text)
+    if token in PRODUCER1_EXCLUDED_HEADS:
+        return False
+    return token in PRODUCER1_MILESTONE_HEADS
 
 
 def is_chrome_bus_subject(subject: str) -> bool:

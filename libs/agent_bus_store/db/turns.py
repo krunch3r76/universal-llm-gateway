@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
+
 from ..recipients import (
     is_same_seat_memo_note,
     recipient_in_clause,
@@ -316,12 +318,22 @@ def insert_turn(
 
         turn_number = 1 if idempotent_first_turn else latest_turn_number + 1
 
+        read_at: str | None = None
+        if normalize_bus_address(from_agent) == normalize_bus_address(to_agent):
+            if not is_same_seat_memo_note(
+                seat=from_agent,
+                from_agent=from_agent,
+                to_agent=to_agent,
+                subject=subject,
+            ):
+                read_at = ts
+
         try:
             cur = conn.execute(
                 "INSERT INTO turns "
                 "(thread, turn_number, from_agent, to_agent, subject, body, "
-                "status, supersedes_turn, created_at, attested_by, user_agent) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, supersedes_turn, created_at, read_at, attested_by, user_agent) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread,
                     turn_number,
@@ -332,6 +344,7 @@ def insert_turn(
                     status,
                     supersedes_turn,
                     ts,
+                    read_at,
                     attested_by,
                     user_agent,
                 ),

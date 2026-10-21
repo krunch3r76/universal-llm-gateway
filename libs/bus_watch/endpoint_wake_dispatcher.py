@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 import httpx
+from agent_bus_store.routes.threads.send_prep import MAESTRO_MILESTONE_PREFIXES
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -20,6 +21,10 @@ from bus_watch.endpoint_wake_transport import (
     classify_display,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
+
+# ``ACK`` is in ``MAESTRO_MILESTONE_PREFIXES`` so compose keeps ``ACK|`` on maestro;
+# ``qualifies()`` suppresses ``ACK|`` wakes to maestro / ``web-anthropic``.
+_MAESTRO_MILESTONE_WAKE_HEADS = MAESTRO_MILESTONE_PREFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +37,6 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "AMEND",
         "DONE",
         "FAILED",
-        "FACT",
         "REVIEW",
         "PLAN",
         "LANDED",
@@ -133,6 +137,44 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     return agent
 
 
+_MAESTRO_CSE_WAKE_TARGETS = frozenset({"maestro", "web-anthropic"})
+
+
+def _maestro_cse_nonwake_head(
+    *, to_agent: str, from_agent: str, subject: str, head: str
+) -> bool:
+    """L17/L19: house telemetry and intermediate subjects to maestro/CSE do not wake."""
+    if to_agent not in _MAESTRO_CSE_WAKE_TARGETS:
+        return False
+    _ = _MAESTRO_MILESTONE_WAKE_HEADS
+    token = head.split()[0] if head else ""
+    if token in {"FACT", "PICKUP", "UPDATE", "HOP"}:
+        return True
+    if head == "STATUS" or token == "STATUS":
+        parts = [p.strip().lower() for p in (subject or "").split("|")]
+        if (
+            len(parts) >= 2
+            and parts[0] == "status"
+            and parts[1] == "ack-batch"
+            and to_agent == "web-anthropic"
+            and from_agent == "grok-bot-gc1"
+        ):
+            return False
+        return True
+    text = subject or ""
+    if text.strip().lower().startswith("score_resurface"):
+        return True
+    if _INTERMEDIATE_SUBJECT_RE.search(text):
+        checkpoint_head = text.split("|", 1)[0].strip().upper()
+        if not checkpoint_head.startswith("CHECKPOINT"):
+            return True
+    lowered = text.lower()
+    for marker in ("closeout", "cursor-sdk generate", "cdp generate"):
+        if marker in lowered:
+            return True
+    return False
+
+
 def peer_operator_wake_from(from_agent: str) -> bool:
     """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not."""
     if from_agent in _ROUTINE_DISPATCH_FROM:
@@ -187,6 +229,10 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         to_agent in STAGE_MANAGER_ADDRESSES
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
+        return False
+    if _maestro_cse_nonwake_head(
+        to_agent=to_agent, from_agent=from_agent, subject=subject, head=head
+    ):
         return False
     if not peer_operator_wake_from(from_agent) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent

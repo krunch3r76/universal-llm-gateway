@@ -34,6 +34,7 @@ from .send_prep import (
     _raise_spill_http,
     _resolve_send_supersedes,
     _validate_lane_bind_pre_mint,
+    apply_maestro_compose_reroute,
 )
 from .send_sidecar import _send_with_sidecar
 
@@ -73,6 +74,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
     _raise_if_unexpanded_file_token(body.body)
     _raise_if_unexpanded_file_token(body.sidecar_content)
+    apply_maestro_compose_reroute(body)
     if body.sidecar_content is not None:
         created, producer1_result = await asyncio.to_thread(_send_with_sidecar, body)
         if producer1_result and producer1_result.get("needs_deferred_dispatch"):

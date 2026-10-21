@@ -352,7 +352,7 @@ def _open_owed_wake_count(store: RestartIntentStore, holder_id: str = "holder-ma
 def test_fact_cdp_reply_to_web_anthropic_records_row_and_dispatches_once(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    subject = "FACT|cdp reply latency fixed"
+    subject = "MILESTONE|cdp reply latency fixed"
     assert is_chrome_bus_subject(subject) is False
     store = _bind_store(tmp_path, monkeypatch)
     endpoint_calls: list[dict] = []
@@ -392,6 +392,64 @@ def test_fact_cdp_reply_to_web_anthropic_records_row_and_dispatches_once(
         assert resp.status_code == 201, resp.text
     assert _open_owed_wake_count(store) == 1
     assert len(endpoint_calls) == 1
+
+
+def test_fact_to_web_anthropic_reroutes_and_does_not_record_owed_wake(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subject = "FACT|cdp reply latency fixed"
+    store = _bind_store(tmp_path, monkeypatch)
+    endpoint_calls: list[dict] = []
+    _tracking_build_deps(monkeypatch, endpoint_calls)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    app, token = _bus_app_with_token(tmp_path, monkeypatch)
+    headers = _auth_headers(token)
+    with TestClient(app) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-fact-reroute",
+                "from": "cursor",
+                "to": "web-anthropic",
+                "subject": "bootstrap",
+                "body": "seed",
+            },
+            headers=headers,
+        )
+        assert create.status_code == 201, create.text
+        thread_id = create.json()["thread"]["id"]
+        monkeypatch.setattr(
+            "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+            lambda lane: "holder-maestro" if lane == thread_id else None,
+        )
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web-anthropic",
+                "subject": subject,
+                "body": "house fact rerouted at compose",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        turn = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2",
+            headers=headers,
+        ).json()
+        assert turn["to"] == "cursor"
+    assert _open_owed_wake_count(store) == 0
+    assert endpoint_calls == []
+    after_turn_created(
+        thread_id=thread_id,
+        to_agent="maestro",
+        from_agent="cursor",
+        subject="FACT|forced-via-turns",
+        turn_number=3,
+    )
+    assert _open_owed_wake_count(store) == 0
+    assert endpoint_calls == []
 
 
 @pytest.mark.parametrize("holder_seat", ["maestro", "web-anthropic"])

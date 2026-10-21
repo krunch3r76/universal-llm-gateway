@@ -93,15 +93,56 @@ def test_cse_allowlist_not_display(db: None) -> None:
         {"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"},
         cse=True,
     )
-    assert qualifies(
+    assert not qualifies(
         {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"},
         cse=True,
     )
     assert not qualifies(
-        {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"},
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "grok-bot-gc1",
+            "subject": "STATUS|agent-bus:5222",
+        },
         cse=True,
     )
     assert qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "grok-bot-gc1",
+            "subject": "STATUS|ack-batch|leg1",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "grok-bot-gc1",
+            "subject": "STATUS | ack-batch | leg1",
+        },
+        cse=True,
+    )
+    assert not qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "cursor",
+            "subject": "STATUS|ack-batch|leg1",
+        },
+        cse=True,
+    )
+    for subj in ("FACT r2|x", "PICKUP r2|x", "STATUS r2|x"):
+        assert not qualifies(
+            {
+                "to_agent": "maestro",
+                "from_agent": "grok-bot-gc1",
+                "subject": subj,
+            },
+            cse=True,
+        )
+    assert not qualifies(
+        {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"},
+        cse=True,
+    )
+    assert not qualifies(
         {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"},
         cse=True,
     )
@@ -137,7 +178,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=True,
     )
-    assert qualifies(
+    assert not qualifies(
         {"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"},
         cse=True,
     )
@@ -211,7 +252,6 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "AMEND",
         "DONE",
         "FAILED",
-        "FACT",
         "REVIEW",
         "PLAN",
         "LANDED",
@@ -227,6 +267,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "ESCALATE",
         "BLOCKED",
         "READY",
+        "EAR",
     }
     assert GROK_WAKE_SUBJECT_HEADS == {
         "REQUEST",
@@ -264,6 +305,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "ESCALATE",
         "BLOCKED",
         "READY",
+        "EAR",
     }
     assert not qualifies(
         {"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False
@@ -283,7 +325,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "SCORE_RESURFACE — slug G5",
         "park-harvest wake — 17899",
     ):
-        assert qualifies(
+        assert not qualifies(
             {
                 "to_agent": "maestro",
                 "from_agent": "grok-bot-bl1",
