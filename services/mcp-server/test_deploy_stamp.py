@@ -20,6 +20,8 @@ def test_read_source_sync_stamp_missing(
         "source_sync_basis": None,
         "code_version_semantics": None,
         "source_sync_worktree_state": None,
+        "load_surface_worktree_state": None,
+        "load_surface_classification": None,
         "source_tree_sha": None,
         "image_id": None,
     }
@@ -40,6 +42,8 @@ def test_read_source_sync_stamp_present(
         "source_sync_basis": "unspecified_legacy",
         "code_version_semantics": "legacy_source_sync_commit_label",
         "source_sync_worktree_state": "unknown",
+        "load_surface_worktree_state": None,
+        "load_surface_classification": None,
         "source_tree_sha": None,
         "image_id": None,
     }
@@ -65,6 +69,8 @@ def test_read_source_sync_stamp_qualifies_working_tree_label(
         "source_sync_basis": "working_tree",
         "code_version_semantics": "checkout_head_at_source_sync",
         "source_sync_worktree_state": "dirty",
+        "load_surface_worktree_state": None,
+        "load_surface_classification": None,
         "source_tree_sha": None,
         "image_id": None,
     }

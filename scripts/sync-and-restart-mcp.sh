@@ -523,9 +523,27 @@ write_source_sync_stamp_before_serving_restart() {
   write_source_sync_stamp
 }
 
+read_stamp_classification() {
+  "$PYTHON" -c '
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path[:0] = [str(root / "libs"), str(root / "scripts/model_manager/ui/controller")]
+from fleet_liveness_probe import classify_stamp_worktree
+fields = classify_stamp_worktree(root)
+for key in (
+    "working_tree_state",
+    "load_surface_worktree_state",
+    "load_surface_classification",
+):
+    print(f"{key}={fields[key]}")
+' "$1"
+}
+
 write_source_sync_stamp() {
   local c=mcp-server
-  local stamp code_sha working_tree_state status_output source_tree_sha image_id
+  local stamp code_sha working_tree_state source_tree_sha image_id
+  local load_surface_worktree_state load_surface_classification classification
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   image_id="$(docker inspect -f '{{.Image}}' mcp-server 2>/dev/null || true)"
   code_sha="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
@@ -534,27 +552,32 @@ write_source_sync_stamp() {
       ! -path '*/__pycache__/*' ! -name '*.pyc' -print0 \
       | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
   )"
-  if status_output="$(git -C "$WORKSPACE_ROOT" status --porcelain --untracked-files=all 2>/dev/null)"; then
-    if [[ -n "${status_output}" ]]; then
-      working_tree_state="dirty"
-    else
-      working_tree_state="clean"
+  classification="$(read_stamp_classification "$WORKSPACE_ROOT" 2>/dev/null)" || classification=""
+  working_tree_state="$(printf '%s\n' "$classification" | sed -n 's/^working_tree_state=//p')"
+  load_surface_worktree_state="$(printf '%s\n' "$classification" | sed -n 's/^load_surface_worktree_state=//p')"
+  load_surface_classification="$(printf '%s\n' "$classification" | sed -n 's/^load_surface_classification=//p')"
+  if [[ -n "${_STAMP_CLASS_BEFORE+x}" ]]; then
+    if [[ "$classification" != "${_STAMP_CLASS_BEFORE}" || "$code_sha" != "${_STAMP_HEAD_BEFORE}" ]]; then
+      working_tree_state="unknown"
+      load_surface_worktree_state="unknown"
+      load_surface_classification="unknown"
     fi
-  else
-    working_tree_state="unknown"
   fi
-  # Same join as fleet_liveness_probe.services_for_path, recorded at sync
-  # time. The reader must not reclassify a later porcelain into this field.
-  if ! off_load_untracked_only="$(
-    PYTHONPATH="${WORKSPACE_ROOT}${PYTHONPATH:+:$PYTHONPATH}" \
-      "$PYTHON" -c 'import sys; from pathlib import Path; from scripts.model_manager.ui.controller.fleet_liveness_probe import off_load_untracked_only_label; print(off_load_untracked_only_label(Path(sys.argv[1])))' \
-      "$WORKSPACE_ROOT"
-  )"; then
-    off_load_untracked_only="unknown"
-  fi
+  case "$working_tree_state" in
+    clean|dirty|unknown) ;;
+    *) working_tree_state="unknown" ;;
+  esac
+  case "$load_surface_worktree_state" in
+    clean|dirty|unknown) ;;
+    *) load_surface_worktree_state="unknown" ;;
+  esac
+  case "$load_surface_classification" in
+    none|untracked_off_load_surface_only|off_load_surface_only|load_surface_dirty|unknown) ;;
+    *) load_surface_classification="unknown" ;;
+  esac
   docker exec -u 0 "$c" sh -c \
-    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\noff_load_untracked_only=${off_load_untracked_only}\nsource_tree_sha=${source_tree_sha}\nimage_id=${image_id}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
-  echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
+    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\nload_surface_worktree_state=${load_surface_worktree_state}\nload_surface_classification=${load_surface_classification}\nsource_tree_sha=${source_tree_sha}\nimage_id=${image_id}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+  echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state}, load_surface_worktree_state=${load_surface_worktree_state}, load_surface_classification=${load_surface_classification})"
 }
 
 _SYNC_NONCE=""
@@ -756,6 +779,8 @@ else
     arm_restore_window
     docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
   fi
+  _STAMP_HEAD_BEFORE="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
+  _STAMP_CLASS_BEFORE="$(read_stamp_classification "$WORKSPACE_ROOT" 2>/dev/null || true)"
   sync_source_into_container
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"

@@ -3,8 +3,8 @@
 Slugs come from ``slug_for_service_path`` and ``_SERVICE_OWNERSHIP``
 path prefixes. A ``libs/`` path uses ``serving_services_for_lib_path``
 (the job set), not may-import ownership. Docs and other non-serving
-trees add no slug. A services or libs path no rule maps is reported
-as ``unmapped:`` rather than dropped.
+trees add no slug. A services, libs, or ``archive/`` Python path no
+rule maps is reported as ``unmapped:`` rather than dropped.
 """
 
 from __future__ import annotations
@@ -112,6 +112,9 @@ def restart_owed_line(paths: Sequence[str]) -> str:
                 unmapped.add(path)
             continue
         if path.startswith("services/"):
+            unmapped.add(path)
+            continue
+        if path.startswith("archive/") and path.endswith(".py"):
             unmapped.add(path)
     owed = ", ".join(sorted(slugs)) if slugs else "none"
     lines = [f"restart_owed: {owed}"]

@@ -161,6 +161,10 @@ def test_restart_owed_docs_only_is_none() -> None:
 
 
 def test_restart_owed_charter_runner_script_is_unmapped() -> None:
+    """An archived charter-runner script is not a fleet restart slug.
+
+    Dropping the path would hide it. The line reports it unmapped.
+    """
     path = "archive/charter_runner/propagation_execute.py"
     text = restart_owed_line([path])
     assert text.startswith("restart_owed: none\n")

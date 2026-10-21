@@ -183,29 +183,39 @@ def _reported_sha(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _mark_not_loaded_by(row: dict[str, Any], changed: list[str] | None) -> None:
-    """Record load-relevance beside an ancestry yes. Do not replace the answer.
+_LOAD_RELEVANCE_BASIS = "serving_map+code_ref_first_parent"
 
-    ``liveness.answer`` is what ``service_live`` and the dry-run restart set
-    read. ``not_loaded_by`` is not in that literal, so writing it there makes
-    an already-live service look like it still needs a restart. The ancestry
-    answer stays. ``load_relevance`` says whether this service imports any
-    path in the change list.
 
-    A missing or empty path list is left alone: git could not name the change.
-    Paths the ownership map does not serve do not count as loaded.
+def _attach_load_relevance(row: dict[str, Any], changed: list[str] | None) -> None:
+    """Record whether the serving map names this service, without changing answer.
+
+    ``liveness.answer`` stays the ancestry result. ``service_live`` treats only
+    ``yes`` as live, so replacing it changes restart dry-runs. ``not_loaded_by``
+    means every first-parent path has a non-empty serving set and this service
+    is in none of them. It is not an import scan. An empty serving set is
+    ``unmapped``. A missing path list is ``unknown``. The basis names the map
+    and that the path list is one commit's first parent.
     """
-    if not changed:
-        return
     validation = row.get("code_ref_validation")
     if not isinstance(validation, dict):
         return
     liveness = validation.get("liveness")
-    if not isinstance(liveness, dict) or liveness.get("answer") != "yes":
+    if not isinstance(liveness, dict):
+        return
+    if not changed:
+        liveness["load_relevance"] = "unknown"
+        liveness["load_relevance_basis"] = _LOAD_RELEVANCE_BASIS
         return
     service = str(row.get("service") or "")
-    loaded = any(service in _services_for_path(path) for path in changed)
-    liveness["load_relevance"] = "loaded_by" if loaded else "not_loaded_by"
+    serving_sets = [_services_for_path(path) for path in changed]
+    if any(service in serving for serving in serving_sets):
+        relevance = "loaded_by"
+    elif all(serving for serving in serving_sets):
+        relevance = "not_loaded_by"
+    else:
+        relevance = "unmapped"
+    liveness["load_relevance"] = relevance
+    liveness["load_relevance_basis"] = _LOAD_RELEVANCE_BASIS
 
 
 def _apply_answers_equal(row: dict[str, Any]) -> None:
@@ -364,6 +374,9 @@ def _compact_code_ref_validation(full: dict[str, Any]) -> dict[str, Any]:
         liveness_out["answer"] = answer
     if relation is not None:
         liveness_out["relation"] = relation
+    if liveness.get("load_relevance") is not None:
+        liveness_out["load_relevance"] = liveness.get("load_relevance")
+        liveness_out["load_relevance_basis"] = liveness.get("load_relevance_basis")
     if liveness_out:
         compact["liveness"] = liveness_out
     return compact
@@ -434,12 +447,12 @@ def build_snapshot(
     unfiltered).
 
     ``manage`` has no ``check_manage``. Its row uses this process's pid and
-    ``process_age_s``. An ancestry yes stays ``yes``. ``load_relevance`` is
-    ``not_loaded_by`` when the service imports none of the code_ref's
-    first-parent paths. ``matches_reported_sha`` becomes ``yes`` from path
-    hashes or from ``source_sync_off_load_untracked_only=yes`` recorded on
-    the stamp at sync time. The reader does not rewrite
-    ``source_sync_worktree_state``.
+    ``process_age_s``. Ancestry ``liveness.answer`` is not rewritten.
+    ``load_relevance`` sits beside it. ``not_loaded_by`` means the serving map
+    names other services and not this one. ``matches_reported_sha`` becomes
+    yes from path hashes, or from a stamp field
+    ``load_surface_classification=untracked_off_load_surface_only`` recorded
+    at sync. Current porcelain does not rewrite the stamp.
     """
     selected = normalize_service_filter(service=service, services=services)
     started = time.time()
@@ -536,17 +549,22 @@ def build_snapshot(
     changed_paths = _code_ref_changed_paths(root, code_ref) if code_ref else None
     for row in services_out:
         reported = row.get("reported_version")
+        if not isinstance(reported, dict):
+            reported = {}
         results = row["paths"]
-        recorded_off_load = (
-            isinstance(reported, dict)
-            and reported.get("source_sync_off_load_untracked_only") == "yes"
+        stamp_off_load_only = (
+            not results
+            and reported.get("source") == _STAMP_SOURCE
+            and reported.get("load_surface_worktree_state") == "clean"
+            and reported.get("load_surface_classification")
+            == "untracked_off_load_surface_only"
+            and bool(_reported_sha(row))
         )
-        off_only_match = recorded_off_load and not results and bool(_reported_sha(row))
         if not results:
-            if off_only_match:
+            if stamp_off_load_only:
                 row["live_sha_claim"] = {
                     "sound": True,
-                    "reason": "untracked_off_load_surface_only",
+                    "reason": "stamp_untracked_off_load_surface_only",
                 }
             else:
                 row["live_sha_claim"] = {
@@ -565,7 +583,7 @@ def build_snapshot(
             and all(item["running_bytes_determinable"] == "yes" for item in results)
             else "no"
         )
-        if off_only_match:
+        if stamp_off_load_only:
             row["matches_reported_sha"] = "yes"
         else:
             row["matches_reported_sha"] = (
@@ -591,7 +609,7 @@ def build_snapshot(
             )
             if evidence is not None:
                 row["version_evidence"] = evidence
-            _mark_not_loaded_by(row, changed_paths)
+            _attach_load_relevance(row, changed_paths)
         _apply_answers_equal(row)
         _fill_pid_from_observation(row)
 
