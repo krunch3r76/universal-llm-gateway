@@ -465,6 +465,91 @@ def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
     launch_mock.assert_called_once()
 
 
+def test_fire_ide_hop_timer_win_reaches_land_wait(tmp_path: Path) -> None:
+    """A createComposer timer win must reach the land wait, not phase keystroke.
+
+    Break: Glass eval returns ``ok`` false with ``race_winner`` timer. That
+    used to return from ``fire_ide_hop`` before ``mark_fired`` and the land
+    wait, while the submit was already in flight.
+    """
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    message = f"resume 15420\n\n{marker}\nNOW: test\n"
+    departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _write_transcript(
+        tmp_path, departing, _wrapped_land_line("15420", 17), time.time() - 90
+    )
+
+    class _WsCtx:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    async def _eval_await(
+        ws: object, mid: int, expression: str, timeout_s: float
+    ) -> dict[str, object]:
+        del ws, expression, timeout_s
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            return {
+                "ok": False,
+                "delivered": False,
+                "race_winner": "timer",
+                "reason": "delivery_unconfirmed",
+                "agent_id": "ed-timer",
+                "editor_agent_id": "ed-timer",
+            }
+        return {"ok": False}
+
+    fired = MagicMock(return_value={"root": "15420", "state": "fired"})
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.subprocess.run") as run_mock,
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels") as toplevels_mock,
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch("bus_watch.ide_hop.mark_fired", fired),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+        patch(
+            "cursor_bridge.cursor_agents_hop.list_pages",
+            return_value=[
+                {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+            ],
+        ),
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=_eval_await
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=0.01,
+            departing_transcript_id=departing,
+            armed_since=lambda *_a, **_k: [],
+        )
+    assert out["phase"] != "keystroke"
+    assert out["phase"] == "expired"
+    assert out["keystroke"]["ok"] is True
+    assert out["keystroke"]["delivered"] is False
+    assert out["keystroke"]["race_winner"] == "timer"
+    assert out["keystroke"]["reason"] == "delivery_unconfirmed"
+    fired.assert_called_once()
+    run_mock.assert_not_called()
+    toplevels_mock.assert_not_called()
+
+
 def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     tmp_path: Path,
 ) -> None:

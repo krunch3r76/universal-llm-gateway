@@ -412,3 +412,77 @@ async def test_cursor_human_draft_blocks_selection(monkeypatch: pytest.MonkeyPat
 
     assert out.get("reason") == "composer_not_empty"
     select_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_timer_win_classifies_unknown_not_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timer win stays pasted and classifies unknown, not refused.
+
+    Break: Glass returns ``race_winner`` timer (``ok`` false) after the
+    500ms submit race. A later probe that sees a cleared draft must not
+    mark the wake delivered, and ``classify_display`` must not record
+    refused.
+    """
+    from bus_watch.endpoint_wake_transport import classify_display
+
+    stale = "BRIDGE_WAKE thread=15851 turn=289"
+    expected_title = "15851 slug"
+    surface_match = classify_surface(
+        [],
+        [{"text": expected_title, "selected": True, "agent_id": ""}],
+        composer_draft=stale,
+    )
+    surface_cleared = {
+        **surface_match,
+        "composer_draft": "",
+        "recent_messages": ["BRIDGE_WAKE thread=15851 turn=290"],
+    }
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        return surface_match if _probe.n == 1 else surface_cleared
+
+    inbox = [
+        _cdp_msg(
+            1,
+            {
+                "ok": False,
+                "delivered": False,
+                "race_winner": "timer",
+                "reason": "delivery_unconfirmed",
+                "agent_id": "agent-1",
+            },
+        )
+    ]
+    fake = _FakeWS(inbox)
+
+    def _connect(_url: str, **_kw: Any) -> _FakeWS:
+        return fake
+
+    monkeypatch.setattr("websockets.connect", _connect)
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd.asyncio, "sleep", AsyncMock())
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out["pasted"] is True
+    assert out["delivered"] is False
+    assert out["race_winner"] == "timer"
+    assert out["ok"] is False
+    kind, _why = classify_display(200, out, None)
+    assert kind == "unknown"

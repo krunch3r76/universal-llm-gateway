@@ -1,4 +1,11 @@
-"""Headless CDP hop for Cursor Agents on Xvfb (:8) and orion-node tunnel."""
+"""Headless CDP hop that opens a Cursor Agents tab on Xvfb (:8) or orion-node.
+
+``fire_ide_hop`` calls ``launch_cursor_agents_tab``. A createComposer
+fallback whose submit race is won by the timer is an unconfirmed submit:
+``ok`` true and ``delivered`` false, so the hop still waits for land.
+Confirmed submits and eval failures keep their existing shapes. This
+module talks to the Glass debug port and does not SSH.
+"""
 
 from __future__ import annotations
 
@@ -89,7 +96,15 @@ def launch_cursor_agents_tab(
     gui_host: str | None = None,
     requested_agent_id: str | None = None,
 ) -> dict[str, Any]:
-    """Open a new agent via Glass services, set model and house knobs, paste, submit."""
+    """Open a Glass agent tab, apply model knobs, and submit the hop message.
+
+    Returns ``ok`` true when createAgent confirms the submit, and also when
+    the createComposer fallback's submit race is won by the timer. That
+    timer case is unconfirmed (``delivered`` false, ``race_winner``
+    ``timer``) so ``fire_ide_hop`` still waits for land instead of failing
+    at keystroke. Debug-port and page misses return ``ok`` false. Side
+    effect: one CDP evaluate against the Cursor Agents page for ``gui_host``.
+    """
     origin = debug_url or cursor_debug_url_for_gui_host(gui_host)
     try:
         pages = list_pages(origin, timeout_s=min(timeout_s, 5.0))
@@ -128,6 +143,15 @@ async def _launch_async(
     model_knobs: dict[str, str] | None = None,
     requested_agent_id: str = "",
 ) -> dict[str, Any]:
+    """Run the Glass launch expression and map a timer win to unconfirmed.
+
+    ``race_winner`` ``timer`` on the createComposer fallback means the
+    submit went out and was not confirmed. The return is ``ok`` true with
+    ``delivered`` false and no keystroke phase, so ``fire_ide_hop`` marks
+    the hop fired and waits for land. Other ``ok`` false results stay
+    keystroke failures. Promise-collected and eval-timeout recovery is
+    unchanged and does not run for a timer win.
+    """
     import websockets
 
     expression = launch_new_agent_tab_js(
@@ -160,7 +184,8 @@ async def _launch_async(
             ).lower()
             return "promise was collected" in blob or "timeout" in blob
 
-        if _launch_failure_recoverable(launch_err, result):
+        timer_win = isinstance(result, dict) and result.get("race_winner") == "timer"
+        if not timer_win and _launch_failure_recoverable(launch_err, result):
             recovered = await _recover_launch_after_eval_failure(
                 ws,
                 requested_agent_id=requested_agent_id,
@@ -185,6 +210,28 @@ async def _launch_async(
                 "reason": "launch_eval_failed",
                 "model_query": model_query,
                 "result": result,
+            }
+        if result.get("race_winner") == "timer":
+            editor_id = str(
+                result.get("editor_agent_id") or result.get("agent_id") or ""
+            ).strip()
+            return {
+                "ok": True,
+                "delivered": False,
+                "race_winner": "timer",
+                "reason": str(result.get("reason") or "delivery_unconfirmed"),
+                "transport": "cdp_cursor_agents",
+                "page_title": page.get("title"),
+                "editor_agent_id": editor_id,
+                "model_query": model_query,
+                "model_pick": (
+                    {"ok": True, "model_query": model_query}
+                    if model_query
+                    else {"ok": True, "skipped": True}
+                ),
+                "send_fallback_clicked": False,
+                "glass_launch": result,
+                "requested_agent_id": requested_agent_id,
             }
         if not result.get("ok") and _launch_failure_recoverable(None, result):
             recovered = await _recover_launch_after_eval_failure(

@@ -7,8 +7,12 @@ present in the sidebar, the step can switch to that row provided the
 currently active chat's composer is empty (streaming/generating does not
 block steering or row selection). A match pastes
 ``BRIDGE_WAKE thread=<id> turn=<n>`` into that app's composer, submits it,
-and verifies delivery. Any other outcome returns ``ok`` false. This module
-does not fail a pipeline run.
+and verifies delivery. A Glass timer win is not a refusal: the submit
+went out and was not confirmed, so the result keeps ``pasted`` true,
+``delivered`` false, and ``race_winner`` ``timer``. ``classify_display``
+maps that shape to unknown, which holds the re-wake off. Any other failure
+returns ``ok`` false with ``pasted`` false. This module does not fail a
+pipeline run.
 """
 
 from __future__ import annotations
@@ -169,7 +173,15 @@ async def deliver_wake(
     select: bool = True,
     turn: object,
 ) -> dict[str, Any]:
-    """Select (when allowed) and paste one wake into the target sidebar chat."""
+    """Paste one wake into the target sidebar chat and report whether it landed.
+
+    Cursor submits through Glass. When the submit race is won by the timer,
+    the return keeps ``pasted`` true, ``delivered`` false, and
+    ``race_winner`` ``timer`` so callers do not treat the in-flight submit
+    as never sent. ``classify_display`` then records unknown. Other failures
+    set ``pasted`` false. Side effect: one CDP evaluate on the display debug
+    socket, under the per-display lock.
+    """
     target = normalize_target(display, app)
     if not target.get("ok"):
         return _refuse("unknown_target", display=target.get("display"), app=target.get("app"))
@@ -296,6 +308,22 @@ async def _deliver_locked(
             expected_title=verdict.get("expected_title"),
             active_title=verdict.get("active_title"),
         )
+    if paste_res.get("race_winner") == "timer":
+        # Submit went out and was not confirmed. Do not post-probe: the
+        # script clears the draft in finally, which would look delivered.
+        return {
+            **verdict,
+            "ok": False,
+            "reason": str(paste_res.get("reason") or "delivery_unconfirmed"),
+            "pasted": True,
+            "delivered": False,
+            "race_winner": "timer",
+            "selected": selected,
+            "send_fallback_clicked": bool(paste_res.get("send_fallback_clicked")),
+            "display": disp,
+            "app": app,
+            "wake": line,
+        }
     if not paste_res.get("ok"):
         return _refuse(
             str(paste_res.get("reason") or "no_composer"),
@@ -328,7 +356,12 @@ async def _deliver_locked(
 async def _paste_cursor_services(
     ws_url: str, line: str, *, agent_id: str = ""
 ) -> dict[str, Any]:
-    """Submit a wake line through Glass composer services (no Input.*)."""
+    """Submit a wake line through Glass composer services (no Input.*).
+
+    A ``race_winner`` of ``timer`` is returned with ``pasted`` true and
+    ``delivered`` false. Other ``ok`` false evaluations stay refusals and
+    drop the Glass payload.
+    """
     import websockets
 
     from cursor_bridge.glass_services_js import submit_wake_line_js
@@ -350,6 +383,15 @@ async def _paste_cursor_services(
         )
         raw = await asyncio.wait_for(_response(ws, 1), 5.0)
     value = ((raw.get("result") or {}).get("result") or {}).get("value")
+    if isinstance(value, dict) and value.get("race_winner") == "timer":
+        return {
+            "ok": False,
+            "reason": str(value.get("reason") or "delivery_unconfirmed"),
+            "pasted": True,
+            "delivered": False,
+            "race_winner": "timer",
+            "send_fallback_clicked": False,
+        }
     if not isinstance(value, dict) or not value.get("ok"):
         reason = value.get("reason") if isinstance(value, dict) else "paste_failed"
         return {"ok": False, "reason": reason}
