@@ -9,19 +9,28 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
 from typing import Any
 
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphan_cse_classify import cse_pages_from_list
-from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
+from claude_bundles.cse_idle_probe import probe_page_liveness_sync
 from claude_bundles.cse_url import normalize_cse_url
-from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
-PageProbe = Callable[[int, str], tuple[dict[str, Any] | None, bool]]
+from cdp_ask.lane_current_cse_cap import (
+    PageProbe,
+    PurposeFor,
+    _harvested_holder,
+    _holder_view,
+    _iso_utc,
+    _none_body,
+    collect_claimed_pages,
+    finalize_lane_current_body,
+    index_operator_registrations,
+    select_lane_current,
+)
+
 ProvenanceFor = Callable[[str], dict[str, Any] | None]
 ListPages = Callable[[], Iterator[tuple[int, str, str | None]]]
-PurposeFor = Callable[[str], str | None]
 
 
 def enumerate_live_cse_pages() -> Iterator[tuple[int, str, str | None]]:
@@ -71,203 +80,6 @@ def _default_purpose_for() -> PurposeFor:
     return purpose_for
 
 
-def _is_operator_purpose(purpose: Any) -> bool:
-    return str(purpose or "").strip().lower() in OPERATOR_PURPOSES
-
-
-def _probe_one(
-    port: int,
-    ws_url: str | None,
-    probe_page: PageProbe,
-) -> tuple[bool | None, bool]:
-    if not ws_url:
-        return None, False
-    try:
-        state, probe_ok = probe_page(port, ws_url)
-    except Exception:
-        return None, False
-    if not probe_ok or not isinstance(state, dict):
-        return None, False
-    try:
-        return bool(in_flight_from_state(state)), True
-    except Exception:
-        return None, False
-
-
-def _fold_liveness(samples: list[tuple[bool | None, bool]]) -> tuple[bool | None, bool]:
-    if not samples:
-        return None, False
-    inflight: bool | None = False
-    if any(item is True for item, _ok in samples):
-        inflight = True
-    elif any(item is None for item, _ok in samples):
-        inflight = None
-    probe_ok = any(ok for _item, ok in samples)
-    return inflight, probe_ok
-
-
-def _page_evidence_class(
-    claims: list[str],
-    *,
-    holder_live: bool,
-) -> str:
-    if "registry_row" in claims or ("seat_holder" in claims and holder_live):
-        return "live_binding"
-    return "stored_association"
-
-
-def select_lane_current(
-    claimed: list[dict[str, Any]],
-    holder_url: str | None,
-    holder_live: bool = False,
-    *,
-    attended_idle_ok: bool = False,
-) -> tuple[str, str | None, str | None, dict[str, Any] | None]:
-    """Pick current/ambiguous/none over already-claimed identities.
-
-    Invariant: ``state == \"current\"`` implies
-    ``current[\"evidence_class\"] == \"live_binding\"``.
-
-    Returns ``(state, basis, reason, current_page)``.
-
-    Superseded registry rows stay out of ``in_flight`` and ``unknown`` unless
-    the page is also the seat holder, so a closed predecessor that is still
-    streaming cannot tie the open seat.
-    """
-    non_superseded = [
-        page
-        for page in claimed
-        if "superseded_registry_row" not in (page.get("claims") or [])
-        or "seat_holder" in (page.get("claims") or [])
-    ]
-    in_flight = [page for page in non_superseded if page.get("in_flight") is True]
-    unknown = [page for page in non_superseded if page.get("in_flight") is None]
-    if len(in_flight) >= 2:
-        return "ambiguous", None, "multiple_in_flight", None
-    if len(in_flight) == 1 and len(unknown) > 0:
-        return "ambiguous", None, "probe_incomplete", None
-    if len(in_flight) == 1 and len(unknown) == 0:
-        page = in_flight[0]
-        if page.get("evidence_class") == "live_binding":
-            return "current", "in_flight", None, page
-        return "ambiguous", None, "stored_association_streaming", None
-    holder_key = normalize_cse_url(holder_url or "")
-    if any(
-        "registry_row" in (page.get("claims") or [])
-        and page.get("chat_url") != holder_key
-        for page in unknown
-    ):
-        return "ambiguous", None, "probe_incomplete", None
-    holder_page = next(
-        (page for page in claimed if page.get("chat_url") == holder_key),
-        None,
-    )
-    if holder_key and holder_page is not None:
-        if holder_live:
-            return "current", "seat_holder", None, holder_page
-        # Harvested generate left the Maestro tab open and idle. That page is
-        # the operator seat. A hygiene_drain provenance stays a refusal.
-        if (
-            attended_idle_ok
-            and holder_page.get("in_flight") is False
-            and holder_page.get("probe_ok") is True
-            and holder_page.get("provenance_reason") != "hygiene_drain"
-        ):
-            page = dict(holder_page)
-            page["evidence_class"] = "live_binding"
-            return "current", "attended_idle", None, page
-        return "ambiguous", None, "seat_holder_dormant", None
-    if len(unknown) > 0:
-        return "ambiguous", None, "probe_incomplete", None
-    if holder_key and claimed:
-        # A dormant holder is still the lane's seat; an idle open page is not
-        # evidence the operator moved off it.
-        return "ambiguous", None, "seat_holder_not_open", None
-    if claimed:
-        # An idle claim is stored association, the same evidence that named
-        # the hygiene_drain page in a:37834.
-        return "ambiguous", None, "no_live_signal", None
-    if holder_key and not holder_live:
-        # Stored seat with no open claimed page. Not a paste target and not
-        # the empty-lane miss.
-        return "stored", "stored_seat_holder", "seat_holder_stored", None
-    return "none", None, "no_claimed_live_page", None
-
-
-_HARVESTED_STATUSES = frozenset({"completed", "failed", "aborted"})
-
-
-def _harvested_holder(snap: dict | None, registration_id: str | None) -> bool:
-    """True when this seat's tracked generate has already reached a terminal row."""
-    rid = (registration_id or "").strip()
-    if not rid or not isinstance(snap, dict):
-        return False
-    rows = snap.get("rows")
-    if not isinstance(rows, list):
-        return False
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("registration_id") or "").strip() != rid:
-            continue
-        status = str(row.get("status") or "").strip()
-        stream = str(row.get("stream_state") or "").strip()
-        if status in _HARVESTED_STATUSES or stream.startswith("terminal:"):
-            return True
-    return False
-
-
-def _iso_utc(now_s: float) -> str:
-    return datetime.fromtimestamp(now_s, tz=UTC).isoformat()
-
-
-def _none_body(lane: str, now_s: float, *, reason: str) -> dict[str, Any]:
-    return {
-        "parent_thread": lane,
-        "state": "none",
-        "basis": None,
-        "reason": reason,
-        "current": None,
-        "stale": [],
-        "candidates": [],
-        "seat_holder": None,
-        "unclaimed_cse_urls": [],
-        "as_of": _iso_utc(now_s),
-        "source": "cdp_live_probe",
-        "scope": f"parent_thread:{lane}",
-    }
-
-
-def _holder_view(
-    snap: dict[str, Any] | None,
-    lane: str,
-    chat_url_for_registration: Callable[..., str | None],
-) -> dict[str, Any] | None:
-    if not isinstance(snap, dict):
-        return None
-    try:
-        from cdp_ask.lane_admission import lane_seat_holder
-
-        holder = lane_seat_holder(snap, lane)
-    except Exception:
-        return None
-    if not isinstance(holder, dict):
-        return None
-    reg_id = str(holder.get("registration_id") or "").strip() or None
-    url = None
-    if reg_id:
-        try:
-            url = chat_url_for_registration(reg_id)
-        except Exception:
-            url = None
-    if not url:
-        raw = holder.get("chat_url")
-        url = str(raw).strip() if raw else None
-    if not reg_id and not url:
-        return None
-    return {"registration_id": reg_id, "chat_url": normalize_cse_url(url or "") or url}
-
-
 def resolve_lane_current_cse(
     parent_thread: str,
     *,
@@ -279,6 +91,7 @@ def resolve_lane_current_cse(
     chat_url_for_registration: Callable[..., str | None] | None = None,
     purpose_for_registration: PurposeFor | None = None,
     now: Callable[[], float] = time.time,
+    include_superseded: bool = False,
 ) -> dict[str, Any]:
     """Return the live CSE identity for ``parent_thread``. Never raises.
 
@@ -309,6 +122,7 @@ def resolve_lane_current_cse(
             chat_url_for_registration=chat_url_for_registration,
             purpose_for_registration=purpose_for_registration,
             now_s=now_s,
+            include_superseded=include_superseded,
         )
     except Exception:
         return _none_body(lane, now_s, reason="probe_error")
@@ -325,6 +139,7 @@ def _resolve(
     chat_url_for_registration: Callable[..., str | None],
     purpose_for_registration: PurposeFor,
     now_s: float,
+    include_superseded: bool = False,
 ) -> dict[str, Any]:
     grouped: dict[str, dict[str, Any]] = {}
     gathered: list[Any] = []
@@ -357,9 +172,6 @@ def _resolve(
     holder_url = (seat or {}).get("chat_url") or None
     holder_key = normalize_cse_url(holder_url or "")
 
-    live_registry_by_url: dict[str, list[str]] = {}
-    superseded_registry_by_url: dict[str, list[str]] = {}
-    # An unreadable registry is a probe failure, not an empty lane.
     active = list_active()
     seat_rid_key = str((seat or {}).get("registration_id") or "").strip() or None
     has_open_seat = bool(seat_rid_key) or any(
@@ -384,93 +196,29 @@ def _resolve(
             **seat,
             "evidence_class": "live_binding" if holder_live else "stored_association",
         }
-    for reg in active:
-        try:
-            parent = str(getattr(reg, "parent_thread", "") or "").strip()
-            if parent != lane:
-                continue
-            rid = str(getattr(reg, "registration_id", "") or "").strip()
-            purpose = getattr(reg, "purpose", None) or purpose_for_registration(rid)
-            if not _is_operator_purpose(purpose):
-                continue
-            raw_url = chat_url_for_registration(rid)
-            key = normalize_cse_url(str(raw_url or ""))
-        except Exception:
-            continue
-        if key:
-            live_lane_seat = getattr(reg, "seat_closed_at", None) is None and (
-                getattr(reg, "seat_lane", None) == lane
-                or rid == seat_rid_key
-                or not has_open_seat
-            )
-            target = (
-                live_registry_by_url if live_lane_seat else superseded_registry_by_url
-            )
-            target.setdefault(key, [])
-            if rid and rid not in target[key]:
-                target[key].append(rid)
-
-    claimed: list[dict[str, Any]] = []
-    unclaimed: list[str] = []
-    for url in sorted(grouped):
-        slot = grouped[url]
-        claims: list[str] = []
-        registration_ids: list[str] = []
-        provenance_reason = None
-        if holder_key and url == holder_key:
-            claims.append("seat_holder")
-        live_rids = live_registry_by_url.get(url) or []
-        superseded_rids = superseded_registry_by_url.get(url) or []
-        if live_rids:
-            if "registry_row" not in claims:
-                claims.append("registry_row")
-            for rid in live_rids:
-                if rid not in registration_ids:
-                    registration_ids.append(rid)
-        elif superseded_rids:
-            if "superseded_registry_row" not in claims:
-                claims.append("superseded_registry_row")
-            for rid in superseded_rids:
-                if rid not in registration_ids:
-                    registration_ids.append(rid)
-        try:
-            prov = provenance_for(url)
-        except Exception:
-            prov = None
-        prid = ""
-        if isinstance(prov, dict):
-            prid = str(prov.get("registration_id") or "").strip()
-        try:
-            prov_purpose = purpose_for_registration(prid) if prid else None
-        except Exception:
-            prov_purpose = None
-        if (
-            isinstance(prov, dict)
-            and str(prov.get("parent_thread_claim") or "") == lane
-            and _is_operator_purpose(prov_purpose)
-        ):
-            claims.append("provenance_claim")
-            provenance_reason = prov.get("reason")
-            if prid not in registration_ids:
-                registration_ids.append(prid)
-        if not claims:
-            unclaimed.append(url)
-            continue
-        samples = [_probe_one(port, ws, probe_page) for port, ws in slot["sockets"]]
-        in_flight, probe_ok = _fold_liveness(samples)
-        evidence_class = _page_evidence_class(claims, holder_live=holder_live)
-        claimed.append(
-            {
-                "chat_url": url,
-                "ports": sorted(slot["ports"]),
-                "in_flight": in_flight,
-                "probe_ok": probe_ok,
-                "claims": claims,
-                "registration_ids": registration_ids,
-                "provenance_reason": provenance_reason,
-                "evidence_class": evidence_class,
-            }
-        )
+    (
+        live_registry_by_url,
+        superseded_registry_by_url,
+        superseded_reg_ids,
+    ) = index_operator_registrations(
+        lane=lane,
+        active=active,
+        seat_rid_key=seat_rid_key,
+        has_open_seat=has_open_seat,
+        chat_url_for_registration=chat_url_for_registration,
+        purpose_for_registration=purpose_for_registration,
+    )
+    claimed, unclaimed = collect_claimed_pages(
+        lane=lane,
+        grouped=grouped,
+        holder_key=holder_key,
+        holder_live=holder_live,
+        live_registry_by_url=live_registry_by_url,
+        superseded_registry_by_url=superseded_registry_by_url,
+        provenance_for=provenance_for,
+        purpose_for_registration=purpose_for_registration,
+        probe_page=probe_page,
+    )
 
     # Admission ``rows`` keep only pending/running executions. A harvested
     # operator seat is absent from that list, so a terminal row cannot be the
@@ -506,10 +254,18 @@ def _resolve(
                     else stale_reason
                 )
                 stale.append({**page, "stale_reason": page_stale_reason})
-    elif state == "ambiguous":
-        candidates = list(claimed)
 
-    return {
+    for page in claimed:
+        if "superseded_registry_row" not in (page.get("claims") or []):
+            continue
+        for prid in page.get("registration_ids") or []:
+            s = str(prid or "").strip()
+            if s:
+                superseded_reg_ids.add(s)
+
+    superseded_count = len(superseded_reg_ids)
+
+    body: dict[str, Any] = {
         "parent_thread": lane,
         "state": state,
         "basis": basis,
@@ -523,3 +279,9 @@ def _resolve(
         "source": "cdp_live_probe",
         "scope": f"parent_thread:{lane}",
     }
+    return finalize_lane_current_body(
+        body,
+        claimed,
+        superseded_count,
+        include_superseded=include_superseded,
+    )

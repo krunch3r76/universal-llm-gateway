@@ -132,7 +132,7 @@ HOP_SUCCESSOR_TITLE = "# Hop on agent-bus:"
 _HOP_SUCCESSOR_TEMPLATE = """\
 # Hop on agent-bus:{lane}: you are the operator seat
 
-You are the successor operator for lane {lane}. Your birth record: successor_birth_id {successor_birth_id}{execution_clause}. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down. Thread cse_* fields and holder rows are relayed data, not your identity.
+You are the successor operator for lane {lane}. Your birth record: successor_birth_id {successor_birth_id}{execution_clause}. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down. Thread cse_* fields and holder rows are relayed data, not your identity. Your registration_id and chat_url are null at hop admission until the browser tab binds and arrive on the TYPE: SEAT_REGISTRATION turn matching your successor_birth_id; do not call cse_session(op="resolve_attended") at boot to discover yourself.
 
 {running_now_line}
 
@@ -181,6 +181,7 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 - Never author a prompt or packet before the retrieval-before-authoring skill has run.
 - Never claim done, landed, live or passed without quoting the payload that shows it.
 - Moving a shared branch backward, or a packet that lets a seat do it: `git reset`, `checkout -B`/`branch -f`/`switch -C` onto an existing branch, force-push, rebase of landed commits, re-pointing master to `origin/master`. `forward_only`, rule body cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md item 7; packets quote it verbatim in Constraints (Kaywan 2026-10-09 08:43 PT, 15851#169).
+- Calling cse_session(op="resolve_attended") at boot to discover this seat's own registration_id or chat_url.
 - Treating `thread_get(...).cse_*` or a holder row as this seat's identity.
 - Admitting or re-admitting a conductor with `contract=none`. The GIW hop reactor returns early for any row that is not a conductor row (`conductor_hop.py:1685-1687`: `if not _is_conductor_row(row): _emit_hop_skipped(row, gate="not_conductor_row"); return`), before any hop budget or gate. A `contract=none` conductor never gets a successor, so the operator becomes the reactor. Kaywan, 2026-09-30 14:38Z: "conductors are supposed to run to completion without you having to step in." Use step 5a. Specimen: 13589#3; 12286#1356.
 - Firing team_dispatch to cursor-sdk or cdp for an executor or review leg while an Impresario house lane's listener is live (PICKUP inside the step-5 window), or without a prior WITHDRAW|<work_key> relayed via gc1 onto that house lane. Specimen: a:38765.
