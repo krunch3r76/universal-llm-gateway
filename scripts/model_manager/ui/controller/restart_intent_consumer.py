@@ -30,8 +30,8 @@ DEADLINE_SEMANTICS = (
 )
 
 STARGATE_DEADLINE_SEMANTICS = (
-    "Stargate idle-drain ceiling — a busy deadline extends and does not "
-    "self-preempt. Still busy at this instant waits until active-work is idle."
+    "Stargate idle-drain ceiling — self-preempt instant. Still busy at this "
+    "instant moves force_requested then drained_restarting. NOT alert-only."
 )
 
 
