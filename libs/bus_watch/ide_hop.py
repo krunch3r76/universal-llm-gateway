@@ -883,7 +883,7 @@ def fire_ide_hop(
             )
             # Fence/transcript window. Not pre_since (None on tip hops, 180s
             # earlier on tipless) and not fired_at (sampled after return).
-            land_since = time.time()
+            land_since = float(int(time.time()) - 1)
             keystroke = launch_cursor_agents_tab(
                 message,
                 model_query=resolved_model_query,
@@ -902,7 +902,7 @@ def fire_ide_hop(
                 }
         else:
             try:
-                land_since = time.time()
+                land_since = float(int(time.time()) - 1)
                 proc = subprocess.run(
                     [
                         "ssh",

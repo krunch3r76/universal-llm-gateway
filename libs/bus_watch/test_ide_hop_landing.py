@@ -1046,6 +1046,79 @@ def test_fence_armed_during_keystroke_lands_via_fence(tmp_path: Path) -> None:
     assert bounds["since"] > bounds["enter"] - 2.0
 
 
+def test_fence_same_whole_second_found_with_floored_land_since(tmp_path: Path) -> None:
+    """Fence ``created_epoch`` at launch whole second still matches floored ``since_epoch``.
+
+    Break: ``land_since = time.time()`` is fractional; SQLite stores ``created_at`` at
+    one-second resolution, so ``created >= since_epoch`` fails when both share the
+    second but ``since_epoch`` is strictly greater than the stored integer second.
+    """
+    message = "resume 15420\n\nmarker line\n"
+    tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    launch_t = 1_700_000_000.75
+    created_epoch = float(int(launch_t))
+
+    def _armed(root, *, since_epoch, exclude_transcript_ids=None):
+        del root, exclude_transcript_ids
+        assert since_epoch == float(int(launch_t) - 1)
+        if float(since_epoch) > created_epoch:
+            return []
+        return [
+            {
+                "fence_id": "rf-same-second",
+                "transcript_id": tid,
+                "created_epoch": created_epoch,
+            }
+        ]
+
+    time_values = iter([launch_t, launch_t + 0.05, launch_t + 0.1, launch_t + 0.15])
+
+    def _time():
+        return next(time_values, launch_t + 1.0)
+
+    with (
+        patch("bus_watch.ide_hop.time.time", side_effect=_time),
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch(
+            "bus_watch.ide_hop.launch_cursor_agents_tab",
+            return_value={"ok": True, "transport": "cdp_cursor_agents"},
+        ),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch(
+            "bus_watch.ide_hop.mark_fired",
+            return_value={"root": "15420", "state": "fired", "deadline_at": launch_t + 30},
+        ),
+        patch(
+            "bus_watch.ide_hop.mark_landed",
+            side_effect=lambda record, **kwargs: {
+                **record,
+                "state": "landed",
+                "proof": kwargs.get("proof"),
+            },
+        ),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=0.4,
+            armed_since=_armed,
+        )
+    assert out["landed_via"] == "fence"
+    assert out["landed_transcript_id"] == tid
+
+
 def test_expire_overdue_hops_logs_oserror_and_continues(tmp_path: Path, caplog) -> None:
     """write_hop_land OSError on one hop is logged; the scan keeps going."""
     import logging
