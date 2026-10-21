@@ -1,10 +1,15 @@
-"""On-demand dropbox PDF ingest (plan ingest-pdf-v1 D3)."""
+"""Bounded dropbox PDF ingest for the code MCP surface only.
+
+Registered by ``register_ingest_dropbox_tools`` on ``/mcp/code``; life connectors
+never load it. Valid ``op`` values are ``run``, ``dry_run``, and ``status``; any
+other op (including ``list``) raises ``ValueError``.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from mcp_events import record
@@ -57,6 +62,7 @@ def _parse_family_map(raw: Any) -> list[tuple[str, str]]:
 
 
 def load_config(path: Path | None = None) -> IngestConfig:
+    """Load ocr-review YAML into ``IngestConfig`` and validate canonical/check model families."""
     cfg_path = path or config_path()
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -85,6 +91,7 @@ def load_config(path: Path | None = None) -> IngestConfig:
 
 
 def reconcile_promote_stages(_config: dict[str, Any]) -> None:
+    """Advance or terminalize promote-stage rows when promoted files are missing on disk."""
     for rec in list(iter_state_records()):
         if rec.get("stage") != "promote" or rec.get("terminal"):
             continue
@@ -187,6 +194,7 @@ def ingest_dropbox_run(
     since: str | None = None,
     cap: int | None = None,
 ) -> dict[str, Any]:
+    """Run bounded ingest passes over selected dropbox PDF paths (mutating)."""
     config = load_config()
     eff_since = since or config.since
     eff_cap = cap if cap is not None else config.cap
@@ -236,6 +244,7 @@ def ingest_dropbox_dry_run(
     since: str | None = None,
     cap: int | None = None,
 ) -> dict[str, Any]:
+    """Preview selection and per-path stages without mutating on-disk ingest state."""
     config = load_config()
     eff_since = since or config.since
     eff_cap = cap if cap is not None else config.cap
@@ -280,6 +289,7 @@ def ingest_dropbox_dry_run(
 
 
 def ingest_dropbox_status() -> dict[str, Any]:
+    """Return terminal failures and duplicate-path aggregates from persisted ingest state."""
     terminal: list[dict[str, Any]] = []
     duplicates: list[dict[str, str]] = []
     for rec in iter_state_records():
@@ -315,15 +325,22 @@ def ingest_dropbox_status() -> dict[str, Any]:
 
 
 def register_ingest_dropbox_tools(mcp: FastMCP) -> None:
+    """Register the code-surface ``ingest_dropbox`` dispatcher on the given FastMCP instance."""
     @mcp.tool(title="Ingest Dropbox")
     def ingest_dropbox(
-        op: str,
+        op: Literal["run", "dry_run", "status"],
         paths: list[str] | None = None,
         ctx: str | None = None,
         since: str | None = None,
         cap: int | None = None,
     ) -> dict[str, Any]:
-        """Run bounded dropbox PDF ingest (extract, cross-check, promote)."""
+        """Process dropbox PDFs through extract, cross-check, and promote stages.
+
+        Operations:
+            run (paths?, ctx?, since?, cap?)
+            dry_run (paths?, ctx?, since?, cap?)
+            status ()
+        """
         if op == "run":
             return ingest_dropbox_run(paths=paths, ctx=ctx, since=since, cap=cap)
         if op == "dry_run":

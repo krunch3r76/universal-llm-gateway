@@ -79,8 +79,6 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "boot_inspect",
         "extract_directory",
         "extract_document",
-        # Code-surface v1 on-demand ingest; same overflow class as extract/promote.
-        "ingest_dropbox",
         "js_analyze",
         "markdown",
         "model_status",

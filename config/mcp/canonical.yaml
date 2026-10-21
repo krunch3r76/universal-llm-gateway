@@ -13,6 +13,7 @@ domains:
 - git_status
 - git_diff
 - git_commit
+- ingest_dropbox
 - observability
 - manage
 - dispatch
@@ -4177,6 +4178,120 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
+- canonical_name: ingest_dropbox_run
+  domain: ingest_dropbox
+  operation: run
+  dispatcher_call_shape:
+    tool: ingest_dropbox
+    dispatch_key: op
+    dispatch_value: run
+  flat_call_shape:
+    tool: ingest_dropbox_run
+    substrate_qualified: user-vortex__ingest_dropbox_run
+  fol_descriptor: "∀ rel ∈ SelectedDropboxPaths: ingest_dropbox(run) ⟹ extract ∧ crosscheck ∧ promote stages advance under cap; mutating side-effects on FILES_ROOT and cortex entities. Code-surface only.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - run
+        - dry_run
+        - status
+      paths:
+        type: array
+        items:
+          type: string
+      ctx:
+        type: string
+      since:
+        type: string
+      cap:
+        type: integer
+    required:
+    - op
+  skill_uri: agent_skill:document-ingestion
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-10-20
+- canonical_name: ingest_dropbox_dry_run
+  domain: ingest_dropbox
+  operation: dry_run
+  dispatcher_call_shape:
+    tool: ingest_dropbox
+    dispatch_key: op
+    dispatch_value: dry_run
+  flat_call_shape:
+    tool: ingest_dropbox_dry_run
+    substrate_qualified: user-vortex__ingest_dropbox_dry_run
+  fol_descriptor: "∀ rel ∈ SelectedDropboxPaths: ingest_dropbox(dry_run) ⟹ selection preview ∧ stage hints; ¬ mutates ingest state. Read-only. Code-surface only.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - run
+        - dry_run
+        - status
+      paths:
+        type: array
+        items:
+          type: string
+      ctx:
+        type: string
+      since:
+        type: string
+      cap:
+        type: integer
+    required:
+    - op
+  skill_uri: agent_skill:document-ingestion
+  seat_visibility:
+  - mcp
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-10-20
+- canonical_name: ingest_dropbox_status
+  domain: ingest_dropbox
+  operation: status
+  dispatcher_call_shape:
+    tool: ingest_dropbox
+    dispatch_key: op
+    dispatch_value: status
+  flat_call_shape:
+    tool: ingest_dropbox_status
+    substrate_qualified: user-vortex__ingest_dropbox_status
+  fol_descriptor: "∃ terminal ∧ duplicate rows: ingest_dropbox(status) ⟹ aggregate ingest-state snapshot; ¬ mutates state. Read-only. Code-surface only.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - run
+        - dry_run
+        - status
+      paths:
+        type: array
+        items:
+          type: string
+      ctx:
+        type: string
+      since:
+        type: string
+      cap:
+        type: integer
+    required:
+    - op
+  skill_uri: agent_skill:document-ingestion
+  seat_visibility:
+  - mcp
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-10-20
 - canonical_name: observability_recent_failures
   domain: observability
   operation: recent_failures
@@ -5887,6 +6002,8 @@ domain_endpoints:
     - code
     git_commit:
     - code
+    ingest_dropbox:
+    - code
     agent_bus_read:
     - life
     - code
@@ -5937,6 +6054,7 @@ surface_primary_domains:
   - fleet_liveness
   - cse_session
   - chat_session
+  - ingest_dropbox
   - claudeburst
 cortex_families:
   defaults:

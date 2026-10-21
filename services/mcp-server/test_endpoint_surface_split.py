@@ -54,6 +54,7 @@ CODE_EXTRA = frozenset(
         "observability",
         "team_dispatch",
         "panel_dispatch",
+        "ingest_dropbox",
     }
 )
 CODE_PRIMARY = SHARED_ON_CODE | CODE_EXTRA
