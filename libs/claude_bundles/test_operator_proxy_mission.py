@@ -357,18 +357,34 @@ _AGENT_BUS_DISCIPLINE_REFERENCE = (
     / "cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md"
 )
 _HISTORICAL_POLL_HEADING = "## Dispatch polling (historical — other seats)"
-
-
-def _cowork_operator_loop_shell(skill_text: str) -> str:
-    start = skill_text.index("## Cowork operator loop")
-    tail = skill_text[start + 1 :]
-    match = re.search(r"\n## [^#]", tail)
-    end = start + 1 + (match.start() if match else len(tail))
-    return skill_text[start:end]
+_POLL_INSTRUCTION_SKIP = (
+    "Do not call",
+    "Polling is removed",
+    "Do not poll",
+    "re-poll from this seat",
+    "not a reason to re-poll",
+    "do not open a `poll_hint` wait loop",
+    "not via `poll_hint` loops",
+    "IDE polls",
+    "¬ poll",
+    "historical — other seats",
+    "cursor-sdk / IDE watchers",
+)
+_POLL_INSTRUCTION_RE = re.compile(
+    r'agent_bus\s*\(\s*tool\s*=\s*["\']wait["\']|'
+    r"poll_hint\s+`arguments_json`\s+unchanged|"
+    r"poll that response's `poll_hint`|"
+    r"wait on (?:that|the predecessor's|its) `poll_hint`|"
+    r"re-call the same hint|"
+    r"keep polling|"
+    r"`wait` until CLOSEOUT follows the `poll_hint`|"
+    r"before holding `wait`|"
+    r"polled by that call's `poll_hint`"
+)
 
 
 def test_maestro_shell_poll_contract_vs_historical_reference() -> None:
-    """Shell must not instruct agent_bus wait polling; reference keeps the procedure."""
+    """cdp-operator-proxy SKILL must not instruct poll-wait; reference keeps wait procedure."""
     skill_text = _CDP_OPERATOR_PROXY_SKILL.read_text(encoding="utf-8")
     assert "≤290" not in skill_text
     ref_text = _AGENT_BUS_DISCIPLINE_REFERENCE.read_text(encoding="utf-8")
@@ -376,15 +392,10 @@ def test_maestro_shell_poll_contract_vs_historical_reference() -> None:
     historical = ref_text.split(_HISTORICAL_POLL_HEADING, 1)[1].split("\n## ", 1)[0]
     assert 'agent_bus(tool="wait"' in historical
 
-    shell = _cowork_operator_loop_shell(skill_text)
-    for line in shell.splitlines():
-        if "Do not call" in line or "Polling is removed" in line:
+    for line in skill_text.splitlines():
+        if any(skip in line for skip in _POLL_INSTRUCTION_SKIP):
             continue
-        assert not re.search(
-            r'agent_bus\s*\(\s*tool\s*=\s*["\']wait["\']|'
-            r"poll_hint\s+`arguments_json`\s+unchanged",
-            line,
-        ), line
+        assert not _POLL_INSTRUCTION_RE.search(line), line
 
 
 def test_mission_skill_slugs_include_lane_act_gates() -> None:

@@ -27,7 +27,7 @@ Topic overlap ≠ thread continuity. Prior thread can be evidence context; new t
 
 ## Dispatch polling
 
-Polling is removed. Do not call `agent_bus` `wait` or `poll_hint` loops from this seat. Milestones and exceptions go `to=maestro` per L17 allowlist. `predicate_unmet` is not a reason to re-poll here. Watcher and liveness: `cdp-operator-proxy` `reference.md` § How this seat works.
+Polling is removed on the **Castle maestro operator seat**. Do not call `agent_bus` `wait` or `poll_hint` loops from the Castle maestro operator seat. Milestones and exceptions go `to=maestro` per L17 allowlist. `predicate_unmet` is not a reason to re-poll on that seat. Watcher and liveness: `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/reference.md` § **How this seat works**.
 
 ## Pre-flight before reply
 
@@ -66,8 +66,8 @@ agent_bus(tool="send", arguments='{"new_slug":"topic","to":"grok-web","subject":
 
 ## Related
 
-- `reference.md` — standing roots, thread genus, lifecycle, CONFER, Gate 1, lane parentage, R12, session-close; historical § Dispatch polling for non-maestro seats.
-- `cdp-operator-proxy/reference.md` § How this seat works / § Standing authority — maestro polling removed, liveness, watcher recovery.
+- `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md` — standing roots, thread genus, lifecycle, CONFER, Gate 1, lane parentage, R12, session-close; § **Dispatch polling (historical — other seats)**.
+- `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/reference.md` § **How this seat works** / § **Standing authority** — Castle maestro polling removed, liveness, watcher recovery.
 - `checkpoint-discipline` — CHECKPOINT profiles and resume.
 - Session-close discipline — bus debrief before closing.
 
