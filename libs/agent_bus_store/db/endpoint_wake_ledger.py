@@ -317,6 +317,30 @@ def claim_due_wakes(
                     SELECT 1 FROM turns tr
                     WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
                   )
+                  AND NOT (
+                    EXISTS (
+                      SELECT 1 FROM turns tp
+                      WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                      FROM agent_endpoint_subscriptions s_curr
+                      LEFT JOIN agent_endpoint_subscriptions s_prev
+                        ON s_prev.id = d.subscription_id
+                      WHERE s_curr.agent = p.agent
+                        AND s_curr.state = 'subscribed'
+                        AND (
+                          s_curr.thread_scope = p.thread_id
+                          OR s_curr.thread_scope = '*'
+                        )
+                        AND s_curr.agent_id != ''
+                        AND (
+                          s_prev.agent_id IS NULL
+                          OR s_curr.agent_id != s_prev.agent_id
+                        )
+                      LIMIT 1
+                    )
+                  )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM endpoint_wake_ledger u

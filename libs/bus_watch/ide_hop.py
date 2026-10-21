@@ -1068,6 +1068,23 @@ def finalize_xvfb_hop_sidebar(
             retired_title,
             debug_url=debug_url,
         )
+    from bus_watch.impresario_ear_common import (
+        hop_watermark_key,
+        hop_watermark_present,
+        maybe_enqueue_after_hop,
+    )
+
+    wm_key = hop_watermark_key(
+        root_id, departing_transcript_id=departing_agent_id or None
+    )
+    if hop_watermark_present(wm_key):
+        out["impresario_ear"] = False
+    else:
+        out["impresario_ear"] = maybe_enqueue_after_hop(
+            root_thread=root_id,
+            departing_transcript_id=departing_agent_id or None,
+            channel="hop",
+        )
     return out
 
 

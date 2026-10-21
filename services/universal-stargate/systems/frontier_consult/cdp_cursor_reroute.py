@@ -354,9 +354,14 @@ async def run_cdp_reroute_via_cursor_sdk(
     )
 
 
+poll_dispatch_status = _poll_dispatch_status
+harvest_sdk_body = _harvest_sdk_body
+
 __all__ = [
     "REROUTE_ADMIT_SUBSTRATE",
+    "harvest_sdk_body",
     "load_cdp_reroute_config",
+    "poll_dispatch_status",
     "resolve_cdp_reroute",
     "run_cdp_reroute_via_cursor_sdk",
 ]

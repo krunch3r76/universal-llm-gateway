@@ -46,6 +46,7 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "ESCALATE",
         "BLOCKED",
         "READY",
+        "EAR",
     }
 )
 GROK_WAKE_SUBJECT_HEADS = frozenset(
@@ -78,6 +79,7 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "RELAY",
         "SEND",
         "PASS",
+        "EAR",
         "SYNTHESIS",
         "CORRECTION",
         "RESTARTED",
@@ -526,6 +528,9 @@ async def run_dispatcher() -> None:
             await asyncio.to_thread(
                 check_cursor_ide_context_hops, store, mark=hop_mark
             )
+            from bus_watch.impresario_ear_patrol import run_patrol_pass
+
+            await asyncio.to_thread(run_patrol_pass, store)
         except Exception:
             logger.exception("endpoint_wake_dispatcher pass failed")
         await asyncio.sleep(_POLL_S)

@@ -35,6 +35,8 @@ impresario:
     - cdp/fable-5
     - cursor/muse-wonder-1.0
   cdp_reroute_for_critic: false
+  ear: {model: cursor/gemini-4-argon, effort: high}
+  ear_patrol: {model: cursor/composer-2.5, effort: low, fast: true}
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
 default_seat: cursor-sdk

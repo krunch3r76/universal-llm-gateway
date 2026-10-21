@@ -41,6 +41,8 @@ categories:
     description: gate1_audit
   grokbot_checkpoint:
     description: grokbot_checkpoint
+  impresario_ear:
+    description: impresario_ear
   grokbot_computer_update:
     description: grokbot_computer_update
   maestro_landed_live:

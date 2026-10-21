@@ -185,6 +185,19 @@ async def run_post(
             from_agent=str(options.get("bus_identity") or ""),
             bus_turn=bus_turn,
         )
+    channel = str(options.get("channel") or "cp")
+    mode = str(options.get("mode") or "")
+    if bus_turn > 0 and not seal.get("refused") and (
+        channel == "hop" or mode in ("seal", "harvest_seal")
+    ):
+        from bus_watch.impresario_ear_common import maybe_enqueue_after_hop
+
+        maybe_enqueue_after_hop(
+            root_thread=thread,
+            departing_transcript_id=str(options.get("agent_id") or seal.get("transcript_id") or ""),
+            hop_turn=bus_turn,
+            channel="hop" if channel == "hop" else None,
+        )
     return {
         "refused": None,
         "duplicate": False,

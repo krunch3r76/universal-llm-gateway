@@ -60,6 +60,7 @@ from bus_watch.spawn_pending import (
     digest_root_surface,
     observe_terminal_lane_closeouts,
 )
+from bus_watch.impresario_ear_common import is_ear_turn
 from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
 
@@ -196,7 +197,11 @@ def build_digest(
             {
                 "root": {
                     "id": root_id,
-                    "recent_turns": recent_turns,
+                    "recent_turns": [
+                        t
+                        for t in recent_turns
+                        if not (isinstance(t, dict) and is_ear_turn(t))
+                    ],
                     "unread_turns": unread_turns,
                 },
             },

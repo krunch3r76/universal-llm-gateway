@@ -1,0 +1,34 @@
+schema_version: 6
+id: impresario-ear-v1
+version: "1.0"
+type: impresario_ear
+category: impresario_ear
+description: >
+  Impresario ear — resolve context, gather house signals, evaluate via
+  in-handler cursor-sdk (ephemeral), deliver EAR | steering turn.
+output: deliver
+
+concurrency:
+  key: "impresario-ear:{context.dispatch_thread_id}"
+  scope: execution
+  timeout_seconds: 600
+
+options:
+  timeout_seconds: 900
+  mode: deep
+
+steps:
+  - name: resolve
+    type: impresario_ear_resolve_v1
+
+  - name: gather
+    type: impresario_ear_gather_v1
+    condition: "resolve.json.get('skip') is not True"
+
+  - name: evaluate
+    type: impresario_ear_evaluate_v1
+    condition: "gather.json.get('skip') is not True"
+
+  - name: deliver
+    type: impresario_ear_deliver_v1
+    condition: "evaluate.json.get('skip') is not True"

@@ -34,6 +34,7 @@ class SeatSpec:
     effort_rung: str
     transport: Transport
     seat: str = "cursor-sdk"
+    fast: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,8 @@ class ImpresarioPolicy:
     critic_roles: Mapping[str, dict[str, Any]]
     allowed_critics: frozenset[str]
     cdp_reroute_for_critic: bool
+    ear: SeatSpec
+    ear_patrol: SeatSpec
     policy_sha256: str
 
 
@@ -102,14 +105,31 @@ def policy_snapshot_sha256(*, path: Path | None = None) -> str:
 
 
 def _parse_seat_entry(
-    raw: object, *, default_model: str, default_effort: str
+    raw: object,
+    *,
+    default_model: str,
+    default_effort: str,
+    require_allowed_critic: bool = True,
+    allowed_critics: frozenset[str] | None = None,
 ) -> SeatSpec:
     if not isinstance(raw, dict):
         return _seat(default_model, default_effort)
     model = str(raw.get("model") or default_model).strip()
     effort = str(raw.get("effort") or default_effort).strip()
     seat = str(raw.get("seat") or "cursor-sdk").strip()
-    return _seat(model, effort, seat=seat)
+    fast = bool(raw.get("fast"))
+    resolved = _seat(model, effort, seat=seat)
+    if require_allowed_critic and allowed_critics is not None:
+        if model not in allowed_critics:
+            msg = f"impresario seat model {model!r} not in allowed_critics"
+            raise ValueError(msg)
+    return SeatSpec(
+        model=resolved.model,
+        effort_rung=resolved.effort_rung,
+        transport=resolved.transport,
+        seat=resolved.seat,
+        fast=fast,
+    )
 
 
 def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
@@ -141,13 +161,31 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         default_effort=_HYBRID_MECHANICAL_EFFORT,
     )
     critic = _parse_seat_entry(
-        critic_raw, default_model="cursor/gemini-4-argon", default_effort="high"
+        critic_raw,
+        default_model="cursor/gemini-4-argon",
+        default_effort="high",
+        allowed_critics=frozenset(),  # set below after allowed_critics parsed
+        require_allowed_critic=False,
     )
     allowed_raw = raw.get("allowed_critics") or []
     if not isinstance(allowed_raw, list) or not allowed_raw:
         msg = "impresario.allowed_critics must be a non-empty list"
         raise ValueError(msg)
     allowed_critics = frozenset(str(m).strip() for m in allowed_raw)
+    ear_raw = raw.get("ear") or {}
+    ear_patrol_raw = raw.get("ear_patrol") or {}
+    ear = _parse_seat_entry(
+        ear_raw,
+        default_model=critic.model,
+        default_effort=critic.effort_rung,
+        allowed_critics=allowed_critics,
+    )
+    ear_patrol = _parse_seat_entry(
+        ear_patrol_raw,
+        default_model="cursor/composer-2.5",
+        default_effort="low",
+        require_allowed_critic=False,
+    )
     roles_raw = raw.get("critic_roles") or {}
     if not isinstance(roles_raw, dict):
         msg = "impresario.critic_roles must be a mapping"
@@ -178,8 +216,19 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         critic_roles=roles_raw,
         allowed_critics=allowed_critics,
         cdp_reroute_for_critic=bool(raw.get("cdp_reroute_for_critic")),
+        ear=ear,
+        ear_patrol=ear_patrol,
         policy_sha256=sha,
     )
+
+
+def critic_for_role(policy: ImpresarioPolicy, role: str) -> SeatSpec:
+    """Resolve ear vs critic role seats (``ear`` / ``ear_patrol`` are not critic_roles)."""
+    if role == "ear":
+        return policy.ear
+    if role == "ear_patrol":
+        return policy.ear_patrol
+    return _role_seat(policy, role)
 
 
 @lru_cache(maxsize=4)

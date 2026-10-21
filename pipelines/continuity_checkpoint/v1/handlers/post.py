@@ -348,6 +348,23 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             bus_turn=bus_turn,
         )
 
+        checkpoint_channel = str(options.get("channel") or "continuity")
+        if (
+            checkpoint_channel == "hop"
+            and not seal.get("refused")
+            and not resolve.get("refused")
+            and not resolve.get("replayed")
+            and not resolve.get("duplicate")
+        ):
+            from bus_watch.impresario_ear_common import maybe_enqueue_after_hop
+
+            maybe_enqueue_after_hop(
+                root_thread=thread,
+                departing_transcript_id=str(seal.get("transcript_id") or ""),
+                hop_turn=bus_turn,
+                channel="hop",
+            )
+
         session_id = seal.get("session_id") or ""
         result = {
             "execution_id": execution_id,
