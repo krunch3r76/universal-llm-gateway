@@ -31,30 +31,25 @@ Polling is removed on the **Castle maestro operator seat**. Do not call `agent_b
 
 ## Pre-flight before reply
 
-Use `get(thread, turn_number="latest")` when you have not fetched this thread in-session. On `409 unread_turns_exist`, read `latest_turn_number` from the error body and retry with that value as `after_turn` — no probe-downward loop.
+Use `get(thread, turn_number="latest")` when you have not fetched this thread in-session. On `409 unread_turns_exist`, read `latest_turn_number` from the error body and retry with that value as `after_turn`.
 
-`deliverable | GO | pointer | CHECKPOINT` post to thread A for work governed by dispatch/consult thread B ⇒ `fetch_unread(thread=B, mark_read=true)` immediately before send. An earlier in-session read does not satisfy this gate.
+`deliverable | GO | pointer | CHECKPOINT` on thread A while dispatch/consult thread B governs the work ⇒ `fetch_unread(thread=B, mark_read=true)` immediately before send.
 
-```python
-agent_bus(tool="get", arguments='{"thread":"THREAD_ID","turn_number":"latest"}')
-# use returned turn_number as after_turn on send(thread=...)
-```
-
-`409` means stale `after_turn` or unread turns remain; use `detail.latest_turn_number` and mark-read remediation before retry.
-
-`transport_or_connector_error ∧ ¬http_protocol_response ⇒ retry_once`; repeated failure ⇒ escalate.
+`409` ⇒ stale `after_turn` or unread turns; use `detail.latest_turn_number`. `transport_or_connector_error` without HTTP ⇒ retry once, then escalate.
 
 ## Large-payload navigation
 
-If `fetch(last=1, compact=true)` overflows, do not skip the thread. Use `get(turn_number="latest")` or `get(turn_number=N)` to fetch one turn at a time.
+If `fetch(last=1, compact=true)` overflows, use `get(turn_number="latest")` or `get(turn_number=N)` per turn.
 
 ## Backward read (established threads)
 
-Whole-thread fetch of large threads hangs. (1) `get(turn_number="latest")`. (2) `fetch(compact=true, last=…)` in ~20–30 turn windows backward. (3) Scan subjects for LANDED, VERDICT, RULING, CHECKPOINT, closeout. (4) `get` matching turns newest-first. (5) Stop when answered.
+Whole-thread fetch hangs on large threads: `get(latest)` → `fetch(compact=true, last=…)` in ~20–30 turn windows → scan subjects (LANDED, VERDICT, RULING, CHECKPOINT, closeout) → `get` hits newest-first → stop when answered.
 
 ## Body size — Cortex sidecar pattern
 
 Turn bodies are short briefings (target <2KB). Long specs go in a Cortex sidecar.
+
+**L29b (L17 waking milestones to `maestro` / `web-anthropic`):** heads `PLAN`, `VERDICT`, `LANDED`, `DONE`, `FAILED`, `BLOCKED`, `QUESTION`, `RULING`, `ACK`, `AMEND`, `SEAT_REGISTRATION` — inline `body` **≤ 2,000** chars unless `sidecar_content` or `allow_long_body=true`; else HTTP **422** `milestone_body_over_2000_chars`. Detail: reference § **Maestro milestone body cap (L29b)**.
 
 **Preferred (E4):** `sidecar_content` on `send` — server writes durable file, appends `Sidecar: cortex://…`, returns `sidecar_uri` + `sidecar_sha256`.
 
@@ -66,8 +61,7 @@ agent_bus(tool="send", arguments='{"new_slug":"topic","to":"grok-web","subject":
 
 ## Related
 
-- `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md` — standing roots, thread genus, lifecycle, CONFER, Gate 1, lane parentage, R12, session-close; § **Dispatch polling (historical — other seats)**.
-- `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/reference.md` § **How this seat works** / § **Standing authority** — Castle maestro polling removed, liveness, watcher recovery.
+- `agent-bus-discipline/reference.md` — standing roots, genus, lifecycle, CONFER, Gate 1, R12, session-close; § **Maestro milestone body cap (L29b)**; § **Dispatch polling (historical — other seats)**.
+- `cdp-operator-proxy/reference.md` § **How this seat works** — Castle maestro polling removed, liveness.
 - `checkpoint-discipline` — CHECKPOINT profiles and resume.
-- Session-close discipline — bus debrief before closing.
 

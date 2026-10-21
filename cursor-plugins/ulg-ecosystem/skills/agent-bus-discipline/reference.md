@@ -2,6 +2,12 @@
 
 Sidecar law for standing roots, classification, lifecycle, CONFER, Gate 1, lane parentage, R12, and session-close. Load with `fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md", section="…")`.
 
+## Maestro milestone body cap (L29b)
+
+For `to=maestro` or `to=web-anthropic`, the eleven L17 waking milestone heads (`PLAN`, `VERDICT`, `LANDED`, `DONE`, `FAILED`, `BLOCKED`, `QUESTION`, `RULING`, `ACK`, `AMEND`, `SEAT_REGISTRATION`) enforce an inline body cap of **2,000** characters at compose/send unless the caller passes `sidecar_content` (preferred) or `allow_long_body=true` (recipient contract only). Over 2,000 without a sidecar ⇒ HTTP **422** `milestone_body_over_2000_chars` with fix_hint to move detail into `sidecar_content`.
+
+Heads outside that set (for example `DISPOSITION`, `DIRECTIVE`, `ROUTE`, `ORIENTED`, `HOLD`, `COMPLETE`, `IN FLIGHT`) are not gated by L29b; other runbooks may still cap them (Castle maestro `DISPOSITION` on `<lane>` `to=cursor` ≤ 2,000 via runbook step 4). Wake routing still uses the wider `MAESTRO_MILESTONE_PREFIXES` allowlist — L29b only bounds inline body size on the gated heads.
+
 ## Dispatch polling (historical — other seats)
 
 After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, thread=N, after_turn=T, completion=<from poll_hint>, from_agent=...)`. A CDP generate is bound to `dispatch_thread_id`. Done for the watching seat is `proof_reply_from` on that thread — do not downgrade to `first_reply_from`, and do not treat `streaming=false` on the Cowork page as that signal. Streaming pauses between tools. A tool-badge scrape (`Loaded tools, ran a command`) and a `cdp FAILED` envelope whose archive is only that badge are `predicate_unmet`, not the reply. `producer_terminal_no_reply` after that envelope means the harvest closed early — read `archive_uri` before re-dispatching.

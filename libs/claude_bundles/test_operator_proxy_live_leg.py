@@ -590,6 +590,70 @@ def test_project_live_leg_saves_open_keys_before_render_filter() -> None:
     assert len(saved["15851"].open_keys) == 3
 
 
+_STALE_15851_OPEN_KEYS = [
+    "15851:1560:REQUEST|freeform|decision:anthropic-api-credits-use-A — stargate path check",
+    "15851:1577:REQUEST|freeform|decision:anthropic-api-credits-use-C1 — harness fix leg",
+    "15851:1613:PLAN|friction:39550 r2 sha f94b1b05 — VERDICT PASS_WITH_NITS",
+    "15851:1631:PLAN|friction:39330|cc of #1630 (lane 17905)",
+    "15851:1798:PICKUP|friction:39610 #1793 items 1-2 dispatched",
+    "15851:1853:PICKUP|friction:39550 house 16416 (cursor) under f94b1b05",
+    "15851:1854:PICKUP|friction:39614 residue investigate routed to house 16416",
+    "15851:1983:PLAN|todo:cursor-sdk-token-efficiency-lean-a-d|Shape A PLAN ready",
+    "15851:1998:PLAN|a:39687 G1+G2 implement proposal 2/2",
+    "15851:2037:REQUEST|a:39707 needs owner; fable-5-1 consult on floor enforcement",
+    "15851:2080:REQUEST|freeform|friction:39707: relay one question to Kaywan",
+    "15851:2081:PLAN|todo:conductor-admit-pipeline-options-shape-a r-next^2",
+    "15851:2083:REQUEST|freeform|friction:39668: child 4 refused step1",
+    "15851:2091:REQUEST|freeform|friction:39710 range forward fixes",
+    "15851:2281:REQUEST|freeform|friction:30054 — co-sign or rule",
+    "15851:2300:REQUEST|freeform|todo:conductor-admit-pipeline-options-shape-a — stargate sync_restart",
+]
+
+
+def test_l23_15851_stale_rows_suppressed_without_inflight_section() -> None:
+    fold_state = {
+        "15851": LaneFoldState(watermark=3000, open_keys=_STALE_15851_OPEN_KEYS),
+    }
+
+    def _page(
+        lane: str,
+        *,
+        after_turn: int = 0,
+        last: int = 200,
+        compact: bool = True,
+        mark_read: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        del lane, after_turn, last, compact, mark_read
+        return [], False, None
+
+    leg = project_live_leg(
+        ["15851"],
+        lambda _l: [],
+        page_fetch=_page,
+        fold_state_load=lambda: dict(fold_state),
+        fold_state_save=lambda _s: None,
+        inflight_work_keys=frozenset(),
+        hop_boundary_by_lane={"15851": 2300},
+    )
+    text = render_live_leg(leg, declared_in_flight=0)
+    assert "declared_in_flight: 0" in text
+    assert "anthropic-api-credits-use-A" not in text
+    assert "fable-5-1 consult on floor enforcement" not in text
+    assert "conductor-admit-pipeline-options-shape-a — stargate" not in text
+
+
+def test_l23_inflight_key_older_than_hop_boundary_still_shown() -> None:
+    items = [
+        OpenItem("15851", 1560, "REQUEST", "", "todo:decision-a", "s"),
+    ]
+    filtered = _filter_live_leg_items(
+        items,
+        inflight_work_keys=frozenset({"todo:decision-a"}),
+        hop_boundary_by_lane={"15851": 2300},
+    )
+    assert [i.key for i in filtered] == ["todo:decision-a"]
+
+
 def test_render_live_leg_keeps_lane_errors_when_item_budget_truncates() -> None:
     leg = LiveLeg(
         items=[

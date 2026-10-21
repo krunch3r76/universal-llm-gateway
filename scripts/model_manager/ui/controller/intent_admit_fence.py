@@ -64,6 +64,9 @@ def queue_kw_for_pending_intent(
     admit_lane: str,
     armed: bool = False,
     read_only: bool = False,
+    admit_work_key: str | None = None,
+    busy_work_keys: Collection[str] = (),
+    nest_under: str | None = None,
 ) -> dict[str, bool]:
     """Ledger kwargs that queue a write admit, or ``{}`` when it should start.
 
@@ -71,8 +74,15 @@ def queue_kw_for_pending_intent(
     even when the store read missed. Read-only admits are not queued: the
     write-lease promoter would never rehome them. ``force`` is not an input;
     this fence does not add or remove a force bypass.
+
+    During restart drain, an admit whose ``admit_work_key`` is not among live
+    ``busy_work_keys`` bypasses the lane queue (independent act). Nested
+    children (non-empty ``nest_under``) also bypass. Unkeyed admits fail closed
+    into the lane queue when the lane is blocked.
     """
     if read_only:
+        return {}
+    if str(nest_under or "").strip():
         return {}
     status = STATUS_PENDING_DRAIN if armed else intent_status
     blocked = blocked_admit_lanes(
@@ -80,9 +90,16 @@ def queue_kw_for_pending_intent(
         intent_status=status,
         occupied_lanes=occupied_lanes,
     )
-    if pending_intent_queues_admit(blocked_lanes=blocked, admit_lane=admit_lane):
-        return {"queue_for_pending_intent": True}
-    return {}
+    if not pending_intent_queues_admit(blocked_lanes=blocked, admit_lane=admit_lane):
+        return {}
+    admit_key = str(admit_work_key or "").strip().lower()
+    if admit_key and busy_work_keys:
+        busy_norm = {
+            str(k).strip().lower() for k in busy_work_keys if str(k).strip()
+        }
+        if admit_key not in busy_norm:
+            return {}
+    return {"queue_for_pending_intent": True}
 
 
 def pending_service_intent_status(
