@@ -266,7 +266,11 @@ def measure_ide_tab(
     if not transcript_id:
         return None
     path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
+    gui_host = str(policy.get("gui_host") or ":8")
     if not path.is_file():
+        glass = probe_glass_composer_budget(transcript_id, gui_host)
+        if glass:
+            return glass
         return None
     measure = measure_transcript(path)
     per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
@@ -282,7 +286,6 @@ def measure_ide_tab(
         "tokens_per_tool_call": per_call,
         **measure,
     }
-    gui_host = str(policy.get("gui_host") or ":8")
     glass = probe_glass_composer_budget(transcript_id, gui_host)
     if glass:
         out["used_tokens"] = int(glass.get("contextTokensUsed") or used_tokens)

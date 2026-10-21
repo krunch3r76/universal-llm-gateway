@@ -256,6 +256,42 @@ def test_measure_ide_tab_overrides_from_glass_probe(tmp_path: Path) -> None:
     assert path.is_file()
 
 
+def test_measure_ide_tab_returns_probe_when_jsonl_absent(tmp_path: Path) -> None:
+    glass = {
+        "ok": True,
+        "contextTokensUsed": 42_000,
+        "contextTokenLimit": 200_000,
+        "contextUsagePercent": 21.0,
+        "status": "completed",
+        "model": "gemini-4-argon",
+    }
+    with patch(
+        "bus_watch.ide_budget.probe_glass_composer_budget", return_value=glass
+    ):
+        ide = measure_ide_tab(
+            "10479",
+            {"holder": f"ide:{_TID}"},
+            {"gui_host": ":8"},
+            transcripts_dir=tmp_path,
+            watch_dir=tmp_path / "watchers",
+        )
+    assert ide == glass
+
+
+def test_measure_ide_tab_none_when_jsonl_absent_and_probe_fails(tmp_path: Path) -> None:
+    with patch("bus_watch.ide_budget.probe_glass_composer_budget", return_value=None):
+        assert (
+            measure_ide_tab(
+                "10479",
+                {"holder": f"ide:{_TID}"},
+                {"gui_host": ":8"},
+                transcripts_dir=tmp_path,
+                watch_dir=tmp_path / "watchers",
+            )
+            is None
+        )
+
+
 def test_digest_estimate_never_raises_stop_class() -> None:
     budget = build_budget_block(
         used_tokens=3_500_000,
