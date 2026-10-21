@@ -543,8 +543,17 @@ write_source_sync_stamp() {
   else
     working_tree_state="unknown"
   fi
+  # Same join as fleet_liveness_probe.services_for_path, recorded at sync
+  # time. The reader must not reclassify a later porcelain into this field.
+  if ! off_load_untracked_only="$(
+    PYTHONPATH="${WORKSPACE_ROOT}${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON" -c 'import sys; from pathlib import Path; from scripts.model_manager.ui.controller.fleet_liveness_probe import off_load_untracked_only_label; print(off_load_untracked_only_label(Path(sys.argv[1])))' \
+      "$WORKSPACE_ROOT"
+  )"; then
+    off_load_untracked_only="unknown"
+  fi
   docker exec -u 0 "$c" sh -c \
-    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\nsource_tree_sha=${source_tree_sha}\nimage_id=${image_id}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\noff_load_untracked_only=${off_load_untracked_only}\nsource_tree_sha=${source_tree_sha}\nimage_id=${image_id}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
   echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
 }
 

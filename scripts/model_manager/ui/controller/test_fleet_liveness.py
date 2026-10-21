@@ -1372,9 +1372,11 @@ def _running_info(_state: object, service: str) -> ServiceInfo:
 def test_not_loaded_by_when_service_does_not_import_code_ref(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    """Ancestry yes for wake_delivery is not_loaded_by on manage and yes on mcp.
+    """Ancestry yes stays yes. Load-relevance is a separate field.
 
-    Git failing to name the commit leaves the ancestry yes in place.
+    wake_delivery is not loaded by manage and is loaded by mcp. Git failing
+    to name the commit leaves the ancestry yes in place and omits
+    load_relevance.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1434,18 +1436,20 @@ def test_not_loaded_by_when_service_does_not_import_code_ref(
     by_name = {row["service"]: row for row in result["services"]}
     manage_liveness = by_name["manage"]["code_ref_validation"]["liveness"]
     mcp_liveness = by_name["mcp"]["code_ref_validation"]["liveness"]
-    assert manage_liveness["answer"] == "not_loaded_by"
+    assert manage_liveness["answer"] == "yes"
     assert manage_liveness["relation"] == "ancestor"
+    assert manage_liveness["load_relevance"] == "not_loaded_by"
     assert mcp_liveness["answer"] == "yes"
+    assert mcp_liveness["load_relevance"] == "loaded_by"
     assert probe.services_for_path("libs/cursor_bridge/wake_delivery.py") == ("mcp",)
 
     monkeypatch.setattr(live, "_code_ref_changed_paths", lambda *_args: None)
     unresolved = live.build_snapshot(
         repo, SimpleNamespace(), service="manage", code_ref=code_ref
     )
-    assert (
-        unresolved["services"][0]["code_ref_validation"]["liveness"]["answer"] == "yes"
-    )
+    unresolved_liveness = unresolved["services"][0]["code_ref_validation"]["liveness"]
+    assert unresolved_liveness["answer"] == "yes"
+    assert "load_relevance" not in unresolved_liveness
 
 
 def test_manage_loads_model_manager_diff_and_joins_dirty_path(
@@ -1490,6 +1494,7 @@ def _off_load_untracked_mcp(
     status: str,
     on_load_surface: bool,
     reported_value: str | None = "b" * 40,
+    off_load_untracked_only: str | None = None,
 ) -> dict:
     path = "libs/web_drive/pending.txt"
     opened = {
@@ -1537,6 +1542,11 @@ def _off_load_untracked_mcp(
             "source": "docker:/app/.source_sync_stamp",
             "source_sync_worktree_state": "dirty",
             "error": None if reported_value else "stamp_value_unavailable",
+            **(
+                {"source_sync_off_load_untracked_only": off_load_untracked_only}
+                if off_load_untracked_only is not None
+                else {}
+            ),
         },
     )
     monkeypatch.setattr(
@@ -1556,16 +1566,17 @@ def _off_load_untracked_mcp(
 def test_untracked_off_load_surface_does_not_leave_stamp_dirty(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    """libs/web_drive untracked and off-load must not keep the stamp dirty.
+    """The reader keeps the stamp's working_tree_state. It does not reclassify it.
 
-    A tracked edit off the load surface still leaves the stamp dirty.
+    Current porcelain, including off-load untracked files, is a different
+    moment from the sync write. A tracked edit stays dirty for the same reason.
     """
     result = _off_load_untracked_mcp(
         monkeypatch, tmp_path, status="??", on_load_surface=False
     )
     reported = result["services"][0]["reported_version"]
-    assert reported["source_sync_worktree_state"] == "clean"
-    assert reported["worktree_state_qualification"] == "untracked_off_load_surface_only"
+    assert reported["source_sync_worktree_state"] == "dirty"
+    assert "worktree_state_qualification" not in reported
 
     tracked = _off_load_untracked_mcp(
         monkeypatch, tmp_path, status=" M", on_load_surface=False
@@ -1579,14 +1590,25 @@ def test_untracked_off_load_surface_does_not_leave_stamp_dirty(
 def test_untracked_off_load_surface_resolves_matches_reported_sha(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    """The same off-load untracked dirt must not leave matches_reported_sha open.
+    """matches_reported_sha yes comes from the stamp classification, not porcelain.
 
-    With no reported sha the match stays indeterminate.
+    Without that recorded field the match stays indeterminate. With no
+    reported sha it stays indeterminate even when the stamp says yes.
     """
-    result = _off_load_untracked_mcp(
+    bare = _off_load_untracked_mcp(
         monkeypatch, tmp_path, status="??", on_load_surface=False
     )
+    assert bare["services"][0]["matches_reported_sha"] == "indeterminate"
+
+    result = _off_load_untracked_mcp(
+        monkeypatch,
+        tmp_path,
+        status="??",
+        on_load_surface=False,
+        off_load_untracked_only="yes",
+    )
     row = result["services"][0]
+    assert row["reported_version"]["source_sync_worktree_state"] == "dirty"
     assert row["matches_reported_sha"] == "yes"
     assert row["live_sha_claim"] == {
         "sound": True,
@@ -1599,6 +1621,7 @@ def test_untracked_off_load_surface_resolves_matches_reported_sha(
         status="??",
         on_load_surface=False,
         reported_value=None,
+        off_load_untracked_only="yes",
     )
     assert missing["services"][0]["matches_reported_sha"] == "indeterminate"
 
@@ -1642,7 +1665,9 @@ def test_null_service_pid_copies_reachable_observation_pid(
     )
     by_name = {row["service"]: row for row in result["services"]}
     assert by_name["mcp"]["pid"] == 1
+    assert by_name["mcp"]["pid_source"] == "container"
     assert by_name["stargate"]["pid"] == 7
+    assert "pid_source" not in by_name["stargate"]
     assert by_name["gateway"]["pid"] is None
 
 
@@ -1685,3 +1710,32 @@ def test_answers_equal_compares_seal_with_observed_code_version(
         tmp_path, SimpleNamespace(), service="manage", code_ref="abc123"
     )
     assert unequal["services"][0]["loaded_code_evidence"]["answers_equal"] is False
+
+
+def test_off_load_label_uses_untracked_files_all(tmp_path) -> None:
+    """A new package directory is on the load surface once every file is listed.
+
+    Default porcelain is one ``?? dir/`` row. That name does not end in
+    ``.py``, so a suffix join would call it off-load. ``--untracked-files=all``
+    lists the module the sync copies into ``/app``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+    keep = repo / "README"
+    keep.write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "README")
+    _git(repo, "commit", "-m", "init")
+    assert probe.off_load_untracked_only_label(repo) == "no"
+
+    junk = repo / "notes" / "scratch.txt"
+    junk.parent.mkdir()
+    junk.write_text("junk\n", encoding="utf-8")
+    assert probe.off_load_untracked_only_label(repo) == "yes"
+
+    module = repo / "services" / "mcp-server" / "newpkg" / "mod.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("x = 1\n", encoding="utf-8")
+    assert probe.off_load_untracked_only_label(repo) == "no"

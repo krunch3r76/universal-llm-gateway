@@ -53,6 +53,19 @@ def _slug_for_prefix(path: str) -> str | None:
     return None
 
 
+def _model_manager_test_module(path: str) -> bool:
+    """True for pytest files under ``scripts/model_manager/``.
+
+    The manage prefix would otherwise owe a ``manage`` restart. ``manage`` is
+    not a sync-restart slug, so nothing can carry that restart out. Production
+    modules under the prefix still map to ``manage``.
+    """
+    if not path.startswith("scripts/model_manager/") or not path.endswith(".py"):
+        return False
+    name = path.rsplit("/", 1)[-1]
+    return name.startswith("test_") or "/tests/" in f"/{path}"
+
+
 def _skipped_non_serving(path: str) -> bool:
     if path.startswith(_SKIP_PREFIXES):
         return True
@@ -76,6 +89,8 @@ def restart_owed_line(paths: Sequence[str]) -> str:
     for raw in paths:
         path = _norm(raw)
         if not path or is_lib_test_module(path) or _skipped_non_serving(path):
+            continue
+        if _model_manager_test_module(path):
             continue
         slug = slug_for_service_path(path) or _slug_for_prefix(path)
         if slug:
@@ -198,9 +213,7 @@ def record_land_restart_receipt(
     except Exception as exc:
         unavailable = _unavailable(exc)
         try:
-            _publish_receipt(
-                path, _receipt_body(before, after, land_path, unavailable)
-            )
+            _publish_receipt(path, _receipt_body(before, after, land_path, unavailable))
         except Exception:
             path.unlink(missing_ok=True)
         return unavailable

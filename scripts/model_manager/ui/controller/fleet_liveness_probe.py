@@ -286,7 +286,7 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
         key, separator, item = raw.partition("=")
         if separator and key.strip() and item.strip():
             metadata[key.strip()] = item.strip()
-    return {
+    payload = {
         "field": "code_version",
         "value": value,
         "source": "docker:/app/.source_sync_stamp",
@@ -297,6 +297,10 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
         "source_sync_worktree_state": metadata.get("working_tree_state", "unknown"),
         "error": None if value else "stamp_value_unavailable",
     }
+    recorded = metadata.get("off_load_untracked_only")
+    if recorded in {"yes", "no", "unknown"}:
+        payload["source_sync_off_load_untracked_only"] = recorded
+    return payload
 
 
 def index_behind_head(root: Path, head_sha: str | None, path: str) -> bool:
@@ -430,6 +434,77 @@ def container_sha(container: str, path: str) -> str | None:
     return value[0] if value else None
 
 
+def off_load_untracked_only_label(root: Path) -> str:
+    """Classify sync-time porcelain for the source-sync stamp.
+
+    ``yes`` means every ``--untracked-files=all`` row is untracked and
+    ``services_for_path`` names no service. The default porcelain collapses
+    a new directory to one ``?? dir/`` line, which has no ``.py`` suffix and
+    looks off-surface even when the directory contains a package the sync
+    copies into ``/app``. ``no`` is any other successful porcelain, including
+    an empty tree. ``unknown`` is a failed git status. The reader must not
+    recompute this from a later tree.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "status",
+                "--porcelain",
+                "-z",
+                "--untracked-files=all",
+            ],
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    paths = _porcelain_z_paths(result.stdout)
+    if paths is None:
+        return "unknown"
+    if not paths:
+        return "no"
+    for status, path in paths:
+        if status.strip() != "??":
+            return "no"
+        if services_for_path(path):
+            return "no"
+    return "yes"
+
+
+def _porcelain_z_paths(blob: bytes) -> list[tuple[str, str]] | None:
+    """Return ``(status, path)`` rows from ``git status -z``.
+
+    A rename record is ``XY old\\0new\\0``. The path that matters for the
+    load join is the new name. A truncated rename is ``None``.
+    """
+    parts = blob.split(b"\0")
+    rows: list[tuple[str, str]] = []
+    index = 0
+    while index < len(parts):
+        rec = parts[index]
+        if not rec:
+            index += 1
+            continue
+        if len(rec) < 4:
+            return None
+        status = rec[:2].decode("utf-8", errors="replace")
+        path = rec[3:].decode("utf-8", errors="replace")
+        index += 1
+        if "R" in status or "C" in status:
+            if index >= len(parts) or not parts[index]:
+                return None
+            path = parts[index].decode("utf-8", errors="replace")
+            index += 1
+        rows.append((status, path))
+    return rows
+
+
 __all__ = [
     "BIND_MOUNT_SERVICES",
     "CONTAINER_MARKERS",
@@ -443,6 +518,7 @@ __all__ = [
     "git_blob_sha",
     "manage_loaded_code_evidence",
     "mcp_reported_version",
+    "off_load_untracked_only_label",
     "process_start",
     "tree_probe",
     "utc",

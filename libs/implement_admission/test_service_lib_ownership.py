@@ -26,7 +26,6 @@ _propagation_execute = import_archived("propagation_execute")
 _propagation_libs_closure = import_archived("propagation_libs_closure")
 _resolve_libs_path = _propagation_execute._resolve_libs_path
 plan_propagation = _propagation_execute.plan_propagation
-_lib_to_services = _propagation_libs_closure._lib_to_services
 repo_root = _propagation_libs_closure.repo_root
 
 
@@ -79,11 +78,9 @@ def test_inferred_fanout_ge_two_defers_without_restart(monkeypatch) -> None:
 
 @pytest.mark.offline
 def test_declared_superset_of_measured_closure_per_service() -> None:
-    measured = _lib_to_services(str(repo_root()), path_prefixes())
-    measured_by_service: dict[str, set[str]] = {}
-    for lib, slugs in measured.items():
-        for slug in slugs:
-            measured_by_service.setdefault(slug, set()).add(lib)
+    measured_by_service = _propagation_libs_closure.direct_production_libs_by_service(
+        repo_root(), path_prefixes()
+    )
 
     for slug, own in service_ownership().items():
         missing = measured_by_service.get(slug, set()) - own.owned_libs
@@ -121,7 +118,6 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
             "consult_substrate_notice",
             "git_integrate",
             "implement_admission",
-            "job_grammar",
             "job_vocab",
             "prompt_expand_consume",
             "work_key_grammar",
