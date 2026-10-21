@@ -14,6 +14,7 @@ from bus_watch.impresario_ear_common import (
     clear_hop_watermarks_for_tests,
     hop_watermark_key,
     hop_watermark_present,
+    maybe_enqueue_after_hop,
     set_watermark_path_for_tests,
     try_claim_hop_watermark,
 )
@@ -49,6 +50,37 @@ def test_resolve_dispatch_thread_missing() -> None:
     assert out["error"]["code"] == "ear.dispatch_thread_missing"
 
 
+def test_resolve_ear_echo_guard_skips_when_tip_is_ear() -> None:
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "deep"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("skip") is True
+    assert out.get("reason") == "ear_echo_guard"
+
+
+def test_hop_enqueue_cursor_sets_to_agent() -> None:
+    with patch(
+        "bus_watch.impresario_ear_common.enqueue_impresario_ear",
+    ) as enqueue:
+        maybe_enqueue_after_hop(
+            root_thread=_ROOT,
+            departing_transcript_id="dep-tx",
+            channel="hop",
+            to_agent="cursor",
+        )
+    opts = enqueue.call_args.args[0]
+    assert opts["to_agent"] == "cursor"
+
+
 @pytest.mark.asyncio
 async def test_evaluate_ephemeral_sdk_harvest_does_not_post() -> None:
     generate = AsyncMock(
@@ -75,6 +107,29 @@ async def test_evaluate_ephemeral_sdk_harvest_does_not_post() -> None:
     assert generate.await_args.kwargs["bus_lifecycle"] == "ephemeral"
     assert generate.await_args.kwargs["dispatch_thread_id"] is None
     assert "agent_bus" in generate.await_args.kwargs["message_text"]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_patrol_pick_critic_does_not_typeerror() -> None:
+    load_impresario_policy.cache_clear()
+    generate = AsyncMock(
+        return_value={"dispatch_id": "d1", "thread_id": _ROOT},
+    )
+    poll = AsyncMock(return_value={"terminal": True, "status": "completed"})
+    harvest = AsyncMock(return_value="VERDICT: healthy")
+    resolve = {"skip": False, "root_thread": _ROOT, "mode": "patrol", "trigger": "patrol"}
+    gather = {"jsonl": {"glass_status": "completed", "transcript_id": _ROOT}}
+    out = await evaluate_impresario_ear(
+        resolve=resolve,
+        gather=gather,
+        options={},
+        patrol_prescreen=AsyncMock(return_value={"skip_model": False}),
+        sdk_generate=generate,
+        sdk_poll=poll,
+        sdk_harvest=harvest,
+    )
+    assert out.get("skip") is False
+    assert "model" in out
 
 
 @pytest.mark.asyncio

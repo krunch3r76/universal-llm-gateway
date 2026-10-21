@@ -176,3 +176,11 @@ class StoreClient:
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
+
+    def turns(self, thread: str, **params: Any) -> dict[str, Any]:
+        payload = self._bus(
+            "GET",
+            "/turns",
+            params={"thread": thread, **params},
+        )
+        return payload if isinstance(payload, dict) else {"turns": payload}

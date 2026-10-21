@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import inspect
 import time
 from pathlib import Path
 from typing import Any
@@ -10,9 +12,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bus_watch.impresario_ear_common import maybe_enqueue_after_hop
 from bus_watch.impresario_ear_patrol import (
     clear_patrol_state_for_tests,
+    load_patrol_prescreen_inputs,
     patrol_cooldown_active,
+    patrol_mailbox_for_agent,
     prescreen_house,
     run_patrol_pass,
     set_patrol_cooldown_path_for_tests,
@@ -23,6 +28,9 @@ pytestmark = pytest.mark.offline
 
 _ROOT = "18374"
 _TRANSCRIPT = "81fb6960-950d-59c5-88b4-af3839f170d1"
+_SPECIMEN_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "patrol_specimen_18374.json"
+)
 
 
 def test_patrol_prescreen_skips_generating_without_model_call() -> None:
@@ -55,8 +63,6 @@ def test_patrol_cooldown_allows_new_turn_hash(tmp_path: Path) -> None:
 
 
 def test_run_dispatcher_pass_calls_patrol_beside_context_hops() -> None:
-    import inspect
-
     from bus_watch import endpoint_wake_dispatcher as disp
 
     src = inspect.getsource(disp.run_dispatcher)
@@ -69,22 +75,8 @@ def test_patrol_specimen_18374_promised_act_hop_failed_quiet_unmerged(
 ) -> None:
     set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
     clear_patrol_state_for_tests()
-    tail = (
-        "Where this is going: review lane commit 7139b60eec14. "
-        "Who carries it: this seat. Report again: when that review starts."
-    )
-    out = prescreen_house(
-        root_id=_ROOT,
-        transcript_id=_TRANSCRIPT,
-        glass_status="completed",
-        activity_age_s=120.0,
-        in_flight=0,
-        assistant_tail=tail,
-        tool_blob="",
-        tick={"now_row": "quiet", "ready": True},
-        hop_failed=True,
-        unmerged_child=True,
-    )
+    payload = json.loads(_SPECIMEN_FIXTURE.read_text(encoding="utf-8"))
+    out = prescreen_house(**payload)
     for signal in (
         "promised_act_not_fired",
         "hop_failed_stranded",
@@ -96,20 +88,14 @@ def test_patrol_specimen_18374_promised_act_hop_failed_quiet_unmerged(
     assert "7139b60" in out["imperative"]
     fp = out["fingerprint"]
     stamp_patrol_cooldown(fp, now=time.time())
-    again = prescreen_house(
-        root_id=_ROOT,
-        transcript_id=_TRANSCRIPT,
-        glass_status="completed",
-        activity_age_s=120.0,
-        assistant_tail=tail,
-        hop_failed=True,
-        unmerged_child=True,
-    )
+    again = prescreen_house(**payload)
     assert again.get("reason") == "cooldown"
 
 
-def test_patrol_pass_enqueues_nonblocking() -> None:
+def test_patrol_specimen_fixture_loads_through_run_patrol_pass(tmp_path: Path) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
     clear_patrol_state_for_tests()
+    payload = json.loads(_SPECIMEN_FIXTURE.read_text(encoding="utf-8"))
     store = MagicMock()
     store.subscriptions.return_value = [
         {
@@ -125,14 +111,111 @@ def test_patrol_pass_enqueues_nonblocking() -> None:
         admitted.append(opts)
 
     with patch(
-        "bus_watch.impresario_ear_patrol.prescreen_house",
-        return_value={
-            "skip_model": True,
-            "signals": ["promised_act_not_fired"],
-            "fingerprint": f"{_ROOT}|{_TRANSCRIPT}|x",
-            "mode": "patrol",
-        },
+        "bus_watch.impresario_ear_patrol.load_patrol_prescreen_inputs",
+        return_value=payload,
     ):
         stats = run_patrol_pass(store, now=10_000.0, admit_pipeline=_admit)
     assert stats["enqueued"] >= 1
     assert admitted[0]["root_thread"] == _ROOT
+    assert admitted[0]["to_agent"] == "cursor"
+
+
+def test_patrol_pass_enqueues_grok_mailbox() -> None:
+    clear_patrol_state_for_tests()
+    store = MagicMock()
+
+    def _subscriptions(agent: str = "cursor") -> list[dict[str, Any]]:
+        if agent != "grok-bot":
+            return []
+        return [
+            {
+                "surface": "grok",
+                "thread_scope": _ROOT,
+                "agent_id": "grok-tab",
+                "glass_status": "completed",
+            }
+        ]
+
+    store.subscriptions.side_effect = _subscriptions
+    admitted: list[dict[str, Any]] = []
+
+    def _admit(opts: dict[str, Any], **_: Any) -> None:
+        admitted.append(opts)
+
+    tail = (
+        "Where this is going: review lane commit 7139b60eec14. "
+        "Who carries it: this seat."
+    )
+    with patch(
+        "bus_watch.impresario_ear_patrol.load_patrol_prescreen_inputs",
+        return_value={
+            "root_id": _ROOT,
+            "transcript_id": "grok-tab",
+            "glass_status": "completed",
+            "activity_age_s": 120.0,
+            "in_flight": 0,
+            "assistant_tail": tail,
+            "tool_blob": "",
+            "tick": {"now_row": "quiet"},
+            "hop_failed": False,
+            "unmerged_child": True,
+            "recent_turns": [],
+        },
+    ):
+        stats = run_patrol_pass(store, now=10_000.0, admit_pipeline=_admit)
+    assert stats["enqueued"] >= 1
+    assert admitted[0]["to_agent"] == "grok-bot"
+
+
+def test_patrol_mailbox_for_agent() -> None:
+    assert patrol_mailbox_for_agent("cursor") == "cursor"
+    assert patrol_mailbox_for_agent("grok-bot") == "grok-bot"
+    assert patrol_mailbox_for_agent("insyncerator") == "insyncerator"
+
+
+def test_hop_enqueue_sets_to_agent_for_grok() -> None:
+    with patch("bus_watch.impresario_ear_common.enqueue_impresario_ear") as enqueue:
+        maybe_enqueue_after_hop(
+            root_thread=_ROOT,
+            departing_transcript_id="grok-tab",
+            channel="hop",
+            to_agent="grok-bot",
+        )
+    opts = enqueue.call_args.args[0]
+    assert opts["to_agent"] == "grok-bot"
+
+
+def test_load_patrol_prescreen_inputs_merges_turns_and_tick(tmp_path: Path) -> None:
+    tick_path = tmp_path / f"liaison-{_ROOT}.tick.json"
+    tick_path.write_text(
+        json.dumps({"policy": {"now_row": "quiet"}, "ready": True}),
+        encoding="utf-8",
+    )
+    store = MagicMock()
+    store.turns.return_value = {
+        "turns": [
+            {
+                "from_agent": "cursor",
+                "body": "hop failed: phase=keystroke debug_unreachable",
+            },
+            {
+                "from_agent": "cursor-sdk",
+                "body": "CLOSEOUT land_disposition: unlanded lane 18671",
+            },
+        ]
+    }
+    with patch("bus_watch.impresario_ear_patrol.fetch_giw_active_work_payload", return_value=None), patch(
+        "bus_watch.impresario_ear_patrol._transcript_probe",
+        return_value=("", "", 120.0, None),
+    ):
+        loaded = load_patrol_prescreen_inputs(
+            store,
+            root_id=_ROOT,
+            transcript_id=_TRANSCRIPT,
+            subscription_row={"glass_status": "completed"},
+            watch_dir=tmp_path,
+        )
+    assert loaded["hop_failed"] is True
+    assert loaded["unmerged_child"] is True
+    assert loaded["tick"]["now_row"] == "quiet"
+    assert len(loaded["recent_turns"]) == 2

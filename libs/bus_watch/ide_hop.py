@@ -1084,6 +1084,7 @@ def finalize_xvfb_hop_sidebar(
             root_thread=root_id,
             departing_transcript_id=departing_agent_id or None,
             channel="hop",
+            to_agent="cursor",
         )
     return out
 

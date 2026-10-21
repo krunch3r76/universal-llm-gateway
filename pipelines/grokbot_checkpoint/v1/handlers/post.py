@@ -197,6 +197,11 @@ async def run_post(
             departing_transcript_id=str(options.get("agent_id") or seal.get("transcript_id") or ""),
             hop_turn=bus_turn,
             channel="hop" if channel == "hop" else None,
+            to_agent=str(
+                options.get("bus_identity")
+                or options.get("verifier")
+                or "grok-bot"
+            ),
         )
     return {
         "refused": None,

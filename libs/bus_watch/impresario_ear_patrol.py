@@ -11,12 +11,17 @@ import time
 from pathlib import Path
 from typing import Any
 
+from bus_watch.digest_budget import effective_policy
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.ide_budget import AGENT_TRANSCRIPTS
 from bus_watch.impresario_ear_common import (
     build_pipeline_options,
     enqueue_impresario_ear,
     is_ear_turn,
+    normalize_grok_to_agent,
 )
+from bus_watch.roster import _holders_from_active_work, fetch_giw_active_work_payload
+from bus_watch.state import read_state
 
 log = logging.getLogger("bus_watch.impresario_ear_patrol")
 
@@ -27,6 +32,27 @@ _TOOL_MUTATION_RE = re.compile(
     r"team_dispatch|(?:CallDynamicTool.*?(team_dispatch|pipeline|agent_bus))"
     r"|(?:toolName[\"']?\s*:\s*[\"'](team_dispatch|pipeline|agent_bus))",
     re.I,
+)
+_HOP_FAILED_RE = re.compile(
+    r"(?i)(?:phase=keystroke|hop.{0,48}(?:fail|refus|stranded)|debug_unreachable|"
+    r"exit\s*code\s*2|no successor)",
+)
+_UNMERGED_CHILD_RE = re.compile(
+    r"(?i)(?:land_disposition:\s*unlanded|\bunmerged\b|\bnot.?landed\b|"
+    r"unharvested_or_unlanded)",
+)
+_NON_TERMINAL_HOLDER = frozenset(
+    {
+        "acting",
+        "admitted",
+        "running",
+        "queued",
+        "claimed",
+        "parked",
+        "parked_waiting",
+        "in_flight",
+        "hopping",
+    }
 )
 
 _last_pass: dict[str, float] = {}
@@ -93,6 +119,170 @@ def clear_patrol_state_for_tests() -> None:
     path = patrol_cooldown_path()
     if path.is_file():
         path.unlink(missing_ok=True)
+
+
+def _turns_listing(store: Any, root_id: str, *, last: int = 10) -> list[dict[str, Any]]:
+    fetch = getattr(store, "turns", None)
+    if not callable(fetch):
+        return []
+    try:
+        listing = fetch(thread=root_id, last=last)
+    except Exception:  # noqa: BLE001
+        log.debug("patrol turns fetch failed root=%s", root_id, exc_info=True)
+        return []
+    turns = listing.get("turns") if isinstance(listing, dict) else None
+    return [t for t in turns or [] if isinstance(t, dict)]
+
+
+def _holder_thread(holder: dict[str, Any]) -> str:
+    for key in ("thread_id", "dispatch_thread_id", "lane_thread_id", "root_thread"):
+        val = holder.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _in_flight_for_root(root_id: str) -> int:
+    payload = fetch_giw_active_work_payload()
+    if not payload:
+        return 0
+    count = 0
+    for holder in _holders_from_active_work(payload):
+        if _holder_thread(holder) != root_id:
+            continue
+        status = str(holder.get("status") or holder.get("state") or "").lower()
+        if not status or status in _NON_TERMINAL_HOLDER:
+            count += 1
+    return count
+
+
+def _transcript_probe(
+    transcript_id: str,
+) -> tuple[str, str, float, str | None]:
+    """Return assistant tail, tool blob, activity age, optional glass_status."""
+    path = AGENT_TRANSCRIPTS / transcript_id / f"{transcript_id}.jsonl"
+    if not path.is_file():
+        return "", "", 999.0, None
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    activity_age_s = max(0.0, time.time() - mtime) if mtime else 999.0
+    tail = ""
+    tool_parts: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "", "", activity_age_s, None
+    for raw in reversed(lines[-80:]):
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            tool_parts.append(raw)
+            continue
+        role = row.get("role")
+        content = (row.get("message") or {}).get("content") or []
+        if role == "assistant" and not tail:
+            text_chunks = [
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict)
+            ]
+            tail = "\n".join(chunk for chunk in text_chunks if chunk).strip()
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                tool_parts.append(json.dumps(block, default=str))
+            elif block.get("type") == "text":
+                tool_parts.append(str(block.get("text") or ""))
+    return tail, "\n".join(tool_parts), activity_age_s, None
+
+
+def _detect_hop_failed(turns: list[dict[str, Any]], tick: dict[str, Any]) -> bool:
+    blob = "\n".join(
+        str(t.get("body") or t.get("content") or t.get("subject") or "") for t in turns
+    )
+    if _HOP_FAILED_RE.search(blob):
+        return True
+    hop = tick.get("last_hop") if isinstance(tick.get("last_hop"), dict) else {}
+    phase = str(hop.get("phase") or "")
+    if phase == "keystroke" and hop.get("ok") is False:
+        return True
+    return False
+
+
+def _detect_unmerged_child(turns: list[dict[str, Any]]) -> bool:
+    blob = "\n".join(
+        str(t.get("body") or t.get("content") or t.get("subject") or "") for t in turns
+    )
+    return bool(_UNMERGED_CHILD_RE.search(blob))
+
+
+def load_patrol_prescreen_inputs(
+    store: Any,
+    *,
+    root_id: str,
+    transcript_id: str,
+    subscription_row: dict[str, Any] | None = None,
+    agent: str = "cursor",
+    now: float | None = None,
+    watch_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Load live inputs for ``prescreen_house`` (transcript, turns, tick, in-flight)."""
+    del agent  # reserved for surface-specific enrichment
+    clock = now if now is not None else time.time()
+    row = subscription_row or {}
+    recent_turns = _turns_listing(store, root_id, last=10)
+    tick_path = (watch_dir or WATCH_DIR) / f"liaison-{root_id}.tick.json"
+    tick_state = read_state(tick_path)
+    policy = effective_policy(tick_state)
+    tick = {"now_row": str(policy.get("now_row") or ""), "ready": tick_state.get("ready")}
+    tail, tool_blob, activity_age_s, _glass = _transcript_probe(transcript_id)
+    if not tail and recent_turns:
+        for turn in reversed(recent_turns[-3:]):
+            role = str(turn.get("role") or turn.get("from_agent") or "")
+            if role in {"assistant", "cursor", "grok-bot", "insyncerator"}:
+                tail = str(turn.get("body") or turn.get("content") or "")
+                break
+    if not tool_blob and recent_turns:
+        tool_blob = "\n".join(
+            str(t.get("body") or t.get("content") or "") for t in recent_turns[-5:]
+        )
+    last_turn_ts = 0.0
+    for turn in reversed(recent_turns):
+        ts = turn.get("created_at") or turn.get("timestamp")
+        if ts is not None:
+            try:
+                last_turn_ts = float(ts)
+            except (TypeError, ValueError):
+                pass
+            break
+    if last_turn_ts:
+        activity_age_s = min(activity_age_s, max(0.0, clock - last_turn_ts))
+    glass_status = str(row.get("glass_status") or _glass or "completed")
+    return {
+        "root_id": root_id,
+        "transcript_id": transcript_id,
+        "glass_status": glass_status,
+        "activity_age_s": activity_age_s,
+        "in_flight": _in_flight_for_root(root_id),
+        "assistant_tail": tail,
+        "tool_blob": tool_blob,
+        "tick": tick,
+        "hop_failed": _detect_hop_failed(recent_turns, tick_state),
+        "unmerged_child": _detect_unmerged_child(recent_turns),
+        "recent_turns": recent_turns,
+    }
+
+
+def patrol_mailbox_for_agent(agent: str) -> str:
+    normalized = normalize_grok_to_agent(agent)
+    if normalized:
+        return normalized
+    if str(agent).strip().lower() == "cursor":
+        return "cursor"
+    return "cursor"
 
 
 def _assistant_tail_hash(messages: list[dict[str, Any]]) -> str:
@@ -201,12 +391,18 @@ def run_patrol_pass(
                 continue
             _last_pass[root_id] = clock
             transcript_id = str(row.get("agent_id") or root_id)
-            pre = prescreen_house(
+            loaded = load_patrol_prescreen_inputs(
+                store,
                 root_id=root_id,
                 transcript_id=transcript_id,
-                glass_status=str(row.get("glass_status") or "completed"),
+                subscription_row=row,
+                agent=agent,
+                now=clock,
             )
+            pre = prescreen_house(**loaded)
             if pre.get("skip_model") and not pre.get("signals"):
+                continue
+            if pre.get("reason") == "ear_echo":
                 continue
             fp = str(pre.get("fingerprint") or "")
             if fp:
@@ -217,6 +413,7 @@ def run_patrol_pass(
                     root_thread=root_id,
                     mode=mode,
                     trigger="patrol",
+                    to_agent=patrol_mailbox_for_agent(agent),
                 ),
                 blocking=False,
             )
@@ -225,7 +422,10 @@ def run_patrol_pass(
 
 
 async def patrol_prescreen_for_evaluate(
-    *, resolve: dict[str, Any], gather: dict[str, Any]
+    *,
+    resolve: dict[str, Any],
+    gather: dict[str, Any],
+    fetch_turns: Any | None = None,
 ) -> dict[str, Any]:
     if str(resolve.get("mode")) != "patrol":
         return {"skip_model": False}
@@ -233,12 +433,47 @@ async def patrol_prescreen_for_evaluate(
     status = str((jsonl or {}).get("glass_status") or "completed")
     if status == "generating":
         return {"skip_model": True, "verdict": "healthy", "reason": "generating"}
-    return {"skip_model": False}
+    root = str(resolve.get("root_thread") or "")
+    transcript_id = str((jsonl or {}).get("transcript_id") or root)
+    recent_turns = gather.get("recent_turns") if isinstance(gather, dict) else None
+    if not isinstance(recent_turns, list):
+        store = type("_Turns", (), {"turns": fetch_turns})()
+        if fetch_turns is None:
+            from bus_watch.endpoint_wake_transport import StoreClient
+
+            store = StoreClient()
+        recent_turns = _turns_listing(store, root, last=10)
+    tick_path = WATCH_DIR / f"liaison-{root}.tick.json"
+    tick_state = read_state(tick_path)
+    policy = effective_policy(tick_state)
+    tick = {"now_row": str(policy.get("now_row") or ""), "ready": tick_state.get("ready")}
+    tail, tool_blob, activity_age_s, _glass = _transcript_probe(transcript_id)
+    if not tail and recent_turns:
+        for turn in reversed(recent_turns[-3:]):
+            role = str(turn.get("role") or turn.get("from_agent") or "")
+            if role in {"assistant", "cursor", "grok-bot", "insyncerator"}:
+                tail = str(turn.get("body") or turn.get("content") or "")
+                break
+    return prescreen_house(
+        root_id=root,
+        transcript_id=transcript_id,
+        glass_status=status,
+        activity_age_s=activity_age_s,
+        in_flight=_in_flight_for_root(root),
+        assistant_tail=tail,
+        tool_blob=tool_blob or json.dumps(jsonl, default=str)[:8000],
+        tick=tick,
+        hop_failed=_detect_hop_failed(recent_turns, tick_state),
+        unmerged_child=_detect_unmerged_child(recent_turns),
+        recent_turns=recent_turns,
+    )
 
 
 __all__ = [
     "clear_patrol_state_for_tests",
+    "load_patrol_prescreen_inputs",
     "patrol_cooldown_active",
+    "patrol_mailbox_for_agent",
     "patrol_prescreen_for_evaluate",
     "prescreen_house",
     "run_patrol_pass",

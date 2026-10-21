@@ -257,11 +257,17 @@ def maybe_enqueue_after_hop(
     seal_refused: bool = False,
     replayed: bool = False,
     duplicate: bool = False,
+    to_agent: str | None = None,
 ) -> bool:
     if seal_refused or replayed or duplicate:
         return False
     if channel and channel != "hop":
         return False
+    mailbox = normalize_grok_to_agent(to_agent) if to_agent else None
+    if mailbox is None and to_agent:
+        mailbox = str(to_agent).strip() or None
+    if mailbox is None:
+        mailbox = "cursor"
     enqueue_impresario_ear(
         build_pipeline_options(
             root_thread=root_thread,
@@ -269,6 +275,7 @@ def maybe_enqueue_after_hop(
             trigger="hop",
             departing_transcript_id=departing_transcript_id,
             hop_turn=hop_turn,
+            to_agent=mailbox,
         )
     )
     return True

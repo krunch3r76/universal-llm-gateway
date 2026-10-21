@@ -81,8 +81,15 @@ class ImpresarioEarResolveHandler(BaseHandler):
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
         dispatch_thread_id = getattr(context, "dispatch_thread_id", None)
+        fetch_turns = options.get("_fetch_turns")
+        if fetch_turns is None:
+            from bus_watch.endpoint_wake_transport import StoreClient
+
+            _store = StoreClient()
+            fetch_turns = _store.turns
         payload = resolve_impresario_ear(
             options=options,
             dispatch_thread_id=dispatch_thread_id,
+            fetch_turns=fetch_turns,
         )
         return StepOutput(raw=json.dumps(payload), json=payload)

@@ -1,0 +1,13 @@
+{
+  "root_id": "18374",
+  "transcript_id": "81fb6960-950d-59c5-88b4-af3839f170d1",
+  "glass_status": "completed",
+  "activity_age_s": 120.0,
+  "in_flight": 0,
+  "assistant_tail": "Where this is going: review lane commit 7139b60eec14. Who carries it: this seat. Report again: when that review starts.",
+  "tool_blob": "",
+  "tick": {"now_row": "quiet", "ready": true},
+  "hop_failed": true,
+  "unmerged_child": true,
+  "recent_turns": []
+}

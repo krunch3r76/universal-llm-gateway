@@ -30,7 +30,7 @@ def _pick_critic(mode: str, options: dict[str, Any]):
             from implement_admission.impresario_policy import _seat
 
             seat = _seat(override, seat.effort_rung, seat=seat.seat)
-        return seat
+        return seat, None
     seat = policy.ear
     if override:
         if override not in policy.allowed_critics:
@@ -68,7 +68,11 @@ async def evaluate_impresario_ear(
 ) -> dict[str, Any]:
     mode = str(resolve.get("mode") or "deep")
     if patrol_prescreen is not None:
-        pre = await patrol_prescreen(resolve=resolve, gather=gather)
+        pre = await patrol_prescreen(
+            resolve=resolve,
+            gather=gather,
+            fetch_turns=options.get("_fetch_turns"),
+        )
         if pre.get("skip_model"):
             signals = pre.get("signals") or []
             if signals:
