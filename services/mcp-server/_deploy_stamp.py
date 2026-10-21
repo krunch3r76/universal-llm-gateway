@@ -27,6 +27,8 @@ def read_source_sync_stamp() -> dict[str, str | None]:
             "source_sync_basis": None,
             "code_version_semantics": None,
             "source_sync_worktree_state": None,
+            "load_surface_worktree_state": None,
+            "load_surface_classification": None,
             "source_tree_sha": None,
             "image_id": None,
         }
@@ -44,9 +46,9 @@ def read_source_sync_stamp() -> dict[str, str | None]:
         "code_version_semantics": metadata.get(
             "code_version_semantics", "legacy_source_sync_commit_label"
         ),
-        "source_sync_worktree_state": metadata.get(
-            "working_tree_state", "unknown"
-        ),
+        "source_sync_worktree_state": metadata.get("working_tree_state", "unknown"),
+        "load_surface_worktree_state": metadata.get("load_surface_worktree_state"),
+        "load_surface_classification": metadata.get("load_surface_classification"),
         "source_tree_sha": metadata.get("source_tree_sha"),
         "image_id": metadata.get("image_id"),
     }

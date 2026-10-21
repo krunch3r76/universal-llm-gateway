@@ -246,9 +246,26 @@ async def cancel_drain(req: CancelDrainRequest, request: Request) -> dict[str, A
 
     Mismatch / generation-gone is an idempotent no-op returning current
     ``drain_state``. Manage ``cancel_restart_intent`` calls this before store
-    cancel when a drain epoch is set (release-then-cancel).
+    cancel when a drain epoch is set (release-then-cancel). A matching release
+    promotes fence-queued rows so they do not wait for a worker restart.
     """
     controller = _controller(request)
-    return controller.release_drain(
+    before = controller.drain_state()
+    state = controller.release_drain(
         intent_id=req.intent_id, drain_epoch=req.drain_epoch
     )
+    # Matching release lifts the in-process fence without a worker restart.
+    # The store row may still be pending_drain; cancel writes it afterwards.
+    if (before.get("draining") or before.get("armed")) and not (
+        state.get("draining") or state.get("armed")
+    ):
+        from services.git_integration_worker.routes.cursor_sdk import (
+            promote_queued_when_fence_lifts,
+        )
+
+        await promote_queued_when_fence_lifts(
+            controller=controller,
+            request=request,
+            released=True,
+        )
+    return state

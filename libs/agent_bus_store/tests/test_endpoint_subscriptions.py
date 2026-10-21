@@ -41,7 +41,14 @@ def _sub(client: TestClient, **overrides: object) -> object:
 
 
 def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
-    cursor = _sub(client, agent="cursor", thread_scope="*", surface="cursor", display="8", title="c")
+    cursor = _sub(
+        client,
+        agent="cursor",
+        thread_scope="*",
+        surface="cursor",
+        display="8",
+        title="c",
+    )
     assert cursor.status_code == 422
     assert cursor.json()["detail"]["code"] == "endpoint_wildcard_refused"
     coord = _sub(client, agent="grok-coordinator-1", thread_scope="*", surface="grok")
@@ -108,7 +115,9 @@ def test_exact_beats_wildcard_and_tombstone_falls_through(client: TestClient) ->
     assert gone.status_code == 200 and gone.json()["appended"] is True
     route2, row2 = resolve_endpoint("grok-bot-gc1", thread)  # type: ignore[misc]
     assert route2 == "wildcard" and row2["title"] == "wild"
-    insert_turn(thread=thread, from_agent="cursor", to_agent="all", subject="DONE|x", body="b")
+    insert_turn(
+        thread=thread, from_agent="cursor", to_agent="all", subject="DONE|x", body="b"
+    )
     assert resolve_endpoint("all", thread) is None
     assert resolve_endpoint("grok-bot-gc1", thread)[0] == "wildcard"
 
@@ -176,7 +185,9 @@ def test_resubscribe_same_agent_id_no_prior_subscription_id(client: TestClient) 
 
 def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) -> None:
     thread = _thread("idem")
-    with patch("agent_bus_store.routes.threads.subscriptions.emit_endpoint_subscribed") as sub_emit:
+    with patch(
+        "agent_bus_store.routes.threads.subscriptions.emit_endpoint_subscribed"
+    ) as sub_emit:
         first = _sub(client, thread_scope=thread, bound_by="a")
         assert first.json()["appended"] is True
         again = _sub(client, thread_scope=thread, bound_by="other", evidence="e2")
@@ -186,7 +197,9 @@ def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) ->
         assert changed.json()["prior"] is None
         assert changed.json()["prior_subscription_id"] is None
         assert sub_emit.call_count == 2
-    with patch("agent_bus_store.routes.threads.subscriptions.emit_endpoint_unsubscribed") as unsub:
+    with patch(
+        "agent_bus_store.routes.threads.subscriptions.emit_endpoint_unsubscribed"
+    ) as unsub:
         once = client.post(
             "/endpoint-subscriptions/unsubscribe",
             json={"agent": "grok-bot-gc1", "thread_scope": thread},
@@ -198,3 +211,52 @@ def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) ->
         assert once.json()["appended"] is True
         assert twice.json()["appended"] is False
         assert unsub.call_count == 1
+
+
+def test_unsubscribe_replaced_agent_id_keeps_new_row(client: TestClient) -> None:
+    """A row replaced before the tombstone write survives a stale expected_agent_id.
+
+    Break: unsubscribe read agent A, subscribe replaced it with B, then the
+    tombstone still appended and dropped B.
+    """
+    thread = _thread("replaced")
+    old_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    new_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    first = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        agent_id=old_id,
+    )
+    assert first.status_code == 200
+    replaced = _sub(
+        client,
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        agent_id=new_id,
+    )
+    assert replaced.status_code == 200
+    stale = client.post(
+        "/endpoint-subscriptions/unsubscribe",
+        json={
+            "agent": "cursor",
+            "thread_scope": thread,
+            "bound_by": "endpoint-wake-dispatcher",
+            "expected_agent_id": old_id,
+        },
+    )
+    assert stale.status_code == 200
+    assert stale.json()["appended"] is False
+    assert stale.json()["row"]["agent_id"] == new_id
+    assert stale.json()["row"]["state"] == "subscribed"
+    listed = client.get(
+        "/endpoint-subscriptions", params={"agent": "cursor", "thread_scope": thread}
+    )
+    rows = listed.json()["subscriptions"]
+    assert len(rows) == 1
+    assert rows[0]["agent_id"] == new_id
+    assert rows[0]["state"] == "subscribed"

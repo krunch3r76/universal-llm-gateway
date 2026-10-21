@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -71,7 +72,25 @@ def validate_intake_payload(
             "refused": "raw_prompt_prohibited_use_intake_schema",
             "error": "messages/prompt prohibited; pass structured intake fields",
         }
-    raw = dict(options.get("intake") or {})
+    intake_raw = options.get("intake")
+    if isinstance(intake_raw, str):
+        try:
+            parsed_intake = json.loads(intake_raw)
+        except json.JSONDecodeError as exc:
+            return None, {
+                "ok": False,
+                "refused": "intake_invalid",
+                "error": f"intake JSON parse failed: {exc.msg}",
+            }
+        if not isinstance(parsed_intake, dict):
+            return None, {
+                "ok": False,
+                "refused": "intake_invalid",
+                "error": "intake must be a JSON object",
+            }
+        raw = dict(parsed_intake)
+    else:
+        raw = dict(intake_raw or {})
     if not raw and "verbatim_notes" in options:
         for key in (
             "verbatim_notes",

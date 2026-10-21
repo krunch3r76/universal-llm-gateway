@@ -67,9 +67,7 @@ def test_hop_header_line_is_the_landing_marker() -> None:
 
 
 def test_hop_arm_line_attaches_tail() -> None:
-    message = build_ide_hop_message(
-        "10479", row="x", arm_labels=["10479-r1-closeout"]
-    )
+    message = build_ide_hop_message("10479", row="x", arm_labels=["10479-r1-closeout"])
     assert "ARM: live watcher 10479-r1-closeout" in message
     assert "push-wake only" in message
     assert "watch-supervise.sh tail" not in message
@@ -194,12 +192,8 @@ def test_land_find_telemetry_lists_exact_needles() -> None:
 def test_case_a_number_prefix_does_not_match() -> None:
     """F1 — tip_cp=1 must not match tip_cp=17."""
     line = _land_line("15420", 17)
-    assert first_line_matches_land(
-        line, root_id="15420", tip_cp=17, marker="unused"
-    )
-    assert not first_line_matches_land(
-        line, root_id="15420", tip_cp=1, marker="unused"
-    )
+    assert first_line_matches_land(line, root_id="15420", tip_cp=17, marker="unused")
+    assert not first_line_matches_land(line, root_id="15420", tip_cp=1, marker="unused")
 
 
 def test_case_b_other_root_does_not_match() -> None:
@@ -208,9 +202,7 @@ def test_case_b_other_root_does_not_match() -> None:
     assert not first_line_matches_land(
         line, root_id="15420", tip_cp=17, marker="unused"
     )
-    assert first_line_matches_land(
-        line, root_id="15441", tip_cp=17, marker="unused"
-    )
+    assert first_line_matches_land(line, root_id="15441", tip_cp=17, marker="unused")
 
 
 def test_case_c_quoted_review_without_liaison_does_not_match() -> None:
@@ -227,9 +219,7 @@ def test_case_c_quoted_review_without_liaison_does_not_match() -> None:
 def test_tip_in_now_row_does_not_match() -> None:
     """15456#4 F1 — tip_cp on NOW must not satisfy land for a different Liaison tip."""
     line = _wrapped_land_line("15420", 16, now_extra=" verify tip_cp=17 land")
-    assert first_line_matches_land(
-        line, root_id="15420", tip_cp=16, marker="unused"
-    )
+    assert first_line_matches_land(line, root_id="15420", tip_cp=16, marker="unused")
     assert not first_line_matches_land(
         line, root_id="15420", tip_cp=17, marker="unused"
     )
@@ -238,9 +228,7 @@ def test_tip_in_now_row_does_not_match() -> None:
 def test_wrapped_user_query_real_shape_matches() -> None:
     """15456#4 F3 — hub <user_query> wrapper must still land (specimen d195e491)."""
     line = _wrapped_land_line("15420", 17)
-    assert first_line_matches_land(
-        line, root_id="15420", tip_cp=17, marker="unused"
-    )
+    assert first_line_matches_land(line, root_id="15420", tip_cp=17, marker="unused")
 
 
 def test_quoted_full_hop_in_review_does_not_match() -> None:
@@ -270,7 +258,9 @@ def test_quoted_full_hop_in_review_does_not_match() -> None:
 
 def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
     """Exact (root, tip) lands without mtime; tipless find keeps since_epoch."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     fired = time.time()
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), fired - 120)
@@ -305,10 +295,10 @@ def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
 
 
 def test_find_rejects_wrong_root_even_when_tip_matches(tmp_path: Path) -> None:
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
-    _write_transcript(
-        tmp_path, "wrong-root", _land_line("15441", 17), time.time()
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     )
+    _write_transcript(tmp_path, "wrong-root", _land_line("15441", 17), time.time())
     found, tel = find_transcript_with_hop_header(
         marker, tmp_path, root_id="15420", tip_cp=17
     )
@@ -318,7 +308,9 @@ def test_find_rejects_wrong_root_even_when_tip_matches(tmp_path: Path) -> None:
 
 def test_find_excludes_departing_transcript(tmp_path: Path) -> None:
     """15456#4 F2 — departing tab must not win pre_existing / find."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     successor = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, departing, _wrapped_land_line("15420", 17), time.time())
@@ -344,7 +336,9 @@ def test_find_excludes_departing_transcript(tmp_path: Path) -> None:
 
 def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
     """15456 ask 2 — exact land already present ⇒ ok via pre_existing, no Ctrl+N."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
@@ -370,7 +364,9 @@ def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
 
 def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
     """15456#4 F2 — departing tab alone must not skip keystroke as pre_existing."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     _write_transcript(
@@ -419,7 +415,9 @@ def test_fire_ide_hop_expired_xvfb_host_skips_remote_toplevels(
     tmp_path: Path,
 ) -> None:
     """15851#1815 — expired hop on Glass :8 must not SSH remote_toplevels."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     _write_transcript(
@@ -472,7 +470,9 @@ def test_fire_ide_hop_timer_win_reaches_land_wait(tmp_path: Path) -> None:
     used to return from ``fire_ide_hop`` before ``mark_fired`` and the land
     wait, while the submit was already in flight.
     """
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     _write_transcript(
@@ -526,9 +526,7 @@ def test_fire_ide_hop_timer_win_reaches_land_wait(tmp_path: Path) -> None:
             ],
         ),
         patch("websockets.connect", return_value=_WsCtx()),
-        patch(
-            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=_eval_await
-        ),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=_eval_await),
     ):
         out = fire_ide_hop(
             message,
@@ -554,7 +552,9 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     tmp_path: Path,
 ) -> None:
     """a:38362 — wait miss while exact land present ⇒ ok via find; ¬ glass-launch ask."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
+    )
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
@@ -620,9 +620,7 @@ def test_real_d195e491_first_line_matches_when_present() -> None:
     if not path.is_file():
         pytest.skip("specimen transcript not on this host")
     first = path.read_text(encoding="utf-8").splitlines()[0]
-    assert first_line_matches_land(
-        first, root_id="15420", tip_cp=17, marker="unused"
-    )
+    assert first_line_matches_land(first, root_id="15420", tip_cp=17, marker="unused")
 
 
 def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> None:
@@ -711,20 +709,12 @@ def test_live_watcher_labels_skips_dead_predicate_unmet(tmp_path: Path) -> None:
 def test_tipless_land_requires_resume_root_not_marker_alone() -> None:
     """a:38439 — shared Liaison template must not match a foreign root."""
     marker = "Liaison IDE hop (attended register). LOAD the ide-continuity skill (do not skim)."
-    foreign = (
-        '{"role":"user","text":"resume 12286\\n'
-        f'{marker}\\nNOW: old"}}'
-    )
-    ours = (
-        '{"role":"user","text":"resume 15420\\n'
-        f'{marker}\\nNOW: collective"}}'
-    )
+    foreign = f'{{"role":"user","text":"resume 12286\\n{marker}\\nNOW: old"}}'
+    ours = f'{{"role":"user","text":"resume 15420\\n{marker}\\nNOW: collective"}}'
     assert not first_line_matches_land(
         foreign, root_id="15420", tip_cp=None, marker=marker
     )
-    assert first_line_matches_land(
-        ours, root_id="15420", tip_cp=None, marker=marker
-    )
+    assert first_line_matches_land(ours, root_id="15420", tip_cp=None, marker=marker)
 
 
 def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
@@ -733,12 +723,8 @@ def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
     """find_transcript without tip must not revive Sep-era foreign hops."""
     marker = "Liaison IDE hop (attended register). LOAD the ide-continuity skill (do not skim)."
     fired = time.time()
-    foreign = (
-        f'{{"role":"user","text":"resume 12286\\n{marker}\\nNOW: old"}}'
-    )
-    ours = (
-        f'{{"role":"user","text":"resume 15420\\n{marker}\\nNOW: collective"}}'
-    )
+    foreign = f'{{"role":"user","text":"resume 12286\\n{marker}\\nNOW: old"}}'
+    ours = f'{{"role":"user","text":"resume 15420\\n{marker}\\nNOW: collective"}}'
     _write_transcript(tmp_path, "old-foreign", foreign, fired - 600)
     found, tel = find_transcript_with_hop_header(
         marker,
@@ -764,7 +750,9 @@ def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
 
 def test_wait_lands_when_jsonl_appears_after_30s(tmp_path: Path, monkeypatch) -> None:
     """AC1 — JSONL born well after the old 30s window still lands (a:38474)."""
-    marker = "Liaison IDE hop (attended register) tip_cp=75. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=75. LOAD the ide-continuity skill."
+    )
     tid = "6d365a29-dddf-4036-a6e0-2c8b5a7ea8df"
     fired = time.time()
     polls = {"n": 0}
@@ -796,7 +784,9 @@ def test_wait_lands_when_jsonl_appears_after_30s(tmp_path: Path, monkeypatch) ->
 
 def test_wait_fence_first_lands_before_jsonl(tmp_path: Path) -> None:
     """Fence armed row proves land without any JSONL on disk."""
-    marker = "Liaison IDE hop (attended register) tip_cp=33. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=33. LOAD the ide-continuity skill."
+    )
     tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
     fired = time.time()
 
@@ -827,7 +817,9 @@ def test_wait_fence_first_lands_before_jsonl(tmp_path: Path) -> None:
 
 
 def test_wait_fence_excludes_departing_transcript(tmp_path: Path) -> None:
-    marker = "Liaison IDE hop (attended register) tip_cp=1. LOAD the ide-continuity skill."
+    marker = (
+        "Liaison IDE hop (attended register) tip_cp=1. LOAD the ide-continuity skill."
+    )
     departing = "70d485fe-b09d-435c-8c50-d5dde2d9f9c4"
     fired = time.time()
 
@@ -849,7 +841,9 @@ def test_wait_fence_excludes_departing_transcript(tmp_path: Path) -> None:
     assert found is None
 
 
-def test_find_land_via_fence_default_probe_uses_http(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_land_via_fence_default_probe_uses_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """a:38474 review B1 — default path must not open SQLite; HTTP route only."""
     tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
     seen: dict[str, object] = {}
@@ -915,3 +909,173 @@ def test_find_land_via_fence_default_probe_uses_http(monkeypatch: pytest.MonkeyP
     assert seen["path"] == "/threads/15420/resume-fence"
     assert seen["params"] == {"since_epoch": 100.0}
     assert seen["headers"] == {"Authorization": "Bearer test-token"}
+
+
+def test_mark_fired_clock_starts_after_keystroke(tmp_path: Path) -> None:
+    """deadline_at is taken after the keystroke, so the wait owns the whole window.
+
+    Break: fired_at was sampled before ssh/CDP, and the dispatcher expired the
+    hop while fire_ide_hop was still inside its own wait.
+    """
+    message = "resume 15420\n\nmarker line\n"
+    done: dict[str, float] = {}
+
+    def _launch(*_args, **_kwargs):
+        time.sleep(0.03)
+        done["t"] = time.time()
+        return {"ok": True, "transport": "cdp_cursor_agents"}
+
+    captured: dict[str, float] = {}
+
+    def _fired(**kwargs):
+        captured["fired_at"] = float(kwargs["fired_at"])
+        return {
+            "root": "15420",
+            "state": "fired",
+            "deadline_at": float(kwargs["fired_at"]) + 30.0,
+        }
+
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.launch_cursor_agents_tab", side_effect=_launch),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch("bus_watch.ide_hop.mark_fired", side_effect=_fired),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+        patch(
+            "bus_watch.ide_hop.wait_for_landed_transcript",
+            return_value=(None, {}),
+        ),
+        patch(
+            "bus_watch.ide_hop.find_transcript_with_hop_header",
+            return_value=(None, {}),
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=30.0,
+        )
+    assert captured["fired_at"] >= done["t"]
+    assert out["phase"] == "expired"
+
+
+def test_fence_armed_during_keystroke_lands_via_fence(tmp_path: Path) -> None:
+    """An armed fence created during the keystroke lands via the real wait.
+
+    Break: since_epoch was fired_at, taken after the keystroke returned, so a
+    fence whose created_epoch fell between land_since and fired_at was excluded.
+    pre_since is not the window either (None on tip hops, 180s earlier tipless).
+    """
+    message = "resume 15420\n\nmarker line\n"
+    tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    bounds: dict[str, float] = {}
+
+    def _launch(*_args, **_kwargs):
+        bounds["enter"] = time.time()
+        time.sleep(0.03)
+        bounds["created"] = time.time()
+        time.sleep(0.03)
+        return {"ok": True, "transport": "cdp_cursor_agents"}
+
+    def _armed(root, *, since_epoch, exclude_transcript_ids=None):
+        del root, exclude_transcript_ids
+        bounds["since"] = float(since_epoch)
+        created = bounds.get("created")
+        if created is None or float(since_epoch) > created:
+            return []
+        return [
+            {
+                "fence_id": "rf-mid-keystroke",
+                "transcript_id": tid,
+                "created_epoch": created,
+            }
+        ]
+
+    def _fired(**kwargs):
+        bounds["fired_at"] = float(kwargs["fired_at"])
+        return {
+            "root": "15420",
+            "state": "fired",
+            "deadline_at": float(kwargs["fired_at"]) + 30.0,
+        }
+
+    def _landed(record, **kwargs):
+        return {**record, "state": "landed", "proof": kwargs.get("proof")}
+
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.launch_cursor_agents_tab", side_effect=_launch),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch("bus_watch.ide_hop.mark_fired", side_effect=_fired),
+        patch("bus_watch.ide_hop.mark_landed", side_effect=_landed),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=0.4,
+            armed_since=_armed,
+        )
+    assert out["landed_via"] == "fence"
+    assert out["landed_transcript_id"] == tid
+    assert bounds["created"] > bounds["since"]
+    assert bounds["created"] < bounds["fired_at"]
+    assert bounds["since"] <= bounds["enter"]
+    assert bounds["since"] > bounds["enter"] - 2.0
+
+
+def test_expire_overdue_hops_logs_oserror_and_continues(tmp_path: Path, caplog) -> None:
+    """write_hop_land OSError on one hop is logged; the scan keeps going."""
+    import logging
+
+    from bus_watch import ide_hop_land
+
+    def _fire(root: str) -> None:
+        ide_hop_land.mark_fired(
+            root=root,
+            tip_cp=1,
+            seal_bus_turn=1,
+            departing_transcript_id=None,
+            fired_at=1.0,
+            deadline_s=10.0,
+            watch_dir=tmp_path,
+        )
+
+    _fire("aaa")
+    _fire("bbb")
+    real = ide_hop_land.write_hop_land
+
+    def _write(record, **kwargs):
+        if record.get("root") == "aaa" and record.get("state") == "expired":
+            raise OSError("disk full")
+        return real(record, **kwargs)
+
+    with (
+        patch.object(ide_hop_land, "write_hop_land", side_effect=_write),
+        caplog.at_level(logging.ERROR),
+    ):
+        expired = ide_hop_land.expire_overdue_hops(now=100.0, watch_dir=tmp_path)
+    assert [row["root"] for row in expired] == ["bbb"]
+    assert "aaa" in caplog.text

@@ -87,7 +87,7 @@ def test_restart_owed_capability_tree_is_stargate() -> None:
         ("libs/g6_review_class.py", "restart_owed: stargate"),
         (
             "libs/job_grammar.py",
-            "restart_owed: git_integration_worker, mcp, stargate",
+            "restart_owed: mcp, stargate",
         ),
         (
             "libs/job_vocab/__init__.py",
@@ -119,6 +119,24 @@ def test_restart_owed_stargate_service_tree_is_stargate_only() -> None:
     assert text == "restart_owed: stargate"
 
 
+def test_model_manager_test_file_does_not_owe_manage() -> None:
+    """A pytest module under scripts/model_manager is not a manage restart.
+
+    manage is not a sync-restart slug. A production module under the same
+    prefix still maps to manage.
+    """
+    assert (
+        restart_owed_line(
+            ["scripts/model_manager/ui/controller/test_fleet_liveness.py"]
+        )
+        == "restart_owed: none"
+    )
+    assert (
+        restart_owed_line(["scripts/model_manager/ui/controller/fleet_liveness.py"])
+        == "restart_owed: manage"
+    )
+
+
 def test_restart_owed_event_store_lib_is_event_service() -> None:
     """S3: event_service runs python -m event_store; the lib is its job set."""
     text = restart_owed_line(["libs/event_store/query_client.py"])
@@ -143,6 +161,10 @@ def test_restart_owed_docs_only_is_none() -> None:
 
 
 def test_restart_owed_charter_runner_script_is_unmapped() -> None:
+    """An archived charter-runner script is not a fleet restart slug.
+
+    Dropping the path would hide it. The line reports it unmapped.
+    """
     path = "archive/charter_runner/propagation_execute.py"
     text = restart_owed_line([path])
     assert text.startswith("restart_owed: none\n")

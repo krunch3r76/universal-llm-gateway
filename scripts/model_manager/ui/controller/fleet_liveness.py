@@ -6,15 +6,20 @@ per-service health checkers, and import-sealed code labels without mutating flee
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from charter_runner_store.propagation_validation import current_validation
-from deploy_identity.code_version import resolve_code_version
+from deploy_identity.code_version import (
+    is_valid_sha40,
+    process_age_s,
+    resolve_code_version,
+)
 
-from ..model.service_state import ServiceInfo, ServiceState
+from ..model.service_state import ServiceInfo, ServiceState, ServiceStatus
 from .fleet_liveness_filter import normalize_service_filter
 from .fleet_liveness_probe import (
     BIND_MOUNT_SERVICES,
@@ -22,6 +27,9 @@ from .fleet_liveness_probe import (
     CONTAINER_SERVICES,
     HOST_CLOCK_GRANULARITY_S,
     SERVICE_SLUGS,
+)
+from .fleet_liveness_probe import (
+    code_ref_changed_paths as _code_ref_changed_paths,
 )
 from .fleet_liveness_probe import (
     container_sha as _container_sha,
@@ -43,6 +51,9 @@ from .fleet_liveness_probe import (
 )
 from .fleet_liveness_probe import (
     process_start as _process_start,
+)
+from .fleet_liveness_probe import (
+    services_for_path as _services_for_path,
 )
 from .fleet_liveness_probe import (
     tree_probe as _tree_probe,
@@ -141,6 +152,119 @@ def _service_info(service_state: ServiceState, service: str) -> ServiceInfo:
     """Read one service status through the existing manage health checker."""
     checker = getattr(service_state, f"check_{service}")
     return checker()
+
+
+def _manage_self_info() -> ServiceInfo:
+    """Identity of this process, which is the manage row.
+
+    ``ServiceState`` has no ``check_manage``. ``getattr(state, "check_manage")``
+    raises AttributeError, and the row then reports status unknown with a null
+    pid. The process building the snapshot is manage, so the pid and age are
+    ``os.getpid`` and ``process_age_s``, the same pair ``_whoami`` reports.
+    """
+    pid = os.getpid()
+    age = process_age_s()
+    if age is None:
+        detail = f"PID {pid}, process age unavailable"
+    else:
+        detail = f"PID {pid}, age {age:.0f}s"
+    return ServiceInfo(
+        name="manage",
+        status=ServiceStatus.RUNNING,
+        pid=pid,
+        detail=detail,
+    )
+
+
+def _reported_sha(row: dict[str, Any]) -> str | None:
+    value = (row.get("reported_version") or {}).get("value")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+_LOAD_RELEVANCE_BASIS = "serving_map+code_ref_first_parent"
+
+
+def _attach_load_relevance(row: dict[str, Any], changed: list[str] | None) -> None:
+    """Record whether the serving map names this service, without changing answer.
+
+    ``liveness.answer`` stays the ancestry result. ``service_live`` treats only
+    ``yes`` as live, so replacing it changes restart dry-runs. ``not_loaded_by``
+    means every first-parent path has a non-empty serving set and this service
+    is in none of them. It is not an import scan. An empty serving set is
+    ``unmapped``. A missing path list is ``unknown``. The basis names the map
+    and that the path list is one commit's first parent.
+    """
+    validation = row.get("code_ref_validation")
+    if not isinstance(validation, dict):
+        return
+    liveness = validation.get("liveness")
+    if not isinstance(liveness, dict):
+        return
+    if not changed:
+        liveness["load_relevance"] = "unknown"
+        liveness["load_relevance_basis"] = _LOAD_RELEVANCE_BASIS
+        return
+    service = str(row.get("service") or "")
+    serving_sets = [_services_for_path(path) for path in changed]
+    if any(service in serving for serving in serving_sets):
+        relevance = "loaded_by"
+    elif all(serving for serving in serving_sets):
+        relevance = "not_loaded_by"
+    else:
+        relevance = "unmapped"
+    liveness["load_relevance"] = relevance
+    liveness["load_relevance_basis"] = _LOAD_RELEVANCE_BASIS
+
+
+def _apply_answers_equal(row: dict[str, Any]) -> None:
+    """Set answers_equal only when the import seal and observed version compare.
+
+    Temporal evidence has no seal, and a seal without an observed code version
+    has nothing to compare. Those rows omit the field instead of storing null.
+    """
+    evidence = row.get("loaded_code_evidence")
+    if not isinstance(evidence, dict):
+        return
+    seal = evidence.get("sha")
+    observed = (row.get("code_ref_validation") or {}).get("liveness", {})
+    observed_sha = (
+        observed.get("observed_code_version") if isinstance(observed, dict) else None
+    )
+    if (
+        evidence.get("kind") == "imported_code"
+        and isinstance(seal, str)
+        and isinstance(observed_sha, str)
+        and is_valid_sha40(seal)
+        and is_valid_sha40(observed_sha)
+    ):
+        evidence["answers_equal"] = seal.strip().lower() == observed_sha.strip().lower()
+        return
+    evidence.pop("answers_equal", None)
+
+
+def _fill_pid_from_observation(row: dict[str, Any]) -> None:
+    """Copy a reachable liveness pid when the service checker left the row null.
+
+    A checker pid is kept. An unreachable probe's pid is not a row pid: the
+    probe did not confirm the process it named.
+    """
+    if row.get("pid") is not None:
+        return
+    liveness = (row.get("code_ref_validation") or {}).get("liveness") or {}
+    observation = liveness.get("observation") if isinstance(liveness, dict) else None
+    if not isinstance(observation, dict):
+        return
+    if observation.get("probe_reachable") is False:
+        return
+    pid = observation.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return
+    row["pid"] = pid
+    if row.get("load_surface_kind") == "container_copy":
+        # os.getpid() inside the container is not a host /proc pid.
+        row["pid_source"] = "container"
 
 
 _STAMP_SOURCE = "docker:/app/.source_sync_stamp"
@@ -250,6 +374,9 @@ def _compact_code_ref_validation(full: dict[str, Any]) -> dict[str, Any]:
         liveness_out["answer"] = answer
     if relation is not None:
         liveness_out["relation"] = relation
+    if liveness.get("load_relevance") is not None:
+        liveness_out["load_relevance"] = liveness.get("load_relevance")
+        liveness_out["load_relevance_basis"] = liveness.get("load_relevance_basis")
     if liveness_out:
         compact["liveness"] = liveness_out
     return compact
@@ -318,20 +445,33 @@ def build_snapshot(
     absent from the payload — never implied healthy. Checkout porcelain stays
     full-fleet. ``service_filter`` echoes the selected slugs (``null`` when
     unfiltered).
+
+    ``manage`` has no ``check_manage``. Its row uses this process's pid and
+    ``process_age_s``. Ancestry ``liveness.answer`` is not rewritten.
+    ``load_relevance`` sits beside it. ``not_loaded_by`` means the serving map
+    names other services and not this one. ``matches_reported_sha`` becomes
+    yes from path hashes, or from a stamp field
+    ``load_surface_classification=untracked_off_load_surface_only`` recorded
+    at sync. Current porcelain does not rewrite the stamp.
     """
     selected = normalize_service_filter(service=service, services=services)
     started = time.time()
     before = _tree_probe(root)
     services_out: list[dict[str, Any]] = []
     for service_slug in selected if selected is not None else SERVICE_SLUGS:
-        try:
-            info = _service_info(service_state, service_slug)
+        if service_slug == "manage":
+            info = _manage_self_info()
             status = info.status.value
-            errors: list[str] = []
-        except Exception as exc:
-            info = None
-            status = "unknown"
-            errors = [f"service_probe:{type(exc).__name__}"]
+            errors = []
+        else:
+            try:
+                info = _service_info(service_state, service_slug)
+                status = info.status.value
+                errors = []
+            except Exception as exc:
+                info = None
+                status = "unknown"
+                errors = [f"service_probe:{type(exc).__name__}"]
 
         if service_slug in CONTAINER_SERVICES:
             marker = _container_start(CONTAINER_SERVICES[service_slug][0])
@@ -406,13 +546,31 @@ def build_snapshot(
                     )
                 )
 
+    changed_paths = _code_ref_changed_paths(root, code_ref) if code_ref else None
     for row in services_out:
+        reported = row.get("reported_version")
+        if not isinstance(reported, dict):
+            reported = {}
         results = row["paths"]
+        stamp_off_load_only = (
+            not results
+            and reported.get("source") == _STAMP_SOURCE
+            and reported.get("load_surface_worktree_state") == "clean"
+            and reported.get("load_surface_classification")
+            == "untracked_off_load_surface_only"
+            and bool(_reported_sha(row))
+        )
         if not results:
-            row["live_sha_claim"] = {
-                "sound": None,
-                "reason": "no_relevant_dirty_paths_or_version",
-            }
+            if stamp_off_load_only:
+                row["live_sha_claim"] = {
+                    "sound": True,
+                    "reason": "stamp_untracked_off_load_surface_only",
+                }
+            else:
+                row["live_sha_claim"] = {
+                    "sound": None,
+                    "reason": "no_relevant_dirty_paths_or_version",
+                }
         elif any(item["matches_reported_sha"] == "no" for item in results):
             row["live_sha_claim"] = {"sound": False, "reason": "path_mismatch"}
         elif all(item["matches_reported_sha"] == "yes" for item in results):
@@ -425,16 +583,19 @@ def build_snapshot(
             and all(item["running_bytes_determinable"] == "yes" for item in results)
             else "no"
         )
-        row["matches_reported_sha"] = (
-            "no"
-            if any(item["matches_reported_sha"] == "no" for item in results)
-            else (
-                "yes"
-                if results
-                and all(item["matches_reported_sha"] == "yes" for item in results)
-                else "indeterminate"
+        if stamp_off_load_only:
+            row["matches_reported_sha"] = "yes"
+        else:
+            row["matches_reported_sha"] = (
+                "no"
+                if any(item["matches_reported_sha"] == "no" for item in results)
+                else (
+                    "yes"
+                    if results
+                    and all(item["matches_reported_sha"] == "yes" for item in results)
+                    else "indeterminate"
+                )
             )
-        )
         if code_ref:
             row["code_ref_validation"] = _code_ref_validation_with_provenance(
                 row["service"],
@@ -448,6 +609,9 @@ def build_snapshot(
             )
             if evidence is not None:
                 row["version_evidence"] = evidence
+            _attach_load_relevance(row, changed_paths)
+        _apply_answers_equal(row)
+        _fill_pid_from_observation(row)
 
     behind = _paths_index_behind_head(
         root, before.get("head_sha"), before.get("paths", {})

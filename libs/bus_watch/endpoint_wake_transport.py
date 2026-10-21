@@ -12,6 +12,7 @@ _RETRIABLE_DISPLAY = {
     "active_chat_busy",
     "composer_not_empty",
     "debug_unreachable",
+    "no_composer",
     "no_page",
     "surface_probe_failed",
 }
@@ -155,7 +156,13 @@ class StoreClient:
         ]
         if not candidates:
             return None
-        best = min(candidates, key=lambda r: (_rank(str(r.get("thread_scope") or "")), -int(r.get("id") or 0)))
+        best = min(
+            candidates,
+            key=lambda r: (
+                _rank(str(r.get("thread_scope") or "")),
+                -int(r.get("id") or 0),
+            ),
+        )
         scope = str(best.get("thread_scope") or "")
         if scope == thread_id:
             kind = "exact"
@@ -184,3 +191,24 @@ class StoreClient:
             params={"thread": thread, **params},
         )
         return payload if isinstance(payload, dict) else {"turns": payload}
+
+    def unsubscribe(
+        self,
+        agent: str,
+        thread_scope: str,
+        *,
+        bound_by: str = "endpoint-wake-dispatcher",
+        evidence: str | None = None,
+        expected_agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._bus(
+            "POST",
+            "/endpoint-subscriptions/unsubscribe",
+            json={
+                "agent": agent,
+                "thread_scope": thread_scope,
+                "bound_by": bound_by,
+                "evidence": evidence,
+                "expected_agent_id": expected_agent_id,
+            },
+        )

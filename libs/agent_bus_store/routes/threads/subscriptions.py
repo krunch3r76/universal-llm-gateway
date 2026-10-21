@@ -39,6 +39,7 @@ class UnsubscribeBody(BaseModel):
     thread_scope: str
     bound_by: str | None = None
     evidence: str | None = None
+    expected_agent_id: str | None = None
 
 
 def _refuse(exc: SubscribeError) -> HTTPException:

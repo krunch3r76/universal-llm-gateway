@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -19,17 +20,38 @@ def _stem_variant(term: str) -> str:
     return t
 
 
+def _collect_list_field_text(items: list[Any] | None, *, dict_keys: tuple[str, ...]) -> list[str]:
+    parts: list[str] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            parts.extend(str(item.get(key, "")) for key in dict_keys)
+        elif isinstance(item, str):
+            parts.append(item)
+    return parts
+
+
+def apply_problem_defaults(
+    problem: Mapping[str, Any],
+    *,
+    default_run_seed: int = 0,
+) -> dict[str, Any]:
+    """Merge pipeline defaults into parsed problem JSON (schema P)."""
+    out = dict(problem)
+    seed = out.get("run_seed")
+    if seed is None:
+        out["run_seed"] = int(default_run_seed)
+    else:
+        out["run_seed"] = int(seed)
+    return out
+
+
 def _abstract_text(abstract: dict[str, Any]) -> str:
     parts: list[str] = [str(abstract.get("structural_goal", ""))]
-    for actor in abstract.get("actors") or []:
-        if isinstance(actor, dict):
-            parts.extend(str(actor.get(k, "")) for k in ("role", "capability"))
-    for resource in abstract.get("resources") or []:
-        if isinstance(resource, dict):
-            parts.append(str(resource.get("name", "")))
-    for constraint in abstract.get("constraints") or []:
-        if isinstance(constraint, dict):
-            parts.append(str(constraint.get("statement", "")))
+    parts.extend(_collect_list_field_text(abstract.get("actors"), dict_keys=("role", "capability")))
+    parts.extend(_collect_list_field_text(abstract.get("resources"), dict_keys=("name",)))
+    parts.extend(
+        _collect_list_field_text(abstract.get("constraints"), dict_keys=("statement",))
+    )
     for inv in abstract.get("invariants") or []:
         parts.append(str(inv))
     return " ".join(parts)
@@ -41,8 +63,12 @@ def build_rag_query(abstract_problem: dict[str, Any]) -> str:
     for constraint in abstract_problem.get("constraints") or []:
         if isinstance(constraint, dict):
             stmt = str(constraint.get("statement", "")).strip()
-            if stmt:
-                parts.append(stmt)
+        elif isinstance(constraint, str):
+            stmt = constraint.strip()
+        else:
+            stmt = ""
+        if stmt:
+            parts.append(stmt)
     return " ".join(p for p in parts if p)
 
 

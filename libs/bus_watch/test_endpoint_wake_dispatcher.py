@@ -37,19 +37,82 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cse_allowlist_not_display(db: None) -> None:
-    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT|x"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-aab1", "subject": "ASK|escrow in opening only?"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-aab1", "subject": "RESULT|escrow-in-opening panel"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "NUDGE|16934#11 ASK"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "web-drive-impresario", "subject": "PLAN r2|web-drive-impresario"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "AMEND #712|Composio mail scope"}, cse=True)
-    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT_REPLY|x"}, cse=True)
-    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"}, cse=True)
-    assert not qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"}, cse=True)
-    assert qualifies({"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=True)
-    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "CLOSEOUT|x"}, cse=True)
+    assert qualifies(
+        {"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "CONSULT|x"},
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "grok-bot-aab1",
+            "subject": "ASK|escrow in opening only?",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "grok-bot-aab1",
+            "subject": "RESULT|escrow-in-opening panel",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "grok-bot-gc1",
+            "subject": "NUDGE|16934#11 ASK",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "web-drive-impresario",
+            "subject": "PLAN r2|web-drive-impresario",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "grok-bot-gc1",
+            "subject": "AMEND #712|Composio mail scope",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "cursor",
+            "subject": "CONSULT_REPLY|x",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "MEMO|x"},
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "STATUS|x"},
+        cse=True,
+    )
+    assert not qualifies(
+        {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "ACK|x"},
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "maestro", "from_agent": "grok-bot-gc1", "subject": "PICKUP|x"},
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "maestro", "from_agent": "cursor", "subject": "CHECKPOINT|x"},
+        cse=True,
+    )
+    assert not qualifies(
+        {"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "CLOSEOUT|x"},
+        cse=True,
+    )
     assert qualifies(
         {
             "to_agent": "cursor",
@@ -58,21 +121,78 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=False,
     )
-    assert not qualifies({"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": "DONE #359 RAG without pipe"}, cse=True)
-    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "TYPE: DIRECTIVE — go"}, cse=True)
-    assert qualifies({"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"}, cse=True)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "FACT|x"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "RULING|x"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-aab1", "from_agent": "grok-bot-gc1", "subject": "RELAY|maestro ACK"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor-sdk", "subject": "RESULT|39359"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-r1", "from_agent": "web-drive-impresario", "subject": "REVIEW-REQUEST|R1"}, cse=False)
+    assert not qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "cursor-sdk",
+            "subject": "DONE #359 RAG without pipe",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {
+            "to_agent": "web-anthropic",
+            "from_agent": "cursor",
+            "subject": "TYPE: DIRECTIVE — go",
+        },
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "web-anthropic", "from_agent": "cursor", "subject": "FACT|x"},
+        cse=True,
+    )
+    assert qualifies(
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "MEMO|x"},
+        cse=False,
+    )
+    assert qualifies(
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "FACT|x"},
+        cse=False,
+    )
+    assert qualifies(
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "RULING|x"},
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-aab1",
+            "from_agent": "grok-bot-gc1",
+            "subject": "RELAY|maestro ACK",
+        },
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "cursor-sdk",
+            "subject": "RESULT|39359",
+        },
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-r1",
+            "from_agent": "web-drive-impresario",
+            "subject": "REVIEW-REQUEST|R1",
+        },
+        cse=False,
+    )
     assert subject_allowed("TYPE: ROUTE/CONTROL", cse=False)
     assert not subject_allowed("TYPE: ROUTE/CONTROL", cse=True)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"}, cse=False)
     assert qualifies(
-        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "cursor-sdk generate admitted"},
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "CHECKPOINT|x"},
+        cse=False,
+    )
+    assert qualifies(
+        {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"},
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "cursor",
+            "subject": "cursor-sdk generate admitted",
+        },
         cse=False,
     )
     assert qualifies(
@@ -145,8 +265,12 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "BLOCKED",
         "READY",
     }
-    assert not qualifies({"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
-    assert not qualifies({"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False)
+    assert not qualifies(
+        {"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False
+    )
+    assert not qualifies(
+        {"to_agent": "cursor", "from_agent": "cursor", "subject": "DONE|x"}, cse=False
+    )
     # Intermediate impresario telemetry still wakes peer Grok/Maestro seats; cursor-sdk stays filtered.
     for intermediate_subj in (
         "PICKUP|work-1",
@@ -160,20 +284,46 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "park-harvest wake — 17899",
     ):
         assert qualifies(
-            {"to_agent": "maestro", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
+            {
+                "to_agent": "maestro",
+                "from_agent": "grok-bot-bl1",
+                "subject": intermediate_subj,
+            },
             cse=True,
         )
         assert qualifies(
-            {"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": intermediate_subj},
+            {
+                "to_agent": "grok-bot-gc1",
+                "from_agent": "grok-bot-bl1",
+                "subject": intermediate_subj,
+            },
             cse=False,
         )
         assert not qualifies(
-            {"to_agent": "maestro", "from_agent": "cursor-sdk", "subject": intermediate_subj},
+            {
+                "to_agent": "maestro",
+                "from_agent": "cursor-sdk",
+                "subject": intermediate_subj,
+            },
             cse=True,
         )
     # ACK/ROUTE receipts to grok-bot-gc1 or maestro do not wake them, while ACK to an impresario house still wakes it
-    assert not qualifies({"to_agent": "grok-bot-gc1", "from_agent": "grok-bot-bl1", "subject": "ACK|work-1"}, cse=False)
-    assert qualifies({"to_agent": "grok-bot-bl1", "from_agent": "grok-bot-gc1", "subject": "ACK|work-1"}, cse=False)
+    assert not qualifies(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "grok-bot-bl1",
+            "subject": "ACK|work-1",
+        },
+        cse=False,
+    )
+    assert qualifies(
+        {
+            "to_agent": "grok-bot-bl1",
+            "from_agent": "grok-bot-gc1",
+            "subject": "ACK|work-1",
+        },
+        cse=False,
+    )
     assert not qualifies(
         {
             "to_agent": "cursor",
@@ -201,9 +351,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
 
 
 def test_dispatch_and_conductor_hop_gate_wakes_route_to_cursor() -> None:
-    freeform_closeout = (
-        "cursor-sdk CLOSEOUT 940a9f86d053-8e0c8ad5 contract=freeform"
-    )
+    freeform_closeout = "cursor-sdk CLOSEOUT 940a9f86d053-8e0c8ad5 contract=freeform"
     assert qualifies(
         {
             "to_agent": "dispatch",
@@ -351,19 +499,40 @@ def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     assert detail is not None
     thread = str(detail["id"])
     turn_id, _ts, number, _c = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|x", body="b"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
     )
-    item = {"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": turn_id, "turn_number": number}
+    item = {
+        "agent": "grok-bot-gc1",
+        "thread_id": thread,
+        "turn_id": turn_id,
+        "turn_number": number,
+    }
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
-    advance_scan("endpoint-wake-dispatcher", 0, turn_id, [item], now="2020-01-01 00:00:00")
+    advance_scan(
+        "endpoint-wake-dispatcher", 0, turn_id, [item], now="2020-01-01 00:00:00"
+    )
     wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
-    record_wake_result(wake, "pending", "active_chat_busy", "exact", 1, None, now="2020-01-01 00:00:02")
+    record_wake_result(
+        wake, "pending", "active_chat_busy", "exact", 1, None, now="2020-01-01 00:00:02"
+    )
     assert claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"] is None
     again = claim_due_wakes(now="2020-01-01 00:01:03")
     assert again["wake_id"]
-    record_wake_result(again["wake_id"], "unknown", "paste_failed", "exact", 1, None, now="2020-01-01 00:01:04")
+    record_wake_result(
+        again["wake_id"],
+        "unknown",
+        "paste_failed",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:01:04",
+    )
     assert claim_due_wakes(now="2020-01-01 00:20:00")["wake_id"] is None
 
 
@@ -395,24 +564,52 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
             ("2020-01-01T09:00:00Z", early_target_id, early_web_id),
         )
     a_id, _t, a_n, _c = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|a", body="a"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|a",
+        body="a",
     )
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
     advance_scan(
-        "endpoint-wake-dispatcher", 0, a_id,
-        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
+        "endpoint-wake-dispatcher",
+        0,
+        a_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": a_id,
+                "turn_number": a_n,
+            }
+        ],
         now="2020-01-01 10:00:00",
     )
     wake = claim_due_wakes(now="2020-01-01 10:00:01")
-    record_wake_result(wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 10:00:02")
+    record_wake_result(
+        wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 10:00:02"
+    )
     b_id, _tb, b_n, _cb = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|b", body="b"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|b",
+        body="b",
     )
     advance_scan(
-        "endpoint-wake-dispatcher", a_id, b_id,
-        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": b_id, "turn_number": b_n}],
+        "endpoint-wake-dispatcher",
+        a_id,
+        b_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": b_id,
+                "turn_number": b_n,
+            }
+        ],
         now="2020-01-01 10:00:10",
     )
     # Before target replies after 10:00:02, debounce holds despite 09:00:00Z turns
@@ -446,11 +643,24 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
             ("2020-01-01T10:00:25Z", reply_id),
         )
     c_id, _t3, c_n, _c3 = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|c", body="c"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|c",
+        body="c",
     )
     advance_scan(
-        "endpoint-wake-dispatcher", b_id, c_id,
-        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": c_id, "turn_number": c_n}],
+        "endpoint-wake-dispatcher",
+        b_id,
+        c_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": c_id,
+                "turn_number": c_n,
+            }
+        ],
         now="2020-01-01 10:00:30",
     )
     early = claim_due_wakes(now="2020-01-01 10:00:40")
@@ -468,24 +678,52 @@ def test_cse_route_debounce_cleared_by_web_anthropic_reply(db: None) -> None:
     assert detail is not None
     thread = str(detail["id"])
     a_id, _t, a_n, _c = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="maestro", subject="CONSULT|a", body="a"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="CONSULT|a",
+        body="a",
     )
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
     advance_scan(
-        "endpoint-wake-dispatcher", 0, a_id,
-        [{"agent": "maestro", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
+        "endpoint-wake-dispatcher",
+        0,
+        a_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": a_id,
+                "turn_number": a_n,
+            }
+        ],
         now="2020-01-01 10:00:00",
     )
     wake = claim_due_wakes(now="2020-01-01 10:00:01")
-    record_wake_result(wake["wake_id"], "delivered", "ok", "cse", 9, "reg-1", now="2020-01-01 10:00:02")
+    record_wake_result(
+        wake["wake_id"], "delivered", "ok", "cse", 9, "reg-1", now="2020-01-01 10:00:02"
+    )
     c_id, _t3, c_n, _c3 = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="maestro", subject="CONSULT|c", body="c"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="CONSULT|c",
+        body="c",
     )
     advance_scan(
-        "endpoint-wake-dispatcher", a_id, c_id,
-        [{"agent": "maestro", "thread_id": thread, "turn_id": c_id, "turn_number": c_n}],
+        "endpoint-wake-dispatcher",
+        a_id,
+        c_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": c_id,
+                "turn_number": c_n,
+            }
+        ],
         now="2020-01-01 10:00:10",
     )
     assert claim_due_wakes(now="2020-01-01 10:00:12")["wake_id"] is None
@@ -503,7 +741,9 @@ def test_cse_route_debounce_cleared_by_web_anthropic_reply(db: None) -> None:
         )
     early = claim_due_wakes(now="2020-01-01 10:00:20")
     assert early["wake_id"]
-    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [c_id]
+    assert [r["turn_id"] for r in early["rows"] if r.get("state") == "claimed"] == [
+        c_id
+    ]
 
 
 def test_debounce_second_turn_waits(db: None) -> None:
@@ -511,24 +751,52 @@ def test_debounce_second_turn_waits(db: None) -> None:
     assert detail is not None
     thread = str(detail["id"])
     a_id, _t, a_n, _c = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|a", body="a"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|a",
+        body="a",
     )
     b_id, _t2, b_n, _c2 = insert_turn(
-        thread=thread, from_agent="cursor", to_agent="grok-bot-gc1", subject="FACT|b", body="b"
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|b",
+        body="b",
     )
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
     advance_scan(
-        "endpoint-wake-dispatcher", 0, a_id,
-        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": a_id, "turn_number": a_n}],
+        "endpoint-wake-dispatcher",
+        0,
+        a_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": a_id,
+                "turn_number": a_n,
+            }
+        ],
         now="2020-01-01 00:00:00",
     )
     wake = claim_due_wakes(now="2020-01-01 00:00:01")
-    record_wake_result(wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 00:00:02")
+    record_wake_result(
+        wake["wake_id"], "delivered", "ok", "exact", 1, None, now="2020-01-01 00:00:02"
+    )
     advance_scan(
-        "endpoint-wake-dispatcher", a_id, b_id,
-        [{"agent": "grok-bot-gc1", "thread_id": thread, "turn_id": b_id, "turn_number": b_n}],
+        "endpoint-wake-dispatcher",
+        a_id,
+        b_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": b_id,
+                "turn_number": b_n,
+            }
+        ],
         now="2020-01-01 00:00:30",
     )
     assert claim_due_wakes(now="2020-01-01 00:00:40")["wake_id"] is None
@@ -537,19 +805,49 @@ def test_debounce_second_turn_waits(db: None) -> None:
 
 
 def test_outcome_table() -> None:
-    assert classify_display(200, {"ok": True, "delivered": True}, None)[0] == "delivered"
-    assert classify_display(200, {"ok": False, "pasted": True, "delivered": False}, None)[0] == "unknown"
-    assert classify_display(200, {"ok": False, "reason": "paste_failed", "pasted": False}, None)[0] == "unknown"
-    assert classify_display(200, {"ok": False, "reason": "active_chat_busy", "pasted": False}, None)[0] == "pending"
+    assert (
+        classify_display(200, {"ok": True, "delivered": True}, None)[0] == "delivered"
+    )
+    assert (
+        classify_display(200, {"ok": False, "pasted": True, "delivered": False}, None)[
+            0
+        ]
+        == "unknown"
+    )
+    assert (
+        classify_display(
+            200, {"ok": False, "reason": "paste_failed", "pasted": False}, None
+        )[0]
+        == "unknown"
+    )
+    assert (
+        classify_display(
+            200, {"ok": False, "reason": "active_chat_busy", "pasted": False}, None
+        )[0]
+        == "pending"
+    )
+    assert classify_display(
+        200, {"ok": False, "reason": "no_composer", "pasted": False}, None
+    ) == (
+        "pending",
+        "no_composer",
+    )
     assert classify_display(500, {"ok": False}, None)[0] == "unknown"
     err = httpx.ConnectError("down")
     assert classify_display(0, None, err)[0] == "pending"
-    assert classify_cse({"ok": False, "error": "cdp-ask unreachable: x"})[0] == "unknown"
+    assert (
+        classify_cse({"ok": False, "error": "cdp-ask unreachable: x"})[0] == "unknown"
+    )
     assert classify_cse({"ok": False})[0] == "unknown"
-    assert classify_cse({"ok": False, "error": "cdp-ask HTTP 502", "status_code": 502})[0] == "refused"
+    assert (
+        classify_cse({"ok": False, "error": "cdp-ask HTTP 502", "status_code": 502})[0]
+        == "refused"
+    )
 
 
-def test_fire_holders_exception_records_unknown_and_does_not_propagate(db: None) -> None:
+def test_fire_holders_exception_records_unknown_and_does_not_propagate(
+    db: None,
+) -> None:
     detail = create_thread(thread_id=None, slug="holders-fire")
     assert detail is not None
     thread = str(detail["id"])
@@ -618,7 +916,9 @@ def test_resolve_delivery_overlays_stale_subscription_display(
 
     path = tmp_path / "grok-window-routing.json"
     monkeypatch.setattr(bindings, "state_path", lambda: path)
-    monkeypatch.setattr(bindings, "sync_endpoint_subscriptions", lambda **_: {"updated": []})
+    monkeypatch.setattr(
+        bindings, "sync_endpoint_subscriptions", lambda **_: {"updated": []}
+    )
     bindings.promote("10", updated_by="test")
 
     class Store:
@@ -641,7 +941,9 @@ def test_resolve_delivery_overlays_stale_subscription_display(
     assert sub["display"] == "10"
 
 
-def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(db: None) -> None:
+def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(
+    db: None,
+) -> None:
     """Mailbox canonical agent in ledger must still resolve grok-bot-gc2 subscriptions."""
     from unittest.mock import patch
 
@@ -746,7 +1048,9 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
     get_cursor()
     with connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
-    advance_scan("endpoint-wake-dispatcher", 0, last_id, pending, now="2020-01-01 00:00:00")
+    advance_scan(
+        "endpoint-wake-dispatcher", 0, last_id, pending, now="2020-01-01 00:00:00"
+    )
     claimed = claim_due_wakes(now="2020-01-01 00:00:01")
     assert claimed["wake_id"]
     turn_args: list[int | str] = []
@@ -799,7 +1103,11 @@ def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> N
         cse=False,
     )
     assert qualifies(
-        {"to_agent": "syncerator", "from_agent": "grok-bot-gc1", "subject": "REQUEST|sync"},
+        {
+            "to_agent": "syncerator",
+            "from_agent": "grok-bot-gc1",
+            "subject": "REQUEST|sync",
+        },
         cse=False,
     )
     assert not qualifies(
@@ -995,10 +1303,408 @@ def test_supervise_respawns_after_connect_error() -> None:
         await asyncio.sleep(30)
 
     async def run() -> None:
-        supervise(App(), "endpoint_wake_dispatcher", loop, restart=True, max_restarts=None)
+        supervise(
+            App(), "endpoint_wake_dispatcher", loop, restart=True, max_restarts=None
+        )
         await asyncio.sleep(1.2)
         assert calls["n"] >= 2
 
     asyncio.run(run())
 
 
+def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """18460#176 specimen: exact cursor route + subscribed agent_id + no_composer -> pending & unsubscribed."""
+    from unittest.mock import AsyncMock, patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from cursor_bridge import wake_delivery as wd
+    from cursor_bridge.chat_surface import classify_surface
+    from cursor_bridge.wake_delivery import deliver_wake
+
+    from bus_watch import ide_hop_land
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=18460, slug="maestro-general-work")
+    assert detail is not None
+    thread = str(detail["id"])
+    dead_agent_id = "4a3412d2-dd68-4510-9953-e92fe72cd720"
+    title = f"{thread} maestro-general-work"
+    sub_res = subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=title,
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    sub_row = sub_res["row"]
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REQUEST|freeform|decision:operator-observability-ledger — K43 of record",
+        body="TYPE: REQUEST\nBody",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "cursor",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2026-10-20 22:59:56",
+    )
+    claimed = claim_due_wakes(now="2026-10-20 22:59:57")
+    assert claimed["wake_id"]
+
+    # Verify wake_delivery normalizes missing Glass composer handle to reason=no_composer
+    surface_match = classify_surface(
+        [],
+        [{"text": title, "selected": True, "agent_id": dead_agent_id}],
+        composer_draft="",
+    )
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [
+            {"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}
+        ],
+    )
+    monkeypatch.setattr(wd, "probe_surface", AsyncMock(return_value=surface_match))
+
+    class _NoHandleWS:
+        async def send(self, _raw: str) -> None:
+            return None
+
+        async def recv(self) -> str:
+            return '{"id": 1, "result": {"result": {"value": {"ok": false, "reason": "no_handle"}}}}'
+
+        async def __aenter__(self) -> _NoHandleWS:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *_a, **_kw: _NoHandleWS())
+    wake_out = asyncio.run(
+        deliver_wake(
+            display="8",
+            app="cursor",
+            thread=thread,
+            title=title,
+            agent_id=dead_agent_id,
+            turn=number,
+        )
+    )
+    assert wake_out["ok"] is False
+    assert wake_out["reason"] == "no_composer"
+    assert wake_out["expected_agent_id"] == dead_agent_id
+
+    unsub_calls: list[tuple[str, str, str | None, str | None]] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+            expected_agent_id: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope, bound_by, evidence))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+                expected_agent_id=expected_agent_id,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now="2026-10-20 22:59:57",
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=classify_display(200, wake_out, None),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+
+    with connect() as conn:
+        ledger_row = conn.execute(
+            "SELECT state, reason, route, subscription_id, finished_at "
+            "FROM endpoint_wake_ledger WHERE wake_id=?",
+            (claimed["wake_id"],),
+        ).fetchone()
+    assert ledger_row is not None
+    assert ledger_row["state"] == "pending"
+    assert ledger_row["reason"] == "no_composer"
+    assert ledger_row["route"] == "exact"
+    assert ledger_row["subscription_id"] == sub_row["id"]
+    assert ledger_row["finished_at"] == "2026-10-20 22:59:57"
+
+    assert len(unsub_calls) == 1
+    assert unsub_calls[0][0] == "cursor"
+    assert unsub_calls[0][1] == thread
+    assert resolve_endpoint("cursor", thread) is None
+    cur_sub = current_subscription("cursor", thread)
+    assert cur_sub is not None
+    assert cur_sub["state"] == "unsubscribed"
+
+
+def test_fired_hop_past_deadline_with_null_landed_transcript_drops_dead_agent_subscription(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fired hop with landed_transcript_id=None past deadline expires and unsubscribes dead agent_id."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+
+    from bus_watch import ide_hop_land
+    from bus_watch.ide_hop_land import (
+        expire_overdue_hop,
+        mark_fired,
+        read_hop_land,
+    )
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=18460, slug="maestro-general-work")
+    assert detail is not None
+    thread = str(detail["id"])
+    dead_agent_id = "4a3412d2-dd68-4510-9953-e92fe72cd720"
+    departing_id = "cded3450-5686-44c8-af7c-c1c7c4c43618"
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} maestro-general-work",
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    mark_fired(
+        root=thread,
+        tip_cp=153,
+        seal_bus_turn=153,
+        departing_transcript_id=departing_id,
+        fired_at=1000.0,
+        deadline_s=600.0,
+        message_path="liaison-18460-20261020T194538Z.md",
+        watch_dir=tmp_path,
+    )
+    # Before deadline (t=1500 < 1600): still fired, subscription still intact.
+    assert expire_overdue_hop(thread, now=1500.0, watch_dir=tmp_path) is None
+    assert resolve_endpoint("cursor", thread) is not None
+
+    # Past deadline (t=2000 >= 1600) with landed_transcript_id=None: expires and drops dead agent_id.
+    expired = expire_overdue_hop(thread, now=2000.0, watch_dir=tmp_path)
+    assert expired is not None
+    assert expired["state"] == "expired"
+    assert expired["landed_transcript_id"] is None
+    persisted = read_hop_land(thread, watch_dir=tmp_path)
+    assert persisted is not None and persisted["state"] == "expired"
+    assert resolve_endpoint("cursor", thread) is None
+    cur_sub = current_subscription("cursor", thread)
+    assert cur_sub is not None
+    assert cur_sub["state"] == "unsubscribed"
+
+    # Also verify scan_once reaps an overdue fired hop before resolving delivery route.
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} maestro-general-work",
+        agent_id=dead_agent_id,
+        bound_by="liaison-tick-claim",
+    )
+    mark_fired(
+        root=thread,
+        tip_cp=153,
+        seal_bus_turn=153,
+        departing_transcript_id=departing_id,
+        fired_at=1000.0,
+        deadline_s=10.0,
+        message_path="liaison-18460-20261020T194538Z.md",
+        watch_dir=tmp_path,
+    )
+
+    class ScanStore:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 166000,
+                    "to_agent": "cursor",
+                    "from_agent": "maestro",
+                    "thread": thread,
+                    "turn_number": 176,
+                    "subject": "REQUEST|freeform|decision:operator-observability-ledger",
+                }
+            ]
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+            expected_agent_id: str | None = None,
+        ) -> dict:
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+                expected_agent_id=expected_agent_id,
+            )
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = ScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+    assert resolve_endpoint("cursor", thread) is None
+    assert read_hop_land(thread, watch_dir=tmp_path)["state"] == "expired"  # type: ignore[index]
+
+
+def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wildcard Grok route with no_composer records pending and does not unsubscribe '*'."""
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        resolve_endpoint,
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+
+    from bus_watch import ide_hop_land
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=None, slug="grok-no-composer")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="stage-manager",
+        thread_scope="*",
+        surface="grok",
+        display="9",
+        title="Stage Manager",
+    )
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="stage-manager",
+        subject="REQUEST|sync",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "stage-manager",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2026-10-20 23:00:00",
+    )
+    claimed = claim_due_wakes(now="2026-10-20 23:00:01")
+    assert claimed["wake_id"]
+    unsub_calls: list[tuple[str, str]] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+            expected_agent_id: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+                expected_agent_id=expected_agent_id,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now="2026-10-20 23:00:01",
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("pending", "no_composer"),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+
+    assert unsub_calls == []
+    assert resolve_endpoint("stage-manager", thread) is not None

@@ -286,7 +286,7 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
         key, separator, item = raw.partition("=")
         if separator and key.strip() and item.strip():
             metadata[key.strip()] = item.strip()
-    return {
+    payload = {
         "field": "code_version",
         "value": value,
         "source": "docker:/app/.source_sync_stamp",
@@ -295,8 +295,122 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
         ),
         "source_sync_basis": metadata.get("source_basis", "unspecified_legacy"),
         "source_sync_worktree_state": metadata.get("working_tree_state", "unknown"),
+        "load_surface_worktree_state": metadata.get("load_surface_worktree_state"),
+        "load_surface_classification": metadata.get("load_surface_classification"),
         "error": None if value else "stamp_value_unavailable",
     }
+    recorded = metadata.get("off_load_untracked_only")
+    if recorded in {"yes", "no", "unknown"}:
+        payload["source_sync_off_load_untracked_only"] = recorded
+    return payload
+
+
+def classify_stamp_worktree(root: Path) -> dict[str, str]:
+    """Classify checkout dirt for the source-sync stamp at write time.
+
+    ``working_tree_state`` is raw porcelain: dirty, clean, or unknown. It is
+    not rewritten later. A path is on the load surface when the serving map
+    names it, or when the mcp sync copies it by directory (``libs/`` and
+    ``services/mcp-server/``). A rename is on that surface when either the
+    destination or the source is. ``untracked_off_load_surface_only`` is set
+    only when every entry is untracked and off that surface. The status read
+    uses ``--untracked-files=all``. Git failure, including a truncated rename
+    record, returns unknown for every field.
+    """
+    unknown = {
+        "working_tree_state": "unknown",
+        "load_surface_worktree_state": "unknown",
+        "load_surface_classification": "unknown",
+    }
+    try:
+        result = run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return unknown
+    if result.returncode != 0:
+        return unknown
+    entries = _porcelain_z_entries(result.stdout)
+    if entries is None:
+        return unknown
+    if not entries:
+        return {
+            "working_tree_state": "clean",
+            "load_surface_worktree_state": "clean",
+            "load_surface_classification": "none",
+        }
+    on_surface = False
+    untracked_off_only = True
+    for status, paths in entries:
+        if any(_stamp_copies_path(path) for path in paths):
+            on_surface = True
+            untracked_off_only = False
+            continue
+        if status.strip() != "??":
+            untracked_off_only = False
+    if on_surface:
+        classification = "load_surface_dirty"
+        load_state = "dirty"
+    elif untracked_off_only:
+        classification = "untracked_off_load_surface_only"
+        load_state = "clean"
+    else:
+        classification = "off_load_surface_only"
+        load_state = "clean"
+    return {
+        "working_tree_state": "dirty",
+        "load_surface_worktree_state": load_state,
+        "load_surface_classification": classification,
+    }
+
+
+def _stamp_copies_path(path: str) -> bool:
+    """True when the serving map or the mcp directory copy includes ``path``.
+
+    The container copies all of ``libs/`` and ``services/mcp-server/``,
+    including files ``services_for_path`` does not name.
+    """
+    if services_for_path(path):
+        return True
+    return path.startswith(("libs/", "services/mcp-server/"))
+
+
+def _porcelain_z_entries(raw: str) -> list[tuple[str, tuple[str, ...]]] | None:
+    """Parse ``git status -z`` into status and every path on the record.
+
+    A rename or copy is ``XY <destination>\\0<source>\\0``. Both paths are
+    kept. A truncated rename or copy record is ``None``.
+    """
+    parts = raw.split("\0")
+    entries: list[tuple[str, tuple[str, ...]]] = []
+    index = 0
+    while index < len(parts):
+        item = parts[index]
+        index += 1
+        if not item:
+            continue
+        status = item[:2]
+        destination = item[3:] if len(item) >= 4 else ""
+        if "R" in status or "C" in status:
+            if index >= len(parts) or not parts[index]:
+                return None
+            source = parts[index]
+            index += 1
+            paths = tuple(path for path in (destination, source) if path)
+        else:
+            paths = (destination,) if destination else ()
+        if paths:
+            entries.append((status, paths))
+    return entries
 
 
 def index_behind_head(root: Path, head_sha: str | None, path: str) -> bool:
@@ -361,25 +475,54 @@ def git_blob_sha(root: Path, commit: str | None, path: str) -> str | None:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def code_ref_changed_paths(root: Path, code_ref: str) -> list[str] | None:
+    """Return paths a commit changed against its first parent.
+
+    Fleet liveness uses the list to tell an ancestry yes from code a service
+    never imports. ``None`` means git could not resolve the ref, which is not
+    an empty change. Merge commits follow the first parent only, so files that
+    parent already contained are not treated as this commit's load surface.
+    """
+    parent = git(root, "rev-parse", "--verify", "--quiet", f"{code_ref}^1")
+    if parent:
+        text = git(root, "diff", "--name-only", parent, code_ref)
+    else:
+        text = git(
+            root,
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            code_ref,
+        )
+    if text is None:
+        return None
+    seen: dict[str, None] = {}
+    for line in text.splitlines():
+        path = line.strip()
+        if path:
+            seen.setdefault(path, None)
+    return list(seen)
+
+
 def manage_loaded_code_evidence(code_version: str | None) -> dict[str, Any]:
     """Describe how the manage RPC process sealed its loaded-code label at import.
 
     A valid 40-hex ``code_version`` means ``deploy_identity`` resolved a Git
     ancestry label when this interpreter imported the module, not a live re-read
     of the checkout. Any other value (including ``unknown``) is temporal evidence
-    only: the probe does not treat process start time as a SHA and leaves
-    ``answers_equal`` null so readers never infer equality from a timestamp.
+    only: the probe does not treat process start time as a SHA. Equality with
+    an observed code version is decided later, where both values exist.
     """
     if code_version and is_valid_sha40(code_version):
         return {
             "kind": "imported_code",
             "sha": code_version.strip().lower(),
-            "answers_equal": None,
         }
     return {
         "kind": "temporal",
         "sha": None,
-        "answers_equal": None,
     }
 
 
@@ -409,7 +552,9 @@ __all__ = [
     "SERVICE_SLUGS",
     "container_sha",
     "container_start",
+    "classify_stamp_worktree",
     "clock_observation",
+    "code_ref_changed_paths",
     "git_blob_sha",
     "manage_loaded_code_evidence",
     "mcp_reported_version",

@@ -29,8 +29,15 @@ _IMPORT_RE = re.compile(
 
 
 def repo_root() -> Path:
-    """Return the checkout root (``scripts/model_manager/ui/controller/<pkg>/`` → up 5)."""
-    return Path(__file__).resolve().parents[5]
+    """Return the checkout that contains this archived module.
+
+    The file lives at ``archive/charter_runner/``, two directories under the
+    repo root. ``parents[5]`` was the depth when the module sat under
+    ``scripts/model_manager/ui/controller/``; from the archive that walk
+    leaves the checkout, the import closure is empty, and a removed
+    ``owned_libs`` entry no longer fails the audit.
+    """
+    return Path(__file__).resolve().parents[2]
 
 
 def _module_names(root: Path) -> frozenset[str]:
@@ -63,6 +70,24 @@ def _tree_files(base: Path) -> list[Path]:
     return [p for p in base.rglob("*.py") if "__pycache__" not in p.parts]
 
 
+def _service_production_files(base: Path) -> list[Path]:
+    """Service-tree Python files, excluding pytest modules.
+
+    A test module under ``services/`` imports libs the running process does
+    not load. Counting those imports makes the closure audit fail for libs
+    the service never serves, and a removed production entry is no longer
+    the failure the audit reports.
+    """
+    files: list[Path] = []
+    for path in _tree_files(base):
+        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+            continue
+        if "tests" in path.parts:
+            continue
+        files.append(path)
+    return files
+
+
 @lru_cache(maxsize=1)
 def _lib_to_libs(root_str: str) -> dict[str, frozenset[str]]:
     """Direct lib→lib import edges, keyed by top-level lib name."""
@@ -90,7 +115,9 @@ def _expand(seeds: Iterable[str], edges: dict[str, frozenset[str]]) -> frozenset
 
 
 @lru_cache(maxsize=1)
-def _lib_to_services(root_str: str, prefixes: tuple[tuple[str, str], ...]) -> dict[str, tuple[str, ...]]:
+def _lib_to_services(
+    root_str: str, prefixes: tuple[tuple[str, str], ...]
+) -> dict[str, tuple[str, ...]]:
     """Invert the import graph: lib name → service slugs needing a restart."""
     root = Path(root_str)
     known = _module_names(root)
@@ -104,6 +131,28 @@ def _lib_to_services(root_str: str, prefixes: tuple[tuple[str, str], ...]) -> di
         for name in _expand(direct, edges):
             owners.setdefault(name, set()).add(slug)
     return {name: tuple(sorted(slugs)) for name, slugs in owners.items()}
+
+
+def direct_production_libs_by_service(
+    root: Path,
+    prefixes: tuple[tuple[str, str], ...],
+) -> dict[str, set[str]]:
+    """Libs each service tree imports directly, excluding pytest modules.
+
+    The restart map is the transitive closure (``_lib_to_services``). The
+    ownership audit compares the manifest to this direct set: a transitive
+    closure lists libs the service never imports, so removing one declared
+    production entry is not the failure the audit reports.
+    """
+    known = _module_names(root)
+    found: dict[str, set[str]] = {}
+    for prefix, slug in prefixes:
+        service_dir = root / prefix.rstrip("/")
+        if not service_dir.is_dir():
+            found[slug] = set()
+            continue
+        found[slug] = set(_imported_libs(_service_production_files(service_dir), known))
+    return found
 
 
 def lib_name_for_path(path: str) -> str | None:

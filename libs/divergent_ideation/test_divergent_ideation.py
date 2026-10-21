@@ -6,7 +6,6 @@ import multiprocessing as mp
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import PropertyMock, patch
 
 import pytest
 import yaml
@@ -21,6 +20,7 @@ from divergent_ideation.collate_v1 import (
     map_success_fraction,
 )
 from divergent_ideation.leak_check_v1 import (
+    apply_problem_defaults,
     build_rag_query,
     check_leak,
     finalize_leak_reports,
@@ -31,7 +31,6 @@ from divergent_ideation.map_enrich_v1 import (
     model_id_mismatches,
 )
 from divergent_ideation.operator_split_v1 import split_operators
-
 
 SERVED_POOL_MODELS = (
     "qwen3-5-9b-q8-0-131072",
@@ -135,6 +134,39 @@ def test_build_rag_query_joins_constraints() -> None:
         "constraints": [{"statement": "c1"}, {"statement": "c2"}],
     }
     assert build_rag_query(abstract) == "goal c1 c2"
+
+
+def test_build_rag_query_includes_string_constraints() -> None:
+    abstract = {
+        "structural_goal": "goal",
+        "constraints": ["plain constraint"],
+    }
+    assert build_rag_query(abstract) == "goal plain constraint"
+
+
+def test_leak_check_string_actor_items() -> None:
+    abstract = {
+        "structural_goal": "neutral",
+        "actors": ["storage operator"],
+        "constraints": [],
+    }
+    report = check_leak(abstract, ["storage"])
+    assert report["passed"] is False
+
+
+def test_apply_problem_defaults_run_seed() -> None:
+    assert apply_problem_defaults({"problem_id": "p"}, default_run_seed=42)["run_seed"] == 42
+    assert apply_problem_defaults({"run_seed": 7}, default_run_seed=42)["run_seed"] == 7
+
+
+def test_divergent_ideation_v1_yaml_run_seed_default() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    spec_dict = yaml.safe_load(
+        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+    )
+    assert spec_dict["options"]["run_seed"]["default"] == 0
+    step_names = [s["name"] for s in spec_dict["steps"]]
+    assert "problem_defaults" in step_names
 
 
 @pytest.mark.parametrize("size", [3, 4, 5])
@@ -772,10 +804,8 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
         http_request=None,  # type: ignore[arg-type]
         execution_id="EXEC-LEAK-HALT",
     )
-    ctx.outputs["load_problem"] = StepOutput(
-        raw="{}",
-        json={"problem_id": "p1", "run_seed": 1, "benchmark_tag": None},
-    )
+    problem = {"problem_id": "p1", "run_seed": 1, "benchmark_tag": None}
+    ctx.outputs["problem_defaults"] = StepOutput(raw="{}", json=problem)
     ctx.outputs["leak_check_final"] = StepOutput(
         raw="{}",
         json={

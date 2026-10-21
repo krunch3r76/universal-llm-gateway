@@ -125,18 +125,50 @@ steps:
 
   - name: draft
     type: writing_draft_selector_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: drafter_openai
+        fields: [json, raw, model_id]
+      - step: drafter_google
+        fields: [json, raw, model_id]
+      - step: drafter_xai
+        fields: [json, raw, model_id]
+      - step: drafter_local_hermes
+        fields: [json, raw, model_id]
+      - step: drafter_local_ernie
+        fields: [json, raw, model_id]
+      - step: drafter_anthropic
+        fields: [json, raw, model_id]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
   - name: independence
     type: writing_independence_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: draft
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None"
 
   - name: fact_ceiling_audit
     type: writing_review_local_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: draft
+        fields: [json]
+      - step: independence
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None"
 
   - name: provenance_check
     type: writing_provenance_check_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: fact_ceiling_audit
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
@@ -146,6 +178,9 @@ steps:
     type: generate
     model_ref: reviser
     prompt_ref: writing.v1.prose_rhythm
+    reads_from:
+      - step: provenance_check
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       draft: draft.json.draft
@@ -157,6 +192,13 @@ steps:
 
   - name: fact_ceiling_final
     type: writing_provenance_check_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: fact_ceiling_audit
+        fields: [json]
+      - step: provenance_check
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger

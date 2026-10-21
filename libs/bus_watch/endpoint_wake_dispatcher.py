@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -18,6 +19,7 @@ from bus_watch.endpoint_wake_transport import (
     classify_cse,
     classify_display,
 )
+from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +124,10 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     if agent == "dispatch" and _CURSOR_GATE_WAKE_RE.search(text):
         return "cursor"
     if agent == "conductor-hop" and _CURSOR_GATE_WAKE_RE.search(text):
-        if "contract=conductor" in text.lower() and "caller=conductor-hop" in text.lower():
+        if (
+            "contract=conductor" in text.lower()
+            and "caller=conductor-hop" in text.lower()
+        ):
             return agent
         return "cursor"
     return agent
@@ -269,6 +274,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
 
+    expire_overdue_hops(store)
     cursor = store.cursor()
     high = int(cursor["high_water_turn_id"])
     turns = store.since(high)
@@ -284,6 +290,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             resolved = None
             cse = True
         else:
+            if agent == "cursor":
+                try:
+                    expire_overdue_hop(thread, store=store)
+                except OSError:
+                    logger.exception(
+                        "ide_hop_land: expire overdue hop failed root=%s",
+                        thread,
+                    )
             resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
@@ -400,6 +414,67 @@ def _deliver_cse(
     return state, reason, str(live.get("registration_id") or "") or None
 
 
+def _drop_dead_agent_subscription(
+    store: StoreClient,
+    *,
+    agent: str,
+    thread: str,
+    sub: dict[str, Any],
+    reason: str,
+) -> None:
+    """Unsubscribe a Cursor route whose subscribed ``agent_id`` has no focusable composer."""
+    if str(sub.get("surface") or "") != "cursor":
+        return
+    dead_agent_id = str(sub.get("agent_id") or "").strip()
+    scope = str(sub.get("thread_scope") or thread).strip()
+    if not dead_agent_id or scope in {"", "*"}:
+        return
+    sub_agent = str(sub.get("agent") or agent).strip() or "cursor"
+    evidence = f"{reason}:{dead_agent_id}"
+    unsub = getattr(store, "unsubscribe", None)
+    if callable(unsub):
+        try:
+            unsub(
+                sub_agent,
+                scope,
+                bound_by="endpoint-wake-dispatcher",
+                evidence=evidence,
+                expected_agent_id=dead_agent_id,
+            )
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: unsubscribe failed agent=%s scope=%s",
+                sub_agent,
+                scope,
+            )
+    if os.environ.get("AGENT_BUS_DB_PATH"):
+        try:
+            from agent_bus_store.db.endpoint_subscriptions import (
+                current_subscription,
+                unsubscribe_endpoint,
+            )
+
+            cur = current_subscription(sub_agent, scope)
+            if (
+                cur is not None
+                and cur.get("state") == "subscribed"
+                and str(cur.get("agent_id") or "").strip() == dead_agent_id
+            ):
+                unsubscribe_endpoint(
+                    agent=sub_agent,
+                    thread_scope=scope,
+                    bound_by="endpoint-wake-dispatcher",
+                    evidence=evidence,
+                    expected_agent_id=dead_agent_id,
+                )
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: local unsubscribe failed agent=%s scope=%s",
+                sub_agent,
+                scope,
+            )
+
+
 def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     """Claim one group and deliver it. Stargate and cdp-ask stay in the table."""
     claimed = store.claim()
@@ -500,9 +575,23 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         return claimed
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
     turn_arg: int | str = (
-        turn_numbers[0] if len(turn_numbers) == 1 else ",".join(str(n) for n in turn_numbers)
+        turn_numbers[0]
+        if len(turn_numbers) == 1
+        else ",".join(str(n) for n in turn_numbers)
     )
     state, reason = _display_post(rows[0], sub, turn_arg)
+    if reason == "no_composer" and str(sub.get("surface") or "") == "cursor":
+        _drop_dead_agent_subscription(
+            store, agent=agent, thread=thread, sub=sub, reason=reason
+        )
+        hop_root = str(sub.get("thread_scope") or thread)
+        try:
+            expire_overdue_hop(hop_root, store=store)
+        except OSError:
+            logger.exception(
+                "ide_hop_land: expire overdue hop failed root=%s",
+                hop_root,
+            )
     store.result(
         wake_id=wake_id,
         outcome=state,
@@ -523,6 +612,7 @@ async def run_dispatcher() -> None:
     hop_mark: dict[str, float] = {}
     while True:
         try:
+            await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             await asyncio.to_thread(fire_due_wakes, store)
             await asyncio.to_thread(

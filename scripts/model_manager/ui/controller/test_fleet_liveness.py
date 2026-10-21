@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -499,6 +500,8 @@ def test_mcp_reported_version_qualifies_working_tree_label(
         "denotes": "checkout_head_at_source_sync",
         "source_sync_basis": "working_tree",
         "source_sync_worktree_state": "dirty",
+        "load_surface_worktree_state": None,
+        "load_surface_classification": None,
         "error": None,
     }
 
@@ -851,7 +854,7 @@ def test_manage_import_seal_surfaces_sha_full_and_compact(
     )
     assert manage["loaded_code_evidence"]["kind"] == "imported_code"
     assert manage["loaded_code_evidence"]["sha"] == _MANAGE_IMPORT_SEAL
-    assert manage["loaded_code_evidence"]["answers_equal"] is None
+    assert "answers_equal" not in manage["loaded_code_evidence"]
 
     _empty_probe_pair(monkeypatch)
     compact = live.build_snapshot(
@@ -860,7 +863,7 @@ def test_manage_import_seal_surfaces_sha_full_and_compact(
     row = compact["services"][0]
     assert row["reported_version"]["value"] == _MANAGE_IMPORT_SEAL
     assert row["loaded_code_evidence"]["kind"] == "imported_code"
-    assert row["loaded_code_evidence"]["answers_equal"] is None
+    assert "answers_equal" not in row["loaded_code_evidence"]
 
 
 def test_manage_unknown_seal_stays_temporal_without_equality_claim(
@@ -880,7 +883,7 @@ def test_manage_unknown_seal_stays_temporal_without_equality_claim(
     manage = full["services"][0]
     assert manage["loaded_code_evidence"]["kind"] == "temporal"
     assert manage["loaded_code_evidence"]["sha"] is None
-    assert manage["loaded_code_evidence"]["answers_equal"] is None
+    assert "answers_equal" not in manage["loaded_code_evidence"]
     assert manage["reported_version"]["value"] is None
     assert manage["reported_version"]["error"] == "reported_version_unavailable"
     assert manage["matches_reported_sha"] != "yes"
@@ -891,28 +894,27 @@ def test_manage_unknown_seal_stays_temporal_without_equality_claim(
     )
     row = compact["services"][0]
     assert row["loaded_code_evidence"]["kind"] == "temporal"
-    assert row["loaded_code_evidence"]["answers_equal"] is None
+    assert "answers_equal" not in row["loaded_code_evidence"]
     assert row["reported_version"]["value"] is None
 
 
-def test_manage_checker_failure_still_carries_import_seal(
+def test_manage_self_row_without_check_manage(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    """Checker RuntimeError must not drop the import-sealed SHA on the manage row."""
+    """Missing check_manage must not become status unknown or a null pid.
+
+    Happy-path snapshots stub ``_service_info``. This one does not: the state
+    object has no checker, which is what production ``ServiceState`` is.
+    """
     _empty_probe_pair(monkeypatch)
     monkeypatch.setattr(live, "resolve_code_version", lambda: _MANAGE_IMPORT_SEAL)
-
-    def _boom(_state: object, service: str) -> ServiceInfo:
-        if service == "manage":
-            raise RuntimeError("checker_down")
-        return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
-
-    monkeypatch.setattr(live, "_service_info", _boom)
     result = live.build_snapshot(tmp_path, SimpleNamespace(), service="manage")
     manage = result["services"][0]
     assert manage["service"] == "manage"
-    assert manage["status"] == "unknown"
-    assert manage["probe_errors"] == ["service_probe:RuntimeError"]
+    assert manage["status"] == "running"
+    assert manage["pid"] == os.getpid()
+    assert manage["detail"].startswith(f"PID {os.getpid()}, age ")
+    assert manage["probe_errors"] == []
     assert manage["loaded_code_evidence"]["kind"] == "imported_code"
     assert manage["loaded_code_evidence"]["sha"] == _MANAGE_IMPORT_SEAL
     assert manage["reported_version"]["value"] == _MANAGE_IMPORT_SEAL
@@ -1187,7 +1189,12 @@ def test_compact_projection_omits_porcelain_and_heavy_fields(
         },
         "status": "running",
         "code_ref_validation": {
-            "liveness": {"answer": "yes", "relation": "equal"},
+            "liveness": {
+                "answer": "yes",
+                "relation": "equal",
+                "load_relevance": "unknown",
+                "load_relevance_basis": "serving_map+code_ref_first_parent",
+            },
         },
         "load_marker": {
             "kind": "container_started_at",
@@ -1350,3 +1357,445 @@ def test_stamp_rewrite_before_recycle_labels_which_sha_is_authoritative(
     assert evidence["process_seal_sha"] == seal_sha
     assert evidence["process_seal_authority"] == "process_start_code_version"
     assert evidence["authoritative_for_liveness"] == "process_start_code_version"
+
+
+def _ancestry_yes(service: str, code_ref: str, activation_validation_id=None) -> dict:
+    return {
+        "verdict": "running_committed_code",
+        "liveness": {
+            "answer": "yes",
+            "relation": "ancestor",
+            "reason": f"observed code_version satisfies {code_ref}",
+            "observed_code_version": "a" * 40,
+            "observation": {"probe_reachable": True, "service": service},
+        },
+    }
+
+
+def _running_info(_state: object, service: str) -> ServiceInfo:
+    return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=42)
+
+
+def test_not_loaded_by_when_service_does_not_import_code_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Ancestry yes stays yes. not_loaded_by is the serving map, not an import scan.
+
+    The basis is serving_map+code_ref_first_parent. Git failing to name the
+    commit leaves answer yes and load_relevance unknown. An empty serving set
+    is unmapped, not not_loaded_by.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+    for rel in (
+        "libs/cursor_bridge/wake_delivery.py",
+        "libs/cursor_bridge/cursor_agents_hop.py",
+    ):
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x = 1\n", encoding="utf-8")
+        _git(repo, "add", rel)
+    _git(repo, "commit", "-m", "cursor bridge")
+    code_ref = _git(repo, "rev-parse", "HEAD")
+    monkeypatch.setattr(live, "_service_info", _running_info)
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(live, "current_validation", _ancestry_yes)
+    result = live.build_snapshot(
+        repo,
+        SimpleNamespace(),
+        services=["manage", "mcp"],
+        code_ref=code_ref,
+    )
+    by_name = {row["service"]: row for row in result["services"]}
+    manage_liveness = by_name["manage"]["code_ref_validation"]["liveness"]
+    mcp_liveness = by_name["mcp"]["code_ref_validation"]["liveness"]
+    assert manage_liveness["answer"] == "yes"
+    assert manage_liveness["load_relevance"] == "not_loaded_by"
+    assert manage_liveness["load_relevance_basis"] == "serving_map+code_ref_first_parent"
+    assert manage_liveness["relation"] == "ancestor"
+    assert mcp_liveness["answer"] == "yes"
+    assert mcp_liveness["load_relevance"] == "loaded_by"
+    assert probe.services_for_path("libs/cursor_bridge/wake_delivery.py") == ("mcp",)
+
+    monkeypatch.setattr(
+        live,
+        "_code_ref_changed_paths",
+        lambda *_args: ["libs/bus_watch/x.py"],
+    )
+    unmapped = live.build_snapshot(
+        repo, SimpleNamespace(), service="manage", code_ref=code_ref
+    )
+    unmapped_liveness = unmapped["services"][0]["code_ref_validation"]["liveness"]
+    assert unmapped_liveness["answer"] == "yes"
+    assert unmapped_liveness["load_relevance"] == "unmapped"
+
+    monkeypatch.setattr(live, "_code_ref_changed_paths", lambda *_args: None)
+    unresolved = live.build_snapshot(
+        repo, SimpleNamespace(), service="manage", code_ref=code_ref
+    )
+    unresolved_liveness = unresolved["services"][0]["code_ref_validation"]["liveness"]
+    assert unresolved_liveness["answer"] == "yes"
+    assert unresolved_liveness["load_relevance"] == "unknown"
+
+
+def test_manage_loads_model_manager_diff_and_joins_dirty_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """0b5b2f5a-shaped path stays yes on manage and leaves the empty-path claim.
+
+    The ownership entry puts the dirty controller file on the manage row. The
+    host comparator still cannot see imported bytes, so the claim reason is
+    evidence_indeterminate rather than no_relevant_dirty_paths_or_version.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+    rel = "scripts/model_manager/ui/controller/fleet_liveness.py"
+    path = repo / rel
+    path.parent.mkdir(parents=True)
+    path.write_text("old\n", encoding="utf-8")
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-m", "manage surface")
+    code_ref = _git(repo, "rev-parse", "HEAD")
+    path.write_text("new\n", encoding="utf-8")
+    monkeypatch.setattr(live, "current_validation", _ancestry_yes)
+    monkeypatch.setattr(live, "resolve_code_version", lambda: _MANAGE_IMPORT_SEAL)
+    result = live.build_snapshot(
+        repo, SimpleNamespace(), service="manage", code_ref=code_ref
+    )
+    manage = result["services"][0]
+    assert probe.services_for_path(rel) == ("manage",)
+    assert manage["code_ref_validation"]["liveness"]["answer"] == "yes"
+    assert manage["code_ref_validation"]["liveness"]["load_relevance"] == "loaded_by"
+    assert [item["path"] for item in manage["paths"]] == [rel]
+    assert manage["live_sha_claim"]["reason"] == "evidence_indeterminate"
+    assert manage["matches_reported_sha"] == "indeterminate"
+
+
+def _init_repo(path) -> None:
+    _git(path, "init", "-b", "master")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "test")
+    anchor = path / "README"
+    anchor.write_text("anchor\n", encoding="utf-8")
+    _git(path, "add", "README")
+    _git(path, "commit", "-m", "anchor")
+
+
+def test_classify_stamp_worktree_untracked_off_load_only(tmp_path) -> None:
+    """Sync-time classification uses --untracked-files=all and the copy surface.
+
+    An untracked file outside libs and mcp-server can be off-load. An
+    untracked file under libs is on the mcp directory copy. A staged rename
+    into services/mcp-server is on the surface because the destination is.
+    Git failure is unknown, not clean.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    junk = repo / "notes" / "pending.txt"
+    junk.parent.mkdir(parents=True)
+    junk.write_text("not loaded\n", encoding="utf-8")
+    classified = probe.classify_stamp_worktree(repo)
+    assert classified == {
+        "working_tree_state": "dirty",
+        "load_surface_worktree_state": "clean",
+        "load_surface_classification": "untracked_off_load_surface_only",
+    }
+
+    copied = repo / "libs" / "web_drive" / "pending.txt"
+    copied.parent.mkdir(parents=True)
+    copied.write_text("copied\n", encoding="utf-8")
+    copied_class = probe.classify_stamp_worktree(repo)
+    assert copied_class["load_surface_classification"] == "load_surface_dirty"
+    copied.unlink()
+
+    moved = repo / "notes" / "moved.py"
+    moved.write_text("y = 1\n", encoding="utf-8")
+    _git(repo, "add", "notes/moved.py")
+    _git(repo, "commit", "-m", "off surface")
+    dest = repo / "services" / "mcp-server" / "moved.py"
+    dest.parent.mkdir(parents=True)
+    _git(repo, "mv", "notes/moved.py", "services/mcp-server/moved.py")
+    renamed = probe.classify_stamp_worktree(repo)
+    assert renamed["load_surface_classification"] == "load_surface_dirty"
+    _git(repo, "reset", "--hard", "HEAD")
+
+    on_load = repo / "services" / "mcp-server" / "new_mod.py"
+    on_load.parent.mkdir(parents=True)
+    on_load.write_text("x = 1\n", encoding="utf-8")
+    dirty = probe.classify_stamp_worktree(repo)
+    assert dirty["load_surface_worktree_state"] == "dirty"
+    assert dirty["load_surface_classification"] == "load_surface_dirty"
+    assert probe.classify_stamp_worktree(tmp_path / "missing")[
+        "working_tree_state"
+    ] == ("unknown")
+
+
+def _mcp_stamp_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    *,
+    reported: dict,
+    porcelain: dict | None = None,
+) -> dict:
+    opened = porcelain or {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((opened, dict(opened)))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=None
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(live, "_mcp_reported_version", lambda _container: reported)
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    return live.build_snapshot(tmp_path, SimpleNamespace(), service="mcp")
+
+
+def test_stamp_classification_is_surfaced_and_not_rewritten(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A recorded off-load classification does not rewrite working_tree_state.
+
+    Current off-load porcelain without that stamp field leaves the match open.
+    """
+    recorded = _mcp_stamp_snapshot(
+        monkeypatch,
+        tmp_path,
+        reported={
+            "field": "code_version",
+            "value": "b" * 40,
+            "source": "docker:/app/.source_sync_stamp",
+            "source_sync_worktree_state": "dirty",
+            "load_surface_worktree_state": "clean",
+            "load_surface_classification": "untracked_off_load_surface_only",
+            "error": None,
+        },
+    )
+    row = recorded["services"][0]
+    assert row["reported_version"]["source_sync_worktree_state"] == "dirty"
+    assert row["matches_reported_sha"] == "yes"
+    assert row["live_sha_claim"] == {
+        "sound": True,
+        "reason": "stamp_untracked_off_load_surface_only",
+    }
+
+    path = "libs/web_drive/pending.txt"
+    porcelain = {
+        "raw": f"?? {path}\0",
+        "paths": {
+            path: {
+                "path": path,
+                "status": "??",
+                "mtime_ns": 1,
+                "serving_services": [],
+                "on_load_surface": False,
+            }
+        },
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    current_only = _mcp_stamp_snapshot(
+        monkeypatch,
+        tmp_path,
+        reported={
+            "field": "code_version",
+            "value": "b" * 40,
+            "source": "docker:/app/.source_sync_stamp",
+            "source_sync_worktree_state": "dirty",
+            "error": None,
+        },
+        porcelain=porcelain,
+    )
+    untouched = current_only["services"][0]
+    assert untouched["reported_version"]["source_sync_worktree_state"] == "dirty"
+    assert untouched["matches_reported_sha"] == "indeterminate"
+
+
+def test_stamp_yes_requires_recorded_classification_and_sha(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A clean stamp with no classification, or a missing sha, stays indeterminate."""
+    clean = _mcp_stamp_snapshot(
+        monkeypatch,
+        tmp_path,
+        reported={
+            "field": "code_version",
+            "value": "b" * 40,
+            "source": "docker:/app/.source_sync_stamp",
+            "source_sync_worktree_state": "clean",
+            "load_surface_worktree_state": "clean",
+            "load_surface_classification": "none",
+            "error": None,
+        },
+    )
+    assert clean["services"][0]["matches_reported_sha"] == "indeterminate"
+
+    missing = _mcp_stamp_snapshot(
+        monkeypatch,
+        tmp_path,
+        reported={
+            "field": "code_version",
+            "value": None,
+            "source": "docker:/app/.source_sync_stamp",
+            "source_sync_worktree_state": "dirty",
+            "load_surface_worktree_state": "clean",
+            "load_surface_classification": "untracked_off_load_surface_only",
+            "error": "stamp_value_unavailable",
+        },
+    )
+    assert missing["services"][0]["matches_reported_sha"] == "indeterminate"
+
+
+def test_null_service_pid_copies_reachable_observation_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """mcp row pid null with observation pid 1 becomes 1.
+
+    A checker pid is not replaced. An unreachable probe pid stays null.
+    """
+    _empty_probe_pair(monkeypatch)
+
+    def _info(_state: object, service: str) -> ServiceInfo:
+        if service == "stargate":
+            return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=7)
+        return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=None)
+
+    def _validation(service: str, code_ref: str, activation_validation_id=None) -> dict:
+        if service == "gateway":
+            observation = {"probe_reachable": False, "pid": 5}
+        elif service == "mcp":
+            observation = {"probe_reachable": True, "pid": 1}
+        else:
+            observation = {"probe_reachable": True, "pid": 99}
+        return {
+            "verdict": "running_committed_code",
+            "liveness": {
+                "answer": "no",
+                "observation": observation,
+            },
+        }
+
+    monkeypatch.setattr(live, "_service_info", _info)
+    monkeypatch.setattr(live, "current_validation", _validation)
+    result = live.build_snapshot(
+        tmp_path,
+        SimpleNamespace(),
+        services=["mcp", "stargate", "gateway"],
+        code_ref="abc123",
+    )
+    by_name = {row["service"]: row for row in result["services"]}
+    assert by_name["mcp"]["pid"] == 1
+    assert by_name["mcp"]["pid_source"] == "container"
+    assert by_name["stargate"]["pid"] == 7
+    assert "pid_source" not in by_name["stargate"]
+    assert by_name["gateway"]["pid"] is None
+
+
+def test_answers_equal_compares_seal_with_observed_code_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """answers_equal is the seal compared to observed_code_version, or absent."""
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(live, "resolve_code_version", lambda: _MANAGE_IMPORT_SEAL)
+    monkeypatch.setattr(live, "_service_info", _running_info)
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref, activation_validation_id=None: {
+            "liveness": {
+                "answer": "yes",
+                "observed_code_version": _MANAGE_IMPORT_SEAL,
+                "observation": {"probe_reachable": True},
+            }
+        },
+    )
+    equal = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="manage", code_ref="abc123"
+    )
+    assert equal["services"][0]["loaded_code_evidence"]["answers_equal"] is True
+
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref, activation_validation_id=None: {
+            "liveness": {
+                "answer": "yes",
+                "observed_code_version": "f" * 40,
+                "observation": {"probe_reachable": True},
+            }
+        },
+    )
+    unequal = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="manage", code_ref="abc123"
+    )
+    assert unequal["services"][0]["loaded_code_evidence"]["answers_equal"] is False

@@ -8,6 +8,7 @@ from .audit_assign import AuditAssignV1Handler
 from .collate import CollateV1Handler
 from .leak_check import LeakCheckV1Handler
 from .operator_split import OperatorSplitV1Handler
+from .problem_defaults import ProblemDefaultsV1Handler
 
 if TYPE_CHECKING:
     from systems.pipeline.core.domain_router import DomainRouter
@@ -20,6 +21,7 @@ def register_handlers(router: DomainRouter) -> None:
         ("operator_split_v1", OperatorSplitV1Handler),
         ("audit_assign_v1", AuditAssignV1Handler),
         ("collate_v1", CollateV1Handler),
+        ("problem_defaults_v1", ProblemDefaultsV1Handler),
     ]
     for step_type, cls in pairs:
         router.register_domain_handler_class(domain, step_type, cls)
