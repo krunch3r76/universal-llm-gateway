@@ -134,7 +134,7 @@ The window classification tells you only what recovery to expect:
 | **This** CSE streaming | Arm, wait for the drain; after healthy recover via **continuity** |
 | **Other** window streaming | Arm, wait for the drain; peer recovers by `chat_url` |
 | **`git_integration_worker`** | **Never force** — drain-gated. `park_live` defaults true: resume-eligible busy occupants park after 20s; others drain-wait. Arm it, report `restart_intent_id`, exit |
-| **`stargate`** (propagate / non-force `sync_restart`) | **Do not** put `force: true` on the YAML row (admit refuses). Busy Stargate arms a durable `restart_intent_id` via manage — fires when `/admin/active-work` is idle (`requests_in_flight` + async pipelines); **600s** idle ceiling then self-preempt restart (CDP in-flight is the expected casualty — recover via continuity). Receipt `disposition: queued`, not `harvest_wanted`. |
+| **`stargate`** (propagate / non-force `sync_restart`) | **Do not** put `force: true` on the YAML row (admit refuses). Busy Stargate arms a durable `restart_intent_id` via manage — fires when `/admin/active-work` is idle (`requests_in_flight` + async pipelines). A busy deadline extends and does not self-preempt. Receipt `disposition: queued`, not `harvest_wanted`. |
 
 Tooling MCP restart ⇒ continuity protocol (not warm follow-up). Ordered sequence:
 

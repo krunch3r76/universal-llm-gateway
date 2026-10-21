@@ -473,8 +473,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         intent_ttl_s: optional arm TTL seconds. 0/omit = default (600s, or none
                    when wait_for_boundary). Positive = caller-set expiry window.
                    This is arm expiry, separate from the idle ceiling. A stargate
-                   idle-drain ceiling self-preempts (force_requested, then
-                   drained_restarting) when the probe is still busy. GIW keeps
+                   idle-drain ceiling extends a busy deadline and does not
+                   self-preempt. Still busy at the ceiling waits until active-work
+                   is idle. GIW keeps
                    an alert-only ceiling. drain_begun is the GIW drain epoch
                    (false for stargate, which has no epoch).
         caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
@@ -584,9 +585,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              a terminal row. deadline_semantics:
                                              GIW is
                                              an alert-only ceiling — NOT scheduled
-                                             fire. Stargate idle-drain is a
-                                             self-preempt instant (still busy →
-                                             force_requested → drained_restarting).
+                                             fire. Stargate idle-drain ceiling — a
+                                             busy deadline extends and does not
+                                             self-preempt. Still busy at this instant
+                                             waits until active-work is idle.
                                              drain_begun is the GIW drain epoch.
           restart_intent_status (intent_id | service) — one-call read of a
                                              restart intent. service= prefers the
