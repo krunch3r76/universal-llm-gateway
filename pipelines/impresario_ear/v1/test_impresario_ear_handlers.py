@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -20,6 +20,7 @@ from implement_admission.impresario_policy import load_impresario_policy
 
 from pipelines.impresario_ear.v1.handlers.deliver import deliver_impresario_ear
 from pipelines.impresario_ear.v1.handlers.evaluate import (
+    _build_evaluate_prompt,
     _extract_harvest_prose,
     evaluate_impresario_ear,
 )
@@ -409,6 +410,83 @@ def test_grok_hop_enqueues_ear_without_ide_hop() -> None:
             )
         )
     hop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_gather_measure_ide_tab_uses_lock_and_policy_not_register() -> None:
+    lock = object()
+    policy = {"gui_host": ":8", "successor_model": "cursor/gemini-4-argon"}
+    measure = MagicMock(return_value={"transcript_id": "tx-18677"})
+    with patch(
+        "bus_watch.ide_budget.measure_ide_tab",
+        measure,
+    ), patch(
+        "bus_watch.tick_state.load_state",
+        return_value={"register": "attended"},
+    ), patch(
+        "bus_watch.digest_budget.effective_policy",
+        return_value=policy,
+    ), patch(
+        "bus_watch.fable_lock.read_lock",
+        return_value=lock,
+    ), patch(
+        "bus_watch.ide_budget.probe_glass_composer_budget",
+        return_value={"status": "idle"},
+    ):
+        await gather_impresario_ear_context(
+            root_thread="18677",
+            tape_fetch=lambda *_a, **_k: {"cells": []},
+        )
+    measure.assert_called_once_with("18677", lock, policy)
+    assert "register" not in (measure.call_args.kwargs or {})
+
+
+@pytest.mark.asyncio
+async def test_gather_default_cdp_probe_uses_transcript_id_and_gui_host() -> None:
+    policy = {"gui_host": ":9"}
+    probe = MagicMock(return_value={"pct": 42})
+    with patch(
+        "bus_watch.ide_budget.measure_ide_tab",
+        MagicMock(return_value={"transcript_id": "trans-abc"}),
+    ), patch(
+        "bus_watch.tick_state.load_state",
+        return_value={},
+    ), patch(
+        "bus_watch.digest_budget.effective_policy",
+        return_value=policy,
+    ), patch(
+        "bus_watch.fable_lock.read_lock",
+        return_value={},
+    ), patch(
+        "bus_watch.ide_budget.probe_glass_composer_budget",
+        probe,
+    ):
+        await gather_impresario_ear_context(
+            root_thread="18677",
+            tape_fetch=lambda *_a, **_k: {"cells": []},
+        )
+    probe.assert_called_once_with("trans-abc", ":9")
+
+
+def test_evaluate_gather_slice_starts_with_jsonl_when_tape_long() -> None:
+    long_tape = "T" * 20000
+    gather = {
+        "tape": long_tape,
+        "continuity": {"checkpoint_present": True},
+        "jsonl": {"transcript_id": "tx-priority", "glass_status": "completed"},
+        "cdp": {"attempted": True, "ok": True},
+    }
+    prompt = _build_evaluate_prompt(
+        root_thread=_ROOT,
+        mode="deep",
+        trigger="hop",
+        gather=gather,
+    )
+    start = prompt.index("<untrusted_context>\n") + len("<untrusted_context>\n")
+    end = prompt.index("\n</untrusted_context>", start)
+    gather_json = prompt[start:end]
+    assert len(gather_json) == 12000
+    assert gather_json.index('"jsonl"') < gather_json.index('"tape"')
 
 
 @pytest.mark.asyncio
