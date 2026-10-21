@@ -45,6 +45,22 @@ async def _next_n(fs: Any, agent_id: str) -> int:
     return await _max_n(fs, agent_id) + 1
 
 
+def bind_admitted_n(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
+    """Copy admit's n onto this step's options.
+
+    ``PipelineContext.options`` rebuilds a dict on every read, so mutating it
+    inside admit does not reach later steps. Breaks when houseless omits n
+    and the agent folder already has checkpoint 1: normalise would run as n=1.
+    """
+    if options.get("n") is not None:
+        return options
+    admit = step_output_json(outputs, "admit")
+    admitted = admit.get("n")
+    if isinstance(admitted, int) and not isinstance(admitted, bool):
+        options["n"] = admitted
+    return options
+
+
 def fact_subject(options: dict[str, Any]) -> str:
     house = str(options.get("house") or "")
     n = options.get("n")

@@ -83,18 +83,35 @@ async def _folder_bytes(
         messages = await fs.read(msg_uri)
         if not prior or messages is None:
             return refuse("harvest.no_prior", f"missing {raw_uri} or {msg_uri}")
+        norm_uri = (
+            f"notes/system/checkpoints/grok/{agent_id}/{n - 1}.normalized.pages.txt"
+        )
+        prior_norm = await fs.read(norm_uri)
         try:
+            payload = json.loads(messages.decode("utf-8"))
             window = prior_window(messages)
-            prior_lines = load_prior_lines(prior)
-        except (json.JSONDecodeError, TranscriptPageError, UnicodeDecodeError) as exc:
+            cap = (payload.get("meta") or {}).get("capture") or {}
+            cap_sha = cap.get("sha256") if isinstance(cap, dict) else None
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return refuse("harvest.no_prior", str(exc))
+        if prior_norm is None or not cap_sha:
+            return refuse("harvest.no_prior", f"missing {norm_uri} or capture.sha256")
+        if file_sha256(prior_norm) != cap_sha:
+            return refuse(
+                "harvest.no_prior",
+                "prior normalized sha != capture.sha256",
+            )
+        try:
+            prior_lines = load_prior_lines(prior_norm)
+        except (TranscriptPageError, UnicodeDecodeError) as exc:
             return refuse("harvest.no_prior", str(exc))
         if window is None:
             return refuse("harvest.no_prior", "prior messages have no window")
         _next, prior_total = window
-        if prior_lines is not None and len(prior_lines) != _next:
+        if len(prior_lines) != _next:
             return refuse(
                 "harvest.no_prior",
-                f"prior raw lines {len(prior_lines)} != window.hi {_next}",
+                f"prior normalized lines {len(prior_lines)} != window.hi {_next}",
             )
     refusal = check_pages(parsed, prior_lines=prior_lines, prior_total=prior_total)
     if refusal:
@@ -223,6 +240,11 @@ class GrokbotCheckpointHarvestNormaliseHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
-        options = dict(getattr(context, "options", {}) or {})
+        from .admit import bind_admitted_n
+
+        options = bind_admitted_n(
+            dict(getattr(context, "options", {}) or {}),
+            getattr(context, "outputs", {}) or {},
+        )
         payload = await run_harvest_normalise(options, fs_of(context))
         return StepOutput(raw="", json=payload)

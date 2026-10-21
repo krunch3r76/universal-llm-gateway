@@ -373,6 +373,17 @@ async def test_pages_folder_and_prefix(fs: MemFs) -> None:
         pour2["envelope"]["messages"][: len(pour["envelope"]["messages"])]
         == pour["envelope"]["messages"]
     )
+    fourth = _page(3, 3, 4, ["d"], start=False)
+    folder3 = _put_page(fs, 3, 3, 3, fourth)
+    options3 = {**options, "n": 3, "l0_ref": folder3}
+    norm3 = await run_harvest_normalise(options3, fs)
+    assert norm3.get("refused") is None, norm3
+    adapter3 = await run_harvest_adapter(options3, norm3, fs)
+    assert adapter3.get("refused") is None, adapter3
+    pour3 = await run_harvest_pour(options3, adapter3, fs, norm3)
+    assert pour3.get("refused") is None, pour3
+    raw3 = fs.files[f"notes/system/checkpoints/grok/{_AGENT}/3.raw.json"]
+    assert raw3.startswith(raw2)
 
 
 @pytest.mark.asyncio
@@ -467,6 +478,72 @@ async def test_incremental_missing_prior(fs: MemFs) -> None:
     }
     norm = await run_harvest_normalise(options, fs)
     assert (norm.get("refused") or {}).get("code") == "harvest.no_prior"
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_wrapped_pages_extend(fs: MemFs) -> None:
+    """n=2 must reassemble the normalized prior, not the wrapped raw."""
+    fence = b'<cursor_untrusted_data_1337 source="ReadTranscript">\n'
+    first = fence + _page(0, 0, 1, ["a"], start=True)
+    folder = _put_page(fs, 1, 0, 0, first)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    adapter = await run_harvest_adapter(options, norm, fs)
+    pour = await run_harvest_pour(options, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    nxt = fence + _page(1, 1, 2, ["b"], start=False)
+    folder2 = _put_page(fs, 2, 1, 1, nxt)
+    options2 = {**options, "n": 2, "l0_ref": folder2}
+    norm2 = await run_harvest_normalise(options2, fs)
+    assert norm2.get("refused") is None, norm2
+
+
+@pytest.mark.asyncio
+async def test_houseless_admitted_n_reaches_normalise(fs: MemFs) -> None:
+    """Omit n after checkpoint 1. Admit picks 2; normalise must use that n."""
+    from types import SimpleNamespace
+
+    from .harvest_normalise import GrokbotCheckpointHarvestNormaliseHandler
+
+    folder1 = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options1 = {
+        "mode": "harvest_seal",
+        "houseless": True,
+        "agent_id": _AGENT,
+        "l0_ref": folder1,
+        "n": 1,
+    }
+    norm1 = await run_harvest_normalise(options1, fs)
+    adapter1 = await run_harvest_adapter(options1, norm1, fs)
+    await run_harvest_pour(options1, adapter1, fs, norm1)
+    folder2 = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    fresh = {
+        "mode": "harvest_seal",
+        "houseless": True,
+        "agent_id": _AGENT,
+        "l0_ref": folder2,
+    }
+    admitted = await run_admit(fresh, {}, fs=fs, get=None)
+    assert admitted["n"] == 2
+
+    # PipelineContext.options rebuilds; the handler must read admit.json.
+    ctx = SimpleNamespace(
+        options=fresh,
+        outputs={"admit": SimpleNamespace(json=admitted)},
+        fs=fs,
+        dispatch_thread_id="",
+    )
+    out = await GrokbotCheckpointHarvestNormaliseHandler().execute(None, ctx)
+    assert out.json.get("refused") is None, out.json
+    assert out.json["raw_ref"].endswith("/2.raw.json")
 
 
 @pytest.mark.asyncio

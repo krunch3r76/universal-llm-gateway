@@ -58,7 +58,12 @@ class GrokbotCheckpointHarvestPourHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
-        options = dict(getattr(context, "options", {}) or {})
+        from .admit import bind_admitted_n
+
+        options = bind_admitted_n(
+            dict(getattr(context, "options", {}) or {}),
+            getattr(context, "outputs", {}) or {},
+        )
         outputs = getattr(context, "outputs", {}) or {}
         adapter = step_output_json(outputs, "harvest_adapter")
         normalise = step_output_json(outputs, "harvest_normalise")

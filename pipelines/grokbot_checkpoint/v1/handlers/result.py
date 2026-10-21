@@ -99,7 +99,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             )
     return {
         "house": options.get("house"),
-        "n": options.get("n"),
+        "n": options.get("n") if options.get("n") is not None else admit.get("n"),
         "mode": options.get("mode"),
         "replayed": bool(admit.get("replayed") or card.get("replayed")),
         "completed_steps": completed,
@@ -166,7 +166,10 @@ class GrokbotCheckpointResultHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
-        options = dict(getattr(context, "options", {}) or {})
-        payload = assemble(options, getattr(context, "outputs", {}) or {})
+        from .admit import bind_admitted_n
+
+        outputs = getattr(context, "outputs", {}) or {}
+        options = bind_admitted_n(dict(getattr(context, "options", {}) or {}), outputs)
+        payload = assemble(options, outputs)
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         return StepOutput(raw=raw, json=payload)
