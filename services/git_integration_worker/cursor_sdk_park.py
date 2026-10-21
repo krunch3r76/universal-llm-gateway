@@ -13,7 +13,7 @@ import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from universal_logging import get_logger
 
@@ -46,6 +46,19 @@ _TERMINAL = frozenset({"completed", "failed"})
 _NEST_CHILD_DONE = frozenset({"completed", "failed", "cancelled"})
 
 ReleaseDisposition = Literal["restored", "released"]
+
+
+class OrphanReclaim(NamedTuple):
+    """Outcome of one orphan-holder reclaim for the stale-lease sweeper.
+
+    ``resume_admitted`` is true only when ``admit_nest_parent_resume``
+    accepts ``resume_of``. Callers that emit ``lease.released`` key off
+    this flag. A refusal cancels the ledger row before the admit response
+    returns, so status is not evidence that the resume was admitted.
+    """
+
+    lease_key: str | None
+    resume_admitted: bool
 
 
 def _resolve_key(*, lease_key: str | None, source_repo: str | None) -> str | None:
@@ -646,16 +659,18 @@ async def _resume_completed_nest_parent(
     lease_key: str | None,
     controller: Any,
     cfg: Any,
-) -> str | None:
+) -> OrphanReclaim:
     """Seal a restored parent through nest resume instead of an orphan fail.
 
     Aborts the stale bridge and frees the capacity slot, then admits
-    ``resume_of`` via ``admit_nest_parent_resume``. Does not emit
-    ``frontier.sdk.worker.orphaned`` and does not mark the parent failed.
-    Returns None when the resume admit owns the lease. Returns ``lease_key``
-    when the parent was sealed cancelled and queued writers may promote.
+    ``resume_of`` via ``admit_nest_parent_resume``. A successful admit
+    does not emit ``frontier.sdk.worker.orphaned`` and does not mark the
+    parent failed; ``resume_admitted`` is true and the lease key is empty
+    because the resume owns the lease. A refusal has already cancelled
+    the parent, so this emits ``frontier.sdk.worker.orphaned`` before
+    returning the lease key for ``lease.released``.
     """
-    await _stop_orphan_bridge(dispatch_id)
+    bridge_aborted = await _stop_orphan_bridge(dispatch_id)
     await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
     from services.git_integration_worker.cursor_sdk_nest_resume import (
         admit_nest_parent_resume,
@@ -668,13 +683,23 @@ async def _resume_completed_nest_parent(
         cfg=cfg,
     )
     if resumed:
-        return None
+        return OrphanReclaim(lease_key=None, resume_admitted=True)
     logger.warning(
         "completed nest child resume refused parent=%s child=%s",
         dispatch_id,
         child_id,
     )
-    return lease_key
+    holder = load_ledger_row(CursorDispatchLedger.instance(), dispatch_id=dispatch_id)
+    if holder is not None:
+        emit_sdk_worker_orphaned(
+            dispatch_id=dispatch_id,
+            thread_id=holder.thread_id,
+            execution_id=holder.execution_id or dispatch_id,
+            resolved_model=holder.resolved_model,
+            timeout_s=0.0,
+            bridge_aborted=bridge_aborted,
+        )
+    return OrphanReclaim(lease_key=lease_key, resume_admitted=False)
 
 
 async def reclaim_orphan_holder(
@@ -683,17 +708,19 @@ async def reclaim_orphan_holder(
     dispatch_id: str,
     controller: Any | None = None,
     cfg: Any | None = None,
-) -> str | None:
+    reap_only: bool = False,
+) -> OrphanReclaim:
     """Stop an orphan holder's bridge, then fail the row and free its lease.
 
     Parked holders and still-running nest children abort then OS-reap before
     the row is marked failed or the slot is force-released. A blocking parent
-    whose nest child is already completed is not failed and does not emit
-    ``frontier.sdk.worker.orphaned`` with ``timeout_s`` 0.0: the child commit
-    is harvested through ``admit_nest_parent_resume``. ``controller`` and
-    ``cfg`` are required for that admit; without them the parent stays on the
-    fail path. Returns the lease key for FIFO promotion, or None when the row
-    is missing, already terminal, or a resume admit now owns the lease.
+    whose nest child is already completed is harvested through
+    ``admit_nest_parent_resume`` when ``reap_only`` is false. ``reap_only``
+    skips that admit and keeps the fail path so a drain cannot start
+    ``resume_of``. ``controller`` and ``cfg`` are required for the admit;
+    without them the parent stays on the fail path. ``resume_admitted`` is
+    true only when that admit accepts. The lease key is empty when the row
+    is missing, already terminal, or the resume now owns the lease.
     """
     with ledger._connect() as conn:
         row = conn.execute(
@@ -702,7 +729,7 @@ async def reclaim_orphan_holder(
             (dispatch_id,),
         ).fetchone()
     if row is None or row["status"] not in _BLOCKING_STATUSES:
-        return None
+        return OrphanReclaim(lease_key=None, resume_admitted=False)
     key = _resolve_key(lease_key=row["lease_key"], source_repo=row["source_repo"])
     if row["status"] == "parked_waiting":
         child_id = row["park_child_dispatch_id"]
@@ -753,9 +780,14 @@ async def reclaim_orphan_holder(
                 dispatch_id=dispatch_id,
                 terminal_status="failed",
             )
-        return key
+        return OrphanReclaim(lease_key=key, resume_admitted=False)
     completed_child = _completed_nest_child_id(ledger, parent_id=dispatch_id)
-    if completed_child is not None and controller is not None and cfg is not None:
+    if (
+        completed_child is not None
+        and controller is not None
+        and cfg is not None
+        and not reap_only
+    ):
         return await _resume_completed_nest_parent(
             dispatch_id=dispatch_id,
             child_id=completed_child,
@@ -775,6 +807,7 @@ async def reclaim_orphan_holder(
             bridge_aborted=bridge_aborted,
         )
     await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
-    return await asyncio.to_thread(
+    released = await asyncio.to_thread(
         ledger.release_stale_writer, dispatch_id=dispatch_id, force=True
     )
+    return OrphanReclaim(lease_key=released, resume_admitted=False)
