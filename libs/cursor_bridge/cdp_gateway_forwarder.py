@@ -109,14 +109,52 @@ def allowed_cdp_peers(*, inspect_output: str | None = None) -> frozenset[str]:
     return mcp_server_peers_from_inspect(proc.stdout)
 
 
+def _cdp_allowlist_entry_authorizes(
+    entry: str, peer: ipaddress.IPv4Address
+) -> bool:
+    token = entry.strip()
+    if not token:
+        return False
+    try:
+        addr = ipaddress.ip_address(token)
+    except ValueError:
+        addr = None
+    else:
+        if isinstance(addr, ipaddress.IPv4Address) and addr == peer:
+            return True
+    try:
+        network = ipaddress.ip_network(token, strict=True)
+    except ValueError:
+        return False
+    if not isinstance(network, ipaddress.IPv4Network):
+        return False
+    if network.prefixlen != 32:
+        return False
+    return network.network_address == peer
+
+
 def is_allowed_cdp_peer(
     peer_host: str, *, allowed: frozenset[str] | None = None
 ) -> bool:
-    """True only when ``peer_host`` is the mcp-server container on compose_default."""
+    """True when some allowlist entry authorizes ``peer_host``.
+
+    Entry-wise OR: an exact IPv4 address equal to ``peer_host``, or an IPv4
+    network parsed with ``strict=True`` whose prefix length is exactly 32 and
+    whose network address equals ``peer_host``, authorizes that peer. Wider
+    prefixes (including ``0.0.0.0/0``), empty strings, whitespace-only tokens,
+    and an empty allowlist authorize nobody. Invalid entries and invalid
+    ``peer_host`` values never raise; they contribute no authorization.
+    """
     peers = allowed_cdp_peers() if allowed is None else allowed
     if not peers:
         return False
-    return peer_host in peers
+    try:
+        peer = ipaddress.ip_address(peer_host)
+    except ValueError:
+        return False
+    if not isinstance(peer, ipaddress.IPv4Address):
+        return False
+    return any(_cdp_allowlist_entry_authorizes(entry, peer) for entry in peers)
 
 
 def on_docker_bridge(addresses: frozenset[str]) -> bool:

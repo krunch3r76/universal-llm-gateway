@@ -166,6 +166,38 @@ def test_allowed_peers_only_mcp_server_container() -> None:
     assert allowed_cdp_peers(inspect_output="172.18.0.5 ") == frozenset({"172.18.0.5"})
 
 
+def test_is_allowed_cdp_peer_strict_allowlist() -> None:
+    host = "172.18.0.5"
+    other = "172.18.0.12"
+    slash32 = frozenset({"172.18.0.5/32"})
+    assert is_allowed_cdp_peer(host, allowed=slash32)
+    assert not is_allowed_cdp_peer(other, allowed=slash32)
+
+    wide = frozenset({"172.18.0.0/16"})
+    assert not is_allowed_cdp_peer(host, allowed=wide)
+
+    assert not is_allowed_cdp_peer(host, allowed=frozenset({"0.0.0.0/0"}))
+    assert not is_allowed_cdp_peer(host, allowed=frozenset())
+    assert not is_allowed_cdp_peer(host, allowed=frozenset({""}))
+    assert not is_allowed_cdp_peer(host, allowed=frozenset({"172.18.0.5/31"}))
+
+    assert is_allowed_cdp_peer(host, allowed=frozenset({"not-an-ip"})) is False
+    assert is_allowed_cdp_peer("not-a-peer", allowed=slash32) is False
+
+    sibling = frozenset({"172.18.0.5", "172.18.0.0/16"})
+    assert is_allowed_cdp_peer(host, allowed=sibling)
+    assert not is_allowed_cdp_peer(other, allowed=sibling)
+
+
+def test_allowed_cdp_peers_env_preserves_slash32_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CDP_GATEWAY_ALLOWED_PEERS", "172.18.0.5/32")
+    assert allowed_cdp_peers() == frozenset({"172.18.0.5/32"})
+    assert is_allowed_cdp_peer("172.18.0.5")
+    assert not is_allowed_cdp_peer("172.18.0.12")
+
+
 def test_refuses_non_mcp_compose_peer_before_relay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
