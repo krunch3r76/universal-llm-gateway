@@ -145,13 +145,13 @@ _ALLOWED_HOP_MODEL_EFFORT = frozenset({"low", "medium", "high", "xhigh"})
 def policy_hop_model_knobs(root_id: str, watch_dir: Path = WATCH_DIR) -> dict[str, str]:
     """``policy.hop_model_knobs`` — Glass ``createAgent`` effort/fast after catalog resolve.
 
-    Merges per-root tick overrides onto ``POLICY_DEFAULTS`` (xhigh, non-fast). House
+    Merges per-root tick overrides onto ``POLICY_DEFAULTS`` (xhigh, fast). House
     knobs override label-derived effort and catalog parameters on hop.
     """
     state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
     defaults_raw = POLICY_DEFAULTS.get("hop_model_knobs") or {
         "effort": "xhigh",
-        "fast": "false",
+        "fast": "true",
     }
     merged = {str(k): str(v) for k, v in defaults_raw.items()}
     raw = effective_policy(state).get("hop_model_knobs")
