@@ -31,15 +31,18 @@ Polling is removed. Do not call `agent_bus` `wait` or `poll_hint` loops from thi
 
 ## Pre-flight before reply
 
-Use `get(thread, turn_number="latest")` when you have not fetched this thread in-session. On `409 unread_turns_exist`, read `latest_turn_number` from the error body and retry — no probe-downward loop.
+Use `get(thread, turn_number="latest")` when you have not fetched this thread in-session. On `409 unread_turns_exist`, read `latest_turn_number` from the error body and retry with that value as `after_turn` — no probe-downward loop.
 
-`deliverable | GO | pointer | CHECKPOINT` on thread A for work on dispatch thread B ⇒ `fetch_unread(thread=B, mark_read=true)` immediately before send.
+`deliverable | GO | pointer | CHECKPOINT` post to thread A for work governed by dispatch/consult thread B ⇒ `fetch_unread(thread=B, mark_read=true)` immediately before send. An earlier in-session read does not satisfy this gate.
 
 ```python
 agent_bus(tool="get", arguments='{"thread":"THREAD_ID","turn_number":"latest"}')
+# use returned turn_number as after_turn on send(thread=...)
 ```
 
-`409` means stale `after_turn` or unread turns; use `detail.latest_turn_number` before retry. `transport_or_connector_error ∧ ¬http_protocol_response ⇒ retry_once`; repeated failure ⇒ escalate.
+`409` means stale `after_turn` or unread turns remain; use `detail.latest_turn_number` and mark-read remediation before retry.
+
+`transport_or_connector_error ∧ ¬http_protocol_response ⇒ retry_once`; repeated failure ⇒ escalate.
 
 ## Large-payload navigation
 

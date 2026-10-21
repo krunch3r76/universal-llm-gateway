@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -345,6 +346,45 @@ def test_hop_body_states_polling_removed_not_sleep_290() -> None:
     assert "polling is removed" in out
     assert "Sleep at most 290" not in out
     assert "sleep 290" not in out.lower()
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CDP_OPERATOR_PROXY_SKILL = (
+    _REPO_ROOT / "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md"
+)
+_AGENT_BUS_DISCIPLINE_REFERENCE = (
+    _REPO_ROOT
+    / "cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md"
+)
+_HISTORICAL_POLL_HEADING = "## Dispatch polling (historical — other seats)"
+
+
+def _cowork_operator_loop_shell(skill_text: str) -> str:
+    start = skill_text.index("## Cowork operator loop")
+    tail = skill_text[start + 1 :]
+    match = re.search(r"\n## [^#]", tail)
+    end = start + 1 + (match.start() if match else len(tail))
+    return skill_text[start:end]
+
+
+def test_maestro_shell_poll_contract_vs_historical_reference() -> None:
+    """Shell must not instruct agent_bus wait polling; reference keeps the procedure."""
+    skill_text = _CDP_OPERATOR_PROXY_SKILL.read_text(encoding="utf-8")
+    assert "≤290" not in skill_text
+    ref_text = _AGENT_BUS_DISCIPLINE_REFERENCE.read_text(encoding="utf-8")
+    assert _HISTORICAL_POLL_HEADING in ref_text
+    historical = ref_text.split(_HISTORICAL_POLL_HEADING, 1)[1].split("\n## ", 1)[0]
+    assert 'agent_bus(tool="wait"' in historical
+
+    shell = _cowork_operator_loop_shell(skill_text)
+    for line in shell.splitlines():
+        if "Do not call" in line or "Polling is removed" in line:
+            continue
+        assert not re.search(
+            r'agent_bus\s*\(\s*tool\s*=\s*["\']wait["\']|'
+            r"poll_hint\s+`arguments_json`\s+unchanged",
+            line,
+        ), line
 
 
 def test_mission_skill_slugs_include_lane_act_gates() -> None:

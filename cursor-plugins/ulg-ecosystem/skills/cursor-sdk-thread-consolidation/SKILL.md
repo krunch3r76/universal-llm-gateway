@@ -66,7 +66,7 @@ agent_bus(tool="fetch", arguments='{"thread": "<dispatch_thread_id>", "compact":
 
 For consolidated Q/R, these must resolve to **one thread**. Stage context on the pending shell and pass that shell as `dispatch_thread_id`; Stargate delivers the result turn to the same thread, closing the loop without extra threads to track or poll.
 
-Cross-links: `consult-routing` § Implement lane — source_ref (dispatch shape authority); `dispatch-shape` § Handoff poll hints (use `poll_hint.arguments_json` to poll the consolidated shell thread post-dispatch); `agent-bus-discipline` § Dispatch polling (cursor-sdk closeout matcher); `agent-bus-discipline` § Thread lifecycle (close the consolidated thread after reading the closeout — reduces false-unread counts at next boot).
+Cross-links: `consult-routing` § Implement lane — source_ref (dispatch shape authority); `dispatch-shape` § Handoff poll hints (use `poll_hint.arguments_json` to poll the consolidated shell thread post-dispatch); `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md` § **Dispatch polling (historical — other seats)** (cursor-sdk closeout matcher); `agent-bus-discipline` § Thread lifecycle (close the consolidated thread after reading the closeout — reduces false-unread counts at next boot).
 
 ## Post-dispatch poll recipe (cursor-sdk — mandatory)
 
