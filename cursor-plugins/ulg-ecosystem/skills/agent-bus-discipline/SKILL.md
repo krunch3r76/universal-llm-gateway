@@ -56,6 +56,8 @@ Whole-thread fetch of large threads hangs. (1) `get(turn_number="latest")`. (2) 
 
 Turn bodies are short briefings (target <2KB). Long specs go in a Cortex sidecar.
 
+**Maestro milestones (`to=maestro` / `web-anthropic`, heads such as DISPOSITION, DIRECTIVE, VERDICT, PLAN, …):** inline `body` must be **≤ 2,000** characters unless you pass `sidecar_content` (or `allow_long_body=true`). Over 2,000 without a sidecar ⇒ HTTP **422** `milestone_body_over_2000_chars` — move detail to `sidecar_content` and keep the inline body ≤ 2,000.
+
 **Preferred (E4):** `sidecar_content` on `send` — server writes durable file, appends `Sidecar: cortex://…`, returns `sidecar_uri` + `sidecar_sha256`.
 
 ```python

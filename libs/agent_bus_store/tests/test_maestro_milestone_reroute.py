@@ -341,3 +341,89 @@ def test_mcp_send_dispatch_reroutes_pickup_fact(
     assert "error" not in result
     assert relay_calls[0]["to"] == house
     assert relay_calls[0]["subject"] == subject
+
+
+def test_l29b_milestone_body_over_2000_without_sidecar_422(
+    tmp_path, monkeypatch
+) -> None:
+    app = _app(tmp_path, monkeypatch)
+    house = "grok-bot-bl1"
+    long_body = "x" * 2001
+    with TestClient(app) as client:
+        thread = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "l29b-over",
+                "from": house,
+                "to": "maestro",
+                "subject": "seed",
+                "body": "open",
+            },
+        ).json()["thread"]["id"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread,
+                "from": house,
+                "to": "maestro",
+                "subject": "DISPOSITION|leg",
+                "body": long_body,
+            },
+        )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "milestone_body_over_2000_chars"
+    assert "sidecar_content" in detail["fix_hint"]
+
+
+def test_l29b_milestone_with_sidecar_and_short_body_201(
+    tmp_path, monkeypatch
+) -> None:
+    app = _app(tmp_path, monkeypatch)
+    house = "grok-bot-bl1"
+    with TestClient(app) as client:
+        parent = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "l29b-sidecar-parent",
+                "from": house,
+                "to": house,
+                "subject": "seed",
+                "body": "parent",
+            },
+        ).json()["thread"]["id"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": parent,
+                "from": house,
+                "to": "maestro",
+                "subject": "DISPOSITION|leg",
+                "body": "verdict: ratify",
+                "sidecar_content": "# detail\n" + ("line\n" * 50),
+            },
+        )
+    assert resp.status_code == 201, resp.text
+
+
+def test_l29b_non_milestone_long_body_not_milestone_422(
+    tmp_path, monkeypatch
+) -> None:
+    """Non-milestone turns keep auto-spill / 413 behavior, not L29b milestone 422."""
+    app = _app(tmp_path, monkeypatch)
+    house = "grok-bot-bl1"
+    long_body = "y" * 5000
+    with TestClient(app) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "l29b-memo",
+                "from": house,
+                "to": "maestro",
+                "subject": "MEMO|note",
+                "body": long_body,
+            },
+        )
+    assert resp.status_code == 201, resp.text
+    detail = resp.json()
+    assert detail.get("auto_spilled") is True

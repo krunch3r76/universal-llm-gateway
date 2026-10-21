@@ -256,6 +256,15 @@ async def prepare_cursor_sdk_generate(
         model=fence_pin if isinstance(fence_pin, str) else None,
         resolved_model=resolved_model,
     )
+    from .cursor_sdk_generate_prepare_restart_busy import (
+        enforce_restart_busy_scoped_by_work_key,
+    )
+
+    await enforce_restart_busy_scoped_by_work_key(
+        request_id=request_id,
+        work_key=work_key,
+        admit_provenance=admit_provenance,
+    )
     if execution_id is None or dispatch_id is None:
         minted_execution, minted_dispatch = mint_cursor_sdk_ids(request_id=request_id)
         execution_id = execution_id or minted_execution

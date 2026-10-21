@@ -45,8 +45,15 @@ MAESTRO_MILESTONE_PREFIXES = frozenset(
         "ACK",
         "AMEND",
         "SEAT_REGISTRATION",
+        "DISPOSITION",
+        "DIRECTIVE",
+        "ORIENTED",
+        "ROUTE",
+        "HOLD",
+        "COMPLETE",
     }
 )
+MAESTRO_MILESTONE_BODY_MAX_CHARS = 2000
 MAESTRO_REROUTE_TO_HOUSE_PREFIXES = frozenset({"PICKUP", "FACT"})
 _MAESTRO_COMPOSE_TARGETS = frozenset({"maestro", "web-anthropic"})
 
@@ -57,6 +64,44 @@ def maestro_subject_head(subject: str | None) -> str:
     if not head:
         return ""
     return head.split()[0]
+
+
+def is_maestro_milestone_turn(*, to: str, subject: str | None) -> bool:
+    """True for maestro/web milestone heads (L17/L29b), including ``IN FLIGHT|``."""
+    if normalize_bus_address(to) not in _MAESTRO_COMPOSE_TARGETS:
+        return False
+    head_part = (subject or "").split("|", 1)[0].strip().upper()
+    if head_part.startswith("IN FLIGHT"):
+        return True
+    token = maestro_subject_head(subject)
+    return token in MAESTRO_MILESTONE_PREFIXES
+
+
+def milestone_body_over_limit_envelope() -> dict[str, str]:
+    return {
+        "code": "milestone_body_over_2000_chars",
+        "error": "Maestro milestone body exceeds 2000 characters without sidecar_content",
+        "fix_hint": (
+            "Move long detail to sidecar_content and keep body <= 2000 characters."
+        ),
+    }
+
+
+def _raise_if_maestro_milestone_body_over_limit(
+    body: TurnSendCreate,
+) -> None:
+    if body.allow_long_body:
+        return
+    if body.sidecar_content is not None:
+        return
+    if not is_maestro_milestone_turn(to=body.to or "", subject=body.subject):
+        return
+    if len(body.body) <= MAESTRO_MILESTONE_BODY_MAX_CHARS:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=milestone_body_over_limit_envelope(),
+    )
 
 
 def apply_maestro_milestone_reroute(
