@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -337,6 +338,68 @@ def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
     assert "How this seat works" in data
     assert "Standing authority" in data
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
+
+
+def test_hop_body_states_polling_removed_not_sleep_290() -> None:
+    """L1: rendered hop names removed polling and drops legacy sleep-290 poll prose."""
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert "polling is removed" in out
+    assert "Sleep at most 290" not in out
+    assert "sleep 290" not in out.lower()
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CDP_OPERATOR_PROXY_SKILL = (
+    _REPO_ROOT / "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md"
+)
+_AGENT_BUS_DISCIPLINE_REFERENCE = (
+    _REPO_ROOT
+    / "cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md"
+)
+_HISTORICAL_POLL_HEADING = "## Dispatch polling (historical — other seats)"
+_POLL_INSTRUCTION_SKIP = (
+    "Do not call",
+    "Polling is removed",
+    "Do not poll",
+    "re-poll from this seat",
+    "not a reason to re-poll",
+    "do not open a `poll_hint` wait loop",
+    "not via `poll_hint` loops",
+    "IDE polls",
+    "¬ poll",
+    "historical — other seats",
+    "cursor-sdk / IDE watchers",
+)
+_POLL_INSTRUCTION_RE = re.compile(
+    r'agent_bus\s*\(\s*tool\s*=\s*["\']wait["\']|'
+    r"poll_hint\s+`arguments_json`\s+unchanged|"
+    r"poll that response's `poll_hint`|"
+    r"wait on (?:that|the predecessor's|its) `poll_hint`|"
+    r"re-call the same hint|"
+    r"keep polling|"
+    r"`wait` until CLOSEOUT follows the `poll_hint`|"
+    r"before holding `wait`|"
+    r"polled by that call's `poll_hint`|"
+    r"poll\s*,|"
+    r"followup:\s*poll|"
+    r"poll agent-bus|"
+    r"poll/"
+)
+
+
+def test_maestro_shell_poll_contract_vs_historical_reference() -> None:
+    """cdp-operator-proxy SKILL must not instruct poll-wait; reference keeps wait procedure."""
+    skill_text = _CDP_OPERATOR_PROXY_SKILL.read_text(encoding="utf-8")
+    assert "≤290" not in skill_text
+    ref_text = _AGENT_BUS_DISCIPLINE_REFERENCE.read_text(encoding="utf-8")
+    assert _HISTORICAL_POLL_HEADING in ref_text
+    historical = ref_text.split(_HISTORICAL_POLL_HEADING, 1)[1].split("\n## ", 1)[0]
+    assert 'agent_bus(tool="wait"' in historical
+
+    for line in skill_text.splitlines():
+        if any(skip in line for skip in _POLL_INSTRUCTION_SKIP):
+            continue
+        assert not _POLL_INSTRUCTION_RE.search(line), line
 
 
 def test_mission_skill_slugs_include_lane_act_gates() -> None:
