@@ -487,6 +487,7 @@ def _lane_seat_followup_gate(
             )
         if state == "ambiguous":
             _emit_lane_current(lane, lane_body, applied=False)
+            superseded_count = int(lane_body.get("superseded_count") or 0)
             contested = _in_flight_off_holder(lane_body)
             if contested:
                 detail = ", ".join(contested)
@@ -496,9 +497,15 @@ def _lane_seat_followup_gate(
                     for page in lane_body.get("candidates") or []
                     if isinstance(page, dict) and page.get("chat_url")
                 )
+            if len(detail) > 360:
+                detail = detail[:357] + "..."
             return (
                 req,
-                fail_followup("lane_cse_ambiguous", detail=detail),
+                fail_followup(
+                    "lane_cse_ambiguous",
+                    detail=detail,
+                    superseded_count=superseded_count,
+                ),
                 None,
             )
         if state == "current":

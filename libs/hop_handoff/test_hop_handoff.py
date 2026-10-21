@@ -339,3 +339,118 @@ def test_consume_time_protocol_missing_later_seat_still_stand_down() -> None:
     text = consume_time_wake_protocol(thread_id=_THREAD)
     assert "later successor_birth_id" in text
     assert "Absence is not permission when the live bus tip names a later" in text
+
+
+def test_successor_identity_lines_in_continuity_body() -> None:
+    body = _cadence_body(
+        successor_registration_id="reg-abc",
+        successor_chat_url="https://claude.ai/cowork/cse_01test",
+    )
+    assert "successor_registration_id: reg-abc" in body
+    assert "successor_chat_url: https://claude.ai/cowork/cse_01test" in body
+    null_body = _cadence_body(
+        successor_registration_id=None,
+        successor_chat_url="",
+    )
+    assert "successor_registration_id: null" in null_body
+    assert "successor_chat_url: null" in null_body
+
+
+def test_operator_proxy_mission_no_resolve_attended_at_boot() -> None:
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+    )
+
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert 'cse_session(op="resolve_attended") at boot' in out
+    assert "Hard refusals" in out
+
+
+def _mcp_tools_on_path() -> None:
+    import sys
+    from pathlib import Path
+
+    root = str(Path(__file__).resolve().parents[2] / "services" / "mcp-server")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+def test_hop_dispatch_successor_receipt_fields() -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    _mcp_tools_on_path()
+    from tools.agent_bus.hop import _hop_dispatch, execute_hop
+
+    assert execute_hop is _hop_dispatch
+
+    async def fake_relay(**_kwargs: object) -> dict[str, str]:
+        return {
+            "execution_id": "exec-1",
+            "registration_id": "reg-hop",
+            "chat_url": "https://claude.ai/cowork/cse_01hop",
+        }
+
+    async def run_dispatch() -> dict[str, object]:
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=_handoff("current"),
+            ),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread=_THREAD,
+                reason="test-receipt",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run_dispatch())
+    succ = result.get("successor")
+    assert isinstance(succ, dict)
+    assert succ.get("execution_id") == "exec-1"
+    assert succ.get("registration_id") == "reg-hop"
+    assert succ.get("chat_url") == "https://claude.ai/cowork/cse_01hop"
+    assert succ.get("value")
+
+
+def test_hop_dispatch_empty_successor_relay_fields() -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    _mcp_tools_on_path()
+    from tools.agent_bus.hop import _hop_dispatch
+
+    async def fake_relay(**_kwargs: object) -> dict[str, str]:
+        return {"execution_id": "", "registration_id": "  ", "chat_url": ""}
+
+    async def run_dispatch() -> dict[str, object]:
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=_handoff("current"),
+            ),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread=_THREAD,
+                reason="test-empty-relay",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run_dispatch())
+    succ = result.get("successor")
+    assert isinstance(succ, dict)
+    assert succ.get("execution_id") is None
+    assert succ.get("registration_id") is None
+    assert succ.get("chat_url") is None

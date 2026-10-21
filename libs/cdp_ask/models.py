@@ -449,3 +449,4 @@ class FollowupProjectAskResponse(BaseModel):
     lane_created: bool = False
     target_binding: TargetBinding | None = None
     reattach_skipped_reason: str | None = None
+    superseded_count: int | None = None

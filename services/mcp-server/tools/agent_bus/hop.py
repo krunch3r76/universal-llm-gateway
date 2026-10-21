@@ -363,9 +363,12 @@ async def _hop_dispatch(
     result = commissioned["relay"]
     if isinstance(result, dict) and "error" in result:
         return result
-    execution_id = (
-        str(result.get("execution_id") or "") if isinstance(result, dict) else ""
-    )
+    raw_exec = result.get("execution_id") if isinstance(result, dict) else None
+    execution_id = str(raw_exec or "").strip()
+    raw_reg = result.get("registration_id") if isinstance(result, dict) else None
+    successor_reg_id = (str(raw_reg).strip() or None) if raw_reg is not None else None
+    raw_url = result.get("chat_url") if isinstance(result, dict) else None
+    successor_chat_url = (str(raw_url).strip() or None) if raw_url is not None else None
     record(
         "mcp.agentbus.hop.posted",
         thread=thread_id,
@@ -392,5 +395,11 @@ async def _hop_dispatch(
             "is the predecessor's receipt — successor_birth_id names the "
             "successor, not the caller"
         ),
+        "execution_id": execution_id or None,
+        "registration_id": successor_reg_id,
+        "chat_url": successor_chat_url,
     }
     return stamped
+
+
+execute_hop = _hop_dispatch

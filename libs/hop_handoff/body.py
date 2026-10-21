@@ -86,6 +86,8 @@ def build_continuity_handoff_body(
     standing_handoff_budget: str | None = None,
     standing_handoff_identity: str | None = None,
     inflight_rows: int | None = None,
+    successor_registration_id: str | None = None,
+    successor_chat_url: str | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -155,6 +157,10 @@ def build_continuity_handoff_body(
         lines.append(f"inflight_rows: {int(inflight_rows)}")
     if superseded_registration_id:
         lines.append(f"superseded_registration_id: {superseded_registration_id}")
+    reg_val = (successor_registration_id or "").strip() or "null"
+    url_val = (successor_chat_url or "").strip() or "null"
+    lines.append(f"successor_registration_id: {reg_val}")
+    lines.append(f"successor_chat_url: {url_val}")
     lines.append(f"{_BIRTH_ID_PREFIX} {birth_id}")
     return "\n".join(lines) + "\n"
 

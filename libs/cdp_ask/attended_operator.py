@@ -7,6 +7,7 @@ candidate on its own ``cdp_url`` only — it never selects among ports.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -423,6 +424,23 @@ def refused_to_http_body(outcome: AttendedResolveRefused) -> dict[str, Any]:
         body["probe"] = _probe_dict(outcome.probe)
     if outcome.conflict is not None:
         body["conflict"] = outcome.conflict
+    if outcome.code == "ambiguous_attended" and len(json.dumps(body).encode("utf-8")) >= 1024:
+        body["shadow_urls_count"] = len(body.get("shadow_urls") or [])
+        body["shadow_urls"] = []
+        if len(json.dumps(body).encode("utf-8")) >= 1024 and body.get("candidates"):
+            body["candidates"] = [
+                {
+                    "registration_id": c.get("registration_id"),
+                    "chat_url": c.get("chat_url"),
+                    "purpose": c.get("purpose"),
+                }
+                for c in body["candidates"]
+                if isinstance(c, dict)
+            ]
+        if len(json.dumps(body).encode("utf-8")) >= 1024:
+            body["candidates_truncated"] = True
+            while body.get("candidates") and len(json.dumps(body).encode("utf-8")) >= 1024:
+                body["candidates"].pop()
     return body
 
 

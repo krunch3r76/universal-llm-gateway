@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -684,8 +685,12 @@ def test_a37868_drain_stream_is_not_current() -> None:
     assert body["reason"] == "stored_association_streaming"
     assert body["current"] is None
     kkej = next(p for p in body["candidates"] if p["chat_url"] == KKEJ)
-    assert kkej["evidence_class"] == "stored_association"
-    assert BB6A in body["unclaimed_cse_urls"]
+    assert kkej["in_flight"] is True
+    assert "provenance_claim" in kkej["claims"]
+    if "evidence_class" in kkej:
+        assert kkej["evidence_class"] == "stored_association"
+    assert _wire409(body) < 1024
+    assert BB6A in body["unclaimed_cse_urls"] or body.get("unclaimed_cse_count") == 1
     assert body["seat_holder"]["evidence_class"] == "stored_association"
 
 
@@ -1536,3 +1541,213 @@ def test_superseded_and_unstamped_rows_do_not_collide_with_open_seat(
     assert winner is not None
     assert winner.registration_id == "newer"
     assert current_seat_for_lane("other") is None
+
+
+def _cse_url(n: int) -> str:
+    return f"https://claude.ai/cowork/cse_wirecap{n:04d}"
+
+
+def _reg_row(
+    rid: str,
+    *,
+    closed: bool = False,
+    url: str | None = None,
+) -> Any:
+    class _Row:
+        parent_thread = LANE
+        registration_id = rid
+        purpose = "operator-proxy"
+        seat_lane = LANE
+        seat_closed_at = 1.0 if closed else None
+
+    _Row.__name__ = f"_Reg_{rid}"
+    return _Row()
+
+
+def _wire409(body: dict[str, Any]) -> int:
+    return len(json.dumps({**body, "code": "lane_cse_ambiguous"}).encode("utf-8"))
+
+
+def test_l12_superseded_count_and_wire_cap_with_unclaimed() -> None:
+    superseded = [_reg_row(f"sup-{i:02d}", closed=True) for i in range(20)]
+    active_urls = [_cse_url(1), _cse_url(2)]
+    unclaimed = [_cse_url(100 + i) for i in range(15)]
+
+    def list_pages() -> Any:
+        ports = 9200
+        for url in active_urls + unclaimed:
+            ports += 1
+            yield ports, url, f"ws://{ports}"
+
+    reg_urls = {f"act-{i}": active_urls[i] for i in range(2)}
+
+    class _Active:
+        pass
+
+    active_regs = [_reg_row("act-0"), _reg_row("act-1")] + superseded
+
+    def chat_url_for_registration(rid: str) -> str | None:
+        if rid in reg_urls:
+            return reg_urls[rid]
+        return None
+
+    def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        return {"streaming": True, "stop": False, "tool_pause": False}, True
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        list_pages=list_pages,
+        probe_page=probe,
+        provenance_for=lambda _u: None,
+        list_active=lambda: active_regs,
+        chat_url_for_registration=chat_url_for_registration,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body["superseded_count"] == 20
+    for page in body["candidates"]:
+        assert "in_flight" in page
+        assert "claims" in page
+        assert "superseded_registry_row" not in (page.get("claims") or [])
+    assert _wire409(body) < 1024
+
+
+def test_l12_many_active_candidates_truncated_under_wire_cap() -> None:
+    active_urls = [_cse_url(i) for i in range(25)]
+    unclaimed = [_cse_url(500 + i) for i in range(15)]
+    active_regs = [_reg_row(f"live-{i:02d}") for i in range(25)]
+
+    def list_pages() -> Any:
+        for i, url in enumerate(active_urls + unclaimed):
+            yield 9300 + i, url, f"ws://{9300 + i}"
+
+    def chat_url_for_registration(rid: str) -> str | None:
+        idx = int(rid.split("-")[1])
+        return active_urls[idx]
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        list_pages=list_pages,
+        probe_page=lambda _p, _w: (
+            {"streaming": True, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda _u: None,
+        list_active=lambda: active_regs,
+        chat_url_for_registration=chat_url_for_registration,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body.get("candidates_truncated") is True
+    for page in body["candidates"]:
+        assert "in_flight" in page
+        assert "claims" in page
+    assert _wire409(body) < 1024
+
+
+def test_l12_include_superseded_returns_all_claimed() -> None:
+    active_urls = [_cse_url(1), _cse_url(2)]
+    superseded_url = _cse_url(99)
+
+    def list_pages() -> Any:
+        yield 9220, active_urls[0], "ws://9220"
+        yield 9221, active_urls[1], "ws://9221"
+        yield 9222, superseded_url, "ws://9222"
+
+    regs = [
+        _reg_row("live-a"),
+        _reg_row("live-b"),
+        _reg_row("old-seat", closed=True),
+    ]
+
+    def chat_url_for_registration(rid: str) -> str | None:
+        return {
+            "live-a": active_urls[0],
+            "live-b": active_urls[1],
+            "old-seat": superseded_url,
+        }.get(rid)
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        list_pages=list_pages,
+        probe_page=lambda _p, _w: (
+            {"streaming": True, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda _u: None,
+        list_active=lambda: regs,
+        chat_url_for_registration=chat_url_for_registration,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+        include_superseded=True,
+    )
+    assert body["state"] == "ambiguous"
+    urls = {p["chat_url"] for p in body["candidates"]}
+    assert superseded_url in urls
+    assert len(body["candidates"]) == 3
+
+
+def test_l12_followup_gate_superseded_count_and_wire_cap() -> None:
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+    from cdp_ask.models import FollowupProjectAskRequest
+
+    superseded = [_reg_row(f"sup-{i:02d}", closed=True) for i in range(20)]
+    u1, u2 = _cse_url(1), _cse_url(2)
+
+    def list_pages() -> Any:
+        yield 9223, u1, "ws://9223"
+        yield 9224, u2, "ws://9224"
+
+    active_regs = [_reg_row("act-0"), _reg_row("act-1")] + superseded
+
+    def chat_url_for_registration(rid: str) -> str | None:
+        return {"act-0": u1, "act-1": u2}.get(rid)
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        list_pages=list_pages,
+        probe_page=lambda _p, _w: (
+            {"streaming": True, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda _u: None,
+        list_active=lambda: active_regs,
+        chat_url_for_registration=chat_url_for_registration,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    req = FollowupProjectAskRequest(prompt_text="memo", parent_thread=LANE)
+    _bound, err, _path = _lane_seat_followup_gate(req, {"body": body}, {})
+    assert err is not None
+    assert err.error == "lane_cse_ambiguous"
+    assert err.superseded_count == 20
+    assert len(json.dumps(err.model_dump()).encode("utf-8")) < 1024
+
+
+def test_l12_refused_to_http_body_ambiguous_attended_wire_cap() -> None:
+    from cdp_ask.attended_operator import AttendedResolveRefused, refused_to_http_body
+
+    candidates = [
+        {
+            "registration_id": f"reg-{i:02d}",
+            "chat_url": _cse_url(i),
+            "purpose": "operator-proxy",
+            "provenance": {"parent_thread_claim": LANE, "reason": "x" * 200},
+        }
+        for i in range(20)
+    ]
+    shadow = [_cse_url(800 + i) for i in range(15)]
+    body = refused_to_http_body(
+        AttendedResolveRefused(
+            code="ambiguous_attended",
+            candidates=candidates,
+            shadow_urls=shadow,
+        )
+    )
+    assert len(json.dumps(body).encode("utf-8")) < 1024
