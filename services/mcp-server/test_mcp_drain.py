@@ -264,3 +264,172 @@ async def test_manage_result_arms_and_clears_the_admit_fence() -> None:
         assert await post() == 200
     finally:
         drain.reset_drain_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_failure_before_stop_clears_the_admit_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed mcp intent clears the fence without a container stop.
+
+    The import probe can fail before sync-and-restart-mcp.sh stops the
+    container. The old process keeps serving, so the flag must drop when
+    manage.sock reports that intent failed. The recheck runs off the
+    tools/call path.
+    """
+    from middleware import drain
+
+    from tools import manage as manage_mod
+
+    drain.reset_drain_for_tests()
+
+    async def app(_scope: Any, _receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def post() -> int:
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "fs", "arguments": {}},
+            }
+        ).encode()
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await drain.DrainMiddleware(app)(
+            {"type": "http", "path": "/mcp/code", "method": "POST"},
+            receive,
+            send,
+        )
+        return int(sent[0]["status"])
+
+    def failed_status(body: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
+        del body, timeout
+        return {
+            "result": {
+                "restart_intent": {
+                    "restart_intent_id": "intent-mcp-fail",
+                    "status": "failed",
+                }
+            }
+        }
+
+    try:
+        manage_mod.note_mcp_pending_intent(
+            "sync_restart",
+            "mcp",
+            {
+                "status": "deferred",
+                "state": "draining",
+                "service": "mcp",
+                "restart_intent_id": "intent-mcp-fail",
+            },
+        )
+        assert await post() == 503
+        monkeypatch.setattr(manage_mod, "_call_manage", failed_status)
+        manage_mod.recheck_armed_mcp_intent()
+        assert drain.pending_mcp_intent_id() is None
+        assert await post() == 200
+    finally:
+        drain.reset_drain_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_refused_cancel_of_terminal_intent_clears_the_admit_fence() -> None:
+    """A refused cancel of an already-terminal mcp intent reopens tools/call.
+
+    ``orchestrate_cancel_restart_intent`` returns ``status=refused`` once the
+    intent has left ``pending_drain``. That refusal is the signal the intent
+    is dead; the fence must not stay up.
+    """
+    from middleware import drain
+    from tools.manage import note_mcp_pending_intent
+
+    drain.reset_drain_for_tests()
+
+    async def app(_scope: Any, _receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def post() -> int:
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "fs", "arguments": {}},
+            }
+        ).encode()
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await drain.DrainMiddleware(app)(
+            {"type": "http", "path": "/mcp/code", "method": "POST"},
+            receive,
+            send,
+        )
+        return int(sent[0]["status"])
+
+    try:
+        note_mcp_pending_intent(
+            "sync_restart",
+            "mcp",
+            {
+                "status": "deferred",
+                "state": "draining",
+                "service": "mcp",
+                "restart_intent_id": "intent-mcp-terminal",
+            },
+        )
+        assert await post() == 503
+        note_mcp_pending_intent(
+            "cancel_restart_intent",
+            "mcp",
+            {
+                "status": "refused",
+                "reason": "cancel_refused_after_final_check_or_terminal",
+                "intent_id": "intent-mcp-terminal",
+                "intent_status": "failed",
+            },
+            intent_id="intent-mcp-terminal",
+        )
+        assert drain.pending_mcp_intent_id() is None
+        assert await post() == 200
+    finally:
+        drain.reset_drain_for_tests()
+
+
+def test_unconfirmed_mcp_intent_hold_fails_open_at_max_age() -> None:
+    """Without a live confirm, the fence drops after the max hold age.
+
+    Covers the socket-down case: the off-request recheck cannot prove the
+    intent is still pending, and the request path must not 503 forever.
+    """
+    from middleware import drain
+
+    drain.reset_drain_for_tests()
+    try:
+        drain.set_pending_mcp_intent(True, intent_id="intent-aged")
+        assert drain._pending_mcp_intent_set() is True
+        drain._PENDING_ARMED_MONO = (
+            drain.time.monotonic() - drain.MCP_INTENT_MAX_HOLD_S - 1
+        )
+        assert drain._pending_mcp_intent_set() is False
+        assert drain.pending_mcp_intent_id() is None
+    finally:
+        drain.reset_drain_for_tests()

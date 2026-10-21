@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
@@ -252,35 +254,182 @@ def _lifecycle_timeout_result(
     }
 
 
-def note_mcp_pending_intent(action: str, service: str | None, result: dict[str, Any]) -> None:
+_LIVENESS_POLL_S = 5.0
+
+
+def _restart_intent_view(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the embedded restart-intent object, or None when absent or null."""
+    intent = result.get("restart_intent")
+    if isinstance(intent, dict):
+        return intent
+    return None
+
+
+def _result_names_armed_intent(
+    result: dict[str, Any],
+    *,
+    service: str | None,
+    intent_id: str,
+    armed_id: str | None,
+) -> bool:
+    """True when this manage result is about the armed mcp intent.
+
+    An mcp-scoped read with a null intent names it too: the live mcp intent
+    is gone. A different service, or a different id, does not.
+    """
+    if service not in {None, "", "mcp"} and result.get("service") not in {
+        None,
+        "",
+        "mcp",
+    }:
+        return False
+    named = str(
+        result.get("intent_id")
+        or (_restart_intent_view(result) or {}).get("restart_intent_id")
+        or intent_id
+        or ""
+    )
+    if armed_id and named and named != armed_id:
+        return False
+    if service == "mcp":
+        return True
+    if result.get("service") == "mcp":
+        return True
+    if armed_id and named == armed_id:
+        return True
+    return False
+
+
+def note_mcp_pending_intent(
+    action: str,
+    service: str | None,
+    result: dict[str, Any],
+    *,
+    intent_id: str = "",
+) -> None:
     """Arm or clear the in-process admit fence from a manage result.
 
     A drain holds later tools/call only after this process sets the flag.
-    A deferred mcp result that carries ``restart_intent_id`` arms it. A
-    successful cancel of an mcp intent clears it. Soft-defers, other
-    services, and error results leave the flag as it is. A failure to
-    import the drain module leaves the manage result unchanged.
+    A deferred mcp result that carries ``restart_intent_id`` arms it and
+    stores that id. The flag clears when an mcp result shows that intent is
+    no longer pending: a cancel that landed, a refused cancel, ``intent_not_found``,
+    or a ``restart_intent`` / busy read whose status is terminal or null.
+    A still-live status confirms the hold so the max-age backstop does not
+    open the fence during a real drain. Soft-defers, other services, and
+    socket errors leave the flag as it is. A failure to import the drain
+    module leaves the manage result unchanged. Arming starts an off-request
+    poll of ``restart_intent_status`` so the flag can drop without a later
+    tools/call from a seat.
     """
     if not isinstance(result, dict) or "error" in result:
         return
     try:
-        from middleware.drain import set_pending_mcp_intent
+        from middleware.drain import (
+            confirm_pending_mcp_intent,
+            intent_status_still_pending,
+            liveness_watch_enabled,
+            pending_mcp_intent_id,
+            set_pending_mcp_intent,
+        )
     except Exception:
         logger.warning("mcp admit fence unavailable", exc_info=True)
-        return
-    if (
-        action == "cancel_restart_intent"
-        and result.get("status") == "cancelled"
-        and result.get("service") == "mcp"
-    ):
-        set_pending_mcp_intent(False)
         return
     if (
         service == "mcp"
         and result.get("status") == "deferred"
         and result.get("restart_intent_id")
     ):
-        set_pending_mcp_intent(True)
+        armed = str(result["restart_intent_id"])
+        set_pending_mcp_intent(True, intent_id=armed)
+        if liveness_watch_enabled():
+            _start_mcp_intent_watch(armed)
+        return
+    armed_id = pending_mcp_intent_id()
+    if not _result_names_armed_intent(
+        result, service=service, intent_id=intent_id, armed_id=armed_id
+    ):
+        return
+    if action == "cancel_restart_intent" and result.get("status") == "cancelled":
+        set_pending_mcp_intent(False)
+        return
+    if result.get("status") == "refused" or result.get("reason") == "intent_not_found":
+        set_pending_mcp_intent(False)
+        return
+    if "restart_intent" not in result:
+        return
+    view = _restart_intent_view(result)
+    if view is None:
+        set_pending_mcp_intent(False)
+        return
+    status = view.get("status")
+    status_text = status if isinstance(status, str) else None
+    view_id = str(view.get("restart_intent_id") or intent_id or armed_id or "")
+    if intent_status_still_pending(status_text):
+        if view_id:
+            confirm_pending_mcp_intent(view_id)
+        return
+    set_pending_mcp_intent(False)
+
+
+def recheck_armed_mcp_intent() -> None:
+    """Read the armed intent from manage.sock and clear the fence when it is dead.
+
+    Called off the tools/call path by the liveness watch. A socket error
+    leaves the flag set; the hold-age backstop in the drain middleware
+    fail-opens when confirms stop arriving. No armed id is a no-op.
+    """
+    from middleware.drain import pending_mcp_intent_id
+
+    armed_id = pending_mcp_intent_id()
+    if not armed_id:
+        return
+    raw = _call_manage(
+        {
+            "jsonrpc": "2.0",
+            "method": "restart_intent_status",
+            "params": {"intent_id": armed_id},
+            "id": 1,
+        },
+        timeout=_PROGRESS_PROBE_TIMEOUT,
+    )
+    note_mcp_pending_intent(
+        "restart_intent_status",
+        "mcp",
+        _extract_result(raw),
+        intent_id=armed_id,
+    )
+
+
+def _start_mcp_intent_watch(intent_id: str) -> None:
+    """Poll intent liveness until the fence drops or the id changes.
+
+    The thread is a daemon so process exit does not wait on it. One watch
+    per arm; a newer id causes the older loop to return.
+    """
+    thread = threading.Thread(
+        target=_watch_mcp_intent,
+        args=(intent_id,),
+        name=f"mcp-intent-liveness-{intent_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _watch_mcp_intent(intent_id: str) -> None:
+    from middleware.drain import liveness_watch_enabled, pending_mcp_intent_id
+
+    while True:
+        time.sleep(_LIVENESS_POLL_S)
+        if not liveness_watch_enabled():
+            return
+        if pending_mcp_intent_id() != intent_id:
+            return
+        try:
+            recheck_armed_mcp_intent()
+        except Exception:
+            logger.warning("mcp intent liveness recheck failed", exc_info=True)
+        if pending_mcp_intent_id() != intent_id:
+            return
 
 
 def register_manage_tools(mcp: FastMCP) -> None:
@@ -645,5 +794,5 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 duration_s=round(duration, 3),
             )
 
-        note_mcp_pending_intent(action, service, result)
+        note_mcp_pending_intent(action, service, result, intent_id=intent_id)
         return result
