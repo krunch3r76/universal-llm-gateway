@@ -37,6 +37,52 @@ def window_mutex_path(gui_host: str, focus_title: str | None) -> Path:
     return WATCH_DIR / f"liaison-gui-{host}-{digest}.hop.lock"
 
 
+def _lock_refusal(
+    path: Path,
+    raw: dict[str, Any],
+    *,
+    ttl_s: float,
+    phase: str,
+    refuse_fix: str,
+    t: float,
+) -> dict[str, Any] | None:
+    """Return a refusal dict when an on-disk lock is still valid; else None."""
+    started = float(raw.get("started_at") or 0.0)
+    pid = int(raw.get("pid") or 0)
+    age = t - started if started else ttl_s + 1.0
+    alive = False
+    if pid > 0:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except OSError:
+            alive = False
+    if age < ttl_s and (alive or started > 0):
+        return {
+            "ok": False,
+            "phase": phase,
+            "path": str(path),
+            "holder_pid": pid,
+            "holder_root": raw.get("root"),
+            "age_s": round(age, 2),
+            "ttl_s": ttl_s,
+            "fix": refuse_fix.format(
+                pid=pid, age=age, ttl_s=ttl_s, holder_root=raw.get("root")
+            ),
+        }
+    return None
+
+
+def _read_lock_raw(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _try_acquire(
     path: Path,
     *,
@@ -48,37 +94,38 @@ def _try_acquire(
 ) -> dict[str, Any]:
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     t = time.time() if now is None else now
-    if path.is_file():
+    for _attempt in range(3):
+        raw = _read_lock_raw(path)
+        if raw:
+            refusal = _lock_refusal(
+                path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
+            )
+            if refusal is not None:
+                return refusal
+            path.unlink(missing_ok=True)
+        payload = {"pid": os.getpid(), "started_at": t, **payload_extra}
+        blob = (json.dumps(payload) + "\n").encode("utf-8")
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            raw = {}
-        started = float(raw.get("started_at") or 0.0)
-        pid = int(raw.get("pid") or 0)
-        age = t - started if started else ttl_s + 1.0
-        alive = False
-        if pid > 0:
-            try:
-                os.kill(pid, 0)
-                alive = True
-            except OSError:
-                alive = False
-        if age < ttl_s and (alive or started > 0):
-            return {
-                "ok": False,
-                "phase": phase,
-                "path": str(path),
-                "holder_pid": pid,
-                "holder_root": raw.get("root"),
-                "age_s": round(age, 2),
-                "ttl_s": ttl_s,
-                "fix": refuse_fix.format(
-                    pid=pid, age=age, ttl_s=ttl_s, holder_root=raw.get("root")
-                ),
-            }
-    payload = {"pid": os.getpid(), "started_at": t, **payload_extra}
-    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-    return {"ok": True, "path": str(path), "pid": payload["pid"], "started_at": t}
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            continue
+        try:
+            os.write(fd, blob)
+        finally:
+            os.close(fd)
+        return {"ok": True, "path": str(path), "pid": payload["pid"], "started_at": t}
+    raw = _read_lock_raw(path)
+    refusal = _lock_refusal(
+        path, raw, ttl_s=ttl_s, phase=phase, refuse_fix=refuse_fix, t=t
+    )
+    if refusal is not None:
+        return refusal
+    return {
+        "ok": False,
+        "phase": phase,
+        "path": str(path),
+        "fix": "exclusive lock create lost race after retries",
+    }
 
 
 def _release(path: Path, *, pid: int | None = None) -> dict[str, Any]:

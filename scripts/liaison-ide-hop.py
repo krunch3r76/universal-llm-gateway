@@ -50,6 +50,8 @@ from bus_watch.ide_hop import (
     seal_hop_window,
     tick_register,
 )
+from bus_watch.ide_hop_land import DEFAULT_LANDING_TIMEOUT_S
+from bus_watch.ide_hop_mutex import release_hop_mutex, try_acquire_hop_mutex
 from bus_watch.ide_hop_retire import (
     GOAL_RELEASE,
     RETIRED_TAB_PREFIX,
@@ -287,12 +289,18 @@ def main() -> int:
         tip_cp_ordinal=args.tip_cp,
         register=reg,
     )
+    root_ttl = max(120.0, float(DEFAULT_LANDING_TIMEOUT_S) + 30.0)
+    hop_mutex = try_acquire_hop_mutex(args.root, ttl_s=root_ttl)
+    if not hop_mutex.get("ok"):
+        print(json.dumps({"ok": False, "root": args.root, **hop_mutex}, indent=2))
+        return 2
     seal = seal_hop_window(
         args.root,
         transcript_id=args.transcript_id,
         preamble=preamble,
     )
     if not seal.get("ok"):
+        release_hop_mutex(args.root)
         print(json.dumps({"ok": False, "root": args.root, **seal}, indent=2))
         return 2
     # Tip fingerprints land (a:38386 / a:38439). When the seat omits --tip-cp,
@@ -323,6 +331,7 @@ def main() -> int:
         departing_transcript_id=args.transcript_id,
         on_fired=None if args.dry_run else _on_fired,
         model_query=args.model_query,
+        hop_mutex_preheld=True,
     )
     out["arm_labels"] = labels
     out["seal"] = seal
