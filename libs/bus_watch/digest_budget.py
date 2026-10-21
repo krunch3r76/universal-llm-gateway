@@ -170,7 +170,11 @@ def _get(client: httpx.Client, path: str, **params: Any) -> dict[str, Any] | Non
 
 
 def health_probe(url: str) -> str:
-    """GET ``url`` for liaison digest health lines; ``ok`` or a short failure tag."""
+    """GET ``url`` for liaison digest health lines; ``ok`` or a short failure tag.
+
+    Used by the liaison digest fleet block. The timeout is 3 seconds. A
+    transport error is returned as text and does not raise.
+    """
     try:
         r = httpx.get(url, timeout=3.0)
     except httpx.HTTPError as exc:
@@ -266,9 +270,11 @@ def seat_budget(
 ) -> tuple[dict[str, Any], float]:
     """Seat window for digest: GIW stream, IDE tab measure, or digest estimate fallback.
 
-    IDE measures may omit normalized keys; raw Glass ``contextTokensUsed`` /
-    ``contextTokenLimit`` and zero defaults for tool counts are accepted without
-    raising. SDK hops use the model card window; unread picker defaults to 256k.
+    A normalized probe with ``ok`` but no ``used_tokens`` returns
+    ``budget_probe=incomplete`` without inventing a count. Raw Glass probes
+    that only carry ``contextTokensUsed`` / ``contextTokenLimit`` still map
+    to measured tokens. SDK hops use the model card window; unread picker
+    defaults to 256k.
     """
     from bus_watch.ide_budget import IDE_BUDGET_SOURCE, ide_holder_transcript
 
@@ -300,20 +306,41 @@ def seat_budget(
     if (register != "autonomous" or ide_holder_transcript(lock)) and (
         ide := _measure_ide_tab(root_id, lock, policy)
     ):
-        used_tokens = ide.get("used_tokens")
-        if used_tokens is None:
+        if "used_tokens" not in ide:
+            if ide.get("ok") is True:
+                return (
+                    {
+                        "used_tokens": None,
+                        "window_limit_tokens": ide.get("window_limit_tokens"),
+                        "model": str(policy.get("ide_model") or "ide-tab"),
+                        "as_of": digest_ts,
+                        "source": IDE_BUDGET_SOURCE,
+                        "scope": _BUDGET_SCOPE,
+                        "epoch": str(ide.get("transcript_id") or ""),
+                        "stop_class": None,
+                        "budget_probe": "incomplete",
+                        "transcript_id": ide.get("transcript_id"),
+                    },
+                    0.0,
+                )
             used_tokens = int(ide.get("contextTokensUsed") or 0)
-        else:
-            used_tokens = int(used_tokens)
-        window_limit = ide.get("window_limit_tokens")
-        if window_limit is None:
             window_limit = int(
                 ide.get("contextTokenLimit")
+                or ide.get("window_limit_tokens")
                 or policy.get("ide_window_tokens")
                 or 256_000
             )
         else:
-            window_limit = int(window_limit)
+            used_tokens = int(ide["used_tokens"])
+            window_limit = ide.get("window_limit_tokens")
+            if window_limit is None:
+                window_limit = int(
+                    ide.get("contextTokenLimit")
+                    or policy.get("ide_window_tokens")
+                    or 256_000
+                )
+            else:
+                window_limit = int(window_limit)
         transcript_id = str(ide.get("transcript_id") or "")
         pct = round(100.0 * used_tokens / max(window_limit, 1), 1)
         return (

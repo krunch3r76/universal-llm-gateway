@@ -123,6 +123,21 @@ services:
       - mcp-network
     restart: unless-stopped
 
+  # Host-namespace listener: 172.18.0.1:9338 → 127.0.0.1:9338 and the same for
+  # 9339. mcp-server stays on the bridge (not host network). The process binds
+  # only the gateway address; it does not publish 0.0.0.0. The module is mounted
+  # from the project tree so this service does not need an image rebuild. Do not
+  # compose up until that path is a file — a missing source becomes a directory.
+  cdp-gateway-forwarder:
+    image: universal-mcp-server:local
+    container_name: cdp-gateway-forwarder
+    user: "1000:1000"
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/libs/cursor_bridge/cdp_gateway_forwarder.py:/app/libs/cursor_bridge/cdp_gateway_forwarder.py:ro
+    command: ["python", "-m", "cursor_bridge.cdp_gateway_forwarder"]
+
 networks:
   mcp-network:
     external: true
