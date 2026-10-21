@@ -46,7 +46,7 @@ agent_bus(tool="get", arguments='{"thread":"THREAD_ID","turn_number":"latest"}')
 
 ## Large-payload navigation
 
-If `fetch(last=1, compact=true)` overflows, use `get(turn_number="latest")` or `get(turn_number=N)` one turn at a time.
+If `fetch(last=1, compact=true)` overflows, do not skip the thread. Use `get(turn_number="latest")` or `get(turn_number=N)` to fetch one turn at a time.
 
 ## Backward read (established threads)
 
