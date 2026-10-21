@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from bus_watch.ide_hop import fire_ide_hop
+from bus_watch.ide_hop import build_hop_preamble, fire_ide_hop
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -37,6 +37,26 @@ def _load_hop_module():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_build_hop_preamble_quiet_sentinel_uses_stay_not_dispatch() -> None:
+    """Truthiness on row would treat quiet as a playable NOW leg and seal dispatch prose."""
+    root = "10479"
+    stay = build_hop_preamble(root, row="quiet")["next_action"]
+    assert "liaison-tick.py" in stay and "STAY" in stay
+    assert "Dispatch the first leg of NOW" not in stay
+
+    stay_ws = build_hop_preamble(root, row="  QUIET  ")["next_action"]
+    assert stay_ws == stay
+
+    stay_empty = build_hop_preamble(root, row="")["next_action"]
+    assert stay_empty == stay
+
+    dispatch = build_hop_preamble(root, row="R16 test")["next_action"]
+    assert "Dispatch the first leg of NOW" in dispatch
+
+    facts_quiet = build_hop_preamble(root, row="quiet")["facts"]
+    assert "NOW: quiet" in facts_quiet
 
 
 def test_liaison_ide_hop_passes_preamble_to_seal(capsys) -> None:

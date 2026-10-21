@@ -451,7 +451,8 @@ def build_hop_preamble(
         f"{tip_token}. ARM watchers: {arm_text}. NOW: {row.strip() or '(empty)'}. "
         "These facts are a snapshot taken at checkpoint time and may have drifted."
     )
-    if row.strip():
+    row_key = row.strip().casefold()
+    if row_key and row_key != "quiet":
         next_action = (
             "Dispatch the first leg of NOW via team_dispatch or life_dispatch per "
             "the liaison ladder; on open forks/retries run divergent-ideation-v1 before "
