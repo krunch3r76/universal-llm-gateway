@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,7 @@ from bus_watch.cursor_xvfb_subscription import (
     resolve_subscription_title,
     subscribe_cursor_xvfb_from_holder,
     subscribe_cursor_xvfb_house,
+    sync_policy_gui_host,
 )
 
 pytestmark = pytest.mark.offline
@@ -198,3 +200,22 @@ def test_subscribe_survives_bus_config_failure() -> None:
         out = subscribe_cursor_xvfb_house("18374", "db36e9f8-e76f-49e7-bd57-c9c4ffa88195")
     assert out["ok"] is False
     assert "subscription_failed" in out.get("reason", "")
+
+
+def test_sync_policy_gui_host_pinned_keeps_colon_eight(tmp_path: Path) -> None:
+    tick = tmp_path / "liaison-18677.tick.json"
+    tick.write_text(
+        json.dumps({"policy": {"gui_host": ":8", "gui_host_pinned": True}}),
+        encoding="utf-8",
+    )
+    sync_policy_gui_host("18677", "orion-node", watch_dir=tmp_path)
+    loaded = json.loads(tick.read_text(encoding="utf-8"))
+    assert loaded["policy"]["gui_host"] == ":8"
+
+
+def test_sync_policy_gui_host_unpinned_takes_detected(tmp_path: Path) -> None:
+    tick = tmp_path / "liaison-18677.tick.json"
+    tick.write_text(json.dumps({"policy": {"gui_host": ":8"}}), encoding="utf-8")
+    sync_policy_gui_host("18677", "orion-node", watch_dir=tmp_path)
+    loaded = json.loads(tick.read_text(encoding="utf-8"))
+    assert loaded["policy"]["gui_host"] == "orion-node"

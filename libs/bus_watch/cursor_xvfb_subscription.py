@@ -266,17 +266,36 @@ def resolve_subscription_title(
     return bare
 
 
+def _policy_gui_host_pinned(policy: dict[str, Any]) -> bool:
+    pinned = policy.get("gui_host_pinned")
+    if pinned is True:
+        return True
+    if isinstance(pinned, str) and pinned.strip().lower() == "true":
+        return True
+    return False
+
+
 def sync_policy_gui_host(
     root_id: str,
     gui_host: str,
     *,
     watch_dir: Path = WATCH_DIR,
 ) -> None:
-    """Persist detected ``gui_host`` on ``liaison-<root>.tick.json`` policy."""
+    """Mirror process-detected ``gui_host`` into liaison tick policy when unpinned.
+
+    Resume and liaison claim call this after ``detect_cursor_gui_host``; on
+    cursor-server that detect value is often ``orion-node``, which would clobber
+    an operator-pinned hop target (``:8``). When ``policy.gui_host_pinned`` is
+    true, the stored ``gui_host`` is left unchanged. Endpoint wake routing still
+    uses ``detect_cursor_gui_host`` so the live tab keeps its own display.
+    """
     path = watch_dir / f"liaison-{root_id}.tick.json"
 
     def mutate(state: dict[str, Any]) -> None:
         policy = dict(state.get("policy") or {})
+        if _policy_gui_host_pinned(policy):
+            state["policy"] = policy
+            return
         policy["gui_host"] = _normalize_gui_host(gui_host)
         state["policy"] = policy
 
