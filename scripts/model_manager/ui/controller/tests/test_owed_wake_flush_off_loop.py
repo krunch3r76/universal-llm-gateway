@@ -18,10 +18,11 @@ def test_blocking_flush_lets_other_coroutines_run(
 ) -> None:
     release = threading.Event()
     started = threading.Event()
+    wait_ok: dict[str, bool] = {}
 
     def _blocking_flush(*, store=None) -> int:
         started.set()
-        release.wait(timeout=2.0)
+        wait_ok["released"] = release.wait(timeout=2.0)
         return 0
 
     monkeypatch.setattr(
@@ -42,6 +43,7 @@ def test_blocking_flush_lets_other_coroutines_run(
         task = mod._owed_wake_flush_task
         assert task is not None
         _, other = await asyncio.gather(task, _concurrent_sleeper())
+        assert wait_ok.get("released") is True
         return other
 
     assert asyncio.run(_run()) == "other-ran"
@@ -50,8 +52,24 @@ def test_blocking_flush_lets_other_coroutines_run(
 @pytest.mark.asyncio
 async def test_busy_status_schedules_flush_once(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
+    """``busy_report`` (not a test double) must arm the owed-wake flush once per read."""
     from scripts.model_manager.ui import api_dispatch
+    from scripts.model_manager.ui.controller.restart_drain import (
+        ActiveWork,
+        RestartDrainGate,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    class _Probe:
+        def __init__(self, work: ActiveWork) -> None:
+            self._work = work
+
+        async def snapshot(self) -> ActiveWork:
+            return self._work
 
     schedule_count = 0
 
@@ -63,28 +81,17 @@ async def test_busy_status_schedules_flush_once(
         "scripts.model_manager.ui.controller.owed_wake_ledger.schedule_owed_wake_flush",
         _schedule,
     )
-    store = MagicMock()
-    store.sweep_expired_windows.return_value = None
-    store.pending_intents.return_value = []
-    store.restart_window_for_service.return_value = None
 
-    async def _busy_report(services):
-        import scripts.model_manager.ui.controller.owed_wake_ledger as owl
-
-        owl.schedule_owed_wake_flush()
-        return {
-            svc: {
-                "busy": False,
-                "restart_would_defer": False,
-                "determination": "idle",
-                "active_work": {"busy": False, "total": 0},
-            }
-            for svc in services
-        }
-
+    idle = ActiveWork(
+        busy=False,
+        detail={"busy": False, "total": 0, "active_count": 0},
+    )
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
     ctl = MagicMock()
     ctl.restart_intent_store = store
-    ctl.restart_gate.busy_report = _busy_report
+    ctl.restart_gate = RestartDrainGate(
+        probes={"git_integration_worker": _Probe(idle)}
+    )
     ctl.build_running = False
     ctl.shutdown_gate.snapshot.return_value = MagicMock(
         manage_inflight=0, activities=[]

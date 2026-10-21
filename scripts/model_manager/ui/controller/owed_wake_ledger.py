@@ -488,7 +488,8 @@ def flush_pending_owed_wakes(store: Any, *, deps: OwedWakeDeps) -> int:
                 OWED_WAKE_RETRY_BASE_S * (2 ** (new_count - 1)),
                 OWED_WAKE_RETRY_CAP_S,
             )
-            next_at = (now + timedelta(seconds=delay_s)).isoformat()
+            failed_at = datetime.now(UTC)
+            next_at = (failed_at + timedelta(seconds=delay_s)).isoformat()
             store.set_owed_wake_next_attempt(row.row_id, next_at)
     return count
 
