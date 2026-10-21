@@ -181,3 +181,86 @@ async def test_pending_mcp_fence_without_scripts_on_the_path(
         sys.meta_path.pop(0)
         sys.modules.update(saved)
         drain.reset_drain_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_manage_result_arms_and_clears_the_admit_fence() -> None:
+    """A deferred mcp intent holds the next tools/call; an mcp cancel reopens it.
+
+    Soft-defer (no intent id) and a cancel for another service do not move
+    the flag. The process is not draining; the hold comes only from the flag
+    the manage result sets.
+    """
+    from middleware import drain
+    from tools.manage import note_mcp_pending_intent
+
+    drain.reset_drain_for_tests()
+
+    async def app(_scope: Any, _receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def post() -> int:
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "fs", "arguments": {}},
+            }
+        ).encode()
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await drain.DrainMiddleware(app)(
+            {"type": "http", "path": "/mcp/code", "method": "POST"},
+            receive,
+            send,
+        )
+        return int(sent[0]["status"])
+
+    try:
+        note_mcp_pending_intent(
+            "sync_restart",
+            "mcp",
+            {"status": "deferred", "state": "busy", "service": "mcp"},
+        )
+        assert await post() == 200
+
+        note_mcp_pending_intent(
+            "sync_restart",
+            "mcp",
+            {
+                "status": "deferred",
+                "state": "draining",
+                "service": "mcp",
+                "restart_intent_id": "intent-mcp-1",
+            },
+        )
+        assert await post() == 503
+
+        note_mcp_pending_intent(
+            "cancel_restart_intent",
+            "git_integration_worker",
+            {
+                "status": "cancelled",
+                "service": "git_integration_worker",
+                "intent_id": "intent-giw",
+            },
+        )
+        assert await post() == 503
+
+        note_mcp_pending_intent(
+            "cancel_restart_intent",
+            "mcp",
+            {"status": "cancelled", "service": "mcp", "intent_id": "intent-mcp-1"},
+        )
+        assert await post() == 200
+    finally:
+        drain.reset_drain_for_tests()

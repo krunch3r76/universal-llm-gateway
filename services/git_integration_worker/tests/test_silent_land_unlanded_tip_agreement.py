@@ -10,6 +10,7 @@ import pytest
 from services.git_integration_worker.cursor_sdk_branch_terminal import (
     maybe_ff_land_silent_lane,
 )
+from services.git_integration_worker.tests.land_k43_fixture import exempt_branch
 
 pytestmark = pytest.mark.offline
 
@@ -50,6 +51,7 @@ def test_silent_land_proceeds_when_unlanded_tip_matches_branch(
     master_before = _git(repo, "rev-parse", "master").stdout.strip()
     closeout = f"land_disposition: unlanded {short}\nstatus: complete\n"
     packet = "land: silent\n"
+    exempt_branch(repo, branch)
     landed = maybe_ff_land_silent_lane(
         repo=repo,
         branch_name=branch,

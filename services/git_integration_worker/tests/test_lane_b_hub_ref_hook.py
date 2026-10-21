@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_wo
 from services.git_integration_worker.lane_b_reference_transaction_hook import (
     HOOK_POLICY_REFUSE_EXIT,
 )
+from services.git_integration_worker.tests.land_k43_fixture import exempt_branch
 
 pytestmark = pytest.mark.offline
 
@@ -131,6 +132,7 @@ def test_worker_ff_land_without_dispatch_id_allowed(
     (wt / "ff.py").write_text("ff\n", encoding="utf-8")
     _git(wt, "add", "ff.py")
     _git(wt, "commit", "-m", "ff branch")
+    exempt_branch(source_repo, branch)
     hold_master_land_lease(source_repo)
     assert ff_only_onto_hub_master(source_repo, branch_name=branch) is True
     assert _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "master"

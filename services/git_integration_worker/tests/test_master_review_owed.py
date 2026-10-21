@@ -818,26 +818,25 @@ def test_section7_lowercase_verdict_matches_and_pass_token_does_not(
     assert bare.status == "no_match"
 
 
-def test_section7_doctrine_sites_do_not_hold_the_merge() -> None:
+def test_section7_land_waits_for_bound_approve() -> None:
     root = REPO / "cursor-plugins/ulg-ecosystem"
     posture = (root / "skills/git-posture/SKILL.md").read_text(encoding="utf-8")
     kernel = (root / "rules/checkout-kernel_ulg.mdc").read_text(encoding="utf-8")
     gotchas = (root / "skills/conductor/reference-gotchas.md").read_text(
         encoding="utf-8"
     )
+    render = (
+        REPO / "libs/implement_admission/conductor_packet_render.py"
+    ).read_text(encoding="utf-8")
+    for text in (posture, kernel, gotchas):
+        assert "bound APPROVE" in text
+        assert "REQUEST_CHANGES" in text or "forward fix" in text
+        assert "does not wait" not in text
+        assert "not a merge hold" not in text
+    assert "bound APPROVE" in render
     anti = (
         root / "skills/conductor/reference-interactive-and-anti-patterns.md"
     ).read_text(encoding="utf-8")
-    for text in (posture, kernel, gotchas, anti):
-        assert "owes a review" in text or "owed review" in text
-        assert "forward fix" in text or "REQUEST_CHANGES" in text
-        assert (
-            "does not wait" in text
-            or "not a merge hold" in text
-            or "not a hold" in text
-            or "Land does not wait" in text
-        )
-    assert "land on green, don't re-ask" in gotchas
     assert "binds to the landed sha or range afterward" in anti
     assert "check debt, not a hold" in anti
     hook = (

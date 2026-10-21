@@ -252,6 +252,37 @@ def _lifecycle_timeout_result(
     }
 
 
+def note_mcp_pending_intent(action: str, service: str | None, result: dict[str, Any]) -> None:
+    """Arm or clear the in-process admit fence from a manage result.
+
+    A drain holds later tools/call only after this process sets the flag.
+    A deferred mcp result that carries ``restart_intent_id`` arms it. A
+    successful cancel of an mcp intent clears it. Soft-defers, other
+    services, and error results leave the flag as it is. A failure to
+    import the drain module leaves the manage result unchanged.
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return
+    try:
+        from middleware.drain import set_pending_mcp_intent
+    except Exception:
+        logger.warning("mcp admit fence unavailable", exc_info=True)
+        return
+    if (
+        action == "cancel_restart_intent"
+        and result.get("status") == "cancelled"
+        and result.get("service") == "mcp"
+    ):
+        set_pending_mcp_intent(False)
+        return
+    if (
+        service == "mcp"
+        and result.get("status") == "deferred"
+        and result.get("restart_intent_id")
+    ):
+        set_pending_mcp_intent(True)
+
+
 def register_manage_tools(mcp: FastMCP) -> None:
     """Register the manage tool on the MCP server instance."""
 
@@ -614,4 +645,5 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 duration_s=round(duration, 3),
             )
 
+        note_mcp_pending_intent(action, service, result)
         return result
