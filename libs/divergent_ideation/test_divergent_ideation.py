@@ -10,8 +10,16 @@ from typing import Any
 import pytest
 import yaml
 from systems.pipeline.core.execution.map_reduce.collection import MapOutputCollection
+from systems.pipeline.core.handlers.generate.prompt_context import (
+    build_prompt_context,
+    format_for_prompt,
+    render_user_prompt,
+)
 from systems.pipeline.core.handlers.step_output import StepOutput
+from systems.pipeline.core.pipeline_config import PromptConfig
+from systems.pipeline.core.prompts import PromptBuilder
 from systems.pipeline.core.schemas import ReadsFrom, StepConfig
+from systems.pipeline.core.step_types import InputBinding
 
 from divergent_ideation.audit_assign_v1 import assign_auditors
 from divergent_ideation.collate_v1 import (
@@ -31,14 +39,6 @@ from divergent_ideation.map_enrich_v1 import (
     model_id_mismatches,
 )
 from divergent_ideation.operator_split_v1 import _normalize_operators, split_operators
-from systems.pipeline.core.handlers.generate.prompt_context import (
-    build_prompt_context,
-    format_for_prompt,
-    render_user_prompt,
-)
-from systems.pipeline.core.pipeline_config import PromptConfig
-from systems.pipeline.core.prompts import PromptBuilder
-from systems.pipeline.core.step_types import InputBinding
 
 SERVED_POOL_MODELS = (
     "qwen3-5-9b-q8-0-131072",
