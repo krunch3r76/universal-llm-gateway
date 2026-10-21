@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
-
 from bus_watch.impresario_ear_common import (
     clear_hop_watermarks_for_tests,
     hop_watermark_key,
@@ -19,8 +17,12 @@ from bus_watch.impresario_ear_common import (
     try_claim_hop_watermark,
 )
 from implement_admission.impresario_policy import load_impresario_policy
+
 from pipelines.impresario_ear.v1.handlers.deliver import deliver_impresario_ear
-from pipelines.impresario_ear.v1.handlers.evaluate import evaluate_impresario_ear
+from pipelines.impresario_ear.v1.handlers.evaluate import (
+    _extract_harvest_prose,
+    evaluate_impresario_ear,
+)
 from pipelines.impresario_ear.v1.handlers.gather import gather_impresario_ear_context
 from pipelines.impresario_ear.v1.handlers.resolve import resolve_impresario_ear
 
@@ -104,6 +106,23 @@ def test_ear_echo_does_not_skip_when_newer_non_ear_follows_older_ear() -> None:
     assert out.get("skip") is False
 
 
+def test_ear_echo_does_not_skip_when_live_from_cursor_before_older_ear() -> None:
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from": "cursor", "subject": "status", "body": "working"},
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "deep"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("skip") is False
+
+
 def test_hop_ear_echo_skip_does_not_consume_watermark(tmp_path: Path) -> None:
     set_watermark_path_for_tests(tmp_path / "wm.json")
     clear_hop_watermarks_for_tests()
@@ -142,6 +161,47 @@ def test_hop_enqueue_cursor_sets_to_agent() -> None:
         )
     opts = enqueue.call_args.args[0]
     assert opts["to_agent"] == "cursor"
+
+
+def test_extract_harvest_prose_strips_sidecar_keeps_verdict() -> None:
+    raw = (
+        "---\nstatus: complete\nresidue: none\n---\n"
+        "VERDICT: healthy\nDIAGNOSIS: ok\nSTEER: continue\n\n"
+        "## effects_manifest\n{\"big\": \"json\"}"
+    )
+    assert _extract_harvest_prose(raw) == (
+        "VERDICT: healthy\nDIAGNOSIS: ok\nSTEER: continue"
+    )
+    plain = "VERDICT: healthy\nSTEER: continue"
+    assert _extract_harvest_prose(plain) == plain
+
+
+@pytest.mark.asyncio
+async def test_evaluate_prompt_includes_verdict_instructions() -> None:
+    generate = AsyncMock(
+        return_value={"dispatch_id": "d1", "thread_id": _ROOT},
+    )
+    poll = AsyncMock(return_value={"terminal": True, "status": "completed"})
+    harvest = AsyncMock(return_value="VERDICT: healthy\nSTEER: continue")
+    resolve = {
+        "skip": False,
+        "root_thread": _ROOT,
+        "mode": "deep",
+        "trigger": "on_demand",
+    }
+    await evaluate_impresario_ear(
+        resolve=resolve,
+        gather={"jsonl": {}},
+        options={},
+        sdk_generate=generate,
+        sdk_poll=poll,
+        sdk_harvest=harvest,
+    )
+    msg = generate.await_args.kwargs["message_text"]
+    assert "VERDICT: healthy | remiss_duty | drift | blocked" in msg
+    assert "DIAGNOSIS:" in msg
+    assert "STEER:" in msg
+    assert "NEXT_ADMIT:" in msg
 
 
 @pytest.mark.asyncio

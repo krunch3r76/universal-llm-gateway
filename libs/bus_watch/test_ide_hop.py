@@ -241,6 +241,13 @@ def test_liaison_ide_hop_auto_resolves_transcript_from_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from bus_watch import fable_lock as fl
+    from bus_watch import ide_hop_mutex as ihm
+
+    real_watch = fl.WATCH_DIR
+    host_hop_lock = real_watch / "liaison-18291.hop.lock"
+    had_host_lock = host_hop_lock.is_file()
+    host_lock_bytes = host_hop_lock.read_bytes() if had_host_lock else b""
+    host_hop_lock.unlink(missing_ok=True)
 
     watch = tmp_path / "watchers"
     watch.mkdir()
@@ -253,8 +260,10 @@ def test_liaison_ide_hop_auto_resolves_transcript_from_lock(
         encoding="utf-8",
     )
     monkeypatch.setattr(fl, "WATCH_DIR", watch)
+    monkeypatch.setattr(ihm, "WATCH_DIR", watch)
 
     hop_mod = _load_hop_module("liaison_ide_hop_auto_tid_lock")
+    monkeypatch.setattr(hop_mod, "WATCH_DIR", watch)
     captured: dict[str, str] = {}
 
     def _fake_seal(root, *, transcript_id, preamble):  # noqa: ANN001
@@ -289,8 +298,13 @@ def test_liaison_ide_hop_auto_resolves_transcript_from_lock(
         "argv",
         ["liaison-ide-hop.py", "--root", "18291", "--dry-run"],
     )
-    assert hop_mod.main() == 0
-    assert captured["transcript_id"] == _TID
+    try:
+        assert hop_mod.main() == 0
+        assert captured["transcript_id"] == _TID
+    finally:
+        host_hop_lock.unlink(missing_ok=True)
+        if had_host_lock:
+            host_hop_lock.write_bytes(host_lock_bytes)
 
 
 @patch("bus_watch.ide_context_hop_monitor._run_ide_hop")
@@ -387,3 +401,17 @@ def test_cleanup_xvfb_sidebar_passes_orion_debug_url() -> None:
         cleanup_xvfb_sidebar_on_holder_claim("18528", f"ide:{_TID}")
     assert mock_prune.call_args.kwargs["debug_url"] == "http://127.0.0.1:19338"
     assert mock_prune.call_args.kwargs["only_retired"] is True
+
+
+def test_bus_watch_repo_root_prefers_valid_project_root_over_stray_nested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale nested universal-llm-gateway/ without libs must not win over PROJECT_ROOT."""
+    (tmp_path / "libs" / "bus_watch").mkdir(parents=True)
+    stray = tmp_path / "universal-llm-gateway"
+    stray.mkdir()
+    (stray / "tmp" / "watchers").mkdir(parents=True)
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    from bus_watch.fable_lock import bus_watch_repo_root
+
+    assert bus_watch_repo_root() == tmp_path

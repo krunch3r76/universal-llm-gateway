@@ -199,9 +199,15 @@ def _transcript_probe(
     return tail, "\n".join(tool_parts), activity_age_s, None
 
 
+def _turns_for_signal_scan(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [t for t in turns if not is_ear_turn(t)]
+
+
 def _detect_hop_failed(turns: list[dict[str, Any]], tick: dict[str, Any]) -> bool:
+    scanned = _turns_for_signal_scan(turns)
     blob = "\n".join(
-        str(t.get("body") or t.get("content") or t.get("subject") or "") for t in turns
+        str(t.get("body") or t.get("content") or t.get("subject") or "")
+        for t in scanned
     )
     if _HOP_FAILED_RE.search(blob):
         return True
@@ -213,8 +219,10 @@ def _detect_hop_failed(turns: list[dict[str, Any]], tick: dict[str, Any]) -> boo
 
 
 def _detect_unmerged_child(turns: list[dict[str, Any]]) -> bool:
+    scanned = _turns_for_signal_scan(turns)
     blob = "\n".join(
-        str(t.get("body") or t.get("content") or t.get("subject") or "") for t in turns
+        str(t.get("body") or t.get("content") or t.get("subject") or "")
+        for t in scanned
     )
     return bool(_UNMERGED_CHILD_RE.search(blob))
 
@@ -345,6 +353,11 @@ def prescreen_house(
         for turn in recent_turns:
             if is_ear_turn(turn):
                 return {"skip_model": True, "signals": signals, "reason": "ear_echo"}
+            sender = str(
+                turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
+            )
+            if sender and sender not in {"impresario-ear"}:
+                break
     assistant_hash = hashlib.sha256(tail.encode()).hexdigest() if tail else ""
     fp = _fingerprint(root_id, transcript_id, assistant_hash)
     if patrol_cooldown_active(fp):

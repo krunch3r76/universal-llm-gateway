@@ -21,11 +21,11 @@ def bus_watch_repo_root() -> Path:
     """ULG checkout root — honors container ``PROJECT_ROOT=/data/project`` mounts."""
     project_root = Path(os.environ.get("PROJECT_ROOT", "")).expanduser()
     if project_root.is_dir():
-        nested = project_root / "universal-llm-gateway"
-        if nested.is_dir():
-            return nested
         if (project_root / "libs" / "bus_watch").is_dir():
             return project_root
+        nested = project_root / "universal-llm-gateway"
+        if nested.is_dir() and (nested / "libs" / "bus_watch").is_dir():
+            return nested
     return Path(__file__).resolve().parents[2]
 
 

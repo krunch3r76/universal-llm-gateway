@@ -9,8 +9,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from bus_watch.fable_lock import WATCH_DIR
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
+
+from bus_watch.fable_lock import WATCH_DIR
 
 log = logging.getLogger("bus_watch.impresario_ear")
 
@@ -122,8 +123,10 @@ def normalize_grok_to_agent(raw: str | None) -> str | None:
 
 def is_ear_turn(turn: dict[str, Any]) -> bool:
     subject = str(turn.get("subject") or "")
-    from_agent = str(turn.get("from_agent") or "").strip().lower()
-    return from_agent == _IMPRESARIO_FROM or subject.startswith(_EAR_PREFIX)
+    sender = str(
+        turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
+    ).strip().lower()
+    return sender == _IMPRESARIO_FROM or subject.startswith(_EAR_PREFIX)
 
 
 def ear_echo_should_skip(
@@ -145,8 +148,10 @@ def ear_echo_should_skip(
             continue
         if is_ear_turn(turn):
             return True
-        role = str(turn.get("role") or turn.get("from_agent") or "")
-        if role and role not in {_IMPRESARIO_FROM, "impresario-ear"}:
+        sender = str(
+            turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
+        )
+        if sender and sender not in {_IMPRESARIO_FROM, "impresario-ear"}:
             break
     del last_assistant_hash  # reserved for JSONL tie-break extensions
     return False

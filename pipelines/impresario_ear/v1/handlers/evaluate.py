@@ -21,6 +21,56 @@ def _scrub_suggestions(text: str) -> str:
     return _SUGGESTIONS_RE.sub("ADVICE", text)
 
 
+def _extract_harvest_prose(raw: str) -> str:
+    if "## closeout_body\n" in raw:
+        start = raw.index("## closeout_body\n") + len("## closeout_body\n")
+        tail = raw[start:]
+        for marker in ("\n## structured_closeout_full", "\n## effects_manifest"):
+            if marker in tail:
+                tail = tail[: tail.index(marker)]
+                break
+        return tail.strip()
+    if "\n## effects_manifest" in raw:
+        text = raw[: raw.index("\n## effects_manifest")].strip()
+    else:
+        text = raw
+    if text.startswith("---\n"):
+        end_fm = text.find("\n---\n", 4)
+        if end_fm != -1:
+            text = text[end_fm + len("\n---\n") :].lstrip()
+    lines = text.splitlines()
+    while lines and lines[0].split(":", 1)[0].strip().lower() in {
+        "status",
+        "residue",
+        "reason",
+    }:
+        lines.pop(0)
+    return "\n".join(lines).strip() if lines else text.strip()
+
+
+def _build_evaluate_prompt(
+    *,
+    root_thread: str,
+    mode: str,
+    trigger: str,
+    gather: dict[str, Any],
+) -> str:
+    gather_json = json.dumps({"mode": mode, "gather": gather}, default=str)[:12000]
+    instructions = (
+        "You are the Impresario Ear critic evaluating house continuity.\n"
+        f"Thread: {root_thread}\n"
+        f"Mode: {mode}\n"
+        f"Trigger: {trigger}\n\n"
+        "Required output format (plain text in your reply body only):\n"
+        "VERDICT: healthy | remiss_duty | drift | blocked\n"
+        "DIAGNOSIS: one short paragraph\n"
+        "STEER: imperative next action for the house tab\n"
+        "NEXT_ADMIT: one line the tab should dispatch (or none if healthy)\n\n"
+        f"<untrusted_context>\n{gather_json}\n</untrusted_context>"
+    )
+    return _BUS_FORBIDDEN + "\n\n" + instructions
+
+
 def _pick_critic(mode: str, options: dict[str, Any]):
     policy = load_impresario_policy()
     override = str(options.get("model") or "").strip()
@@ -92,16 +142,19 @@ async def evaluate_impresario_ear(
     if err:
         return err
     assert seat is not None
-    prompt = _BUS_FORBIDDEN + "\n\n" + json.dumps(
-        {"mode": mode, "gather": gather}, default=str
-    )[:12000]
+    prompt = _build_evaluate_prompt(
+        root_thread=str(resolve.get("root_thread") or ""),
+        mode=mode,
+        trigger=str(resolve.get("trigger") or ""),
+        gather=gather,
+    )
     if sdk_generate is None:
-        from systems.frontier_consult.cursor_sdk_generate import (
-            dispatch_cursor_sdk_generate,
-        )
         from systems.frontier_consult.cdp_cursor_reroute import (
             harvest_sdk_body,
             poll_dispatch_status,
+        )
+        from systems.frontier_consult.cursor_sdk_generate import (
+            dispatch_cursor_sdk_generate,
         )
 
         sdk_generate = dispatch_cursor_sdk_generate
@@ -137,9 +190,8 @@ async def evaluate_impresario_ear(
             "model": seat.model,
             "effort": seat.effort_rung,
         }
-    body = _scrub_suggestions(
-        await sdk_harvest(thread_id=thread_id, dispatch_id=dispatch_id)
-    )
+    harvested = await sdk_harvest(thread_id=thread_id, dispatch_id=dispatch_id)
+    body = _scrub_suggestions(_extract_harvest_prose(str(harvested or "")))
     verdict = _parse_verdict(body)
     return {
         "skip": False,

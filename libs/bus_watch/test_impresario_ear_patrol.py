@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import inspect
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bus_watch.impresario_ear_common import maybe_enqueue_after_hop
+from bus_watch.impresario_ear_common import is_ear_turn, maybe_enqueue_after_hop
 from bus_watch.impresario_ear_patrol import (
     clear_patrol_state_for_tests,
     load_patrol_prescreen_inputs,
@@ -31,6 +30,44 @@ _TRANSCRIPT = "81fb6960-950d-59c5-88b4-af3839f170d1"
 _SPECIMEN_FIXTURE = (
     Path(__file__).resolve().parent / "fixtures" / "patrol_specimen_18374.json"
 )
+
+
+def test_prescreen_ear_echo_when_newest_turn_is_ear() -> None:
+    ear = {"from_agent": "impresario-ear", "subject": f"EAR | {_ROOT} — healthy"}
+    assert is_ear_turn(ear)
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        recent_turns=[ear],
+    )
+    assert out["skip_model"] is True
+    assert out["reason"] == "ear_echo"
+
+
+def test_prescreen_no_ear_echo_when_cursor_turn_is_newer_than_ear() -> None:
+    ear = {"from_agent": "impresario-ear", "subject": f"EAR | {_ROOT} — healthy"}
+    cursor = {"from_agent": "cursor", "body": "fresh work after ear posted"}
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        recent_turns=[cursor, ear],
+    )
+    assert out.get("reason") != "ear_echo"
+
+
+def test_prescreen_no_ear_echo_when_live_from_cursor_before_older_ear() -> None:
+    """GET /turns serializes sender as ``from`` (newest-first)."""
+    ear = {"from_agent": "impresario-ear", "subject": f"EAR | {_ROOT} — healthy"}
+    cursor = {"from": "cursor", "subject": "status", "body": "working"}
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        recent_turns=[cursor, ear],
+    )
+    assert out.get("reason") != "ear_echo"
 
 
 def test_patrol_prescreen_skips_generating_without_model_call() -> None:

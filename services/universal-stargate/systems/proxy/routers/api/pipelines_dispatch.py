@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from universal_logging import get_logger
 
 from src.schemas.chat_completion import ChatCompletionRequest
@@ -372,6 +372,20 @@ async def admit_dispatch(
     )
 
     try:
+        chat_request = _build_chat_completion_request(dispatch)
+    except ValidationError as exc:
+        if resume_of:
+            from systems.pipeline.core.execution.dispatch_journal import (
+                release_continuation,
+            )
+
+            await release_continuation(
+                stop_execution_id=resume_of,
+                successor_execution_id=execution_id,
+            )
+        return _error_response(400, "invalid_request_error", str(exc))
+
+    try:
         endpoint_request_id = (dispatch.pipeline_options or {}).get(
             "_endpoint_request_id"
         )
@@ -405,8 +419,6 @@ async def admit_dispatch(
             "pipeline_dispatch_capacity_exhausted",
             str(exc),
         )
-
-    chat_request = _build_chat_completion_request(dispatch)
 
     if dispatch.messages:
         request.state.pipeline_full_messages = list(dispatch.messages)
