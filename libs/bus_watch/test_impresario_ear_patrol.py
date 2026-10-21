@@ -92,6 +92,38 @@ def test_patrol_specimen_18374_promised_act_hop_failed_quiet_unmerged(
     assert again.get("reason") == "cooldown"
 
 
+def test_run_patrol_pass_skips_enqueue_on_cooldown_even_with_signals(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    payload = json.loads(_SPECIMEN_FIXTURE.read_text(encoding="utf-8"))
+    fp = prescreen_house(**payload)["fingerprint"]
+    clock = time.time()
+    stamp_patrol_cooldown(fp, now=clock)
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": _ROOT,
+            "agent_id": _TRANSCRIPT,
+            "glass_status": "completed",
+        }
+    ]
+    admitted: list[dict[str, Any]] = []
+
+    def _admit(opts: dict[str, Any], **_: Any) -> None:
+        admitted.append(opts)
+
+    with patch(
+        "bus_watch.impresario_ear_patrol.load_patrol_prescreen_inputs",
+        return_value=payload,
+    ):
+        stats = run_patrol_pass(store, now=clock + 30.0, admit_pipeline=_admit)
+    assert stats["enqueued"] == 0
+    assert admitted == []
+
+
 def test_patrol_specimen_fixture_loads_through_run_patrol_pass(tmp_path: Path) -> None:
     set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
     clear_patrol_state_for_tests()

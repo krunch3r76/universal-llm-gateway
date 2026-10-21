@@ -140,7 +140,7 @@ def ear_echo_should_skip(
     turns = listing.get("turns") if isinstance(listing, dict) else None
     if not isinstance(turns, list):
         return False
-    for turn in reversed(turns):
+    for turn in turns:
         if not isinstance(turn, dict):
             continue
         if is_ear_turn(turn):

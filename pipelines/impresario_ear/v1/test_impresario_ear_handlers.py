@@ -67,6 +67,69 @@ def test_resolve_ear_echo_guard_skips_when_tip_is_ear() -> None:
     assert out.get("reason") == "ear_echo_guard"
 
 
+def test_ear_echo_skips_when_newest_turn_is_ear_not_older_ear_in_window() -> None:
+    """GET /turns is newest-first: tip EAR with older peer activity must skip."""
+
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+                {"from_agent": "cursor", "body": "operator steer after ear"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "deep"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("skip") is True
+    assert out.get("reason") == "ear_echo_guard"
+
+
+def test_ear_echo_does_not_skip_when_newer_non_ear_follows_older_ear() -> None:
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from_agent": "cursor", "body": "fresh work after ear posted"},
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "deep"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("skip") is False
+
+
+def test_hop_ear_echo_skip_does_not_consume_watermark(tmp_path: Path) -> None:
+    set_watermark_path_for_tests(tmp_path / "wm.json")
+    clear_hop_watermarks_for_tests()
+    key = hop_watermark_key(_ROOT, departing_transcript_id="tx-echo")
+
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={
+            "root_thread": _ROOT,
+            "trigger": "hop",
+            "departing_transcript_id": "tx-echo",
+        },
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("reason") == "ear_echo_guard"
+    assert hop_watermark_present(key) is False
+    assert try_claim_hop_watermark(key) is True
+
+
 def test_hop_enqueue_cursor_sets_to_agent() -> None:
     with patch(
         "bus_watch.impresario_ear_common.enqueue_impresario_ear",

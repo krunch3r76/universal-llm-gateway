@@ -402,7 +402,7 @@ def run_patrol_pass(
             pre = prescreen_house(**loaded)
             if pre.get("skip_model") and not pre.get("signals"):
                 continue
-            if pre.get("reason") == "ear_echo":
+            if pre.get("reason") in {"ear_echo", "cooldown"}:
                 continue
             fp = str(pre.get("fingerprint") or "")
             if fp:

@@ -47,11 +47,6 @@ def resolve_impresario_ear(
     watermark = hop_watermark_key(
         root, departing_transcript_id=departing, hop_turn=hop_turn_i
     )
-    if trigger == "hop":
-        if hop_watermark_present(watermark):
-            return {"skip": True, "reason": "hop_watermark_present", "watermark": watermark}
-        if not try_claim_hop_watermark(watermark):
-            return {"skip": True, "reason": "hop_watermark_claim_failed", "watermark": watermark}
     raw_to = options.get("to_agent") or options.get("to")
     to_agent = normalize_grok_to_agent(str(raw_to)) if raw_to else None
     if to_agent is None and isinstance(raw_to, str) and raw_to.strip():
@@ -60,6 +55,11 @@ def resolve_impresario_ear(
         root_thread=root, force=force, fetch_turns=fetch_turns
     ):
         return {"skip": True, "reason": "ear_echo_guard"}
+    if trigger == "hop":
+        if hop_watermark_present(watermark):
+            return {"skip": True, "reason": "hop_watermark_present", "watermark": watermark}
+        if not try_claim_hop_watermark(watermark):
+            return {"skip": True, "reason": "hop_watermark_claim_failed", "watermark": watermark}
     return {
         "skip": False,
         "root_thread": root,
