@@ -37,6 +37,8 @@ def apply_problem_defaults(
 ) -> dict[str, Any]:
     """Merge pipeline defaults into parsed problem JSON (schema P)."""
     out = dict(problem)
+    if "target_statement" not in out and isinstance(out.get("problem"), Mapping):
+        out = dict(out["problem"])
     seed = out.get("run_seed")
     if seed is None:
         out["run_seed"] = int(default_run_seed)

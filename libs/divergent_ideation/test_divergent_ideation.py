@@ -34,7 +34,7 @@ from divergent_ideation.operator_split_v1 import split_operators
 
 SERVED_POOL_MODELS = (
     "qwen3-5-9b-q8-0-131072",
-    "gemma-4-26b-a4b-it-q4-k-m-65536",
+    "google/gemini-2.5-pro",
     "openai/gpt-5.4",
 )
 
@@ -63,6 +63,30 @@ def test_divergent_ideation_v1_yaml_default_pool_and_models() -> None:
 
 def _brief(bid: str, author: str, family: str) -> dict:
     return {"brief_id": bid, "author_model": author, "author_family": family}
+
+
+def test_operator_split_rag_api_search_v1_dict_shape() -> None:
+    """Live retrieve_operators json must not iterate dict keys as operator strings."""
+    rag_out = {
+        "chunks": ["operator passage one", "operator passage two"],
+        "metadata": [
+            {"doc_id": "doc-a", "chunk_id": "0"},
+            {"source": "doc-b", "id": "1"},
+        ],
+        "query": "q",
+        "scope": "operators",
+    }
+    result = split_operators(rag_out, _pool(2), run_seed=1)
+    flat = [x for s in result["operator_subsets"] for x in s]
+    assert len(flat) == 2
+    assert "[doc-a:0] operator passage one" in flat
+    assert any(entry.startswith("[doc-b:1]") for entry in flat)
+
+
+def test_operator_split_id_only_entries_without_text() -> None:
+    operators = [{"doc_id": "d1", "chunk_id": "c1"}]
+    result = split_operators(operators, _pool(1), run_seed=0)
+    assert result["operator_subsets"] == [["d1:c1"]]
 
 
 def test_operator_split_disjoint_union_and_dispersion_bounds() -> None:
@@ -157,6 +181,19 @@ def test_leak_check_string_actor_items() -> None:
 def test_apply_problem_defaults_run_seed() -> None:
     assert apply_problem_defaults({"problem_id": "p"}, default_run_seed=42)["run_seed"] == 42
     assert apply_problem_defaults({"run_seed": 7}, default_run_seed=42)["run_seed"] == 7
+
+
+def test_apply_problem_defaults_unwraps_nested_problem() -> None:
+    wrapped = {
+        "problem": {"problem_id": "inner", "target_statement": "goal"},
+        "envelope": True,
+    }
+    out = apply_problem_defaults(wrapped, default_run_seed=3)
+    assert out["problem_id"] == "inner"
+    assert out["target_statement"] == "goal"
+    assert out["run_seed"] == 3
+    flat = {"target_statement": "flat", "run_seed": 9}
+    assert apply_problem_defaults(flat, default_run_seed=0)["run_seed"] == 9
 
 
 def test_divergent_ideation_v1_yaml_run_seed_default() -> None:

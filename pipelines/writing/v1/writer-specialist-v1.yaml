@@ -199,6 +199,8 @@ steps:
         fields: [json]
       - step: provenance_check
         fields: [json]
+      - step: prose_rhythm_pass
+        fields: [raw]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger

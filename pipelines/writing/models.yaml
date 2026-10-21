@@ -1,12 +1,12 @@
 models:
   prompt_architect:
-    model: qwen3-14b-q4-k-m-40960
+    model: qwen3-5-9b-q8-0-131072
   writer:
-    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    model: qwen3-5-9b-q8-0-131072
   drafter_local_hermes:
-    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    model: qwen3-5-9b-q8-0-131072
   drafter_local_ernie:
-    model: ernie-4-5-21b-a3b-pt-q8-0-65536
+    model: qwen3-5-9b-q8-0-131072
   drafter_openai:
     model: openai/gpt-5.4
   drafter_google:
@@ -16,8 +16,8 @@ models:
   drafter_anthropic:
     model: anthropic/claude-sonnet-5-5
   reviser:
-    model: ernie-4-5-21b-a3b-pt-q8-0-65536
+    model: qwen3-5-9b-q8-0-131072
   reviewer:
-    model: qwen3-14b-q4-k-m-40960
+    model: qwen3-5-9b-q8-0-131072
   verifier:
-    model: qwen3-14b-q4-k-m-40960
+    model: qwen3-5-9b-q8-0-131072

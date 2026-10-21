@@ -53,9 +53,8 @@ _GO = (
 _GO2 = _GO + " and draft.json.get('refused') is None"
 _IND = "independence.json.get('refused') is None"
 _AUDIT = _GO2 + " and " + _IND
-_HERMES = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+_QWEN_SERVED = "qwen3-5-9b-q8-0-131072"
 _ERNIE = "ernie-4-5-21b-a3b-pt-q8-0-65536"
-_QWEN = "qwen3-14b-q4-k-m-40960"
 _ANTHROPIC = "anthropic/claude-sonnet-5-5"
 _CLOUD_DRAFTERS = (
     "drafter_openai",
@@ -104,7 +103,13 @@ def test_pipeline_shape() -> None:
         (_V1.parent / "models.yaml").read_text(encoding="utf-8")
     )["models"]
     assert writing_models["drafter_anthropic"]["model"] == _ANTHROPIC
-    assert writing_models["verifier"]["model"] == _QWEN
+    assert writing_models["verifier"]["model"] == _QWEN_SERVED
+    assert writing_models["writer"]["model"] == _QWEN_SERVED
+    fc_final = by_name["fact_ceiling_final"]
+    assert any(
+        entry.step == "prose_rhythm_pass" and "raw" in entry.fields
+        for entry in (fc_final.reads_from or [])
+    )
     assert writing_models["drafter_openai"]["model"] == "openai/gpt-5.4"
     independence_mod = importlib.import_module("writing_v1_handlers.independence")
     assert independence_mod.model_family("google/gemini-2.5-pro") == "google"

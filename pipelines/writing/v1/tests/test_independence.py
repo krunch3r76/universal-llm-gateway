@@ -56,14 +56,14 @@ def test_independence_same_family_refused() -> None:
 
 
 def test_independence_override_reviewer_same_family_refused() -> None:
-    hermes = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
-    handler = independence.WritingIndependenceHandler()
+    qwen = "qwen3-5-9b-q8-0-131072"
+    handler = independence.WritingIndependenceHandler(writer_model=qwen)
     payload = asyncio.run(
-        handler.execute(None, _Ctx(model_ref_overrides={"reviewer": hermes}))
+        handler.execute(None, _Ctx(model_ref_overrides={"reviewer": qwen}))
     ).json
     assert payload["refused"] == "independence_violation"
-    assert payload["reviewer_model"] == hermes
-    assert payload["reviewer_family"] == "llama"
+    assert payload["reviewer_model"] == qwen
+    assert payload["reviewer_family"] == "qwen"
 
 
 def test_independence_partial_when_allowed() -> None:
@@ -102,19 +102,28 @@ def test_model_family_table(model_id: str, family: str | None) -> None:
 
 
 def test_shipped_models_are_full_independence() -> None:
+    served = "qwen3-5-9b-q8-0-131072"
     models = independence.load_writing_models()
-    assert models["writer"] == "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
-    assert models["reviser"] == "ernie-4-5-21b-a3b-pt-q8-0-65536"
-    assert models["reviewer"] == "qwen3-14b-q4-k-m-40960"
-    assert independence.model_family(models["writer"]) == "llama"
+    assert models["writer"] == served
+    assert models["reviser"] == served
+    assert models["reviewer"] == served
+    assert independence.model_family(models["writer"]) == "qwen"
     assert independence.model_family(models["reviewer"]) == "qwen"
-    assert independence.model_family(models["reviser"]) == "ernie"
+    # Live runs bind writer from the selected cloud drafter, not models.yaml writer.
     payload = asyncio.run(
-        independence.WritingIndependenceHandler().execute(None, _Ctx())
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={
+                    "draft": _Out({"selected_step": "drafter_openai"}),
+                    "drafter_openai": _Out({}, model_id="openai/gpt-5.4"),
+                }
+            ),
+        )
     ).json
     assert payload["independence"] == "full"
     assert payload["refused"] is None
-    assert payload["writer_model"] == models["writer"]
+    assert payload["writer_model"] == "openai/gpt-5.4"
     assert payload["reviewer_model"] == models["reviewer"]
 
 
