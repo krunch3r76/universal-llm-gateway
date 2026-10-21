@@ -460,10 +460,7 @@ async def test_workspaces_prefix_does_not_satisfy_cortex_raw(fs: MemFs) -> None:
         "l0_sha256": file_sha256(raw),
     }
     norm = await run_harvest_normalise(options, fs)
-    assert norm.get("refused") is None, norm
-    adapter = await run_harvest_adapter(options, norm, fs)
-    pour = await run_harvest_pour(options, adapter, fs, norm)
-    assert (pour.get("refused") or {}).get("code") == "harvest.raw_conflict"
+    assert (norm.get("refused") or {}).get("code") == "harvest.workspace_refused"
 
 
 @pytest.mark.asyncio
@@ -480,7 +477,6 @@ async def test_incremental_missing_prior(fs: MemFs) -> None:
     assert (norm.get("refused") or {}).get("code") == "harvest.no_prior"
 
 
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_wrapped_pages_extend(fs: MemFs) -> None:
     """n=2 must reassemble the normalized prior, not the wrapped raw."""
@@ -504,6 +500,9 @@ async def test_wrapped_pages_extend(fs: MemFs) -> None:
     options2 = {**options, "n": 2, "l0_ref": folder2}
     norm2 = await run_harvest_normalise(options2, fs)
     assert norm2.get("refused") is None, norm2
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
+    assert pour2.get("refused") is None, pour2
 
 
 @pytest.mark.asyncio
@@ -589,3 +588,189 @@ def test_empty_harvest_messages_admitted() -> None:
     assert req.model == "grokbot-checkpoint-v1"
     with pytest.raises(ValueError):
         ChatCompletionRequest(model="other", messages=[])
+
+
+@pytest.mark.asyncio
+async def test_variable_n_and_reviewer_window(fs: MemFs) -> None:
+    """bl1 shape: highest hi sets T; a later page may name a larger N."""
+    folder = _put_page(fs, 1, 0, 1, _page(0, 1, 6, ["a", "b"], start=True))
+    _put_page(fs, 1, 2, 3, _page(2, 3, 4, ["c", "d"], start=False))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    assert "of 4:" in fs.files[norm["normalized_ref"]].decode()
+
+
+@pytest.mark.asyncio
+async def test_bl1_drift_target_is_highest_hi(fs: MemFs) -> None:
+    """A live self-page grows N. T is the N of the page with the highest hi."""
+    lines = [f"m{i}" for i in range(99)]
+    folder = _put_page(fs, 1, 50, 98, _page(50, 98, 99, lines[50:99], start=False))
+    _put_page(fs, 1, 14, 49, _page(14, 49, 104, lines[14:50], start=False))
+    _put_page(fs, 1, 0, 13, _page(0, 13, 108, lines[0:14], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    text = fs.files[norm["normalized_ref"]].decode()
+    assert "of 99:" in text
+    assert "of 104:" not in text
+    assert "of 108:" not in text
+
+
+@pytest.mark.asyncio
+async def test_evil_prior_raw_does_not_enter_messages(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    pour = await run_harvest_pour(options, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"] = b"EVIL\n"
+    folder2 = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": folder2}
+    norm2 = await run_harvest_normalise(options2, fs)
+    assert norm2.get("refused") is None, norm2
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
+    assert pour2.get("refused") is None, pour2
+    texts = []
+    for message in pour2["envelope"]["messages"]:
+        content = message["content"]
+        if isinstance(content, list):
+            texts.append(content[0].get("text"))
+        else:
+            texts.append(content)
+    assert texts == ["a", "b"]
+    assert "EVIL" not in texts
+
+
+@pytest.mark.asyncio
+async def test_no_new_pages_at_n2_and_n3(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
+    replay = _put_page(fs, 2, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    refused = await run_harvest_normalise({**options, "n": 2, "l0_ref": replay}, fs)
+    assert (refused.get("refused") or {}).get("code") == "harvest.no_new_pages"
+    del fs.files[f"{replay}/p000000-000000.txt"]
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": nxt}
+    norm2 = await run_harvest_normalise(options2, fs)
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    assert (await run_harvest_pour(options2, adapter2, fs, norm2)).get(
+        "refused"
+    ) is None
+    replay3 = _put_page(fs, 3, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    refused3 = await run_harvest_normalise({**options, "n": 3, "l0_ref": replay3}, fs)
+    assert (refused3.get("refused") or {}).get("code") == "harvest.no_new_pages"
+
+
+@pytest.mark.asyncio
+async def test_not_prefix_and_window_mismatch(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    pour = await run_harvest_pour(options, adapter, fs, norm)
+    assert pour.get("refused") is None
+    hole = _put_page(fs, 2, 2, 2, _page(2, 2, 3, ["c"], start=False))
+    gap = await run_harvest_normalise({**options, "n": 2, "l0_ref": hole}, fs)
+    assert (gap.get("refused") or {}).get("code") == "harvest.not_prefix"
+    msg = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
+    payload = json.loads(fs.files[msg].decode())
+    payload["meta"]["sources"][0]["window"]["hi"] = 10
+    fs.files[msg] = json.dumps(payload).encode()
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    mismatch = await run_harvest_normalise({**options, "n": 2, "l0_ref": nxt}, fs)
+    assert (mismatch.get("refused") or {}).get("code") == "harvest.no_prior"
+    assert "window.hi" in (mismatch.get("refused") or {}).get("message", "")
+
+
+def test_grok_export_record_has_no_pseudo() -> None:
+    from ._harvest import format_harvest_record
+
+    line = format_harvest_record(
+        l0_ref="notes/system/checkpoints/grok/a/1.raw.json",
+        l0_sha256="ab" * 32,
+        pages=1,
+        l0_bytes=3,
+        truncated_parts=0,
+        l1_ref="notes/system/checkpoints/grok/a/1.messages.json",
+        l1_sha256="cd" * 32,
+        messages_sha256="ef" * 32,
+        source_sha256="11" * 32,
+        adapter_read_sha256="22" * 32,
+        capture_sha256="33" * 32,
+        capture_kind="grok_export",
+    )
+    assert "capture:grok_export@" in line
+    assert "~pseudo" not in line
+
+
+@pytest.mark.asyncio
+async def test_overlap_raw_differs_from_normalized(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 1, _page(0, 1, 4, ["a", "b"], start=True))
+    _put_page(fs, 1, 1, 3, _page(1, 3, 4, ["b", "c", "d"], start=False))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    adapter = await run_harvest_adapter(options, norm, fs)
+    pour = await run_harvest_pour(options, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    raw = fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"]
+    assert raw != fs.files[norm["normalized_ref"]]
+    assert b"positions 1" in raw
+
+
+@pytest.mark.asyncio
+async def test_unrendered_position_refuses(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 2, _page(0, 2, 3, ["a", "b"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    refused = await run_harvest_normalise(options, fs)
+    body = refused.get("refused") or {}
+    assert body.get("code") == "harvest.page_header"
+    assert "re-page" in body.get("message", "")

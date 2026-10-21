@@ -98,17 +98,20 @@ def check_pages(
     """Return a refusal or None. Does not mutate page bytes."""
     if not pages:
         return refuse("harvest.pages_missing", "pages folder has no page files")
-    totals = {p["total"] for p in pages}
-    if len(totals) != 1:
-        return refuse(
-            "harvest.page_total", f"pages disagree on total N: {sorted(totals)}"
-        )
-    folder_n = totals.pop()
-    if prior_total is not None and folder_n < prior_total:
+    max_hi = max(p["hi"] for p in pages)
+    target_total = max(p["total"] for p in pages if p["hi"] == max_hi)
+    if prior_total is not None and target_total < prior_total:
         return refuse(
             "harvest.page_total",
-            f"folder N {folder_n} < prior total {prior_total}",
+            f"folder N {target_total} < prior total {prior_total}",
         )
+    for page in pages:
+        if page["total"] < target_total or page["hi"] >= page["total"]:
+            return refuse(
+                "harvest.page_total",
+                f"page {page['lo']}-{page['hi']} of {page['total']} "
+                f"is below target {target_total}",
+            )
     targets = {p["target"] for p in pages}
     if len(targets) != 1:
         return refuse(
@@ -132,16 +135,14 @@ def check_pages(
     kept_flags: list[bool] = []
     for page in ordered:
         lo, hi = page["lo"], page["hi"]
-        if lo > hi or hi >= folder_n:
-            return refuse(
-                "harvest.page_header", f"page {lo}-{hi} of {folder_n} is not 0-based"
-            )
+        if lo > hi:
+            return refuse("harvest.page_header", f"page {lo}-{hi} is not 0-based")
         expected = hi - lo + 1
         got = len(page["lines"])
-        if got > expected:
+        if got != expected:
             return refuse(
                 "harvest.page_header",
-                f"page {lo}-{hi}: {got} lines, expected {expected}",
+                f"page {lo}-{hi}: {got} lines, expected {expected}; re-page that range",
             )
         mismatch = False
         for offset, line in enumerate(page["lines"]):
@@ -168,8 +169,21 @@ def check_pages(
         return refuse(
             "harvest.page_gap", f"gap in positions: first missing {missing[0]}"
         )
+    prior_next = len(prior_lines) if prior_lines is not None else 0
+    if target_total - 1 not in covered or any(
+        pos not in covered for pos in range(prior_next, target_total)
+    ):
+        return refuse(
+            "harvest.page_gap",
+            f"coverage must run {prior_next}..{target_total - 1}",
+        )
+    if prior_lines is not None and not any(pos >= prior_next for pos in covered):
+        return refuse(
+            "harvest.no_new_pages", "no page adds a position beyond the prior"
+        )
     for page, keep in zip(ordered, kept_flags, strict=True):
         page["keep"] = keep
+        page["target_total"] = target_total
     return None
 
 

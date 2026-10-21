@@ -59,7 +59,9 @@ def _align_header_totals(lines: list[str], anchor_total: int) -> tuple[list[str]
     return out, changed
 
 
-def normalize_grokbot_l0_pages(text: str) -> tuple[str, L0NormalizeStats]:
+def normalize_grokbot_l0_pages(
+    text: str, *, anchor_total: int | None = None
+) -> tuple[str, L0NormalizeStats]:
     """Return normalized pages text and stats.
 
     Strips wrapper-only lines (opening tag, close+open pairs between pages,
@@ -76,12 +78,12 @@ def normalize_grokbot_l0_pages(text: str) -> tuple[str, L0NormalizeStats]:
             stripped += 1
             continue
         kept.append(line)
-    anchor_total: int | None = None
-    for line in kept:
-        m = HEADER_RE.match(line)
-        if m:
-            anchor_total = int(m.group(4))
-            break
+    if anchor_total is None:
+        for line in kept:
+            match = HEADER_RE.match(line)
+            if match:
+                anchor_total = int(match.group(4))
+                break
     if anchor_total is None:
         raise L0NormalizeError("no ReadTranscript page header found")
     aligned, n_changed = _align_header_totals(kept, anchor_total)

@@ -74,6 +74,7 @@ async def _folder_bytes(
     agent_id = str(options.get("agent_id") or "").strip()
     n = int(options.get("n") or 1)
     prior = b""
+    prior_norm: bytes | None = None
     prior_lines: list[str] | None = None
     prior_total: int | None = None
     if n > 1:
@@ -121,8 +122,12 @@ async def _folder_bytes(
     kept = [
         (page, blob.decode("utf-8")) for page, blob in paired if page.get("keep", True)
     ]
-    norm_text = normalize_input(prior.decode("utf-8") if prior else "", kept)
-    return raw_out, norm_text
+    prior_text = prior_norm.decode("utf-8") if n > 1 and prior_norm else ""
+    norm_text = normalize_input(prior_text, kept)
+    target = next(
+        (page["target_total"] for page in parsed if "target_total" in page), None
+    )
+    return raw_out, norm_text, target
 
 
 async def load_raw_for_pour(options: dict[str, Any], fs: Any) -> bytes | dict[str, Any]:
@@ -152,6 +157,11 @@ async def load_raw_for_pour(options: dict[str, Any], fs: Any) -> bytes | dict[st
 
 async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, Any]:
     l0_ref = str(options.get("l0_ref") or "").strip()
+    if l0_ref.startswith("workspaces://"):
+        return refuse(
+            "harvest.workspace_refused",
+            "l0_ref must be a cortex path; workspaces:// is a different tree",
+        )
     if not l0_ref:
         return refuse("source.no_pour", "harvest_seal requires l0_ref")
     if not rel_path_ok(_bare(l0_ref)):
@@ -168,7 +178,7 @@ async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, A
         loaded = await _folder_bytes(options, fs, l0_ref)
         if isinstance(loaded, dict):
             return loaded
-        raw, text_for_norm = loaded
+        raw, text_for_norm, target_total = loaded
     else:
         try:
             raw = await fs.read(l0_ref)
@@ -180,6 +190,7 @@ async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, A
             text_for_norm = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             return refuse("pour.schema", str(exc))
+        target_total = None
     tape = "tape/" in l0_ref.replace("\\", "/")
     electron = str(options.get("fallback") or "") == "electron"
     if tape and not electron:
@@ -192,7 +203,9 @@ async def run_harvest_normalise(options: dict[str, Any], fs: Any) -> dict[str, A
     if expected and digest != expected:
         return refuse("source.sha_mismatch", f"{digest} != {expected}")
     try:
-        normalized, stats = normalize_grokbot_l0_pages(text_for_norm)
+        normalized, stats = normalize_grokbot_l0_pages(
+            text_for_norm, anchor_total=target_total
+        )
     except L0NormalizeError as exc:
         return refuse("pour.schema", str(exc))
     agent_id = str(options.get("agent_id") or "unknown")

@@ -11,6 +11,27 @@ from ._clients import fs_of, refuse, step_output_json
 from ._harvest import stage_grok_pour
 
 
+def _prefix_view(messages: object) -> list[dict[str, str]]:
+    """Role plus joined text, so prefix_holds is not sensitive to block key order."""
+    if not isinstance(messages, list):
+        return []
+    view: list[dict[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "".join(
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict)
+            )
+        else:
+            text = "" if content is None else str(content)
+        view.append({"role": str(message.get("role") or ""), "content": text})
+    return view
+
+
 async def run_harvest_pour(
     options: dict[str, Any],
     adapter: dict[str, Any],
@@ -42,6 +63,24 @@ async def run_harvest_pour(
     sealed = str((normalise or {}).get("l0_sha256") or "").strip()
     if sealed and digest != sealed:
         return refuse("source.sha_mismatch", f"{digest} != {sealed}")
+    if n > 1:
+        import json
+
+        from cortex_store.verbatim_succession import prefix_holds
+
+        msg_uri = f"notes/system/checkpoints/grok/{agent_id}/{n - 1}.messages.json"
+        old_blob = await fs.read(msg_uri)
+        if not old_blob:
+            return refuse("harvest.no_prior", f"missing {msg_uri}")
+        try:
+            old_msgs = json.loads(old_blob.decode("utf-8")).get("messages")
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return refuse("harvest.no_prior", str(exc))
+        new_msgs = envelope.get("messages")
+        if not prefix_holds(
+            "messages-v1", _prefix_view(old_msgs), _prefix_view(new_msgs)
+        ):
+            return refuse("harvest.not_prefix", "new messages do not prefix-extend")
     return await stage_grok_pour(
         fs,
         agent_id,
