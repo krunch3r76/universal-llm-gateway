@@ -12,6 +12,7 @@ _RETRIABLE_DISPLAY = {
     "active_chat_busy",
     "composer_not_empty",
     "debug_unreachable",
+    "no_composer",
     "no_page",
     "surface_probe_failed",
 }
@@ -176,3 +177,22 @@ class StoreClient:
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
+
+    def unsubscribe(
+        self,
+        agent: str,
+        thread_scope: str,
+        *,
+        bound_by: str = "endpoint-wake-dispatcher",
+        evidence: str | None = None,
+    ) -> dict[str, Any]:
+        return self._bus(
+            "POST",
+            "/endpoint-subscriptions/unsubscribe",
+            json={
+                "agent": agent,
+                "thread_scope": thread_scope,
+                "bound_by": bound_by,
+                "evidence": evidence,
+            },
+        )
