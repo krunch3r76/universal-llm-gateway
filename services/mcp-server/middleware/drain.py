@@ -112,41 +112,46 @@ def reset_drain_for_tests() -> None:
     global _IN_FLIGHT, _DRAIN_STARTED, _LAST_LIFE_TOOLS_MONO
     with _STATE_LOCK:
         _DRAINING.clear()
+        _PENDING_MCP_INTENT.clear()
         _IN_FLIGHT = 0
         _DRAIN_STARTED = False
         _LAST_LIFE_TOOLS_MONO = None
 
 
-def pending_admit_queued_payload(jsonrpc_id: Any) -> dict[str, Any]:
-    """JSON-RPC result for a tools/call held for a pending restart intent.
+# In-process only. The container image has no ``scripts/`` tree, and a store
+# read on the request path would 500 every POST when that import fails.
+_PENDING_MCP_INTENT = threading.Event()
 
-    Not the draining 503. The call did not start and did not count as
-    in-flight, so the idle boundary stays put. Callers retry after the intent
-    leaves ``pending_drain``.
+
+def set_pending_mcp_intent(pending: bool) -> None:
+    """Record a pending mcp restart intent pushed into this process.
+
+    The request path does not import the host intent store. Nothing is held
+    until a caller in this process sets the flag. ``False`` reopens admits.
     """
-    return {
-        "jsonrpc": "2.0",
-        "id": jsonrpc_id,
-        "result": {
-            "status": "queued",
-            "reason": "pending_restart_intent",
-            "lane": "mcp",
-        },
-    }
+    if pending:
+        _PENDING_MCP_INTENT.set()
+    else:
+        _PENDING_MCP_INTENT.clear()
 
 
-def _mcp_pending_queues_tools() -> bool:
-    """True when a pending mcp intent should hold the next tools/call."""
-    from scripts.model_manager.ui.controller.intent_admit_fence import (
-        MCP_ADMIT_LANE,
-        blocked_admit_lanes,
-        pending_intent_queues_admit,
-        pending_service_intent_status,
-    )
+def _pending_mcp_intent_set() -> bool:
+    """Return the in-process flag. Callers treat any error as not pending."""
+    return _PENDING_MCP_INTENT.is_set()
 
-    status = pending_service_intent_status("mcp")
-    blocked = blocked_admit_lanes(service="mcp", intent_status=status)
-    return pending_intent_queues_admit(blocked_lanes=blocked, admit_lane=MCP_ADMIT_LANE)
+
+def _tools_call_held_for_pending_intent(tool_name: str) -> bool:
+    """Hold a tools/call while a pending mcp intent was pushed in.
+
+    ``manage`` stays open so force and cancel can still reach the server.
+    Import and I/O failures fail open: a broken flag must not 500 the POST.
+    """
+    if tool_name == "manage":
+        return False
+    try:
+        return _pending_mcp_intent_set()
+    except Exception:
+        return False
 
 
 def _replay_receive(body: bytes, receive: Receive) -> Receive:
@@ -258,27 +263,34 @@ class DrainMiddleware:
         path = str(scope.get("path", ""))
         method = str(scope.get("method", ""))
 
-        # Pending mcp intent: queue tools/call before it counts as in-flight.
-        # Other methods on the same POST are replayed so initialize still runs.
-        # A store miss fails open inside pending_service_intent_status.
-        if method == "POST" and not _DRAINING.is_set():
+        # Pending mcp intent is an in-process flag, not a scripts import.
+        # Held tools/call get the same retryable 503 as a live drain, and do
+        # not count as in-flight. manage is exempt. A flag error fails open.
+        try:
+            pending_mcp_intent = _pending_mcp_intent_set()
+        except Exception:
+            pending_mcp_intent = False
+        if method == "POST" and not _DRAINING.is_set() and pending_mcp_intent:
             from dual_endpoint_http import is_mcp_endpoint_path  # noqa: PLC0415
 
-            if is_mcp_endpoint_path(path) and _mcp_pending_queues_tools():
+            if is_mcp_endpoint_path(path):
                 body = await _read_body(receive)
                 jsonrpc_id, mcp_method, tool_name = _parse_jsonrpc_request(body)
-                if mcp_method == "tools/call":
+                if mcp_method == "tools/call" and _tools_call_held_for_pending_intent(
+                    tool_name
+                ):
                     record(
-                        "mcp.maintenance.request.queued",
+                        "mcp.maintenance.request.rejected",
                         mcp_method=mcp_method,
                         tool_name=tool_name,
                         jsonrpc_id=jsonrpc_id,
-                        lane="mcp",
+                        retry_after_s=RETRY_AFTER_S,
                     )
                     await _send_json(
                         send,
-                        status=202,
-                        payload=pending_admit_queued_payload(jsonrpc_id),
+                        status=503,
+                        payload=restart_error_payload(jsonrpc_id),
+                        retry_after=True,
                     )
                     return
                 receive = _replay_receive(body, receive)

@@ -1811,6 +1811,41 @@ async def _mark_terminal_and_promote(
         )
 
 
+async def promote_queued_when_fence_lifts(
+    *,
+    controller: WorkAdmissionController,
+    request: Request | None = None,
+    intent_status: str | None = None,
+    released: bool = False,
+) -> None:
+    """Start fence-queued rows once nothing is still holding the lane.
+
+    A matching ``release_drain`` / cancel-drain passes ``released=True`` and
+    promotes even while the intent store still says ``pending_drain`` — cancel
+    runs before the store row moves. The admit route passes the store status
+    with ``released=False`` so a row queued from the store, while this process
+    was never armed, starts when that status leaves ``pending_drain``.
+    Draining or still-armed returns without starting anyone. A free lease
+    promotes; a held lease stays queued.
+    """
+    if controller.is_draining() or controller.is_armed():
+        return
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        STATUS_PENDING_DRAIN,
+    )
+
+    if not released and intent_status == STATUS_PENDING_DRAIN:
+        return
+    ledger = CursorDispatchLedger.instance()
+    lease_keys = await asyncio.to_thread(ledger.queued_writer_lease_keys)
+    for lease_key in lease_keys:
+        await _promote_queued_for_lease(
+            lease_key=lease_key,
+            controller=controller,
+            request=request,
+        )
+
+
 async def _promote_queued_for_lease(
     *,
     lease_key: str,
@@ -4225,14 +4260,23 @@ async def admit_cursor_dispatch(
         queue_kw_for_pending_intent,
     )
 
+    intent_status = pending_service_intent_status("git_integration_worker")
     intent_fence = queue_kw_for_pending_intent(
         service="git_integration_worker",
-        intent_status=pending_service_intent_status("git_integration_worker"),
+        intent_status=intent_status,
         occupied_lanes=ledger.occupied_admit_lanes(),
         admit_lane=selected_lane,
         armed=controller.is_armed(),
         read_only=effective_read_only,
     )
+    # Store left pending_drain and this process is not armed: the fence
+    # queued a free lease that boot reconcile will not see until restart.
+    if not intent_fence:
+        await promote_queued_when_fence_lifts(
+            controller=controller,
+            request=request,
+            intent_status=intent_status,
+        )
     try:
         admit_kwargs: dict[str, object] = {
             "req": req,

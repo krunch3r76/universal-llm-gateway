@@ -383,7 +383,9 @@ class WorkAdmissionController:
 
         Idempotent no-op on mismatch. Does not SIGTERM or mutate tickets; the
         manage cancel path calls this so admission reopens without process death
-        (pairing requirement with store ``cancel``).
+        (pairing requirement with store ``cancel``). The cancel-drain route
+        promotes fence-queued rows after a matching release; this method stays
+        synchronous and does not start them itself.
         """
         matches = self._intent_id == intent_id and self._drain_epoch == drain_epoch
         if matches and (self._draining or self._armed):

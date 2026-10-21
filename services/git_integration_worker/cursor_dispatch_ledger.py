@@ -3236,6 +3236,29 @@ class CursorDispatchLedger:
             for row in rows
         }
 
+    def queued_writer_lease_keys(self) -> list[str]:
+        """Lease keys that still have a queued write admit.
+
+        A pending-intent fence queues onto a free lease. The boot reconcile
+        is the only other scan, so a cancel that does not restart the worker
+        never sees those rows. Held leases are included; promotion refuses
+        them and leaves the FIFO wait in place.
+        """
+        keys: list[str] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT lease_key, source_repo FROM cursor_sdk_dispatches "
+                "WHERE status='queued' AND COALESCE(read_only,0)=0 "
+                "AND (lease_key IS NOT NULL OR source_repo IS NOT NULL)"
+            ).fetchall()
+        for row in rows:
+            key = _resolve_lease_key(
+                lease_key=row["lease_key"], source_repo=row["source_repo"]
+            )
+            if key:
+                keys.append(key)
+        return sorted(set(keys))
+
     def live_dispatch_projections(self) -> list[dict[str, Any]]:
         """Human-readable live cursor-sdk ops for busy / active-work probes.
 

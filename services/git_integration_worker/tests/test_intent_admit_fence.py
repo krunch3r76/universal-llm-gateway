@@ -313,3 +313,82 @@ async def test_promote_skipped_while_intent_still_armed(
     assert controller.is_armed() is True
     assert promoted == []
     assert _status(ledger, successor.dispatch_id) == "queued"
+
+
+@pytest.mark.asyncio
+async def test_cancel_promotes_fence_queue_on_a_free_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel lifts the fence without a restart: a free-lease queued row starts.
+
+    The row was queued while the lease had no holder. release_drain runs
+    before the store leaves pending_drain, so cancel must promote anyway.
+    A store that is still pending_drain and was never released stays queued.
+    """
+    from types import SimpleNamespace
+
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.routes.admin import (
+        CancelDrainRequest,
+        cancel_drain,
+    )
+
+    async def _no_start(*, promoted, controller, request) -> None:
+        del promoted, controller, request
+
+    monkeypatch.setattr(route_mod, "_start_promoted_dispatch", _no_start)
+
+    ledger = CursorDispatchLedger.instance()
+    queued_req = _req(dispatch_id="free-lease-queued")
+    queued = _admit(
+        ledger,
+        queued_req,
+        lease_key="/wt/free",
+        queue_for_pending_intent=True,
+    )
+    assert queued is not None and queued.status == "queued"
+
+    controller = WorkAdmissionController(
+        ledger=ledger,
+        worker_id="test-worker",
+        pid=0,
+        worker_started_at="test",
+    )
+    controller.try_admit("cursor_sdk", op_id="live-holder", route="/r")
+    epoch = controller.next_epoch()
+    controller.begin_drain(
+        reason="a39913",
+        intent_id="intent-cancel",
+        drain_epoch=epoch,
+        arm="holder:live-holder",
+    )
+    assert controller.is_armed() is True
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(admission_controller=controller))
+    )
+    await cancel_drain(
+        CancelDrainRequest(intent_id="intent-cancel", drain_epoch=epoch),
+        request,  # type: ignore[arg-type]
+    )
+    assert controller.is_armed() is False
+    assert _status(ledger, queued_req.dispatch_id) == "admitted"
+
+    still = _req(dispatch_id="still-pending-store")
+    still_queued = _admit(
+        ledger,
+        still,
+        lease_key="/wt/still",
+        queue_for_pending_intent=True,
+    )
+    assert still_queued is not None
+    await route_mod.promote_queued_when_fence_lifts(
+        controller=controller,
+        intent_status=STATUS_PENDING_DRAIN,
+    )
+    assert _status(ledger, still.dispatch_id) == "queued"
+    await route_mod.promote_queued_when_fence_lifts(
+        controller=controller,
+        intent_status=None,
+    )
+    assert _status(ledger, still.dispatch_id) == "admitted"

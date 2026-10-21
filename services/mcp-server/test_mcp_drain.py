@@ -66,20 +66,35 @@ async def test_drain_rejects_new_tool_calls_with_restart_error(
 
 
 @pytest.mark.asyncio
-async def test_pending_mcp_intent_queues_next_tools_call(
+async def test_pending_mcp_fence_without_scripts_on_the_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pending mcp intent: tools/call queues and does not count as in-flight.
+    """Container layout: ``scripts`` is not importable, and the fence still answers.
 
-    ``force_requested`` is not pending, so the same call starts.
+    A pending flag pushed into the process holds an ordinary tools/call with
+    the retryable restart error. ``manage`` is not held. An ImportError or
+    OSError while reading the flag lets the call through. The body is never
+    a 202 result.
     """
+    import importlib.abc
+    import sys
+
     from middleware import drain
 
-    from scripts.model_manager.ui.controller.restart_intent_states import (
-        STATUS_FORCE_REQUESTED,
-        STATUS_PENDING_DRAIN,
-    )
+    class _BlockScripts(importlib.abc.MetaPathFinder):
+        def find_spec(
+            self, fullname: str, path: Any = None, target: Any = None
+        ) -> None:
+            if fullname == "scripts" or fullname.startswith("scripts."):
+                raise ModuleNotFoundError(fullname)
+            return None
 
+    saved = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name == "scripts" or name.startswith("scripts.")
+    }
+    sys.meta_path.insert(0, _BlockScripts())
     events: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
         drain,
@@ -87,66 +102,82 @@ async def test_pending_mcp_intent_queues_next_tools_call(
         lambda signal, **payload: events.append((signal, payload)),
     )
     drain.reset_drain_for_tests()
-    monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.intent_admit_fence.pending_service_intent_status",
-        lambda service: STATUS_PENDING_DRAIN if service == "mcp" else None,
-    )
+    drain.set_pending_mcp_intent(True)
 
-    app_called = False
+    async def _post(tool_name: str, app: Any) -> list[dict[str, Any]]:
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": {}},
+            }
+        ).encode()
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict[str, Any]] = []
 
-    async def app(_scope: Any, _receive: Any, _send: Any) -> None:
-        nonlocal app_called
-        app_called = True
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0)
 
-    body = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 9,
-            "method": "tools/call",
-            "params": {"name": "fs", "arguments": {"op": "list"}},
-        }
-    ).encode()
-    messages = [{"type": "http.request", "body": body, "more_body": False}]
-    sent: list[dict[str, Any]] = []
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
 
-    async def receive() -> dict[str, Any]:
-        return messages.pop(0)
+        await drain.DrainMiddleware(app)(
+            {"type": "http", "path": "/mcp/code", "method": "POST"},
+            receive,
+            send,
+        )
+        return sent
 
-    async def send(message: dict[str, Any]) -> None:
-        sent.append(message)
+    try:
+        app_called = False
 
-    await drain.DrainMiddleware(app)(
-        {"type": "http", "path": "/mcp/code", "method": "POST"},
-        receive,
-        send,
-    )
+        async def app(_scope: Any, _receive: Any, _send: Any) -> None:
+            nonlocal app_called
+            app_called = True
 
-    assert not app_called
-    assert drain.in_flight_count() == 0
-    assert sent[0]["status"] == 202
-    payload = json.loads(sent[1]["body"].decode())
-    assert payload["result"]["status"] == "queued"
-    assert payload["result"]["lane"] == "mcp"
-    assert events[-1][0] == "mcp.maintenance.request.queued"
+        sent = await _post("fs", app)
+        assert not app_called
+        assert drain.in_flight_count() == 0
+        assert sent[0]["status"] == 503
+        headers = dict(sent[0]["headers"])
+        assert headers[b"retry-after"] == b"30"
+        payload = json.loads(sent[1]["body"].decode())
+        assert "result" not in payload
+        assert payload["error"]["code"] == -32099
+        assert payload["error"]["data"]["reason"] == "server_restarting"
+        assert events[-1][0] == "mcp.maintenance.request.rejected"
 
-    monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.intent_admit_fence.pending_service_intent_status",
-        lambda _service: STATUS_FORCE_REQUESTED,
-    )
-    started = {"n": 0}
+        manage_called = False
 
-    async def app_start(_scope: Any, _receive: Any, _send: Any) -> None:
-        started["n"] += 1
+        async def manage_app(_scope: Any, _receive: Any, _send: Any) -> None:
+            nonlocal manage_called
+            manage_called = True
 
-    messages_force = [{"type": "http.request", "body": body, "more_body": False}]
+        await _post("manage", manage_app)
+        assert manage_called
 
-    async def receive_force() -> dict[str, Any]:
-        return messages_force.pop(0)
+        def _boom() -> bool:
+            raise OSError("intent store unreadable")
 
-    await drain.DrainMiddleware(app_start)(
-        {"type": "http", "path": "/mcp/code", "method": "POST"},
-        receive_force,
-        send,
-    )
-    assert started["n"] == 1
-    drain.reset_drain_for_tests()
+        monkeypatch.setattr(drain, "_pending_mcp_intent_set", _boom)
+        opened = False
+
+        async def open_app(_scope: Any, _receive: Any, _send: Any) -> None:
+            nonlocal opened
+            opened = True
+
+        await _post("fs", open_app)
+        assert opened
+
+        def _missing() -> bool:
+            raise ImportError("scripts")
+
+        monkeypatch.setattr(drain, "_pending_mcp_intent_set", _missing)
+        opened = False
+        await _post("fs", open_app)
+        assert opened
+    finally:
+        sys.meta_path.pop(0)
+        sys.modules.update(saved)
+        drain.reset_drain_for_tests()
