@@ -289,7 +289,13 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             cse = True
         else:
             if agent == "cursor":
-                expire_overdue_hop(thread, store=store)
+                try:
+                    expire_overdue_hop(thread, store=store)
+                except OSError:
+                    logger.exception(
+                        "ide_hop_land: expire overdue hop failed root=%s",
+                        thread,
+                    )
             resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
@@ -576,7 +582,14 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         _drop_dead_agent_subscription(
             store, agent=agent, thread=thread, sub=sub, reason=reason
         )
-        expire_overdue_hop(str(sub.get("thread_scope") or thread), store=store)
+        hop_root = str(sub.get("thread_scope") or thread)
+        try:
+            expire_overdue_hop(hop_root, store=store)
+        except OSError:
+            logger.exception(
+                "ide_hop_land: expire overdue hop failed root=%s",
+                hop_root,
+            )
     store.result(
         wake_id=wake_id,
         outcome=state,

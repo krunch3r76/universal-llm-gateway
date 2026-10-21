@@ -880,6 +880,9 @@ def fire_ide_hop(
                     f"ulg-ide-hop:{root_id}:{tip_cp}:{seal.get('bus_turn')}",
                 )
             )
+            # Fence/transcript window. Not pre_since (None on tip hops, 180s
+            # earlier on tipless) and not fired_at (sampled after return).
+            land_since = time.time()
             keystroke = launch_cursor_agents_tab(
                 message,
                 model_query=resolved_model_query,
@@ -898,6 +901,7 @@ def fire_ide_hop(
                 }
         else:
             try:
+                land_since = time.time()
                 proc = subprocess.run(
                     [
                         "ssh",
@@ -932,9 +936,10 @@ def fire_ide_hop(
             # read it). Parse the whole payload; fall back to the last line for a remote
             # that ever emits single-line JSON.
             keystroke = _parse_keystroke_stdout(proc.stdout)
-        # Deadline starts when the wait starts. A clock taken before the
-        # keystroke lets the dispatcher expire the hop while this call is
-        # still inside ``wait_for_landed_transcript``.
+        # Deadline clock, after the keystroke returns. A sample taken before
+        # the keystroke lets the dispatcher expire the hop while this call is
+        # still inside ``wait_for_landed_transcript``. The transcript window
+        # is land_since, sampled immediately before the keystroke.
         fired_at = time.time()
         hop_record = mark_fired(
             root=root_id,
@@ -957,7 +962,7 @@ def fire_ide_hop(
                 }
         landed_id, land_tel = wait_for_landed_transcript(
             marker,
-            since_epoch=fired_at,
+            since_epoch=land_since,
             transcripts_dir=AGENT_TRANSCRIPTS,
             timeout_s=landing_timeout_s,
             root_id=land_root,
@@ -975,7 +980,7 @@ def fire_ide_hop(
                 AGENT_TRANSCRIPTS,
                 root_id=land_root,
                 tip_cp=tip_cp,
-                since_epoch=None if tip_cp is not None else fired_at,
+                since_epoch=None if tip_cp is not None else land_since,
                 exclude_ids=exclude,
             )
             landed_via = "find_transcript"

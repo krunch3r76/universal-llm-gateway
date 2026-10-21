@@ -970,6 +970,82 @@ def test_mark_fired_clock_starts_after_keystroke(tmp_path: Path) -> None:
     assert out["phase"] == "expired"
 
 
+def test_fence_armed_during_keystroke_lands_via_fence(tmp_path: Path) -> None:
+    """An armed fence created during the keystroke lands via the real wait.
+
+    Break: since_epoch was fired_at, taken after the keystroke returned, so a
+    fence whose created_epoch fell between land_since and fired_at was excluded.
+    pre_since is not the window either (None on tip hops, 180s earlier tipless).
+    """
+    message = "resume 15420\n\nmarker line\n"
+    tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    bounds: dict[str, float] = {}
+
+    def _launch(*_args, **_kwargs):
+        bounds["enter"] = time.time()
+        time.sleep(0.03)
+        bounds["created"] = time.time()
+        time.sleep(0.03)
+        return {"ok": True, "transport": "cdp_cursor_agents"}
+
+    def _armed(root, *, since_epoch, exclude_transcript_ids=None):
+        del root, exclude_transcript_ids
+        bounds["since"] = float(since_epoch)
+        created = bounds.get("created")
+        if created is None or float(since_epoch) > created:
+            return []
+        return [
+            {
+                "fence_id": "rf-mid-keystroke",
+                "transcript_id": tid,
+                "created_epoch": created,
+            }
+        ]
+
+    def _fired(**kwargs):
+        bounds["fired_at"] = float(kwargs["fired_at"])
+        return {
+            "root": "15420",
+            "state": "fired",
+            "deadline_at": float(kwargs["fired_at"]) + 30.0,
+        }
+
+    def _landed(record, **kwargs):
+        return {**record, "state": "landed", "proof": kwargs.get("proof")}
+
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.launch_cursor_agents_tab", side_effect=_launch),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch("bus_watch.ide_hop.mark_fired", side_effect=_fired),
+        patch("bus_watch.ide_hop.mark_landed", side_effect=_landed),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            landing_timeout_s=0.4,
+            armed_since=_armed,
+        )
+    assert out["landed_via"] == "fence"
+    assert out["landed_transcript_id"] == tid
+    assert bounds["created"] > bounds["since"]
+    assert bounds["created"] < bounds["fired_at"]
+    assert bounds["since"] <= bounds["enter"]
+    assert bounds["since"] > bounds["enter"] - 2.0
+
+
 def test_expire_overdue_hops_logs_oserror_and_continues(tmp_path: Path, caplog) -> None:
     """write_hop_land OSError on one hop is logged; the scan keeps going."""
     import logging
