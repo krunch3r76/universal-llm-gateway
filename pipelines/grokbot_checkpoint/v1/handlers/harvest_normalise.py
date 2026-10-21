@@ -124,7 +124,7 @@ async def _folder_bytes(
             round_trip, _info = reassemble_pages(aligned)
         except (L0NormalizeError, TranscriptPageError, UnicodeDecodeError) as exc:
             return refuse("harvest.no_prior", str(exc))
-        if round_trip != prior_lines:
+        if round_trip != prior_lines or _info.get("total") != prior_total:
             return refuse(
                 "harvest.no_prior",
                 "prior raw does not match the sealed normalized lines",
