@@ -692,3 +692,79 @@ def test_attempt_backoff_then_held(tmp_path, monkeypatch: pytest.MonkeyPatch) ->
     assert final is not None
     assert final.dispatched_at is not None
     assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_failure_clock_sets_backoff_and_holds_at_fifth(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schedule retries from the wake's return time, and hold only at five failures.
+
+    The failing endpoint_wake advances the fake clock by ten seconds before
+    returning, so flush start and failure time differ. After failures one
+    through four, next_attempt_at equals that failure time plus 30, 60, 120,
+    and 240 seconds. A flush one second before that instant leaves
+    attempt_count unchanged. The row stays open until the fifth failure sets
+    attempt_count to 5 and marks it held.
+    """
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    monkeypatch.setattr(owed_wake_mod, "_lanes_for_stale_projection", lambda: [])
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        turn_ref={
+            "thread_id": "18460",
+            "turn_number": 1,
+            "subject": "MILESTONE|x",
+        },
+    )
+    deps = _deps(endpoint_ok=False)
+    base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = {"now": base}
+    wake_latency = timedelta(seconds=10)
+
+    class _FakeDateTime:
+        UTC = UTC
+        fromisoformat = staticmethod(datetime.fromisoformat)
+
+        @staticmethod
+        def now(tz=None):
+            return clock["now"]
+
+    monkeypatch.setattr(owed_wake_mod, "datetime", _FakeDateTime)
+
+    def endpoint_wake(**_kwargs: object) -> bool:
+        clock["now"] = clock["now"] + wake_latency
+        return False
+
+    deps.endpoint_wake = endpoint_wake  # type: ignore[method-assign]
+
+    for attempt, delay_s in enumerate((30, 60, 120, 240), start=1):
+        started = clock["now"]
+        flush_pending_owed_wakes(store, deps=deps)
+        failure_at = clock["now"]
+        assert failure_at == started + wake_latency
+        refreshed = store.get_owed_wake(row.row_id)
+        assert refreshed is not None
+        assert refreshed.attempt_count == attempt
+        assert refreshed.dispatched_at is None
+        assert (
+            refreshed.next_attempt_at
+            == (failure_at + timedelta(seconds=delay_s)).isoformat()
+        )
+        clock["now"] = failure_at + timedelta(seconds=delay_s - 1)
+        flush_pending_owed_wakes(store, deps=deps)
+        during = store.get_owed_wake(row.row_id)
+        assert during is not None
+        assert during.attempt_count == attempt
+        assert during.dispatched_at is None
+        clock["now"] = failure_at + timedelta(seconds=delay_s)
+
+    started = clock["now"]
+    flush_pending_owed_wakes(store, deps=deps)
+    assert clock["now"] == started + wake_latency
+    final = store.get_owed_wake(row.row_id)
+    assert final is not None
+    assert final.attempt_count == 5
+    assert final.dispatched_at is not None
+    assert store.list_open_undispatched_owed_wakes() == []
