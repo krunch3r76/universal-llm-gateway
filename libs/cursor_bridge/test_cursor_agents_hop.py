@@ -305,6 +305,66 @@ async def test_launch_async_skips_recovery_on_composer_not_empty() -> None:
     assert recovery_mids == []
 
 
+@pytest.mark.asyncio
+async def test_launch_async_timer_win_is_unconfirmed_not_keystroke() -> None:
+    """A timer win is an unconfirmed submit, not a keystroke failure.
+
+    Break: the createComposer eval returns ``ok`` false with
+    ``race_winner`` timer, and the payload text contains ``timeout`` so
+    launch recovery would otherwise rewrite it. ``fire_ide_hop`` treats
+    ``ok`` false as phase keystroke and skips the land wait.
+    """
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+    recovery_mids: list[int] = []
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid in (90, 91):
+            recovery_mids.append(mid)
+            return {"ok": True, "agent_id": rid, "method": "recovered_after_gc"}
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            return {
+                "ok": False,
+                "delivered": False,
+                "race_winner": "timer",
+                "reason": "delivery_unconfirmed",
+                "detail": "submit timeout",
+                "agent_id": rid,
+                "editor_agent_id": rid,
+            }
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "resume 10479",
+            page,
+            timeout_s=5.0,
+            model_query="Grok 4.7",
+            requested_agent_id=rid,
+        )
+    assert out["ok"] is True
+    assert out["delivered"] is False
+    assert out["race_winner"] == "timer"
+    assert out["reason"] == "delivery_unconfirmed"
+    assert out.get("phase") != "keystroke"
+    assert out["editor_agent_id"] == rid
+    assert out["glass_launch"]["race_winner"] == "timer"
+    assert recovery_mids == []
+
+
 def test_launch_cursor_agents_tab_ok() -> None:
     page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
 
