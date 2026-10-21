@@ -8,11 +8,32 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cortex_store import db
+from cortex_store._absent_migration import migration_filename_from_filenotfound
 from cortex_store._test_db_bootstrap import (
     _session_template_path,
     fresh_migrated_connection,
 )
 from cortex_store.dispatch_ops import _shared as dispatch_shared
+
+
+class _AbsentMigrationModule(pytest.Module):
+    """Skip collection when a gitignored numbered migration .py is absent."""
+
+    def _getobj(self):
+        try:
+            return super()._getobj()
+        except FileNotFoundError as exc:
+            name = migration_filename_from_filenotfound(exc)
+            if name is None:
+                raise
+            pytest.skip(
+                f"migration file absent from this worktree: {name}",
+                allow_module_level=True,
+            )
+
+
+def pytest_pycollect_makemodule(module_path, parent):
+    return _AbsentMigrationModule.from_parent(parent, path=module_path)
 
 
 def bind_cortex_db(monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
