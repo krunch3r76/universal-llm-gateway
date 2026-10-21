@@ -142,6 +142,23 @@ async def _folder_bytes(
     target = next(
         (page["target_total"] for page in parsed if "target_total" in page), None
     )
+    try:
+        raw_aligned, _raw_stats = normalize_grokbot_l0_pages(
+            raw_out.decode("utf-8"), anchor_total=target
+        )
+        norm_aligned, _norm_stats = normalize_grokbot_l0_pages(
+            norm_text, anchor_total=target
+        )
+        raw_lines, raw_info = reassemble_pages(raw_aligned)
+        norm_lines, norm_info = reassemble_pages(norm_aligned)
+    except (L0NormalizeError, TranscriptPageError, UnicodeDecodeError) as exc:
+        return refuse("harvest.no_prior", str(exc))
+    keys = ("total", "header_target", "start_sentinel", "positions")
+    if raw_lines != norm_lines or any(raw_info.get(k) != norm_info.get(k) for k in keys):
+        return refuse(
+            "harvest.no_prior",
+            "sealed raw would not reassemble to the normalized chain",
+        )
     return raw_out, norm_text, target
 
 

@@ -673,6 +673,29 @@ async def test_headerless_prior_raw_refuses(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rewritten_header_target_refuses(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
+    raw_key = f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"
+    rewritten = fs.files[raw_key].decode().replace(
+        "Transcript of this conversation", "Transcript of something else", 1
+    )
+    fs.files[raw_key] = rewritten.encode()
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    refused = await run_harvest_normalise({**options, "n": 2, "l0_ref": nxt}, fs)
+    assert (refused.get("refused") or {}).get("code") == "harvest.no_prior"
+
+
+@pytest.mark.asyncio
 async def test_no_new_pages_at_n2_and_n3(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
     options = {
