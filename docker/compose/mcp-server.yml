@@ -119,8 +119,9 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - default
-      - mcp-network
+      default:
+        ipv4_address: 172.18.0.2
+      mcp-network: {}
     restart: unless-stopped
 
   # Host-namespace listener: 172.18.0.1:9338 → 127.0.0.1:9338 and the same for
@@ -133,11 +134,18 @@ services:
     container_name: cdp-gateway-forwarder
     user: "1000:1000"
     network_mode: host
+    environment:
+      - CDP_GATEWAY_ALLOWED_PEERS=172.18.0.2/32
     restart: unless-stopped
     volumes:
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/libs/cursor_bridge/cdp_gateway_forwarder.py:/app/libs/cursor_bridge/cdp_gateway_forwarder.py:ro
     command: ["python", "-m", "cursor_bridge.cdp_gateway_forwarder"]
 
 networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1
   mcp-network:
     external: true
