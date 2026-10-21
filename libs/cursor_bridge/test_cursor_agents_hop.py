@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -494,6 +495,309 @@ def test_archive_agent_js_streaming_guard() -> None:
     # streaming check precedes archive paths
     assert js.index("agent_streaming") < js.index("archiveAgent")
     assert js.index("archiveAgent") < js.index("btn.click()")
+
+
+_ARCHIVE_RELOOKUP_HARNESS = r"""
+const archiveSrc = __ARCHIVE_SRC__;
+
+function makeService(archiveAgent) {
+  return {
+    getAgentHeader() {
+      return {status: {value: "done"}};
+    },
+    archiveAgent,
+  };
+}
+
+function makeRow(id, service, opts) {
+  const button = opts.button === false ? null : {
+    attrs: {"aria-label": "Archive"},
+    clicks: 0,
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null;
+    },
+    querySelector() { return null; },
+    click() {
+      this.clicks += 1;
+      if (opts.onClick) opts.onClick();
+    },
+  };
+  const row = {
+    attrs: {"data-agent-id": id},
+    isConnected: true,
+    button,
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null;
+    },
+    querySelector(sel) {
+      if (sel.indexOf("In progress") !== -1 || sel.indexOf("ui-dot-grid-loader") !== -1) {
+        return null;
+      }
+      if (sel === 'button[aria-label="Archive"]') return this.button;
+      return null;
+    },
+  };
+  row["__reactFiber$fake"] = {
+    return: null,
+    memoizedProps: {
+      header: {status: {value: "done"}},
+      value: {
+        workspace: {
+          instantiationService: {
+            _services: {
+              _entries: {
+                entries() {
+                  return [["agentRepo", {instance: service}]];
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  return row;
+}
+
+function install(rows) {
+  globalThis.document = {
+    rows,
+    querySelectorAll(sel) {
+      if (sel === '[data-perf-id="glass-sidebar-agent-row"]') return this.rows.slice();
+      return [];
+    },
+  };
+}
+
+async function runArchive() {
+  const fn = new Function("return " + archiveSrc);
+  return await fn();
+}
+
+const cases = [];
+
+async function record(name, rows, tracked, body) {
+  const started = Date.now();
+  let result = null;
+  let error = null;
+  try {
+    result = await body();
+  } catch (err) {
+    error = String(err && err.stack ? err.stack : err);
+  }
+  cases.push({
+    name,
+    elapsed: Date.now() - started,
+    result,
+    error,
+    clicks: tracked.map((row) => ({
+      id: row.attrs["data-agent-id"],
+      clicks: row.button ? row.button.clicks : null,
+    })),
+  });
+}
+
+(async () => {
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {
+      target.attrs["data-agent-id"] = "agent-y";
+      target.isConnected = true;
+    });
+    target = makeRow("agent-x", service, {});
+    const neighbor = makeRow("neighbor", service, {});
+    tracked.push(target, neighbor);
+    rows.push(neighbor, target);
+    install(rows);
+    await record("id_reused", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {
+      target.isConnected = false;
+      const index = rows.indexOf(target);
+      if (index >= 0) rows.splice(index, 1);
+    });
+    target = makeRow("agent-x", service, {});
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("disconnected_during_await", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {
+      throw new Error("archive failed");
+    });
+    target = makeRow("agent-x", service, {
+      onClick() {
+        const index = rows.indexOf(target);
+        if (index >= 0) rows.splice(index, 1);
+      },
+    });
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("throw_then_click", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {});
+    target = makeRow("agent-x", service, {
+      onClick() {
+        const index = rows.indexOf(target);
+        if (index >= 0) rows.splice(index, 1);
+      },
+    });
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("sync_click_removal", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {});
+    target = makeRow("agent-x", service, {
+      onClick() {
+        setTimeout(() => {
+          const index = rows.indexOf(target);
+          if (index >= 0) rows.splice(index, 1);
+        }, 40);
+      },
+    });
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("delayed_click_removal", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    const service = makeService(async () => {});
+    const target = makeRow("agent-x", service, {onClick() {}});
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("click_leaves_row", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    const service = makeService(async () => {});
+    const target = makeRow("agent-x", service, {button: false});
+    tracked.push(target);
+    rows.push(target);
+    install(rows);
+    await record("no_archive_btn", rows, tracked, runArchive);
+  }
+  {
+    const tracked = [];
+    const rows = [];
+    let target;
+    const service = makeService(async () => {});
+    const neighbor = makeRow("neighbor", service, {});
+    target = makeRow("agent-x", service, {
+      onClick() {
+        const index = rows.indexOf(target);
+        if (index >= 0) rows.splice(index, 1);
+      },
+    });
+    tracked.push(neighbor, target);
+    rows.push(neighbor, target);
+    install(rows);
+    await record("two_rows", rows, tracked, runArchive);
+  }
+  process.stdout.write(JSON.stringify(cases));
+})();
+"""
+
+
+def test_archive_agent_js_relookup_fake_dom(tmp_path: Path) -> None:
+    js = _archive_agent_js("agent-x")
+    assert js.index("if (!el.isConnected)") < js.index("findLiveRow")
+    assert js.index("findLiveRow") < js.index("btn.click()")
+    script = tmp_path / "archive_relookup_fake_dom.js"
+    script.write_text(
+        _ARCHIVE_RELOOKUP_HARNESS.replace("__ARCHIVE_SRC__", json.dumps(js)),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        ["node", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr
+    by_name = {row["name"]: row for row in json.loads(proc.stdout)}
+
+    reused = by_name["id_reused"]
+    assert reused["error"] is None
+    assert reused["result"] == {"ok": True, "archived": "agent-x", "method": "archiveAgent"}
+    assert reused["clicks"] == [
+        {"id": "agent-y", "clicks": 0},
+        {"id": "neighbor", "clicks": 0},
+    ]
+
+    disconnected = by_name["disconnected_during_await"]
+    assert disconnected["error"] is None
+    assert disconnected["result"] == {
+        "ok": True,
+        "archived": "agent-x",
+        "method": "archiveAgent",
+    }
+    assert disconnected["clicks"] == [{"id": "agent-x", "clicks": 0}]
+
+    thrown = by_name["throw_then_click"]
+    assert thrown["error"] is None
+    assert thrown["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert thrown["clicks"] == [{"id": "agent-x", "clicks": 1}]
+    assert thrown["elapsed"] < 150
+
+    sync = by_name["sync_click_removal"]
+    assert sync["error"] is None
+    assert sync["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert sync["clicks"] == [{"id": "agent-x", "clicks": 1}]
+    assert sync["elapsed"] < 150
+
+    delayed = by_name["delayed_click_removal"]
+    assert delayed["error"] is None
+    assert delayed["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert delayed["clicks"] == [{"id": "agent-x", "clicks": 1}]
+    assert delayed["elapsed"] >= 30
+
+    stuck = by_name["click_leaves_row"]
+    assert stuck["error"] is None
+    assert stuck["result"] == {
+        "ok": False,
+        "reason": "row_still_present",
+        "agent_id": "agent-x",
+    }
+    assert stuck["clicks"] == [{"id": "agent-x", "clicks": 1}]
+    assert stuck["elapsed"] >= 180
+
+    missing = by_name["no_archive_btn"]
+    assert missing["error"] is None
+    assert missing["result"] == {"ok": False, "reason": "no_archive_btn"}
+    assert missing["clicks"] == [{"id": "agent-x", "clicks": None}]
+    assert missing["elapsed"] < 150
+
+    pair = by_name["two_rows"]
+    assert pair["error"] is None
+    assert pair["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert pair["clicks"] == [
+        {"id": "neighbor", "clicks": 0},
+        {"id": "agent-x", "clicks": 1},
+    ]
 
 
 @pytest.mark.asyncio
