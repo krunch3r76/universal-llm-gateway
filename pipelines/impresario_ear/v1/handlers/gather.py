@@ -58,6 +58,8 @@ async def gather_impresario_ear_context(
         bundle["jsonl"] = await asyncio.to_thread(
             measure_ide_tab, root_thread, lock, policy
         )
+    except TypeError:
+        raise
     except Exception as exc:  # noqa: BLE001
         bundle["jsonl"] = {"error": type(exc).__name__}
 

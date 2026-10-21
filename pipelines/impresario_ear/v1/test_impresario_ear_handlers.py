@@ -413,6 +413,19 @@ def test_grok_hop_enqueues_ear_without_ide_hop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gather_measure_ide_tab_typeerror_propagates() -> None:
+    with patch(
+        "bus_watch.ide_budget.measure_ide_tab",
+        MagicMock(side_effect=TypeError("unexpected keyword 'register'")),
+    ):
+        with pytest.raises(TypeError, match="unexpected keyword 'register'"):
+            await gather_impresario_ear_context(
+                root_thread="18677",
+                tape_fetch=lambda *a, **k: {"cells": []},
+            )
+
+
+@pytest.mark.asyncio
 async def test_gather_measure_ide_tab_uses_lock_and_policy_not_register() -> None:
     lock = object()
     policy = {"gui_host": ":8", "successor_model": "cursor/gemini-4-argon"}
