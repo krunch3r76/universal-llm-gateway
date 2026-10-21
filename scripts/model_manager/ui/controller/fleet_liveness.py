@@ -1,4 +1,8 @@
-"""Assemble a load-surface-aware liveness snapshot for manage JSON-RPC."""
+"""Assemble a load-surface-aware fleet liveness snapshot for manage JSON-RPC.
+
+``build_snapshot`` is called by manage tools and MCP; it joins checkout porcelain,
+per-service health checkers, and import-sealed code labels without mutating fleet state.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from charter_runner_store.propagation_validation import current_validation
+from deploy_identity.code_version import resolve_code_version
 
 from ..model.service_state import ServiceInfo, ServiceState
 from .fleet_liveness_filter import normalize_service_filter
@@ -26,6 +31,9 @@ from .fleet_liveness_probe import (
 )
 from .fleet_liveness_probe import (
     git_blob_sha as _git_blob_sha,
+)
+from .fleet_liveness_probe import (
+    manage_loaded_code_evidence as _manage_loaded_code_evidence,
 )
 from .fleet_liveness_probe import (
     mcp_reported_version as _mcp_reported_version,
@@ -264,6 +272,8 @@ def _compact_service_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if "version_evidence" in row:
         compact["version_evidence"] = row["version_evidence"]
+    if "loaded_code_evidence" in row:
+        compact["loaded_code_evidence"] = row["loaded_code_evidence"]
     marker = row.get("load_marker")
     if isinstance(marker, dict):
         compact["load_marker"] = dict(marker)
@@ -351,21 +361,31 @@ def build_snapshot(
             }
             surface = "host_process"
 
-        services_out.append(
-            {
-                "service": service_slug,
-                "status": status,
-                "detail": info.detail if info is not None else "",
-                "pid": info.pid if info is not None else None,
-                "health_url": info.health_url if info is not None else None,
-                "fail_class": info.fail_class if info is not None else None,
-                "load_surface_kind": surface,
-                "load_marker": marker,
-                "reported_version": reported,
-                "probe_errors": errors,
-                "paths": [],
-            }
-        )
+        row: dict[str, Any] = {
+            "service": service_slug,
+            "status": status,
+            "detail": info.detail if info is not None else "",
+            "pid": info.pid if info is not None else None,
+            "health_url": info.health_url if info is not None else None,
+            "fail_class": info.fail_class if info is not None else None,
+            "load_surface_kind": surface,
+            "load_marker": marker,
+            "reported_version": reported,
+            "probe_errors": errors,
+            "paths": [],
+        }
+        if service_slug == "manage":
+            loaded = _manage_loaded_code_evidence(resolve_code_version())
+            row["loaded_code_evidence"] = loaded
+            if loaded["kind"] == "imported_code":
+                row["reported_version"] = {
+                    "field": "code_version",
+                    "value": loaded["sha"],
+                    "source": "deploy_identity.resolve_code_version",
+                    "denotes": "import_sealed_git_ancestry_label",
+                    "error": None,
+                }
+        services_out.append(row)
 
     after = _tree_probe(root)
     tree_moved = before["raw"] != after["raw"] or before["paths"] != after["paths"]
@@ -473,9 +493,7 @@ def build_snapshot(
             "verdict": checkout_verdict,
             "index_behind_head_paths": behind,
         },
-        "service_filter": (
-            None if selected is None else {"services": list(selected)}
-        ),
+        "service_filter": (None if selected is None else {"services": list(selected)}),
         "services": services_out,
         "probe_errors": before.get("errors", []) + after.get("errors", []),
     }
