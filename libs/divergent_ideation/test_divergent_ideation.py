@@ -30,7 +30,15 @@ from divergent_ideation.map_enrich_v1 import (
     briefs_from_re_instantiate,
     model_id_mismatches,
 )
-from divergent_ideation.operator_split_v1 import split_operators
+from divergent_ideation.operator_split_v1 import _normalize_operators, split_operators
+from systems.pipeline.core.handlers.generate.prompt_context import (
+    build_prompt_context,
+    format_for_prompt,
+    render_user_prompt,
+)
+from systems.pipeline.core.pipeline_config import PromptConfig
+from systems.pipeline.core.prompts import PromptBuilder
+from systems.pipeline.core.step_types import InputBinding
 
 SERVED_POOL_MODELS = (
     "qwen3-5-9b-q8-0-131072",
@@ -63,6 +71,74 @@ def test_divergent_ideation_v1_yaml_default_pool_and_models() -> None:
 
 def _brief(bid: str, author: str, family: str) -> dict:
     return {"brief_id": bid, "author_model": author, "author_family": family}
+
+
+def test_normalize_operators_chunks_dict_and_text_objects() -> None:
+    rows = _normalize_operators({"chunks": ["op1", "op2"]})
+    assert rows[0]["text"] == "op1"
+    rows2 = _normalize_operators({"chunks": [{"text": "op1"}]})
+    assert rows2[0]["text"] == "op1"
+    assert _normalize_operators({"unexpected": True}) == []
+
+
+def test_decontextualize_prior_leak_hits_empty_list_renders() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    prompts = yaml.safe_load(
+        (repo_root / "pipelines/divergent_ideation/v1/prompts.yaml").read_text()
+    )["prompts"]["decontextualize"]
+    template = prompts["template"]
+    step = SimpleNamespace(
+        id="decontextualize_0",
+        handler_inputs={
+            "target_statement": InputBinding.parse(
+                "problem_defaults.json.target_statement"
+            ),
+            "hard_constraints": InputBinding.parse(
+                "problem_defaults.json.hard_constraints"
+            ),
+            "domain_terms_to_strip": InputBinding.parse(
+                "problem_defaults.json.domain_terms_to_strip"
+            ),
+            "prior_leak_hits": InputBinding.parse("optionsNs.initial_prior_leak_hits"),
+        },
+        resolved_map_inputs={},
+    )
+    problem = {
+        "target_statement": "Ship faster",
+        "hard_constraints": ["Must be safe"],
+        "domain_terms_to_strip": ["widget"],
+    }
+
+    class _Out:
+        json = problem
+
+    source = SimpleNamespace(text="{}")
+    context = SimpleNamespace(
+        source_text="{}",
+        source=source,
+        options={"initial_prior_leak_hits": []},
+        outputs={"problem_defaults": _Out()},
+    )
+    ctx = build_prompt_context(step, context, format_value=format_for_prompt)
+    assert ctx["prior_leak_hits"] == "[]"
+    rendered = render_user_prompt(
+        PromptConfig(name="decontextualize", template=template),
+        step,
+        context,
+        prompt_builder=PromptBuilder(),
+        build_context=lambda _s, _c: ctx,
+    )
+    assert "Prior leak hits" in rendered
+    assert "{prior_leak_hits}" not in rendered
+
+    context_missing = SimpleNamespace(
+        source_text="{}",
+        source=source,
+        options={},
+        outputs={"problem_defaults": _Out()},
+    )
+    with pytest.raises(ValueError, match="handler_inputs.*prior_leak_hits"):
+        build_prompt_context(step, context_missing, format_value=format_for_prompt)
 
 
 def test_operator_split_rag_api_search_v1_dict_shape() -> None:

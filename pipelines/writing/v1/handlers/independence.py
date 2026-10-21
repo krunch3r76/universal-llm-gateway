@@ -55,6 +55,18 @@ def model_family(model_id: str) -> str | None:
     return None
 
 
+def load_review_fallback_models(path: Path | None = None) -> list[str]:
+    """Reviewer transport fallback chain from ``models.yaml`` seat_fallback.review."""
+    yaml_path = path or Path(__file__).resolve().parents[2] / "models.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    block = data.get("seat_fallback") or {}
+    if isinstance(block, dict):
+        review = block.get("review")
+        if isinstance(review, list):
+            return [str(item) for item in review if str(item).strip()]
+    return []
+
+
 def load_writing_models(path: Path | None = None) -> dict[str, str]:
     """Return writer, reviser, and reviewer model ids from ``models.yaml``.
 

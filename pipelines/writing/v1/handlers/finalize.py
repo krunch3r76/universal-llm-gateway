@@ -32,6 +32,32 @@ def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
 
 
+def _attach_status(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map refused/degraded runs to honest top-level status."""
+    if payload.get("refused"):
+        payload["status"] = "refused"
+        if not payload.get("error"):
+            payload["error"] = str(payload.get("refused"))
+        return payload
+    ship = payload.get("ship_gate") or {}
+    review = payload.get("review") or {}
+    degraded_reasons: list[str] = []
+    if ship.get("pass") is False:
+        unresolved = ship.get("unresolved") or []
+        if unresolved and isinstance(unresolved[0], dict):
+            degraded_reasons.append(str(unresolved[0].get("detail") or "ship_gate_unresolved"))
+        else:
+            degraded_reasons.append("ship_gate_failed")
+    if review.get("status") == "failed":
+        degraded_reasons.append(str(review.get("reason") or "review_failed"))
+    if degraded_reasons:
+        payload["status"] = "degraded"
+        payload["error"] = "; ".join(degraded_reasons)
+    elif "status" not in payload:
+        payload["status"] = "complete"
+    return payload
+
+
 def _raw_step(outputs: dict[str, Any], name: str) -> Any:
     return outputs.get(name)
 
@@ -180,19 +206,23 @@ class WritingFinalizeHandler(BaseHandler):
         assemble = _json_of(outputs, "assemble")
         if assemble is None:
             return _step(
-                {
-                    "unsent": True,
-                    "refused": "assemble_missing",
-                    "error": "assemble step not ok",
-                }
+                _attach_status(
+                    {
+                        "unsent": True,
+                        "refused": "assemble_missing",
+                        "error": "assemble step not ok",
+                    }
+                )
             )
         if assemble.get("refused"):
             return _step(
-                {
-                    "unsent": True,
-                    "refused": assemble.get("refused"),
-                    "error": assemble.get("error"),
-                }
+                _attach_status(
+                    {
+                        "unsent": True,
+                        "refused": assemble.get("refused"),
+                        "error": assemble.get("error"),
+                    }
+                )
             )
         if assemble.get("output") == "packet":
             return _step(
@@ -207,24 +237,34 @@ class WritingFinalizeHandler(BaseHandler):
         draft = _json_of(outputs, "draft")
         if isinstance(draft, dict) and draft.get("refused") == "writer_seat_failed":
             return _step(
-                {
-                    "unsent": True,
-                    "refused": "writer_seat_failed",
-                    "seat_fallback": {"draft": draft.get("seat_fallback")},
-                    "error": draft.get("error"),
-                }
+                _attach_status(
+                    {
+                        "unsent": True,
+                        "refused": "writer_seat_failed",
+                        "seat_fallback": {"draft": draft.get("seat_fallback")},
+                        "error": draft.get("error"),
+                    }
+                )
             )
         initial_payload = _json_of(outputs, "provenance_check")
         initial = list((initial_payload or {}).get("violations") or [])
+        dropped_facts = list((initial_payload or {}).get("dropped_facts") or [])
+        added_facts = list((initial_payload or {}).get("added_facts") or [])
+        drift_check = (initial_payload or {}).get("drift_check") or {
+            "passed": True,
+            "flagged_sentences": [],
+        }
         independence = _json_of(outputs, "independence")
         if independence is None or independence.get("refused"):
             return _step(
-                {
-                    "unsent": True,
-                    "refused": "independence_violation",
-                    "draft_v1": draft,
-                    "provenance": {"initial": initial},
-                }
+                _attach_status(
+                    {
+                        "unsent": True,
+                        "refused": "independence_violation",
+                        "draft_v1": draft,
+                        "provenance": {"initial": initial},
+                    }
+                )
             )
         review = _json_of(outputs, "fact_ceiling_audit") or _json_of(outputs, "review")
         held_review = bool(review) and review.get("status") == "held_reviewer_unfunded"
@@ -324,6 +364,30 @@ class WritingFinalizeHandler(BaseHandler):
                     "detail": f"{writer_live}->{reviewer_live}",
                 }
             )
+        if added_facts:
+            passed = False
+            unresolved.append(
+                {
+                    "type": "added_unattested_fact",
+                    "claim_id": None,
+                    "detail": added_facts[0],
+                }
+            )
+        if not drift_check.get("passed", True):
+            passed = False
+            flagged = drift_check.get("flagged_sentences") or []
+            detail = (
+                flagged[0].get("reason")
+                if flagged and isinstance(flagged[0], dict)
+                else "drift_check_failed"
+            )
+            unresolved.append(
+                {
+                    "type": "purpose_drift",
+                    "claim_id": None,
+                    "detail": str(detail),
+                }
+            )
         revision = None
         if revision_ran:
             draft_v2_text = rhythm_raw if isinstance(rhythm_raw, str) else None
@@ -345,6 +409,9 @@ class WritingFinalizeHandler(BaseHandler):
                 "pin_ledger": assemble.get("pin_ledger"),
                 "initial": initial,
                 "final": final,
+                "dropped_facts": dropped_facts,
+                "added_facts": added_facts,
+                "drift_check": drift_check,
             },
             "review": {
                 "status": (
@@ -391,4 +458,4 @@ class WritingFinalizeHandler(BaseHandler):
         }
         if cost_note:
             payload["cost_note"] = cost_note
-        return _step(payload)
+        return _step(_attach_status(payload))

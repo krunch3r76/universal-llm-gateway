@@ -74,15 +74,26 @@ def _validate_architect_brief(
     return text, True
 
 
+def _filing_exhibit_rule(intake: dict[str, Any]) -> str:
+    if str(intake.get("channel") or "") != "filing":
+        return ""
+    return (
+        "negative_constraints: require (Exhibit N) on every exhibit-backed fact; "
+        "no listicle paragraphs without exhibit tags."
+    )
+
+
 def _fallback_brief(blocks: dict[str, str], intake: dict[str, Any]) -> str:
     max_chars = intake.get("max_chars")
     budget = str(max_chars) if max_chars else "none"
+    filing_rule = _filing_exhibit_rule(intake)
+    constraints = filing_rule or "negative_constraints: no new facts; attested pins only"
     return "\n".join(
         [
             "lead_pin_id: P1",
             "beat_order: verbatim order",
             f"audience_posture: { _fence(str(intake.get('channel') or 'email')) }",
-            "negative_constraints: no new facts; attested pins only",
+            constraints,
             f"char_budget: {budget}",
             blocks.get("verbatim_notes_block") or "",
             blocks.get("brief_block") or "",

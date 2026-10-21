@@ -3681,10 +3681,29 @@ tools:
   flat_call_shape:
     tool: outbound_write
     substrate_qualified: user-vortex__outbound_write
-  fol_descriptor: "Structured outbound write intake relay to writing/writer-specialist-v1."
+  fol_descriptor: >
+    Structured outbound write intake relay to writing/writer-specialist-v1.
+    Pass options.intake (or top-level intake fields); raw messages/prompt are refused.
+    mode=standard requires verbatim_notes, recipient, objective, channel.
+    mode=fact_inventory requires prior_draft, purpose/objective, audience/recipient;
+    channel defaults to filing. divergent-ideation-v1 uses options.problem JSON plus
+    optional options.initial_prior_leak_hits (defaults []).
   json_schema:
     type: object
     properties:
+      mode:
+        type: string
+        enum: [standard, fact_inventory]
+      prior_draft:
+        type: string
+      purpose:
+        type: string
+      audience:
+        type: string
+      attested_sources:
+        type: array
+        items:
+          type: string
       verbatim_notes:
         type: array
         items:

@@ -51,7 +51,7 @@ def format_for_prompt(value: Any, field_name: str) -> str:
     """
     if isinstance(value, list):
         if not value:
-            return "(empty array)"
+            return "[]"
 
         if all(isinstance(item, str) and len(item) < 50 for item in value):
             return ", ".join(value)
@@ -125,6 +125,8 @@ def build_prompt_context(
         logger.info(
             f"Step '{step.id}': Resolving {len(step.handler_inputs)} handler_inputs"
         )
+        from ...execution.resolver import BindingResolutionError
+
         resolver = NamespaceResolver(context)
         for field_name, binding in step.handler_inputs.items():
             try:
@@ -152,16 +154,11 @@ def build_prompt_context(
                     f"Step '{step.id}': Added '{field_name}' to prompt context "
                     f"({len(str(formatted_value))} chars)"
                 )
-            except (KeyError, AttributeError, ValueError) as e:
-                logger.error(
-                    "Step '%s': Failed to resolve handler_input '%s' "
-                    "(binding=%s): %s. Input will be absent from prompt context.",
-                    step.id,
-                    field_name,
-                    binding,
-                    e,
-                    exc_info=True,
-                )
+            except (KeyError, AttributeError, ValueError, BindingResolutionError) as e:
+                raise ValueError(
+                    f"Step '{step.id}': Failed to resolve handler_inputs "
+                    f"field '{field_name}' from binding {binding}: {e}"
+                ) from e
     else:
         logger.debug(f"Step '{step.id}': No handler_inputs to resolve")
 

@@ -18,7 +18,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 
-from .independence import load_writing_models
+from .independence import load_review_fallback_models, load_writing_models
 from .review_schema import REVIEW_RESULT_SCHEMA
 from .seat_dispatch import _prompts
 
@@ -81,17 +81,32 @@ class WritingReviewLocalHandler(BaseHandler):
                 content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
             else:
                 models = load_writing_models()
-                result = await self._call_model(
-                    models.get("reviewer") or "",
-                    prompt,
-                    step,
-                    context,
-                    system_prompt=system,
-                    temperature=0.1,
-                    max_tokens=2048,
-                    json_schema=REVIEW_RESULT_SCHEMA,
-                )
-                content = result.content
+                primary = models.get("reviewer") or models.get("verifier") or ""
+                candidates = [primary, *load_review_fallback_models()]
+                seen: set[str] = set()
+                content = None
+                last_exc: BaseException | None = None
+                for model_id in candidates:
+                    if not model_id or model_id in seen:
+                        continue
+                    seen.add(model_id)
+                    try:
+                        result = await self._call_model(
+                            model_id,
+                            prompt,
+                            step,
+                            context,
+                            system_prompt=system,
+                            temperature=0.1,
+                            max_tokens=2048,
+                            json_schema=REVIEW_RESULT_SCHEMA,
+                        )
+                        content = result.content
+                        break
+                    except Exception as exc:  # noqa: BLE001 — try fallback chain
+                        last_exc = exc
+                if content is None and last_exc is not None:
+                    raise last_exc
         except Exception as exc:  # noqa: BLE001 — must not escape to the executor
             return _refusal(exc)
         if not isinstance(content, str):

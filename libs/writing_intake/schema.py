@@ -6,40 +6,121 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ChannelType = Literal["email", "sms", "letter", "portal", "filing"]
+IntakeMode = Literal["standard", "fact_inventory"]
+
+_INTAKE_SCHEMA_HINT: dict[str, Any] = {
+    "required_fields": ["verbatim_notes", "recipient", "objective", "channel"],
+    "optional_fields": [
+        "mode",
+        "max_chars",
+        "not_attested",
+        "working_set",
+        "signer",
+        "voice_anchor",
+        "standing_limits",
+    ],
+    "fact_inventory_fields": [
+        "mode='fact_inventory'",
+        "prior_draft",
+        "purpose (or objective)",
+        "audience (or recipient)",
+        "attested_sources (optional)",
+        "channel (default 'filing')",
+    ],
+    "minimal_example": {
+        "standard": {
+            "mode": "standard",
+            "verbatim_notes": ["The lease ended March 1, 2026 (Exhibit 2)."],
+            "recipient": "Housing authority clerk",
+            "objective": "Request reinstatement hearing date",
+            "channel": "filing",
+        },
+        "fact_inventory": {
+            "mode": "fact_inventory",
+            "prior_draft": "I declare… Tenant paid rent (Exhibit 2).",
+            "purpose": "Reinstatement declaration for AAB",
+            "audience": "Administrative law judge",
+            "attested_sources": ["Exhibit 2 notice"],
+            "channel": "filing",
+        },
+    },
+}
+
+
+def _refusal(refused: str, error: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "refused": refused,
+        "error": error,
+        **_INTAKE_SCHEMA_HINT,
+    }
 
 
 class OutboundWriteIntake(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    verbatim_notes: list[str]
-    recipient: str
-    objective: str
-    channel: ChannelType
+    mode: IntakeMode = "standard"
+    verbatim_notes: list[str] | None = None
+    recipient: str | None = None
+    objective: str | None = None
+    channel: ChannelType | None = None
     max_chars: int | None = None
     not_attested: list[str] = Field(default_factory=list)
     working_set: list[str] = Field(default_factory=list)
     signer: str | None = None
     voice_anchor: str | None = None
     standing_limits: str | None = None
+    prior_draft: str | None = None
+    purpose: str | None = None
+    audience: str | None = None
+    attested_sources: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _normalize_aliases_and_mode(self) -> OutboundWriteIntake:
+        if self.objective is None and self.purpose:
+            self.objective = self.purpose.strip()
+        if self.purpose is None and self.objective:
+            self.purpose = self.objective.strip()
+        if self.recipient is None and self.audience:
+            self.recipient = self.audience.strip()
+        if self.audience is None and self.recipient:
+            self.audience = self.recipient.strip()
+        if self.mode == "fact_inventory":
+            if self.channel is None:
+                self.channel = "filing"
+            if not (self.prior_draft and str(self.prior_draft).strip()):
+                raise ValueError("fact_inventory requires non-empty prior_draft")
+            if not (self.objective and str(self.objective).strip()):
+                raise ValueError("fact_inventory requires purpose or objective")
+            if not (self.recipient and str(self.recipient).strip()):
+                raise ValueError("fact_inventory requires audience or recipient")
+            return self
+        if not self.verbatim_notes:
+            raise ValueError("verbatim_notes must contain at least one non-empty string")
+        if self.channel is None:
+            raise ValueError("channel is required")
+        return self
 
     @field_validator("verbatim_notes")
     @classmethod
-    def _verbatim_non_empty(cls, value: list[str]) -> list[str]:
+    def _verbatim_non_empty(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
         cleaned = [item.strip() for item in value if str(item).strip()]
         if not cleaned:
             raise ValueError("verbatim_notes must contain at least one non-empty string")
         return cleaned
 
-    @field_validator("recipient", "objective")
+    @field_validator("recipient", "objective", "purpose", "audience")
     @classmethod
-    def _strip_required(cls, value: str) -> str:
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         text = str(value or "").strip()
-        if not text:
-            raise ValueError("field must be non-empty")
-        return text
+        return text or None
 
     @field_validator("max_chars")
     @classmethod
@@ -61,38 +142,31 @@ def validate_intake_payload(
             if isinstance(m, dict) and str(m.get("content") or "").strip()
         ]
         if non_empty:
-            return None, {
-                "ok": False,
-                "refused": "raw_prompt_prohibited_use_intake_schema",
-                "error": "messages/prompt prohibited; pass structured intake fields",
-            }
+            return None, _refusal(
+                "raw_prompt_prohibited_use_intake_schema",
+                "messages/prompt prohibited; pass structured intake fields",
+            )
     if "prompt" in options or "messages" in options:
-        return None, {
-            "ok": False,
-            "refused": "raw_prompt_prohibited_use_intake_schema",
-            "error": "messages/prompt prohibited; pass structured intake fields",
-        }
+        return None, _refusal(
+            "raw_prompt_prohibited_use_intake_schema",
+            "messages/prompt prohibited; pass structured intake fields",
+        )
     intake_raw = options.get("intake")
     if isinstance(intake_raw, str):
         try:
             parsed_intake = json.loads(intake_raw)
         except json.JSONDecodeError as exc:
-            return None, {
-                "ok": False,
-                "refused": "intake_invalid",
-                "error": f"intake JSON parse failed: {exc.msg}",
-            }
+            return None, _refusal("intake_invalid", f"intake JSON parse failed: {exc.msg}")
         if not isinstance(parsed_intake, dict):
-            return None, {
-                "ok": False,
-                "refused": "intake_invalid",
-                "error": "intake must be a JSON object",
-            }
+            return None, _refusal("intake_invalid", "intake must be a JSON object")
         raw = dict(parsed_intake)
     else:
         raw = dict(intake_raw or {})
-    if not raw and "verbatim_notes" in options:
+    if not raw and (
+        "verbatim_notes" in options or options.get("mode") == "fact_inventory"
+    ):
         for key in (
+            "mode",
             "verbatim_notes",
             "recipient",
             "objective",
@@ -103,17 +177,22 @@ def validate_intake_payload(
             "signer",
             "voice_anchor",
             "standing_limits",
+            "prior_draft",
+            "purpose",
+            "audience",
+            "attested_sources",
         ):
             if key in options:
                 raw[key] = options[key]
-    if "verbatim_notes" not in raw:
+    if raw.get("mode") != "fact_inventory" and "verbatim_notes" not in raw:
         return None, None
+    if raw.get("mode") == "fact_inventory" and "prior_draft" not in raw:
+        return None, _refusal(
+            "intake_invalid",
+            "fact_inventory requires prior_draft",
+        )
     try:
         intake = OutboundWriteIntake.model_validate(raw)
     except Exception as exc:  # noqa: BLE001 — surface validation to caller
-        return None, {
-            "ok": False,
-            "refused": "intake_invalid",
-            "error": str(exc),
-        }
+        return None, _refusal("intake_invalid", str(exc))
     return intake, None

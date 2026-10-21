@@ -3,28 +3,55 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _chunk_text(chunk: Any) -> str:
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        for key in ("text", "content", "operator_statement", "body"):
+            val = chunk.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return str(chunk)
+    return str(chunk)
 
 
 def _normalize_operators(operators: Any) -> list[dict[str, Any]]:
     """Accept rag_api_search_v1 envelopes, operator dict lists, or plain strings."""
-    if isinstance(operators, dict) and "chunks" in operators:
-        chunks = list(operators.get("chunks") or [])
-        metadata = list(operators.get("metadata") or [])
-        out: list[dict[str, Any]] = []
-        for i, chunk in enumerate(chunks):
-            meta = metadata[i] if i < len(metadata) and isinstance(metadata[i], dict) else {}
-            doc_id = str(
-                meta.get("doc_id")
-                or meta.get("source")
-                or meta.get("file_path")
-                or f"doc_{i}"
-            )
-            chunk_id = str(
-                meta.get("chunk_id") or meta.get("id") or meta.get("chunk_index") or i
-            )
-            out.append({"doc_id": doc_id, "chunk_id": chunk_id, "text": str(chunk)})
-        return out
+    if isinstance(operators, dict):
+        if "chunks" in operators:
+            chunks = list(operators.get("chunks") or [])
+            metadata = list(operators.get("metadata") or [])
+            out: list[dict[str, Any]] = []
+            for i, chunk in enumerate(chunks):
+                meta = (
+                    metadata[i]
+                    if i < len(metadata) and isinstance(metadata[i], dict)
+                    else {}
+                )
+                doc_id = str(
+                    meta.get("doc_id")
+                    or meta.get("source")
+                    or meta.get("file_path")
+                    or f"doc_{i}"
+                )
+                chunk_id = str(
+                    meta.get("chunk_id") or meta.get("id") or meta.get("chunk_index") or i
+                )
+                out.append(
+                    {"doc_id": doc_id, "chunk_id": chunk_id, "text": _chunk_text(chunk)}
+                )
+            return out
+        logger.warning(
+            "operator_split_v1: unknown dict shape (expected rag chunks envelope): %s",
+            sorted(operators.keys()),
+        )
+        return []
     if isinstance(operators, list):
         out_list: list[dict[str, Any]] = []
         for i, item in enumerate(operators):
@@ -33,6 +60,11 @@ def _normalize_operators(operators: Any) -> list[dict[str, Any]]:
             elif isinstance(item, str):
                 out_list.append({"doc_id": f"doc_{i}", "chunk_id": str(i), "text": item})
         return out_list
+    if operators not in (None, ""):
+        logger.warning(
+            "operator_split_v1: unsupported operators type %s",
+            type(operators).__name__,
+        )
     return []
 
 

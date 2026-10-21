@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
+from writing_intake.fact_inventory import run_drift_check
 
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",
@@ -742,5 +743,48 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     v2_clauses_from_derive=v2_clauses_from_derive,
                 )
             )
-        payload = {"ok": True, "violations": violations, "pass": violations == []}
+        dropped_facts: list[dict[str, str]] = []
+        if isinstance(assemble_json, dict):
+            raw_dropped = assemble_json.get("dropped_facts")
+            if isinstance(raw_dropped, list):
+                dropped_facts = [
+                    row
+                    for row in raw_dropped
+                    if isinstance(row, dict) and row.get("claim") and row.get("reason")
+                ]
+        added_facts: list[str] = []
+        if parsed is not None:
+            attested_text = " ".join(
+                str(pin.get("excerpt") or "")
+                for pin in ledger
+                if isinstance(pin, dict) and pin.get("attested")
+            ).lower()
+            for claim in parsed.get("claims") or []:
+                text = str(claim.get("text") or claim) if isinstance(claim, dict) else str(claim)
+                token = text.strip().lower()
+                if token and token not in attested_text and len(token) > 24:
+                    added_facts.append(text.strip())
+        drift = {"passed": True, "flagged_sentences": []}
+        if parsed is not None:
+            drift = run_drift_check(
+                str(parsed.get("draft") or ""),
+                channel=str(channel or "email"),
+                pin_ledger=ledger,
+            )
+        if added_facts:
+            violations.append(
+                _violation("added_unattested_fact", None, added_facts[0][:120])
+            )
+        if not drift.get("passed"):
+            violations.append(
+                _violation("purpose_drift", None, "drift_check_failed")
+            )
+        payload = {
+            "ok": True,
+            "violations": violations,
+            "pass": violations == [],
+            "dropped_facts": dropped_facts,
+            "added_facts": added_facts,
+            "drift_check": drift,
+        }
         return _step(payload)

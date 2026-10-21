@@ -17,6 +17,7 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
+from writing_intake.fact_inventory import build_fact_inventory
 from writing_intake.schema import validate_intake_payload
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
@@ -257,6 +258,8 @@ class WritingAssembleHandler(BaseHandler):
 
     async def _execute_intake(self, intake: Any, options: dict[str, Any]) -> StepOutput:
         data = intake.model_dump(exclude_none=True)
+        if data.get("mode") == "fact_inventory":
+            return await self._execute_fact_inventory(data, options)
         parsed, bad = _parse_working_set(data.get("working_set") or options.get("working_set"))
         if bad is not None:
             return _step(bad)
@@ -320,6 +323,87 @@ class WritingAssembleHandler(BaseHandler):
                 "intake": data,
                 "max_chars": data.get("max_chars"),
                 "channel": data.get("channel"),
+                "packet": packet,
+                "output": output,
+            }
+        )
+
+    async def _execute_fact_inventory(
+        self, data: dict[str, Any], options: dict[str, Any]
+    ) -> StepOutput:
+        inventory = build_fact_inventory(
+            str(data.get("prior_draft") or ""),
+            purpose=str(data.get("purpose") or data.get("objective") or ""),
+            audience=str(data.get("audience") or data.get("recipient") or ""),
+            attested_sources=list(data.get("attested_sources") or []),
+            verbatim_notes=list(data.get("verbatim_notes") or []) or None,
+        )
+        data = {
+            **data,
+            "verbatim_notes": inventory["verbatim_notes"],
+            "recipient": data.get("recipient") or data.get("audience"),
+            "objective": data.get("objective") or data.get("purpose"),
+        }
+        parsed, bad = _parse_working_set(data.get("working_set") or options.get("working_set"))
+        if bad is not None:
+            return _step(bad)
+        client = self._client or WorkingSetClient()
+        try:
+            ws_pins = await _resolve_pins(client, parsed)
+        except WorkingSetUnavailable as exc:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "working_set_unavailable",
+                    "error": exc.reason,
+                    "ref": exc.ref,
+                }
+            )
+        pins = _verbatim_note_pins(inventory["load_bearing_claims"], start=1)
+        offset = len(pins) + 1
+        for index, pin in enumerate(ws_pins, start=offset):
+            pin["pin_id"] = f"P{index}"
+            pins.append(pin)
+        max_pins = int(_unwrap(options.get("max_pins", 40), 40))
+        if len(pins) > max_pins:
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "brief_invalid",
+                    "error": "max_pins_exceeded",
+                }
+            )
+        blocks = _intake_blocks(data, pins)
+        if str(data.get("channel") or "") == "filing":
+            blocks["brief_block"] = (
+                blocks["brief_block"]
+                + "\nFiling rule: every exhibit-backed proposition must carry (Exhibit N); "
+                "no one-fact-per-paragraph listicles without exhibit tags."
+            )
+        output = str(_unwrap(options.get("output", "envelope"), "envelope"))
+        packet = PromptBuilder().render(
+            _writer_template(),
+            {
+                "documents": blocks["documents_block"],
+                "brief": blocks["brief_block"],
+                "architect_brief": "",
+                "verbatim_notes": blocks["verbatim_notes_block"],
+            },
+        )
+        return _step(
+            {
+                "ok": True,
+                "refused": None,
+                "pin_ledger": pins,
+                "verbatim_notes_block": blocks["verbatim_notes_block"],
+                "documents_block": blocks["documents_block"],
+                "brief_block": blocks["brief_block"],
+                "intake": data,
+                "max_chars": data.get("max_chars"),
+                "channel": data.get("channel"),
+                "mode": "fact_inventory",
+                "dropped_facts": inventory["dropped_facts"],
+                "load_bearing_claims": inventory["load_bearing_claims"],
                 "packet": packet,
                 "output": output,
             }
