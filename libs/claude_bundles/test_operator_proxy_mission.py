@@ -339,6 +339,14 @@ def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
 
+def test_hop_body_states_polling_removed_not_sleep_290() -> None:
+    """L1: rendered hop names removed polling and drops legacy sleep-290 poll prose."""
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert "polling is removed" in out
+    assert "Sleep at most 290" not in out
+    assert "sleep 290" not in out.lower()
+
+
 def test_mission_skill_slugs_include_lane_act_gates() -> None:
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
