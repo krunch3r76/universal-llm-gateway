@@ -275,7 +275,12 @@ def test_measure_ide_tab_returns_probe_when_jsonl_absent(tmp_path: Path) -> None
             transcripts_dir=tmp_path,
             watch_dir=tmp_path / "watchers",
         )
-    assert ide == glass
+    assert ide["used_tokens"] == 42_000
+    assert ide["window_limit_tokens"] == 200_000
+    assert ide["budget_probe"] == "glass.cdp"
+    assert ide["tool_calls"] == 0
+    assert ide["bytes"] == 0
+    assert ide["transcript_id"] == _TID
 
 
 def test_measure_ide_tab_none_when_jsonl_absent_and_probe_fails(tmp_path: Path) -> None:
@@ -361,7 +366,7 @@ def test_policy_defaults_grok_successor_and_row_bind() -> None:
     assert policy["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
     assert policy["critic_model"] == "cursor/gemini-4-argon"
     assert policy["hop_model_query"] == "Grok 4.7"
-    assert policy["hop_model_knobs"] == {"effort": "xhigh", "fast": "false"}
+    assert policy["hop_model_knobs"] == {"effort": "xhigh", "fast": "true"}
     assert policy["under_pattern"] == "grok-confer-argon"
     assert policy["row_bind_model"] == "cursor/grok-4.7"
     assert policy["row_bind_model_knobs"] == {"effort": "high", "fast": "false"}

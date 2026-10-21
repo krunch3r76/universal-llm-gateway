@@ -9,9 +9,7 @@ Silence is **seat-scoped** (``last_turn_from(T, S)``), never ``threads.updated_a
 — worker closeouts that create debt must not reset the quiet clock.
 
 The execution named on the latest ``TYPE: SEAT_REGISTRATION`` stamp is the
-generate that holds the operator seat. Every ``execution_id`` named on any
-``TYPE: SEAT_REGISTRATION`` or ``TYPE: SEAT_STAND_DOWN`` turn on the lane is
-omitted from the WIP set (including superseded predecessor seats).
+generate that holds the operator seat. It is omitted from the WIP set.
 A dispatch the seat commissioned stays in the set until harvested.
 """
 
@@ -130,7 +128,6 @@ def infer_seat(turns: Sequence[LaneTurnView]) -> str | None:
 
 
 _SEAT_REGISTRATION_MARK = "TYPE: SEAT_REGISTRATION"
-_SEAT_STAND_DOWN_MARK = "TYPE: SEAT_STAND_DOWN"
 # First token after execution_id, whether the separator is ":", "=", or space.
 _EXECUTION_ID_RE = re.compile(r"execution_id(?:\s*[:=]\s*|\s+)(\S+)")
 
@@ -157,37 +154,15 @@ def seat_holding_execution_id(turns: Sequence[LaneTurnView]) -> str | None:
     return None
 
 
-def seat_registered_execution_ids(turns: Sequence[LaneTurnView]) -> frozenset[str]:
-    """Return every execution_id named on seat registration or stand-down turns.
-
-    Scans all lane turns whose first non-empty line starts with
-    ``TYPE: SEAT_REGISTRATION`` or ``TYPE: SEAT_STAND_DOWN`` and collects
-    each ``execution_id`` token matched in the body. No I/O.
-    """
-    ids: set[str] = set()
-    for turn in turns:
-        body = turn.body or ""
-        first = body.strip().split("\n", 1)[0].strip()
-        if not (
-            first.startswith(_SEAT_REGISTRATION_MARK)
-            or first.startswith(_SEAT_STAND_DOWN_MARK)
-        ):
-            continue
-        match = _EXECUTION_ID_RE.search(body)
-        if match is not None:
-            ids.add(match.group(1))
-    return frozenset(ids)
-
-
 def _links_excluding_seat_holder(
     links: Sequence[DispatchLinkView],
     turns: Sequence[LaneTurnView],
 ) -> list[DispatchLinkView]:
-    """Drop seat registration/stand-down generates from the WIP set."""
-    excluded = seat_registered_execution_ids(turns)
-    if not excluded:
+    """Drop the seat-holding generate so it cannot count as unharvested WIP."""
+    holder = seat_holding_execution_id(turns)
+    if not holder:
         return list(links)
-    return [lnk for lnk in links if lnk.execution_id not in excluded]
+    return [lnk for lnk in links if lnk.execution_id != holder]
 
 
 def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
@@ -216,8 +191,8 @@ def _classify_wip(
 ) -> tuple[QuietReason | None, tuple[str, ...], tuple[str, ...]]:
     """Return ``(reason, execution_ids, unbound_turn_labels)`` for first WIP class.
 
-    All seat registration/stand-down generates on the lane are removed before
-    either in-flight or unharvested classification.
+    The seat-holding generate (latest ``SEAT_REGISTRATION`` execution) is
+    removed before either in-flight or unharvested classification.
     """
     counted = _links_excluding_seat_holder(links, turns)
     in_flight = [lnk for lnk in counted if _link_counts_as_live_wip(lnk, now=now)]
@@ -260,8 +235,8 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
 
     Returns ``fire=True`` only when WIP is open, the seat has been silent longer
     than ``threshold_s``, the lane is admitted/active, park is not licensed, and
-    no alarm is already open (idempotence). Generates named on any
-    seat-registration or stand-down stamp on the lane do not count as WIP.
+    no alarm is already open (idempotence). The generate named on the latest
+    seat-registration stamp does not count as WIP.
     """
     if snap.lifecycle not in ("admitted", "active"):
         return QuietWithWipVerdict(fire=False, skip_reason="lifecycle_out")
