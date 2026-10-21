@@ -325,17 +325,13 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "SCORE_RESURFACE — slug G5",
         "park-harvest wake — 17899",
     ):
-        maestro_wakes = not intermediate_subj.startswith(("PICKUP|", "FACT|"))
-        assert (
-            qualifies(
-                {
-                    "to_agent": "maestro",
-                    "from_agent": "grok-bot-bl1",
-                    "subject": intermediate_subj,
-                },
-                cse=True,
-            )
-            is maestro_wakes
+        assert not qualifies(
+            {
+                "to_agent": "maestro",
+                "from_agent": "grok-bot-bl1",
+                "subject": intermediate_subj,
+            },
+            cse=True,
         )
         assert qualifies(
             {

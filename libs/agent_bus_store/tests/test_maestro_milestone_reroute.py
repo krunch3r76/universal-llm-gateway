@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -207,9 +206,100 @@ def test_http_sidecar_content_reroutes_pickup_fact_to_house(
         assert stored["subject"] == subject
 
 
+@pytest.mark.parametrize(
+    "house,subject",
+    (
+        ("grok-bot-bl1", "FACT|house-cp|16934|1"),
+        ("grok-bot-bl1", "PICKUP|work-1"),
+        ("cursor", "FACT|pickup|12797|hop-B"),
+        ("cursor", "PICKUP|sidecar-work"),
+    ),
+)
+def test_rerouted_pickup_fact_self_read_at_and_after_turn(
+    tmp_path, monkeypatch, house: str, subject: str
+) -> None:
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread = client.post(
+            "/threads/send",
+            json={
+                "new_slug": f"l17-read-{house.split('-')[-1]}",
+                "from": house,
+                "to": house,
+                "subject": "seed",
+                "body": "open lane",
+            },
+        ).json()["thread"]["id"]
+        reroute = client.post(
+            "/threads/send",
+            json={
+                "thread": thread,
+                "from": house,
+                "to": "maestro",
+                "subject": subject,
+                "body": "telemetry",
+            },
+        )
+        assert reroute.status_code == 201, reroute.text
+        turn_n = int(reroute.json()["turn"]["turn_number"])
+        stored = client.get(
+            f"/turns/by-number?thread={thread}&turn_number={turn_n}"
+        ).json()
+        assert stored["to"] == house
+        assert stored["read_at"] is not None
+        unread = client.get(
+            "/turns",
+            params={"thread": thread, "to": house, "unread": "true"},
+        ).json()
+        unread_nums = {int(t["turn_number"]) for t in unread.get("turns") or []}
+        assert turn_n not in unread_nums
+        follow = client.post(
+            "/threads/send",
+            json={
+                "thread": thread,
+                "from": house,
+                "to": house,
+                "subject": "follow-up",
+                "body": "after reroute",
+                "after_turn": 1,
+            },
+        )
+        assert follow.status_code == 201, follow.text
+
+
+def test_self_memo_note_stays_unread_at_insert(tmp_path, monkeypatch) -> None:
+    app = _app(tmp_path, monkeypatch)
+    house = "grok-bot-bl1"
+    with TestClient(app) as client:
+        thread = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "l17-memo-unread",
+                "from": house,
+                "to": house,
+                "subject": "seed",
+                "body": "open",
+            },
+        ).json()["thread"]["id"]
+        memo = client.post(
+            "/threads/send",
+            json={
+                "thread": thread,
+                "from": house,
+                "to": house,
+                "subject": "MEMO|successor work",
+                "body": "unpaid note",
+            },
+        )
+        assert memo.status_code == 201, memo.text
+        turn_n = int(memo.json()["turn"]["turn_number"])
+        stored = client.get(
+            f"/turns/by-number?thread={thread}&turn_number={turn_n}"
+        ).json()
+        assert stored["read_at"] is None
+
+
 MCP_ROOT = Path(__file__).resolve().parents[3] / "services" / "mcp-server"
-sys.path.insert(0, str(MCP_ROOT))
-from tools import agent_bus as agent_bus_module  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -219,7 +309,12 @@ from tools import agent_bus as agent_bus_module  # noqa: E402
         ("FACT|house-cp|16934|2", "web-anthropic"),
     ),
 )
-def test_mcp_send_dispatch_reroutes_pickup_fact(subject: str, to_addr: str) -> None:
+def test_mcp_send_dispatch_reroutes_pickup_fact(
+    monkeypatch, subject: str, to_addr: str
+) -> None:
+    monkeypatch.syspath_prepend(str(MCP_ROOT))
+    from tools import agent_bus as agent_bus_module
+
     house = "cursor"
     relay_calls: list[dict] = []
 

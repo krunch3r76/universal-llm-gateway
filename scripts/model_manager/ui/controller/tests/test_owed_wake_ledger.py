@@ -107,6 +107,42 @@ def test_allowlisted_subject_qualifies() -> None:
     assert subject_qualifies_producer1("MILESTONE|decision:foo|bar")
 
 
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "PLAN r2|scope",
+        "VERDICT #12|outcome",
+        "FAILED|work-key",
+        "BLOCKED|work-key",
+        "LANDED|sha",
+        "QUESTION|blocker",
+        "RULING|work-key",
+        "AMEND #712|scope",
+        "SEAT_REGISTRATION|hop",
+        "ESCALATED|work-key",
+        "READY|leg",
+    ],
+)
+def test_r3_spaced_milestone_heads_qualify(subject: str) -> None:
+    assert subject_qualifies_producer1(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "FACT|pickup|x",
+        "PICKUP|work-1",
+        "UPDATE|work-1",
+        "HOP|lane-1",
+        "ACK|batch",
+        "STATUS|ack-batch|leg1",
+        "ROUTE|control",
+    ],
+)
+def test_r3_non_milestone_heads_excluded(subject: str) -> None:
+    assert not subject_qualifies_producer1(subject)
+
+
 @pytest.mark.parametrize("to_agent", ["maestro", "web-anthropic"])
 def test_checkpoint_creates_no_owed_wake_row(
     tmp_path, monkeypatch, to_agent: str
