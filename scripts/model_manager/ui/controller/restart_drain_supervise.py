@@ -14,7 +14,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from .busy_work_summary import format_active_work_summary
+from .busy_work_summary import _active_count, format_active_work_summary
 from .restart_intent_lookup import note_waiting_reason
 from .restart_intent_reason_codes import (
     BLOCKED_BY_JOB,
@@ -45,10 +45,14 @@ def _clip(text: str) -> str:
 
 
 def _active_count_above_zero(detail: Any) -> bool:
-    """True only when the payload's own ``active_count`` is an int above 0."""
+    """True when the waiting-note count is an int above 0.
+
+    Same keys as ``format_active_work_summary``: ``active_count``, then
+    ``total``, ``running_count``, ``running``. A bool does not count.
+    """
     if not isinstance(detail, dict):
         return False
-    count = detail.get("active_count")
+    count = _active_count(detail)
     if isinstance(count, bool) or not isinstance(count, int):
         return False
     return count > 0
@@ -142,10 +146,11 @@ async def supervise_until_lifecycle(
                     _note_if_changed(store, intent_id, last_cause, last_note)
                     last_note = last_cause
             if loop.time() >= deadline:
-                # Busy self-preempt must not CAS force or fall through to
-                # lifecycle (SIGKILL / short stop). Probe-exception ceilings
-                # still force. active_count above 0 never force-preempts.
-                # No drain re-queue helper accepts job ids.
+                # Busy work must not CAS force or fall through to lifecycle
+                # (SIGKILL / short stop). The block uses the waiting-note
+                # count (active_count, total, running_count, running). A
+                # probe failure with no such count still forces. No drain
+                # re-queue helper accepts job ids.
                 count_blocks = _active_count_above_zero(extend_detail)
                 if (
                     ceiling == "self_preempt"

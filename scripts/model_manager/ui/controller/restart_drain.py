@@ -66,10 +66,10 @@ _PROBE_TIMEOUT_S = 5.0
 # would target the wrong endpoint and every non-force stargate restart would
 # return state=probe_error (perpetual deferral). Pin the host port explicitly.
 STARGATE_PROBE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
-# Operator-proxy propagate (inv 39): CDP generates have no GIW park path — after
-# this ceiling the supervisor runs sync_restart while requests may still be in
-# flight (self-preempt force). Idle predicate reads Stargate ``/admin/active-work``
-# ``busy`` (``requests_in_flight`` + async pipelines).
+# Operator-proxy propagate (inv 39): CDP generates have no GIW park path. A
+# busy deadline extends and does not self-preempt. Idle predicate reads
+# Stargate ``/admin/active-work`` ``busy`` (``requests_in_flight`` + async
+# pipelines).
 STARGATE_OPERATOR_IDLE_CEILING_S = 600.0
 GIT_INTEGRATION_WORKER_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
@@ -1148,8 +1148,9 @@ async def run_gated_stargate_idle_drain_supervised(
     result["cdp_legs_orphaned"] = orphaned
     result["idle_ceiling_s"] = supervisor.deadline_s
     result["guidance"] = (
-        "Stargate restart intent armed — fires when active-work reports idle, "
-        f"or self-preempts at {int(supervisor.deadline_s)}s ceiling. "
+        "Stargate restart intent armed — fires when active-work reports idle. "
+        "A busy deadline extends and does not self-preempt "
+        f"at {int(supervisor.deadline_s)}s ceiling. "
         "Query restart_intent_status or fleet_liveness after converge."
     )
     return result
