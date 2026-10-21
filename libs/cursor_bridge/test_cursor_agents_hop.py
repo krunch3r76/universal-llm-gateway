@@ -21,6 +21,7 @@ from cursor_bridge.cursor_agents_hop import (
     _launch_async,
     _prune_predecessors_async,
     _root_row_pattern,
+    _select_agent_js,
     archive_cursor_agents_tab,
     cursor_debug_url_for_gui_host,
     is_cursor_xvfb_host,
@@ -376,6 +377,40 @@ def test_archive_agent_js_row_title_splits_on_newline() -> None:
 def test_archive_agent_js_passes_node_syntax_check(tmp_path: Path) -> None:
     js = _archive_agent_js("agent-x")
     path = tmp_path / "archive_probe.js"
+    path.write_text(js, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", "--check", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_select_agent_js_passes_node_syntax_check(tmp_path: Path) -> None:
+    """Fail when the select-agent CDP script is not parseable JavaScript.
+
+    node --check covers the select wrapper around the shared Glass row probe.
+    A syntax error here still passes the archive-only check.
+    """
+    js = _select_agent_js("agent-x")
+    path = tmp_path / "select_probe.js"
+    path.write_text(js, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", "--check", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_list_root_sidebar_rows_js_passes_node_syntax_check(tmp_path: Path) -> None:
+    """Fail when the sidebar row-list CDP script is not parseable JavaScript.
+
+    node --check covers the list wrapper, including its RegExp construction.
+    A syntax error here still passes the archive-only check.
+    """
+    js = _list_root_sidebar_rows_js("10479")
+    path = tmp_path / "list_probe.js"
     path.write_text(js, encoding="utf-8")
     proc = subprocess.run(
         ["node", "--check", str(path)],
