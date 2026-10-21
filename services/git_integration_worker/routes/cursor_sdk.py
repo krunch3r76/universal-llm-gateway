@@ -1988,8 +1988,9 @@ async def reconcile_stale_leases(
     ``reap_only`` keeps the reap half and drops the promote half. Used while
     draining, where clearing a wedged holder is exactly what lets the drain
     finish, but starting its queued successor would admit new work into a
-    worker that is shutting down. The promote half also re-drives park
-    auto-resume for rows refused on an earlier pass.
+    worker that is shutting down. The same flag skips nest-parent
+    ``resume_of`` so a drain does not admit a harvest dispatch. The promote
+    half also re-drives park auto-resume for rows refused on an earlier pass.
     """
     from services.git_integration_worker.cursor_sdk_gate import (
         reclaim_cross_lane_phantom_holders,
@@ -2036,46 +2037,41 @@ async def reconcile_stale_leases(
         orphan_row = await asyncio.to_thread(
             load_ledger_row, ledger, dispatch_id=dispatch_id
         )
-        lease_key = await reclaim_orphan_holder(
+        reclaimed = await reclaim_orphan_holder(
             ledger,
             dispatch_id=dispatch_id,
             controller=controller,
             cfg=cfg,
+            reap_only=reap_only,
         )
-        if lease_key:
-            repos.add(lease_key)
-            prune_result = await asyncio.to_thread(
-                salvage_restart_survivor_worktree,
-                dispatch_id=dispatch_id,
-                source_repo=cfg.source_repo,
+        # Admitted resume owns the lease. A refusal cancels the row first,
+        # so ledger status is not the gate — ``resume_admitted`` is.
+        if reclaimed.resume_admitted or not reclaimed.lease_key:
+            continue
+        lease_key = reclaimed.lease_key
+        repos.add(lease_key)
+        prune_result = await asyncio.to_thread(
+            salvage_restart_survivor_worktree,
+            dispatch_id=dispatch_id,
+            source_repo=cfg.source_repo,
+        )
+        if prune_result.pruned and (
+            prune_result.salvaged or prune_result.branch_retained
+        ):
+            logger.info(
+                "stale-lease survivor worktree salvaged dispatch_id=%s "
+                "salvaged=%s branch_retained=%s",
+                dispatch_id,
+                prune_result.salvaged,
+                prune_result.branch_retained,
             )
-            if prune_result.pruned and (
-                prune_result.salvaged or prune_result.branch_retained
-            ):
-                logger.info(
-                    "stale-lease survivor worktree salvaged dispatch_id=%s "
-                    "salvaged=%s branch_retained=%s",
-                    dispatch_id,
-                    prune_result.salvaged,
-                    prune_result.branch_retained,
-                )
-            # A completed nest child seals the parent cancelled and must not
-            # be restamped orphaned. Survivor emit stays for rows still blocking.
-            if orphan_row is not None and not terminal_emitted(dispatch_id):
-                fresh = await asyncio.to_thread(
-                    load_ledger_row, ledger, dispatch_id=dispatch_id
-                )
-                if fresh is not None and fresh.status in (
-                    "admitted",
-                    "running",
-                    "parked_waiting",
-                ):
-                    emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
-            emit_write_lease_released(
-                dispatch_id=dispatch_id,
-                source_repo=lease_key,
-                stale=True,
-            )
+        if orphan_row is not None and not terminal_emitted(dispatch_id):
+            emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
+        emit_write_lease_released(
+            dispatch_id=dispatch_id,
+            source_repo=lease_key,
+            stale=True,
+        )
     if reap_only:
         return
     await _resume_parked_rows(
