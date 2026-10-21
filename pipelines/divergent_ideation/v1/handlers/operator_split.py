@@ -23,7 +23,7 @@ class OperatorSplitV1Handler(BaseHandler):
         operators = self._resolve_input(resolver, step, "operators", inputs)
         pool_manifest = self._resolve_input(resolver, step, "pool_manifest", inputs)
         run_seed = int(self._resolve_input(resolver, step, "run_seed", inputs) or 0)
-        result = split_operators(list(operators or []), list(pool_manifest or []), run_seed)
+        result = split_operators(operators, list(pool_manifest or []), run_seed)
         self._publish_bus_event(
             context,
             DivergentIdeationOperatorSplit(
