@@ -1,4 +1,9 @@
-"""Tracked Cursor Glass window targets (:8, orion-node) for CDP and wake routing."""
+"""Tracked Cursor Glass window targets (:8, orion-node) for CDP and wake routing.
+
+Host and Stargate callers keep the loopback origins in ``cursor-windows.json``.
+A process on the mcp docker bridge rewrites ports 9338 and 9339 to the gateway
+forwarder. Orion-node stays on its own loopback port.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from cursor_bridge.cdp_gateway_forwarder import container_cdp_origin
 
 _SCHEMA = 1
 _DEFAULT_ORIGIN = "http://127.0.0.1:9338"
@@ -16,6 +23,7 @@ def _repo_root() -> Path:
 
 
 def config_path() -> Path:
+    """Absolute path of the tracked Glass window table at ``config/cursor-windows.json``."""
     return _repo_root() / "config" / "cursor-windows.json"
 
 
@@ -60,19 +68,35 @@ def _row_for_gui_host(gui_host: str | None, *, config: dict[str, Any] | None = N
 
 
 def all_gui_host_aliases() -> frozenset[str]:
+    """Every gui_host label and alias the window table accepts.
+
+    Callers use the set to reject an unknown host before opening a debug port.
+    """
     cfg = load_config()
     idx = _alias_index(cfg)
     return frozenset(idx.keys())
 
 
 def cdp_origin_for_gui_host(gui_host: str | None) -> str:
+    """Debug origin for one Glass host.
+
+    The configured value stays loopback for host and Stargate callers. Inside
+    the mcp container, ports 9338 and 9339 are rewritten to the docker gateway
+    forwarder. The rewrite does not connect to those ports.
+    """
     row = _row_for_gui_host(gui_host)
     if row:
-        return str(row.get("cdp_origin") or _DEFAULT_ORIGIN)
-    return _DEFAULT_ORIGIN
+        origin = str(row.get("cdp_origin") or _DEFAULT_ORIGIN)
+    else:
+        origin = _DEFAULT_ORIGIN
+    return container_cdp_origin(origin)
 
 
 def subscription_display_for_gui_host(gui_host: str | None) -> str:
+    """Display token stored on a cursor endpoint subscription for this host.
+
+    ``:8`` maps to ``8``. An unlisted host other than orion-node also returns ``8``.
+    """
     row = _row_for_gui_host(gui_host)
     if row:
         return str(row.get("subscription_display") or "8")
@@ -83,6 +107,10 @@ def subscription_display_for_gui_host(gui_host: str | None) -> str:
 
 
 def normalize_gui_host(gui_host: str | None) -> str:
+    """Canonical gui_host label from the window table.
+
+    An unlisted host returns ``:8``, except orion-node which stays ``orion-node``.
+    """
     row = _row_for_gui_host(gui_host)
     if row:
         return str(row.get("gui_host") or ":8")
@@ -93,6 +121,7 @@ def normalize_gui_host(gui_host: str | None) -> str:
 
 
 def is_configured_cursor_glass_host(gui_host: str | None) -> bool:
+    """Whether ``gui_host`` is a row or alias in the tracked Glass window table."""
     return _row_for_gui_host(gui_host) is not None
 
 

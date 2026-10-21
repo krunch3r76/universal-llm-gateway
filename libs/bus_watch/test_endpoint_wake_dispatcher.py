@@ -1524,10 +1524,10 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     assert cur_sub["state"] == "unsubscribed"
 
 
-def test_fired_hop_past_deadline_with_null_landed_transcript_drops_dead_agent_subscription(
+def test_fired_hop_past_deadline_with_null_landed_transcript_keeps_display_subscription(
     db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Fired hop with landed_transcript_id=None past deadline expires and unsubscribes dead agent_id."""
+    """Fired hop with no landed transcript expires and leaves the display subscription."""
     from agent_bus_store.db.endpoint_subscriptions import (
         current_subscription,
         resolve_endpoint,
@@ -1571,17 +1571,18 @@ def test_fired_hop_past_deadline_with_null_landed_transcript_drops_dead_agent_su
     assert expire_overdue_hop(thread, now=1500.0, watch_dir=tmp_path) is None
     assert resolve_endpoint("cursor", thread) is not None
 
-    # Past deadline (t=2000 >= 1600) with landed_transcript_id=None: expires and drops dead agent_id.
+    # Past deadline (t=2000 >= 1600) with no landed transcript: expire, keep the row.
     expired = expire_overdue_hop(thread, now=2000.0, watch_dir=tmp_path)
     assert expired is not None
     assert expired["state"] == "expired"
     assert expired["landed_transcript_id"] is None
     persisted = read_hop_land(thread, watch_dir=tmp_path)
     assert persisted is not None and persisted["state"] == "expired"
-    assert resolve_endpoint("cursor", thread) is None
+    assert resolve_endpoint("cursor", thread) is not None
     cur_sub = current_subscription("cursor", thread)
     assert cur_sub is not None
-    assert cur_sub["state"] == "unsubscribed"
+    assert cur_sub["state"] == "subscribed"
+    assert "hop_expired" not in str(cur_sub.get("evidence") or "")
 
     # Also verify scan_once reaps an overdue fired hop before resolving delivery route.
     subscribe_endpoint(
@@ -1648,9 +1649,56 @@ def test_fired_hop_past_deadline_with_null_landed_transcript_drops_dead_agent_su
 
     store = ScanStore()
     scan_once(store)  # type: ignore[arg-type]
-    assert store.pending == []
-    assert resolve_endpoint("cursor", thread) is None
+    assert store.pending
+    assert resolve_endpoint("cursor", thread) is not None
+    kept = current_subscription("cursor", thread)
+    assert kept is not None
+    assert kept["state"] == "subscribed"
     assert read_hop_land(thread, watch_dir=tmp_path)["state"] == "expired"  # type: ignore[index]
+
+
+def test_mark_expired_with_landed_transcript_drops_different_agent(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded landed id that differs from the live agent is still unsubscribed."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        subscribe_endpoint,
+    )
+
+    from bus_watch import ide_hop_land
+    from bus_watch.ide_hop_land import mark_expired, mark_fired
+
+    monkeypatch.setattr(ide_hop_land, "WATCH_DIR", tmp_path)
+    detail = create_thread(thread_id=18461, slug="landed-differs")
+    assert detail is not None
+    thread = str(detail["id"])
+    live_agent = "4a3412d2-dd68-4510-9953-e92fe72cd720"
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=f"{thread} landed-differs",
+        agent_id=live_agent,
+        bound_by="liaison-tick-claim",
+    )
+    record = mark_fired(
+        root=thread,
+        tip_cp=1,
+        seal_bus_turn=1,
+        departing_transcript_id="departing",
+        fired_at=1000.0,
+        deadline_s=600.0,
+        message_path="liaison-18461.md",
+        watch_dir=tmp_path,
+    )
+    record["landed_transcript_id"] = "landed-other"
+    mark_expired(record, watch_dir=tmp_path)
+    cur = current_subscription("cursor", thread)
+    assert cur is not None
+    assert cur["state"] == "unsubscribed"
+    assert str(cur.get("evidence") or "").startswith("hop_expired:")
 
 
 def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(

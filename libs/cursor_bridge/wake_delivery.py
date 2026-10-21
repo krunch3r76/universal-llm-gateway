@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
+from cursor_bridge.cdp_gateway_forwarder import container_cdp_origin
 from cursor_bridge.cdp_pages import list_pages
 from cursor_bridge.chat_surface import (
     probe_surface,
@@ -76,7 +77,12 @@ def _display_lock(display: str) -> asyncio.Lock:
 
 
 def normalize_target(display: object, app: object) -> dict[str, Any]:
-    """Map one display and app to its debug-port origin."""
+    """Map one display and app to its debug-port origin.
+
+    The table is loopback. A process on the mcp docker bridge rewrites only
+    ports 9338 and 9339 to the gateway forwarder. Host and Stargate callers
+    keep ``127.0.0.1``. Unknown display/app pairs stay unknown.
+    """
     disp = str(display or "").strip().lstrip(":").lower()
     name = str(app or "").strip().lower().replace("_", "-")
     if name in {"grok-bot", "grokbot"}:
@@ -84,7 +90,12 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     origin = _TARGETS.get((name, disp))
     if origin is None:
         return {"ok": False, "reason": "unknown_target", "display": disp, "app": name}
-    return {"ok": True, "display": disp, "app": name, "origin": origin}
+    return {
+        "ok": True,
+        "display": disp,
+        "app": name,
+        "origin": container_cdp_origin(origin),
+    }
 
 
 def _turn(value: object) -> int | str | list[int] | None:

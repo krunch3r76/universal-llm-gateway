@@ -169,6 +169,11 @@ def _get(client: httpx.Client, path: str, **params: Any) -> dict[str, Any] | Non
 
 
 def health_probe(url: str) -> str:
+    """GET ``url`` and return ``ok``, ``down:<exc>``, or ``http_<status>``.
+
+    Used by the liaison digest fleet block. The timeout is 3 seconds. A
+    transport error is returned as text and does not raise.
+    """
     try:
         r = httpx.get(url, timeout=3.0)
     except httpx.HTTPError as exc:
@@ -262,7 +267,13 @@ def seat_budget(
     digest_ts: str,
     epoch: str,
 ) -> tuple[dict[str, Any], float]:
-    """Window from the model card for an sdk hop; 256k only for an unread picker."""
+    """Window from the model card for an sdk hop; 256k only for an unread picker.
+
+    A tab probe dict with no ``used_tokens`` key does not raise and does not
+    invent a count. The returned block sets ``budget_probe`` to ``incomplete``
+    and ``used_tokens`` to null. The percent alongside it is 0 and is not a
+    measured ratio.
+    """
     from bus_watch.ide_budget import IDE_BUDGET_SOURCE, ide_holder_transcript
 
     if usage_live:
@@ -293,6 +304,22 @@ def seat_budget(
     if (register != "autonomous" or ide_holder_transcript(lock)) and (
         ide := _measure_ide_tab(root_id, lock, policy)
     ):
+        if "used_tokens" not in ide:
+            return (
+                {
+                    "used_tokens": None,
+                    "window_limit_tokens": ide.get("window_limit_tokens"),
+                    "model": str(policy.get("ide_model") or "ide-tab"),
+                    "as_of": digest_ts,
+                    "source": IDE_BUDGET_SOURCE,
+                    "scope": _BUDGET_SCOPE,
+                    "epoch": str(ide.get("transcript_id") or ""),
+                    "stop_class": None,
+                    "budget_probe": "incomplete",
+                    "transcript_id": ide.get("transcript_id"),
+                },
+                0.0,
+            )
         pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
         return (
             build_budget_block(

@@ -31,6 +31,11 @@ def _resolve_watch_dir(watch_dir: Path | None) -> Path:
 
 
 def hop_land_path(root_id: str, watch_dir: Path | None = None) -> Path:
+    """Path of the hop-land JSON for one liaison root under the watch directory.
+
+    The file name is ``liaison-<root>.hop-land.json``. ``watch_dir`` defaults
+    to the bus_watch watch directory. This does not touch the filesystem.
+    """
     return _resolve_watch_dir(watch_dir) / f"liaison-{root_id}.hop-land.json"
 
 
@@ -49,6 +54,11 @@ def write_hop_land(record: dict[str, Any], *, watch_dir: Path | None = None) -> 
 def read_hop_land(
     root_id: str, *, watch_dir: Path | None = None
 ) -> dict[str, Any] | None:
+    """Load one hop-land record, or None when the file is missing or not a dict.
+
+    JSON and OS errors return None rather than raising, so a corrupt file does
+    not stall the expire scan.
+    """
     path = hop_land_path(root_id, _resolve_watch_dir(watch_dir))
     if not path.is_file():
         return None
@@ -143,11 +153,19 @@ def _drop_dead_hop_subscription(
     *,
     store: Any | None = None,
 ) -> bool:
-    """Unsubscribe ``("cursor", root_id)`` when it still names an unlanded ``agent_id``."""
+    """Unsubscribe ``("cursor", root_id)`` only when a landed transcript id differs.
+
+    An empty ``landed_transcript_id`` is not proof the house display subscription
+    is the dead hop. ``sub_agent_id != ""`` is true for every live row, and
+    unsubscribing it drops wakes until something resubscribes. Returns False
+    without calling unsubscribe in that case.
+    """
     root = str(root_id or "").strip()
     if not root or root == "*":
         return False
     landed_id = str(record.get("landed_transcript_id") or "").strip()
+    if not landed_id:
+        return False
     dropped = False
     if store is not None:
         sub_fn = getattr(store, "subscription", None)
@@ -213,14 +231,23 @@ def mark_expired(
     store: Any | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
-    """Advance a fired record to ``expired`` — OPERATOR_GATE, never re-fire."""
+    """Advance a fired record to ``expired`` — OPERATOR_GATE, never re-fire.
+
+    With no landed transcript id the house display subscription stays. A
+    recorded landed id that differs from the live ``agent_id`` is still dropped.
+    """
     t = time.time() if now is None else float(now)
     updated = {**record, "state": "expired", "expired_at": t}
     write_hop_land(updated, watch_dir=watch_dir)
-    if not updated.get("landed_transcript_id"):
-        root = str(updated.get("root") or "").strip()
-        if root:
-            _drop_dead_hop_subscription(root, updated, store=store)
+    landed_id = str(updated.get("landed_transcript_id") or "").strip()
+    root = str(updated.get("root") or "").strip()
+    if root and landed_id:
+        _drop_dead_hop_subscription(root, updated, store=store)
+    elif root:
+        logger.info(
+            "ide_hop_land: hop_expired keeps display subscription root=%s",
+            root,
+        )
     return updated
 
 
@@ -231,7 +258,7 @@ def expire_overdue_hop(
     now: float | None = None,
     watch_dir: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Expire a ``fired`` hop record past ``deadline_at`` with no landed tab and drop dead subscription."""
+    """Expire a ``fired`` hop past ``deadline_at`` and keep the display subscription."""
     root = str(root_id or "").strip()
     if not root:
         return None
