@@ -105,15 +105,20 @@ def test_drift_check_flags_bad_draft() -> None:
     clean_numbered = (
         "I, Kaywan Joseph Mansubi, state:\n\n"
         "1. I received the January 16, 2026 notice at 15571 Flintridge Dr close to its date (Exhibit 2).\n\n"
-        "2. I do not know the date I received supplemental tax bills #10059585 and #10059586 (Exhibit 4).\n\n"
-        "3. On May 28, 2026, she emailed me confirming submission (Exhibit 7.).\n"
+        "2. Rafael Aranda called me into a side office and told me Ms. Bathurst had been on emergency leave.\n\n"
+        "3. On May 27, 2026, I delivered my Assessment Appeal Applications in person to Dr. Amber Green. "
+        "On May 28, 2026, she emailed me confirming submission (Exhibit 7.).\n"
     )
     inv = build_fact_inventory(
         clean_numbered,
         purpose="Timeliness hearing",
         audience="Assessment Appeals Board",
     )
-    assert len(inv["load_bearing_claims"]) == 3
+    assert len(inv["load_bearing_claims"]) == 4
+    assert inv["sentence_count"] == 4
+    assert inv["input_sha256"]
+    assert inv["checked_sha256"]
+    assert inv["sworn_body_word_count"] > inv["checked_word_count"]
     assert inv["dropped_facts"] == []
     drift_clean = run_drift_check(
         clean_numbered,
@@ -121,6 +126,11 @@ def test_drift_check_flags_bad_draft() -> None:
         pin_ledger=[{"id": "P1", "excerpt": "Exhibit 2, Exhibit 4, Exhibit 7"}],
     )
     assert drift_clean["passed"] is True
+    assert drift_clean["input_sha256"] == inv["input_sha256"]
+    assert drift_clean["checked_sha256"] == inv["checked_sha256"]
+    assert drift_clean["sworn_body_word_count"] == inv["sworn_body_word_count"]
+    assert drift_clean["checked_word_count"] == inv["checked_word_count"]
+    assert drift_clean["sentence_count"] == 4
     assert drift_clean["flagged_sentences"] == []
 
 
