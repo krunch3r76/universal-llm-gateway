@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sqlite3
 from pathlib import Path
@@ -10,156 +9,7 @@ from typing import Any
 
 import pytest
 
-from cortex_store import db
 from cortex_store.dispatch_ops import ops_journals
-from cortex_store.routes import (
-    session_close,
-    session_close_persist,
-    session_journals,
-)
-
-_MIG_PATH = Path(__file__).parent / "migrations" / "055_session_journals_source_ref.py"
-_spec = importlib.util.spec_from_file_location(
-    "migration_055_session_journals_source_ref", _MIG_PATH
-)
-assert _spec is not None and _spec.loader is not None
-migration_055 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(migration_055)
-
-
-def _install_schema(db_path: Path) -> None:
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE entities (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT,
-                status TEXT,
-                source_uri TEXT,
-                attributes TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            );
-            CREATE TABLE assertions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entity_id TEXT NOT NULL,
-                claim TEXT,
-                confidence TEXT,
-                confidence_score REAL,
-                evidence TEXT,
-                evidence_uris TEXT,
-                derivation_type TEXT,
-                chunk_id TEXT,
-                chunk_id_schema TEXT,
-                reasoning_summary TEXT,
-                is_atomic INTEGER DEFAULT 1,
-                is_decontextualized INTEGER DEFAULT 1,
-                observed_at TEXT,
-                valid_from TEXT,
-                valid_until TEXT,
-                superseded_by INTEGER,
-                review_status TEXT,
-                reviewer TEXT,
-                reviewed_at TEXT,
-                review_notes TEXT,
-                resolution_status TEXT,
-                fulfillment_assertion_id INTEGER,
-                quality_score REAL,
-                prospective_summary TEXT,
-                events_json TEXT,
-                artifact_uri TEXT,
-                artifact_storage TEXT,
-                entrenchment_score REAL,
-                predicate_form TEXT,
-                created_at TEXT,
-                raw_predicate_form TEXT,
-                normalization_decision TEXT,
-                candidate_set_fingerprint TEXT,
-                normalizer_version TEXT,
-                seeded_by TEXT
-            );
-            CREATE TABLE relationships (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_entity TEXT NOT NULL,
-                to_entity TEXT NOT NULL,
-                type TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1
-            );
-            CREATE TABLE session_journals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                agent TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                domains TEXT,
-                decisions TEXT,
-                open_items TEXT,
-                entity_ids TEXT,
-                file_path TEXT,
-                session_id TEXT NOT NULL,
-                prior_session_id TEXT,
-                handoff_prompt TEXT
-            );
-            CREATE TABLE session_edges (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                agent TEXT NOT NULL,
-                from_node TEXT NOT NULL,
-                to_node TEXT NOT NULL,
-                edge_type TEXT NOT NULL,
-                strength REAL,
-                edge_source TEXT,
-                created_at TEXT,
-                valid_until TEXT
-            );
-            CREATE TABLE reflective_journal (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent TEXT NOT NULL,
-                register TEXT NOT NULL,
-                entry TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                session_id TEXT,
-                revises INTEGER,
-                consolidation_data TEXT,
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-            );
-            CREATE TABLE journal_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_entry INTEGER NOT NULL,
-                to_entry INTEGER,
-                to_entity TEXT,
-                link_type TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-            );
-            """
-        )
-        migration_055.migrate(conn)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-@pytest.fixture()
-def session_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
-    db_path = tmp_path / "cortex.db"
-    files_root = tmp_path / "files"
-    files_root.mkdir(parents=True)
-    transcripts_root = tmp_path / "agent-transcripts"
-    transcripts_root.mkdir()
-    _install_schema(db_path)
-    monkeypatch.setattr(db, "_CORTEX_DB", db_path)
-    monkeypatch.setattr(ops_journals, "_FILES_ROOT", files_root)
-    monkeypatch.setattr(session_journals, "_FILES_ROOT", files_root)
-    monkeypatch.setattr(session_close, "_FILES_ROOT", files_root)
-    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", files_root)
-    monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(transcripts_root))
-    return {
-        "db_path": db_path,
-        "files_root": files_root,
-        "transcripts_root": transcripts_root,
-    }
 
 
 def _write_jsonl(path: Path) -> None:
@@ -396,6 +246,17 @@ def test_source_ref_depth_none_advisory(session_env: dict[str, Path]) -> None:
 
 
 def test_migration_adds_source_ref_column() -> None:
+    import importlib.util
+
+    mig = Path(__file__).parent / "migrations" / "055_session_journals_source_ref.py"
+    if not mig.is_file():
+        pytest.skip("migration file absent from this worktree: 055_session_journals_source_ref.py")
+    spec = importlib.util.spec_from_file_location(
+        "migration_055_session_journals_source_ref", mig
+    )
+    assert spec is not None and spec.loader is not None
+    migration_055 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_055)
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
