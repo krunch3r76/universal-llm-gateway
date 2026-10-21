@@ -1,4 +1,10 @@
-"""Hub-land scope from commissioner packet prose and lane-B ref reachability."""
+"""Hub-land scope from commissioner packet prose and lane-B ref reachability.
+
+``land_lane_branch_onto_hub_master`` fast-forwards or clean-merges a lane
+branch onto hub master only when the tip has an APPROVE K43 or a recorded
+exemption. The silent-land path and the deliberate land actuator are the
+callers. Direct fast-forward helpers do not apply this gate.
+"""
 
 from __future__ import annotations
 
@@ -53,6 +59,10 @@ def land_lane_branch_onto_hub_master(
 
     Non-blocking. Another holder returns not-landed at once. A clean merge is
     the fallback when fast-forward is refused and the merge does not conflict.
+    Before any ref move, the branch tip must have an ``APPROVE`` row in
+    ``master_review_owed`` or a recorded ``exemption_ref``. A missing ledger
+    refuses. Prechecks that already refuse (dirty overlap, gitignored path,
+    non-master HEAD) keep their reasons. Does not revert an earlier land.
     Never call this to test feasibility.
     """
     from services.git_integration_worker.cursor_sdk_land_lease import (
@@ -91,6 +101,23 @@ def land_lane_branch_onto_hub_master(
     refuse_reason: str | None = None
     try:
         try:
+            from services.git_integration_worker.master_review_owed import (
+                land_k43_block_reason,
+            )
+
+            ready = _ff_ready(repo, branch_name=branch_name)
+            if isinstance(ready, _FfReadyOk):
+                block = land_k43_block_reason(ready.tip_sha)
+                if block:
+                    logger.info(
+                        "hub land refuse %s branch=%s tip=%s",
+                        block,
+                        branch_name,
+                        ready.tip_sha,
+                    )
+                    return LaneBranchLandResult(
+                        False, before, before, refuse_reason=block
+                    )
             moved, ff_reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
             if not moved:
                 refuse_reason = ff_reason
@@ -144,9 +171,7 @@ def hub_land_precondition_reason(repo: Path, *, branch_name: str) -> str | None:
     return None
 
 
-def _ff_ready(
-    repo: Path, *, branch_name: str
-) -> _FfReadyOk | str | None:
+def _ff_ready(repo: Path, *, branch_name: str) -> _FfReadyOk | str | None:
     """Hub and branch tip when ff pre-merge checks pass, else a reason or ``None``."""
     branch = (branch_name or "").strip()
     if not branch or branch == "master":
@@ -259,11 +284,7 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
         return "hub_land_paths_unknown"
     cached = _git_capture(hub, "diff", "--cached", "--name-only")
     if cached.returncode == 0 and cached.stdout.strip():
-        staged = [
-            line.strip()
-            for line in cached.stdout.splitlines()
-            if line.strip()
-        ]
+        staged = [line.strip() for line in cached.stdout.splitlines() if line.strip()]
         logger.info(
             "hub land refuse hub_index_staged dirty_paths=%s",
             staged,
@@ -357,9 +378,7 @@ def _ff_only_onto_hub_master(
     post_sha = _master_sha(hub)
     if post_sha and post_sha != pre_sha:
         before_sha, after_sha = _ff_range(hub, merged.stdout, tip_sha)
-        _record_hub_master_move(
-            hub, before_sha, after_sha, "ff_only_onto_hub_master"
-        )
+        _record_hub_master_move(hub, before_sha, after_sha, "ff_only_onto_hub_master")
     if commit_is_ancestor_of_hub_master(hub, tip_sha) is not True:
         return False, "not_ff"
     return True, None

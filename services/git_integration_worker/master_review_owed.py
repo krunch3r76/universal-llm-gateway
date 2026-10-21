@@ -1,9 +1,14 @@
 """Ledger of reviews owed on hub master after a land.
 
-One canonical ``VERDICT:`` line binds a row. The check lists master commits
-with no covering row and posts a gap notice. It does not refuse a land, does
-not revert, and does not call ``team_dispatch``. Ride-along notices use the
-same poster and ``gap_posted_at`` dedupe and also do not block.
+One canonical ``VERDICT:`` line binds a row. The post-land check lists master
+commits with no covering row and posts a gap notice. That check does not
+refuse a land, does not revert, and does not call ``team_dispatch``.
+Ride-along notices use the same poster and ``gap_posted_at`` dedupe and also
+do not block.
+
+``land_k43_block_reason`` is the pre-land query the hub land actuator calls.
+An ``APPROVE`` verdict or a recorded ``exemption_ref`` admits the tip. This
+module still does not revert a commit and does not call ``team_dispatch``.
 
 Authority for the rows is the dispatch-ledger table ``master_review_owed``.
 The JSON file is the idempotent seed. Recovery is the next check: seed rows
@@ -189,7 +194,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             bus_turn INTEGER,
             fixes_sha TEXT,
             gap_posted_at TEXT,
-            notice_tag TEXT
+            notice_tag TEXT,
+            exemption_ref TEXT
         )
         """
     )
@@ -217,6 +223,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE master_review_owed_state "
             "ADD COLUMN verdict_scan_after_turn INTEGER NOT NULL DEFAULT 0"
         )
+    owed_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(master_review_owed)")
+    }
+    if "exemption_ref" not in owed_columns:
+        conn.execute("ALTER TABLE master_review_owed ADD COLUMN exemption_ref TEXT")
     conn.commit()
 
 
@@ -437,6 +448,106 @@ def bind_canonical_verdict(
         bus_turn=bus_turn,
         review_dispatch_id=review_dispatch_id,
     )
+
+
+def land_k43_block_reason(
+    tip_sha: str,
+    *,
+    mounts_table: list[tuple[str, str]] | None = None,
+) -> str | None:
+    """Return why a hub land of ``tip_sha`` must not move master.
+
+    ``None`` means the tip has an ``APPROVE`` verdict or a non-empty
+    ``exemption_ref``. ``REQUEST_CHANGES``, a gap row, and a missing row
+    return ``k43_unbound``. An unreadable ledger returns
+    ``k43_ledger_unavailable`` so the land fails closed. Reads the
+    dispatch ledger and does not post, bind, or move refs.
+    """
+    tip = (tip_sha or "").strip().lower()
+    if not tip:
+        return "k43_unbound"
+    try:
+        conn, _reason = _open_ledger(mounts_table)
+    except Exception:
+        logger.warning("k43 land ledger open failed tip=%s", tip, exc_info=True)
+        return "k43_ledger_unavailable"
+    if conn is None:
+        return "k43_ledger_unavailable"
+    try:
+        row = conn.execute(
+            "SELECT verdict, exemption_ref FROM master_review_owed WHERE tip_sha = ?",
+            (tip,),
+        ).fetchone()
+    except sqlite3.Error:
+        logger.warning("k43 land ledger read failed tip=%s", tip, exc_info=True)
+        return "k43_ledger_unavailable"
+    finally:
+        conn.close()
+    if row is None:
+        return "k43_unbound"
+    verdict = str(row["verdict"] or "").strip().upper()
+    if verdict == "APPROVE":
+        return None
+    exemption = str(row["exemption_ref"] or "").strip()
+    if exemption:
+        return None
+    return "k43_unbound"
+
+
+def record_land_exemption(
+    repo: str | Path,
+    tip_sha: str,
+    *,
+    base_sha: str,
+    exemption_ref: str,
+    mounts_table: list[tuple[str, str]] | None = None,
+) -> str:
+    """Store an explicit land exemption for one commit tip.
+
+    ``exemption_ref`` is the record (a bus turn or ruling id). A blank ref
+    writes nothing and returns ``exemption_ref_empty``. Unknown commits
+    return ``unresolved_sha``. Ledger open failure returns that reason.
+    A later gap notice does not clear the ref. Returns ``recorded`` after
+    the row is committed. Does not move git refs.
+    """
+    ref = (exemption_ref or "").strip()
+    if not ref:
+        return "exemption_ref_empty"
+    tip = (tip_sha or "").strip().lower()
+    base = (base_sha or "").strip().lower()
+    root = Path(repo)
+    if not tip or not base or not _is_commit(root, tip) or not _is_commit(root, base):
+        return "unresolved_sha"
+    try:
+        conn, reason = _open_ledger(mounts_table)
+    except Exception:
+        logger.warning("k43 exemption ledger open failed tip=%s", tip, exc_info=True)
+        return "ledger_connect_failed"
+    if conn is None:
+        return reason or "ledger_not_local"
+    try:
+        existing = conn.execute(
+            "SELECT tip_sha FROM master_review_owed WHERE tip_sha = ?",
+            (tip,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO master_review_owed (tip_sha, base_sha, exemption_ref) "
+                "VALUES (?, ?, ?)",
+                (tip, base, ref),
+            )
+        else:
+            conn.execute(
+                "UPDATE master_review_owed SET exemption_ref=? WHERE tip_sha=?",
+                (ref, tip),
+            )
+        conn.commit()
+    except sqlite3.Error:
+        logger.warning("k43 exemption write failed tip=%s", tip, exc_info=True)
+        return "ledger_connect_failed"
+    finally:
+        conn.close()
+    return "recorded"
 
 
 def _covered_shas(repo: Path, rows: Sequence[sqlite3.Row]) -> set[str]:

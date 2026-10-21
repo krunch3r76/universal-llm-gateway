@@ -37,6 +37,7 @@ from services.git_integration_worker.cursor_sdk_land_lease import (
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import commit_on_terminal
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
+from services.git_integration_worker.tests.land_k43_fixture import exempt_branch
 
 pytestmark = pytest.mark.offline
 
@@ -77,6 +78,7 @@ def _master(repo: Path) -> str:
 def test_land_lane_branch_lands_when_lease_free(tmp_path: Path) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(repo, "cursor-sdk/lane-deliberate", "lane\n")
+    exempt_branch(repo, "cursor-sdk/lane-deliberate")
     before = _master(repo)
     result = land_lane_branch_onto_hub_master(
         repo, branch_name="cursor-sdk/lane-deliberate", holder_op_id="d-free"
@@ -227,6 +229,7 @@ def test_silent_land_acquires_lease_when_free_and_skips_when_held(
 ) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(repo, "cursor-sdk/lane-silent", "silent\n")
+    exempt_branch(repo, "cursor-sdk/lane-silent")
     before = _master(repo)
     key = master_land_lease_key(repo)
     holder = "busy-land"
@@ -270,7 +273,10 @@ def test_process_holds_lease_ledger_raise_refuses(
         "services.git_integration_worker.cursor_sdk_land_lease._connect",
         _down,
     )
-    assert ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-ledger-down") is False
+    assert (
+        ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-ledger-down")
+        is False
+    )
     assert _master(repo) == before
 
 
@@ -279,6 +285,7 @@ def test_silent_land_release_raise_after_ff_keeps_landed_true(
 ) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(repo, "cursor-sdk/lane-release-raise", "lane\n")
+    exempt_branch(repo, "cursor-sdk/lane-release-raise")
     before = _master(repo)
 
     def _raise(**_kwargs: object) -> bool:
@@ -367,6 +374,7 @@ def test_land_lane_branch_ledger_down_on_release_returns_landed(
 ) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(repo, "cursor-sdk/lane-reap", "lane\n")
+    exempt_branch(repo, "cursor-sdk/lane-reap")
     real = land_lease._connect
     calls = {"n": 0}
 
@@ -397,6 +405,7 @@ def test_land_lane_branch_merge_timeout_returns_unlanded_and_aborts(
     assert _git(repo, "add", "hub.md").returncode == 0
     assert _git(repo, "commit", "-m", "hub").returncode == 0
     before = _master(repo)
+    exempt_branch(repo, "cursor-sdk/lane-timeout")
     import services.git_integration_worker.cursor_sdk_hub_land_scope as scope
 
     real = scope._git_capture
@@ -460,6 +469,7 @@ def test_land_lane_branch_clean_merge_conflict_unlanded(tmp_path: Path) -> None:
     assert _git(repo, "add", "README.md").returncode == 0
     assert _git(repo, "commit", "-m", "hub").returncode == 0
     before = _master(repo)
+    exempt_branch(repo, "cursor-sdk/lane-conflict")
     result = land_lane_branch_onto_hub_master(
         repo, branch_name="cursor-sdk/lane-conflict", holder_op_id="d-conflict"
     )
@@ -481,6 +491,7 @@ def test_land_lane_branch_clean_merge_fallback_lands(tmp_path: Path) -> None:
     (repo / "hub.md").write_text("hub\n", encoding="utf-8")
     assert _git(repo, "add", "hub.md").returncode == 0
     assert _git(repo, "commit", "-m", "hub").returncode == 0
+    exempt_branch(repo, "cursor-sdk/lane-merge")
     result = land_lane_branch_onto_hub_master(
         repo, branch_name="cursor-sdk/lane-merge", holder_op_id="d-merge"
     )
