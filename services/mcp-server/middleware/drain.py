@@ -117,6 +117,53 @@ def reset_drain_for_tests() -> None:
         _LAST_LIFE_TOOLS_MONO = None
 
 
+def pending_admit_queued_payload(jsonrpc_id: Any) -> dict[str, Any]:
+    """JSON-RPC result for a tools/call held for a pending restart intent.
+
+    Not the draining 503. The call did not start and did not count as
+    in-flight, so the idle boundary stays put. Callers retry after the intent
+    leaves ``pending_drain``.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "id": jsonrpc_id,
+        "result": {
+            "status": "queued",
+            "reason": "pending_restart_intent",
+            "lane": "mcp",
+        },
+    }
+
+
+def _mcp_pending_queues_tools() -> bool:
+    """True when a pending mcp intent should hold the next tools/call."""
+    from scripts.model_manager.ui.controller.intent_admit_fence import (
+        MCP_ADMIT_LANE,
+        blocked_admit_lanes,
+        pending_intent_queues_admit,
+        pending_service_intent_status,
+    )
+
+    status = pending_service_intent_status("mcp")
+    blocked = blocked_admit_lanes(service="mcp", intent_status=status)
+    return pending_intent_queues_admit(blocked_lanes=blocked, admit_lane=MCP_ADMIT_LANE)
+
+
+def _replay_receive(body: bytes, receive: Receive) -> Receive:
+    """Return a receive callable that yields ``body`` once, then the original."""
+    pending = {"type": "http.request", "body": body, "more_body": False}
+    sent = False
+
+    async def inner() -> dict[str, Any]:
+        nonlocal sent
+        if not sent:
+            sent = True
+            return pending
+        return await receive()
+
+    return inner
+
+
 def restart_error_payload(jsonrpc_id: Any) -> dict[str, Any]:
     """Return the canonical JSON-RPC restart error payload."""
     return {
@@ -210,6 +257,31 @@ class DrainMiddleware:
 
         path = str(scope.get("path", ""))
         method = str(scope.get("method", ""))
+
+        # Pending mcp intent: queue tools/call before it counts as in-flight.
+        # Other methods on the same POST are replayed so initialize still runs.
+        # A store miss fails open inside pending_service_intent_status.
+        if method == "POST" and not _DRAINING.is_set():
+            from dual_endpoint_http import is_mcp_endpoint_path  # noqa: PLC0415
+
+            if is_mcp_endpoint_path(path) and _mcp_pending_queues_tools():
+                body = await _read_body(receive)
+                jsonrpc_id, mcp_method, tool_name = _parse_jsonrpc_request(body)
+                if mcp_method == "tools/call":
+                    record(
+                        "mcp.maintenance.request.queued",
+                        mcp_method=mcp_method,
+                        tool_name=tool_name,
+                        jsonrpc_id=jsonrpc_id,
+                        lane="mcp",
+                    )
+                    await _send_json(
+                        send,
+                        status=202,
+                        payload=pending_admit_queued_payload(jsonrpc_id),
+                    )
+                    return
+                receive = _replay_receive(body, receive)
 
         # Atomic check-and-admit: under the lock either reject (drain mode) or
         # increment the in-flight counter. Prevents the TOCTOU window where a

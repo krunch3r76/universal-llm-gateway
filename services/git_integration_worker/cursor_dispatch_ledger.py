@@ -1564,6 +1564,7 @@ class CursorDispatchLedger:
         source_ref: str | None = None,
         work_key: str | None = None,
         force: bool = False,
+        queue_for_pending_intent: bool = False,
         nest_under: str | None = None,
         refuse_if_lease_held: bool = False,
         concurrency_posture: str | None = None,
@@ -1582,6 +1583,8 @@ class CursorDispatchLedger:
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
+        ``queue_for_pending_intent`` inserts ``queued`` even when the lease is
+        free and does not park a nest parent. ``force`` does not skip it.
 
         Work-identity gate (contract-agnostic): when ``identity_class != adhoc``,
         ``work_key`` is set, and ``force`` is false, a peer row with the same
@@ -1888,7 +1891,12 @@ class CursorDispatchLedger:
             insert_status = _STATUS_ADMITTED
             queued_at: str | None = None
             nested_park_parent: str | None = None
-            if not read_only and writer_key:
+            if queue_for_pending_intent:
+                # Pending restart intent: do not start, and do not park the
+                # parent. The route returns 202 before try_admit.
+                insert_status = _STATUS_QUEUED
+                queued_at = _now()
+            elif not read_only and writer_key:
                 active_row = conn.execute(
                     "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
@@ -3202,6 +3210,30 @@ class CursorDispatchLedger:
             "dispatch_ids": live,
             "active_bridges": len(bridge_ids),
             "active_bridge_dispatch_ids": bridge_ids,
+        }
+
+    def occupied_admit_lanes(self) -> set[str]:
+        """Cursor lanes with an admitted or running row, the drain's wait set.
+
+        Queued rows are excluded so a fenced admit does not count itself as
+        the occupant. Read-only; no events. Empty when nothing is started.
+        """
+        from services.git_integration_worker.cursor_sdk_capacity_invariant import (
+            resolve_admit_lane,
+        )
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT record_json, lease_key, source_repo FROM cursor_sdk_dispatches "
+                "WHERE status IN ('admitted','running')"
+            ).fetchall()
+        return {
+            resolve_admit_lane(
+                record_json=row["record_json"],
+                lease_key=row["lease_key"],
+                source_repo=row["source_repo"],
+            )
+            for row in rows
         }
 
     def live_dispatch_projections(self) -> list[dict[str, Any]]:

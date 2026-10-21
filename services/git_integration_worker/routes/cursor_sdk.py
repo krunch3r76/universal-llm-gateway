@@ -1801,7 +1801,9 @@ async def _mark_terminal_and_promote(
         # Parked parent regained capacity — siblings stay queued (Q4).
         return
     emit_write_lease_released(dispatch_id=dispatch_id, source_repo=lease_key)
-    if lease_key and not controller.is_draining():
+    # Armed pending intent: do not start a queued successor before the drain
+    # flips. Draining already skips promote; this covers the still-armed case.
+    if lease_key and not controller.is_draining() and not controller.is_armed():
         await _promote_queued_for_lease(
             lease_key=lease_key,
             controller=controller,
@@ -4218,6 +4220,19 @@ async def admit_cursor_dispatch(
         if concurrency_posture is not None
         else 1
     )
+    from scripts.model_manager.ui.controller.intent_admit_fence import (
+        pending_service_intent_status,
+        queue_kw_for_pending_intent,
+    )
+
+    intent_fence = queue_kw_for_pending_intent(
+        service="git_integration_worker",
+        intent_status=pending_service_intent_status("git_integration_worker"),
+        occupied_lanes=ledger.occupied_admit_lanes(),
+        admit_lane=selected_lane,
+        armed=controller.is_armed(),
+        read_only=effective_read_only,
+    )
     try:
         admit_kwargs: dict[str, object] = {
             "req": req,
@@ -4242,6 +4257,7 @@ async def admit_cursor_dispatch(
             "identity_class": identity_class,
             "packet_kind": packet_kind,
         }
+        admit_kwargs.update(intent_fence)
         if (
             req.hop_seq is not None
             and req.hop_from is not None
