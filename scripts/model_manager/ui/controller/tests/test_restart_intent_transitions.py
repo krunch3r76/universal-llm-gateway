@@ -250,7 +250,63 @@ def test_busy_until_ceiling_names_last_cause(tmp_path: Any) -> None:
     )
     assert not any(reason.startswith("idle_ceiling_reached") for reason in reasons)
     assert "active_count=2" in seen["status_reason"]
+    assert "deadline_extended job_ids=none" in seen["status_reason"]
     assert any(reason.startswith("idle_observed") for reason in reasons)
+
+
+def test_busy_extend_records_payload_job_ids(tmp_path: Any) -> None:
+    """A busy extend writes job_id values already on the payload.
+
+    Breaks when the extend invents ids, drops the ones present, or calls
+    cas_force_preempt_from_pending while active_count is above 0.
+    """
+    store = _store(tmp_path)
+    intent = _arm(store)
+    busy = ActiveWork(
+        busy=True,
+        detail={
+            "busy": True,
+            "active_count": 2,
+            "active_ops": [
+                {"job_id": "job-a"},
+                {"job_id": "job-b"},
+                {"op_id": "not-a-job"},
+            ],
+        },
+    )
+    idle = ActiveWork(busy=False, detail={"busy": False, "active_count": 0})
+    seen: dict[str, str] = {}
+    force_calls: list[str] = []
+    original = store.cas_force_preempt_from_pending
+
+    def _counting(intent_id: str, **kwargs: Any) -> int:
+        force_calls.append(intent_id)
+        return original(intent_id, **kwargs)
+
+    store.cas_force_preempt_from_pending = _counting  # type: ignore[method-assign]
+
+    class _BusyThenIdle:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def snapshot(self) -> ActiveWork:
+            self.n += 1
+            if self.n == 8:
+                row = store.get(intent.intent_id)
+                assert row is not None
+                seen["status_reason"] = row.status_reason or ""
+                return idle
+            return busy
+
+    async def _lifecycle() -> str:
+        return "restart after idle"
+
+    supervisor = _supervisor(_BusyThenIdle(), _lifecycle, deadline_s=0.05)  # type: ignore[arg-type]
+    supervisor.store = store
+    _run(supervisor.supervise(intent))
+    assert force_calls == []
+    assert "job_ids=job-a,job-b" in seen["status_reason"]
+    assert "job_ids=job-a,job-b,not-a-job" not in seen["status_reason"]
 
 
 def test_lifecycle_raise_names_phase_and_class(tmp_path: Any) -> None:

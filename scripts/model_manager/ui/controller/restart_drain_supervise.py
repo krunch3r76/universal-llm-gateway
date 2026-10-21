@@ -44,6 +44,50 @@ def _clip(text: str) -> str:
     return text if len(text) <= _REASON_LIMIT else text[: _REASON_LIMIT - 3] + "..."
 
 
+def _active_count_above_zero(detail: Any) -> bool:
+    """True only when the payload's own ``active_count`` is an int above 0."""
+    if not isinstance(detail, dict):
+        return False
+    count = detail.get("active_count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return False
+    return count > 0
+
+
+def _job_ids_on_payload(detail: Any) -> list[str]:
+    """Job ids already stored under ``job_id``. Missing ids are not invented."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            raw = node.get("job_id")
+            if isinstance(raw, str):
+                text = raw.strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    found.append(text)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    if isinstance(detail, dict):
+        walk(detail)
+    return found
+
+
+def _deadline_extended_note(detail: Any) -> str:
+    """Waiting note for a busy self-preempt deadline extend."""
+    summary = format_active_work_summary(detail if isinstance(detail, dict) else None)
+    ids = _job_ids_on_payload(detail)
+    listed = ",".join(ids) if ids else "none"
+    return reason_code(
+        BLOCKED_BY_JOB, f"{summary or 'busy'}; deadline_extended job_ids={listed}"
+    )
+
+
 async def supervise_until_lifecycle(
     *,
     store: Any,
@@ -66,6 +110,8 @@ async def supervise_until_lifecycle(
     probe_count = 0
     escalated = False
     saw_active_work = False
+    extend_detail: Any = None
+    deadline_was_extended = False
     try:
         while True:
             try:
@@ -86,31 +132,47 @@ async def supervise_until_lifecycle(
                 if is_idle(work):
                     break
                 saw_active_work = True
-                summary = format_active_work_summary(getattr(work, "detail", None))
-                last_cause = reason_code(BLOCKED_BY_JOB, summary or "busy")
+                extend_detail = getattr(work, "detail", None)
+                summary = format_active_work_summary(extend_detail)
+                if deadline_was_extended and ceiling == "self_preempt":
+                    last_cause = _deadline_extended_note(extend_detail)
+                else:
+                    last_cause = reason_code(BLOCKED_BY_JOB, summary or "busy")
                 if last_cause != last_note:
                     _note_if_changed(store, intent_id, last_cause, last_note)
                     last_note = last_cause
             if loop.time() >= deadline:
                 # Busy self-preempt must not CAS force or fall through to
                 # lifecycle (SIGKILL / short stop). Probe-exception ceilings
-                # still force. No drain re-queue helper accepts job ids.
-                if ceiling == "self_preempt" and not saw_active_work:
+                # still force. active_count above 0 never force-preempts.
+                # No drain re-queue helper accepts job ids.
+                count_blocks = _active_count_above_zero(extend_detail)
+                if (
+                    ceiling == "self_preempt"
+                    and not saw_active_work
+                    and not count_blocks
+                ):
                     escalated = True
                     phase = "force_requested"
                     if (
                         store.cas_force_preempt_from_pending(
                             intent_id,
-                            reason=_clip(
-                                reason_code(IDLE_CEILING_REACHED, last_cause)
-                            ),
+                            reason=_clip(reason_code(IDLE_CEILING_REACHED, last_cause)),
                         )
                         != 1
                     ):
                         return
                     break
+                if ceiling == "self_preempt" and (saw_active_work or count_blocks):
+                    extended = _deadline_extended_note(extend_detail)
+                    if extended != last_note:
+                        _note_if_changed(store, intent_id, extended, last_note)
+                        last_note = extended
+                    last_cause = extended
+                    deadline_was_extended = True
                 deadline = loop.time() + deadline_s
-                saw_active_work = False
+                if not count_blocks:
+                    saw_active_work = False
             await asyncio.sleep(poll_interval_s)
         phase = "drained_restarting"
         if escalated:
@@ -120,13 +182,9 @@ async def supervise_until_lifecycle(
         else:
             drained_reason = IDLE_OBSERVED
         current = store.get(intent_id)
-        already_drained = (
-            getattr(current, "status", None) == STATUS_DRAINED_RESTARTING
-        )
+        already_drained = getattr(current, "status", None) == STATUS_DRAINED_RESTARTING
         if not already_drained:
-            from_status = (
-                STATUS_FORCE_REQUESTED if escalated else STATUS_PENDING_DRAIN
-            )
+            from_status = STATUS_FORCE_REQUESTED if escalated else STATUS_PENDING_DRAIN
             if not _cas(
                 store,
                 intent_id,
