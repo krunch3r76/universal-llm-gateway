@@ -1,0 +1,330 @@
+"""Channel-aware purpose gates and correspondence drift units."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+from writing_intake.fact_inventory import run_drift_check
+from writing_intake.purpose_gate import map_claim_to_purpose
+from writing_intake.schema import validate_intake_payload
+
+_PKG = "writing_v1_handlers"
+if _PKG not in sys.modules:
+    _HANDLERS = Path(__file__).resolve().parents[1] / "handlers"
+    _spec = importlib.util.spec_from_file_location(
+        _PKG,
+        _HANDLERS / "__init__.py",
+        submodule_search_locations=[str(_HANDLERS)],
+    )
+    assert _spec is not None and _spec.loader is not None
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules[_PKG] = _mod
+    _spec.loader.exec_module(_mod)
+
+assemble = importlib.import_module("writing_v1_handlers.assemble")
+provenance = importlib.import_module("writing_v1_handlers.provenance_check")
+review_schema = importlib.import_module("writing_v1_handlers.review_schema")
+
+pytestmark = pytest.mark.offline
+
+PURPOSE_POINTS = [
+    "Exhibits must be submitted electronically at least 3 business days before the hearing to clerk@example.org . "
+    "Use the Following File Naming Format: First Name – Last Name – Appeal Number – Document Title – Number",
+    "The request for reinstatement of appeal no(s): 99.0001 ... has been scheduled for consideration by the "
+    "Assessment Appeals Board on: Date: Tuesday, October 27, 2026 Time: 09:00 AM Location: Remote via Zoom",
+    "Before the hearing, provide the Clerk with an email address that can be used to exchange documents during "
+    "the hearing, including rebuttal evidence or corrections.",
+]
+CONFIRM_RECEIPT = "Please confirm receipt of this email and the attachments."
+
+REDRAFT = """To: clerk@example.org
+Subject: Exhibits – Reinstatement Hearing Tue 10/27/2026 9:00 AM – Appeal Nos. 99.0001 and 99.0002 – APN 000-00-000
+
+Dear Clerk of the Assessment Appeals Board,
+
+I am the applicant on Assessment Appeal Nos. 99.0001 and 99.0002 (APN 000-00-000, Supplemental Assessment). My requests for reinstatement are scheduled for the Board's hearing on Tuesday, October 27, 2026 at 9:00 AM, remote via Zoom.
+
+My exhibits for that hearing are attached, named in the requested format:
+
+1. Pat – Applicant – 99.0001 and 99.0002 – Declaration re Timeliness – 1
+2. Pat – Applicant – 99.0001 and 99.0002 – Notice of Supplemental Assessment dated 2026-01-16 – 2
+3. Pat – Applicant – 99.0001 and 99.0002 – Notification of Base Year Value dated 2025-12-16 – 3
+4. Pat – Applicant – 99.0001 and 99.0002 – Supplemental Tax Bills 1 and 2 – 4
+5. Pat – Applicant – 99.0001 and 99.0002 – Invalid Closed Letters dated 2026-06-05 – 5
+6. Pat – Applicant – 99.0001 and 99.0002 – Requests for Reinstatement stamped 2026-07-23 – 6
+7. Pat – Applicant – 99.0001 and 99.0002 – Clerk Email of 2026-05-28 Acknowledging Documents Submitted 2026-05-27 – 7
+8. Pat – Applicant – 99.0001 and 99.0002 – Letter to Assessor stamped 2026-04-15 – 8
+
+For document exchange during the hearing, please use applicant@example.com.
+
+Thank you,
+
+Pat Applicant
+Applicant, Appeal Nos. 99.0001 and 99.0002
+[PHONE]
+"""
+
+BASELINE = """To: clerk@example.org
+
+Subject: Assessment Appeals 99.0001 and 99.0002, APN 000-00-000, Reinstatement Hearing on October 27, 2026
+
+Hello,
+
+I, Pat Applicant, am submitting my signed CCP § 2015.5 Declaration of Pat Applicant Regarding Timeliness (Exhibit 1) plus Exhibits 2 through 8 for the reinstatement hearing on Assessment Appeals 99.0001 and 99.0002.
+
+The property is at 1 Example St, Townsville, APN 000-00-000. The hearing is set for Tuesday, October 27, 2026, at 9:00 AM PT, on Zoom.
+
+Attached are the following exhibits:
+
+Exhibit 1: Declaration of Pat Applicant Regarding Timeliness (CCP § 2015.5)
+Exhibit 2: Notice of Supplemental Assessment dated 2026-01-16
+
+Please confirm receipt of this email and the attachments.
+
+Thank you,
+Pat Applicant
+"""
+
+
+def test_confirm_receipt_not_mapped_to_purpose() -> None:
+    assert map_claim_to_purpose(CONFIRM_RECEIPT, PURPOSE_POINTS) is None
+
+
+def test_one_token_overlap_does_not_map() -> None:
+    assert (
+        map_claim_to_purpose(
+            CONFIRM_RECEIPT,
+            ["Send the exhibits to the Clerk as attachments."],
+        )
+        is None
+    )
+    assert (
+        map_claim_to_purpose("The hearing is important to me.", PURPOSE_POINTS) is None
+    )
+
+
+def test_two_token_overlap_maps_to_purpose_two() -> None:
+    assert (
+        map_claim_to_purpose(
+            "For document exchange during the hearing, please use applicant@example.com.",
+            PURPOSE_POINTS,
+        )
+        == "purpose[2]"
+    )
+
+
+def test_baseline_email_drift_flags_register_and_purpose() -> None:
+    out = run_drift_check(
+        BASELINE,
+        channel="email",
+        pin_ledger=[],
+        purpose_points=PURPOSE_POINTS,
+    )
+    assert out["passed"] is False
+    assert {"sentence": CONFIRM_RECEIPT, "reason": "not_purpose_relevant"} in out[
+        "flagged_sentences"
+    ]
+    decl = next(
+        row
+        for row in out["flagged_sentences"]
+        if row["reason"] == "declaration_register_in_correspondence"
+    )
+    assert decl["sentence"].startswith("I, Pat Applicant, am submitting")
+    assert out["check_class"] == "correspondence"
+    assert "sworn_body_word_count" not in out
+
+
+def test_redraft_email_passes_purpose_gate() -> None:
+    out = run_drift_check(
+        REDRAFT,
+        channel="email",
+        pin_ledger=[],
+        purpose_points=PURPOSE_POINTS,
+    )
+    assert out["passed"] is True
+    assert out["flagged_sentences"] == []
+    assert out["purpose_gate"] == "applied"
+    assert "sworn_body_word_count" not in out
+    assert out["sentence_count"] == 12
+    checked = "\n".join(row["sentence"] for row in out.get("flagged_sentences", []))
+    for token in ("Dear", "Subject", "Thank you", "[PHONE]"):
+        assert token not in checked
+
+
+def test_filing_keeps_sworn_fields() -> None:
+    text = (
+        "I, Pat Applicant, state:\n\n"
+        "1. I received the notice (Exhibit 2).\n\n"
+        "I declare under penalty of perjury under the laws of the State of California "
+        "that the foregoing is true and correct."
+    )
+    out = run_drift_check(text, channel="filing", pin_ledger=[])
+    assert out["check_class"] == "sworn"
+    assert "sworn_body_word_count" in out
+
+
+def test_verbatim_required_exempts_declaration_register() -> None:
+    sentence = (
+        "I, Pat Applicant, am submitting my signed declaration for Assessment Appeals "
+        "99.0001 and 99.0002."
+    )
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "verbatim_required": True,
+            "excerpt": sentence,
+        }
+    ]
+    out = run_drift_check(sentence, channel="email", pin_ledger=pin_ledger)
+    reasons = [row["reason"] for row in out["flagged_sentences"]]
+    assert "declaration_register_in_correspondence" not in reasons
+
+
+def _standard_email_intake(**extra: Any) -> dict[str, Any]:
+    base = {
+        "verbatim_notes": ["Fact one."],
+        "recipient": "Clerk",
+        "objective": "Submit exhibits",
+        "channel": "email",
+    }
+    base.update(extra)
+    return base
+
+
+def test_schema_purpose_and_verbatim_required() -> None:
+    intake, refusal = validate_intake_payload(
+        {
+            "intake": _standard_email_intake(
+                purpose_points=["Hearing on Tuesday."],
+                verbatim_required=[0],
+            )
+        },
+        None,
+    )
+    assert refusal is None
+    assert intake is not None
+    assert intake.purpose_points == ["Hearing on Tuesday."]
+    assert intake.verbatim_required == [0]
+
+    _, bad = validate_intake_payload(
+        {"intake": _standard_email_intake(verbatim_required=[5])},
+        None,
+    )
+    assert bad is not None
+    assert bad.get("refused") == "intake_invalid"
+
+    intake2, refusal2 = validate_intake_payload(
+        {"intake": _standard_email_intake()},
+        [{"role": "user", "content": ""}],
+    )
+    assert refusal2 is None
+    assert intake2 is not None
+
+
+class _Ctx:
+    def __init__(self, **options: Any) -> None:
+        self.options = options
+
+
+def test_assemble_email_intake_brief_and_check_class() -> None:
+    payload = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(
+                intake=_standard_email_intake(
+                    purpose_points=["Point A"],
+                    working_set=[],
+                ),
+            ),
+        )
+    ).json
+    assert payload["check_class"] == "correspondence"
+    brief = payload["brief_block"]
+    assert "Check class: correspondence" in brief
+    assert "Register rule: verbatim_notes are facts" in brief
+    assert "Review rubric (correspondence)" in brief
+    assert "purpose[0]" in brief
+
+    filing = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(
+                intake=_standard_email_intake(
+                    channel="filing",
+                    purpose_points=["Point A"],
+                    working_set=[],
+                ),
+            ),
+        )
+    ).json
+    assert "Check class: sworn" in filing["brief_block"]
+    assert "Review rubric (sworn)" in filing["brief_block"]
+
+    flagged = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(
+                intake=_standard_email_intake(
+                    verbatim_required=[0],
+                    working_set=[],
+                ),
+            ),
+        )
+    ).json
+    assert 'verbatim_required="true"' in flagged["verbatim_notes_block"]
+
+
+class _Out:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.json = payload
+
+
+class _ProvCtx:
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self.outputs = outputs
+
+
+class _ProvStep:
+    def __init__(self) -> None:
+        self.handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "draft.json",
+        }
+
+
+def test_provenance_handler_purpose_drops_on_baseline() -> None:
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _ProvStep(),
+            _ProvCtx(
+                {
+                    "assemble": _Out(
+                        {
+                            "channel": "email",
+                            "purpose_points": PURPOSE_POINTS,
+                            "pin_ledger": [],
+                        }
+                    ),
+                    "draft": _Out({"draft": BASELINE, "claims": []}),
+                }
+            ),
+        )
+    ).json
+    assert payload["check_class"] == "correspondence"
+    assert {
+        "sentence": CONFIRM_RECEIPT,
+        "reason": "not_purpose_relevant",
+    } in payload["purpose_drops"]
+    assert "purpose_drift" in [row["type"] for row in payload["violations"]]
+    assert "sworn_body_word_count" not in payload["drift_check"]
+
+
+def test_not_purpose_relevant_in_finding_types() -> None:
+    assert "not_purpose_relevant" in review_schema.FINDING_TYPES

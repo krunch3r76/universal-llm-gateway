@@ -19,6 +19,7 @@ FINDING_TYPES = (
     "register",
     "sequitur",
     "omission",
+    "not_purpose_relevant",
 )
 
 REVIEW_RESULT_SCHEMA: dict[str, Any] = {

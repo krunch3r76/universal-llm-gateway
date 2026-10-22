@@ -45,7 +45,9 @@ def _attach_status(payload: dict[str, Any]) -> dict[str, Any]:
     if ship.get("pass") is False:
         unresolved = ship.get("unresolved") or []
         if unresolved and isinstance(unresolved[0], dict):
-            degraded_reasons.append(str(unresolved[0].get("detail") or "ship_gate_unresolved"))
+            degraded_reasons.append(
+                str(unresolved[0].get("detail") or "ship_gate_unresolved")
+            )
         else:
             degraded_reasons.append("ship_gate_failed")
     if review.get("status") == "failed":
@@ -425,6 +427,7 @@ class WritingFinalizeHandler(BaseHandler):
                 "independence": live_independence,
                 "findings": review.get("findings") if review_ok else None,
                 "verdict": review.get("verdict") if review_ok else None,
+                "rubric": assemble.get("check_class"),
             },
             "revision": revision,
             "ship_gate": {

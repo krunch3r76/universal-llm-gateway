@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 from writing_intake.fact_inventory import build_fact_inventory
+from writing_intake.purpose_gate import check_class_for_channel
 from writing_intake.schema import validate_intake_payload
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
@@ -260,7 +262,9 @@ class WritingAssembleHandler(BaseHandler):
         data = intake.model_dump(exclude_none=True)
         if data.get("mode") == "fact_inventory":
             return await self._execute_fact_inventory(data, options)
-        parsed, bad = _parse_working_set(data.get("working_set") or options.get("working_set"))
+        parsed, bad = _parse_working_set(
+            data.get("working_set") or options.get("working_set")
+        )
         if bad is not None:
             return _step(bad)
         client = self._client or WorkingSetClient()
@@ -275,7 +279,11 @@ class WritingAssembleHandler(BaseHandler):
                     "ref": exc.ref,
                 }
             )
-        pins = _verbatim_note_pins(data["verbatim_notes"], start=1)
+        pins = _verbatim_note_pins(
+            data["verbatim_notes"],
+            start=1,
+            verbatim_required=data.get("verbatim_required") or (),
+        )
         offset = len(pins) + 1
         for index, pin in enumerate(ws_pins, start=offset):
             pin["pin_id"] = f"P{index}"
@@ -323,6 +331,8 @@ class WritingAssembleHandler(BaseHandler):
                 "intake": data,
                 "max_chars": data.get("max_chars"),
                 "channel": data.get("channel"),
+                "check_class": check_class_for_channel(data.get("channel")),
+                "purpose_points": list(data.get("purpose_points") or []),
                 "packet": packet,
                 "output": output,
             }
@@ -344,7 +354,9 @@ class WritingAssembleHandler(BaseHandler):
             "recipient": data.get("recipient") or data.get("audience"),
             "objective": data.get("objective") or data.get("purpose"),
         }
-        parsed, bad = _parse_working_set(data.get("working_set") or options.get("working_set"))
+        parsed, bad = _parse_working_set(
+            data.get("working_set") or options.get("working_set")
+        )
         if bad is not None:
             return _step(bad)
         client = self._client or WorkingSetClient()
@@ -401,6 +413,8 @@ class WritingAssembleHandler(BaseHandler):
                 "intake": data,
                 "max_chars": data.get("max_chars"),
                 "channel": data.get("channel"),
+                "check_class": check_class_for_channel(data.get("channel")),
+                "purpose_points": list(data.get("purpose_points") or []),
                 "mode": "fact_inventory",
                 "dropped_facts": inventory["dropped_facts"],
                 "load_bearing_claims": inventory["load_bearing_claims"],
@@ -440,7 +454,9 @@ _DEFAULT_SEAT_MODELS = {
 
 
 def _seat_models(options: dict[str, Any]) -> dict[str, str]:
-    raw = _unwrap(options.get("seat_models", _DEFAULT_SEAT_MODELS), _DEFAULT_SEAT_MODELS)
+    raw = _unwrap(
+        options.get("seat_models", _DEFAULT_SEAT_MODELS), _DEFAULT_SEAT_MODELS
+    )
     if not isinstance(raw, dict):
         return dict(_DEFAULT_SEAT_MODELS)
     merged = dict(_DEFAULT_SEAT_MODELS)
@@ -476,9 +492,7 @@ def resolve_openai_reviewer_model(seat_models: dict[str, str] | None = None) -> 
     raw = str(models.get("openai") or _DEFAULT_SEAT_MODELS["openai"])
     if raw in MODEL_CAPABILITY_CARDS and raw.lower().startswith("openai/gpt-5"):
         return raw
-    raise ValueError(
-        f"openai reviewer model {raw!r} is not a carded openai/gpt-5.x id"
-    )
+    raise ValueError(f"openai reviewer model {raw!r} is not a carded openai/gpt-5.x id")
 
 
 def _quota_code_in_mapping(data: dict[str, Any]) -> str | None:
@@ -564,7 +578,9 @@ def is_openai_reviewer_quota_error(record: dict[str, Any]) -> bool:
     return openai_reviewer_quota_reason(record) is not None
 
 
-def build_held_reviewer_unfunded_review(*, reason: str = "insufficient_quota") -> dict[str, Any]:
+def build_held_reviewer_unfunded_review(
+    *, reason: str = "insufficient_quota"
+) -> dict[str, Any]:
     """Review-step payload when OpenAI reviewer credit is unavailable."""
     return {
         "ok": False,
@@ -659,11 +675,7 @@ def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, 
     allow = options.get("allow_partial_independence", False)
     if isinstance(allow, dict) and "default" in allow:
         allow = allow.get("default", False)
-    if (
-        anthropic_writer
-        and reviewer_given == "cdp"
-        and allow is not True
-    ):
+    if anthropic_writer and reviewer_given == "cdp" and allow is not True:
         return {
             "ok": False,
             "refused": "reviewer_seat_unavailable",
@@ -839,38 +851,89 @@ def _not_attested_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
     return pins
 
 
-def _verbatim_note_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
+def _verbatim_note_pins(
+    items: list[str],
+    *,
+    start: int,
+    verbatim_required: Collection[int] = (),
+) -> list[dict[str, Any]]:
     pins: list[dict[str, Any]] = []
+    required = set(verbatim_required)
     for offset, item in enumerate(items):
-        pins.append(
-            {
-                "pin_id": f"P{start + offset}",
-                "source_uri": f"intake:verbatim_notes[{offset}]",
-                "kind": "verbatim_note",
-                "excerpt": _truncate(_fence(item)),
-                "sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
-                "attested": True,
-            }
-        )
+        pin: dict[str, Any] = {
+            "pin_id": f"P{start + offset}",
+            "source_uri": f"intake:verbatim_notes[{offset}]",
+            "kind": "verbatim_note",
+            "excerpt": _truncate(_fence(item)),
+            "sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
+            "attested": True,
+        }
+        if offset in required:
+            pin["verbatim_required"] = True
+        pins.append(pin)
     return pins
 
 
-def _intake_blocks(intake: dict[str, Any], pins: list[dict[str, Any]]) -> dict[str, str]:
-    notes = "\n".join(
-        f"<note id=\"{pin['pin_id']}\">{pin['excerpt']}</note>"
-        for pin in pins
-        if pin.get("kind") == "verbatim_note"
-    )
+def _intake_blocks(
+    intake: dict[str, Any], pins: list[dict[str, Any]]
+) -> dict[str, str]:
+    note_lines: list[str] = []
+    for pin in pins:
+        if pin.get("kind") != "verbatim_note":
+            continue
+        attrs = f'id="{pin["pin_id"]}"'
+        if pin.get("verbatim_required") is True:
+            attrs += ' verbatim_required="true"'
+        note_lines.append(f"<note {attrs}>{pin['excerpt']}</note>")
+    notes = "\n".join(note_lines)
     verbatim_notes_block = f"<verbatim_notes>\n{notes}\n</verbatim_notes>"
     not_attested = ", ".join(_fence(item) for item in intake.get("not_attested") or [])
     max_chars = intake.get("max_chars")
+    check_class = check_class_for_channel(intake.get("channel"))
     brief_lines = [
         f"Recipient: {_fence(str(intake.get('recipient') or ''))}",
         f"Objective: {_fence(str(intake.get('objective') or ''))}",
         f"Channel: {_fence(str(intake.get('channel') or ''))}",
         f"Max chars: {max_chars if max_chars is not None else 'none'}",
         f"Not attested: {not_attested or 'none'}",
+        f"Check class: {check_class}",
     ]
+    purpose_points = intake.get("purpose_points") or []
+    if purpose_points:
+        brief_lines.append(
+            "Purpose points: "
+            + "; ".join(
+                f"purpose[{index}] {_fence(str(point))}"
+                for index, point in enumerate(purpose_points)
+            )
+        )
+    if check_class == "correspondence":
+        brief_lines.append(
+            "Register rule: verbatim_notes are facts to restate in this channel's register, "
+            "not text to copy. Copy a note word for word only when it is marked verbatim_required. "
+            'No declaration phrasing in correspondence (no "I, <name>, am submitting", '
+            'no "I, <name>, state:", no jurat).'
+        )
+        brief_lines.append(
+            "Review rubric (correspondence): flag declaration phrasing or jurat language as type "
+            '"register"; flag a body sentence that serves no purpose point as type "not_purpose_relevant"; '
+            "sworn-body and exhibit-tag rules do not apply."
+        )
+    else:
+        brief_lines.append(
+            "Register rule: sworn filing. Keep declaration form. "
+            "Notes marked verbatim_required are copied exactly."
+        )
+        brief_lines.append(
+            "Review rubric (sworn): flag an exhibit-backed proposition without an inline (Exhibit N) "
+            'tag as type "omission"; flag a sentence that serves no purpose point as type '
+            '"not_purpose_relevant".'
+        )
+    if purpose_points:
+        brief_lines.append(
+            "Purpose rule: every body sentence must serve a listed purpose point. "
+            "Do not add requests or courtesies no purpose point asks for, such as a receipt-confirmation request."
+        )
     brief_block = "<brief>\n" + "\n".join(brief_lines) + "\n</brief>"
     documents_block = "\n".join(_pin_line(pin) for pin in pins)
     return {
@@ -883,7 +946,10 @@ def _intake_blocks(intake: dict[str, Any], pins: list[dict[str, Any]]) -> dict[s
 def _pin_line(pin: dict[str, Any]) -> str:
     attested = "true" if pin["attested"] else "false"
     source = _xml_attr(pin["source_uri"])
+    verbatim = (
+        ' verbatim_required="true"' if pin.get("verbatim_required") is True else ""
+    )
     return (
         f'<pin id="{pin["pin_id"]}" source="{source}" '
-        f'attested="{attested}">{pin["excerpt"]}</pin>'
+        f'attested="{attested}"{verbatim}>{pin["excerpt"]}</pin>'
     )

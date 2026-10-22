@@ -9,6 +9,7 @@ from typing import Any, Literal
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.fact_inventory import run_drift_check
+from writing_intake.purpose_gate import check_class_for_channel
 
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",
@@ -267,11 +268,17 @@ def _causal_connective_violations(
         if not isinstance(clause, dict):
             continue
         text = str(clause.get("text") or "")
-        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        pin_ids = (
+            clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        )
         disposition = str(clause.get("disposition") or "express")
         for pin_id in pin_ids:
             pin = next(
-                (row for row in (pin_ledger or []) if str(row.get("pin_id")) == str(pin_id)),
+                (
+                    row
+                    for row in (pin_ledger or [])
+                    if str(row.get("pin_id")) == str(pin_id)
+                ),
                 None,
             )
             if pin is None:
@@ -360,7 +367,9 @@ def _pin_clause_anchor_tokens(
     v1_clauses: list[dict[str, Any]],
 ) -> set[str]:
     for clause in v1_clauses:
-        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        pin_ids = (
+            clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        )
         if pin_id in {str(item) for item in pin_ids}:
             return _content_anchor_tokens(str(clause.get("text") or ""))
     return set()
@@ -454,7 +463,9 @@ def _pins_for_text(
     matched_for_rank = list(matched)
     matched.sort(
         key=lambda pin_id: (
-            _first_anchor_offset(text, pin_id, matched_for_rank, pin_ledger, v1_clauses),
+            _first_anchor_offset(
+                text, pin_id, matched_for_rank, pin_ledger, v1_clauses
+            ),
             ordered_pin_ids.index(pin_id),
         )
     )
@@ -492,7 +503,9 @@ def derive_v2_clauses_from_audit(
         disposition = "express"
         pin_id_set = {str(item) for item in pin_ids}
         for clause in v1_clauses:
-            clause_pins = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+            clause_pins = (
+                clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+            )
             if pin_id_set & {str(item) for item in clause_pins}:
                 disposition = str(clause.get("disposition") or disposition)
                 break
@@ -581,7 +594,9 @@ def revision_delta(
         return []
 
     if v1_order and v2_order and v1_order != v2_order:
-        violations.append(_violation("fact_reordered", None, {"v1": v1_order, "v2": v2_order}))
+        violations.append(
+            _violation("fact_reordered", None, {"v1": v1_order, "v2": v2_order})
+        )
 
     hedge = _HEDGE.search(v2_text)
     if hedge and not _HEDGE.search(v1_text):
@@ -760,25 +775,48 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 if isinstance(pin, dict) and pin.get("attested")
             ).lower()
             for claim in parsed.get("claims") or []:
-                text = str(claim.get("text") or claim) if isinstance(claim, dict) else str(claim)
+                text = (
+                    str(claim.get("text") or claim)
+                    if isinstance(claim, dict)
+                    else str(claim)
+                )
                 token = text.strip().lower()
                 if token and token not in attested_text and len(token) > 24:
                     added_facts.append(text.strip())
-        drift = {"passed": True, "flagged_sentences": []}
+        effective_channel = str(channel or "email")
+        purpose_points: list[str] = []
+        if isinstance(assemble_json, dict):
+            raw_points = assemble_json.get("purpose_points")
+            if not isinstance(raw_points, list):
+                intake_block = assemble_json.get("intake") or {}
+                if isinstance(intake_block, dict):
+                    raw_points = intake_block.get("purpose_points")
+            if isinstance(raw_points, list):
+                purpose_points = [str(item) for item in raw_points]
+        drift: dict[str, Any] = {
+            "passed": True,
+            "flagged_sentences": [],
+            "check_class": check_class_for_channel(effective_channel),
+        }
         if parsed is not None:
             drift = run_drift_check(
                 str(parsed.get("draft") or ""),
-                channel=str(channel or "email"),
+                channel=effective_channel,
                 pin_ledger=ledger,
+                purpose_points=purpose_points or None,
             )
+        flagged = drift.get("flagged_sentences") or []
+        purpose_drops = [
+            {"sentence": row["sentence"], "reason": "not_purpose_relevant"}
+            for row in flagged
+            if isinstance(row, dict) and row.get("reason") == "not_purpose_relevant"
+        ]
         if added_facts:
             violations.append(
                 _violation("added_unattested_fact", None, added_facts[0][:120])
             )
         if not drift.get("passed"):
-            violations.append(
-                _violation("purpose_drift", None, "drift_check_failed")
-            )
+            violations.append(_violation("purpose_drift", None, "drift_check_failed"))
         payload = {
             "ok": True,
             "violations": violations,
@@ -786,5 +824,8 @@ class WritingProvenanceCheckHandler(BaseHandler):
             "dropped_facts": dropped_facts,
             "added_facts": added_facts,
             "drift_check": drift,
+            "channel": effective_channel,
+            "check_class": drift.get("check_class"),
+            "purpose_drops": purpose_drops,
         }
         return _step(payload)

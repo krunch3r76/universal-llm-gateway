@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from typing import Any
+
+from .purpose_gate import (
+    check_class_for_channel,
+    is_declaration_register,
+    map_claim_to_purpose,
+)
 
 _ABBREV = re.compile(
     r"\b(?:Mr|Ms|Mrs|Dr|Prof|Sr|Jr|St|No|Nos|Ex|Fig|Para|Paras|Sec|Secs|v|vs|etc|e\.g|i\.e)\.$",
@@ -60,7 +67,10 @@ _NON_LOAD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"At \d{1,2}:\d{2}\s+[AP]M that day, I emailed", re.I),
         "redundant_qualifier_recital",
     ),
-    (re.compile(r"\brev\s+\d|not legal advice|attorney review|\bdraft\b", re.I), "process_chat_residue"),
+    (
+        re.compile(r"\brev\s+\d|not legal advice|attorney review|\bdraft\b", re.I),
+        "process_chat_residue",
+    ),
 ]
 
 
@@ -110,9 +120,7 @@ def _split_sentences(text: str) -> list[str]:
         part = part.strip()
         if not part:
             continue
-        if merged and (
-            _ABBREV.search(merged[-1]) or _STANDALONE_EXHIBIT.match(part)
-        ):
+        if merged and (_ABBREV.search(merged[-1]) or _STANDALONE_EXHIBIT.match(part)):
             merged[-1] = f"{merged[-1]} {part}"
         else:
             merged.append(part)
@@ -322,14 +330,89 @@ _DRIFT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def drift_check_sentence(sentence: str, *, channel: str, exhibit_ids: set[str]) -> str | None:
+_HEADER_LINE = re.compile(
+    r"^\s*(?:to|cc|bcc|from|subject|date)\s*:",
+    re.I,
+)
+_SALUTATION = re.compile(
+    r"^(?:dear|hello|hi|greetings|to whom it may concern)\b",
+    re.I,
+)
+_VALEDICTION = re.compile(
+    r"^(?:thank you|thanks|sincerely|regards|best regards|kind regards|best|"
+    r"respectfully|cordially|yours truly|warm regards)[\s,.!]*$",
+    re.I,
+)
+_LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
+
+
+def _correspondence_units(text: str) -> list[str]:
+    units: list[str] = []
+    paragraph_lines: list[str] = []
+    past_valediction = False
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if not paragraph_lines:
+            return
+        list_lines = [ln for ln in paragraph_lines if _LIST_MARKER.match(ln)]
+        if len(list_lines) >= 2:
+            for line in paragraph_lines:
+                if _LIST_MARKER.match(line):
+                    stripped = _LIST_MARKER.sub("", line.strip()).strip()
+                    if len(stripped) >= 12:
+                        units.append(stripped)
+        else:
+            joined = " ".join(ln.strip() for ln in paragraph_lines if ln.strip())
+            for sent in _split_sentences(joined):
+                sent = sent.strip()
+                if len(sent) >= 12:
+                    units.append(sent)
+        paragraph_lines = []
+
+    for line in text.splitlines():
+        if past_valediction:
+            break
+        stripped = line.strip()
+        if _HEADER_LINE.match(line):
+            continue
+        if stripped and len(stripped) <= 80 and _SALUTATION.match(stripped):
+            continue
+        if stripped and _VALEDICTION.match(stripped):
+            past_valediction = True
+            flush_paragraph()
+            continue
+        if not stripped:
+            flush_paragraph()
+            continue
+        paragraph_lines.append(line)
+    flush_paragraph()
+    return units
+
+
+def drift_check_sentence(
+    sentence: str,
+    *,
+    channel: str,
+    exhibit_ids: set[str],
+    purpose_points: Sequence[str] | None = None,
+    verbatim_required_excerpts: Sequence[str] = (),
+) -> str | None:
     """Return drift reason if sentence should be flagged."""
     for pattern, reason in _DRIFT_PATTERNS:
         if pattern.search(sentence):
             return reason
+    if check_class_for_channel(channel) == "correspondence" and is_declaration_register(
+        sentence
+    ):
+        exempt = any(sentence in str(excerpt) for excerpt in verbatim_required_excerpts)
+        if not exempt:
+            return "declaration_register_in_correspondence"
     if channel == "filing" and exhibit_ids:
         if _EXHIBIT_LEDGER.search(sentence) and not _EXHIBIT_TAG.search(sentence):
             return "exhibit_fact_missing_inline_tag"
+    if purpose_points and map_claim_to_purpose(sentence, purpose_points) is None:
+        return "not_purpose_relevant"
     return None
 
 
@@ -339,40 +422,70 @@ def run_drift_check(
     channel: str,
     pin_ledger: list[dict[str, Any]] | None = None,
     strip_non_sworn: bool = True,
+    purpose_points: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Sentence-level purpose drift check over final draft with input provenance counts."""
+    """Sentence-level drift check; branches on channel — correspondence has no sworn fields."""
+    check_class = check_class_for_channel(channel)
+    points = [p for p in (purpose_points or []) if str(p).strip()]
+    verbatim_required_excerpts = [
+        str(pin["excerpt"])
+        for pin in (pin_ledger or [])
+        if isinstance(pin, dict) and pin.get("verbatim_required") is True
+    ]
     exhibit_ids: set[str] = set()
     if pin_ledger:
         for pin in pin_ledger:
             excerpt = str(pin.get("excerpt") or "")
             for match in _EXHIBIT_LEDGER.finditer(excerpt):
                 exhibit_ids.add(match.group(1))
-    checked_body = _strip_non_sworn_body(draft_text) if strip_non_sworn else draft_text
+    if check_class == "correspondence":
+        units = _correspondence_units(draft_text)
+        checked_body = "\n".join(units)
+    else:
+        checked_body = (
+            _strip_non_sworn_body(draft_text) if strip_non_sworn else draft_text
+        )
     flagged: list[dict[str, str]] = []
     seen_propositions: set[str] = set()
     sentence_count = 0
-    for para in re.split(r"\n\s*\n", checked_body):
-        for sent in _split_sentences(para.strip()):
-            sent = sent.strip()
-            if not sent:
-                continue
-            sentence_count += 1
-            reason = drift_check_sentence(sent, channel=channel, exhibit_ids=exhibit_ids)
-            if reason:
-                flagged.append({"sentence": sent, "reason": reason})
-                continue
-            normalized = re.sub(r"\s+", " ", sent.lower())
-            normalized = re.sub(r"\(exhibit\s+\d+\.?\)", "", normalized, flags=re.I)
-            if len(normalized) > 40 and normalized in seen_propositions:
-                flagged.append({"sentence": sent, "reason": "re_explanation_same_draft"})
-            seen_propositions.add(normalized)
-    return {
+    if check_class == "correspondence":
+        iter_units = units
+    else:
+        iter_units = []
+        for para in re.split(r"\n\s*\n", checked_body):
+            iter_units.extend(_split_sentences(para.strip()))
+    for sent in iter_units:
+        sent = sent.strip()
+        if not sent:
+            continue
+        sentence_count += 1
+        reason = drift_check_sentence(
+            sent,
+            channel=channel,
+            exhibit_ids=exhibit_ids,
+            purpose_points=points or None,
+            verbatim_required_excerpts=verbatim_required_excerpts,
+        )
+        if reason:
+            flagged.append({"sentence": sent, "reason": reason})
+            continue
+        normalized = re.sub(r"\s+", " ", sent.lower())
+        normalized = re.sub(r"\(exhibit\s+\d+\.?\)", "", normalized, flags=re.I)
+        if len(normalized) > 40 and normalized in seen_propositions:
+            flagged.append({"sentence": sent, "reason": "re_explanation_same_draft"})
+        seen_propositions.add(normalized)
+    result: dict[str, Any] = {
         "passed": not flagged,
         "input_sha256": hashlib.sha256(draft_text.encode("utf-8")).hexdigest(),
         "checked_sha256": hashlib.sha256(checked_body.encode("utf-8")).hexdigest(),
         "input_word_count": len(draft_text.split()),
-        "sworn_body_word_count": _measure_sworn_body_words(draft_text),
         "checked_word_count": len(checked_body.split()),
         "sentence_count": sentence_count,
         "flagged_sentences": flagged,
+        "channel": channel,
+        "check_class": check_class,
+        "purpose_gate": "applied" if points else "skipped_no_purpose_points",
     }
+    if check_class == "sworn":
+        result["sworn_body_word_count"] = _measure_sworn_body_words(draft_text)
+    return result

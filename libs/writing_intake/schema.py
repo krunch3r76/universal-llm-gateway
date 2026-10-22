@@ -21,7 +21,14 @@ _INTAKE_SCHEMA_HINT: dict[str, Any] = {
         "signer",
         "voice_anchor",
         "standing_limits",
+        "purpose_points",
+        "verbatim_required",
     ],
+    "call_shape": (
+        "pipeline_options.intake only; messages may be omitted or []. "
+        "An empty-content user message is also accepted. "
+        "Non-empty messages or a prompt are refused."
+    ),
     "fact_inventory_fields": [
         "mode='fact_inventory'",
         "prior_draft",
@@ -77,6 +84,13 @@ class OutboundWriteIntake(BaseModel):
     purpose: str | None = None
     audience: str | None = None
     attested_sources: list[str] = Field(default_factory=list)
+    purpose_points: list[str] = Field(default_factory=list)
+    verbatim_required: list[int] = Field(default_factory=list)
+
+    @field_validator("purpose_points")
+    @classmethod
+    def _purpose_points_clean(cls, value: list[str]) -> list[str]:
+        return [str(item).strip() for item in value if str(item).strip()]
 
     @model_validator(mode="after")
     def _normalize_aliases_and_mode(self) -> OutboundWriteIntake:
@@ -99,7 +113,13 @@ class OutboundWriteIntake(BaseModel):
                 raise ValueError("fact_inventory requires audience or recipient")
             return self
         if not self.verbatim_notes:
-            raise ValueError("verbatim_notes must contain at least one non-empty string")
+            raise ValueError(
+                "verbatim_notes must contain at least one non-empty string"
+            )
+        notes_len = len(self.verbatim_notes or [])
+        for index in self.verbatim_required:
+            if index < 0 or index >= notes_len:
+                raise ValueError("verbatim_required index out of range")
         if self.channel is None:
             raise ValueError("channel is required")
         return self
@@ -111,7 +131,9 @@ class OutboundWriteIntake(BaseModel):
             return None
         cleaned = [item.strip() for item in value if str(item).strip()]
         if not cleaned:
-            raise ValueError("verbatim_notes must contain at least one non-empty string")
+            raise ValueError(
+                "verbatim_notes must contain at least one non-empty string"
+            )
         return cleaned
 
     @field_validator("recipient", "objective", "purpose", "audience")
@@ -156,7 +178,9 @@ def validate_intake_payload(
         try:
             parsed_intake = json.loads(intake_raw)
         except json.JSONDecodeError as exc:
-            return None, _refusal("intake_invalid", f"intake JSON parse failed: {exc.msg}")
+            return None, _refusal(
+                "intake_invalid", f"intake JSON parse failed: {exc.msg}"
+            )
         if not isinstance(parsed_intake, dict):
             return None, _refusal("intake_invalid", "intake must be a JSON object")
         raw = dict(parsed_intake)
@@ -181,6 +205,8 @@ def validate_intake_payload(
             "purpose",
             "audience",
             "attested_sources",
+            "purpose_points",
+            "verbatim_required",
         ):
             if key in options:
                 raw[key] = options[key]

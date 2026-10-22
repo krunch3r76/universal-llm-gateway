@@ -14,7 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
-    """A single chat message in the conversation history, validated and serialized as a pydantic model. Supports multimodal content (e.g., text alongside other content types) in addition to plain text bodies."""
+    """A single chat message in the conversation history.
+
+    Validated and serialized as a pydantic model. Supports multimodal content
+    (e.g., text alongside other content types) in addition to plain text bodies.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -29,7 +33,14 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request schema for the chat completion endpoint, deliberately simplified to avoid pydantic default-value issues. Requires exactly one of `messages` or `prompt` to be set — `model_post_init` raises `ValueError` if both or neither are provided."""
+    """Request schema for the chat completion endpoint.
+
+    Deliberately simplified to avoid pydantic default-value issues. Requires
+    exactly one of `messages` or `prompt` unless a carve-out applies:
+    grokbot harvest_seal, or non-empty structured writer intake in
+    pipeline_options. `model_post_init` raises `ValueError` if both messages
+    and prompt are provided.
+    """
 
     model_config = ConfigDict(
         extra="allow",  # Allow additional fields not defined in schema
@@ -77,14 +88,22 @@ class ChatCompletionRequest(BaseModel):
                 and po.get("mode") == "harvest_seal"
                 and str(po.get("l0_ref") or "").strip()
             )
-            if not harvest:
+            intake_raw = po.get("intake")
+            intake_ok = isinstance(intake_raw, dict) and bool(intake_raw)
+            if isinstance(intake_raw, str) and intake_raw.strip():
+                intake_ok = True
+            if not harvest and not intake_ok:
                 raise ValueError("Either 'messages' or 'prompt' field must be provided")
         if self.messages and self.prompt:
             raise ValueError("Cannot provide both 'messages' and 'prompt' fields")
 
 
 class ChatCompletionChoice(BaseModel):
-    """One individual completion choice as returned by the chat completion endpoint, mirroring the choices-list pattern used across this module's response schemas; validated and serialized as a pydantic model."""
+    """One individual completion choice in a chat completion response.
+
+    Mirrors the choices-list pattern used across this module's response
+    schemas; validated and serialized as a pydantic model.
+    """
 
     index: int = Field(..., description="Choice index")
     message: ChatMessage = Field(..., description="Assistant response message")
@@ -92,7 +111,11 @@ class ChatCompletionChoice(BaseModel):
 
 
 class ChatCompletionUsage(BaseModel):
-    """Token usage accounting attached to a chat completion response — the counts consumers use for billing and rate-limit bookkeeping, validated and serialized as a pydantic model like its sibling schemas in this module."""
+    """Token usage accounting attached to a chat completion response.
+
+    Counts consumers use for billing and rate-limit bookkeeping; validated
+    and serialized as a pydantic model like its sibling schemas in this module.
+    """
 
     prompt_tokens: int = Field(..., description="Number of tokens in the prompt")
     completion_tokens: int = Field(
@@ -102,7 +125,11 @@ class ChatCompletionUsage(BaseModel):
 
 
 class ChatCompletionResponse(BaseModel):
-    """Top-level response returned by the (non-streaming) chat completion endpoint, bundling the model's completion choices and usage accounting into a single pydantic-validated payload for the API client."""
+    """Top-level non-streaming chat completion response.
+
+    Bundles completion choices and usage accounting into a single
+    pydantic-validated payload for the API client.
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -147,7 +174,10 @@ class ChatCompletionResponse(BaseModel):
 
 # Streaming response schemas (for future implementation)
 class ChatCompletionStreamDelta(BaseModel):
-    """An incremental delta of content within a single streamed completion chunk (supports multimodal content), as opposed to a full message body; validated and serialized as a pydantic model."""
+    """Incremental content delta within one streamed completion chunk.
+
+    Supports multimodal content; validated and serialized as a pydantic model.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -156,7 +186,11 @@ class ChatCompletionStreamDelta(BaseModel):
 
 
 class ChatCompletionStreamChoice(BaseModel):
-    """One individual choice within a streamed chat completion chunk, carrying a `ChatCompletionStreamDelta` rather than a complete message; validated and serialized as a pydantic model."""
+    """One choice within a streamed chat completion chunk.
+
+    Carries a `ChatCompletionStreamDelta` rather than a complete message;
+    validated and serialized as a pydantic model.
+    """
 
     index: int
     delta: ChatCompletionStreamDelta
@@ -164,7 +198,11 @@ class ChatCompletionStreamChoice(BaseModel):
 
 
 class ChatCompletionStreamResponse(BaseModel):
-    """One chunk of a server-sent streaming chat completion response, sent incrementally instead of the single `ChatCompletionResponse` payload used by non-streaming requests; validated and serialized as a pydantic model."""
+    """One chunk of a server-sent streaming chat completion response.
+
+    Sent incrementally instead of the single `ChatCompletionResponse` payload
+    used by non-streaming requests; validated and serialized as a pydantic model.
+    """
 
     id: str
     object: str = "chat.completion.chunk"
