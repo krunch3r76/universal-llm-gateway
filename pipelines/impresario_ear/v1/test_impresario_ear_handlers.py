@@ -18,6 +18,7 @@ from bus_watch.impresario_ear_common import (
     try_claim_hop_watermark,
 )
 from implement_admission.impresario_policy import load_impresario_policy
+from implement_admission.normalize import _files_from_packet
 
 from pipelines.impresario_ear.v1.handlers.deliver import (
     admit_friction_cite,
@@ -30,6 +31,9 @@ from pipelines.impresario_ear.v1.handlers.evaluate import (
 )
 from pipelines.impresario_ear.v1.handlers.gather import gather_impresario_ear_context
 from pipelines.impresario_ear.v1.handlers.resolve import resolve_impresario_ear
+from services.git_integration_worker.cursor_sdk_closeout.deliverable_probe import (
+    _files_expected_from_packet,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -537,6 +541,31 @@ async def test_gather_default_cdp_probe_uses_transcript_id_and_gui_host() -> Non
             tape_fetch=lambda *_a, **_k: {"cells": []},
         )
     probe.assert_called_once_with("trans-abc", ":9")
+
+
+def test_build_evaluate_prompt_lane_b_empty_files_expected_frontmatter() -> None:
+    """Lane B admit must not scrape absolute paths embedded in gathered context."""
+    gather = {
+        "jsonl": {
+            "body": "see /tmp/messages-self-smoke-9.json for smoke output",
+        },
+        "cdp": {
+            "note": (
+                "rule at "
+                "/home/io/.cursor/plugins/local/ulg-ecosystem/rules/"
+                "liaison-hop-retire_ulg.mdc"
+            ),
+        },
+    }
+    prompt = _build_evaluate_prompt(
+        root_thread=_ROOT,
+        mode="deep",
+        trigger="hop",
+        gather=gather,
+    )
+    assert prompt.startswith("---\nfiles_expected: []\n---\n")
+    assert _files_from_packet(prompt) == []
+    assert _files_expected_from_packet(prompt) == []
 
 
 def test_evaluate_gather_keeps_full_tape_and_orders_jsonl_first() -> None:

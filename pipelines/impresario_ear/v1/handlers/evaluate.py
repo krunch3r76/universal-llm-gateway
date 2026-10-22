@@ -106,6 +106,9 @@ def _extract_harvest_prose(raw: str) -> str:
     return "\n".join(remainder).strip() if remainder else core.strip()
 
 
+_LANE_B_EMPTY_SCOPE_FRONTMATTER = "---\nfiles_expected: []\n---\n"
+
+
 def _build_evaluate_prompt(
     *,
     root_thread: str,
@@ -152,7 +155,7 @@ def _build_evaluate_prompt(
         "action to offer or dispatch in STEER and NEXT_ADMIT.\n\n"
         f"<untrusted_context>\n{gather_json}\n</untrusted_context>"
     )
-    return _BUS_FORBIDDEN + "\n\n" + instructions
+    return _LANE_B_EMPTY_SCOPE_FRONTMATTER + _BUS_FORBIDDEN + "\n\n" + instructions
 
 
 def _pick_critic(mode: str, options: dict[str, Any]):
