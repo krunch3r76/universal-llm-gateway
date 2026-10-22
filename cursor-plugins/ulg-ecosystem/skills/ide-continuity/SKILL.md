@@ -61,6 +61,7 @@ below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (anthropic/* API admitted wh
 same_input_failed_twice ⇒ ¬retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE
 open_fork(design ∨ strategy ∨ retry_same_AC) ∧ ¬mechanical ⇒ pipeline(divergent-ideation-v1) ≺ bind
 outbound_prose(high_stakes) ⇒ outbound-voice-spec ≺ pipeline(divergent-ideation-v1) ≺ pipeline(writer-specialist-v1)
+operator_issue ⇒ proactive_offer ∧ in_lock_same_turn ∧ ¬STAY(confirm_only) (decision:impresario-proactive-offer-on-operator-issue · 17934)
 ```
 
 ## Registers
@@ -81,9 +82,7 @@ Flip: `scripts/liaison-tick.py --root R --register autonomous|attended`. Return 
 
 **When:** operator overnight/departure — **not** attended `CONTEXT_BUDGET` mid-arc (§ Tick step 7 **ide-hop**). PARK ¬ a step while `NOW` or unread lanes remain.
 
-Metronome (Overnight gear) never pages the Castle (12286), which keeps its own cadence; bus turns keep canonical `to="web-anthropic"` (`¬ to="web"`, per `decision:identity-doctrine-endpoint-provenance`) while envelope subject/sender subscriptions suppress wake noise.
-
-Overnight leftover = **hold | play | sit** (`spawn_wake.play_classify`): hold = live conductor owns addressed `todo:{slug}`; play = `now_row` names `todo:{slug}` and no live owner → admit conductor; sit = house attention, no addressed todo → headless liaison. Default `--go-under` is play-aware; `--go-under --sit` is the old 10534 chain. `successor_contract=conductor` on house generate ≠ play path.
+Overnight leftover = **hold | play | sit** (`spawn_wake.play_classify`): hold = live conductor owns addressed `todo:{slug}`; play = `now_row` names `todo:{slug}` and no live owner → admit conductor; sit = house attention, no addressed todo → headless liaison. Default `--go-under` is play-aware; `--go-under --sit` is the old 10534 chain.
 
 **Come up** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" — **not** `resume R`, which is check-in and leaves ticker driving): (1) SIGTERM `--loop --spawn-on-wake` ticker; (2) `--register attended --set ready=false`; (3) drop `induction_binds` that forbid IDE hop; (4) then `resume R` may `--take-over`. One driver: IDE-hop ⇒ `ready=false`; ticker ⇒ `--go-under` only on overnight/departure. Check-in `resume R` while UNDER must not run this sequence.
 
@@ -130,7 +129,7 @@ Binds. Later prose that conflicts loses.
 ## Tick steps
 
 0. **Wake check** — ¬ arm turn-by-turn on in-flight (§ Seat stays 5). Arm `--loop --heartbeat 1200` only while finish watcher live or row playable. Skip `CreateGoal`.
-1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end.
+1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end. Operator issue: ¬ terminal confirm/describe on empty/`quiet` NOW — offer concrete actions + in-lock same turn.
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")`; quote CLOSEOUT/SCORE_RESURFACE; `mark_read`. Unpaid `PARKED_TRANSPORT` + consult wake on thread ⇒ successor check / GIW single-admit (§ Seat stays 6). Non-terminal unread ⇒ latest turn only. `watchers_complete_unrelayed` ⇒ harvest then `--mark-relayed <basename>` (`path.name` only). `kind=friction` / `digest.frictions` ⇒ § Friction score rows (≤ one `assertion_get` deepen).
 3. **Fold** — update scoreboard (`fs md_replace` on tip-CHECKPOINT cortex URI): row status ← observed (quote sha / pytest / execution_id). Landed ≠ live: served paths need `manage(sync_restart)` — LOAD `restart-drain-discipline`.
 4. **Decide** — compute Address. Unpaid `PARKED_TRANSPORT` with consult wake on thread = Address (§ Seat stays 6), not STAY / operator-resume gate. Played `todo:{slug}` admits/re-admits one conductor (§ Play). Conductor owns scoreboard NOW under `work_key=todo:{slug}` and nests Composer after Compose. ¬ this seat fire that implement. No seat bind ⇒ induction NOW **is** newest undispositioned friction. Gear 3 pins attention-tier NOW into `policy.now_row` and releases when spent. `--set now_row=…` wins while satisfied; `--set now_row=quiet` holds. `reasoning-posture`: pin question, bind forks.

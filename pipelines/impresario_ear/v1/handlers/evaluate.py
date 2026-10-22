@@ -112,6 +112,7 @@ def _build_evaluate_prompt(
     mode: str,
     trigger: str,
     gather: dict[str, Any],
+    prescreen: dict[str, Any] | None = None,
 ) -> str:
     gather_for_prompt = gather
     if isinstance(gather, dict):
@@ -123,9 +124,16 @@ def _build_evaluate_prompt(
             if key not in ordered:
                 ordered[key] = value
         gather_for_prompt = ordered
-    gather_json = json.dumps(
-        {"mode": mode, "gather": gather_for_prompt}, default=str
-    )[:12000]
+    payload: dict[str, Any] = {"mode": mode, "gather": gather_for_prompt}
+    if prescreen:
+        sig = prescreen.get("signals")
+        imp = prescreen.get("imperative")
+        if sig or imp:
+            payload["prescreen"] = {
+                "signals": sig,
+                "imperative": imp,
+            }
+    gather_json = json.dumps(payload, default=str)[:12000]
     instructions = (
         "You are the Impresario Ear critic evaluating house continuity.\n"
         f"Thread: {root_thread}\n"
@@ -136,6 +144,12 @@ def _build_evaluate_prompt(
         "DIAGNOSIS: one short paragraph\n"
         "STEER: imperative next action for the house tab\n"
         "NEXT_ADMIT: one line the tab should dispatch (or none if healthy)\n\n"
+        "If the house tab responds to an operator observation or issue merely by "
+        "confirming, describing, or diagnosing it and parking on STAY / "
+        "Going. Stay here / empty or quiet NOW without proactively offering "
+        "concrete actions and executing in-lock autonomous actions in the same "
+        "turn, classify as VERDICT: remiss_duty and name the concrete remedial "
+        "action to offer or dispatch in STEER and NEXT_ADMIT.\n\n"
         f"<untrusted_context>\n{gather_json}\n</untrusted_context>"
     )
     return _BUS_FORBIDDEN + "\n\n" + instructions
@@ -221,6 +235,7 @@ async def evaluate_impresario_ear(
         mode=mode,
         trigger=str(resolve.get("trigger") or ""),
         gather=gather,
+        prescreen=pre,
     )
     if sdk_generate is None:
         from systems.frontier_consult.cdp_cursor_reroute import (

@@ -23,9 +23,7 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 | High-stakes outbound prose (after OUTBOUND SPEC) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", ...) -> pipeline(op="run", pipeline_id="writer-specialist-v1", ...)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
 
-`cursor_request` is life-only. On code the AutoJob admit door is `agent_bus(tool="request")`. `job=implement` through `cursor_request` from this seat is an extra admit. Life implement uses that verb because life MCP has no `team_dispatch`.
-
-Gear-3 `goal_escalation` admits a conductor for repo-write and design. Life seats without `team_dispatch` stay on `cursor_request`. This seat does not follow that life rung.
+`cursor_request` is life-only; code AutoJob door is `agent_bus(tool="request")`.
 
 ## Hop (:8 Xvfb)
 
@@ -36,12 +34,13 @@ when the operator asked. Default GUI = `:8` Cursor Agents (`127.0.0.1:9338`).
 ## Wake
 
 On every `BRIDGE_WAKE` or `liaison-tick.py --set now_row=…`, read digest/tick JSON `budget.stop_class`.
+Operator issue: ¬ confirm+Stay on empty NOW; offer concrete actions + in-lock levers same turn (decision:impresario-proactive-offer-on-operator-issue · 17934).
 Contradiction or open design fork ⇒ same turn: `pipeline(op=run, pipeline_id=divergent-ideation-v1)` and/or
 `cdp/opus-5.5` · `cdp/fable-5.1` · `cursor/grok-4.7`, or execute the falsifying probe — ¬ park on partial read.
 
 A watcher line `closeout turn=` is the harvest, once. `conductor_live ⇒ ¬arm(turn_watcher)`. When a conductor tail is armed, use `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and does not surface ordinary turns. Turn-by-turn watch only when the operator names that run. Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable — via `liaison-arm-loop.sh` then `liaison-monitor-loop.sh`; never as the agent Shell PID (a:38446). No playable row and no live watcher ⇒ SIGTERM this root's `--loop` (pidfile / pkill). Loop-abort system wakes: restate LOCKED harvest body or stay silent if already relayed — never loop-status-only. An `AGENT_LOOP_TICK_liaison` that only repeats this tab's CHECKPOINT is not an instruction to play.
 
-A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished. `watch-supervise.sh stop --label <label>`. That tail is not a watcher and not a close. Arm the finish tail with no `notify_on_output`. Its shell completion is the one harvest turn. A pattern notify plus that exit is two turns, and the second covers the relay (friction 37400; `runbook:bus-consult-watcher` step 4).
+Relayed closeout while tail still prints `stall-pop:` ⇒ finished; `watch-supervise.sh stop --label <label>`. Finish tail: no `notify_on_output`; shell completion = harvest turn (friction 37400).
 
 Unpaid `PARKED_TRANSPORT` with the `web-anthropic` reply already on the worker thread is owed park-harvest continue in that harvest (`liaison` Seat stays 6): one successor check, then the GIW single-admit path. Do not stop at an empty continue stamp, and do not hand-admit via `team_dispatch`.
 
