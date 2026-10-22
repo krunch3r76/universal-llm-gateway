@@ -119,6 +119,54 @@ def subscribe_cursor_xvfb_house(
     }
 
 
+def unsubscribe_cursor_xvfb_house(
+    thread_scope: str,
+    agent_id: str,
+    *,
+    client: httpx.Client | None = None,
+    bound_by: str | None = None,
+    evidence: str | None = None,
+) -> dict[str, Any]:
+    """Remove a Glass subscription when spawn launch fails after upsert."""
+    root = str(thread_scope).strip()
+    aid = str(agent_id).strip()
+    if not root or not aid:
+        return {"ok": False, "reason": "thread_scope_and_agent_id_required"}
+    payload = {
+        "agent": "cursor",
+        "thread_scope": root,
+        "bound_by": bound_by or "cursor-xvfb-subscription",
+        "evidence": evidence,
+        "expected_agent_id": aid,
+    }
+    owns = client is None
+    try:
+        if owns:
+            with _bus() as bus:
+                resp = bus.post("/endpoint-subscriptions/unsubscribe", json=payload)
+        else:
+            resp = client.post("/endpoint-subscriptions/unsubscribe", json=payload)
+    except (Exception, SystemExit) as exc:
+        if isinstance(exc, httpx.HTTPError):
+            return {
+                "ok": False,
+                "reason": f"unsubscribe_http:{type(exc).__name__}",
+                "detail": str(exc)[:200],
+            }
+        return {
+            "ok": False,
+            "reason": f"unsubscribe_failed:{type(exc).__name__}",
+            "detail": str(exc)[:200],
+        }
+    ok = resp.status_code < 400
+    body: dict[str, Any] = {}
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {"raw": resp.text[:500]}
+    return {"ok": ok, "status_code": resp.status_code, "body": body}
+
+
 def subscribe_cursor_xvfb_from_holder(
     root_id: str,
     holder: str,
@@ -311,4 +359,5 @@ __all__ = [
     "subscribe_cursor_xvfb_from_holder",
     "subscribe_cursor_xvfb_house",
     "sync_policy_gui_host",
+    "unsubscribe_cursor_xvfb_house",
 ]

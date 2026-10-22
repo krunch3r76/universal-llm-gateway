@@ -840,7 +840,7 @@ def test_build_digest_l28_sibling_maestro_dead_letter(
 
     mock_bus.return_value.__enter__.return_value = MagicMock()
     mock_get.side_effect = _get_side_effect
-    state: dict = {"policy": {}}
+    state: dict = {"policy": {"sibling_roots": ["18374", "15851"]}}
     digest = build_digest("16416", state, register="autonomous")
     kinds = [item.get("kind") for item in digest.get("attention") or []]
     assert "dead_letter_maestro_turn" in kinds
@@ -911,3 +911,16 @@ def test_liaison_loop_due_unread_turns_list_vs_int() -> None:
     assert liaison_loop_due(digest_unread_key, {}, **kwargs) is True
     digest_zero = {**base, "root": {"unread_turns": []}}
     assert liaison_loop_due(digest_zero, {}, **kwargs) is False
+
+
+def test_l28_scan_root_ids_without_implicit_sibling_fallback() -> None:
+    from bus_watch.liaison_l24_l28 import l28_scan_root_ids
+
+    assert l28_scan_root_ids("16416", [], {}) == {"16416"}
+    assert l28_scan_root_ids("19263", [], {}) == {"19263"}
+    explicit = l28_scan_root_ids(
+        "19263",
+        [],
+        {"sibling_roots": ["15851", "16416"]},
+    )
+    assert explicit == {"19263", "15851", "16416"}

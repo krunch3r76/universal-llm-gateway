@@ -12,6 +12,8 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 
 ## Dispatch
 
+Unrelated missions on display `:8` mint a **new** single-mission house — `cursor_bridge(op=spawn_house, slug=…, prompt=…, gui_host=:8)` (or `spawn_tab` on an existing root). Do not bind a second distinct `todo:{slug}` onto `16416` or another occupied single-mission root; `liaison-tick.py --set now_row=…` refuses with `multiplex_refused` and names the spawn hint.
+
 | Work | Fire |
 |---|---|
 | Recon, loci unknown | `Task(subagent_type="explore")` in this tab |

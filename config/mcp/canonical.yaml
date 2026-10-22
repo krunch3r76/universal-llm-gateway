@@ -2113,12 +2113,7 @@ tools:
   flat_call_shape:
     tool: cursor_bridge
     substrate_qualified: user-vortex__cursor_bridge
-  fol_descriptor: "∀ op ∈ {open_tab, send_msg, status}: exactly one agent-bus REST call, no business
-    logic.\nopen_tab(slug ∧ (thread XOR new_slug)) ⟹ POST /threads/send subject=BRIDGE_OPEN + title
-    '<thread> <slug>'.\nsend_msg(thread ∧ body) ⟹ POST /threads/send subject=MSG. status(thread) ⟹
-    GET /turns + tab_ready + last_reply_turn.\nclaude.ai ↔ Cursor Composer keystroke bridge; an
-    io-side watcher consumes BRIDGE_OPEN/MSG and the in-tab agent posts TAB_READY/REPLY. Mutating.
-    Life+code callable. Spec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md\n"
+  fol_descriptor: "cursor_bridge relay: open_tab/send_msg/status (agent-bus BRIDGE_OPEN/MSG); spawn_tab/spawn_house/wake_tab/rename_tab/prune_sidebar (Glass CDP on gui_host).\nspawn_house atomically mints role:root thread, liaison tick policy, :8 subscription, and Glass tab.\nSpec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md\n"
   json_schema:
     type: object
     properties:
@@ -2128,6 +2123,11 @@ tools:
         - open_tab
         - send_msg
         - status
+        - spawn_tab
+        - spawn_house
+        - wake_tab
+        - rename_tab
+        - prune_sidebar
       thread:
         type: string
         description: Existing bridge lane id (open_tab continue path, send_msg, status).
@@ -2150,6 +2150,39 @@ tools:
         type: integer
         description: Turn window for status (default 10).
         default: 10
+      gui_host:
+        type: string
+        description: Glass GUI host label (default :8).
+        default: ':8'
+      prompt:
+        type: string
+        description: Hop message for spawn_tab / spawn_house.
+      model:
+        type: string
+        description: Model catalog label for spawn_tab / spawn_house.
+      slug:
+        type: string
+        description: Kebab slug for spawn_house thread mint and subscription title.
+      agent_id:
+        type: string
+        description: Deterministic Glass composer id (spawn_tab / spawn_house / wake_tab / rename_tab).
+      title:
+        type: string
+        description: Sidebar rename title (rename_tab).
+      effort:
+        type: string
+        description: Glass house effort knob (spawn_tab / spawn_house).
+      fast:
+        type: boolean
+        description: Glass fast-mode knob (spawn_tab / spawn_house).
+      model_knobs:
+        type: object
+        description: Glass createAgent knob map (spawn_tab / spawn_house).
+        additionalProperties:
+          type: string
+      work_key:
+        type: string
+        description: Single-mission todo key stored on spawn_house tick policy.
     required:
     - op
   skill_uri: agent_skill:agent_bus

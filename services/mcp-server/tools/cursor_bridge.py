@@ -9,17 +9,15 @@ Spec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any, Literal
 
-from cursor_bridge.cursor_agents_archive import prune_cursor_agents_predecessors
-from cursor_bridge.cursor_agents_hop import (
-    cursor_debug_url_for_gui_host,
-    launch_cursor_agents_tab,
-    rename_agent_row_in_sidebar,
+from cursor_bridge.bridge_glass_relay import (
+    relay_prune_sidebar,
+    relay_rename_tab,
+    relay_wake_tab,
 )
+from cursor_bridge.bridge_spawn_relay import relay_spawn_house, relay_spawn_tab
 from cursor_bridge.lane_ready import assess_lane_readiness
-from cursor_bridge.wake_delivery import _paste_cursor_services, normalize_target
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
@@ -39,6 +37,7 @@ BridgeOp = Literal[
     "send_msg",
     "status",
     "spawn_tab",
+    "spawn_house",
     "wake_tab",
     "rename_tab",
     "prune_sidebar",
@@ -120,23 +119,76 @@ def _send_msg(
     return {**result, "op": "send_msg"}
 
 
-def _gui_display(gui_host: str) -> str:
-    return "orion-node" if str(gui_host or "").strip() == "orion-node" else "8"
-
-
 def _spawn_tab(
-    *, gui_host: str, prompt: str | None, model: str | None
+    *,
+    gui_host: str,
+    prompt: str | None,
+    model: str | None,
+    effort: str | None = None,
+    fast: bool | str | None = None,
+    model_knobs: dict[str, str] | None = None,
+    agent_id: str | None = None,
 ) -> dict[str, Any]:
     if not prompt or not str(prompt).strip():
         return _param_error("spawn_tab", "prompt_required", "spawn_tab requires prompt")
-    debug_url = cursor_debug_url_for_gui_host(gui_host)
-    res = launch_cursor_agents_tab(
-        str(prompt).strip(),
-        model_query=str(model or "").strip(),
-        debug_url=debug_url,
+    res = relay_spawn_tab(
+        gui_host=gui_host,
+        prompt=str(prompt).strip(),
+        model=model,
+        effort=effort,
+        fast=fast,
+        model_knobs=model_knobs,
+        agent_id=agent_id,
     )
-    record("mcp.cursor_bridge.spawn_tab", gui_host=gui_host, ok=bool(res.get("ok")))
-    return {**res, "op": "spawn_tab", "gui_host": gui_host}
+    record(
+        "mcp.cursor_bridge.spawn_tab",
+        gui_host=gui_host,
+        ok=bool(res.get("ok")),
+        agent_id=res.get("editor_agent_id") or res.get("_requested_agent_id"),
+        has_model_knobs=bool(res.get("_knobs")),
+    )
+    res.pop("_knobs", None)
+    res.pop("_requested_agent_id", None)
+    return res
+
+
+def _spawn_house(
+    *,
+    gui_host: str,
+    slug: str | None,
+    prompt: str | None,
+    model: str | None,
+    effort: str | None = None,
+    fast: bool | str | None = None,
+    model_knobs: dict[str, str] | None = None,
+    agent_id: str | None = None,
+    work_key: str | None = None,
+) -> dict[str, Any]:
+    if not slug or not str(slug).strip():
+        return _param_error("spawn_house", "slug_required", "spawn_house requires slug")
+    if not prompt or not str(prompt).strip():
+        return _param_error(
+            "spawn_house", "prompt_required", "spawn_house requires prompt"
+        )
+    res = relay_spawn_house(
+        gui_host=gui_host,
+        slug=str(slug).strip(),
+        prompt=str(prompt).strip(),
+        model=model,
+        effort=effort,
+        fast=fast,
+        model_knobs=model_knobs,
+        agent_id=agent_id,
+        work_key=work_key,
+    )
+    record(
+        "mcp.cursor_bridge.spawn_house",
+        gui_host=gui_host,
+        ok=bool(res.get("ok")),
+        thread_id=res.get("thread_id"),
+        agent_id=res.get("agent_id"),
+    )
+    return res
 
 
 def _wake_tab(
@@ -144,53 +196,11 @@ def _wake_tab(
 ) -> dict[str, Any]:
     if not body or not str(body).strip():
         return _param_error("wake_tab", "body_required", "wake_tab requires body")
-    display = _gui_display(gui_host)
-    target = normalize_target(display, "cursor")
-    if not target.get("ok"):
-        return _param_error(
-            "wake_tab",
-            "unknown_target",
-            f"wake_tab unknown gui_host {gui_host!r}",
-        )
-    from cursor_bridge.cdp_pages import list_pages
-    from cursor_bridge.wake_delivery import _pick_page
-
-    try:
-        pages = list_pages(target["origin"])
-    except OSError as exc:
-        return {
-            "ok": False,
-            "error": "debug_unreachable",
-            "detail": type(exc).__name__,
-            "op": "wake_tab",
-            "gui_host": gui_host,
-        }
-    page = _pick_page(pages, "cursor")
-    if page is None:
-        return {
-            "ok": False,
-            "error": "no_page",
-            "op": "wake_tab",
-            "gui_host": gui_host,
-            "pages": len(pages),
-        }
-    ws_url = page["web_socket_debugger_url"]
-    line = str(body).strip()
-    aid = str(agent_id or "").strip()
-    try:
-        paste_res = asyncio.run(_paste_cursor_services(ws_url, line, agent_id=aid))
-    except (TimeoutError, RuntimeError, OSError) as exc:
-        return {
-            "ok": False,
-            "error": "paste_failed",
-            "detail": type(exc).__name__,
-            "op": "wake_tab",
-            "gui_host": gui_host,
-        }
-    record(
-        "mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(paste_res.get("ok"))
-    )
-    return {**paste_res, "op": "wake_tab", "gui_host": gui_host, "display": display}
+    res = relay_wake_tab(gui_host=gui_host, agent_id=agent_id, body=str(body).strip())
+    if res.get("error") == "unknown_target":
+        return _param_error("wake_tab", "unknown_target", str(res.get("detail") or ""))
+    record("mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+    return res
 
 
 def _rename_tab(
@@ -202,14 +212,13 @@ def _rename_tab(
         )
     if not title or not str(title).strip():
         return _param_error("rename_tab", "title_required", "rename_tab requires title")
-    debug_url = cursor_debug_url_for_gui_host(gui_host)
-    res = rename_agent_row_in_sidebar(
-        str(agent_id).strip(),
-        str(title).strip(),
-        debug_url=debug_url,
+    res = relay_rename_tab(
+        gui_host=gui_host,
+        agent_id=str(agent_id).strip(),
+        title=str(title).strip(),
     )
     record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
-    return {**res, "op": "rename_tab", "gui_host": gui_host}
+    return res
 
 
 def _prune_sidebar(
@@ -225,14 +234,13 @@ def _prune_sidebar(
         return _param_error(
             "prune_sidebar", "agent_id_required", "prune_sidebar requires agent_id"
         )
-    debug_url = cursor_debug_url_for_gui_host(gui_host)
-    res = prune_cursor_agents_predecessors(
-        str(thread).strip(),
-        active_agent_id=str(agent_id).strip(),
-        debug_url=debug_url,
+    res = relay_prune_sidebar(
+        gui_host=gui_host,
+        thread=str(thread).strip(),
+        agent_id=str(agent_id).strip(),
     )
     record("mcp.cursor_bridge.prune_sidebar", gui_host=gui_host, ok=bool(res.get("ok")))
-    return {**res, "op": "prune_sidebar", "gui_host": gui_host}
+    return res
 
 
 def _status(*, thread: str | None, last: int) -> dict[str, Any]:
@@ -306,6 +314,10 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
         prompt: str | None = None,
         model: str | None = None,
         title: str | None = None,
+        effort: str | None = None,
+        fast: bool | str | None = None,
+        model_knobs: dict[str, str] | None = None,
+        work_key: str | None = None,
     ) -> dict[str, Any]:
         """claude.ai ↔ Cursor Composer keystroke bridge.
 
@@ -340,7 +352,27 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
             if op == "status":
                 return _status(thread=thread, last=last)
             if op == "spawn_tab":
-                return _spawn_tab(gui_host=gui_host, prompt=prompt, model=model)
+                return _spawn_tab(
+                    gui_host=gui_host,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    fast=fast,
+                    model_knobs=model_knobs,
+                    agent_id=agent_id,
+                )
+            if op == "spawn_house":
+                return _spawn_house(
+                    gui_host=gui_host,
+                    slug=slug,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    fast=fast,
+                    model_knobs=model_knobs,
+                    agent_id=agent_id,
+                    work_key=work_key,
+                )
             if op == "wake_tab":
                 return _wake_tab(gui_host=gui_host, agent_id=agent_id, body=body)
             if op == "rename_tab":

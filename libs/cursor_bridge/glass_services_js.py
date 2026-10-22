@@ -253,7 +253,7 @@ def launch_new_agent_tab_js(
     msg = json.dumps(message)
     mq = json.dumps(str(model_query or "").strip())
     label_set = bool(str(model_query or "").strip())
-    if label_set and model_knobs is not None:
+    if model_knobs is not None:
         knobs_line = f"  const houseKnobs = {json.dumps(model_knobs)};\n"
     else:
         knobs_line = "  const houseKnobs = null;\n"

@@ -275,3 +275,25 @@ def emit_roster_hire_released(**kwargs: Any) -> None:
 
 def emit_roster_hire_refused(**kwargs: Any) -> None:
     _emit(LiaisonRosterHireRefused(**kwargs))
+
+
+@event_factory
+def BusWatchMultiplexRefused(  # noqa: N802
+    *,
+    root_id: str,
+    occupied_mission: str,
+    requested_row: str,
+) -> Event:
+    return Event(
+        signal="bus.watch.multiplex.refused",
+        payload={
+            "root_id": root_id,
+            "occupied_mission": occupied_mission,
+            "requested_row": requested_row,
+        },
+        scope="global",
+    )
+
+
+def emit_multiplex_refused(**kwargs: Any) -> None:
+    _emit(BusWatchMultiplexRefused(**kwargs))

@@ -7,6 +7,7 @@ from typing import Any
 
 from bus_watch.events import emit_now_row_bound, emit_now_row_released
 from bus_watch.hop_qualify import HOLD_MARKERS, quiet_row
+from bus_watch.multiplex_guard import assess_now_row_multiplex
 from bus_watch.now_row import policy_bind_satisfied, resolve_now_row
 from bus_watch.spawn_pending import (
     LAND_RESULT_RE,
@@ -113,8 +114,21 @@ def maybe_bind_now_row(
                     return {"action": "refused", "reason": spent}
         if raw == expected_prior and not release_reason:
             return {"action": "unchanged"}
+        if raw != expected_prior and not release_reason:
+            root_id = str((digest.get("root") or {}).get("id") or "")
+            policy = dict(state.get("policy") or {})
+            verdict = assess_now_row_multiplex(root_id, policy, raw)
+            if not verdict.get("ok"):
+                return {
+                    "action": "refused",
+                    "reason": "multiplex_refused",
+                    "detail": verdict.get("detail"),
+                    "spawn_hint": verdict.get("spawn_hint"),
+                }
 
-    if release_only or (source == "attention" and (raw != expected_prior or release_reason)):
+    if release_only or (
+        source == "attention" and (raw != expected_prior or release_reason)
+    ):
         root_id = str((digest.get("root") or {}).get("id") or "")
         released_row = str(bind.get("row") or expected_prior)
         released_lane_id = str(bind.get("lane_id") or "")

@@ -402,6 +402,17 @@ def main() -> int:
     state = load_state(state_path)
     if set_items:
         _validate_successor_policy_set(root, state, set_items)
+        if "now_row" in set_items:
+            from bus_watch.multiplex_guard import assess_now_row_multiplex
+
+            verdict = assess_now_row_multiplex(
+                root,
+                dict(state.get("policy") or {}),
+                str(set_items["now_row"]),
+            )
+            if not verdict.get("ok"):
+                print(json.dumps(verdict))
+                return 1
         try:
             apply_policy_set({}, set_items, as_of=_utcnow())
         except OperatorGateChannelError as exc:
@@ -697,10 +708,9 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         if is_overnight_quiet(policy=policy_pre):
             time.sleep(args.poll)
             continue
-        if (
-            not refresh_fable_lock(holder, root_id=root, require_pid=os.getpid())
-            or read_lock(root).get("preempt_by")
-        ):
+        if not refresh_fable_lock(
+            holder, root_id=root, require_pid=os.getpid()
+        ) or read_lock(root).get("preempt_by"):
             print(
                 json.dumps(
                     {"loop": "preempted", "holder": holder, "lock": read_lock(root)}
@@ -741,8 +751,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         ) != budget.get("epoch")
         now = time.monotonic()
         changed_not_echo = bool(
-            digest["changed_since_last_tick"]
-            and not is_own_digest_echo(digest, state)
+            digest["changed_since_last_tick"] and not is_own_digest_echo(digest, state)
         )
         heartbeat_due = bool(args.heartbeat) and (now - last_emit) >= args.heartbeat
         policy = digest.get("policy") or {}

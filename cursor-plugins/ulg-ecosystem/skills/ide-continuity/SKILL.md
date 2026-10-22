@@ -8,7 +8,7 @@ description: IDE continuity impresario — infer Light/Attended/Overnight, seat 
 `web-anthropic`) — never one maestro per house. **House** = any other durable body of work (`role:root`).
 **Impresario** = this reasoning agent in the IDE tab: coordinates a house or mints one if missing; infers
 gear internally. **Conductor** = session that plays one `todo:` score until a designed stop. **Metronome** =
-gear-3 overnight ticker (`liaison-tick.py --loop --spawn-on-wake` after `--go-under`). **Stage manager** =
+gear-3 overnight ticker (`liaison-tick.py --loop --spawn-on-wake` after `--go-under`). New unrelated `:8` missions use `cursor_bridge(op=spawn_house)` / `spawn_tab` instead of multiplexing `now_row` onto an occupied single-mission house (`16416` included). **Stage manager** =
 the one Jupiter fleet watcher (lane `15851`).
 
 ## Gear inference (Light / Attended / Overnight)

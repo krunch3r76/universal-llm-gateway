@@ -370,6 +370,8 @@ def render_doorbell(
                     f"lane_role=sub_mission, to=cursor, ...)"
                 )
                 follow = (
+                    "cursor_bridge(op=spawn_house, slug=<slug>, prompt=..., gui_host=:8) "
+                    "or cursor_bridge(op=spawn_tab, ...); else "
                     "team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, "
                     "lane=B, dispatch_thread_id=<new thread>, "
                     "work_key=agent-bus:<new thread>)"
@@ -506,6 +508,8 @@ def _successor_duty_line(
             )
         return (
             "duty: dispatch -> read back -> verify -> CP. Commission: "
+            "cursor_bridge(op=spawn_house, slug=<slug>, prompt=..., gui_host=:8) "
+            "for a new single-mission house, or "
             "agent_bus(send, new_slug=r15-wake-<slug>, parent_thread=<root>, "
             "lane_role=sub_mission, to=cursor, ...) then "
             "team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, lane=B, "

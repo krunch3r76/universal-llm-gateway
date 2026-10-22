@@ -211,8 +211,6 @@ def l28_scan_root_ids(
         if lane_id:
             roots.add(lane_id)
     sibling = policy.get("sibling_roots")
-    if sibling is None and root_id == "16416":
-        sibling = ("18374", "15851")
     if isinstance(sibling, (list, tuple, set, frozenset)):
         for item in sibling:
             token = str(item or "").strip()
