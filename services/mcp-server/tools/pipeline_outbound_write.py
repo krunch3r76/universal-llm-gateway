@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 def register_outbound_write_tool(mcp: FastMCP) -> None:
+    """Register the outbound_write MCP tool that forwards typed intake into writer-specialist."""
     from tools.pipeline import _capability_async, _pipeline_run
 
     @mcp.tool(title="Outbound Write")
