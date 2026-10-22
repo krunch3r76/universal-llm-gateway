@@ -97,6 +97,16 @@ _CONCESSION = (
 )
 
 
+_PRESERVE_FINDING_TYPES = frozenset(
+    {
+        "not_purpose_relevant",
+        "intake_answer_promoted",
+        "volunteered_negative_or_concession",
+        "prior_draft_carryover",
+    }
+)
+
+
 def findings_actionable(findings: Any) -> list[Any]:
     """Drop findings whose fix text concedes the sentence.
 
@@ -108,6 +118,9 @@ def findings_actionable(findings: Any) -> list[Any]:
     kept: list[Any] = []
     for row in findings:
         if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        if str(row.get("type") or "") in _PRESERVE_FINDING_TYPES:
             kept.append(row)
             continue
         fix = str(row.get("fix") or "").lower()
@@ -652,7 +665,9 @@ class WritingReviewOpenaiWaitHandler(BaseHandler):
         assemble = _json_of(outputs, "assemble") or {}
         dispatch = _json_of(outputs, "review_openai") or {}
         writer_model = str(assemble.get("writer_model") or "")
-        reviewer_model = str(dispatch.get("model") or assemble.get("reviewer_model") or "")
+        reviewer_model = str(
+            dispatch.get("model") or assemble.get("reviewer_model") or ""
+        )
         thread = _thread_id(options)
         execution_id = dispatch.get("execution_id")
         key = dispatch.get("idempotency_key")
@@ -828,7 +843,8 @@ class WritingSeatSelectHandler(BaseHandler):
                         {
                             "refused": "review_transport_failed",
                             "reason": "review_transport_failed",
-                            "error": openai_review.get("error") or "review_transport_failed",
+                            "error": openai_review.get("error")
+                            or "review_transport_failed",
                         }
                     )
         wait_name = "draft_wait" if role == "writer" else "review_wait"

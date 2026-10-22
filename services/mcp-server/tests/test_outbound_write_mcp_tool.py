@@ -89,3 +89,31 @@ async def test_outbound_write_async_capability_relay() -> None:
         body = result.structured_content or {}
         assert "writer-specialist-v1" in str(body.get("href") or body)
         async_call.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_outbound_write_async_intake_only_no_messages() -> None:
+    with patch("tools.pipeline._capability_async") as async_call:
+        async_call.return_value = {"href": "/api/v1/capabilities/writing/writer-specialist-v1/runs/y"}
+        with patch("tools.pipeline._refresh_pipeline_timeouts"):
+            mcp = FastMCP("outbound-write-async-intake")
+            register_pipeline_tools(mcp)
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "outbound_write",
+                {
+                    "recipient": "Clerk",
+                    "objective": "Notify",
+                    "channel": "email",
+                    "verbatim_notes": ["Fact"],
+                    "async_exec": True,
+                },
+            )
+        assert (result.structured_content or {}).get("href")
+        call = async_call.call_args
+        kwargs = call.kwargs if call.kwargs else {}
+        args = call.args if call.args else ()
+        options = kwargs.get("options") or (args[1] if len(args) > 1 else {})
+        messages = kwargs.get("messages") if "messages" in kwargs else (args[2] if len(args) > 2 else None)
+        assert messages == [] or messages is None
+        assert options["intake"]["recipient"] == "Clerk"

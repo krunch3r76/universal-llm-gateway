@@ -7,11 +7,17 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from .purpose_gate import (
-    check_class_for_channel,
+from .claim_gates import (
+    ClaimEvaluation,
+    check_profile_for_channel,
+    detect_volunteered_negative_or_concession,
+    evaluate_candidate_claim,
     is_declaration_register,
     map_claim_to_purpose,
+    parse_purpose_points,
 )
+
+check_class_for_channel = check_profile_for_channel
 
 _ABBREV = re.compile(
     r"\b(?:Mr|Ms|Mrs|Dr|Prof|Sr|Jr|St|No|Nos|Ex|Fig|Para|Paras|Sec|Secs|v|vs|etc|e\.g|i\.e)\.$",
@@ -205,10 +211,10 @@ _SUBCLAUSE_TRIMS: list[tuple[re.Pattern[str], str, str]] = [
     ),
     (
         re.compile(
-            r"^(Supplemental tax bills\s+#\d+\s+and\s+#\d+)\s+(each show a bill-created date of\s+[^;]+;\s*)(I do not know the date I received)\s+them\b",
+            r"\beach show a bill-created date of\s+[^;.]+(?:;\s*|.\s*)?",
             re.I,
         ),
-        r"\3 \1",
+        "",
         "unrequested_bill_created_date",
     ),
     (
@@ -251,13 +257,38 @@ def classify_claim_load_bearing(
     *,
     purpose: str,
     audience: str,
+    purpose_points: list[str] | None = None,
+    intake_answers: list[str] | None = None,
+    fact_sources: list[dict[str, Any]] | None = None,
+    verbatim_notes: list[str] | None = None,
+    attested_sources: list[str] | None = None,
+    strict_attestation: bool | None = None,
 ) -> tuple[bool, str | None]:
     """Return (load_bearing, reason_if_dropped)."""
-    del purpose, audience
+    del audience
     for pattern, reason in _NON_LOAD_PATTERNS:
         if pattern.search(claim):
             return False, reason
-    return True, None
+    parsed_points = parse_purpose_points(purpose, purpose_points)
+    notes = list(verbatim_notes or [])
+    attested = list(attested_sources or [])
+    strict = (
+        strict_attestation
+        if strict_attestation is not None
+        else bool(notes or attested)
+    )
+    evaluation = evaluate_candidate_claim(
+        claim,
+        purpose_points=parsed_points,
+        verbatim_notes=notes,
+        attested_sources=attested,
+        intake_answers=list(intake_answers or []),
+        fact_sources=list(fact_sources or []),
+        strict_attestation=strict,
+    )
+    if evaluation.load_bearing:
+        return True, None
+    return False, evaluation.reason
 
 
 def build_fact_inventory(
@@ -267,39 +298,88 @@ def build_fact_inventory(
     audience: str,
     attested_sources: list[str] | None = None,
     verbatim_notes: list[str] | None = None,
+    purpose_points: list[str] | None = None,
+    intake_answers: list[str] | None = None,
+    fact_sources: list[dict[str, Any]] | None = None,
+    strict_attestation: bool | None = None,
 ) -> dict[str, Any]:
-    """Classify claims and produce load-bearing inventory + dropped_facts with provenance counts."""
+    """Classify claims and produce load-bearing inventory + dropped_facts with provenance."""
+    del audience
     attested_sources = list(attested_sources or [])
-    verbatim_notes = list(verbatim_notes or [])
+    notes = list(verbatim_notes or []) if verbatim_notes is not None else []
+    strict = (
+        strict_attestation
+        if strict_attestation is not None
+        else verbatim_notes is not None or bool(attested_sources)
+    )
+    parsed_points = parse_purpose_points(purpose, purpose_points)
     checked_body = _strip_non_sworn_body(prior_draft)
     candidates = extract_candidate_claims(prior_draft)
     load_bearing: list[str] = []
-    dropped_facts: list[dict[str, str]] = []
+    dropped_facts: list[dict[str, Any]] = []
+    claim_ledger: list[dict[str, Any]] = []
+    context_facts: list[dict[str, Any]] = []
     for claim in candidates:
         trimmed_claim, sub_drops = _trim_non_load_subclauses(claim)
-        lb, reason = classify_claim_load_bearing(
-            trimmed_claim, purpose=purpose, audience=audience
-        )
-        if lb:
-            dropped_facts.extend(sub_drops)
+        for drop in sub_drops:
+            dropped_facts.append(
+                {**drop, "provenance": "operator_account", "claim": drop["claim"]}
+            )
+        clerical_reason: str | None = None
+        for pattern, reason in _NON_LOAD_PATTERNS:
+            if pattern.search(trimmed_claim):
+                clerical_reason = reason
+                break
+        if clerical_reason:
+            evaluation = ClaimEvaluation(
+                False, clerical_reason, "prior_draft_only", None
+            )
+        else:
+            evaluation = evaluate_candidate_claim(
+                trimmed_claim,
+                purpose_points=parsed_points,
+                verbatim_notes=notes,
+                attested_sources=attested_sources,
+                intake_answers=list(intake_answers or []),
+                fact_sources=list(fact_sources or []),
+                strict_attestation=strict,
+            )
+        if evaluation.load_bearing:
             load_bearing.append(trimmed_claim)
-        elif reason:
-            dropped_facts.append({"claim": claim, "reason": reason})
-    if not verbatim_notes and load_bearing:
-        verbatim_notes = list(load_bearing)
-    attested = list(dict.fromkeys([*verbatim_notes, *attested_sources, *load_bearing]))
-    return {
+            claim_ledger.append(
+                {
+                    "claim": trimmed_claim,
+                    "provenance": evaluation.provenance,
+                    "purpose_point": evaluation.purpose_point,
+                }
+            )
+        elif evaluation.reason:
+            row: dict[str, Any] = {
+                "claim": trimmed_claim,
+                "reason": evaluation.reason,
+                "provenance": evaluation.provenance,
+            }
+            dropped_facts.append(row)
+            if evaluation.provenance == "intake_answer":
+                context_facts.append(row)
+    attested = list(dict.fromkeys([*notes, *attested_sources]))
+    channel_profile = check_profile_for_channel("filing")
+    result: dict[str, Any] = {
         "input_sha256": hashlib.sha256(prior_draft.encode("utf-8")).hexdigest(),
         "checked_sha256": hashlib.sha256(checked_body.encode("utf-8")).hexdigest(),
         "input_word_count": len(prior_draft.split()),
-        "sworn_body_word_count": _measure_sworn_body_words(prior_draft),
         "checked_word_count": len(checked_body.split()),
         "sentence_count": len(candidates),
         "load_bearing_claims": load_bearing,
         "dropped_facts": dropped_facts,
-        "verbatim_notes": verbatim_notes,
+        "claim_ledger": claim_ledger,
+        "context_facts": context_facts,
+        "verbatim_notes": notes,
         "attested_sources": attested,
+        "check_profile": channel_profile,
     }
+    result["sworn_body_word_count"] = _measure_sworn_body_words(prior_draft)
+    return result
 
 
 _EXHIBIT_TAG = re.compile(r"\(Exhibit\s+\d+\.?\)", re.I)
@@ -396,19 +476,29 @@ def drift_check_sentence(
     channel: str,
     exhibit_ids: set[str],
     purpose_points: Sequence[str] | None = None,
+    parsed_purpose_points: list | None = None,
+    intake_answers: Sequence[str] | None = None,
     verbatim_required_excerpts: Sequence[str] = (),
 ) -> str | None:
     """Return drift reason if sentence should be flagged."""
+    points = parsed_purpose_points or (
+        parse_purpose_points("", list(purpose_points or [])) if purpose_points else []
+    )
+    for answer in intake_answers or []:
+        if answer.strip() and answer.strip() in sentence:
+            return "intake_answer_promoted"
+    neg, _ = detect_volunteered_negative_or_concession(sentence, points)
+    if neg:
+        return neg
     for pattern, reason in _DRIFT_PATTERNS:
         if pattern.search(sentence):
             return reason
-    if check_class_for_channel(channel) == "correspondence" and is_declaration_register(
-        sentence
-    ):
+    profile = check_profile_for_channel(channel)
+    if profile == "correspondence" and is_declaration_register(sentence):
         exempt = any(sentence in str(excerpt) for excerpt in verbatim_required_excerpts)
         if not exempt:
             return "declaration_register_in_correspondence"
-    if channel == "filing" and exhibit_ids:
+    if profile == "sworn" and exhibit_ids:
         if _EXHIBIT_LEDGER.search(sentence) and not _EXHIBIT_TAG.search(sentence):
             return "exhibit_fact_missing_inline_tag"
     if purpose_points and map_claim_to_purpose(sentence, purpose_points) is None:
@@ -423,10 +513,17 @@ def run_drift_check(
     pin_ledger: list[dict[str, Any]] | None = None,
     strip_non_sworn: bool = True,
     purpose_points: Sequence[str] | None = None,
+    purpose: str | None = None,
+    intake_answers: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Sentence-level drift check; branches on channel — correspondence has no sworn fields."""
-    check_class = check_class_for_channel(channel)
+    """Sentence-level drift check; branches on channel profile."""
+    check_class = check_profile_for_channel(channel)
     points = [p for p in (purpose_points or []) if str(p).strip()]
+    parsed_points = (
+        parse_purpose_points(purpose or "", list(points) if points else None)
+        if purpose or points
+        else []
+    )
     verbatim_required_excerpts = [
         str(pin["excerpt"])
         for pin in (pin_ledger or [])
@@ -464,6 +561,8 @@ def run_drift_check(
             channel=channel,
             exhibit_ids=exhibit_ids,
             purpose_points=points or None,
+            parsed_purpose_points=parsed_points,
+            intake_answers=intake_answers,
             verbatim_required_excerpts=verbatim_required_excerpts,
         )
         if reason:
@@ -484,8 +583,11 @@ def run_drift_check(
         "flagged_sentences": flagged,
         "channel": channel,
         "check_class": check_class,
+        "check_profile": check_class,
         "purpose_gate": "applied" if points else "skipped_no_purpose_points",
     }
     if check_class == "sworn":
         result["sworn_body_word_count"] = _measure_sworn_body_words(draft_text)
+    else:
+        result["body_word_count"] = len(checked_body.split())
     return result

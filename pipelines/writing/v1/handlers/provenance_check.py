@@ -186,6 +186,18 @@ def check_provenance(
             attested = pin.get("attested") is True
             if disposition in _EXPRESS and pin.get("attested") is False:
                 violations.append(_violation("unattested_pin", claim_id_s, key))
+            prov = pin.get("provenance")
+            if disposition in _EXPRESS and prov in {
+                "intake_answer",
+                "prior_draft_only",
+            }:
+                violations.append(
+                    _violation(
+                        "non_attested_provenance",
+                        claim_id_s,
+                        f"{key}:{prov}",
+                    )
+                )
             if disposition == _REQUEST and attested:
                 violations.append(_violation("request_cites_attested", claim_id_s, key))
         if (

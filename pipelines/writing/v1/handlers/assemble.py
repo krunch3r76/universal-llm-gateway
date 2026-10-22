@@ -347,6 +347,9 @@ class WritingAssembleHandler(BaseHandler):
             audience=str(data.get("audience") or data.get("recipient") or ""),
             attested_sources=list(data.get("attested_sources") or []),
             verbatim_notes=list(data.get("verbatim_notes") or []) or None,
+            purpose_points=list(data.get("purpose_points") or []) or None,
+            intake_answers=list(data.get("intake_answers") or []) or None,
+            fact_sources=list(data.get("fact_sources") or []) or None,
         )
         data = {
             **data,
@@ -371,7 +374,13 @@ class WritingAssembleHandler(BaseHandler):
                     "ref": exc.ref,
                 }
             )
-        pins = _verbatim_note_pins(inventory["load_bearing_claims"], start=1)
+        ledger_rows = inventory.get("claim_ledger") or []
+        pin_items = [
+            str(row.get("claim") or "")
+            for row in ledger_rows
+            if isinstance(row, dict) and row.get("claim")
+        ]
+        pins = _claim_ledger_pins(ledger_rows or pin_items, start=1)
         offset = len(pins) + 1
         for index, pin in enumerate(ws_pins, start=offset):
             pin["pin_id"] = f"P{index}"
@@ -851,6 +860,38 @@ def _not_attested_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
     return pins
 
 
+def _claim_ledger_pins(
+    ledger: list[Any],
+    *,
+    start: int,
+) -> list[dict[str, Any]]:
+    pins: list[dict[str, Any]] = []
+    for offset, row in enumerate(ledger):
+        if isinstance(row, dict):
+            claim = str(row.get("claim") or "")
+            provenance = row.get("provenance")
+            purpose_point = row.get("purpose_point")
+        else:
+            claim = str(row)
+            provenance = "operator_account"
+            purpose_point = None
+        if not claim:
+            continue
+        attested = provenance in {"operator_account", "document"}
+        pin: dict[str, Any] = {
+            "pin_id": f"P{start + offset}",
+            "source_uri": f"intake:claim_ledger[{offset}]",
+            "kind": "verbatim_note",
+            "excerpt": _truncate(_fence(claim)),
+            "sha256": hashlib.sha256(claim.encode("utf-8")).hexdigest(),
+            "attested": attested,
+            "provenance": provenance,
+            "purpose_point": purpose_point,
+        }
+        pins.append(pin)
+    return pins
+
+
 def _verbatim_note_pins(
     items: list[str],
     *,
@@ -870,6 +911,8 @@ def _verbatim_note_pins(
         }
         if offset in required:
             pin["verbatim_required"] = True
+        else:
+            pin["restate"] = True
         pins.append(pin)
     return pins
 
@@ -884,6 +927,8 @@ def _intake_blocks(
         attrs = f'id="{pin["pin_id"]}"'
         if pin.get("verbatim_required") is True:
             attrs += ' verbatim_required="true"'
+        elif pin.get("restate") is True:
+            attrs += ' restate="true"'
         note_lines.append(f"<note {attrs}>{pin['excerpt']}</note>")
     notes = "\n".join(note_lines)
     verbatim_notes_block = f"<verbatim_notes>\n{notes}\n</verbatim_notes>"
@@ -946,10 +991,18 @@ def _intake_blocks(
 def _pin_line(pin: dict[str, Any]) -> str:
     attested = "true" if pin["attested"] else "false"
     source = _xml_attr(pin["source_uri"])
-    verbatim = (
-        ' verbatim_required="true"' if pin.get("verbatim_required") is True else ""
-    )
+    extra = ""
+    if pin.get("verbatim_required") is True:
+        extra = ' verbatim_required="true"'
+    elif pin.get("restate") is True:
+        extra = ' restate="true"'
+    provenance = pin.get("provenance")
+    purpose_point = pin.get("purpose_point")
+    if provenance:
+        extra += f' provenance="{_xml_attr(str(provenance))}"'
+    if purpose_point:
+        extra += f' purpose_point="{_xml_attr(str(purpose_point))}"'
     return (
         f'<pin id="{pin["pin_id"]}" source="{source}" '
-        f'attested="{attested}"{verbatim}>{pin["excerpt"]}</pin>'
+        f'attested="{attested}"{extra}>{pin["excerpt"]}</pin>'
     )

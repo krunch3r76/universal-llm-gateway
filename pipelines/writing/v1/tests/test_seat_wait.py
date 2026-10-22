@@ -705,6 +705,18 @@ def test_select_refuses_invalid_local_review_before_revise() -> None:
     )
 
 
+def test_findings_actionable_preserves_purpose_and_provenance_findings_with_concession_words() -> None:
+    findings = [
+        {
+            "ref": "s1",
+            "type": "not_purpose_relevant",
+            "fix": "Although this is supported by the intake note, remove it because the reader does not need it.",
+        }
+    ]
+    kept = seat_wait.findings_actionable(findings)
+    assert kept == findings
+
+
 def test_concession_consistent_with_drops_a_real_finding() -> None:
     """False-negative risk: a real omission whose fix says consistent with is dropped."""
     findings = [

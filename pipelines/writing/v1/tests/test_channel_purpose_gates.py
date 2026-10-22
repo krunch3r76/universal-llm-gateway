@@ -328,3 +328,52 @@ def test_provenance_handler_purpose_drops_on_baseline() -> None:
 
 def test_not_purpose_relevant_in_finding_types() -> None:
     assert "not_purpose_relevant" in review_schema.FINDING_TYPES
+
+
+BASELINE_INTAKE = {
+    "mode": "standard",
+    "channel": "email",
+    "recipient": "AABHearing@cob.sccgov.org",
+    "signer": "Kaywan Joseph Mansubi",
+    "objective": (
+        "Short cover email from Kaywan Joseph Mansubi to AABHearing@cob.sccgov.org that (1) identifies "
+        "Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, the property at 15571 Flintridge Dr, "
+        "Los Gatos, and the reinstatement hearing on Tuesday, October 27, 2026, 9:00 AM PT, on Zoom; "
+        "(2) states that the signed CCP § 2015.5 Declaration of Kaywan Joseph Mansubi Regarding Timeliness "
+        "(Exhibit 1) and Exhibits 2–8 are attached; (3) lists the eight exhibits."
+    ),
+    "verbatim_notes": [
+        "To: AABHearing@cob.sccgov.org",
+        "I, Kaywan Joseph Mansubi, am submitting my signed CCP § 2015.5 Declaration of Kaywan Joseph Mansubi Regarding Timeliness (Exhibit 1) plus Exhibits 2–8 for the reinstatement hearing on Assessment Appeals 25.7489 and 25.7490.",
+        "APN 424-20-043, 15571 Flintridge Dr, Los Gatos.",
+        "Hearing: Tuesday, October 27, 2026, 9:00 AM PT, on Zoom.",
+        "Send-by deadline: Thursday, October 22, 2026.",
+        "Exhibit 1: Declaration of Kaywan Joseph Mansubi Regarding Timeliness (CCP § 2015.5)",
+        "Exhibit 2: Notice of Supplemental Assessment dated 2026-01-16",
+        "Exhibit 3: Notification of Base Year Value dated 2025-12-16",
+        "Exhibit 4: Supplemental Tax Bills 10059585 and 10059586",
+        "Exhibit 5: Invalid Closed Letters dated 2026-06-05",
+        "Exhibit 6: Requests for Reinstatement stamped 2026-07-23",
+        "Exhibit 7: Clerk Email of 2026-05-28 Acknowledging Documents Submitted 2026-05-27",
+        "Exhibit 8: Letter to Assessor stamped 2026-04-15",
+    ],
+    "standing_limits": (
+        "Write in first person as Kaywan Joseph Mansubi. Plain and brief. No argument on the merits. "
+        "No placeholders. Use only the facts in verbatim_notes; do not add or change facts."
+    ),
+}
+
+
+def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
+    payload = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(intake=BASELINE_INTAKE, working_set=[]),
+        )
+    ).json
+    assert payload["verbatim_notes_block"].count('restate="true"') == 13
+    assert payload["documents_block"].count('restate="true"') == 13
+    assert 'verbatim_required="true"' not in payload["verbatim_notes_block"]
+    assert "Copy a note word for word only when it is marked verbatim_required" in payload["packet"]
+    assert "No declaration phrasing in correspondence" in payload["brief_block"]
+    assert "copy-verbatim" not in payload["packet"].lower()

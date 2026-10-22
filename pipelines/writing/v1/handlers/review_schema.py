@@ -20,6 +20,9 @@ FINDING_TYPES = (
     "sequitur",
     "omission",
     "not_purpose_relevant",
+    "intake_answer_promoted",
+    "volunteered_negative_or_concession",
+    "prior_draft_carryover",
 )
 
 REVIEW_RESULT_SCHEMA: dict[str, Any] = {

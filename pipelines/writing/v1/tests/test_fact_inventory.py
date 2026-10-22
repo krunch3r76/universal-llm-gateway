@@ -104,7 +104,8 @@ def test_drift_check_flags_bad_draft() -> None:
 
     clean_numbered = (
         "I, Kaywan Joseph Mansubi, state:\n\n"
-        "1. I received the January 16, 2026 notice at 15571 Flintridge Dr close to its date (Exhibit 2).\n\n"
+        "1. The Assessor's Notice of Supplemental Assessment dated January 16, 2026 showed a "
+        "reappraised value of $2,800,000 (Exhibit 2).\n\n"
         "2. Rafael Aranda called me into a side office and told me Ms. Bathurst had been on emergency leave.\n\n"
         "3. On May 27, 2026, I delivered my Assessment Appeal Applications in person to Dr. Amber Green. "
         "On May 28, 2026, she emailed me confirming submission (Exhibit 7.).\n"
@@ -119,7 +120,17 @@ def test_drift_check_flags_bad_draft() -> None:
     assert inv["input_sha256"]
     assert inv["checked_sha256"]
     assert inv["sworn_body_word_count"] > inv["checked_word_count"]
-    assert inv["dropped_facts"] == []
+    concession = (
+        "I received the January 16, 2026 notice at 15571 Flintridge Dr close to its date (Exhibit 2)."
+    )
+    inv_bad = build_fact_inventory(
+        concession,
+        purpose="Timeliness hearing",
+        audience="Assessment Appeals Board",
+    )
+    assert any(
+        row.get("reason") == "volunteered_concession" for row in inv_bad["dropped_facts"]
+    )
     drift_clean = run_drift_check(
         clean_numbered,
         channel="filing",
@@ -131,6 +142,7 @@ def test_drift_check_flags_bad_draft() -> None:
     assert drift_clean["sworn_body_word_count"] == inv["sworn_body_word_count"]
     assert drift_clean["checked_word_count"] == inv["checked_word_count"]
     assert drift_clean["sentence_count"] == 4
+    assert drift_clean["check_profile"] == "sworn"
     assert drift_clean["flagged_sentences"] == []
 
 

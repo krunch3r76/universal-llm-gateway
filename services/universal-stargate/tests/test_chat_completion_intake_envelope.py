@@ -41,3 +41,11 @@ def test_empty_content_message_with_intake_ok() -> None:
         messages=[{"role": "user", "content": ""}],
         pipeline_options={"intake": {"mode": "standard"}},
     )
+
+
+def test_intake_only_rejected_for_non_writer_model() -> None:
+    with pytest.raises(ValueError):
+        ChatCompletionRequest(
+            model="deepseek-chat",
+            pipeline_options={"intake": {"mode": "standard", "verbatim_notes": ["x"]}},
+        )
