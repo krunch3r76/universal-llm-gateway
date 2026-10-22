@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from writing_intake.claim_gates import evaluate_candidate_claim, parse_purpose_points
 from writing_intake.fact_inventory import build_fact_inventory, run_drift_check
+from writing_intake.schema import validate_intake_payload
 
 pytestmark = pytest.mark.offline
 
@@ -151,6 +152,66 @@ def test_negative_detector_preserves_past_tense_good_cause_knowledge() -> None:
         strict_attestation=False,
     )
     assert evaluation.load_bearing is True
+
+
+def test_validate_intake_refuses_whitespace_purpose() -> None:
+    intake, refusal = validate_intake_payload(
+        {
+            "intake": {
+                "mode": "fact_inventory",
+                "prior_draft": "I received the notice on January 16, 2026 at the property.",
+                "purpose": "   \t  ",
+                "objective": "  ",
+                "audience": "Assessment Appeals Board",
+            }
+        }
+    )
+    assert intake is None
+    assert refusal is not None
+    assert refusal["refused"] == "intake_invalid"
+    assert "purpose" in refusal["error"]
+
+
+def test_subclause_trim_does_not_preserve_bill_receipt_negative() -> None:
+    claim = (
+        "I do not know the date I received Supplemental tax bills #10059585 and #10059586 "
+        "(Exhibit 4); each show a bill-created date of March 1, 2026."
+    )
+    inv = build_fact_inventory(
+        claim,
+        purpose=AAB_PURPOSE,
+        audience="Assessment Appeals Board",
+        verbatim_notes=[],
+        attested_sources=[],
+        strict_attestation=True,
+    )
+    assert all(
+        "do not know the date I received" not in item
+        for item in inv["load_bearing_claims"]
+    )
+    reasons = {row["reason"] for row in inv["dropped_facts"]}
+    assert (
+        "volunteered_negative" in reasons or "unrequested_bill_created_date" in reasons
+    )
+    assert "I do not know the date I received Supplemental tax bills" not in " ".join(
+        inv["load_bearing_claims"]
+    )
+
+
+def test_purpose_explicit_negative_override_keeps_required_negative() -> None:
+    purpose = (
+        "State that no written notice was ever received and that I do not know "
+        "the date I received the supplemental tax bills."
+    )
+    inv = build_fact_inventory(
+        REGRESSION_S3,
+        purpose=purpose,
+        audience="Assessment Appeals Board",
+    )
+    assert REGRESSION_S3 in inv["load_bearing_claims"]
+    assert all(
+        row.get("reason") != "volunteered_negative" for row in inv["dropped_facts"]
+    )
 
 
 def test_prior_draft_only_never_populates_attested_sources_or_verbatim_notes() -> None:

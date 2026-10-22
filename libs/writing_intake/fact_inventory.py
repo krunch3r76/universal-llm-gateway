@@ -344,16 +344,17 @@ def build_fact_inventory(
                 fact_sources=list(fact_sources or []),
                 strict_attestation=strict,
             )
+        ledger_row = {
+            "claim": trimmed_claim,
+            "provenance": evaluation.provenance,
+            "purpose_point": evaluation.purpose_point,
+        }
         if evaluation.load_bearing:
             load_bearing.append(trimmed_claim)
-            claim_ledger.append(
-                {
-                    "claim": trimmed_claim,
-                    "provenance": evaluation.provenance,
-                    "purpose_point": evaluation.purpose_point,
-                }
-            )
-        elif evaluation.reason:
+            claim_ledger.append(ledger_row)
+        elif evaluation.provenance == "prior_draft_only":
+            claim_ledger.append(ledger_row)
+        if not evaluation.load_bearing and evaluation.reason:
             row: dict[str, Any] = {
                 "claim": trimmed_claim,
                 "reason": evaluation.reason,

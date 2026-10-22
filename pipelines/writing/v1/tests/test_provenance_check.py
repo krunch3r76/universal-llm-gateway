@@ -397,7 +397,10 @@ def test_fact_ceiling_final_detects_mutations(v2: str, kind: str) -> None:
     v1_clauses = [
         {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"]},
         {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"]},
-        {"text": "So two days of work and it's sitting where it started.", "pin_ids": ["P3"]},
+        {
+            "text": "So two days of work and it's sitting where it started.",
+            "pin_ids": ["P3"],
+        },
     ]
     v2_clauses = list(v1_clauses)
     if kind == "fact_reordered":
@@ -494,7 +497,11 @@ _FILL_V1 = (
     "So two days of work and it's sitting where it started."
 )
 _FILL_V1_CLAUSES = [
-    {"text": "Fill was 251 when I opened Saturday.", "pin_ids": ["P1"], "disposition": "express"},
+    {
+        "text": "Fill was 251 when I opened Saturday.",
+        "pin_ids": ["P1"],
+        "disposition": "express",
+    },
     {"text": "It was 213 Sunday morning.", "pin_ids": ["P2"], "disposition": "express"},
     {
         "text": "So two days of work and it's sitting where it started.",
@@ -523,7 +530,8 @@ def test_fixture_saturday_drop_is_drop_finding() -> None:
     kinds = _types(violations)
     assert "fact_dropped" in kinds
     assert any(
-        row["type"] == "fact_dropped" and row["detail"] == "Saturday" for row in violations
+        row["type"] == "fact_dropped" and row["detail"] == "Saturday"
+        for row in violations
     )
 
 
@@ -629,7 +637,11 @@ def test_fact_ceiling_final_merged_p2_before_p1_fact_reordered() -> None:
 _RENT_V1 = "Rent is 1200. Rent goes up to 1350 in March."
 _RENT_V1_CLAUSES = [
     {"text": "Rent is 1200.", "pin_ids": ["P1"], "disposition": "express"},
-    {"text": "Rent goes up to 1350 in March.", "pin_ids": ["P2"], "disposition": "express"},
+    {
+        "text": "Rent goes up to 1350 in March.",
+        "pin_ids": ["P2"],
+        "disposition": "express",
+    },
 ]
 _RENT_LEDGER = [
     {"pin_id": "P1", "attested": True, "excerpt": "Rent is 1200"},
@@ -723,6 +735,74 @@ def test_fact_ceiling_final_r2_probe_merged_fact_reordered() -> None:
         pin_ledger=_FILL_LEDGER,
     )
     assert "fact_reordered" in _types(violations)
+
+
+def test_provenance_check_rejects_prior_draft_only_and_intake_answer_pins() -> None:
+    ledger = [
+        {
+            "pin_id": "P1",
+            "attested": False,
+            "provenance": "prior_draft_only",
+            "excerpt": "The garage door was painted blue during 2019.",
+        },
+        {
+            "pin_id": "P2",
+            "attested": False,
+            "provenance": "intake_answer",
+            "excerpt": "I do not have phone records of these calls.",
+        },
+    ]
+    draft = _draft(
+        "The garage door was painted blue during 2019. I do not have phone records of these calls.",
+        [
+            {
+                "claim_id": "c1",
+                "text": "The garage door was painted blue during 2019.",
+                "pin_ids": ["P1"],
+                "disposition": "express",
+            },
+            {
+                "claim_id": "c2",
+                "text": "I do not have phone records of these calls.",
+                "pin_ids": ["P2"],
+                "disposition": "express",
+            },
+        ],
+    )
+    details = [
+        str(row["detail"])
+        for row in provenance.check_provenance(ledger, draft)
+        if row["type"] == "non_attested_provenance"
+    ]
+    assert "P1:prior_draft_only" in details
+    assert "P2:intake_answer" in details
+
+
+def test_fact_ceiling_final_blocks_ship_gate_on_drift_check_concession() -> None:
+    concession = "I received the January 16, 2026 notice at 15571 Flintridge Dr close to its date."
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _StepFactCeilingFinal(),
+            _Ctx(
+                {
+                    "assemble": _Out({"pin_ledger": _FILL_LEDGER, "channel": "filing"}),
+                    "draft": _Out({"draft": _FILL_V1, "claims": _FILL_V1_CLAUSES}),
+                    "fact_ceiling_audit": _Out(
+                        {"findings": [], "verdict": "ship", "clauses": _FILL_V1_CLAUSES}
+                    ),
+                    "prose_rhythm_pass": _Raw(concession),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    assert payload["pass"] is False
+    assert "purpose_drift" in _types(payload["violations"])
+    assert payload["drift_check"]["passed"] is False
+    assert any(
+        row.get("reason") == "volunteered_concession"
+        for row in payload["drift_check"]["flagged_sentences"]
+    )
 
 
 def test_fact_ceiling_final_derived_unpinned_new_sentence() -> None:
