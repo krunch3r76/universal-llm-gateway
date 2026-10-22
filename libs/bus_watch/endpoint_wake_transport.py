@@ -192,6 +192,28 @@ class StoreClient:
         )
         return payload if isinstance(payload, dict) else {"turns": payload}
 
+    def create_turn(
+        self,
+        *,
+        thread: str,
+        from_agent: str,
+        to_agent: str,
+        subject: str,
+        body: str,
+    ) -> dict[str, Any]:
+        """Insert one bus turn (same contract as ``POST /turns``)."""
+        return self._bus(
+            "POST",
+            "/turns",
+            json={
+                "thread": thread,
+                "from": from_agent,
+                "to": to_agent,
+                "subject": subject,
+                "body": body,
+            },
+        )
+
     def unsubscribe(
         self,
         agent: str,

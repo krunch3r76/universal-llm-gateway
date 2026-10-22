@@ -423,6 +423,112 @@ def _cse_agree(holder: dict[str, Any], dry: dict[str, Any]) -> bool:
     return bool(a and a == b)
 
 
+_MAESTRO_SEAT_REGISTRATION_THREAD = "12286"
+_SEAT_REGISTRATION_HEAD = "TYPE: SEAT_REGISTRATION"
+_WAKE_REGISTRATION_REFUSED_SUBJECT = "FACT|wake-registration-refused"
+_WAKE_REGISTRATION_REFUSED_TARGETS = ("maestro", "grok-bot-gc1")
+
+
+def parse_seat_registration_stamp(body: str) -> tuple[str, str] | None:
+    """Return ``(registration_id, chat_url)`` when ``body`` is a valid SEAT_REGISTRATION stamp."""
+    text = str(body or "")
+    lines = text.splitlines()
+    if not lines or not lines[0].strip().startswith(_SEAT_REGISTRATION_HEAD):
+        return None
+    registration_id = ""
+    chat_url = ""
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped.startswith("registration_id:"):
+            registration_id = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("chat_url:"):
+            chat_url = stripped.split(":", 1)[1].strip()
+    if registration_id and chat_url:
+        return registration_id, chat_url
+    return None
+
+
+def load_latest_seat_registration_stamp(
+    store: StoreClient, *, thread: str = _MAESTRO_SEAT_REGISTRATION_THREAD
+) -> tuple[str, str] | None:
+    """Load the newest ``TYPE: SEAT_REGISTRATION`` on ``thread`` by ``turn_number``."""
+    payload = store.turns(thread, last=100)
+    turns = list(payload.get("turns") or [])
+    best_num = -1
+    best: tuple[str, str] | None = None
+    for row in turns:
+        try:
+            turn_number = int(row.get("turn_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        parsed = parse_seat_registration_stamp(str(row.get("body") or ""))
+        if parsed is None or turn_number <= best_num:
+            continue
+        best_num = turn_number
+        best = parsed
+    return best
+
+
+def holder_matches_seat_registration(
+    holder: dict[str, Any], stamp: tuple[str, str] | None
+) -> bool:
+    """True when holder ``registration_id`` and ``chat_url`` equal the stamp pair."""
+    if stamp is None:
+        return False
+    stamp_reg, stamp_url = stamp
+    holder_reg = str(holder.get("registration_id") or "").strip()
+    holder_url = str(holder.get("chat_url") or "").strip()
+    return holder_reg == stamp_reg and holder_url == stamp_url
+
+
+def build_wake_registration_refused_body(
+    *,
+    rejected_registration_id: str,
+    rejected_chat_url: str,
+    stamp_registration_id: str,
+    stamp_chat_url: str,
+) -> str:
+    """Body for ``FACT|wake-registration-refused`` alerts on the operator lane."""
+    return "\n".join(
+        [
+            "wake-registration-refused",
+            f"rejected_registration_id: {rejected_registration_id}",
+            f"rejected_chat_url: {rejected_chat_url}",
+            f"stamp_registration_id: {stamp_registration_id}",
+            f"stamp_chat_url: {stamp_chat_url}",
+        ]
+    )
+
+
+def post_wake_registration_refused_alerts(
+    store: StoreClient,
+    *,
+    rejected_registration_id: str,
+    rejected_chat_url: str,
+    stamp_registration_id: str,
+    stamp_chat_url: str,
+    thread: str = _MAESTRO_SEAT_REGISTRATION_THREAD,
+) -> None:
+    """Post FACT alerts to maestro and the grok gc1 window slot (not a mailbox)."""
+    body = build_wake_registration_refused_body(
+        rejected_registration_id=rejected_registration_id,
+        rejected_chat_url=rejected_chat_url,
+        stamp_registration_id=stamp_registration_id,
+        stamp_chat_url=stamp_chat_url,
+    )
+    poster = getattr(store, "create_turn", None)
+    if not callable(poster):
+        return
+    for to_agent in _WAKE_REGISTRATION_REFUSED_TARGETS:
+        poster(
+            thread=thread,
+            from_agent="agent_bus",
+            to_agent=to_agent,
+            subject=_WAKE_REGISTRATION_REFUSED_SUBJECT,
+            body=body,
+        )
+
+
 def _deliver_cse(
     rows: list[dict[str, Any]],
     holder: dict[str, Any],
@@ -625,7 +731,40 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
             return claimed
+        maestro_stamp: tuple[str, str] | None = None
+        if agent == "maestro":
+            maestro_stamp = load_latest_seat_registration_stamp(store)
+            if not holder_matches_seat_registration(holder, maestro_stamp):
+                stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+                post_wake_registration_refused_alerts(
+                    store,
+                    rejected_registration_id=str(holder.get("registration_id") or ""),
+                    rejected_chat_url=str(holder.get("chat_url") or ""),
+                    stamp_registration_id=stamp_reg,
+                    stamp_chat_url=stamp_url,
+                )
+                store.result(
+                    wake_id=wake_id,
+                    outcome="skipped",
+                    reason="seat_registration_mismatch",
+                    route="cse",
+                    subscription_id=sub.get("id"),
+                    cse_registration_id=None,
+                )
+                return claimed
         state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
+        if agent == "maestro":
+            stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+            if reason.startswith("cse_authority_split") or (
+                reg and stamp_reg and reg != stamp_reg
+            ):
+                post_wake_registration_refused_alerts(
+                    store,
+                    rejected_registration_id=str(holder.get("registration_id") or ""),
+                    rejected_chat_url=str(holder.get("chat_url") or ""),
+                    stamp_registration_id=stamp_reg,
+                    stamp_chat_url=stamp_url,
+                )
         store.result(
             wake_id=wake_id,
             outcome=state,
@@ -677,9 +816,7 @@ async def run_dispatcher() -> None:
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             await asyncio.to_thread(fire_due_wakes, store)
-            await asyncio.to_thread(
-                check_cursor_ide_context_hops, store, mark=hop_mark
-            )
+            await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
             await asyncio.to_thread(run_patrol_pass, store)

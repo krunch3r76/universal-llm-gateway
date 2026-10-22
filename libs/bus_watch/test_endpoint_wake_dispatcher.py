@@ -1218,9 +1218,101 @@ def test_scan_holders_exception_propagates() -> None:
         scan_once(Boom())  # type: ignore[arg-type]
 
 
+def _maestro_seat_registration_turns() -> list[dict[str, object]]:
+    from hop_handoff.body import build_seat_registration_stamp
+
+    stamp_body = build_seat_registration_stamp(
+        successor_birth_id="a" * 32,
+        registration_id="reg-maestro",
+        execution_id="exec-test",
+        parent_thread="12286",
+        chat_url="https://claude.ai/chat/maestro",
+    )
+    _tid, _ts, reg_num, _c = insert_turn(
+        thread="12286",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        subject="SEAT_REGISTRATION",
+        body=stamp_body,
+    )
+    return [
+        {
+            "turn_number": reg_num,
+            "body": stamp_body,
+        }
+    ]
+
+
+def _maestro_cse_wake_store(
+    *,
+    claimed: dict,
+    holder: dict[str, str],
+    seat_registration_turns: list[dict[str, object]] | None,
+) -> tuple[object, list[dict[str, object]], list[str]]:
+    alerts: list[dict[str, object]] = []
+    bodies: list[str] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            assert lane_thread_id == "12286"
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            assert thread == "12286"
+            return {"turns": seat_registration_turns or []}
+
+        def create_turn(
+            self,
+            *,
+            thread: str,
+            from_agent: str,
+            to_agent: str,
+            subject: str,
+            body: str,
+        ) -> dict:
+            alerts.append(
+                {
+                    "thread": thread,
+                    "from_agent": from_agent,
+                    "to_agent": to_agent,
+                    "subject": subject,
+                    "body": body,
+                }
+            )
+            return {"id": len(alerts)}
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    return Store(), alerts, bodies
+
+
 def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
     from unittest.mock import patch
 
+    create_thread(thread_id=12286, slug="maestro-lane")
     detail = create_thread(thread_id=None, slug="maestro-cse")
     assert detail is not None
     bus_thread = str(detail["id"])
@@ -1254,37 +1346,11 @@ def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
         "chat_url": "https://claude.ai/chat/maestro",
         "registration_id": "reg-maestro",
     }
-    bodies: list[str] = []
-
-    class Store:
-        def claim(self) -> dict:
-            return claimed
-
-        def holder(self, lane_thread_id: str) -> dict:
-            assert lane_thread_id == "12286"
-            return holder
-
-        def subscription(self, agent: str, thread_id: str):
-            return (
-                "wildcard",
-                {
-                    "id": 9,
-                    "surface": "cse",
-                    "display": "cse",
-                    "agent_id": "12286",
-                    "title": None,
-                },
-            )
-
-        def result(self, **payload: object) -> int:
-            return record_wake_result(
-                str(payload["wake_id"]),
-                str(payload["outcome"]),
-                str(payload["reason"]) if payload["reason"] is not None else None,
-                str(payload["route"]) if payload["route"] is not None else None,
-                payload["subscription_id"],  # type: ignore[arg-type]
-                payload["cse_registration_id"],  # type: ignore[arg-type]
-            )
+    store, alerts, bodies = _maestro_cse_wake_store(
+        claimed=claimed,
+        holder=holder,
+        seat_registration_turns=_maestro_seat_registration_turns(),
+    )
 
     def _capture(induction: str, root_id: str, **kwargs: object) -> dict:
         bodies.append(induction)
@@ -1300,9 +1366,143 @@ def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
         }
 
     with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_capture):
-        fire_due_wakes(Store())  # type: ignore[arg-type]
+        fire_due_wakes(store)  # type: ignore[arg-type]
     assert bodies[0] == f"wake thread {bus_thread} turns {number}"
     assert bodies[1] == f"wake thread {bus_thread} turns {number}"
+    assert alerts == []
+
+
+@pytest.mark.parametrize(
+    ("holder", "case"),
+    [
+        (
+            {
+                "chat_url": "https://claude.ai/chat/stale",
+                "registration_id": "reg-stale",
+            },
+            "stale_holder",
+        ),
+        (
+            {
+                "chat_url": "https://claude.ai/chat/lane-16416",
+                "registration_id": "reg-16416",
+            },
+            "foreign_holder",
+        ),
+    ],
+    ids=["stale_holder", "foreign_holder"],
+)
+def test_fire_maestro_cse_stale_and_foreign_holder_skips_delivery_and_alerts(
+    db: None, holder: dict[str, str], case: str
+) -> None:
+    from unittest.mock import patch
+
+    _ = case
+    create_thread(thread_id=12286, slug="maestro-lane-refuse")
+    detail = create_thread(thread_id=None, slug=f"maestro-cse-{case}")
+    assert detail is not None
+    bus_thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=bus_thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="CONSULT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": bus_thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    store, alerts, bodies = _maestro_cse_wake_store(
+        claimed=claimed,
+        holder=holder,
+        seat_registration_turns=_maestro_seat_registration_turns(),
+    )
+    fire_calls: list[object] = []
+
+    def _forbidden(*args: object, **kwargs: object) -> dict:
+        fire_calls.append((args, kwargs))
+        return {"ok": True}
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_forbidden):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert fire_calls == []
+    assert bodies == []
+    assert len(alerts) == 2
+    assert {a["to_agent"] for a in alerts} == {"maestro", "grok-bot-gc1"}
+    assert all(a["subject"] == "FACT|wake-registration-refused" for a in alerts)
+    assert all(a["from_agent"] == "agent_bus" for a in alerts)
+    assert "rejected_registration_id:" in alerts[0]["body"]
+    assert "stamp_registration_id: reg-maestro" in alerts[0]["body"]
+
+
+def test_fire_maestro_cse_missing_seat_registration_stamp_skips_and_alerts(
+    db: None,
+) -> None:
+    from unittest.mock import patch
+
+    create_thread(thread_id=12286, slug="maestro-lane-no-stamp")
+    detail = create_thread(thread_id=None, slug="maestro-cse-no-stamp")
+    assert detail is not None
+    bus_thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=bus_thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="CONSULT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": bus_thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    holder = {
+        "chat_url": "https://claude.ai/chat/maestro",
+        "registration_id": "reg-maestro",
+    }
+    store, alerts, _bodies = _maestro_cse_wake_store(
+        claimed=claimed,
+        holder=holder,
+        seat_registration_turns=[],
+    )
+    fire_calls: list[object] = []
+
+    def _forbidden(*args: object, **kwargs: object) -> dict:
+        fire_calls.append((args, kwargs))
+        return {"ok": True}
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_forbidden):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert fire_calls == []
+    assert len(alerts) == 2
 
 
 def test_scan_store_connect_error_propagates() -> None:
