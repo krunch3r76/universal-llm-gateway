@@ -198,3 +198,16 @@ def test_composer_omit_fast_fills_policy_true(
     assert result.aligned_knobs == {"fast": "true"}
     assert result.knob_resolution["fast"].status == "policy_default"
     assert "effort" not in result.knob_resolution
+
+
+def test_conductor_grok_omit_fast_fills_policy_true(
+    captured_events: dict[str, list[Any]],
+) -> None:
+    result = align_cursor_knobs(
+        resolved_model="cursor/grok-4.7",
+        contract="conductor",
+        model_knobs=None,
+    )
+    assert result.aligned_knobs["fast"] == "true"
+    assert result.knob_resolution["fast"].status == "policy_default"
+    assert result.aligned_knobs["effort"] == "low"

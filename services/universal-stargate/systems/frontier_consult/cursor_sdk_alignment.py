@@ -237,7 +237,14 @@ def align_cursor_knobs(
                 knob_resolution=knob_resolution,
                 aligned_knobs=aligned_knobs,
             )
-    if model_id == "composer-2.5" and "fast" not in wire and "fast" in card:
+    if (
+        (
+            model_id == "composer-2.5"
+            or (model_id == "grok-4.7" and contract == "conductor")
+        )
+        and "fast" not in wire
+        and "fast" in card
+    ):
         _fill_policy_knob(
             model_id=model_id,
             name="fast",

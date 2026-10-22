@@ -69,7 +69,12 @@ def default_knobs_from_route_policy() -> ConductorKnobSnapshot:
     pol = load_impresario_policy()
     roles = resolve_roles(pol)
     critic = roles.critic
-    driver = {"model": pol.driver.model, "effort": pol.driver.effort_rung}
+    driver: dict[str, Any] = {
+        "model": pol.driver.model,
+        "effort": pol.driver.effort_rung,
+    }
+    if pol.driver.fast:
+        driver["fast"] = pol.driver.fast
     mechanical = {"model": pol.mechanical.model, "effort": pol.mechanical.effort_rung}
     role_map: dict[str, Any] = {
         "critic": {"model": critic.model, "effort": critic.effort_rung},

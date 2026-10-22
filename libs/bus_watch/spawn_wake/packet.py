@@ -74,15 +74,29 @@ def successor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
+def _grok_bare_id(model: str) -> bool:
+    bare = model.rsplit("/", 1)[-1] if model else ""
+    return bare == "grok-4.7"
+
+
 def play_conductor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
     """Play / ROW_HOP conductor model — ``play_conductor_model`` when set."""
     play = str(policy.get("play_conductor_model") or "").strip()
     if not play:
-        return successor_model_fields(policy)
+        fields = successor_model_fields(policy)
+        if "play_conductor_model_knobs" not in policy:
+            model = str(fields.get("model") or policy.get("successor_model") or "")
+            if _grok_bare_id(model):
+                knobs = dict(fields.get("model_knobs") or {})
+                knobs["fast"] = "true"
+                fields["model_knobs"] = knobs
+        return fields
     fields: dict[str, Any] = {"model": play}
     policy_knobs = policy.get("play_conductor_model_knobs")
     if isinstance(policy_knobs, dict):
         fields["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
+    elif _grok_bare_id(play):
+        fields["model_knobs"] = {"effort": "high", "fast": "true"}
     return fields
 
 
