@@ -531,6 +531,270 @@ async def test_gather_includes_cdp_enrichment_when_reachable() -> None:
     assert out["cdp"]["payload"]["status"] == "generating"
 
 
+@pytest.mark.asyncio
+async def test_evaluate_degraded_provider_error_does_not_verdict_remiss() -> None:
+    """16416#2118 shape: degraded SDK closeout must not fall through to remiss_duty."""
+    harvest = (
+        "status: degraded\n"
+        "reason: provider_error: Provider Error We're having trouble connecting "
+        "to the model provider.\n"
+        "Later narrative mentions remiss duty without VERDICT line."
+    )
+    generate = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT})
+    poll = AsyncMock(return_value={"terminal": True, "status": "completed"})
+    harvest_fn = AsyncMock(return_value=harvest)
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "deep", "trigger": "hop"},
+        gather={},
+        options={},
+        sdk_generate=generate,
+        sdk_poll=poll,
+        sdk_harvest=harvest_fn,
+    )
+    assert out.get("skip") is False
+    assert out.get("degraded_notice") is True
+    assert "verdict" not in out
+    assert out["body"] == (
+        "status: degraded\n"
+        "reason: provider_error: Provider Error We're having trouble connecting "
+        "to the model provider."
+    )
+
+
+@pytest.mark.asyncio
+async def test_deliver_degraded_provider_error_posts_notice_subject() -> None:
+    sent: dict[str, Any] = {}
+
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        sent.update(kwargs)
+        return {"turn_number": 11}, 200
+
+    body = (
+        "status: degraded\n"
+        "reason: provider_error: Provider Error We're having trouble connecting "
+        "to the model provider."
+    )
+    out = await deliver_impresario_ear(
+        resolve={"root_thread": "16416", "dry_run": False},
+        evaluate={
+            "skip": False,
+            "degraded_notice": True,
+            "degraded_reason_token": "provider_error",
+            "body": body,
+        },
+        bus_send=_send,
+    )
+    assert out["posted"] is True
+    assert sent["subject"] == "DEGRADED | 16416 — provider_error"
+    assert sent["body"] == body
+    assert sent["from_agent"] == "impresario-ear"
+
+
+@pytest.mark.asyncio
+async def test_deliver_degraded_zero_tool_calls_subject() -> None:
+    sent: dict[str, Any] = {}
+
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        sent.update(kwargs)
+        return {"turn_number": 2}, 200
+
+    body = "status: degraded\nreason: zero_tool_calls"
+    out = await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate={
+            "skip": False,
+            "degraded_notice": True,
+            "degraded_reason_token": "zero_tool_calls",
+            "body": body,
+        },
+        bus_send=_send,
+    )
+    assert out["posted"] is True
+    assert sent["subject"] == f"DEGRADED | {_ROOT} — zero_tool_calls"
+    assert sent["body"] == body
+
+
+@pytest.mark.asyncio
+async def test_evaluate_zero_tool_calls_degraded_notice() -> None:
+    harvest = (
+        "status: degraded\n"
+        "reason: zero_tool_calls\n"
+        "Unstructured spill that mentions remiss later."
+    )
+    generate = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT})
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "deep", "trigger": "hop"},
+        gather={},
+        options={},
+        sdk_generate=generate,
+        sdk_poll=AsyncMock(return_value={"terminal": True, "status": "completed"}),
+        sdk_harvest=AsyncMock(return_value=harvest),
+    )
+    assert out.get("degraded_notice") is True
+    assert out["degraded_reason_token"] == "zero_tool_calls"
+    assert "verdict" not in out
+
+
+@pytest.mark.asyncio
+async def test_evaluate_verdict_remiss_still_ear_subject() -> None:
+    harvest = (
+        "VERDICT: remiss_duty\n"
+        "DIAGNOSIS: house stalled\n"
+        "STEER: dispatch\n"
+        "NEXT_ADMIT: team_dispatch foo"
+    )
+    generate = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT})
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "deep", "trigger": "hop"},
+        gather={},
+        options={},
+        sdk_generate=generate,
+        sdk_poll=AsyncMock(return_value={"terminal": True, "status": "completed"}),
+        sdk_harvest=AsyncMock(return_value=harvest),
+    )
+    assert out.get("degraded_notice") is not True
+    assert out["verdict"] == "remiss_duty"
+
+    sent: dict[str, Any] = {}
+
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        sent.update(kwargs)
+        return {"turn_number": 3}, 200
+
+    await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate=out,
+        bus_send=_send,
+    )
+    assert sent["subject"] == f"EAR | {_ROOT} — remiss_duty"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_healthy_with_provider_error_in_diagnosis_stays_ear() -> None:
+    harvest = (
+        "VERDICT: healthy\n"
+        "DIAGNOSIS: prior provider_error noise in gather only\n"
+        "STEER: continue\n"
+        "NEXT_ADMIT: none"
+    )
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "deep", "trigger": "hop"},
+        gather={},
+        options={},
+        sdk_generate=AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT}),
+        sdk_poll=AsyncMock(return_value={"terminal": True, "status": "completed"}),
+        sdk_harvest=AsyncMock(return_value=harvest),
+    )
+    assert out.get("degraded_notice") is not True
+    assert out["verdict"] == "healthy"
+
+    sent: dict[str, Any] = {}
+
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        sent.update(kwargs)
+        return {"turn_number": 4}, 200
+
+    await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate=out,
+        bus_send=_send,
+    )
+    assert sent["subject"] == f"EAR | {_ROOT} — healthy"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_patrol_prescreen_remiss_delivers_ear() -> None:
+    prescreen = AsyncMock(
+        return_value={
+            "skip_model": True,
+            "signals": ["pending_dispatch"],
+            "imperative": "NEXT_ADMIT: team_dispatch",
+        }
+    )
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "patrol", "trigger": "patrol"},
+        gather={"jsonl": {}},
+        options={},
+        patrol_prescreen=prescreen,
+    )
+    assert out["verdict"] == "remiss_duty"
+
+    sent: dict[str, Any] = {}
+
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        sent.update(kwargs)
+        return {"turn_number": 5}, 200
+
+    await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate=out,
+        bus_send=_send,
+    )
+    assert sent["subject"] == f"EAR | {_ROOT} — remiss_duty"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_incomplete_poll_skips_deliver() -> None:
+    out = await evaluate_impresario_ear(
+        resolve={"skip": False, "root_thread": _ROOT, "mode": "deep", "trigger": "hop"},
+        gather={},
+        options={},
+        sdk_generate=AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT}),
+        sdk_poll=AsyncMock(return_value={"terminal": False, "status": "running"}),
+        sdk_harvest=AsyncMock(),
+    )
+    assert out.get("skip") is True
+    assert out["error"]["code"] == "ear.sdk_incomplete"
+
+    deliver_out = await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate=out,
+        bus_send=AsyncMock(),
+    )
+    assert deliver_out.get("skip") is True
+
+
+@pytest.mark.asyncio
+async def test_deliver_degraded_dry_run_no_bus_send() -> None:
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        raise AssertionError("bus_send must not run")
+
+    body = "status: degraded\nreason: provider_error: down"
+    out = await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": True},
+        evaluate={
+            "skip": False,
+            "degraded_notice": True,
+            "degraded_reason_token": "provider_error",
+            "body": body,
+        },
+        bus_send=_send,
+    )
+    assert out["dry_run"] is True
+    assert out["posted"] is False
+    assert out["subject"] == f"DEGRADED | {_ROOT} — provider_error"
+
+
+@pytest.mark.asyncio
+async def test_deliver_degraded_bus_failure() -> None:
+    async def _send(**kwargs: Any) -> tuple[dict[str, Any], int]:
+        return {"error": "bad"}, 503
+
+    out = await deliver_impresario_ear(
+        resolve={"root_thread": _ROOT, "dry_run": False},
+        evaluate={
+            "skip": False,
+            "degraded_notice": True,
+            "degraded_reason_token": "provider_error",
+            "body": "status: degraded\nreason: provider_error: x",
+        },
+        bus_send=_send,
+    )
+    assert out.get("skip") is True
+    assert out["error"]["code"] == "ear.deliver_failed"
+    assert out.get("posted") is not True
+
+
 def test_continuity_ops_omit_ear() -> None:
     continuity_py = (
         Path(__file__).resolve().parents[3]

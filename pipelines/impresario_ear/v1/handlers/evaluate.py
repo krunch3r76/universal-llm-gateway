@@ -21,7 +21,11 @@ def _scrub_suggestions(text: str) -> str:
     return _SUGGESTIONS_RE.sub("ADVICE", text)
 
 
-def _extract_harvest_prose(raw: str) -> str:
+_METADATA_KEYS = frozenset({"status", "residue", "reason"})
+
+
+def _harvest_core_text(raw: str) -> str:
+    """Return harvest prose after sidecar/frontmatter trim, before metadata line strip."""
     if "## closeout_body\n" in raw:
         start = raw.index("## closeout_body\n") + len("## closeout_body\n")
         tail = raw[start:]
@@ -38,14 +42,68 @@ def _extract_harvest_prose(raw: str) -> str:
         end_fm = text.find("\n---\n", 4)
         if end_fm != -1:
             text = text[end_fm + len("\n---\n") :].lstrip()
-    lines = text.splitlines()
-    while lines and lines[0].split(":", 1)[0].strip().lower() in {
-        "status",
-        "residue",
-        "reason",
-    }:
-        lines.pop(0)
-    return "\n".join(lines).strip() if lines else text.strip()
+    return text.strip()
+
+
+def _leading_metadata_lines(core_text: str) -> tuple[list[str], list[str]]:
+    """Split leading status/residue/reason lines from the remainder."""
+    lines = core_text.splitlines()
+    meta: list[str] = []
+    while lines:
+        key = lines[0].split(":", 1)[0].strip().lower()
+        if key not in _METADATA_KEYS:
+            break
+        meta.append(lines.pop(0))
+    return meta, lines
+
+
+def _parse_degraded_harvest_notice(core_text: str) -> dict[str, str] | None:
+    """Detect SDK degraded/provider_error closeout before verdict parsing.
+
+    Matches leading ``status: degraded`` or a ``reason:`` value starting with
+    ``provider_error``. Returns notice body (status/reason lines) and subject
+    suffix token when matched; otherwise None.
+    """
+    meta_lines, _rest = _leading_metadata_lines(core_text)
+    if not meta_lines:
+        return None
+    status_val = ""
+    reason_val = ""
+    status_line = ""
+    reason_line = ""
+    for line in meta_lines:
+        key, _, val = line.partition(":")
+        k = key.strip().lower()
+        v = val.strip()
+        if k == "status":
+            status_val = v.lower()
+            status_line = line.strip()
+        elif k == "reason":
+            reason_val = v
+            reason_line = line.strip()
+    is_degraded = status_val == "degraded"
+    is_provider = reason_val.lower().startswith("provider_error")
+    if not is_degraded and not is_provider:
+        return None
+    body_parts = [ln for ln in (status_line, reason_line) if ln]
+    if not body_parts and is_degraded and status_line:
+        body_parts = [status_line]
+    if reason_val.lower().startswith("provider_error"):
+        reason_token = "provider_error"
+    elif reason_val:
+        reason_token = reason_val.split(":", 1)[0].strip()
+    else:
+        reason_token = "degraded"
+    return {
+        "body": "\n".join(body_parts),
+        "degraded_reason_token": reason_token,
+    }
+
+
+def _extract_harvest_prose(raw: str) -> str:
+    core = _harvest_core_text(raw)
+    _meta, remainder = _leading_metadata_lines(core)
+    return "\n".join(remainder).strip() if remainder else core.strip()
 
 
 def _build_evaluate_prompt(
@@ -203,6 +261,19 @@ async def evaluate_impresario_ear(
             "effort": seat.effort_rung,
         }
     harvested = await sdk_harvest(thread_id=thread_id, dispatch_id=dispatch_id)
+    core = _harvest_core_text(str(harvested or ""))
+    notice = _parse_degraded_harvest_notice(core)
+    if notice:
+        return {
+            "skip": False,
+            "degraded_notice": True,
+            "body": notice["body"],
+            "degraded_reason_token": notice["degraded_reason_token"],
+            "model": seat.model,
+            "effort": seat.effort_rung,
+            "bus_lifecycle": "ephemeral",
+            "dispatch_id": dispatch_id,
+        }
     body = _scrub_suggestions(_extract_harvest_prose(str(harvested or "")))
     verdict = _parse_verdict(body)
     return {

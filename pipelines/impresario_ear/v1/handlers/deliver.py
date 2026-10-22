@@ -18,6 +18,11 @@ def _compose_subject(root: str, verdict: str, signal: str | None = None) -> str:
     return f"EAR | {root} — {verdict}"
 
 
+def _compose_degraded_subject(root: str, reason_token: str) -> str:
+    """Subject line for SDK-degraded harvest notices (not EAR verdict posts)."""
+    return f"DEGRADED | {root} — {reason_token}"
+
+
 async def deliver_impresario_ear(
     *,
     resolve: dict[str, Any],
@@ -27,14 +32,18 @@ async def deliver_impresario_ear(
     if evaluate.get("skip"):
         return {"skip": True, "reason": "evaluate_skipped"}
     root = str(resolve.get("root_thread") or "")
-    verdict = str(evaluate.get("verdict") or "unknown")
     body = str(evaluate.get("body") or "").strip()
     dry_run = bool(resolve.get("dry_run"))
     raw_to = resolve.get("to_agent") or "cursor"
     to_agent = normalize_grok_to_agent(str(raw_to)) or str(raw_to).strip() or "cursor"
     if to_agent == _FROM:
         to_agent = "cursor"
-    subject = _compose_subject(root, verdict)
+    if evaluate.get("degraded_notice"):
+        token = str(evaluate.get("degraded_reason_token") or "degraded")
+        subject = _compose_degraded_subject(root, token)
+    else:
+        verdict = str(evaluate.get("verdict") or "unknown")
+        subject = _compose_subject(root, verdict)
     if dry_run:
         return {
             "skip": False,
@@ -46,7 +55,9 @@ async def deliver_impresario_ear(
             "posted": False,
         }
     if bus_send is None:
-        from pipelines.continuity_checkpoint.v1.handlers._clients import bus_send as _send
+        from pipelines.continuity_checkpoint.v1.handlers._clients import (
+            bus_send as _send,
+        )
 
         bus_send = _send
     payload, status = await bus_send(
