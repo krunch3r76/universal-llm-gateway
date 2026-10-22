@@ -790,9 +790,18 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 return claimed
         state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
         stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+        post_paste_mismatch = (
+            agent == "maestro"
+            and state == "delivered"
+            and reg
+            and stamp_reg
+            and reg != stamp_reg
+        )
+        if post_paste_mismatch:
+            state = "refused"
+            reason = "seat_registration_mismatch_post_paste"
         need_refused_alert = agent == "maestro" and (
-            reason.startswith("cse_authority_split")
-            or (reg and stamp_reg and reg != stamp_reg)
+            reason.startswith("cse_authority_split") or post_paste_mismatch
         )
         store.result(
             wake_id=wake_id,
@@ -805,7 +814,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         if need_refused_alert:
             post_wake_registration_refused_alerts(
                 store,
-                rejected_registration_id=str(holder.get("registration_id") or ""),
+                rejected_registration_id=str(
+                    reg or holder.get("registration_id") or ""
+                ),
                 rejected_chat_url=str(holder.get("chat_url") or ""),
                 stamp_registration_id=stamp_reg,
                 stamp_chat_url=stamp_url,

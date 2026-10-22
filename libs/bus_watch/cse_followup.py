@@ -177,12 +177,12 @@ def fire_cse_followup(
     response_reg = data.get("registration_id") or registration_id
     ok = bool(data.get("ok", True))
     return {
+        **result,
+        **{k: v for k, v in data.items() if k not in result},
         "ok": ok,
         "url": response_url,
         "registration_id": response_reg,
         "send_verified": send_verified,
-        **{k: v for k, v in data.items() if k not in result},
-        **result,
     }
 
 
