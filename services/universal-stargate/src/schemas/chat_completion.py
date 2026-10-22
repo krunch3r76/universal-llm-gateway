@@ -89,9 +89,16 @@ class ChatCompletionRequest(BaseModel):
                 and str(po.get("l0_ref") or "").strip()
             )
             intake_raw = po.get("intake")
-            intake_ok = isinstance(intake_raw, dict) and bool(intake_raw)
-            if isinstance(intake_raw, str) and intake_raw.strip():
-                intake_ok = True
+            intake_ok = False
+            model_id = str(self.model or "")
+            if model_id in {
+                "writer-specialist-v1",
+                "writing/writer-specialist-v1",
+            }:
+                if isinstance(intake_raw, dict) and bool(intake_raw):
+                    intake_ok = True
+                if isinstance(intake_raw, str) and intake_raw.strip():
+                    intake_ok = True
             if not harvest and not intake_ok:
                 raise ValueError("Either 'messages' or 'prompt' field must be provided")
         if self.messages and self.prompt:
