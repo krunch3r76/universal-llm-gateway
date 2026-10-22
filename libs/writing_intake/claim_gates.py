@@ -118,6 +118,7 @@ def check_class_for_channel(channel: str | None) -> CheckProfile:
 
 
 def purpose_content_tokens(text: str) -> frozenset[str]:
+    """Extract normalized content tokens from purpose text, dropping stopwords and correspondence boilerplate."""
     scrubbed = re.sub(r"\S+@\S+", " ", text.lower())
     tokens: set[str] = set()
     for match in _TOKEN_RE.finditer(scrubbed):
@@ -170,6 +171,7 @@ def parse_purpose_points(
     purpose: str,
     purpose_points: list[str] | None = None,
 ) -> list[PurposePoint]:
+    """Build PurposePoint rows from explicit lists, numbered clauses, or the full purpose string."""
     explicit = [str(p).strip() for p in (purpose_points or []) if str(p).strip()]
     if explicit:
         return [
@@ -240,6 +242,7 @@ def map_claim_to_purpose(
     claim: str,
     purpose_points: Sequence[str] | Sequence[PurposePoint],
 ) -> str | None:
+    """Return the purpose point id with the strongest token overlap to the claim, if any."""
     points = _coerce_purpose_points(purpose_points)
     if not points:
         return None
@@ -257,6 +260,7 @@ def map_claim_to_purpose(
 
 
 def is_declaration_register(sentence: str) -> bool:
+    """True when the sentence matches sworn-declaration register patterns."""
     return bool(_DECLARATION_REGISTER.search(sentence))
 
 
@@ -264,6 +268,7 @@ def detect_volunteered_negative_or_concession(
     claim: str,
     purpose_points: list[PurposePoint],
 ) -> tuple[str | None, str | None]:
+    """Flag volunteered negatives or concessions in a claim when purpose points do not allow them."""
     allows = any(p.allows_negative_or_concession for p in purpose_points)
     if allows:
         return None, None
