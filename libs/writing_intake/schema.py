@@ -92,6 +92,25 @@ class OutboundWriteIntake(BaseModel):
     intake_answers: list[str] = Field(default_factory=list)
     fact_sources: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("fact_sources", mode="before")
+    @classmethod
+    def _coerce_fact_sources_field(cls, value: Any) -> dict[str, str]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {str(key): str(item) for key, item in value.items()}
+        if isinstance(value, list):
+            coerced: dict[str, str] = {}
+            for row in value:
+                if not isinstance(row, dict):
+                    continue
+                claim = row.get("claim") or row.get("match") or row.get("text")
+                provenance = row.get("provenance") or row.get("source")
+                if claim and provenance:
+                    coerced[str(claim)] = str(provenance)
+            return coerced
+        return {}
+
     @field_validator("purpose_points")
     @classmethod
     def _purpose_points_clean(cls, value: list[str]) -> list[str]:

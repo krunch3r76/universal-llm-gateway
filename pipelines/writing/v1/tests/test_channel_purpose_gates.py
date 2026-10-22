@@ -449,5 +449,6 @@ def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
     assert payload["documents_block"].count('provenance="operator_account"') == 13
     assert 'verbatim_required="true"' not in payload["verbatim_notes_block"]
     assert "Copy a note word for word only when it is marked verbatim_required" in payload["packet"]
-    assert "No declaration phrasing in correspondence" in payload["brief_block"]
+    assert "Prohibited:" in payload["brief_block"]
+    assert "Email envelope:" in payload["brief_block"]
     assert "copy-verbatim" not in payload["packet"].lower()

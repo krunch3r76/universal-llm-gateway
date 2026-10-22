@@ -39,6 +39,52 @@ def test_intake_schema_mcp_and_pipeline_assemble_parity() -> None:
     assert option_refused["refused"] == "raw_prompt_prohibited_use_intake_schema"
 
 
+def test_outbound_write_intake_coerces_fact_sources_list() -> None:
+    intake, err = validate_intake_payload(
+        {
+            "intake": {
+                "verbatim_notes": ["Fact"],
+                "recipient": "Ada",
+                "objective": "Notify",
+                "channel": "email",
+                "fact_sources": [
+                    {"claim": "Exhibit 2 notice", "provenance": "document"},
+                ],
+            }
+        },
+        messages=[],
+    )
+    assert err is None
+    assert intake is not None
+    assert intake.fact_sources == {"Exhibit 2 notice": "document"}
+
+
+@pytest.mark.asyncio
+async def test_outbound_write_forwards_extended_intake_fields() -> None:
+    with patch("tools.pipeline._pipeline_run") as run:
+        run.return_value = {"ok": True}
+        with patch("tools.pipeline._refresh_pipeline_timeouts"):
+            mcp = FastMCP("outbound-write-extended")
+            register_pipeline_tools(mcp)
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "outbound_write",
+                {
+                    "verbatim_notes": ["Fact A"],
+                    "recipient": "Ada",
+                    "objective": "Status",
+                    "channel": "email",
+                    "purpose_points": ["Confirm filing"],
+                    "verbatim_required": [],
+                    "mode": "standard",
+                    "attested_sources": ["Exhibit 1"],
+                },
+            )
+        intake = run.call_args.kwargs["options"]["intake"]
+        assert intake["purpose_points"] == ["Confirm filing"]
+        assert intake["attested_sources"] == ["Exhibit 1"]
+
+
 @pytest.mark.asyncio
 async def test_outbound_write_forwards_intake_answers_and_fact_sources() -> None:
     with patch("tools.pipeline._pipeline_run") as run:

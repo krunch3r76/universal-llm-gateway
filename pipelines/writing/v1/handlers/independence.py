@@ -86,6 +86,27 @@ def load_writing_models(path: Path | None = None) -> dict[str, str]:
     return found
 
 
+def is_independent(writer_model: str, reviewer_model: str) -> bool:
+    """True when both models resolve to different vendor families."""
+    writer_family = model_family(writer_model)
+    reviewer_family = model_family(reviewer_model)
+    if not writer_family or not reviewer_family:
+        return False
+    return writer_family != reviewer_family
+
+
+def _pick_independent_reviewer(
+    writer: str, primary: str, fallbacks: list[str]
+) -> tuple[str, str | None]:
+    """Return reviewer model id and independence level (full or None)."""
+    if is_independent(writer, primary):
+        return primary, "full"
+    for candidate in fallbacks:
+        if candidate and is_independent(writer, candidate):
+            return candidate, "full"
+    return primary, None
+
+
 def _allow_partial(options: dict[str, Any]) -> bool:
     value = options.get("allow_partial_independence", False)
     if isinstance(value, dict) and "default" in value:
@@ -201,15 +222,16 @@ class WritingIndependenceHandler(BaseHandler):
                     "reviewer_family": reviewer_family,
                 }
             )
-        if writer_family and reviewer_family and writer_family != reviewer_family:
-            independence: str | None = "full"
-            refused = None
-        elif _allow_partial(options):
-            independence = "partial"
-            refused = None
-        else:
-            independence = None
-            refused = "independence_violation"
+        fallbacks = load_review_fallback_models()
+        reviewer, independence = _pick_independent_reviewer(writer, reviewer, fallbacks)
+        reviewer_family = model_family(reviewer)
+        refused = None
+        if independence is None:
+            if _allow_partial(options):
+                independence = "partial"
+            else:
+                independence = None
+                refused = "independence_violation"
         return _step(
             {
                 "ok": refused is None,

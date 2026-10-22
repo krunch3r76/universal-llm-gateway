@@ -990,8 +990,11 @@ def _intake_blocks(
         brief_lines.append(
             "Register rule: verbatim_notes are facts to restate in this channel's register, "
             "not text to copy. Copy a note word for word only when it is marked verbatim_required. "
-            'No declaration phrasing in correspondence (no "I, <name>, am submitting", '
-            'no "I, <name>, state:", no jurat).'
+            'Prohibited: sworn openings ("I, <name>, am submitting", "I, <name>, declare", jurats) '
+            'and impersonal "This correspondence serves to submit...". '
+            "Required when standing_limits call for first person: plain "
+            '"I am submitting..." / "Attached are my...". '
+            "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."
         )
         brief_lines.append(
             "Review rubric (correspondence): flag declaration phrasing or jurat language as type "

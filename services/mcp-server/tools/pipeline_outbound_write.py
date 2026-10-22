@@ -24,6 +24,13 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
         working_set: list[str] | None = None,
         intake_answers: list[str] | None = None,
         fact_sources: dict[str, str] | list[dict[str, Any]] | None = None,
+        purpose_points: list[str] | None = None,
+        verbatim_required: list[int] | None = None,
+        mode: str | None = None,
+        prior_draft: str | None = None,
+        purpose: str | None = None,
+        audience: str | None = None,
+        attested_sources: list[str] | None = None,
         async_exec: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
@@ -36,10 +43,20 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
             "not_attested": not_attested or [],
             "working_set": working_set or [],
         }
-        if intake_answers is not None:
-            intake_body["intake_answers"] = intake_answers
-        if fact_sources is not None:
-            intake_body["fact_sources"] = fact_sources
+        optional_fields: dict[str, Any] = {
+            "intake_answers": intake_answers,
+            "fact_sources": fact_sources,
+            "purpose_points": purpose_points,
+            "verbatim_required": verbatim_required,
+            "mode": mode,
+            "prior_draft": prior_draft,
+            "purpose": purpose,
+            "audience": audience,
+            "attested_sources": attested_sources,
+        }
+        for key, value in optional_fields.items():
+            if value is not None:
+                intake_body[key] = value
         intake = OutboundWriteIntake.model_validate(intake_body)
         options = {"intake": intake.model_dump(exclude_none=True)}
         pipeline_id = "writing/writer-specialist-v1"

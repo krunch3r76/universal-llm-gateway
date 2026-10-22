@@ -15,6 +15,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from .email_envelope import polish_email_draft
 from .independence import _allow_partial, load_writing_models, model_family
 
 _GENERATE_STEPS = (
@@ -95,6 +96,18 @@ def _merge_drift(v1: dict[str, Any], v2: dict[str, Any] | None) -> dict[str, Any
         "passed": not _drift_failed(v1) and not _drift_failed(v2),
         "flagged_sentences": flags,
     }
+
+
+def _polish_email_draft_if_needed(assemble: dict[str, Any], text: str) -> str:
+    if str(assemble.get("channel") or "") != "email" or not text.strip():
+        return text
+    intake = assemble.get("intake")
+    intake_dict = intake if isinstance(intake, dict) else {}
+    recipient = str(intake_dict.get("recipient") or assemble.get("recipient") or "")
+    signer = str(intake_dict.get("signer") or "")
+    return polish_email_draft(
+        text, recipient=recipient, signer=signer, intake=intake_dict
+    )
 
 
 def _selected_body(selected: str, draft: Any, revision: dict[str, Any] | None) -> str:
@@ -294,6 +307,11 @@ class WritingFinalizeHandler(BaseHandler):
             )
         models = load_writing_models()
         draft = _json_of(outputs, "draft")
+        if isinstance(draft, dict) and isinstance(draft.get("draft"), str):
+            draft = {
+                **draft,
+                "draft": _polish_email_draft_if_needed(assemble, draft["draft"]),
+            }
         if isinstance(draft, dict) and draft.get("refused") == "writer_seat_failed":
             return _step(
                 _attach_status(
@@ -410,13 +428,17 @@ class WritingFinalizeHandler(BaseHandler):
         writer_live = (
             _model_of(_raw_step(outputs, "draft")) or models.get("writer") or ""
         )
-        reviewer_live = (
-            _model_of(_raw_step(outputs, "fact_ceiling_audit"))
-            or _model_of(_raw_step(outputs, "review"))
-            or models.get("verifier")
-            or models.get("reviewer")
-            or ""
-        )
+        reviewer_live = ""
+        if isinstance(independence, dict) and independence.get("reviewer_model"):
+            reviewer_live = str(independence["reviewer_model"])
+        if not reviewer_live:
+            reviewer_live = (
+                _model_of(_raw_step(outputs, "fact_ceiling_audit"))
+                or _model_of(_raw_step(outputs, "review"))
+                or models.get("verifier")
+                or models.get("reviewer")
+                or ""
+            )
         writer_family = model_family(str(writer_live))
         reviewer_family = model_family(str(reviewer_live))
         if writer_family and reviewer_family and writer_family != reviewer_family:
@@ -472,6 +494,8 @@ class WritingFinalizeHandler(BaseHandler):
             draft_v2_text = rhythm_raw if isinstance(rhythm_raw, str) else None
             if draft_v2_text is None and isinstance(rhythm, dict):
                 draft_v2_text = rhythm.get("draft")
+            if isinstance(draft_v2_text, str):
+                draft_v2_text = _polish_email_draft_if_needed(assemble, draft_v2_text)
             revision = {
                 "draft_v2": draft_v2_text,
                 "changed_claims": [],
@@ -558,4 +582,5 @@ class WritingFinalizeHandler(BaseHandler):
             payload["cost_note"] = cost_note
         if filing_text is not None:
             payload["filing_text"] = filing_text
+        payload["selected_draft"] = _selected_body(selected, draft, revision)
         return _step(_attach_status(payload))

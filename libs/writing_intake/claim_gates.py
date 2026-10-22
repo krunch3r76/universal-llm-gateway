@@ -322,6 +322,9 @@ def resolve_claim_provenance(
         }:
             if pattern in claim or _matches_note(claim, pattern):
                 return prov  # type: ignore[return-value]
+    for note in verbatim_notes:
+        if _matches_note(claim, note):
+            return "operator_account"
     for answer in intake_answers:
         if _matches_note(claim, answer):
             return "intake_answer"
@@ -332,9 +335,6 @@ def resolve_claim_provenance(
         for answer in intake_answers:
             if _matches_note(claim, answer):
                 return "intake_answer"
-    for note in verbatim_notes:
-        if _matches_note(claim, note):
-            return "operator_account"
     if _EXHIBIT_CITE_RE.search(claim):
         return "document"
     return "prior_draft_only"

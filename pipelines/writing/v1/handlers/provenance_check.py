@@ -11,6 +11,8 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.claim_gates import check_class_for_channel
 from writing_intake.fact_inventory import run_drift_check
 
+from .email_envelope import polish_email_draft
+
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",
     re.IGNORECASE,
@@ -738,6 +740,23 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 verifier_clauses = raw_clauses
 
         parsed = _parse_draft(draft)
+        if parsed is not None and str(channel or "") == "email":
+            intake_block = (
+                assemble_json.get("intake") if isinstance(assemble_json, dict) else None
+            )
+            intake_dict = intake_block if isinstance(intake_block, dict) else {}
+            recipient = str(
+                intake_dict.get("recipient")
+                or (assemble_json or {}).get("recipient")
+                or ""
+            )
+            signer = str(intake_dict.get("signer") or "")
+            parsed["draft"] = polish_email_draft(
+                str(parsed.get("draft") or ""),
+                recipient=recipient,
+                signer=signer,
+                intake=intake_dict,
+            )
         violations: list[dict[str, Any]] = []
         if parsed is None:
             violations = [_violation("draft_unparseable", None, "malformed")]

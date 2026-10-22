@@ -81,7 +81,19 @@ class WritingReviewLocalHandler(BaseHandler):
                 content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
             else:
                 models = load_writing_models()
-                primary = models.get("reviewer") or models.get("verifier") or ""
+                independence = outputs.get("independence")
+                independence_json = (
+                    independence.get("json")
+                    if isinstance(independence, dict)
+                    else getattr(independence, "json", None)
+                )
+                primary = ""
+                if isinstance(independence_json, dict) and independence_json.get(
+                    "reviewer_model"
+                ):
+                    primary = str(independence_json["reviewer_model"])
+                if not primary:
+                    primary = models.get("reviewer") or models.get("verifier") or ""
                 candidates = [primary, *load_review_fallback_models()]
                 seen: set[str] = set()
                 content = None

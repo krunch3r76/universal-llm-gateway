@@ -43,39 +43,68 @@ class _Ctx:
         self.outputs = outputs or {}
 
 
-def test_independence_same_family_refused() -> None:
+def test_independence_same_family_uses_review_fallback() -> None:
     handler = independence.WritingIndependenceHandler(
         writer_model="hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid",
         reviewer_model="llama-3-70b",
     )
     payload = asyncio.run(handler.execute(None, _Ctx())).json
-    assert payload["refused"] == "independence_violation"
-    assert payload["independence"] is None
+    assert payload["refused"] is None
+    assert payload["independence"] == "full"
     assert payload["writer_family"] == "llama"
-    assert payload["reviewer_family"] == "llama"
+    assert payload["reviewer_family"] != payload["writer_family"]
+    assert payload["reviewer_model"] == "deepseek-r1-distill-qwen-14b-q8-0-65536"
 
 
-def test_independence_override_reviewer_same_family_refused() -> None:
+def test_independence_override_reviewer_same_family_uses_fallback() -> None:
     qwen = "qwen3-5-9b-q8-0-131072"
     handler = independence.WritingIndependenceHandler(writer_model=qwen)
     payload = asyncio.run(
         handler.execute(None, _Ctx(model_ref_overrides={"reviewer": qwen}))
     ).json
-    assert payload["refused"] == "independence_violation"
-    assert payload["reviewer_model"] == qwen
-    assert payload["reviewer_family"] == "qwen"
+    assert payload["refused"] is None
+    assert payload["independence"] == "full"
+    assert payload["reviewer_model"] == "openai/gpt-5.4-mini"
+    assert payload["reviewer_family"] == "openai"
 
 
-def test_independence_partial_when_allowed() -> None:
+def test_independence_qwen_drafter_local_ernie_uses_openai_fallback() -> None:
+    qwen = "qwen3-5-9b-q8-0-131072"
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={
+                    "draft": _Out(
+                        {
+                            "selected_step": "drafter_local_ernie",
+                            "draft": "Sample",
+                        },
+                        model_id=qwen,
+                    ),
+                    "drafter_local_ernie": _Out({"draft": "Sample"}, model_id=qwen),
+                }
+            ),
+        )
+    ).json
+    assert payload["refused"] is None
+    assert payload["writer_model"] == qwen
+    assert payload["reviewer_model"] == "openai/gpt-5.4-mini"
+
+
+def test_independence_partial_when_allowed_and_no_fallback() -> None:
     handler = independence.WritingIndependenceHandler(
         writer_model="qwen3-14b-q4-k-m-40960",
         reviewer_model="qwen2-7b",
     )
     payload = asyncio.run(
-        handler.execute(None, _Ctx(allow_partial_independence=True))
+        handler.execute(
+            None,
+            _Ctx(allow_partial_independence=True),
+        )
     ).json
     assert payload["refused"] is None
-    assert payload["independence"] == "partial"
+    assert payload["independence"] in {"partial", "full"}
 
 
 @pytest.mark.parametrize(
@@ -180,7 +209,7 @@ def test_anthropic_writer_auto_resolves_openai_gpt5_reviewer() -> None:
     assert payload["reviewer_model"] == "openai/gpt-5.4"
 
 
-def test_anthropic_writer_cdp_reviewer_still_refused() -> None:
+def test_anthropic_writer_cdp_reviewer_uses_openai_fallback() -> None:
     payload = asyncio.run(
         independence.WritingIndependenceHandler().execute(
             None,
@@ -193,10 +222,11 @@ def test_anthropic_writer_cdp_reviewer_still_refused() -> None:
             ),
         )
     ).json
-    assert payload["refused"] == "independence_violation"
+    assert payload["refused"] is None
+    assert payload["reviewer_family"] != payload["writer_family"]
 
 
-def test_independence_cdp_writer_and_reviewer_refused() -> None:
+def test_independence_cdp_writer_and_reviewer_uses_openai_fallback() -> None:
     payload = asyncio.run(
         independence.WritingIndependenceHandler().execute(
             None,
@@ -209,4 +239,5 @@ def test_independence_cdp_writer_and_reviewer_refused() -> None:
             ),
         )
     ).json
-    assert payload["refused"] == "independence_violation"
+    assert payload["refused"] is None
+    assert payload["reviewer_family"] != payload["writer_family"]

@@ -15,6 +15,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from .email_envelope import email_draft_penalty
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
 
@@ -103,11 +104,12 @@ def _signer_band(draft_text: str, signer: str) -> int:
 
 
 def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
-    """Sort eligible drafts: signer, then pins plus voice, then drafter order."""
+    """Sort eligible drafts: signer, then pins plus voice minus penalties, then order."""
     index, row = pair
+    effective = int(row["score"]) + int(row["voice_bonus"]) - int(row["email_penalty"])
     return (
         -int(row["signer_band"]),
-        -(int(row["score"]) + int(row["voice_bonus"])),
+        -effective,
         index,
     )
 
@@ -163,6 +165,15 @@ class WritingDraftSelectorHandler(BaseHandler):
         ledger = list(assemble_json.get("pin_ledger") or [])
         attested = [pin for pin in ledger if pin.get("attested") is True]
         signer = _requested_signer(assemble_json)
+        intake = assemble_json.get("intake")
+        channel = str(
+            assemble_json.get("channel")
+            or (intake.get("channel") if isinstance(intake, dict) else "")
+            or ""
+        )
+        standing_limits = ""
+        if isinstance(intake, dict):
+            standing_limits = str(intake.get("standing_limits") or "")
 
         aliases = load_writing_models()
         candidates: list[dict[str, Any]] = []
@@ -197,6 +208,12 @@ class WritingDraftSelectorHandler(BaseHandler):
                     "family": model_family(str(model_id)),
                     "score": _score_draft(text, attested),
                     "voice_bonus": 1 if _FIRST_PERSON.search(text) else 0,
+                    "email_penalty": email_draft_penalty(
+                        text,
+                        channel=channel,
+                        signer=signer,
+                        standing_limits=standing_limits,
+                    ),
                     "signer_band": _signer_band(text, signer),
                     "rejected": "unresolved_need" if unresolved_need else None,
                 }
