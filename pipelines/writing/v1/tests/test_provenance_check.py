@@ -887,6 +887,8 @@ def test_revision_delta_enumeration_vs_range_flagged() -> None:
         channel="filing",
     )
     assert "fact_dropped" in _types(through_to_and)
+    dropped = [v for v in through_to_and if v.get("type") == "fact_dropped"]
+    assert any(v.get("detail") == "through" for v in dropped)
 
 
 def test_revision_delta_sworn_in_vs_through_non_numeric_flagged() -> None:
@@ -904,6 +906,123 @@ def test_revision_delta_sworn_in_vs_through_non_numeric_flagged() -> None:
     dropped = [v for v in through_to_in if v.get("type") == "fact_dropped"]
     assert dropped
     assert any(v.get("detail") == "through" for v in dropped)
+
+
+def test_derive_v2_clauses_from_audit_skips_uncited_non_restate_pin_when_audit_pins_present() -> (
+    None
+):
+    v1_clauses = [
+        {"text": "Alpha fact.", "pin_ids": ["P1"], "disposition": "express"},
+        {"text": "Beta fact.", "pin_ids": ["P2"], "disposition": "express"},
+    ]
+    ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "Alpha fact."},
+        {"pin_id": "P2", "attested": True, "excerpt": "Beta fact."},
+        {"pin_id": "P3", "attested": True, "excerpt": "Only on ledger."},
+    ]
+    v2_rows = provenance.derive_v2_clauses_from_audit(
+        "Alpha fact. Beta fact.", v1_clauses, ledger
+    )
+    assert all("P3" not in (row.get("pin_ids") or []) for row in v2_rows)
+    violations = provenance.revision_delta(
+        {"draft": "Alpha fact. Beta fact."},
+        {"draft": "Alpha fact. Beta fact."},
+        v1_clauses=v1_clauses,
+        v2_clauses=v2_rows,
+        pin_ledger=ledger,
+        v2_clauses_from_derive=True,
+        channel="filing",
+    )
+    assert "fact_reordered" not in _types(violations)
+
+
+_EXHIBIT_INTAKE_NOTES = [
+    "Exhibit 4: Supplemental Tax Bills 10059585 and 10059586",
+    "Exhibit 5: Invalid Closed Letters dated 2026-06-05",
+    "Exhibit 6: Requests for Reinstatement stamped 2026-07-23",
+    "Exhibit 8: Letter to Assessor stamped 2026-04-15",
+]
+_LEG_C18_V1_TAIL = (
+    "Exhibit 4: Supplemental Tax Bills 10059585 and 10059586\n"
+    "Exhibit 5: Invalid Closed Letters dated 2026-06-05\n"
+    "Exhibit 6: Requests for Reinstatement stamped 2026-07-23\n"
+    "Exhibit 7: Clerk Email of 2026-05-28 Acknowledging Documents Submitted 2026-05-27\n"
+    "Exhibit 8: Letter to Assessor stamped 2026-04-15\n"
+    "Sincerely,\n"
+    "Kaywan Joseph Mansubi"
+)
+_LEG_C18_V2_TAIL = (
+    "Exhibit 4 contains Supplemental Tax Bills 10059585 and 10059586.\n"
+    "Exhibit 5 includes Invalid Closed Letters dated 2026-06-05.\n"
+    "Exhibit 6 shows Requests for Reinstatement stamped 2026-07-23.\n"
+    "Exhibit 7: Clerk Email of 2026-05-28 Acknowledging Documents Submitted 2026-05-27\n"
+    "Exhibit 8: Letter to Assessor stamped 2026-04-15.\n"
+    "Sincerely,\n"
+    "Kaywan Joseph Mansubi"
+)
+
+
+def test_fact_ceiling_final_email_unpunctuated_exhibit_before_sincerely_passes() -> None:
+    body = (
+        "I am submitting documents for the reinstatement hearing. "
+        "Attached are my declaration and Exhibits 2 through 8.\n"
+    )
+    v1_email = (
+        "To: AABHearing@cob.sccgov.org\n"
+        "Subject: Assessment Appeals 25.7489 and 25.7490\n\n"
+        f"{body}{_LEG_C18_V1_TAIL}"
+    )
+    v2_email = (
+        "To: AABHearing@cob.sccgov.org\n"
+        "Subject: Assessment Appeals 25.7489 and 25.7490\n\n"
+        f"{body}{_LEG_C18_V2_TAIL}"
+    )
+    intake = {
+        "recipient": "AABHearing@cob.sccgov.org",
+        "signer": "Kaywan Joseph Mansubi",
+        "verbatim_notes": _EXHIBIT_INTAKE_NOTES,
+    }
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _StepFactCeilingFinal(),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {
+                            "pin_ledger": [
+                                {
+                                    "pin_id": "P2",
+                                    "attested": True,
+                                    "excerpt": "Attached are my declaration and Exhibits 2 through 8.",
+                                }
+                            ],
+                            "channel": "email",
+                            "recipient": "AABHearing@cob.sccgov.org",
+                            "intake": intake,
+                        }
+                    ),
+                    "draft": _Out({"ok": True, "draft": v1_email}),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": [
+                                {
+                                    "text": body.strip(),
+                                    "pin_ids": ["P2"],
+                                    "disposition": "express",
+                                }
+                            ],
+                        }
+                    ),
+                    "prose_rhythm_pass": _Raw(v2_email),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    assert payload["violations"] == []
+    assert payload["pass"] is True
 
 
 _LEG_C_BODY_1 = (

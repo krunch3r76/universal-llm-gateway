@@ -18,6 +18,7 @@ _DECLARATION_OPEN = re.compile(
     re.I,
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
+_EXHIBIT_NOTE_RE = re.compile(r"^\s*(Exhibit\s+\d+)\s*:\s*(.+)$", re.I)
 _RESTATE_STOPWORDS = frozenset(
     {
         "a",
@@ -116,6 +117,37 @@ def _normalize_signer_line(body: str, signer: str) -> str:
     return body
 
 
+def _normalize_exhibit_lines(text: str, intake: dict[str, Any]) -> str:
+    """Restore canonical Exhibit N: title lines when rhythm pass rewrites colons."""
+    canonical: dict[str, tuple[str, str]] = {}
+    for note in intake.get("verbatim_notes") or []:
+        match = _EXHIBIT_NOTE_RE.match(str(note or "").strip())
+        if match:
+            ex_num = match.group(1)
+            title = match.group(2).strip().rstrip(".")
+            canonical[ex_num.lower()] = (ex_num, title)
+    if not canonical:
+        return text
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        replaced = False
+        for ex_num, title in canonical.values():
+            pattern = re.compile(
+                rf"^\s*{re.escape(ex_num)}\s*"
+                rf"(?::|\bis(?:\s+the)?\b|\bcontains\b|\bincludes\b|\bshows\b)\s*"
+                rf"(.+?)\.?\s*$",
+                re.I,
+            )
+            if pattern.match(stripped):
+                out_lines.append(f"{ex_num}: {title}")
+                replaced = True
+                break
+        if not replaced:
+            out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 def ensure_email_envelope(
     text: str,
     *,
@@ -156,8 +188,9 @@ def polish_email_draft(
     """Rewrite opening, normalize dashes, and enforce email envelope lines."""
     normalized = normalize_email_dashes(text)
     rewritten = rewrite_email_opening(normalized)
+    exhibit_normalized = _normalize_exhibit_lines(rewritten, intake)
     return ensure_email_envelope(
-        rewritten, recipient=recipient, signer=signer, intake=intake
+        exhibit_normalized, recipient=recipient, signer=signer, intake=intake
     )
 
 

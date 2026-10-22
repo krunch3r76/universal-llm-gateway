@@ -61,6 +61,7 @@ prompts:
       - does not advance any stated point in Objective (type="not_purpose_relevant"), EVEN IF the sentence matches a pin.
       Stage 2: Attestation and fact ceiling (ask SECOND):
       Map each remaining declarative sentence to attested="true" pin ids (provenance="operator_account" or "document"). Flag unbacked or altered claims as "unattested_fact", "contradicts_pin", or "unsupported".
+      On correspondence/email channels, never flag To:, Subject:, Exhibit N: <title> lines, or the signer closing as not_purpose_relevant; if every body sentence serves a stated point in Objective and all claims are attested, return findings=[] and verdict="ship".
       Return JSON:
       {"findings": [{"ref", "type", "fix"}], "verdict": "ship" | "revise", "clauses": [{"text", "pin_ids", "disposition"}]}
   prose_rhythm:
@@ -80,7 +81,7 @@ prompts:
       (4) Place the shortest sentence on the load-bearing number, date, or consequence.
       (5) End paragraphs on concrete nouns or facts.
       Keep every content word. Keep frequency phrases as written. Keep "I stated" and "I said" attribution. Keep numbering.
-      When channel is email: preserve To:, Subject:, exhibit list, plain first-person body, and the signer closing; replace any em dash (—) or en dash (–) with ASCII hyphen or the word "through" for numeric ranges; do not add receipt-confirmation sentences.
+      When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim (never rewrite 'Exhibit N: ...' into 'Exhibit N is/contains/includes/shows ...'), plain first-person body, and the signer closing; replace any em dash (—) or en dash (–) with ASCII hyphen or the word "through" for numeric ranges; do not add receipt-confirmation sentences.
       When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
       No narrative arc or earned close on transactional messages. Output the revised plain-text body only.
   reviser:

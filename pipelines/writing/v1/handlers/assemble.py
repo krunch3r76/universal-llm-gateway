@@ -1018,7 +1018,9 @@ def _intake_blocks(
         brief_lines.append(
             "Review rubric (correspondence): flag declaration phrasing or jurat language as type "
             '"register"; flag a body sentence that serves no purpose point as type "not_purpose_relevant"; '
-            "sworn-body and exhibit-tag rules do not apply."
+            "To:, Subject:, Exhibit N: <title> lines, and the signer closing are required correspondence "
+            "structure and must NEVER be flagged as not_purpose_relevant; "
+            "sworn-body and inline (Exhibit N) tag rules do not apply."
         )
     else:
         brief_lines.append(

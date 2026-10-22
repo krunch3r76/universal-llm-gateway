@@ -94,6 +94,17 @@ def _normalize_numeric_ranges(text: str) -> str:
     return _NUMERIC_RANGE_RE.sub(r"\1 numrange \2", text)
 
 
+_ENVELOPE_OR_EXHIBIT_LINE_RE = re.compile(
+    r"^\s*(?:(?:to|cc|bcc|from|subject|re|date)\s*:|Exhibit\s+\d+\s*:|"
+    r"(?:thank you|thanks|sincerely|regards|best regards|kind regards|respectfully)[,!]?\s*$)",
+    re.IGNORECASE,
+)
+_VALEDICTION_LINE_RE = re.compile(
+    r"^\s*(?:thank you|thanks|sincerely|regards|best regards|kind regards|respectfully)[,!]?\s*$",
+    re.IGNORECASE,
+)
+
+
 _REQUEST_VERBS = re.compile(
     r"\b(could you|can you|please confirm|please send|would you)\b",
     re.IGNORECASE,
@@ -338,8 +349,68 @@ def _causal_connective_violations(
     return violations
 
 
+def _is_non_claim_envelope_unit(unit: str) -> bool:
+    first_line = unit.splitlines()[0].strip() if unit.strip() else ""
+    if not first_line:
+        return True
+    if _VALEDICTION_LINE_RE.match(first_line):
+        return True
+    if re.match(r"^\s*(?:to|cc|bcc|from|subject|re|date)\s*:", first_line, re.I):
+        return True
+    if re.match(
+        r"^\s*(?:attached are(?:\s+the\s+following(?:\s+exhibits|\s+documents)?)?|"
+        r"the\s+(?:attached\s+)?exhibits\s+are(?:\s+as\s+follows)?)\s*[:.]?\s*$",
+        first_line,
+        re.I,
+    ):
+        return True
+    return False
+
+
 def _sentences(text: str) -> list[str]:
-    return [part.strip() for part in _SENTENCE.split(text) if part.strip()]
+    blocks: list[str] = []
+    current: list[str] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i].strip()
+        if not raw_line:
+            if current:
+                blocks.append(" ".join(current))
+                current = []
+            i += 1
+            continue
+        if _VALEDICTION_LINE_RE.match(raw_line):
+            if current:
+                blocks.append(" ".join(current))
+                current = []
+            closing = [raw_line]
+            if i + 1 < len(lines) and lines[i + 1].strip():
+                closing.append(lines[i + 1].strip())
+                i += 1
+            blocks.append("\n".join(closing))
+            i += 1
+            continue
+        if _ENVELOPE_OR_EXHIBIT_LINE_RE.match(raw_line):
+            if current:
+                blocks.append(" ".join(current))
+                current = []
+            blocks.append(raw_line)
+            i += 1
+            continue
+        current.append(raw_line)
+        i += 1
+    if current:
+        blocks.append(" ".join(current))
+    out: list[str] = []
+    for block in blocks:
+        if "\n" in block or _ENVELOPE_OR_EXHIBIT_LINE_RE.match(block):
+            out.append(block.strip())
+        else:
+            for part in _SENTENCE.split(block):
+                if part.strip():
+                    out.append(part.strip())
+    return out
 
 
 def _tokens(text: str) -> set[str]:
@@ -639,7 +710,11 @@ def revision_delta(
             if not isinstance(row, dict):
                 continue
             sentence = str(row.get("text") or "").strip()
-            if not sentence or _in_v1(sentence):
+            if (
+                not sentence
+                or _in_v1(sentence)
+                or _is_non_claim_envelope_unit(sentence)
+            ):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
             if not pin_ids:
@@ -692,7 +767,11 @@ def revision_delta(
             if not isinstance(row, dict):
                 continue
             sentence = str(row.get("text") or "").strip()
-            if not sentence or _in_v1(sentence):
+            if (
+                not sentence
+                or _in_v1(sentence)
+                or _is_non_claim_envelope_unit(sentence)
+            ):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
             if pin_ids:
@@ -706,7 +785,7 @@ def revision_delta(
     new_tokens = v2_tokens - v1_tokens - join_words
     if new_tokens:
         for sentence in _sentences(v2_text):
-            if _in_v1(sentence):
+            if _in_v1(sentence) or _is_non_claim_envelope_unit(sentence):
                 continue
             if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
@@ -731,7 +810,8 @@ def revision_delta(
             violations.append(_violation("fact_added", None, detail))
     if lost_content:
         for token in sorted(lost_content):
-            violations.append(_violation("fact_dropped", None, token))
+            detail_tok = "through" if token == "numrange" else token
+            violations.append(_violation("fact_dropped", None, detail_tok))
     return violations
 
 
