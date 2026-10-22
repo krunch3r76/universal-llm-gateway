@@ -99,7 +99,10 @@ _PRE_EDIT_READ_SHA_RE = re.compile(
     re.IGNORECASE,
 )
 _TIP_SHA256_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
-_REPO_PATH_IN_ITEM_RE = re.compile(r"(?:^|\s)(?:libs/|services/)\S")
+_PATH_SHAPED_TOKEN_RE = re.compile(
+    r"(?:^|[\s(])(?:\./)?(?:libs/|services/|scripts/|docs/|pipelines/|config/)\S",
+    re.IGNORECASE,
+)
 _WORKSPACES_URI_RE = re.compile(r"workspaces://[^\s`)]+")
 
 
@@ -117,9 +120,7 @@ def _parse_g3_files_expected_pairs(section: str) -> list[tuple[str, str]] | None
         return None
     for match in re.finditer(r"`([^`]+)`", section):
         path = match.group(1).strip()
-        if path.startswith(("libs/", "services/")):
-            return None
-        if path.lower() == "none":
+        if not path.startswith("cortex://"):
             return None
     items = [chunk.strip() for chunk in re.split(r"(?m)^-\s+", section) if chunk.strip()]
     if not items:
@@ -127,24 +128,19 @@ def _parse_g3_files_expected_pairs(section: str) -> list[tuple[str, str]] | None
     pairs: list[tuple[str, str]] = []
     for item in items:
         uris = _CORTEX_URI_RE.findall(item)
-        if not uris:
-            if _REPO_PATH_IN_ITEM_RE.search(item) or re.search(
-                r"(?:^|\s)none(?:\s|$|`)", item, re.IGNORECASE
-            ):
-                return None
-            continue
-        if len(uris) != 1:
+        if not uris or len(uris) != 1:
             return None
         uri = uris[0]
-        remainder = _CORTEX_URI_RE.sub("", item, count=1)
-        if (
-            _WORKSPACES_URI_RE.search(remainder)
-            or _REPO_PATH_IN_ITEM_RE.search(remainder)
-            or re.search(r"(?:^|\s)none(?:\s|$|`)", remainder, re.IGNORECASE)
-        ):
-            return None
         pre_match = _PRE_EDIT_READ_SHA_RE.search(item)
         if not pre_match:
+            return None
+        remainder = _CORTEX_URI_RE.sub("", item, count=1)
+        remainder = _PRE_EDIT_READ_SHA_RE.sub("", remainder, count=1)
+        if (
+            _WORKSPACES_URI_RE.search(remainder)
+            or _PATH_SHAPED_TOKEN_RE.search(remainder)
+            or re.search(r"(?:^|\s)none(?:\s|$|`)", remainder, re.IGNORECASE)
+        ):
             return None
         pre_sha = pre_match.group(1).lower()
         pairs.append((uri, pre_sha))

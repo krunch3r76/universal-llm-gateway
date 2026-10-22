@@ -17,6 +17,7 @@ from implement_admission.conductor_witness import (
     row_witnesses,
 )
 from implement_admission.conductor_witness_g5 import (
+    _parse_g3_files_expected_pairs,
     g5_implement_witness,
     hang_g5_witness,
     select_g5_implement_witness,
@@ -1263,6 +1264,103 @@ def test_g5_mixed_repo_and_cortex_files_expected_refuses_cortex_witness(
         )
         is None
     )
+
+
+@pytest.mark.offline
+def test_g5_scripts_files_expected_refuses_cortex_witness(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    pre_a = _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "baseline-a\n")
+    post_a = hashlib.sha256(b"post-a\n").hexdigest()
+    _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "post-a\n")
+    g3_body = _g3_cortex_only_spec_body(
+        [(_G5_CORTEX_URI_A, pre_a)],
+        extra_lines=["- scripts/foo.py\n"],
+    )
+    _write_cortex_uri(files_root, _G5_CORTEX_G3_URI, g3_body)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        f"| S4b | `{_G5_CORTEX_G3_URI}` | G3 spec |\n"
+        f"\nread_sha256: {post_a}\n"
+    )
+    deps = _g5_cortex_deps(tmp_path)
+    assert (
+        select_g5_implement_witness(
+            tip_body=tip_body,
+            deps=deps,
+            files_root=files_root,
+            artifacts=_artifact_map(tip_body),
+            repo=deps.repo,
+        )
+        is None
+    )
+
+
+@pytest.mark.offline
+def test_g5_docs_files_expected_refuses_cortex_witness(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    pre_a = _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "baseline-a\n")
+    post_a = hashlib.sha256(b"post-a\n").hexdigest()
+    _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "post-a\n")
+    g3_body = _g3_cortex_only_spec_body(
+        [(_G5_CORTEX_URI_A, pre_a)],
+        extra_lines=["- `docs/agent-guides/example.md`\n"],
+    )
+    _write_cortex_uri(files_root, _G5_CORTEX_G3_URI, g3_body)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        f"| S4b | `{_G5_CORTEX_G3_URI}` | G3 spec |\n"
+        f"\nread_sha256: {post_a}\n"
+    )
+    deps = _g5_cortex_deps(tmp_path)
+    assert (
+        select_g5_implement_witness(
+            tip_body=tip_body,
+            deps=deps,
+            files_root=files_root,
+            artifacts=_artifact_map(tip_body),
+            repo=deps.repo,
+        )
+        is None
+    )
+
+
+@pytest.mark.offline
+def test_g5_dot_libs_files_expected_refuses_cortex_witness(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    pre_a = _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "baseline-a\n")
+    post_a = hashlib.sha256(b"post-a\n").hexdigest()
+    _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "post-a\n")
+    g3_body = _g3_cortex_only_spec_body(
+        [(_G5_CORTEX_URI_A, pre_a)],
+        extra_lines=["- `./libs/implement_admission/foo.py`\n"],
+    )
+    _write_cortex_uri(files_root, _G5_CORTEX_G3_URI, g3_body)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        f"| S4b | `{_G5_CORTEX_G3_URI}` | G3 spec |\n"
+        f"\nread_sha256: {post_a}\n"
+    )
+    deps = _g5_cortex_deps(tmp_path)
+    assert (
+        select_g5_implement_witness(
+            tip_body=tip_body,
+            deps=deps,
+            files_root=files_root,
+            artifacts=_artifact_map(tip_body),
+            repo=deps.repo,
+        )
+        is None
+    )
+
+
+@pytest.mark.offline
+def test_g5_same_bullet_second_path_returns_none() -> None:
+    pre_sha = "a" * 64
+    section = (
+        f"- `{_G5_CORTEX_URI_A}` scripts/foo.py\n"
+        f"  pre-edit read_sha256: {pre_sha}\n"
+    )
+    assert _parse_g3_files_expected_pairs(section) is None
 
 
 @pytest.mark.offline
