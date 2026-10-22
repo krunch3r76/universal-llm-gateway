@@ -15,7 +15,7 @@ import time
 from typing import Any
 
 from deploy_identity.code_version import resolve_code_version
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from universal_logging import get_logger
 
@@ -143,19 +143,37 @@ async def cse_holders(lane_thread_id: str) -> dict[str, object]:
 
 @router.post("/cse-holder/upsert", summary="Register or refresh a CSE session holder.")
 async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
-    """Idempotent upsert keyed by ``holder_id`` from ``chat_url``."""
-    from services.git_integration_worker.cse_session_holders import upsert_holder
+    """Register a CSE holder or refresh it on the lane it already occupies.
+
+    A driving or dormant row bound to another lane is refused with HTTP 409
+    and ``current_lane`` / ``requested_lane``. The ledger row is left unchanged.
+    """
+    from services.git_integration_worker.cse_session_holders import (
+        HolderLaneConflictError,
+        upsert_holder,
+    )
 
     with CursorDispatchLedger.instance()._connect() as conn:
-        row = upsert_holder(
-            conn,
-            chat_url=req.chat_url,
-            registration_id=req.registration_id,
-            execution_id=req.execution_id,
-            lane_thread_id=req.lane_thread_id,
-            work_key=req.work_key,
-            score_journal_uri=req.score_journal_uri,
-        )
+        try:
+            row = upsert_holder(
+                conn,
+                chat_url=req.chat_url,
+                registration_id=req.registration_id,
+                execution_id=req.execution_id,
+                lane_thread_id=req.lane_thread_id,
+                work_key=req.work_key,
+                score_journal_uri=req.score_journal_uri,
+            )
+        except HolderLaneConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "reason": "lane_conflict",
+                    "holder_id": exc.holder_id,
+                    "current_lane": exc.current_lane,
+                    "requested_lane": exc.requested_lane,
+                },
+            ) from exc
         conn.commit()
     return {"ok": True, "holder": row}
 

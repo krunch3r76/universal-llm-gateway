@@ -103,6 +103,30 @@ def resolve_nest_parent(
     return row
 
 
+class HolderLaneConflictError(Exception):
+    """Live holder refused a move onto a different continuity lane.
+
+    Raised by ``upsert_holder`` when the row is driving or dormant and already
+    bound to another ``lane_thread_id``. Callers map this to HTTP 409. Released
+    and superseded rows are not conflicts; they may rebind.
+    """
+
+    def __init__(
+        self,
+        *,
+        holder_id: str,
+        current_lane: str,
+        requested_lane: str,
+    ) -> None:
+        self.holder_id = holder_id
+        self.current_lane = current_lane
+        self.requested_lane = requested_lane
+        super().__init__(
+            "lane_conflict "
+            f"holder={holder_id} current={current_lane} requested={requested_lane}"
+        )
+
+
 def upsert_holder(
     conn: sqlite3.Connection,
     *,
@@ -113,7 +137,16 @@ def upsert_holder(
     work_key: str | None = None,
     score_journal_uri: str | None = None,
 ) -> dict[str, Any]:
-    """Idempotent upsert keyed by ``holder_id`` from normalized ``chat_url``."""
+    """Idempotent holder bind keyed by chat URL, refusing a live cross-lane steal.
+
+    A driving or dormant row whose ``lane_thread_id`` is already set stays on
+    that lane when the request names a different one (``HolderLaneConflictError``;
+    no column write). Released and superseded rows rebind and return to
+    driving. Any upsert that leaves a driving row supersedes the other
+    driving and dormant rows on that lane (``superseded_by`` is the new
+    holder id) and emits ``cse.holder.lane_conflict`` or the helper's
+    ``cse.holder.superseded``.
+    """
     url = normalize_cse_url(chat_url)
     hid = holder_id_from_chat_url(url)
     if not hid:
@@ -125,6 +158,27 @@ def upsert_holder(
     lane = (lane_thread_id or "").strip() or None
     if existing is not None:
         prior_state = str(existing.get("seat_state") or "")
+        prior_lane = str(existing.get("lane_thread_id") or "").strip() or None
+        if (
+            lane
+            and prior_lane
+            and lane != prior_lane
+            and prior_state in _OCCUPANCY_STATES
+        ):
+            _emit(
+                "cse.holder.lane_conflict",
+                {
+                    "holder_id": hid,
+                    "current_lane": prior_lane,
+                    "requested_lane": lane,
+                    "seat_state": prior_state,
+                },
+            )
+            raise HolderLaneConflictError(
+                holder_id=hid,
+                current_lane=prior_lane,
+                requested_lane=lane,
+            )
         conn.execute(
             "UPDATE cse_session_holders SET chat_url=?, registration_id=?, "
             "execution_id=?, lane_thread_id=COALESCE(?, lane_thread_id), "
@@ -156,7 +210,9 @@ def upsert_holder(
                     "execution_id": exec_id,
                 },
             )
-        return get_holder(conn, hid) or {}
+        row = get_holder(conn, hid) or {}
+        _supersede_if_driving(conn, row)
+        return get_holder(conn, hid) or row
     conn.execute(
         "INSERT INTO cse_session_holders "
         "(holder_id, chat_url, registration_id, execution_id, lane_thread_id, "
@@ -184,7 +240,26 @@ def upsert_holder(
             "lane_thread_id": lane,
         },
     )
-    return get_holder(conn, hid) or {}
+    row = get_holder(conn, hid) or {}
+    _supersede_if_driving(conn, row)
+    return get_holder(conn, hid) or row
+
+
+def _supersede_if_driving(conn: sqlite3.Connection, row: dict[str, Any]) -> list[str]:
+    """Supersede other live rows when *row* is the driving holder on its lane."""
+    if str(row.get("seat_state") or "") != "driving":
+        return []
+    lane = str(row.get("lane_thread_id") or "").strip()
+    hid = str(row.get("holder_id") or "").strip()
+    if not lane or not hid:
+        return []
+    return _supersede_lane_predecessors(
+        conn,
+        lane_thread_id=lane,
+        occupy_holder_id=hid,
+        superseded_registration_id=None,
+        superseded_by=hid,
+    )
 
 
 def transition_seat_state(
@@ -300,6 +375,34 @@ def _supersede_lane_predecessors(
     return superseded_ids
 
 
+def _union_ids(left: list[str], right: list[str]) -> list[str]:
+    seen: list[str] = []
+    for hid in [*left, *right]:
+        if hid and hid not in seen:
+            seen.append(hid)
+    return seen
+
+
+def _holders_marked_superseded_by(
+    conn: sqlite3.Connection,
+    lane_thread_id: str,
+    markers: list[str],
+) -> list[str]:
+    """Holder ids on *lane_thread_id* already stamped superseded by *markers*."""
+    lane = (lane_thread_id or "").strip()
+    marks = [m.strip() for m in markers if m and m.strip()]
+    if not lane or not marks:
+        return []
+    placeholders = ",".join("?" * len(marks))
+    rows = conn.execute(
+        "SELECT holder_id FROM cse_session_holders "
+        f"WHERE lane_thread_id=? AND seat_state='superseded' "
+        f"AND superseded_by IN ({placeholders})",
+        (lane, *marks),
+    ).fetchall()
+    return [str(row["holder_id"]) for row in rows]
+
+
 def seat_successor_on_lane(
     conn: sqlite3.Connection,
     *,
@@ -328,12 +431,18 @@ def seat_successor_on_lane(
     if existing is not None:
         existing_lane = str(existing.get("lane_thread_id") or "").strip()
         existing_state = str(existing.get("seat_state") or "")
-        if existing_lane and existing_lane != lane and existing_state == "driving":
+        if (
+            existing_lane
+            and existing_lane != lane
+            and existing_state in _OCCUPANCY_STATES
+        ):
             return {
                 "ok": False,
                 "reason": "occupy_target_held_by_live_peer",
                 "holder": existing,
                 "held_by_lane": existing_lane,
+                "current_lane": existing_lane,
+                "requested_lane": lane,
                 "superseded_holder_ids": [],
             }
     row = upsert_holder(
@@ -364,10 +473,14 @@ def seat_successor_on_lane(
         superseded_registration_id=None,
         superseded_by=reg,
     )
+    superseded = _union_ids(
+        superseded,
+        _holders_marked_superseded_by(conn, lane, [hid, reg]),
+    )
     return {
         "ok": True,
-        "holder": row,
-        "superseded_holder_ids": superseded,
+        "holder": get_holder(conn, hid) or row,
+        "superseded_holder_ids": [i for i in superseded if i != hid],
     }
 
 
@@ -399,7 +512,11 @@ def occupy_holder_on_hop(
     if existing is not None:
         existing_lane = str(existing.get("lane_thread_id") or "").strip()
         existing_state = str(existing.get("seat_state") or "")
-        if existing_lane and existing_lane != lane and existing_state == "driving":
+        if (
+            existing_lane
+            and existing_lane != lane
+            and existing_state in _OCCUPANCY_STATES
+        ):
             _emit(
                 "cse.holder.occupy_refused",
                 {
@@ -443,6 +560,15 @@ def occupy_holder_on_hop(
         superseded_registration_id=superseded_registration_id,
         superseded_by=new_registration_id or hid,
     )
+    superseded_holders = _union_ids(
+        superseded_holders,
+        _holders_marked_superseded_by(
+            conn,
+            lane,
+            [hid, new_registration_id or ""],
+        ),
+    )
+    superseded_holders = [i for i in superseded_holders if i != hid]
     _emit(
         "cse.holder.occupy",
         {
@@ -926,6 +1052,7 @@ __all__ = [
     "close_owed_wake_on_lane_activity",
     "dispatch_owed_wake_producer1_row",
     "ensure_schema",
+    "HolderLaneConflictError",
     "get_driving_holder_for_lane",
     "get_holder",
     "lookup_holder_for_owed_wake",
