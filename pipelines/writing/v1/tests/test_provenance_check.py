@@ -868,6 +868,44 @@ def test_revision_delta_email_channel_skips_fact_reordered() -> None:
     assert "fact_reordered" in _types(filing_violations)
 
 
+def test_revision_delta_enumeration_vs_range_flagged() -> None:
+    and_to_through = provenance.revision_delta(
+        {"draft": "Attached are Exhibits 2 and 8."},
+        {"draft": "Attached are Exhibits 2 through 8."},
+        channel="filing",
+    )
+    assert "fact_added" in _types(and_to_through)
+    and_to_hyphen = provenance.revision_delta(
+        {"draft": "Attached are Exhibits 2 and 8."},
+        {"draft": "Attached are Exhibits 2-8."},
+        channel="filing",
+    )
+    assert "fact_added" in _types(and_to_hyphen)
+    through_to_and = provenance.revision_delta(
+        {"draft": "Attached are Exhibits 2 through 8."},
+        {"draft": "Attached are Exhibits 2 and 8."},
+        channel="filing",
+    )
+    assert "fact_dropped" in _types(through_to_and)
+
+
+def test_revision_delta_sworn_in_vs_through_non_numeric_flagged() -> None:
+    in_to_through = provenance.revision_delta(
+        {"draft": "I resided there in March 2026."},
+        {"draft": "I resided there through March 2026."},
+        channel="filing",
+    )
+    assert "fact_added" in _types(in_to_through)
+    through_to_in = provenance.revision_delta(
+        {"draft": "I resided there through March 2026."},
+        {"draft": "I resided there in March 2026."},
+        channel="filing",
+    )
+    dropped = [v for v in through_to_in if v.get("type") == "fact_dropped"]
+    assert dropped
+    assert any(v.get("detail") == "through" for v in dropped)
+
+
 _LEG_C_BODY_1 = (
     "I am submitting the attached CCP § 2015.5 Declaration of Kaywan Joseph Mansubi "
     "Regarding Timeliness (Exhibit 1) and Exhibits 2-8 for the reinstatement hearing "

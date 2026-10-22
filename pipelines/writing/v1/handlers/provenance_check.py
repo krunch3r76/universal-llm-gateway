@@ -71,7 +71,6 @@ _FUNCTION_WORDS = frozenset(
         "in",
         "on",
         "so",
-        "through",
     }
 )
 _CLAUSE_DETAIL_MAX = 160
@@ -85,6 +84,16 @@ _CAUSAL_CONNECTIVES_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
+_NUMERIC_RANGE_RE = re.compile(
+    r"(\d)\s*(?:-|–|—|\bthrough\b)\s*(\d)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_numeric_ranges(text: str) -> str:
+    return _NUMERIC_RANGE_RE.sub(r"\1 numrange \2", text)
+
+
 _REQUEST_VERBS = re.compile(
     r"\b(could you|can you|please confirm|please send|would you)\b",
     re.IGNORECASE,
@@ -334,11 +343,15 @@ def _sentences(text: str) -> list[str]:
 
 
 def _tokens(text: str) -> set[str]:
-    return set(_TOKEN.findall(text.lower()))
+    return set(_TOKEN.findall(_normalize_numeric_ranges(text).lower()))
 
 
 def _content_token_seq(text: str, join_words: set[str]) -> tuple[str, ...]:
-    return tuple(tok for tok in _TOKEN.findall(text.lower()) if tok not in join_words)
+    return tuple(
+        tok
+        for tok in _TOKEN.findall(_normalize_numeric_ranges(text).lower())
+        if tok not in join_words
+    )
 
 
 def _clause_pinned(sentence: str, claims: list[Any]) -> bool:
@@ -519,11 +532,13 @@ def derive_v2_clauses_from_audit(
 ) -> list[dict[str, Any]]:
     """Map v2 prose sentences to pin ids using the audit clause pin order."""
     ordered_pins = _pin_order(v1_clauses)
+    had_audit_pins = bool(ordered_pins)
     for pin in pin_ledger or []:
         if isinstance(pin, dict) and pin.get("attested") is True:
-            pid = str(pin.get("pin_id") or "")
-            if pid and pid not in ordered_pins:
-                ordered_pins.append(pid)
+            if not had_audit_pins or pin.get("restate") is True:
+                pid = str(pin.get("pin_id") or "")
+                if pid and pid not in ordered_pins:
+                    ordered_pins.append(pid)
     sentences = _sentences(draft_text)
     if not sentences:
         return []
