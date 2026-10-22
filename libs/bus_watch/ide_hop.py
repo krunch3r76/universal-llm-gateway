@@ -194,6 +194,10 @@ OPERATOR_LOOP = (
     "Where this is going: <next leg>. Who carries it: this seat. "
     "Report again: <when>. "
     "You run the bus. Do not ask the operator to abort, hire, or edit. "
+    "When the operator raises an observation or issue, confirming or describing "
+    "it is never a complete turn: proactively state concrete actions this seat "
+    "can offer and fire in-lock dispatches, fixes, consults, or policy updates "
+    "in the same turn instead of parking on STAY or an empty NOW. "
     "A finished watch with no next leg is not a situation report."
 )
 
@@ -396,7 +400,11 @@ def build_ide_hop_message(
         "STAY = no hop, never = no dispatch.",
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
-        "→ STAY — do not hop.",
+        "→ STAY — do not hop; STAY never permits stopping at confirmation or "
+        "description when the operator raised an observation or issue — proactively "
+        "offer concrete remedial actions (liaison-tick.py --set, live probe, "
+        "friction/todo mint, advisor consult, or cursor-sdk lane=B dispatch) and "
+        "execute in-lock actions in the same turn.",
         "LOAD AND EXECUTE: runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
         peer_house_line,

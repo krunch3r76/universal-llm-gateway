@@ -509,7 +509,7 @@ async def dispatch_cursor_sdk_generate_route(
             else None
         )
         prompt_resolution = None
-        if body.job == "implement" or has_packet:
+        if body.job == "implement" or has_packet or conductor_message is not None:
             source_text = ""
         else:
             prompt_resolution = await resolve_generate_prompt_resolution(
@@ -533,7 +533,8 @@ async def dispatch_cursor_sdk_generate_route(
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
-            model=getattr(body, "model", None), requested_model_pin=requested_model_pin,
+            model=getattr(body, "model", None),
+            requested_model_pin=requested_model_pin,
             subject=None,
             caller_agent=body.caller_agent,
             contract=body.job,
@@ -565,6 +566,7 @@ async def dispatch_cursor_sdk_generate_route(
             prompt_bind_mode=(
                 getattr(body, "prompt_bind_mode", None)
                 or (prompt_resolution.prompt_bind_mode if prompt_resolution else None)
+                or ("explicit_external" if conductor_message is not None else None)
             ),
             source_ref=getattr(body, "source_ref", None),
             dispatch_lane=getattr(body, "dispatch_lane", None),

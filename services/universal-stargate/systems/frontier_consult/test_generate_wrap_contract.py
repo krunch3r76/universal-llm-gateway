@@ -282,6 +282,67 @@ async def test_wrap_route_defensive_packet_path_rejection() -> None:
     assert b"wrap_with_packet_path" in result.body
 
 
+@pytest.mark.asyncio
+@pytest.mark.offline
+async def test_conductor_message_skips_prompt_resolution_and_binds_external(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fail_resolve(**kwargs: object) -> object:
+        raise AssertionError("resolve_generate_prompt_resolution must not run")
+
+    sdk_mock = dispatch_cursor_sdk_generate_mock(
+        autospec=True,
+        return_value={
+            "dispatch_id": "disp-conductor",
+            "thread_id": "19998",
+            "execution_id": "exec-conductor",
+            "status": "admitted",
+        },
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        _fail_resolve,
+    )
+    async def _thread_targets(**kwargs: object) -> tuple[None, None, bool]:
+        return None, None, False
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_cursor_sdk_thread_targets",
+        _thread_targets,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
+        sdk_mock,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.prepare_conductor_packet",
+        lambda **kwargs: GenerateWrapResult(
+            packet_path=None,
+            packet_markdown="# conductor packet\n",
+        ),
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="conductor",
+        seat="cursor-sdk",
+        source_ref="todo:impresario-proactive-offer",
+        dispatch_thread_id="19998",
+        lane="B",
+        caller_agent="cursor",
+    )
+    response = Response()
+    await dispatch_cursor_sdk_generate_route(
+        request_id="req-conductor-markdown",
+        body=body,
+        seat="cursor-sdk",
+        response=response,
+    )
+    sdk_mock.assert_awaited_once()
+    assert sdk_mock.await_args.kwargs["prompt_bind_mode"] == "explicit_external"
+
+
 @pytest.mark.offline
 def test_materialization_threads_bridge_provenance(
     monkeypatch: pytest.MonkeyPatch,

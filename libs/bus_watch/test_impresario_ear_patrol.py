@@ -13,6 +13,9 @@ import pytest
 
 from bus_watch.impresario_ear_common import is_ear_turn, maybe_enqueue_after_hop
 from bus_watch.impresario_ear_patrol import (
+    _TOOL_MUTATION_RE,
+    _passive_issue_confirmation_parked,
+    _transcript_probe,
     clear_patrol_state_for_tests,
     load_patrol_prescreen_inputs,
     patrol_cooldown_active,
@@ -288,3 +291,104 @@ def test_load_patrol_prescreen_inputs_merges_turns_and_tick(tmp_path: Path) -> N
     assert loaded["unmerged_child"] is True
     assert loaded["tick"]["now_row"] == "quiet"
     assert len(loaded["recent_turns"]) == 2
+
+
+_PASSIVE_TAIL = (
+    "Confirmed the stale CP residue drift matches the operator report. "
+    "Going. Stay here until the next push."
+)
+
+
+def test_tool_mutation_re_ignores_read_only_cortex_and_bus() -> None:
+    read_only = (
+        '{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"vortex-code",'
+        '"toolName":"cortex","arguments":{"tool":"entity_get"}}}\n'
+        '{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"vortex-code",'
+        '"toolName":"agent_bus","arguments":{"tool":"mark_read"}}}\n'
+        '{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"vortex-code",'
+        '"toolName":"pipeline","arguments":{"op":"list"}}}'
+    )
+    assert _TOOL_MUTATION_RE.search(read_only) is None
+    mutating = (
+        '{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"vortex-code",'
+        '"toolName":"pipeline","arguments":{"op":"run","pipeline_id":"x"}}}'
+    )
+    assert _TOOL_MUTATION_RE.search(mutating) is not None
+
+
+def test_transcript_probe_scopes_tool_blob_to_latest_assistant_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch import impresario_ear_patrol as patrol_mod
+
+    tid = "probe-scope-test"
+    tdir = tmp_path / tid
+    tdir.mkdir()
+    lines = [
+        json.dumps({"role": "user", "message": {"content": [{"type": "text", "text": "team_dispatch old hop"}]}}),
+        json.dumps(
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "older assistant"},
+                        {
+                            "type": "tool_use",
+                            "name": "CallDynamicTool",
+                            "input": {"toolName": "agent_bus", "tool": "mark_read"},
+                        },
+                    ]
+                },
+            }
+        ),
+        json.dumps({"role": "user", "message": {"content": [{"type": "text", "text": "operator follow-up"}]}}),
+        json.dumps(
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": _PASSIVE_TAIL},
+                    ]
+                },
+            }
+        ),
+    ]
+    (tdir / f"{tid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(patrol_mod, "AGENT_TRANSCRIPTS", tmp_path)
+    tail, tool_blob, _age, _glass = _transcript_probe(tid)
+    assert _PASSIVE_TAIL.split(".")[0] in tail
+    assert tool_blob == ""
+
+
+def test_prescreen_passive_issue_confirmation_parked_imperative(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    for now_row in ("none", "quiet", ""):
+        out = prescreen_house(
+            root_id=_ROOT,
+            transcript_id=_TRANSCRIPT,
+            activity_age_s=999.0,
+            in_flight=0,
+            assistant_tail=_PASSIVE_TAIL,
+            tool_blob="",
+            tick={"now_row": now_row},
+            unmerged_child=True,
+        )
+        assert "passive_issue_confirmation_parked" in out["signals"]
+        assert out["imperative"]
+        assert "NEXT_ADMIT" in out["imperative"]
+        assert out["skip_model"] is False
+
+
+def test_passive_issue_not_fired_when_mutating_tool_blob() -> None:
+    blob = (
+        '{"toolName":"pipeline","op":"run","pipeline_id":"impresario-ear-v1"}'
+    )
+    assert not _passive_issue_confirmation_parked(
+        _PASSIVE_TAIL,
+        in_flight=0,
+        tool_blob=blob,
+        tick={"now_row": "none"},
+    )

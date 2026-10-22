@@ -14,6 +14,7 @@ import pytest
 from bus_watch.digest_budget import POLICY_DEFAULTS
 from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 from bus_watch.ide_hop import (
+    OPERATOR_LOOP,
     build_ide_hop_message,
     cleanup_xvfb_sidebar_on_holder_claim,
     fire_ide_hop,
@@ -60,6 +61,21 @@ def test_in_seat_posture_keeps_in_seat_ladder() -> None:
     assert "no Argon confer" in msg
     assert "outsource regular judgment/design/advice" not in msg
     assert "§ Peer-house:" in msg
+    assert "cursor/gemini-4-argon" not in msg
+
+
+def test_operator_loop_and_hop_message_bind_proactive_offer_on_issue() -> None:
+    assert "confirming or describing" in OPERATOR_LOOP
+    assert "proactively state concrete actions" in OPERATOR_LOOP
+    msg = build_ide_hop_message(
+        "17934",
+        row="quiet",
+        arm_labels=[],
+        register="attended",
+        judgment_posture="in_seat",
+    )
+    assert "advisor consult" in msg
+    assert "proactively offer concrete remedial actions" in msg
     assert "cursor/gemini-4-argon" not in msg
 
 

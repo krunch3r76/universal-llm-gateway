@@ -29,9 +29,55 @@ PATROL_INTERVAL_S = float(os.environ.get("IMPRESARIO_EAR_PATROL_INTERVAL_S", "90
 PATROL_COOLDOWN_S = float(os.environ.get("IMPRESARIO_EAR_PATROL_COOLDOWN_S", "600"))
 _ACTIVITY_GRACE_S = 45.0
 _TOOL_MUTATION_RE = re.compile(
-    r"team_dispatch|(?:CallDynamicTool.*?(team_dispatch|pipeline|agent_bus))"
-    r"|(?:toolName[\"']?\s*:\s*[\"'](team_dispatch|pipeline|agent_bus))",
-    re.I,
+    r"^(?!.*GetDynamicTools)(?:"
+    r"[^\n]*\bteam_dispatch\b"
+    r"|(?=[^\n]*\"toolName\"\s*:\s*\"pipeline\")(?=[^\n]*\"op\"\s*:\s*\"run\")[^\n]+"
+    r"|(?=[^\n]*\"toolName\"\s*:\s*\"agent_bus\")(?!.*\"tool\"\s*:\s*\"(?:mark_read|get|fetch|fetch_unread|threads|thread_get|wait)\")[^\n]+"
+    r"|(?=[^\n]*\"toolName\"\s*:\s*\"cortex\")(?=[^\n]*\"tool\"\s*:\s*\"(?:friction|assert|entity_create|entity_update)\")[^\n]+"
+    r"|[^\n]*liaison-tick\.py[^\n]*--set"
+    r"|(?![^\n]*\"toolName\"\s*:\s*\"fs\")[^\n]*\bcortex\s*\([^\n]*(?:friction|assert|entity_create|entity_update)"
+    r"|[^\n]*\bpipeline\s*\([^\n]*\bop\s*=\s*[\"']run[\"']"
+    r"|[^\n]*\bagent_bus\s*\([^\n]*\btool\s*=\s*[\"'](?:send|reply|post|resolve|request|create_thread|close)[\"']"
+    r")",
+    re.I | re.M,
+)
+_ISSUE_CONFIRM_RE = re.compile(
+    r"(?i)\b(?:"
+    r"confirmed|confirming|stale\s+cp|stale\s+residue|unverified|defect|bug|drift|"
+    r"mismatch(?:es)?|overrid(?:e|den)|missed\s+degraded|missed\s+wake|root\s+cause|"
+    r"reproduced|died\s+at|has\s+no\s+attribute|does\s+not\s+prove|wrong\s+stop|"
+    r"did\s+not\s+stick|does\s+not\s+match|fast=false|checks_failed|"
+    r"stated_intent_no_write|provider\s+connection\s+error|unsubscribed"
+    r")\b"
+)
+_PASSIVE_PARK_CLOSE_RE = re.compile(
+    r"(?i)(?:"
+    r"going\s*[.:—-]\s*stay\s+here|"
+    r"\*\*going\.\*\*\s*stay\s+here|"
+    r"\bstay\s+here\b|"
+    r"\bidle\s+until\s+next\s+wake\b|"
+    r"\bidle\s+until\s+(?:the\s+next|a\s+land)\b|"
+    r"\bnow\s+is\s+(?:empty|quiet|none)\b[^\n]*\b(?:stay|idle)\b|"
+    r"\bthe\s+house\s+stays\s+(?:clear|seated)\b|"
+    r"\bi\s+am\s+not\s+admitting\s+a\s+conductor\b|"
+    r"\bno\s+timer\s+(?:is\s+)?armed\b|"
+    r"\bdid\s+not\s+re-run\s+[^\n]*\btonight\b|"
+    r"\bwait(?:ing|s)?\s+(?:on|for)\s+the\s+next\s+push\b"
+    r")"
+)
+_EXPLICIT_ACTION_OFFER_RE = re.compile(
+    r"(?i)(?:"
+    r"\bi\s+can\s+(?:offer|dispatch|run|update|mint|file|fix|reconcile)\b|"
+    r"\bconcrete\s+actions?\s+(?:i\s+can|this\s+seat\s+can|to)\s+(?:offer|take)\b|"
+    r"\boptions\s+to\s+proceed\b|"
+    r"\bnext_admit\s*:"
+    r")"
+)
+_PASSIVE_ISSUE_IMPERATIVE = (
+    "NEXT_ADMIT: state concrete remedial actions for the confirmed operator "
+    "issue and execute in-lock (liaison-tick.py --set, live probe, "
+    "friction/todo mint, advisor consult, or cursor-sdk lane=B dispatch) — "
+    "do not park on Going. Stay here."
 )
 _HOP_FAILED_RE = re.compile(
     r"(?i)(?:phase=keystroke|hop.{0,48}(?:fail|refus|stranded)|debug_unreachable|"
@@ -174,15 +220,24 @@ def _transcript_probe(
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return "", "", activity_age_s, None
+    seen_assistant = False
     for raw in reversed(lines[-80:]):
         try:
             row = json.loads(raw)
         except json.JSONDecodeError:
-            tool_parts.append(raw)
+            if not seen_assistant:
+                tool_parts.append(raw)
             continue
         role = row.get("role")
+        if role == "user":
+            if seen_assistant:
+                break
+            continue
+        if role != "assistant":
+            continue
+        seen_assistant = True
         content = (row.get("message") or {}).get("content") or []
-        if role == "assistant" and not tail:
+        if not tail:
             text_chunks = [
                 str(block.get("text") or "")
                 for block in content
@@ -192,10 +247,11 @@ def _transcript_probe(
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "tool_use":
+            if (
+                block.get("type") == "tool_use"
+                and block.get("name") != "GetDynamicTools"
+            ):
                 tool_parts.append(json.dumps(block, default=str))
-            elif block.get("type") == "text":
-                tool_parts.append(str(block.get("text") or ""))
     return tail, "\n".join(tool_parts), activity_age_s, None
 
 
@@ -245,15 +301,19 @@ def load_patrol_prescreen_inputs(
     tick_path = (watch_dir or WATCH_DIR) / f"liaison-{root_id}.tick.json"
     tick_state = read_state(tick_path)
     policy = effective_policy(tick_state)
-    tick = {"now_row": str(policy.get("now_row") or ""), "ready": tick_state.get("ready")}
+    tick = {
+        "now_row": str(policy.get("now_row") or ""),
+        "ready": tick_state.get("ready"),
+    }
     tail, tool_blob, activity_age_s, _glass = _transcript_probe(transcript_id)
+    has_transcript = bool(tail)
     if not tail and recent_turns:
         for turn in reversed(recent_turns[-3:]):
             role = str(turn.get("role") or turn.get("from_agent") or "")
             if role in {"assistant", "cursor", "grok-bot", "insyncerator"}:
                 tail = str(turn.get("body") or turn.get("content") or "")
                 break
-    if not tool_blob and recent_turns:
+    if not has_transcript and not tool_blob and recent_turns:
         tool_blob = "\n".join(
             str(t.get("body") or t.get("content") or "") for t in recent_turns[-5:]
         )
@@ -302,9 +362,55 @@ def _assistant_tail_hash(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _promised_act_not_fired(
-    tail: str, *, in_flight: int, tool_blob: str
+def _passive_issue_confirmation_parked(
+    tail: str,
+    *,
+    in_flight: int,
+    tool_blob: str,
+    tick: dict[str, Any] | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> bool:
+    if in_flight > 0 or not tail.strip():
+        return False
+    if _TOOL_MUTATION_RE.search(tool_blob):
+        return False
+    if _EXPLICIT_ACTION_OFFER_RE.search(tail):
+        return False
+    tick_row = str((tick or {}).get("now_row") or "").strip().lower()
+    if tick_row not in {"", "quiet", "none"}:
+        return False
+    issue_in_tail = bool(_ISSUE_CONFIRM_RE.search(tail))
+    if not issue_in_tail and recent_turns:
+        for turn in recent_turns:
+            if is_ear_turn(turn):
+                continue
+            sender = str(
+                turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
+            ).lower()
+            body = str(
+                turn.get("body") or turn.get("content") or turn.get("subject") or ""
+            )
+            if sender in {"operator", "kaywan", "user"} or "operator" in sender:
+                if _ISSUE_CONFIRM_RE.search(body):
+                    issue_in_tail = True
+                    break
+            if sender and sender not in {"impresario-ear", "assistant", "cursor"}:
+                break
+    if not issue_in_tail:
+        return False
+    parked = bool(_PASSIVE_PARK_CLOSE_RE.search(tail))
+    if not parked:
+        parked = bool(
+            re.search(
+                r"(?i)\b(?:going\s*[.:—-]\s*stay|stay\s+here|idle\s+until|"
+                r"wait(?:ing|s)?\s+(?:on|for)\s+the\s+next)\b",
+                tail,
+            )
+        )
+    return parked
+
+
+def _promised_act_not_fired(tail: str, *, in_flight: int, tool_blob: str) -> bool:
     if in_flight > 0:
         return False
     if _TOOL_MUTATION_RE.search(tool_blob):
@@ -349,6 +455,14 @@ def prescreen_house(
     tick_row = str((tick or {}).get("now_row") or "")
     if tick_row == "quiet" and (unmerged_child or signals):
         signals.append("false_quiet_with_pending_work")
+    if _passive_issue_confirmation_parked(
+        tail,
+        in_flight=in_flight,
+        tool_blob=tool_blob,
+        tick=tick,
+        recent_turns=recent_turns,
+    ):
+        signals.append("passive_issue_confirmation_parked")
     if recent_turns:
         for turn in recent_turns:
             if is_ear_turn(turn):
@@ -361,10 +475,23 @@ def prescreen_house(
     assistant_hash = hashlib.sha256(tail.encode()).hexdigest() if tail else ""
     fp = _fingerprint(root_id, transcript_id, assistant_hash)
     if patrol_cooldown_active(fp):
-        return {"skip_model": True, "signals": signals, "reason": "cooldown", "fingerprint": fp}
+        return {
+            "skip_model": True,
+            "signals": signals,
+            "reason": "cooldown",
+            "fingerprint": fp,
+        }
     imperative = ""
-    if "7139b60" in tail or unmerged_child:
-        imperative = "team_dispatch review lane commit 7139b60 — do not stop at narration"
+    if "7139b60" in tail:
+        imperative = (
+            "team_dispatch review lane commit 7139b60 — do not stop at narration"
+        )
+    elif "passive_issue_confirmation_parked" in signals:
+        imperative = _PASSIVE_ISSUE_IMPERATIVE
+    elif unmerged_child:
+        imperative = (
+            "team_dispatch review lane commit 7139b60 — do not stop at narration"
+        )
     return {
         "skip_model": len(signals) == 0,
         "signals": signals,
@@ -460,14 +587,20 @@ async def patrol_prescreen_for_evaluate(
     tick_path = WATCH_DIR / f"liaison-{root}.tick.json"
     tick_state = read_state(tick_path)
     policy = effective_policy(tick_state)
-    tick = {"now_row": str(policy.get("now_row") or ""), "ready": tick_state.get("ready")}
+    tick = {
+        "now_row": str(policy.get("now_row") or ""),
+        "ready": tick_state.get("ready"),
+    }
     tail, tool_blob, activity_age_s, _glass = _transcript_probe(transcript_id)
+    has_transcript = bool(tail)
     if not tail and recent_turns:
         for turn in reversed(recent_turns[-3:]):
             role = str(turn.get("role") or turn.get("from_agent") or "")
             if role in {"assistant", "cursor", "grok-bot", "insyncerator"}:
                 tail = str(turn.get("body") or turn.get("content") or "")
                 break
+    if not has_transcript and not tool_blob and isinstance(jsonl, dict):
+        tool_blob = json.dumps(jsonl, default=str)[:8000]
     return prescreen_house(
         root_id=root,
         transcript_id=transcript_id,
@@ -475,7 +608,7 @@ async def patrol_prescreen_for_evaluate(
         activity_age_s=activity_age_s,
         in_flight=_in_flight_for_root(root),
         assistant_tail=tail,
-        tool_blob=tool_blob or json.dumps(jsonl, default=str)[:8000],
+        tool_blob=tool_blob,
         tick=tick,
         hop_failed=_detect_hop_failed(recent_turns, tick_state),
         unmerged_child=_detect_unmerged_child(recent_turns),

@@ -204,6 +204,60 @@ async def test_evaluate_prompt_includes_verdict_instructions() -> None:
     assert "DIAGNOSIS:" in msg
     assert "STEER:" in msg
     assert "NEXT_ADMIT:" in msg
+    assert "passive confirmation" in msg.lower() or "confirming, describing" in msg
+
+
+@pytest.mark.asyncio
+async def test_evaluate_patrol_forwards_prescreen_signals_to_prompt() -> None:
+    pre = {
+        "skip_model": False,
+        "signals": ["passive_issue_confirmation_parked"],
+        "imperative": "NEXT_ADMIT: liaison-tick.py --set",
+    }
+    generate = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT})
+    poll = AsyncMock(return_value={"terminal": True, "status": "completed"})
+    harvest = AsyncMock(return_value="VERDICT: remiss_duty")
+    await evaluate_impresario_ear(
+        resolve={
+            "skip": False,
+            "root_thread": _ROOT,
+            "mode": "patrol",
+            "trigger": "patrol",
+        },
+        gather={"jsonl": {}},
+        options={"patrol_prescreen_result": pre},
+        sdk_generate=generate,
+        sdk_poll=poll,
+        sdk_harvest=harvest,
+    )
+    msg = generate.await_args.kwargs["message_text"]
+    assert "passive_issue_confirmation_parked" in msg
+    assert pre["imperative"] in msg
+
+
+def test_prompts_yaml_and_build_evaluate_prompt_passive_remiss_parity() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    from pipelines.impresario_ear.v1.handlers.evaluate import _build_evaluate_prompt
+
+    prompts_path = Path(__file__).resolve().parent / "prompts.yaml"
+    prompts = yaml.safe_load(prompts_path.read_text(encoding="utf-8"))
+    evaluate_prompt = prompts["prompts"]["impresario_ear.v1.evaluate"]
+    blob = (
+        evaluate_prompt["system_prompt"] + evaluate_prompt["template"]
+    ).lower()
+    assert "remiss_duty" in blob
+    assert "stay" in blob
+    built = _build_evaluate_prompt(
+        root_thread=_ROOT,
+        mode="patrol",
+        trigger="patrol",
+        gather={"jsonl": {}},
+    ).lower()
+    assert "remiss_duty" in built
+    assert "confirming, describing" in built
 
 
 @pytest.mark.asyncio
