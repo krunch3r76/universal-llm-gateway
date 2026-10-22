@@ -269,6 +269,9 @@ def _relay_client(
     except OSError:
         client.close()
         return
+    # create_connection leaves the connect timeout installed. Idle CDP
+    # sessions must not die when upstream is silent longer than that dial.
+    upstream.settimeout(None)
     left = threading.Thread(target=_pump, args=(client, upstream), daemon=True)
     right = threading.Thread(target=_pump, args=(upstream, client), daemon=True)
     left.start()

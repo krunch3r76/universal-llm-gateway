@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ipaddress
 import socket
+import threading
+import time
 from pathlib import Path
 
 import pytest
 import yaml
 
 from cursor_bridge.cdp_gateway_forwarder import (
+    GATEWAY_HOST,
     _handle_accepted_client,
     _relay_client,
     allowed_cdp_peers,
@@ -241,6 +245,62 @@ def test_upstream_down_closes_client_without_raising() -> None:
 
     _relay_client(client, 9338, connect=fail_connect)  # type: ignore[arg-type]
     assert client.closed is True
+
+
+def test_relay_survives_upstream_silence_past_connect_timeout() -> None:
+    client, client_side = socket.socketpair()
+    upstream, upstream_side = socket.socketpair()
+    connect_timeout = 0.05
+
+    def stub_connect(*_args: object, **_kwargs: object) -> socket.socket:
+        upstream_side.settimeout(connect_timeout)
+        return upstream_side
+
+    relay = threading.Thread(
+        target=_relay_client,
+        args=(client_side, 9338),
+        kwargs={"connect": stub_connect},
+        daemon=True,
+    )
+    client_payload = b"from-client"
+    upstream_payload = b"from-upstream"
+    client.settimeout(2.0)
+    upstream.settimeout(2.0)
+    try:
+        relay.start()
+        client.sendall(client_payload)
+        assert upstream.recv(65536) == client_payload
+        time.sleep(connect_timeout * 4)
+        delivered = b""
+        try:
+            upstream.sendall(upstream_payload)
+            delivered = client.recv(65536)
+        except OSError:
+            delivered = b""
+        assert delivered == upstream_payload
+    finally:
+        for sock in (client, upstream, client_side, upstream_side):
+            try:
+                sock.close()
+            except OSError:
+                pass
+        relay.join(timeout=2.0)
+    assert not relay.is_alive()
+
+
+def test_compose_pin_matches_allowlist_and_gateway() -> None:
+    loaded = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    pin = loaded["services"]["mcp-server"]["networks"]["default"]["ipv4_address"]
+    env = loaded["services"]["cdp-gateway-forwarder"]["environment"]
+    allowed = frozenset(
+        item.split("=", 1)[1]
+        for item in env
+        if isinstance(item, str) and item.startswith("CDP_GATEWAY_ALLOWED_PEERS=")
+    )
+    assert is_allowed_cdp_peer(pin, allowed=allowed)
+    ipam = loaded["networks"]["default"]["ipam"]["config"][0]
+    assert ipam["gateway"] == GATEWAY_HOST
+    assert ipaddress.ip_address(pin) in ipaddress.ip_network(ipam["subnet"])
 
 
 def test_compose_publishes_gateway_forwarder_not_mcp_host_network() -> None:
