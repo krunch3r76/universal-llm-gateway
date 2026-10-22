@@ -218,6 +218,7 @@ async function resolveCatalog(modelConfigService, label) {
 }
 """
 
+
 APPLY_HOUSE_KNOBS_FN = r"""
 function applyHouseKnobs(cat, knobs) {
   if (!cat || !cat.modelId || !knobs || typeof knobs !== 'object') return cat;
@@ -252,7 +253,6 @@ def launch_new_agent_tab_js(
     """CDP expression: create agent tab, set model from label plus house knobs, submit."""
     msg = json.dumps(message)
     mq = json.dumps(str(model_query or "").strip())
-    label_set = bool(str(model_query or "").strip())
     if model_knobs is not None:
         knobs_line = f"  const houseKnobs = {json.dumps(model_knobs)};\n"
     else:
@@ -272,7 +272,7 @@ def launch_new_agent_tab_js(
         f"{mq};\n"
         f"{knobs_line}"
         "  const anchor = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"]')"
-        " || document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');\n"
+        ' || document.querySelector(\'[aria-label="Prompt"][contenteditable="true"]\');\n'
         "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"
         "  const byId = glassServiceMap(anchor);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
@@ -358,7 +358,7 @@ def launch_new_agent_tab_js(
         "    }\n"
         "  }\n"
         "  const prompt = document.querySelector(\n"
-        "    '[aria-label=\"Prompt\"][contenteditable=\"true\"][data-sidebar-file-drop-editor-agent-id=\"' + agentId + '\"]'\n"
+        '    \'[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="\' + agentId + \'"]\'\n'
         "  );\n"
         "  const hasDomEditor = prompt && prompt.editor && prompt.editor.commands;\n"
         "  const stale = /^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(String(text || '').trim());\n"
@@ -425,7 +425,7 @@ def probe_glass_composer_budget_js(transcript_id: str) -> str:
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"  const agentId = {tid};\n"
         "  const anchor = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"]')"
-        " || document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');\n"
+        ' || document.querySelector(\'[aria-label="Prompt"][contenteditable="true"]\');\n'
         "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"
         "  const byId = glassServiceMap(anchor);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
@@ -469,7 +469,7 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         f"  const scopedId = {aid};\n"
         "  let agentId = scopedId;\n"
         "  if (!agentId) {\n"
-        "    const activeRow = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"][data-active=\"true\"]')\n"
+        '    const activeRow = document.querySelector(\'[data-perf-id="glass-sidebar-agent-row"][data-active="true"]\')\n'
         "      || document.querySelector('.ui-sidebar-menu-button-trigger[aria-current=\"page\"]')\n"
         "        ?.closest('[data-perf-id=\"glass-sidebar-agent-row\"]');\n"
         "    if (activeRow) {\n"
@@ -478,8 +478,8 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "    }\n"
         "  }\n"
         "  const promptSel = agentId\n"
-        "    ? '[aria-label=\"Prompt\"][contenteditable=\"true\"][data-sidebar-file-drop-editor-agent-id=\"' + agentId + '\"]'\n"
-        "    : '[aria-label=\"Prompt\"][contenteditable=\"true\"]';\n"
+        '    ? \'[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="\' + agentId + \'"]\'\n'
+        '    : \'[aria-label="Prompt"][contenteditable="true"]\';\n'
         "  const prompt = document.querySelector(promptSel);\n"
         "  const anchor = document.querySelector('[data-perf-id=\"glass-sidebar-agent-row\"]') || prompt;\n"
         "  if (!anchor) return {ok: false, reason: 'no_anchor'};\n"

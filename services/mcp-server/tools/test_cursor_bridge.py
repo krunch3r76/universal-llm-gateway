@@ -111,7 +111,9 @@ def test_wake_tab_requires_body() -> None:
     [(":8", "http://127.0.0.1:9338"), ("orion-node", "http://127.0.0.1:19338")],
 )
 def test_rename_tab_calls_sidebar_rename(gui_host: str, expected_origin: str) -> None:
-    with patch("cursor_bridge.bridge_glass_relay.rename_agent_row_in_sidebar") as rename:
+    with patch(
+        "cursor_bridge.bridge_glass_relay.rename_agent_row_in_sidebar"
+    ) as rename:
         rename.return_value = {"ok": True, "new_title": "t"}
         out = _rename_tab(gui_host=gui_host, agent_id="aid", title="new title")
     rename.assert_called_once_with("aid", "new title", debug_url=expected_origin)
@@ -137,7 +139,9 @@ def test_rename_tab_requires_agent_id_and_title() -> None:
 def test_prune_sidebar_calls_predecessor_prune(
     gui_host: str, expected_origin: str
 ) -> None:
-    with patch("cursor_bridge.bridge_glass_relay.prune_cursor_agents_predecessors") as prune:
+    with patch(
+        "cursor_bridge.bridge_glass_relay.prune_cursor_agents_predecessors"
+    ) as prune:
         prune.return_value = {"ok": True, "archived": []}
         out = _prune_sidebar(gui_host=gui_host, thread="18528", agent_id="keep-me")
     prune.assert_called_once_with(

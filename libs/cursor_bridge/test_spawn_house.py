@@ -102,9 +102,7 @@ def test_spawn_house_subscription_before_launch_order(tmp_path: Path) -> None:
         ),
         patch("cursor_bridge.spawn_house.WATCH_DIR", tmp_path),
     ):
-        out = spawn_house(
-            slug="m", prompt="go", agent_id="a1", watch_dir=tmp_path
-        )
+        out = spawn_house(slug="m", prompt="go", agent_id="a1", watch_dir=tmp_path)
     assert out["ok"] is True
     assert order == ["subscribe", "launch"]
     tick = tmp_path / "liaison-19500.tick.json"

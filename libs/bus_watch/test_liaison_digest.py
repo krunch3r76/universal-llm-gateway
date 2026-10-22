@@ -328,8 +328,7 @@ def test_hop_cap_tracks_policy_override() -> None:
         patch("bus_watch.liaison_digest._bus") as mock_bus,
     ):
         mock_bus.return_value.__enter__.return_value = MagicMock()
-        digest = build_digest(
-            "10479", digest_state, register="autonomous"        )
+        digest = build_digest("10479", digest_state, register="autonomous")
     assert digest["hop_cap"]["max_hops_per_night"] == 16
     assert digest["hop_cap"]["lock_hops_scope"] == "root"
     assert "lock_hops" in digest["hop_cap"]
@@ -564,12 +563,10 @@ def test_checkpoint_observed_advances_epoch_and_clears_due(
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=None)
     mock_root_surface.return_value = ([], None, [])
     state: dict = {"ticks": 5, "last_cp_tick": 0, "last_cp_turn": 0, "policy": {}}
-    due_before = build_digest(
-        "10479", state, register="autonomous"    )
+    due_before = build_digest("10479", state, register="autonomous")
     assert due_before["checkpoint_due"] is True
     mock_root_surface.return_value = ([], 50, [])
-    due_after = build_digest(
-        "10479", state, register="autonomous"    )
+    due_after = build_digest("10479", state, register="autonomous")
     assert state["last_cp_turn"] == 50
     assert state["last_cp_tick"] == 7
     assert due_after["checkpoint_due"] is False
@@ -858,7 +855,10 @@ def test_absorb_operator_edits_unions_relayed_watchers(tmp_path) -> None:  # noq
             "fingerprint": "disk-fp",
         },
     )
-    loop_state = {"relayed_watchers": ["b.json"], "last_tick_at": "2026-10-18T19:00:00Z"}
+    loop_state = {
+        "relayed_watchers": ["b.json"],
+        "last_tick_at": "2026-10-18T19:00:00Z",
+    }
     changed = absorb_operator_edits(loop_state, path)
     assert "a.json" in loop_state["relayed_watchers"]
     assert "b.json" in loop_state["relayed_watchers"]
