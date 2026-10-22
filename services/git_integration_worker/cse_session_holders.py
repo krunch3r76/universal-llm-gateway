@@ -9,7 +9,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from claude_bundles.cse_url import normalize_cse_url
@@ -104,7 +104,7 @@ def resolve_nest_parent(
     return row
 
 
-class RemoteUpsert(str, Enum):
+class RemoteUpsert(StrEnum):
     """Outcome of ``upsert_holder_remote`` (one POST, no retry)."""
 
     OK = "ok"
