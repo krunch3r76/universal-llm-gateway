@@ -23,6 +23,6 @@ models:
     model: qwen3-5-9b-q8-0-131072
 seat_fallback:
   review:
-    - deepseek-r1-distill-qwen-14b-q8-0-65536
     - openai/gpt-5.4-mini
+    - deepseek-r1-distill-qwen-14b-q8-0-65536
     - xai/grok-4-fast-non-reasoning

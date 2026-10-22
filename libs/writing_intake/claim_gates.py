@@ -332,10 +332,6 @@ def resolve_claim_provenance(
         if _matches_note(claim, src):
             return "document"
     if _EXHIBIT_CITE_RE.search(claim):
-        for answer in intake_answers:
-            if _matches_note(claim, answer):
-                return "intake_answer"
-    if _EXHIBIT_CITE_RE.search(claim):
         return "document"
     return "prior_draft_only"
 

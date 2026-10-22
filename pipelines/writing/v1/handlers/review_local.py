@@ -18,7 +18,11 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 
-from .independence import load_review_fallback_models, load_writing_models
+from .independence import (
+    is_independent,
+    load_review_fallback_models,
+    load_writing_models,
+)
 from .review_schema import REVIEW_RESULT_SCHEMA
 from .seat_dispatch import _prompts
 
@@ -76,17 +80,21 @@ class WritingReviewLocalHandler(BaseHandler):
         prompt = PromptBuilder().render(str(row.get("template") or ""), fields)
         prompt = prompt.rstrip() + "\n" + _JSON_ONLY
         system = str(row.get("system_prompt") or "")
+        independence = outputs.get("independence")
+        independence_json = (
+            independence.get("json")
+            if isinstance(independence, dict)
+            else getattr(independence, "json", None)
+        )
+        writer_model = ""
+        if isinstance(independence_json, dict) and independence_json.get("writer_model"):
+            writer_model = str(independence_json["writer_model"])
+        elif isinstance(draft, dict):
+            writer_model = str(draft.get("model_id") or draft.get("model") or "")
+        used_model = ""
         try:
             if self._caller is not None:
-                content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
-            else:
                 models = load_writing_models()
-                independence = outputs.get("independence")
-                independence_json = (
-                    independence.get("json")
-                    if isinstance(independence, dict)
-                    else getattr(independence, "json", None)
-                )
                 primary = ""
                 if isinstance(independence_json, dict) and independence_json.get(
                     "reviewer_model"
@@ -94,7 +102,34 @@ class WritingReviewLocalHandler(BaseHandler):
                     primary = str(independence_json["reviewer_model"])
                 if not primary:
                     primary = models.get("reviewer") or models.get("verifier") or ""
-                candidates = [primary, *load_review_fallback_models()]
+                raw_candidates = [primary, *load_review_fallback_models()]
+                candidates = [
+                    c
+                    for c in raw_candidates
+                    if c
+                    and (not writer_model or is_independent(writer_model, c))
+                ]
+                if primary and primary in candidates:
+                    used_model = primary
+                elif candidates:
+                    used_model = candidates[0]
+                content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
+            else:
+                models = load_writing_models()
+                primary = ""
+                if isinstance(independence_json, dict) and independence_json.get(
+                    "reviewer_model"
+                ):
+                    primary = str(independence_json["reviewer_model"])
+                if not primary:
+                    primary = models.get("reviewer") or models.get("verifier") or ""
+                raw_candidates = [primary, *load_review_fallback_models()]
+                candidates = [
+                    c
+                    for c in raw_candidates
+                    if c
+                    and (not writer_model or is_independent(writer_model, c))
+                ]
                 seen: set[str] = set()
                 content = None
                 last_exc: BaseException | None = None
@@ -114,6 +149,7 @@ class WritingReviewLocalHandler(BaseHandler):
                             json_schema=REVIEW_RESULT_SCHEMA,
                         )
                         content = result.content
+                        used_model = model_id
                         break
                     except Exception as exc:  # noqa: BLE001 — try fallback chain
                         last_exc = exc
@@ -132,4 +168,7 @@ class WritingReviewLocalHandler(BaseHandler):
         if "clauses" not in parsed:
             parsed = dict(parsed)
             parsed["clauses"] = []
+        if used_model:
+            parsed = dict(parsed)
+            parsed.setdefault("reviewer_model", used_model)
         return _step(parsed)

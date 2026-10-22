@@ -11,7 +11,11 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.claim_gates import check_class_for_channel
 from writing_intake.fact_inventory import run_drift_check
 
-from .email_envelope import polish_email_draft
+from .email_envelope import (
+    email_restate_pin_satisfied,
+    has_email_subject,
+    polish_email_draft,
+)
 
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",
@@ -762,6 +766,32 @@ class WritingProvenanceCheckHandler(BaseHandler):
             violations = [_violation("draft_unparseable", None, "malformed")]
         else:
             violations = check_provenance(ledger, parsed, verifier_clauses)
+            if str(channel or "") == "email":
+                draft_body = str(parsed.get("draft") or "")
+                for pin in ledger:
+                    if not isinstance(pin, dict):
+                        continue
+                    if pin.get("restate") is True and pin.get("attested") is True:
+                        excerpt = str(pin.get("excerpt") or "")
+                        if excerpt and not email_restate_pin_satisfied(
+                            draft_body, excerpt
+                        ):
+                            violations.append(
+                                _violation(
+                                    "restate_pin_missing",
+                                    str(pin.get("pin_id")),
+                                    excerpt[:120],
+                                )
+                            )
+                if not has_email_subject(draft_body):
+                    violations.append(
+                        _violation(
+                            "email_subject_missing",
+                            None,
+                            "Email draft lacks a Subject: line and intake did not "
+                            "provide sufficient subject fields.",
+                        )
+                    )
             if max_chars is not None or channel is not None:
                 violations.extend(
                     check_fact_ceiling(

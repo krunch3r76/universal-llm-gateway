@@ -15,7 +15,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from .email_envelope import email_draft_penalty
+from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
 
@@ -47,7 +47,12 @@ def _pin_tokens(pin: dict[str, Any]) -> set[str]:
     return _normalize_tokens(excerpt)
 
 
-def _score_draft(draft_text: str, attested_pins: list[dict[str, Any]]) -> int:
+def _score_draft(
+    draft_text: str,
+    attested_pins: list[dict[str, Any]],
+    *,
+    channel: str = "",
+) -> int:
     """Count attested pins whose anchor tokens are all present in the draft.
 
     A pin with an empty excerpt does not score. The count is the fact
@@ -56,6 +61,11 @@ def _score_draft(draft_text: str, attested_pins: list[dict[str, Any]]) -> int:
     draft_tokens = _normalize_tokens(draft_text)
     score = 0
     for pin in attested_pins:
+        excerpt = str(pin.get("excerpt") or "")
+        if channel == "email" and pin.get("restate") is True and excerpt:
+            if email_restate_pin_satisfied(draft_text, excerpt):
+                score += 1
+            continue
         anchors = _pin_tokens(pin)
         if anchors and anchors <= draft_tokens:
             score += 1
@@ -206,13 +216,22 @@ class WritingDraftSelectorHandler(BaseHandler):
                     "draft": text,
                     "model_id": model_id,
                     "family": model_family(str(model_id)),
-                    "score": _score_draft(text, attested),
+                    "score": _score_draft(text, attested, channel=channel),
                     "voice_bonus": 1 if _FIRST_PERSON.search(text) else 0,
                     "email_penalty": email_draft_penalty(
                         text,
                         channel=channel,
                         signer=signer,
                         standing_limits=standing_limits,
+                        recipient=str(
+                            assemble_json.get("recipient")
+                            or (
+                                intake.get("recipient")
+                                if isinstance(intake, dict)
+                                else ""
+                            )
+                            or ""
+                        ),
                     ),
                     "signer_band": _signer_band(text, signer),
                     "rejected": "unresolved_need" if unresolved_need else None,

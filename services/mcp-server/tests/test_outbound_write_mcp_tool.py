@@ -60,6 +60,32 @@ def test_outbound_write_intake_coerces_fact_sources_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_outbound_write_forwards_signer_standing_limits_voice_anchor() -> None:
+    with patch("tools.pipeline._pipeline_run") as run:
+        run.return_value = {"ok": True}
+        with patch("tools.pipeline._refresh_pipeline_timeouts"):
+            mcp = FastMCP("outbound-write-signer")
+            register_pipeline_tools(mcp)
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "outbound_write",
+                {
+                    "verbatim_notes": ["Fact A"],
+                    "recipient": "Ada",
+                    "objective": "Status",
+                    "channel": "email",
+                    "signer": "Ada Lovelace",
+                    "standing_limits": "Plain and brief.",
+                    "voice_anchor": "formal",
+                },
+            )
+        intake = run.call_args.kwargs["options"]["intake"]
+        assert intake["signer"] == "Ada Lovelace"
+        assert intake["standing_limits"] == "Plain and brief."
+        assert intake["voice_anchor"] == "formal"
+
+
+@pytest.mark.asyncio
 async def test_outbound_write_forwards_extended_intake_fields() -> None:
     with patch("tools.pipeline._pipeline_run") as run:
         run.return_value = {"ok": True}

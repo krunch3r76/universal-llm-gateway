@@ -141,6 +141,68 @@ def test_review_transport_error_keeps_draft_v1() -> None:
     )
 
 
+def test_review_local_skips_same_family_transport_fallback(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _fake_call_model(
+        _self: object,
+        model_id: str,
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        calls.append(model_id)
+        if model_id == "openai/gpt-5.4-mini":
+            raise httpx.ConnectError("simulated")
+        return type(
+            "Result",
+            (),
+            {
+                "content": (
+                    '{"findings": [], "verdict": "ship", "clauses": [{"text": "x"}]}'
+                )
+            },
+        )()
+
+    monkeypatch.setattr(
+        review_local.WritingReviewLocalHandler,
+        "_call_model",
+        _fake_call_model,
+    )
+    qwen = "qwen3-5-9b-q8-0-131072"
+    base = {
+        "assemble": _Out({"documents_block": "", "brief_block": "", "refused": None}),
+        "draft": _Out({"draft": "Backed.", "model_id": qwen}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "independence": "full",
+                "writer_model": qwen,
+                "reviewer_model": "openai/gpt-5.4-mini",
+            }
+        ),
+    }
+    parsed = asyncio.run(
+        review_local.WritingReviewLocalHandler().execute(
+            _Step("fact_ceiling_audit"), _Ctx(base)
+        )
+    ).json
+    assert parsed["reviewer_model"] == "xai/grok-4-fast-non-reasoning"
+    assert "deepseek-r1-distill-qwen-14b-q8-0-65536" not in calls
+    assert calls[0] == "openai/gpt-5.4-mini"
+    assert calls[-1] == "xai/grok-4-fast-non-reasoning"
+
+    outputs = {
+        **base,
+        "fact_ceiling_audit": _Out(parsed),
+        "provenance_check": _Out({"violations": [], "pass": True, "drift_check": {}}),
+    }
+    envelope = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert envelope["review"]["independence"] == "full"
+    assert envelope["seats_used"]["reviewer"] == "xai/grok-4-fast-non-reasoning"
+
+
 def test_review_local_call_receives_schema() -> None:
     seen: dict = {}
 

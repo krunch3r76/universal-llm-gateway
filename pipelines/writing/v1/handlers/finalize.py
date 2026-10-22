@@ -15,8 +15,13 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from .email_envelope import polish_email_draft
-from .independence import _allow_partial, load_writing_models, model_family
+from .email_envelope import has_email_subject, polish_email_draft
+from .independence import (
+    _allow_partial,
+    is_independent,
+    load_writing_models,
+    model_family,
+)
 
 _GENERATE_STEPS = (
     ("drafter_openai", "drafter_openai"),
@@ -429,8 +434,12 @@ class WritingFinalizeHandler(BaseHandler):
             _model_of(_raw_step(outputs, "draft")) or models.get("writer") or ""
         )
         reviewer_live = ""
-        if isinstance(independence, dict) and independence.get("reviewer_model"):
-            reviewer_live = str(independence["reviewer_model"])
+        if isinstance(review, dict) and review.get("reviewer_model"):
+            reviewer_live = str(review["reviewer_model"])
+        if not reviewer_live:
+            audit_json = _json_of(outputs, "fact_ceiling_audit") or {}
+            if isinstance(audit_json, dict) and audit_json.get("reviewer_model"):
+                reviewer_live = str(audit_json["reviewer_model"])
         if not reviewer_live:
             reviewer_live = (
                 _model_of(_raw_step(outputs, "fact_ceiling_audit"))
@@ -439,9 +448,7 @@ class WritingFinalizeHandler(BaseHandler):
                 or models.get("reviewer")
                 or ""
             )
-        writer_family = model_family(str(writer_live))
-        reviewer_family = model_family(str(reviewer_live))
-        if writer_family and reviewer_family and writer_family != reviewer_family:
+        if is_independent(str(writer_live), str(reviewer_live)):
             live_independence: str | None = "full"
         elif _allow_partial(options):
             live_independence = "partial"
@@ -520,6 +527,21 @@ class WritingFinalizeHandler(BaseHandler):
                         "detail": "numbered_paragraphs_required",
                     }
                 )
+        selected_body = _selected_body(selected, draft, revision)
+        if str(assemble.get("channel") or "") == "email" and not has_email_subject(
+            selected_body
+        ):
+            passed = False
+            unresolved.append(
+                {
+                    "type": "email_subject_missing",
+                    "claim_id": None,
+                    "detail": (
+                        "Email draft lacks a Subject: line and intake did not "
+                        "provide sufficient subject fields."
+                    ),
+                }
+            )
         usage = {
             name: _usage_of(_raw_step(outputs, name)) for name, _role in _GENERATE_STEPS
         }
@@ -558,8 +580,7 @@ class WritingFinalizeHandler(BaseHandler):
             "seats_used": {
                 "writer": _model_of(_raw_step(outputs, "draft"))
                 or models.get("writer"),
-                "reviewer": _model_of(_raw_step(outputs, "review"))
-                or models.get("reviewer"),
+                "reviewer": reviewer_live or models.get("reviewer"),
                 "reviser": (
                     (_model_of(_raw_step(outputs, "revise")) or models.get("reviser"))
                     if revision_ran
@@ -582,5 +603,5 @@ class WritingFinalizeHandler(BaseHandler):
             payload["cost_note"] = cost_note
         if filing_text is not None:
             payload["filing_text"] = filing_text
-        payload["selected_draft"] = _selected_body(selected, draft, revision)
+        payload["selected_draft"] = selected_body
         return _step(_attach_status(payload))

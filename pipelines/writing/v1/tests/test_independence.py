@@ -53,7 +53,7 @@ def test_independence_same_family_uses_review_fallback() -> None:
     assert payload["independence"] == "full"
     assert payload["writer_family"] == "llama"
     assert payload["reviewer_family"] != payload["writer_family"]
-    assert payload["reviewer_model"] == "deepseek-r1-distill-qwen-14b-q8-0-65536"
+    assert payload["reviewer_model"] == "openai/gpt-5.4-mini"
 
 
 def test_independence_override_reviewer_same_family_uses_fallback() -> None:
@@ -223,7 +223,7 @@ def test_anthropic_writer_cdp_reviewer_uses_openai_fallback() -> None:
         )
     ).json
     assert payload["refused"] is None
-    assert payload["reviewer_family"] != payload["writer_family"]
+    assert payload["reviewer_model"] == "openai/gpt-5.4-mini"
 
 
 def test_independence_cdp_writer_and_reviewer_uses_openai_fallback() -> None:
@@ -240,4 +240,15 @@ def test_independence_cdp_writer_and_reviewer_uses_openai_fallback() -> None:
         )
     ).json
     assert payload["refused"] is None
-    assert payload["reviewer_family"] != payload["writer_family"]
+    assert payload["reviewer_model"] == "openai/gpt-5.4-mini"
+
+
+def test_independence_openai_writer_skips_same_family_reviewer_fallback() -> None:
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler(
+            writer_model="openai/gpt-5.4",
+            reviewer_model="openai/gpt-5.4-mini",
+        ).execute(None, _Ctx())
+    ).json
+    assert payload["refused"] is None
+    assert payload["reviewer_model"] == "deepseek-r1-distill-qwen-14b-q8-0-65536"

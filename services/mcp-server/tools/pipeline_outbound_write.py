@@ -31,6 +31,9 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
         purpose: str | None = None,
         audience: str | None = None,
         attested_sources: list[str] | None = None,
+        signer: str | None = None,
+        standing_limits: str | None = None,
+        voice_anchor: str | None = None,
         async_exec: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
@@ -53,6 +56,9 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
             "purpose": purpose,
             "audience": audience,
             "attested_sources": attested_sources,
+            "signer": signer,
+            "standing_limits": standing_limits,
+            "voice_anchor": voice_anchor,
         }
         for key, value in optional_fields.items():
             if value is not None:
