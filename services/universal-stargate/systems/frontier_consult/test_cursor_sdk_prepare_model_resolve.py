@@ -104,3 +104,54 @@ async def test_prepare_denied_cursor_model_raises_invalid(
             message_text="inline prompt body",
         )
     assert exc_info.value.code == "sdk_generate_model_invalid"
+
+
+@pytest.mark.asyncio
+async def test_code_contract_mismatch_aborts_before_admit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when a grok pin is admitted as composer (lanes 19040/19044/19064)."""
+    _patch_prepare_deps(monkeypatch)
+    mint = AsyncMock(side_effect=AssertionError("mint ran"))
+    monkeypatch.setattr(prepare_mod, "mint_cursor_sdk_ids", mint)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await prepare_mod.prepare_cursor_sdk_generate(
+            request_id="req-model-mismatch",
+            role="cursor-sdk",
+            model="cursor/composer-2.5",
+            requested_model_pin="cursor/grok-4.7",
+            subject="s",
+            caller_agent="dispatch",
+            contract="freeform",  # type: ignore[arg-type]
+            packet_path=None,
+            message_text="inline prompt body",
+        )
+    err = exc_info.value
+    assert err.code == "resolved_model_mismatch"
+    assert err.details["requested_model"] == "cursor/grok-4.7"
+    assert err.details["resolved_model"] == "cursor/composer-2.5"
+    mint.assert_not_called()
+    prepare_mod.create_handoff_thread.assert_not_called()
+    prepare_mod.admit_handoff_dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_matching_composer_pin_is_not_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when an explicit cursor/composer-2.5 code pin is banned."""
+    _patch_prepare_deps(monkeypatch)
+    handle = await prepare_mod.prepare_cursor_sdk_generate(
+        request_id="req-composer-match",
+        role="cursor-sdk",
+        model="cursor/composer-2.5",
+        requested_model_pin="cursor/composer-2.5",
+        subject="s",
+        caller_agent="dispatch",
+        contract="freeform",  # type: ignore[arg-type]
+        packet_path=None,
+        message_text="inline prompt body",
+    )
+    assert handle.resolved_model == "cursor/composer-2.5"
+    posted = prepare_mod.create_handoff_thread.await_args.kwargs["pointer_body"]
+    assert "resolved_model: cursor/composer-2.5" in posted

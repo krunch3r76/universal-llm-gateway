@@ -243,6 +243,15 @@ async def prepare_cursor_sdk_generate(
             status_code=422,
             code="sdk_generate_model_invalid",
         )
+    from .cursor_sdk_model_pin import refuse_code_contract_model_mismatch
+
+    pin_text = requested_model_pin if isinstance(requested_model_pin, str) else None
+    refuse_code_contract_model_mismatch(
+        request_id=request_id,
+        contract=effective_contract,
+        requested_model=pin_text,
+        resolved_model=resolved_model,
+    )
     to_agent, family, platform = "cursor-sdk", "cursor", "sdk"
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 

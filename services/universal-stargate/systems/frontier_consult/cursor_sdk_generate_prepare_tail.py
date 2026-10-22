@@ -97,6 +97,10 @@ async def finish_cursor_sdk_generate_prepare(
     thread_subject = bound["thread_subject"]
     resolved_model = bound.get("resolved_model")
     pointer_body = bound.get("pointer_body")
+    if isinstance(pointer_body, str) and resolved_model:
+        from .cursor_sdk_model_pin import append_resolved_model_fact
+
+        pointer_body = append_resolved_model_fact(pointer_body, str(resolved_model))
     worker_packet = bound.get("worker_packet")
     worker_message = bound.get("worker_message")
     early_packet_text = bound.get("early_packet_text")
@@ -285,6 +289,7 @@ async def finish_cursor_sdk_generate_prepare(
         has_explicit_prompt_source=has_explicit_prompt_source,
         admit_provenance=admit_provenance,
         bound_work_key=work_key,
+        resolved_model=str(resolved_model) if resolved_model else None,
     )
 
     from implement_admission.check_review_substrate import consultant_rung
