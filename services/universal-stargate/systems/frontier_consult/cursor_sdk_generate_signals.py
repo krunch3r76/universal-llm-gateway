@@ -10,6 +10,7 @@ from .events import (
     FrontierSdkGenerateRequested,
     FrontierSdkKnobDropped,
     FrontierSdkMaterializationIncomplete,
+    FrontierSdkModelMismatch,
     FrontierSdkPoolDenied,
     FrontierSdkPoolExempted,
     FrontierSdkReasoningEffortRejected,
@@ -78,6 +79,7 @@ def emit_sdk_worker_outcome(
     topic: str | None = None,
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
+    resolved_model: str | None = None,
 ) -> None:
     envelope = build_association_envelope(
         purpose_body=purpose_body,
@@ -100,6 +102,7 @@ def emit_sdk_worker_outcome(
         "topic": topic,
         "packet_kind": packet_kind,
         "model_knobs_requested": model_knobs_requested,
+        "resolved_model": resolved_model,
     }
     if worker_ok:
         if worker_detail.get("queued"):
@@ -229,6 +232,29 @@ def emit_sdk_reasoning_effort_rejected(
         FrontierSdkReasoningEffortRejected(
             model_id=model_id,
             requested=requested,
+        )
+    )
+
+
+def emit_sdk_model_mismatch(
+    *,
+    request_id: str,
+    contract: str,
+    requested_model: str,
+    resolved_model: str,
+) -> None:
+    """Publish ``frontier.sdk.model.mismatch`` before a code-contract admit is refused.
+
+    The payload names the requested pin and the resolved model. The raise
+    that follows is what stops mint and the worker post.
+    """
+    publish_frontier_event(
+        FrontierSdkModelMismatch(
+            request_id=request_id,
+            contract=contract,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            code="resolved_model_mismatch",
         )
     )
 

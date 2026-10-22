@@ -188,6 +188,7 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     topic: str | None = None,
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
+    resolved_model: str | None = None,
 ) -> Event:
     """SDK worker dispatch accepted.
 
@@ -219,6 +220,8 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
         payload["packet_kind"] = packet_kind
     if model_knobs_requested is not None:
         payload["model_knobs_requested"] = model_knobs_requested
+    if resolved_model is not None:
+        payload["resolved_model"] = resolved_model
     return Event(
         signal="frontier.sdk.worker.dispatched",
         payload=payload,
@@ -299,6 +302,7 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     topic: str | None = None,
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
+    resolved_model: str | None = None,
 ) -> Event:
     """SDK worker dispatch durably queued awaiting write-lease."""
     payload: dict[str, object] = {
@@ -327,6 +331,8 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["packet_kind"] = packet_kind
     if model_knobs_requested is not None:
         payload["model_knobs_requested"] = model_knobs_requested
+    if resolved_model is not None:
+        payload["resolved_model"] = resolved_model
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -836,6 +842,33 @@ def FrontierSdkPoolDenied(  # noqa: N802
             "pool": pool,
             "code": code,
         },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkModelMismatch(  # noqa: N802
+    request_id: str,
+    contract: str,
+    requested_model: str,
+    resolved_model: str,
+    code: str,
+) -> Event:
+    """Code-contract pin disagreed with the model about to be admitted.
+
+    Observation only. Fires before thread mint, so a later seat can see
+    the refused pair without an admitted worker.
+    """
+    return Event(
+        signal="frontier.sdk.model.mismatch",
+        payload={
+            "request_id": request_id,
+            "contract": contract,
+            "requested_model": requested_model,
+            "resolved_model": resolved_model,
+            "code": code,
+        },
+        role="observation",
         scope="node",
     )
 

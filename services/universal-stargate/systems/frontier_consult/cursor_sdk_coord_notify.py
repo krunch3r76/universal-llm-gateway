@@ -41,11 +41,18 @@ def _bus_token_configured() -> bool:
     )
 
 
-def _admit_body(*, worker_thread_id: str, contract: str) -> str:
+def _admit_body(
+    *,
+    worker_thread_id: str,
+    contract: str,
+    resolved_model: str | None = None,
+) -> str:
     lines = [
         f"Worker thread `{worker_thread_id}` — poll via `poll_hint` from the 202 "
         "response (not this coordination thread).",
     ]
+    if resolved_model:
+        lines.append(f"resolved_model: {resolved_model}")
     if contract == "implement":
         lines.append(
             "contract=implement: deliverable also stages on the bound todo — "
@@ -180,6 +187,7 @@ async def post_coord_admit_pointer(
     has_explicit_prompt_source: bool = False,
     admit_provenance: AdmitProvenanceContext | None = None,
     bound_work_key: str | None = None,
+    resolved_model: str | None = None,
 ) -> None:
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
@@ -206,7 +214,11 @@ async def post_coord_admit_pointer(
             else None
         )
     )
-    body_text = _admit_body(worker_thread_id=worker_thread_id, contract=contract)
+    body_text = _admit_body(
+        worker_thread_id=worker_thread_id,
+        contract=contract,
+        resolved_model=resolved_model,
+    )
     body_text = stamp_admit_turn_body(
         body_text, work_key=work_key, provenance_missing=missing
     )

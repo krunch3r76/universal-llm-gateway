@@ -207,6 +207,7 @@ async def _finish_prepared_dispatch(
                 if handle.requested_model_knobs is not None
                 else handle.aligned_knobs,
             ),
+            resolved_model=handle.resolved_model,
         )
         await rollback_admitted_dispatch_links(
             request_id=handle.request_id,
@@ -234,6 +235,7 @@ async def _finish_prepared_dispatch(
             if handle.requested_model_knobs is not None
             else handle.aligned_knobs,
         ),
+        resolved_model=handle.resolved_model,
     )
     result = _sdk_admit_envelope(handle, queued=queued)
     if queued:
