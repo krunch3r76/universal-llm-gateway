@@ -134,37 +134,24 @@ def _jsonl_paths_by_mtime_desc(root: Path) -> list[Path]:
 def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str | None:
     """Derive ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` from a stable JSONL start.
 
-    Priority: (1) ``<timestamp>`` on the first user turn, (2) file birth time
-    when the platform exposes ``st_birthtime``. Returns ``None`` when neither
-    is available — callers MUST keep the boot-held ``session_id`` rather than
-    minting from ``st_mtime`` (Linux appends race the mtime and re-mint a new
-    suffix on every preflight/validate call; friction 21760 / 23205).
+    Only the first user-turn ``<timestamp>`` tag is authoritative. Returns
+    ``None`` when that tag is absent — callers MUST keep the boot-held
+    ``session_id`` rather than minting from ``st_mtime`` or ``st_birthtime``
+    (Linux appends race mtime; birthtime re-mints on preflight — friction
+    21760 / 23205).
     """
     tagged = _extract_jsonl_start_timestamp(jsonl_path)
-    if tagged:
-        normalized = _normalize_cursor_timestamp(tagged)
-        # derive_session_id_from_timestamp wall-clock-falls-back when the
-        # string is not ISO-parseable — that re-mints a new suffix every
-        # call (friction 23205). Refuse the fallback; keep boot-held ID.
-        if not _ISO_LIKE_TIMESTAMP_RE.search(normalized):
-            return None
-        return derive_session_id_from_timestamp(
-            agent,
-            normalized,
-            deterministic=True,
-            conversation_uuid=jsonl_path.parent.name,
-        )
-    st = jsonl_path.stat()
-    started = getattr(st, "st_birthtime", None)
-    if started is None or started <= 0:
+    if not tagged:
         return None
-    dt = datetime.fromtimestamp(started, tz=UTC)
-    # Birth-time path: deterministic suffix from agent|iso|uuid so
-    # preflight copy-paste does not flap across retries, and two tabs
-    # starting the same UTC second do not collide.
+    normalized = _normalize_cursor_timestamp(tagged)
+    # derive_session_id_from_timestamp wall-clock-falls-back when the
+    # string is not ISO-parseable — that re-mints a new suffix every
+    # call (friction 23205). Refuse the fallback; keep boot-held ID.
+    if not _ISO_LIKE_TIMESTAMP_RE.search(normalized):
+        return None
     return derive_session_id_from_timestamp(
         agent,
-        dt.strftime("%Y-%m-%d %H:%M:%S"),
+        normalized,
         deterministic=True,
         conversation_uuid=jsonl_path.parent.name,
     )

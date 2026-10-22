@@ -324,3 +324,143 @@ def test_b14_extend_rollback_restores_sealed_file(
     finally:
         conn.close()
     assert _journal_count(db_path) == 1
+
+
+def test_derive_session_id_refuses_without_timestamp_tag(tmp_path: Path) -> None:
+    """No <timestamp> tag ⇒ None; never mint from birthtime/mtime."""
+    jsonl = tmp_path / "agent-id" / "agent-id.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text(
+        json.dumps(
+            {
+                "role": "user",
+                "message": {"content": [{"type": "text", "text": "no tag here"}]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert (
+        derive_session_id_from_jsonl_start(jsonl_path=jsonl, agent="grok-bot") is None
+    )
+
+
+def test_pretranscribed_missing_session_id() -> None:
+    result = _op_transcript_seal(
+        thread="15851",
+        surface="grok-bot",
+        agent="grok-bot-hm1",
+        transcript_id="68757fe5-d68e-43f6-8708-6abd160bf205",
+        messages=[
+            {"role": "user", "content": "one", "turn_index": 1},
+            {"role": "assistant", "content": "two", "turn_index": 1},
+        ],
+    )
+    assert result.get("code") == "transcript_seal.missing_session_id"
+
+
+def test_pretranscribed_seal_messages_only(
+    session_env: dict[str, Path],
+) -> None:
+    """Grok path: seal store only — no notes/system/transcripts/*.md third artifact."""
+    files_root = session_env["files_root"]
+    db_path = session_env["db_path"]
+    raw_rel = "notes/system/checkpoints/grok/grok-bot-hm1/1.raw.json"
+    raw_path = files_root / raw_rel
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text('{"turns": 1}\n', encoding="utf-8")
+    sid = "grok-bot-2026-10-17-120000-a1b"
+    conv = "68757fe5-d68e-43f6-8708-6abd160bf205"
+    messages = [
+        {"role": "user", "content": "hello", "turn_index": 1},
+        {"role": "assistant", "content": "ack", "turn_index": 1},
+    ]
+    result = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id=conv,
+        messages=messages,
+        raw_export_ref=raw_rel,
+    )
+    assert "error" not in result, result
+    assert result.get("message_count") == 2
+    seal_path = files_root / f"notes/system/seals/{sid}.messages.json"
+    tx_path = files_root / f"notes/system/transcripts/{sid}.md"
+    assert seal_path.is_file()
+    assert not tx_path.is_file()
+    stored = json.loads(seal_path.read_text(encoding="utf-8"))
+    assert stored["meta"]["message_count"] == 2
+    assert stored["meta"]["transcript_id"] == conv
+    assert result.get("conversation_uuid") == conv
+    assert _journal_count(db_path) == 1
+
+
+def test_pretranscribed_prefix_extend(session_env: dict[str, Path]) -> None:
+    files_root = session_env["files_root"]
+    sid = "grok-bot-2026-10-17-120000-b2c"
+    conv = "agent-extend-uuid"
+    base = [
+        {"role": "user", "content": "one", "turn_index": 1},
+        {"role": "assistant", "content": "two", "turn_index": 1},
+    ]
+    first = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id=conv,
+        messages=base,
+    )
+    assert "error" not in first, first
+    extended_msgs = base + [
+        {"role": "user", "content": "three", "turn_index": 2},
+        {"role": "assistant", "content": "four", "turn_index": 2},
+    ]
+    extended = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id=conv,
+        messages=extended_msgs,
+    )
+    assert "error" not in extended, extended
+    assert extended.get("turn_count") == 2
+    seal_path = files_root / f"notes/system/seals/{sid}.messages.json"
+    stored = json.loads(seal_path.read_text(encoding="utf-8"))
+    assert len(stored["messages"]) == 4
+
+
+def test_pretranscribed_empty_readback(
+    session_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = "grok-bot-2026-10-17-120000-c3d"
+    messages = [
+        {"role": "user", "content": "x", "turn_index": 1},
+        {"role": "assistant", "content": "y", "turn_index": 1},
+    ]
+
+    def _bad_readback(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "continuity_tape.seal_reader.load_sealed_envelope_from_path",
+        _bad_readback,
+    )
+
+    result = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id="conv-empty-readback",
+        messages=messages,
+    )
+    assert result.get("code") == "transcript_seal.empty_readback"
+    files_root = session_env["files_root"]
+    assert not (
+        files_root / f"notes/system/seals/{sid}.messages.json"
+    ).is_file()
