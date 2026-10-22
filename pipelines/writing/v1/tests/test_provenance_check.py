@@ -818,3 +818,162 @@ def test_fact_ceiling_final_derived_unpinned_new_sentence() -> None:
     )
     assert violations
     assert "v2_new_unpinned_clause" in _types(violations)
+
+
+def test_revision_delta_email_channel_skips_fact_reordered() -> None:
+    v1_text = "Alpha fact one. Beta fact two."
+    v1_clauses = [
+        {
+            "claim_id": "s1",
+            "text": "Alpha fact one.",
+            "pin_ids": ["P2", "P6"],
+            "disposition": "express",
+        },
+        {
+            "claim_id": "s2",
+            "text": "Beta fact two.",
+            "pin_ids": ["P3"],
+            "disposition": "express",
+        },
+    ]
+    v2_clauses = [
+        {
+            "claim_id": "s1",
+            "text": "Alpha fact one.",
+            "pin_ids": ["P3"],
+            "disposition": "express",
+        },
+        {
+            "claim_id": "s2",
+            "text": "Beta fact two.",
+            "pin_ids": ["P2", "P6"],
+            "disposition": "express",
+        },
+    ]
+    email_violations = provenance.revision_delta(
+        {"draft": v1_text},
+        {"draft": v1_text},
+        v1_clauses=v1_clauses,
+        v2_clauses=v2_clauses,
+        channel="email",
+    )
+    assert "fact_reordered" not in _types(email_violations)
+    filing_violations = provenance.revision_delta(
+        {"draft": v1_text},
+        {"draft": v1_text},
+        v1_clauses=v1_clauses,
+        v2_clauses=v2_clauses,
+        channel="filing",
+    )
+    assert "fact_reordered" in _types(filing_violations)
+
+
+_LEG_C_BODY_1 = (
+    "I am submitting the attached CCP § 2015.5 Declaration of Kaywan Joseph Mansubi "
+    "Regarding Timeliness (Exhibit 1) and Exhibits 2-8 for the reinstatement hearing "
+    "on Assessment Appeals 25.7489 and 25.7490."
+)
+_LEG_C_BODY_2 = (
+    "The property is APN 424-20-043 at 15571 Flintridge Dr in Los Gatos and the hearing "
+    "is Tuesday October 27 2026 at 9:00 AM PT on Zoom."
+)
+_LEG_C_V1_EMAIL = (
+    "To: AABHearing@cob.sccgov.org\n"
+    "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
+    "Reinstatement Hearing October 27 2026\n\n"
+    f"{_LEG_C_BODY_1} {_LEG_C_BODY_2} The exhibits are as follows.\n\n"
+    "Exhibit 1: Declaration of Kaywan Joseph Mansubi Regarding Timeliness (CCP § 2015.5)\n"
+    "Exhibit 2: Notice of Supplemental Assessment dated 2026-01-16\n"
+    "Sincerely\nKaywan Joseph Mansubi"
+)
+_LEG_C_V2_EMAIL = (
+    "To: AABHearing@cob.sccgov.org\n"
+    "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
+    "Reinstatement Hearing October 27 2026\n\n"
+    "I am submitting the attached CCP § 2015.5 Declaration of Kaywan Joseph Mansubi "
+    "Regarding Timeliness (Exhibit 1) and Exhibits 2 through 8 for the reinstatement "
+    "hearing on Assessment Appeals 25.7489 and 25.7490. The property is APN 424-20-043 "
+    "at 15571 Flintridge Dr in Los Gatos, and the hearing is Tuesday October 27 2026 "
+    "at 9:00 AM PT on Zoom. The exhibits are as follows.\n"
+    "Exhibit 1: Declaration of Kaywan Joseph Mansubi Regarding Timeliness (CCP § 2015.5)\n"
+    "Exhibit 2: Notice of Supplemental Assessment dated 2026-01-16\n"
+    "Sincerely\nKaywan Joseph Mansubi"
+)
+_LEG_C_PIN_LEDGER = [
+    {
+        "pin_id": "P2",
+        "attested": True,
+        "restate": True,
+        "excerpt": (
+            "I, Kaywan Joseph Mansubi, am submitting my CCP § 2015.5 Declaration of "
+            "Kaywan Joseph Mansubi Regarding Timeliness (Exhibit 1) plus Exhibits 2–8 "
+            "for the reinstatement hearing on Assessment Appeals 25.7489 and 25.7490."
+        ),
+    },
+    {"pin_id": "P3", "attested": True, "restate": True, "excerpt": "APN 424-20-043, 15571 Flintridge Dr, Los Gatos."},
+    {
+        "pin_id": "P4",
+        "attested": True,
+        "restate": True,
+        "excerpt": "Hearing: Tuesday, October 27, 2026, 9:00 AM PT, on Zoom.",
+    },
+    {
+        "pin_id": "P6",
+        "attested": True,
+        "restate": True,
+        "excerpt": "Exhibit 1: Declaration of Kaywan Joseph Mansubi Regarding Timeliness (CCP § 2015.5)",
+    },
+]
+_LEG_C_V1_CLAUSES = [
+    {"claim_id": "s1", "text": _LEG_C_BODY_1, "pin_ids": ["P2"], "disposition": "express"},
+    {"claim_id": "s2", "text": _LEG_C_BODY_2, "pin_ids": ["P3", "P4"], "disposition": "express"},
+]
+
+
+def test_fact_ceiling_final_email_range_through_and_restate_pin_passes() -> None:
+    _gates_path = Path(__file__).resolve().parent / "test_channel_purpose_gates.py"
+    _gates_spec = importlib.util.spec_from_file_location("_leg_c_gates", _gates_path)
+    assert _gates_spec is not None and _gates_spec.loader is not None
+    _gates_mod = importlib.util.module_from_spec(_gates_spec)
+    _gates_spec.loader.exec_module(_gates_mod)
+    baseline_objective = str(_gates_mod.BASELINE_INTAKE["objective"])
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _StepFactCeilingFinal(),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {
+                            "pin_ledger": _LEG_C_PIN_LEDGER,
+                            "channel": "email",
+                            "recipient": "AABHearing@cob.sccgov.org",
+                            "objective": baseline_objective,
+                            "intake": {
+                                "recipient": "AABHearing@cob.sccgov.org",
+                                "signer": "Kaywan Joseph Mansubi",
+                                "objective": baseline_objective,
+                            },
+                        }
+                    ),
+                    "draft": _Out(
+                        {
+                            "ok": True,
+                            "draft": _LEG_C_V1_EMAIL,
+                            "selected_role": "drafter_xai",
+                        }
+                    ),
+                    "fact_ceiling_audit": _Out(
+                        {
+                            "findings": [],
+                            "verdict": "ship",
+                            "clauses": _LEG_C_V1_CLAUSES,
+                        }
+                    ),
+                    "prose_rhythm_pass": _Raw(_LEG_C_V2_EMAIL),
+                }
+            ),
+        )
+    ).json
+    assert payload is not None
+    assert payload["violations"] == []
+    assert payload["pass"] is True

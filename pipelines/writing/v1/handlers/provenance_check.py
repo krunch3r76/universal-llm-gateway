@@ -71,6 +71,7 @@ _FUNCTION_WORDS = frozenset(
         "in",
         "on",
         "so",
+        "through",
     }
 )
 _CLAUSE_DETAIL_MAX = 160
@@ -336,6 +337,10 @@ def _tokens(text: str) -> set[str]:
     return set(_TOKEN.findall(text.lower()))
 
 
+def _content_token_seq(text: str, join_words: set[str]) -> tuple[str, ...]:
+    return tuple(tok for tok in _TOKEN.findall(text.lower()) if tok not in join_words)
+
+
 def _clause_pinned(sentence: str, claims: list[Any]) -> bool:
     for claim in claims:
         if not isinstance(claim, dict):
@@ -414,12 +419,26 @@ def _pin_matches_text(
     v1_clauses: list[dict[str, Any]],
 ) -> bool:
     sent_tokens = _tokens(text)
+    pin = next(
+        (row for row in (pin_ledger or []) if str(row.get("pin_id")) == pin_id),
+        None,
+    )
+    if isinstance(pin, dict) and pin.get("restate") is True:
+        excerpt = str(pin.get("excerpt") or "")
+        if excerpt and email_restate_pin_satisfied(text, excerpt):
+            return True
     excerpt_anchors = _pin_excerpt_anchor_tokens(pin_id, pin_ledger)
     if excerpt_anchors and excerpt_anchors <= sent_tokens:
         return True
-    clause_anchors = _pin_clause_anchor_tokens(pin_id, v1_clauses)
-    if clause_anchors and clause_anchors <= sent_tokens:
-        return True
+    for clause in v1_clauses:
+        clause_pins = (
+            clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
+        )
+        if pin_id not in {str(item) for item in clause_pins}:
+            continue
+        anchors = _content_anchor_tokens(str(clause.get("text") or ""))
+        if anchors and anchors <= sent_tokens:
+            return True
     return False
 
 
@@ -500,6 +519,11 @@ def derive_v2_clauses_from_audit(
 ) -> list[dict[str, Any]]:
     """Map v2 prose sentences to pin ids using the audit clause pin order."""
     ordered_pins = _pin_order(v1_clauses)
+    for pin in pin_ledger or []:
+        if isinstance(pin, dict) and pin.get("attested") is True:
+            pid = str(pin.get("pin_id") or "")
+            if pid and pid not in ordered_pins:
+                ordered_pins.append(pid)
     sentences = _sentences(draft_text)
     if not sentences:
         return []
@@ -587,13 +611,20 @@ def revision_delta(
     v2_order = _pin_order(v2_clause_rows)
     join_words = set(_FUNCTION_WORDS)
     v1_sentence_set = set(_sentences(v1_text))
+    v1_content_seqs = {_content_token_seq(s, join_words) for s in _sentences(v1_text)}
+
+    def _in_v1(sent: str) -> bool:
+        return sent in v1_sentence_set or _content_token_seq(
+            sent, join_words
+        ) in v1_content_seqs
+
     derived_unpinned_new = False
     if v2_clauses_from_derive:
         for row in v2_clause_rows:
             if not isinstance(row, dict):
                 continue
             sentence = str(row.get("text") or "").strip()
-            if not sentence or sentence in v1_sentence_set:
+            if not sentence or _in_v1(sentence):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
             if not pin_ids:
@@ -646,7 +677,7 @@ def revision_delta(
             if not isinstance(row, dict):
                 continue
             sentence = str(row.get("text") or "").strip()
-            if not sentence or sentence in v1_sentence_set:
+            if not sentence or _in_v1(sentence):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
             if pin_ids:
@@ -660,7 +691,7 @@ def revision_delta(
     new_tokens = v2_tokens - v1_tokens - join_words
     if new_tokens:
         for sentence in _sentences(v2_text):
-            if sentence in v1_sentence_set:
+            if _in_v1(sentence):
                 continue
             if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
@@ -815,6 +846,34 @@ class WritingProvenanceCheckHandler(BaseHandler):
             v1_clauses = verifier_clauses
             v2_clauses: list[dict[str, Any]] | None = None
             v2_clauses_from_derive = False
+            prior_for_delta: Any = prior
+            v2_for_delta: Any = parsed if parsed is not None else draft
+            if (
+                str(channel or "") == "email"
+                and parsed is not None
+            ):
+                intake_block = (
+                    assemble_json.get("intake")
+                    if isinstance(assemble_json, dict)
+                    else None
+                )
+                intake_dict = intake_block if isinstance(intake_block, dict) else {}
+                recipient = str(
+                    intake_dict.get("recipient")
+                    or (assemble_json or {}).get("recipient")
+                    or ""
+                )
+                signer = str(intake_dict.get("signer") or "")
+                prior_parsed = _parse_draft(prior)
+                if prior_parsed is not None:
+                    prior_parsed = dict(prior_parsed)
+                    prior_parsed["draft"] = polish_email_draft(
+                        str(prior_parsed.get("draft") or ""),
+                        recipient=recipient,
+                        signer=signer,
+                        intake=intake_dict,
+                    )
+                    prior_for_delta = prior_parsed
             if isinstance(v1_clauses, list) and v1_clauses and parsed is not None:
                 v2_clauses = derive_v2_clauses_from_audit(
                     parsed["draft"],
@@ -825,8 +884,8 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 violations.extend(_causal_connective_violations(v2_clauses, ledger))
             violations.extend(
                 revision_delta(
-                    prior,
-                    draft,
+                    prior_for_delta,
+                    v2_for_delta,
                     v1_clauses=v1_clauses,
                     v2_clauses=v2_clauses,
                     pin_ledger=ledger,
