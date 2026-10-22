@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from writing_intake.claim_gates import map_claim_to_purpose
+from writing_intake.claim_gates import map_claim_to_purpose, parse_purpose_points
 from writing_intake.fact_inventory import run_drift_check
 from writing_intake.schema import validate_intake_payload
 
@@ -28,6 +28,7 @@ if _PKG not in sys.modules:
     _spec.loader.exec_module(_mod)
 
 assemble = importlib.import_module("writing_v1_handlers.assemble")
+email_envelope = importlib.import_module("writing_v1_handlers.email_envelope")
 provenance = importlib.import_module("writing_v1_handlers.provenance_check")
 review_schema = importlib.import_module("writing_v1_handlers.review_schema")
 
@@ -437,6 +438,73 @@ def test_provenance_objective_only_applies_purpose_gate() -> None:
     } in payload["purpose_drops"]
 
 
+def test_verbatim_note_pins_baseline_p5_not_restate() -> None:
+    parsed = parse_purpose_points(str(BASELINE_INTAKE["objective"]), None)
+    pins = assemble._verbatim_note_pins(
+        list(BASELINE_INTAKE["verbatim_notes"]),
+        start=1,
+        purpose_points=parsed,
+    )
+    by_id = {pin["pin_id"]: pin for pin in pins}
+    assert by_id["P5"].get("restate") is not True
+    assert by_id["P1"].get("restate") is True
+    assert by_id["P2"].get("restate") is True
+    assert by_id["P6"].get("restate") is True
+
+
+def test_run_drift_check_exhibit_leadin_attached_are_passes() -> None:
+    body = (
+        "I am submitting exhibits for the hearing.\n\n"
+        "Attached are:\n"
+        "Exhibit 1: Declaration of Kaywan Joseph Mansubi Regarding Timeliness (CCP § 2015.5)"
+    )
+    out = run_drift_check(
+        body,
+        channel="email",
+        pin_ledger=[],
+        purpose=str(BASELINE_INTAKE["objective"]),
+    )
+    assert out["passed"] is True
+    assert out["flagged_sentences"] == []
+
+
+def test_email_draft_penalty_reinstatement_in_subject_line() -> None:
+    objective = (
+        "Cover email for the reinstatement hearing on Tuesday, October 27, 2026."
+    )
+    signer = "Kaywan Joseph Mansubi"
+    hearing_only = (
+        "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
+        "hearing October 27, 2026\n\nI am submitting the records.\n\n"
+        "Thank you,\nKaywan Joseph Mansubi"
+    )
+    reinstatement = (
+        "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
+        "Reinstatement Hearing October 27, 2026\n\nI am submitting the records.\n\n"
+        "Thank you,\nKaywan Joseph Mansubi"
+    )
+    assert (
+        email_envelope.email_draft_penalty(
+            hearing_only,
+            channel="email",
+            signer=signer,
+            standing_limits="",
+            objective=objective,
+        )
+        == 3
+    )
+    assert (
+        email_envelope.email_draft_penalty(
+            reinstatement,
+            channel="email",
+            signer=signer,
+            standing_limits="",
+            objective=objective,
+        )
+        == 0
+    )
+
+
 def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
     payload = asyncio.run(
         assemble.WritingAssembleHandler().execute(
@@ -444,8 +512,8 @@ def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
             _Ctx(intake=BASELINE_INTAKE, working_set=[]),
         )
     ).json
-    assert payload["verbatim_notes_block"].count('restate="true"') == 13
-    assert payload["documents_block"].count('restate="true"') == 13
+    assert payload["verbatim_notes_block"].count('restate="true"') == 12
+    assert payload["documents_block"].count('restate="true"') == 12
     assert payload["documents_block"].count('provenance="operator_account"') == 13
     assert 'verbatim_required="true"' not in payload["verbatim_notes_block"]
     assert "Copy a note word for word only when it is marked verbatim_required" in payload["packet"]

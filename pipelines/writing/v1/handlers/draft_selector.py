@@ -232,6 +232,15 @@ class WritingDraftSelectorHandler(BaseHandler):
                             )
                             or ""
                         ),
+                        objective=str(
+                            assemble_json.get("objective")
+                            or (
+                                intake.get("objective")
+                                if isinstance(intake, dict)
+                                else ""
+                            )
+                            or ""
+                        ),
                     ),
                     "signer_band": _signer_band(text, signer),
                     "rejected": "unresolved_need" if unresolved_need else None,

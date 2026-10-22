@@ -102,6 +102,20 @@ def test_derive_email_subject_no_hearing_without_hearing_phrase() -> None:
     )
 
 
+def test_email_restate_pin_satisfied_p2_plus_and_through() -> None:
+    pin = (
+        "I, Kaywan Joseph Mansubi, am submitting my CCP § 2015.5 Declaration of "
+        "Kaywan Joseph Mansubi Regarding Timeliness (Exhibit 1) plus Exhibits 2–8 "
+        "for the reinstatement hearing on Assessment Appeals 25.7489 and 25.7490."
+    )
+    draft = (
+        "I am submitting my CCP § 2015.5 Declaration of Kaywan Joseph Mansubi "
+        "Regarding Timeliness (Exhibit 1) and Exhibits 2 through 8 for the "
+        "reinstatement hearing on Assessment Appeals 25.7489 and 25.7490."
+    )
+    assert email_envelope.email_restate_pin_satisfied(draft, pin)
+
+
 def test_polish_rewrites_formal_openings() -> None:
     intake: dict = {"objective": "notify", "verbatim_notes": []}
     formal = (

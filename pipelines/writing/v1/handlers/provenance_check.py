@@ -567,6 +567,7 @@ def revision_delta(
     v2_clauses: list[dict[str, Any]] | None = None,
     pin_ledger: list[dict[str, Any]] | None = None,
     v2_clauses_from_derive: bool = False,
+    channel: str | None = None,
 ) -> list[dict[str, Any]]:
     """List provenance violations introduced between an earlier draft revision and the current one."""
     prior = _parse_draft(draft_v1)
@@ -618,9 +619,11 @@ def revision_delta(
         return []
 
     if v1_order and v2_order and v1_order != v2_order:
-        violations.append(
-            _violation("fact_reordered", None, {"v1": v1_order, "v2": v2_order})
-        )
+        profile = check_class_for_channel(str(channel or "filing"))
+        if profile == "sworn":
+            violations.append(
+                _violation("fact_reordered", None, {"v1": v1_order, "v2": v2_order})
+            )
 
     hedge = _HEDGE.search(v2_text)
     if hedge and not _HEDGE.search(v1_text):
@@ -828,6 +831,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     v2_clauses=v2_clauses,
                     pin_ledger=ledger,
                     v2_clauses_from_derive=v2_clauses_from_derive,
+                    channel=channel,
                 )
             )
         dropped_facts: list[dict[str, str]] = []

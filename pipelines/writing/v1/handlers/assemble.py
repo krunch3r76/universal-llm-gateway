@@ -18,7 +18,11 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
-from writing_intake.claim_gates import check_class_for_channel
+from writing_intake.claim_gates import (
+    check_class_for_channel,
+    map_claim_to_purpose,
+    parse_purpose_points,
+)
 from writing_intake.fact_inventory import build_fact_inventory
 from writing_intake.inventory_drift import filing_frame
 from writing_intake.schema import validate_intake_payload
@@ -280,10 +284,15 @@ class WritingAssembleHandler(BaseHandler):
                     "ref": exc.ref,
                 }
             )
+        parsed_points = parse_purpose_points(
+            str(data.get("purpose") or data.get("objective") or ""),
+            list(data.get("purpose_points") or []) or None,
+        )
         pins = _verbatim_note_pins(
             data["verbatim_notes"],
             start=1,
             verbatim_required=data.get("verbatim_required") or (),
+            purpose_points=parsed_points,
         )
         offset = len(pins) + 1
         for index, pin in enumerate(ws_pins, start=offset):
@@ -927,6 +936,7 @@ def _verbatim_note_pins(
     *,
     start: int,
     verbatim_required: Collection[int] = (),
+    purpose_points: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     pins: list[dict[str, Any]] = []
     required = set(verbatim_required)
@@ -942,6 +952,15 @@ def _verbatim_note_pins(
         }
         if offset in required:
             pin["verbatim_required"] = True
+        elif purpose_points:
+            if re.match(r"^\s*Send-by deadline\s*:", item, re.I):
+                pass
+            elif re.match(r"^\s*(?:to|cc|bcc|from|subject|re)\s*:", item, re.I):
+                pin["restate"] = True
+            elif re.match(r"^\s*Exhibit\s+\d+\s*:", item, re.I):
+                pin["restate"] = True
+            elif map_claim_to_purpose(item, purpose_points) is not None:
+                pin["restate"] = True
         else:
             pin["restate"] = True
         pins.append(pin)

@@ -436,6 +436,12 @@ _VALEDICTION = re.compile(
 )
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
 _EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\s*:", re.I)
+_EXHIBIT_LEADIN = re.compile(
+    r"^(?:attached are(?:\s+the\s+following(?:\s+exhibits|\s+documents)?)?|"
+    r"the\s+(?:attached\s+)?exhibits\s+are(?:\s+as\s+follows)?|"
+    r"enclosed are(?:\s+the\s+following(?:\s+exhibits)?)?)\s*:\s*$",
+    re.I,
+)
 _POSTSCRIPT = re.compile(r"^\s*P\.?\s*S\.?\b", re.I)
 
 
@@ -472,6 +478,8 @@ def _correspondence_units(text: str) -> list[str]:
         if _HEADER_LINE.match(line):
             continue
         if stripped and _EXHIBIT_LINE.match(stripped):
+            continue
+        if stripped and _EXHIBIT_LEADIN.match(stripped):
             continue
         if stripped and len(stripped) <= 120 and _SALUTATION.match(stripped):
             if "," in stripped:

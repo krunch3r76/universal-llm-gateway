@@ -18,6 +18,33 @@ _DECLARATION_OPEN = re.compile(
     re.I,
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
+_RESTATE_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "my",
+        "of",
+        "on",
+        "or",
+        "plus",
+        "that",
+        "the",
+        "through",
+        "to",
+        "via",
+        "with",
+    }
+)
 
 
 def normalize_email_dashes(text: str) -> str:
@@ -136,12 +163,18 @@ def polish_email_draft(
 
 def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
     """True when draft contains pin text or an email opening rewrite of it."""
-    draft_tokens = set(_TOKEN.findall(draft_text.lower()))
-    for variant in (pin_excerpt, rewrite_email_opening(pin_excerpt)):
-        anchors = set(_TOKEN.findall(variant.lower()))
+    norm_draft = normalize_email_dashes(draft_text)
+    draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
+    norm_pin = normalize_email_dashes(pin_excerpt)
+    for variant in (
+        norm_pin,
+        rewrite_email_opening(norm_pin),
+        normalize_email_dashes(rewrite_email_opening(norm_pin)),
+    ):
+        anchors = set(_TOKEN.findall(variant.lower())) - _RESTATE_STOPWORDS
         if anchors and anchors <= draft_tokens:
             return True
-        if variant.strip().lower() in draft_text.lower():
+        if variant.strip().lower() in norm_draft.lower():
             return True
     return False
 
@@ -153,6 +186,7 @@ def email_draft_penalty(
     signer: str,
     standing_limits: str,
     recipient: str = "",
+    objective: str = "",
 ) -> int:
     """Score penalty for email envelope/register defects (3 points each)."""
     if channel != "email":
@@ -162,6 +196,10 @@ def email_draft_penalty(
         penalty += 3
     if not _SUBJECT.search(text):
         penalty += 3
+    if "reinstatement hearing" in objective.lower():
+        subj_match = re.search(r"(?m)^Subject\s*:\s*(.+)$", text, re.I)
+        if subj_match and "reinstatement" not in subj_match.group(1).lower():
+            penalty += 3
     if signer.strip() and not _signer_present(text, signer):
         penalty += 3
     if re.search(r"this correspondence serves", text, re.I):
