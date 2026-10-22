@@ -19,7 +19,10 @@ from bus_watch.impresario_ear_common import (
 )
 from implement_admission.impresario_policy import load_impresario_policy
 
-from pipelines.impresario_ear.v1.handlers.deliver import deliver_impresario_ear
+from pipelines.impresario_ear.v1.handlers.deliver import (
+    admit_friction_cite,
+    deliver_impresario_ear,
+)
 from pipelines.impresario_ear.v1.handlers.evaluate import (
     _build_evaluate_prompt,
     _extract_harvest_prose,
@@ -950,6 +953,51 @@ async def test_deliver_degraded_bus_failure() -> None:
     assert out.get("skip") is True
     assert out["error"]["code"] == "ear.deliver_failed"
     assert out.get("posted") is not True
+
+
+def test_admit_friction_cite_observed_only() -> None:
+    deliver_path = "pipelines/impresario_ear/v1/handlers/deliver.py"
+    gather_with_path = {
+        "jsonl": deliver_path,
+        "cdp": "unreachable",
+        "tape": None,
+    }
+    assert admit_friction_cite(f"see {deliver_path}", gather_with_path) is True
+    assert (
+        admit_friction_cite(
+            "the house looks drifted",
+            {"jsonl": deliver_path},
+        )
+        is False
+    )
+    assert (
+        admit_friction_cite(
+            "see pipelines/impresario_ear/v1/handlers/missing.py",
+            {"jsonl": deliver_path},
+        )
+        is False
+    )
+    assert (
+        admit_friction_cite(
+            "sha b790cb91bdc8 is the run",
+            {"jsonl": "no sha here"},
+        )
+        is False
+    )
+    assert (
+        admit_friction_cite(
+            "sha b790cb91bdc8 is the run",
+            {"jsonl": "b790cb91bdc8"},
+        )
+        is True
+    )
+    assert (
+        admit_friction_cite(
+            'quote "admission gate only"',
+            {"jsonl": "admission gate only"},
+        )
+        is True
+    )
 
 
 def test_continuity_ops_omit_ear() -> None:

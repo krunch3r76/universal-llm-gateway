@@ -299,6 +299,7 @@ async def evaluate_impresario_ear(
         "skip": False,
         "body": body,
         "verdict": verdict,
+        "gather": gather,
         "model": seat.model,
         "effort": seat.effort_rung,
         "bus_lifecycle": "ephemeral",
