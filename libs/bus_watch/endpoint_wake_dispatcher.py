@@ -448,37 +448,60 @@ def parse_seat_registration_stamp(body: str) -> tuple[str, str] | None:
     return None
 
 
+_SEAT_REGISTRATION_SCAN_PAGE = 500
+
+
 def load_latest_seat_registration_stamp(
     store: StoreClient, *, thread: str = _MAESTRO_SEAT_REGISTRATION_THREAD
 ) -> tuple[str, str] | None:
-    """Load the newest ``TYPE: SEAT_REGISTRATION`` on ``thread`` by ``turn_number``."""
-    payload = store.turns(thread, last=100)
-    turns = list(payload.get("turns") or [])
+    """Load the newest parseable ``TYPE: SEAT_REGISTRATION`` on ``thread`` by ``turn_number``.
+
+    Walks the full thread in ascending pages (not the tip ``last=100`` window) so an
+    authoritative stamp is not dropped when more than 100 newer non-registration turns
+    follow it (specimen 12286#4490 vs #4482).
+    """
     best_num = -1
     best: tuple[str, str] | None = None
-    for row in turns:
-        try:
-            turn_number = int(row.get("turn_number") or 0)
-        except (TypeError, ValueError):
-            continue
-        parsed = parse_seat_registration_stamp(str(row.get("body") or ""))
-        if parsed is None or turn_number <= best_num:
-            continue
-        best_num = turn_number
-        best = parsed
+    after_turn = 0
+    while True:
+        payload = store.turns(
+            thread, after_turn=after_turn, last=_SEAT_REGISTRATION_SCAN_PAGE
+        )
+        turns = list(payload.get("turns") or [])
+        if not turns:
+            break
+        for row in turns:
+            try:
+                turn_number = int(row.get("turn_number") or 0)
+            except (TypeError, ValueError):
+                continue
+            parsed = parse_seat_registration_stamp(str(row.get("body") or ""))
+            if parsed is None or turn_number <= best_num:
+                continue
+            best_num = turn_number
+            best = parsed
+        after_turn = int(turns[-1]["turn_number"])
+        if not payload.get("truncated"):
+            break
     return best
 
 
 def holder_matches_seat_registration(
     holder: dict[str, Any], stamp: tuple[str, str] | None
 ) -> bool:
-    """True when holder ``registration_id`` and ``chat_url`` equal the stamp pair."""
+    """True when holder registration and chat URL agree with the stamp pair."""
     if stamp is None:
         return False
     stamp_reg, stamp_url = stamp
     holder_reg = str(holder.get("registration_id") or "").strip()
+    if holder_reg != stamp_reg:
+        return False
     holder_url = str(holder.get("chat_url") or "").strip()
-    return holder_reg == stamp_reg and holder_url == stamp_url
+    holder_hid = holder_id_from_chat_url(holder_url)
+    stamp_hid = holder_id_from_chat_url(stamp_url)
+    if holder_hid and stamp_hid:
+        return holder_hid == stamp_hid
+    return holder_url == stamp_url
 
 
 def build_wake_registration_refused_body(
@@ -518,15 +541,28 @@ def post_wake_registration_refused_alerts(
     )
     poster = getattr(store, "create_turn", None)
     if not callable(poster):
+        logger.warning(
+            "endpoint_wake_dispatcher: create_turn unavailable; "
+            "skipped FACT|wake-registration-refused alerts thread=%s",
+            thread,
+        )
         return
     for to_agent in _WAKE_REGISTRATION_REFUSED_TARGETS:
-        poster(
-            thread=thread,
-            from_agent="agent_bus",
-            to_agent=to_agent,
-            subject=_WAKE_REGISTRATION_REFUSED_SUBJECT,
-            body=body,
-        )
+        try:
+            poster(
+                thread=thread,
+                from_agent="agent_bus",
+                to_agent=to_agent,
+                subject=_WAKE_REGISTRATION_REFUSED_SUBJECT,
+                body=body,
+            )
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: wake-registration-refused alert failed "
+                "thread=%s to=%s",
+                thread,
+                to_agent,
+            )
 
 
 def _deliver_cse(
@@ -736,13 +772,6 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             maestro_stamp = load_latest_seat_registration_stamp(store)
             if not holder_matches_seat_registration(holder, maestro_stamp):
                 stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
-                post_wake_registration_refused_alerts(
-                    store,
-                    rejected_registration_id=str(holder.get("registration_id") or ""),
-                    rejected_chat_url=str(holder.get("chat_url") or ""),
-                    stamp_registration_id=stamp_reg,
-                    stamp_chat_url=stamp_url,
-                )
                 store.result(
                     wake_id=wake_id,
                     outcome="skipped",
@@ -751,13 +780,6 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                     subscription_id=sub.get("id"),
                     cse_registration_id=None,
                 )
-                return claimed
-        state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
-        if agent == "maestro":
-            stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
-            if reason.startswith("cse_authority_split") or (
-                reg and stamp_reg and reg != stamp_reg
-            ):
                 post_wake_registration_refused_alerts(
                     store,
                     rejected_registration_id=str(holder.get("registration_id") or ""),
@@ -765,6 +787,13 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                     stamp_registration_id=stamp_reg,
                     stamp_chat_url=stamp_url,
                 )
+                return claimed
+        state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
+        stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+        need_refused_alert = agent == "maestro" and (
+            reason.startswith("cse_authority_split")
+            or (reg and stamp_reg and reg != stamp_reg)
+        )
         store.result(
             wake_id=wake_id,
             outcome=state,
@@ -773,6 +802,14 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=sub.get("id"),
             cse_registration_id=reg,
         )
+        if need_refused_alert:
+            post_wake_registration_refused_alerts(
+                store,
+                rejected_registration_id=str(holder.get("registration_id") or ""),
+                rejected_chat_url=str(holder.get("chat_url") or ""),
+                stamp_registration_id=stamp_reg,
+                stamp_chat_url=stamp_url,
+            )
         return claimed
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
     turn_arg: int | str = (
