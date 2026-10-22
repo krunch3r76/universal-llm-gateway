@@ -1364,6 +1364,66 @@ def test_g5_same_bullet_second_path_returns_none() -> None:
 
 
 @pytest.mark.offline
+def test_g5_same_bullet_tools_path_returns_none() -> None:
+    pre_sha = "a" * 64
+    section = (
+        f"- `{_G5_CORTEX_URI_A}` tools/foo.py\n"
+        f"  pre-edit read_sha256: {pre_sha}\n"
+    )
+    assert _parse_g3_files_expected_pairs(section) is None
+
+
+@pytest.mark.offline
+def test_g5_same_bullet_dotdot_libs_returns_none() -> None:
+    pre_sha = "a" * 64
+    section = (
+        f"- `{_G5_CORTEX_URI_A}` ../libs/implement_admission/foo.py\n"
+        f"  pre-edit read_sha256: {pre_sha}\n"
+    )
+    assert _parse_g3_files_expected_pairs(section) is None
+
+
+@pytest.mark.offline
+def test_g5_same_bullet_quoted_scripts_returns_none() -> None:
+    pre_sha = "a" * 64
+    section = (
+        f'- `{_G5_CORTEX_URI_A}` "scripts/foo.py"\n'
+        f"  pre-edit read_sha256: {pre_sha}\n"
+    )
+    assert _parse_g3_files_expected_pairs(section) is None
+
+
+@pytest.mark.offline
+def test_g5_same_bullet_tools_select_returns_none(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    pre_a = _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "baseline-a\n")
+    post_a = hashlib.sha256(b"post-a\n").hexdigest()
+    _write_cortex_uri(files_root, _G5_CORTEX_URI_A, "post-a\n")
+    g3_body = (
+        "# G3 cortex-only fixture\n\n## files_expected\n\n"
+        f"- `{_G5_CORTEX_URI_A}` tools/foo.py\n"
+        f"  pre-edit read_sha256: {pre_a}\n"
+    )
+    _write_cortex_uri(files_root, _G5_CORTEX_G3_URI, g3_body)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        f"| S4b | `{_G5_CORTEX_G3_URI}` | G3 spec |\n"
+        f"\nread_sha256: {post_a}\n"
+    )
+    deps = _g5_cortex_deps(tmp_path)
+    assert (
+        select_g5_implement_witness(
+            tip_body=tip_body,
+            deps=deps,
+            files_root=files_root,
+            artifacts=_artifact_map(tip_body),
+            repo=deps.repo,
+        )
+        is None
+    )
+
+
+@pytest.mark.offline
 def test_g5_cortex_only_attended_without_resurface_returns_none(
     tmp_path: Path,
 ) -> None:

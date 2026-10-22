@@ -99,10 +99,14 @@ _PRE_EDIT_READ_SHA_RE = re.compile(
     re.IGNORECASE,
 )
 _TIP_SHA256_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
-_PATH_SHAPED_TOKEN_RE = re.compile(
-    r"(?:^|[\s(])(?:\./)?(?:libs/|services/|scripts/|docs/|pipelines/|config/)\S",
+_REMAINDER_PATH_SUFFIX_RE = re.compile(
+    r"\.(?:py|md|json|yaml|sh)\b",
     re.IGNORECASE,
 )
+
+
+def _remainder_has_path_shaped_token(remainder: str) -> bool:
+    return "/" in remainder or bool(_REMAINDER_PATH_SUFFIX_RE.search(remainder))
 _WORKSPACES_URI_RE = re.compile(r"workspaces://[^\s`)]+")
 
 
@@ -138,7 +142,7 @@ def _parse_g3_files_expected_pairs(section: str) -> list[tuple[str, str]] | None
         remainder = _PRE_EDIT_READ_SHA_RE.sub("", remainder, count=1)
         if (
             _WORKSPACES_URI_RE.search(remainder)
-            or _PATH_SHAPED_TOKEN_RE.search(remainder)
+            or _remainder_has_path_shaped_token(remainder)
             or re.search(r"(?:^|\s)none(?:\s|$|`)", remainder, re.IGNORECASE)
         ):
             return None
