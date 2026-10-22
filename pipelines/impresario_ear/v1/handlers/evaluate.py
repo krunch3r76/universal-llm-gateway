@@ -133,7 +133,7 @@ def _build_evaluate_prompt(
                 "signals": sig,
                 "imperative": imp,
             }
-    gather_json = json.dumps(payload, default=str)[:12000]
+    gather_json = json.dumps(payload, default=str)
     instructions = (
         "You are the Impresario Ear critic evaluating house continuity.\n"
         f"Thread: {root_thread}\n"

@@ -536,7 +536,7 @@ async def test_gather_default_cdp_probe_uses_transcript_id_and_gui_host() -> Non
     probe.assert_called_once_with("trans-abc", ":9")
 
 
-def test_evaluate_gather_slice_starts_with_jsonl_when_tape_long() -> None:
+def test_evaluate_gather_keeps_full_tape_and_orders_jsonl_first() -> None:
     long_tape = "T" * 20000
     gather = {
         "tape": long_tape,
@@ -553,7 +553,8 @@ def test_evaluate_gather_slice_starts_with_jsonl_when_tape_long() -> None:
     start = prompt.index("<untrusted_context>\n") + len("<untrusted_context>\n")
     end = prompt.index("\n</untrusted_context>", start)
     gather_json = prompt[start:end]
-    assert len(gather_json) == 12000
+    assert long_tape in gather_json
+    assert len(gather_json) > 12000
     assert gather_json.index('"jsonl"') < gather_json.index('"tape"')
 
 

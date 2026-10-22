@@ -600,7 +600,7 @@ async def patrol_prescreen_for_evaluate(
                 tail = str(turn.get("body") or turn.get("content") or "")
                 break
     if not has_transcript and not tool_blob and isinstance(jsonl, dict):
-        tool_blob = json.dumps(jsonl, default=str)[:8000]
+        tool_blob = json.dumps(jsonl, default=str)
     return prescreen_house(
         root_id=root,
         transcript_id=transcript_id,
