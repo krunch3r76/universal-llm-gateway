@@ -301,5 +301,122 @@ def test_fire_maestro_delivery_records_result_before_alert_failure(db: None) -> 
     ):
         fire_due_wakes(store)  # type: ignore[arg-type]
     assert len(result_calls) == 1
-    assert result_calls[0]["outcome"] == "delivered"
+    assert result_calls[0]["outcome"] == "refused"
+    assert result_calls[0]["reason"] == "seat_registration_mismatch_post_paste"
+    assert result_calls[0]["cse_registration_id"] == "other-reg"
     assert len(alert_calls) == 2
+
+
+def test_fire_maestro_post_paste_mismatch_via_real_fire_cse_followup(
+    db: None,
+) -> None:
+    """Post-paste reg drift uses real fire_cse_followup and refuses with response reg."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    alert_calls: list[dict[str, object]] = []
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {
+                "turns": [
+                    {
+                        "turn_number": 4490,
+                        "body": _FIXTURE_4490_BODY,
+                    }
+                ]
+            }
+
+        def create_turn(self, **kwargs: object) -> dict:
+            alert_calls.append(dict(kwargs))
+            return {"id": len(alert_calls)}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    from unittest.mock import MagicMock
+
+    import httpx
+
+    from bus_watch import cse_followup as cse_mod
+
+    _real_fire_cse_followup = cse_mod.fire_cse_followup
+
+    def _post(method: str, url: str, *, json=None, timeout: float):  # noqa: ANN001
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.content = b'{"ok": true, "send_verified": true}'
+        resp.json.return_value = {
+            "ok": True,
+            "send_verified": True,
+            "registration_id": "other-reg",
+            "url": holder["chat_url"],
+        }
+        return resp
+
+    def _fire_with_injected_post(*args: object, **kwargs: object) -> dict:
+        if not kwargs.get("dry_run"):
+            kwargs["post"] = _post
+        return _real_fire_cse_followup(*args, **kwargs)  # type: ignore[arg-type]
+
+    store = Store()
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": holder["chat_url"],
+                "registration_id": holder["registration_id"],
+                "url": holder["chat_url"],
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+        patch(
+            "bus_watch.cse_followup.fire_cse_followup",
+            side_effect=_fire_with_injected_post,
+        ),
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "refused"
+    assert result_calls[0]["reason"] == "seat_registration_mismatch_post_paste"
+    assert result_calls[0]["cse_registration_id"] == "other-reg"
+    assert len(alert_calls) == 2
+    for call in alert_calls:
+        assert call["thread"] == "12286"
+        assert call["to_agent"] in ("maestro", "grok-bot-gc1")
+        body = str(call["body"])
+        assert "rejected_registration_id: other-reg" in body
+        assert "stamp_registration_id: 48e59d388f634e9f9dd991f02040d4d0" in body

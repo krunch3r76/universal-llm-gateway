@@ -165,6 +165,37 @@ def test_fire_cse_followup_giw_fallback_populates_chat_url() -> None:
     assert out["body"]["registration_id"] == "reg-giw"
 
 
+def test_fire_cse_followup_response_registration_overrides_request() -> None:
+    def _post(method: str, url: str, *, json=None, timeout: float):  # noqa: ANN001
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {
+            "ok": True,
+            "registration_id": "reg-reattached",
+            "url": "https://claude.ai/cowork/cse_new",
+        }
+        return resp
+
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": "https://claude.ai/cowork/cse_old",
+                "registration_id": "reg-10479",
+                "url": "https://claude.ai/cowork/cse_old",
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+    ):
+        out = fire_cse_followup("WAKE 10479", "10479", post=_post)
+    assert out["registration_id"] == "reg-reattached"
+    assert out["url"] == "https://claude.ai/cowork/cse_new"
+
+
 def test_fire_cse_followup_transport_error_never_raises() -> None:
     def _post(method: str, url: str, *, json=None, timeout: float):  # noqa: ANN001
         raise httpx.ConnectError("connection refused")
