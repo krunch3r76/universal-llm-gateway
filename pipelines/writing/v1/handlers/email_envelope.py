@@ -139,10 +139,23 @@ def _normalize_exhibit_lines(text: str, intake: dict[str, Any]) -> str:
                 rf"(.+?)\.?\s*$",
                 re.I,
             )
-            if pattern.match(stripped):
-                out_lines.append(f"{ex_num}: {title}")
-                replaced = True
-                break
+            match = pattern.match(stripped)
+            if match:
+                remainder = match.group(1).strip()
+                rem_tokens = set(_TOKEN.findall(remainder.lower()))
+                allowed_tokens = set(_TOKEN.findall(title.lower())) | {
+                    "the",
+                    "a",
+                    "an",
+                }
+                if (
+                    rem_tokens
+                    and rem_tokens <= allowed_tokens
+                    and "." not in remainder.rstrip(".")
+                ):
+                    out_lines.append(f"{ex_num}: {title}")
+                    replaced = True
+                    break
         if not replaced:
             out_lines.append(line)
     return "\n".join(out_lines)

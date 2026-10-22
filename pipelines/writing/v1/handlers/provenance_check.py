@@ -349,21 +349,54 @@ def _causal_connective_violations(
     return violations
 
 
-def _is_non_claim_envelope_unit(unit: str) -> bool:
-    first_line = unit.splitlines()[0].strip() if unit.strip() else ""
-    if not first_line:
+def _is_non_claim_envelope_unit(
+    unit: str,
+    *,
+    channel: str | None = None,
+    signer: str | None = None,
+) -> bool:
+    """True when a sentence block is correspondence envelope only, not a factual claim."""
+    if not unit or not unit.strip():
         return True
-    if _VALEDICTION_LINE_RE.match(first_line):
+    if check_class_for_channel(str(channel or "filing")) != "correspondence":
+        return False
+    non_empty = [ln.strip() for ln in unit.splitlines() if ln.strip()]
+    if len(non_empty) == 1:
+        first = non_empty[0]
+        if re.match(
+            r"^\s*(?:attached are(?:\s+the\s+following(?:\s+exhibits|\s+documents)?)?|"
+            r"the\s+(?:attached\s+)?exhibits\s+are(?:\s+as\s+follows)?)\s*[:.]?\s*$",
+            first,
+            re.I,
+        ):
+            return True
+    if not non_empty:
         return True
-    if re.match(r"^\s*(?:to|cc|bcc|from|subject|re|date)\s*:", first_line, re.I):
-        return True
-    if re.match(
-        r"^\s*(?:attached are(?:\s+the\s+following(?:\s+exhibits|\s+documents)?)?|"
-        r"the\s+(?:attached\s+)?exhibits\s+are(?:\s+as\s+follows)?)\s*[:.]?\s*$",
-        first_line,
-        re.I,
-    ):
-        return True
+    if _VALEDICTION_LINE_RE.match(non_empty[0]):
+        if len(non_empty) == 1:
+            return True
+        if len(non_empty) == 2:
+            second = non_empty[1]
+            if re.search(r"[\d.!?;:,]", second) is not None:
+                return False
+            words = second.split()
+            if not (1 <= len(words) <= 5):
+                return False
+            if not all(w[0].isupper() for w in words if w):
+                return False
+            if signer and signer.strip():
+                signer_norm = signer.strip().lower()
+                second_norm = second.lower()
+                tokens = signer.strip().split()
+                short_name = (
+                    f"{tokens[0]} {tokens[-1]}".lower()
+                    if len(tokens) >= 2
+                    else signer_norm
+                )
+                if second_norm not in {signer_norm, short_name}:
+                    return False
+            return True
+        return False
     return False
 
 
@@ -678,6 +711,7 @@ def revision_delta(
     pin_ledger: list[dict[str, Any]] | None = None,
     v2_clauses_from_derive: bool = False,
     channel: str | None = None,
+    signer: str | None = None,
 ) -> list[dict[str, Any]]:
     """List provenance violations introduced between an earlier draft revision and the current one."""
     prior = _parse_draft(draft_v1)
@@ -713,7 +747,9 @@ def revision_delta(
             if (
                 not sentence
                 or _in_v1(sentence)
-                or _is_non_claim_envelope_unit(sentence)
+                or _is_non_claim_envelope_unit(
+                    sentence, channel=channel, signer=signer
+                )
             ):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
@@ -770,7 +806,9 @@ def revision_delta(
             if (
                 not sentence
                 or _in_v1(sentence)
-                or _is_non_claim_envelope_unit(sentence)
+                or _is_non_claim_envelope_unit(
+                    sentence, channel=channel, signer=signer
+                )
             ):
                 continue
             pin_ids = row.get("pin_ids") if isinstance(row.get("pin_ids"), list) else []
@@ -785,7 +823,9 @@ def revision_delta(
     new_tokens = v2_tokens - v1_tokens - join_words
     if new_tokens:
         for sentence in _sentences(v2_text):
-            if _in_v1(sentence) or _is_non_claim_envelope_unit(sentence):
+            if _in_v1(sentence) or _is_non_claim_envelope_unit(
+                sentence, channel=channel, signer=signer
+            ):
                 continue
             if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
@@ -937,6 +977,13 @@ class WritingProvenanceCheckHandler(BaseHandler):
                         channel=channel,
                     )
                 )
+        delta_signer: str | None = None
+        if isinstance(assemble_json, dict):
+            intake_for_signer = assemble_json.get("intake")
+            if isinstance(intake_for_signer, dict):
+                raw_signer = intake_for_signer.get("signer")
+                if raw_signer is not None and str(raw_signer).strip():
+                    delta_signer = str(raw_signer)
         if prior is not None:
             v1_clauses = verifier_clauses
             v2_clauses: list[dict[str, Any]] | None = None
@@ -959,6 +1006,8 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     or ""
                 )
                 signer = str(intake_dict.get("signer") or "")
+                if signer.strip():
+                    delta_signer = signer
                 prior_parsed = _parse_draft(prior)
                 if prior_parsed is not None:
                     prior_parsed = dict(prior_parsed)
@@ -986,6 +1035,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     pin_ledger=ledger,
                     v2_clauses_from_derive=v2_clauses_from_derive,
                     channel=channel,
+                    signer=delta_signer,
                 )
             )
         dropped_facts: list[dict[str, str]] = []

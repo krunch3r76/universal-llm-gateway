@@ -28,6 +28,7 @@ if _PKG not in sys.modules:
     _spec.loader.exec_module(_mod)
 
 provenance = importlib.import_module("writing_v1_handlers.provenance_check")
+email_envelope = importlib.import_module("writing_v1_handlers.email_envelope")
 
 pytestmark = pytest.mark.offline
 
@@ -1085,6 +1086,120 @@ _LEG_C_V1_CLAUSES = [
     {"claim_id": "s1", "text": _LEG_C_BODY_1, "pin_ids": ["P2"], "disposition": "express"},
     {"claim_id": "s2", "text": _LEG_C_BODY_2, "pin_ids": ["P3", "P4"], "disposition": "express"},
 ]
+
+
+def test_revision_delta_s2_correspondence_closing_prose_not_exempt() -> None:
+    v1 = {"draft": "Body only.\n\nSincerely,\nKaywan Joseph Mansubi"}
+    v2 = {
+        "draft": (
+            "Body only.\n\nThank you\n"
+            "The Assessor admitted in writing that the closure was an error."
+        )
+    }
+    kinds = _types(provenance.revision_delta(v1, v2, channel="email"))
+    assert "fact_added" in kinds
+    assert "v2_new_unpinned_clause" in kinds
+
+
+def test_revision_delta_s3_correspondence_closing_with_date_not_exempt() -> None:
+    v1 = {"draft": "Body only.\n\nSincerely,\nKaywan Joseph Mansubi"}
+    v2 = {
+        "draft": (
+            "Body only.\n\nSincerely,\n"
+            "The clerk confirmed receipt on 2026-05-27."
+        )
+    }
+    kinds = _types(provenance.revision_delta(v1, v2, channel="email"))
+    assert "fact_added" in kinds
+
+
+def test_revision_delta_s4_correspondence_modified_subject_flagged() -> None:
+    v1 = {
+        "draft": (
+            "To: clerk@example.org\n"
+            "Subject: Assessment Appeals 25.7489\n\n"
+            "Body."
+        )
+    }
+    v2 = {
+        "draft": (
+            "To: clerk@example.org\n"
+            "Subject: Appeals 25.7489 wrongly closed after Assessor conceded error\n\n"
+            "Body."
+        )
+    }
+    kinds = _types(provenance.revision_delta(v1, v2, channel="email"))
+    assert "fact_added" in kinds
+
+
+def test_revision_delta_s5_filing_re_or_date_line_flagged() -> None:
+    v1 = {"draft": "I declare under penalty of perjury.\n\n/s/ Signer"}
+    v2_re = {
+        "draft": (
+            "I declare under penalty of perjury.\n\n"
+            "Re: Notice never served on declarant\n\n/s/ Signer"
+        )
+    }
+    kinds_re = _types(provenance.revision_delta(v1, v2_re, channel="filing"))
+    assert "fact_added" in kinds_re
+    v2_date = {
+        "draft": (
+            "I declare under penalty of perjury.\n\n"
+            "Date: 2026-04-15\n\n/s/ Signer"
+        )
+    }
+    kinds_date = _types(provenance.revision_delta(v1, v2_date, channel="filing"))
+    assert "fact_added" in kinds_date
+
+
+def test_normalize_exhibit_lines_n1_claim_line_not_scrubbed() -> None:
+    intake = {"verbatim_notes": _EXHIBIT_INTAKE_NOTES}
+    raw = (
+        "Exhibit 8 shows Letter to Assessor stamped 2026-04-15 "
+        "proving timely service."
+    )
+    out = email_envelope.polish_email_draft(
+        raw,
+        recipient="",
+        signer="",
+        intake=intake,
+    )
+    assert "proving timely service" in out
+    v1 = {"draft": "Attached are exhibits.\nExhibit 8: Letter to Assessor stamped 2026-04-15"}
+    v2 = {"draft": f"Attached are exhibits.\n{raw}"}
+    kinds = _types(provenance.revision_delta(v1, v2, channel="email"))
+    assert "fact_added" in kinds
+
+
+def test_normalize_exhibit_lines_n2_multisentence_not_scrubbed() -> None:
+    intake = {"verbatim_notes": _EXHIBIT_INTAKE_NOTES}
+    raw = (
+        "Exhibit 8 shows I wrote to the Assessor before the deadline. "
+        "I then called the clerk on 2026-05-27."
+    )
+    out = email_envelope.polish_email_draft(
+        raw,
+        recipient="",
+        signer="",
+        intake=intake,
+    )
+    assert "I then called the clerk" in out
+    v1 = {"draft": "Attached are exhibits.\nExhibit 8: Letter to Assessor stamped 2026-04-15"}
+    v2 = {"draft": f"Attached are exhibits.\n{raw}"}
+    kinds = _types(provenance.revision_delta(v1, v2, channel="email"))
+    assert "fact_added" in kinds
+
+
+def test_normalize_exhibit_lines_positive_exhibit_six_still_normalized() -> None:
+    intake = {"verbatim_notes": _EXHIBIT_INTAKE_NOTES}
+    raw = "Exhibit 6 shows the Requests for Reinstatement stamped 2026-07-23."
+    out = email_envelope.polish_email_draft(
+        raw,
+        recipient="",
+        signer="",
+        intake=intake,
+    )
+    assert "Exhibit 6: Requests for Reinstatement stamped 2026-07-23" in out
 
 
 def test_fact_ceiling_final_email_range_through_and_restate_pin_passes() -> None:
