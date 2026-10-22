@@ -9,6 +9,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from claude_bundles.cse_url import normalize_cse_url
@@ -101,6 +102,14 @@ def resolve_nest_parent(
     if str(row.get("seat_state") or "") not in _VALID_NEST_PARENT:
         return None
     return row
+
+
+class RemoteUpsert(StrEnum):
+    """Outcome of ``upsert_holder_remote`` (one POST, no retry)."""
+
+    OK = "ok"
+    LANE_CONFLICT = "lane_conflict"
+    UNAVAILABLE = "unavailable"
 
 
 class HolderLaneConflictError(Exception):
@@ -760,14 +769,36 @@ def release_holder_remote(
         return False
 
 
+def _lane_conflict_from_http_error(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
+    try:
+        raw = exc.read()
+        payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    if isinstance(detail, dict) and detail.get("reason") == "lane_conflict":
+        return detail
+    if payload.get("reason") == "lane_conflict":
+        return payload
+    return None
+
+
 def upsert_holder_remote(
     *,
     chat_url: str,
     registration_id: str | None = None,
     execution_id: str | None = None,
     lane_thread_id: str | None = None,
-) -> bool:
-    """Fail-open HTTP upsert for out-of-process callers (cdp_registry hook)."""
+) -> RemoteUpsert:
+    """Best-effort HTTP upsert for out-of-process callers (cdp_registry hook).
+
+    One POST to GIW ``/cse-holder/upsert`` with no retry. Transport failure and
+    non-conflict HTTP errors return ``RemoteUpsert.UNAVAILABLE`` (fail-open).
+    HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` so
+    callers do not treat a live cross-lane refusal as success or as GIW-down.
+    """
     base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
         "/"
     )
@@ -787,10 +818,31 @@ def upsert_holder_remote(
     )
     try:
         with urllib.request.urlopen(req, timeout=2.0) as resp:
-            return 200 <= resp.status < 300
+            if 200 <= resp.status < 300:
+                return RemoteUpsert.OK
+            logger.debug(
+                "cse holder remote upsert fail-open: unexpected status %s",
+                resp.status,
+            )
+            return RemoteUpsert.UNAVAILABLE
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            conflict = _lane_conflict_from_http_error(exc)
+            if conflict is not None:
+                logger.warning(
+                    "cse holder remote upsert lane_conflict chat_url=%s "
+                    "registration_id=%s current_lane=%s requested_lane=%s",
+                    chat_url,
+                    registration_id,
+                    conflict.get("current_lane"),
+                    conflict.get("requested_lane"),
+                )
+                return RemoteUpsert.LANE_CONFLICT
+        logger.debug("cse holder remote upsert fail-open: %s", exc)
+        return RemoteUpsert.UNAVAILABLE
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         logger.debug("cse holder remote upsert fail-open: %s", exc)
-        return False
+        return RemoteUpsert.UNAVAILABLE
 
 
 from services.git_integration_worker.cse_holder_boot_reconcile import (  # noqa: E402
@@ -1068,6 +1120,7 @@ __all__ = [
     "transition_seat_state",
     "release_holder_for_registration",
     "release_holder_remote",
+    "RemoteUpsert",
     "upsert_holder",
     "upsert_holder_remote",
 ]

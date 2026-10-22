@@ -174,14 +174,21 @@ def bind_session_address(
             )
             if not defer_seat_commit:
                 from services.git_integration_worker.cse_session_holders import (
+                    RemoteUpsert,
                     upsert_holder_remote,
                 )
 
-                upsert_holder_remote(
+                upsert_result = upsert_holder_remote(
                     chat_url=url,
                     registration_id=registration_id,
                     execution_id=execution_id,
                 )
+                if upsert_result is RemoteUpsert.LANE_CONFLICT:
+                    logger.warning(
+                        "bind_session_address holder upsert lane_conflict "
+                        "registration_id=%s",
+                        registration_id,
+                    )
             return True
         if prior and row_execution_in_flight(row):
             # A seat driving a live execution is addressed by that execution's
@@ -241,13 +248,21 @@ def bind_session_address(
     if defer_seat_commit:
         return True
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import upsert_holder_remote
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
+    )
 
-    upsert_holder_remote(
+    upsert_result = upsert_holder_remote(
         chat_url=url,
         registration_id=registration_id,
         execution_id=execution_id,
     )
+    if upsert_result is RemoteUpsert.LANE_CONFLICT:
+        logger.warning(
+            "bind_session_address holder upsert lane_conflict registration_id=%s",
+            registration_id,
+        )
     return True
 
 
@@ -391,17 +406,20 @@ def commit_reattach_driving_seat(
             ],
         )
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import upsert_holder_remote
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
+    )
 
-    try:
-        upsert_holder_remote(
-            chat_url=url,
-            registration_id=rid,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception(
-            "commit_reattach_driving_seat upsert failed reg=%s; seat already written",
+    upsert_result = upsert_holder_remote(
+        chat_url=url,
+        registration_id=rid,
+        execution_id=execution_id,
+    )
+    if upsert_result is RemoteUpsert.LANE_CONFLICT:
+        logger.warning(
+            "commit_reattach_driving_seat holder upsert lane_conflict "
+            "registration_id=%s",
             rid,
         )
     return "committed"
