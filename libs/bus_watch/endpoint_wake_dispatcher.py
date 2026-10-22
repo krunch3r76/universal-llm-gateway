@@ -316,6 +316,12 @@ def _resolve_delivery_route(
     return None
 
 
+def _display_seated(store: StoreClient, thread: str) -> bool:
+    """True when ``thread`` has a non-CSE (display) cursor route; it then owns the sole wake path."""
+    resolved = _resolve_delivery_route(store, "cursor", thread)
+    return resolved is not None and str(resolved[1].get("surface") or "") != "cse"
+
+
 def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) -> None:
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
@@ -351,7 +357,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         if not qualifies(turn, cse=cse):
             continue
         if agent == "web-anthropic":
-            if not store.holder(thread):
+            if _display_seated(store, thread) or not store.holder(thread):
                 continue
         elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
             lane = str(resolved[1].get("agent_id") or "").strip()
@@ -531,6 +537,16 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     agent = rows[0]["agent"]
     thread = rows[0]["thread_id"]
     if agent == "web-anthropic":
+        if _display_seated(store, thread):
+            store.result(
+                wake_id=wake_id,
+                outcome="skipped",
+                reason="display_seated",
+                route=None,
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+            return claimed
         try:
             holder = store.holder(thread)
         except Exception as exc:

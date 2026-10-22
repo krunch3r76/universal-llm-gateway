@@ -924,6 +924,9 @@ def test_fire_holders_exception_records_unknown_and_does_not_propagate(
         def claim(self) -> dict:
             return claimed
 
+        def subscription(self, agent: str, thread_id: str) -> None:
+            return None
+
         def holder(self, lane_thread_id: str) -> dict:
             raise httpx.ConnectError("giw holders down")
 
@@ -1204,6 +1207,9 @@ def test_scan_holders_exception_propagates() -> None:
                     "subject": "CONSULT|x",
                 }
             ]
+
+        def subscription(self, agent: str, thread_id: str) -> None:
+            return None
 
         def holder(self, thread: str) -> dict:
             raise httpx.ConnectError("giw holders down")
