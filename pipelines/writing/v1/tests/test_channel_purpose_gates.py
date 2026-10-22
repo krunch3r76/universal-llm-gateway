@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from writing_intake.fact_inventory import run_drift_check
-from writing_intake.purpose_gate import map_claim_to_purpose
+from writing_intake.claim_gates import map_claim_to_purpose
 from writing_intake.schema import validate_intake_payload
 
 _PKG = "writing_v1_handlers"
@@ -105,7 +105,10 @@ def test_one_token_overlap_does_not_map() -> None:
         is None
     )
     assert (
-        map_claim_to_purpose("The hearing is important to me.", PURPOSE_POINTS) is None
+        map_claim_to_purpose(
+            "I hope your team has a calm week ahead.", PURPOSE_POINTS
+        )
+        is None
     )
 
 
@@ -373,6 +376,7 @@ def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
     ).json
     assert payload["verbatim_notes_block"].count('restate="true"') == 13
     assert payload["documents_block"].count('restate="true"') == 13
+    assert payload["documents_block"].count('provenance="operator_account"') == 13
     assert 'verbatim_required="true"' not in payload["verbatim_notes_block"]
     assert "Copy a note word for word only when it is marked verbatim_required" in payload["packet"]
     assert "No declaration phrasing in correspondence" in payload["brief_block"]

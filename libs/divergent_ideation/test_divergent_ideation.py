@@ -58,7 +58,9 @@ def test_divergent_ideation_v1_yaml_default_pool_and_models() -> None:
     """F2-A: YAML defaults and models.yaml name only the three served pool ids."""
     repo_root = Path(__file__).resolve().parents[2]
     spec_dict = yaml.safe_load(
-        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+        (
+            repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml"
+        ).read_text()
     )
     pool = spec_dict["options"]["pool_manifest"]
     assert [entry["model"] for entry in pool] == list(SERVED_POOL_MODELS)
@@ -167,7 +169,8 @@ def test_operator_split_id_only_entries_without_text() -> None:
 
 def test_operator_split_disjoint_union_and_dispersion_bounds() -> None:
     operators = [
-        {"doc_id": f"d{i}", "chunk_id": "c0", "operator_statement": "x"} for i in range(6)
+        {"doc_id": f"d{i}", "chunk_id": "c0", "operator_statement": "x"}
+        for i in range(6)
     ]
     pool = _pool(3)
     result = split_operators(operators, pool, run_seed=42)
@@ -208,7 +211,9 @@ def test_leak_check_variants_and_finalize() -> None:
     abstract = {"structural_goal": "STORAGE spillover pattern", "constraints": []}
     report = check_leak(abstract, ["storage"])
     assert report["passed"] is False
-    report2 = check_leak({"structural_goal": "neutral goal", "constraints": []}, ["storage"])
+    report2 = check_leak(
+        {"structural_goal": "neutral goal", "constraints": []}, ["storage"]
+    )
     assert report2["passed"] is True
     final, accepted = finalize_leak_reports(
         [{"passed": True, "hits": [], "attempts": 1}, {"_skipped": True}],
@@ -223,7 +228,10 @@ def test_leak_finalize_attempts_count() -> None:
         {"passed": False, "hits": [{"term": "x"}], "attempts": 1},
         {"passed": True, "hits": [], "attempts": 1},
     ]
-    abstracts = [{"structural_goal": "a", "constraints": []}, {"structural_goal": "b", "constraints": []}]
+    abstracts = [
+        {"structural_goal": "a", "constraints": []},
+        {"structural_goal": "b", "constraints": []},
+    ]
     final, _ = finalize_leak_reports(reports, abstracts)
     assert final["attempts"] == 2
 
@@ -255,7 +263,10 @@ def test_leak_check_string_actor_items() -> None:
 
 
 def test_apply_problem_defaults_run_seed() -> None:
-    assert apply_problem_defaults({"problem_id": "p"}, default_run_seed=42)["run_seed"] == 42
+    assert (
+        apply_problem_defaults({"problem_id": "p"}, default_run_seed=42)["run_seed"]
+        == 42
+    )
     assert apply_problem_defaults({"run_seed": 7}, default_run_seed=42)["run_seed"] == 7
 
 
@@ -275,7 +286,9 @@ def test_apply_problem_defaults_unwraps_nested_problem() -> None:
 def test_divergent_ideation_v1_yaml_run_seed_default() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     spec_dict = yaml.safe_load(
-        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+        (
+            repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml"
+        ).read_text()
     )
     assert spec_dict["options"]["run_seed"]["default"] == 0
     step_names = [s["name"] for s in spec_dict["steps"]]
@@ -314,7 +327,11 @@ def test_audit_assign_pool_too_small_and_duplicate_pool() -> None:
     small = assign_auditors([_brief("b", "m0", "f0")], _pool(2), 1, min_auditors=2)
     assert small["audit_assignments"] == []
     assert "pool_too_small" in small["assignment_error"]
-    dup_pool = [{"model": "a", "family": "f"}, {"model": "a", "family": "g"}, {"model": "b", "family": "h"}]
+    dup_pool = [
+        {"model": "a", "family": "f"},
+        {"model": "a", "family": "g"},
+        {"model": "b", "family": "h"},
+    ]
     dup = assign_auditors([_brief("b", "a", "f")], dup_pool, 1)
     assert dup["audit_assignments"] == []
     assert "pool_invalid" in dup["assignment_error"]
@@ -525,12 +542,38 @@ def test_collate_list_order_binding() -> None:
             "pool_manifest": _pool(3),
             "leak_report": {"passed": True, "hits": [], "attempts": 1},
             "briefs": [
-                {"brief_id": "b2", "author_model": "m0", "domain_statement": "x", "falsifier": "f", "cost_to_test": "c", "time_to_signal": "t"},
-                {"brief_id": "b1", "author_model": "m0", "domain_statement": "y", "falsifier": "f", "cost_to_test": "c", "time_to_signal": "t"},
+                {
+                    "brief_id": "b2",
+                    "author_model": "m0",
+                    "domain_statement": "x",
+                    "falsifier": "f",
+                    "cost_to_test": "c",
+                    "time_to_signal": "t",
+                },
+                {
+                    "brief_id": "b1",
+                    "author_model": "m0",
+                    "domain_statement": "y",
+                    "falsifier": "f",
+                    "cost_to_test": "c",
+                    "time_to_signal": "t",
+                },
             ],
             "audits": [
-                {"brief_id": "b2", "auditor_model": "a2", "mechanism_class": "m", "template_match": "novel", "re_instantiation_faithful": True},
-                {"brief_id": "b1", "auditor_model": "a1", "mechanism_class": "m", "template_match": "novel", "re_instantiation_faithful": True},
+                {
+                    "brief_id": "b2",
+                    "auditor_model": "a2",
+                    "mechanism_class": "m",
+                    "template_match": "novel",
+                    "re_instantiation_faithful": True,
+                },
+                {
+                    "brief_id": "b1",
+                    "auditor_model": "a1",
+                    "mechanism_class": "m",
+                    "template_match": "novel",
+                    "re_instantiation_faithful": True,
+                },
             ],
             "audit_assignments": [
                 {"brief_id": "b2", "auditor_model": "a2"},
@@ -726,8 +769,53 @@ def test_briefs_from_re_instantiate_unresolved_ref_is_parse_failure() -> None:
         run_id=run_id,
         ideate_output_positions=[0],
     )
-    assert briefs == []
+    assert any(row.get("domain_statement") == "d" for row in briefs)
     assert failures and "abstract_index" in failures[0]["error"]
+    assert briefs[0]["author_model"] == "m0"
+    assert briefs[0]["brief_id"] == f"{run_id}-0-unresolved-0"
+    assert briefs[0]["author_family"] == "f0"
+
+
+def test_re_instantiate_keeps_out_of_range_index_with_author() -> None:
+    """Indexes 0..5 stay, including slots past the filled 0..2 range."""
+    run_id = "run19095"
+    pool = _pool(3)
+    abstract = [
+        {
+            "brief_id": f"{run_id}-0-{slot}",
+            "author_model": "m0",
+            "author_family": "f0",
+            "domain_statement": "abstract",
+        }
+        for slot in range(3)
+    ]
+    outputs = [
+        _step_output(
+            "m0",
+            {"briefs": [_domain_brief(index) for index in range(6)]},
+        )
+    ]
+    briefs, failures = briefs_from_re_instantiate(
+        outputs,
+        abstract,
+        pool,
+        run_id=run_id,
+        ideate_output_positions=[0],
+    )
+    assert [row["brief_id"] for row in briefs] == [
+        f"{run_id}-0-0",
+        f"{run_id}-0-1",
+        f"{run_id}-0-2",
+        f"{run_id}-0-unresolved-0",
+        f"{run_id}-0-unresolved-1",
+        f"{run_id}-0-unresolved-2",
+    ]
+    assert all(row["author_model"] == "m0" for row in briefs)
+    assert all(row["domain_statement"] == "d" for row in briefs)
+    assert len(failures) == 3
+    assigned = assign_auditors(briefs, pool, run_seed=19095, min_auditors=2)
+    error = assigned.get("assignment_error") or ""
+    assert "pool_invalid" not in error
 
 
 def test_re_instantiate_planned_models_match_ideate_successes_only() -> None:
@@ -762,7 +850,11 @@ def _ideate_step_output(model_id: str) -> StepOutput:
 
 def test_re_instantiate_model_id_mismatches_aligned_after_leading_failure() -> None:
     """Element 0 failed; aligned zip with ideate plan yields no mismatch rows."""
-    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    ideate_successes = [
+        _ideate_step_output("m0"),
+        _ideate_step_output("m1"),
+        _ideate_step_output("m2"),
+    ]
     planned = [str(o.model_id or "") for o in ideate_successes]
     re_inst = MapOutputCollection(
         [
@@ -773,23 +865,33 @@ def test_re_instantiate_model_id_mismatches_aligned_after_leading_failure() -> N
         total_count=3,
         failed_iteration_hints=[{"index": 0, "error_message": "failed"}],
     )
-    assert model_id_mismatches(re_inst.outputs_aligned(), planned, "re_instantiate") == []
+    assert (
+        model_id_mismatches(re_inst.outputs_aligned(), planned, "re_instantiate") == []
+    )
 
 
 def test_re_instantiate_model_id_mismatches_aligned_single_wrong_model() -> None:
     """Element 0 failed; one later slot served the wrong model at its aligned index."""
-    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    ideate_successes = [
+        _ideate_step_output("m0"),
+        _ideate_step_output("m1"),
+        _ideate_step_output("m2"),
+    ]
     planned = [str(o.model_id or "") for o in ideate_successes]
     re_inst = MapOutputCollection(
         [
             StepOutput(raw="{}", model_id="m1", json={"briefs": [_domain_brief(0)]}),
-            StepOutput(raw="{}", model_id="m-wrong", json={"briefs": [_domain_brief(0)]}),
+            StepOutput(
+                raw="{}", model_id="m-wrong", json={"briefs": [_domain_brief(0)]}
+            ),
         ],
         output_positions=[1, 2],
         total_count=3,
         failed_iteration_hints=[{"index": 0, "error_message": "failed"}],
     )
-    mismatches = model_id_mismatches(re_inst.outputs_aligned(), planned, "re_instantiate")
+    mismatches = model_id_mismatches(
+        re_inst.outputs_aligned(), planned, "re_instantiate"
+    )
     assert len(mismatches) == 1
     assert mismatches[0]["iteration_index"] == 2
     assert mismatches[0]["model"] == "m-wrong"
@@ -797,12 +899,18 @@ def test_re_instantiate_model_id_mismatches_aligned_single_wrong_model() -> None
     assert "m-wrong" in mismatches[0]["error"]
 
 
-def test_re_instantiate_aligned_outputs_preserve_pool_index_after_leading_failure() -> None:
+def test_re_instantiate_aligned_outputs_preserve_pool_index_after_leading_failure() -> (
+    None
+):
     """Element 0 failed re_instantiate; later briefs must keep surviving pool indices."""
     exec_id = "EXEC-18011"
     pool = _pool(3)
     pool_models = ["m0", "m1", "m2"]
-    ideate_successes = [_ideate_step_output("m0"), _ideate_step_output("m1"), _ideate_step_output("m2")]
+    ideate_successes = [
+        _ideate_step_output("m0"),
+        _ideate_step_output("m1"),
+        _ideate_step_output("m2"),
+    ]
     map_ideate = MapOutputCollection(
         ideate_successes,
         output_positions=[0, 1, 2],
@@ -894,7 +1002,9 @@ async def test_collate_handler_leak_halt_skipped_upstream_steps() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     spec_dict = yaml.safe_load(
-        (repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml").read_text()
+        (
+            repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml"
+        ).read_text()
     )
     collate_dict = next(s for s in spec_dict["steps"] if s["name"] == "collate")
     step = StepConfig.model_validate(collate_dict)
@@ -984,7 +1094,9 @@ def test_audit_assign_and_collate_brief_ids_share_execution_namespace() -> None:
         run_id=exec_id,
         ideate_output_positions=ideate_positions,
     )
-    assert {b["brief_id"] for b in audit_briefs} == {b["brief_id"] for b in collate_briefs}
+    assert {b["brief_id"] for b in audit_briefs} == {
+        b["brief_id"] for b in collate_briefs
+    }
     assert audit_briefs[0]["brief_id"] == f"{exec_id}-0-0"
     meta_briefs, meta_failures = briefs_from_re_instantiate(
         re_inst.outputs_aligned(),

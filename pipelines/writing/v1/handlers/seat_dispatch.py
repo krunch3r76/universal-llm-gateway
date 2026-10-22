@@ -237,6 +237,8 @@ class WritingSeatDispatchHandler(BaseHandler):
         fields: dict[str, Any] = {
             "documents": assemble.get("documents_block") or "",
             "brief": assemble.get("brief_block") or "",
+            "architect_brief": "",
+            "verbatim_notes": assemble.get("verbatim_notes_block") or "",
         }
         if role == "reviewer":
             draft = getattr(outputs.get("draft"), "json", None)

@@ -86,6 +86,8 @@ class OutboundWriteIntake(BaseModel):
     attested_sources: list[str] = Field(default_factory=list)
     purpose_points: list[str] = Field(default_factory=list)
     verbatim_required: list[int] = Field(default_factory=list)
+    intake_answers: list[str] = Field(default_factory=list)
+    fact_sources: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("purpose_points")
     @classmethod
@@ -207,6 +209,8 @@ def validate_intake_payload(
             "attested_sources",
             "purpose_points",
             "verbatim_required",
+            "intake_answers",
+            "fact_sources",
         ):
             if key in options:
                 raw[key] = options[key]

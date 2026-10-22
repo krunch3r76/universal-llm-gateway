@@ -51,7 +51,9 @@ The reinstatement request was filed May 27, 2026 (Exhibit 8).
 
 
 def test_validate_intake_refusal_enrichment() -> None:
-    _intake, refusal = validate_intake_payload({"messages": [{"role": "user", "content": "hi"}]})
+    _intake, refusal = validate_intake_payload(
+        {"messages": [{"role": "user", "content": "hi"}]}
+    )
     assert _intake is None
     assert refusal is not None
     assert "required_fields" in refusal
@@ -147,9 +149,21 @@ def test_drift_check_flags_bad_draft() -> None:
 
 
 class _Out:
-    def __init__(self, payload: dict[str, Any] | None) -> None:
+    def __init__(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        error: str | None = None,
+        raw: str = "",
+        model_id: str | None = None,
+    ) -> None:
         self.json = payload
-        self.error = None
+        self.error = error
+        self.raw = raw
+        self.model_id = model_id
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.model_call_count = 0
 
 
 class _Ctx:
@@ -163,11 +177,7 @@ def test_finalize_status_refused_and_degraded() -> None:
         finalize_mod.WritingFinalizeHandler().execute(
             None,
             _Ctx(
-                {
-                    "assemble": _Out(
-                        {"refused": "intake_invalid", "error": "bad intake"}
-                    )
-                }
+                {"assemble": _Out({"refused": "intake_invalid", "error": "bad intake"})}
             ),
         )
     ).json
@@ -209,3 +219,309 @@ def test_finalize_status_refused_and_degraded() -> None:
     assert degraded["ship_gate"]["pass"] is False
     assert degraded["status"] == "degraded"
     assert degraded.get("error")
+
+
+_HERMES = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+_QWEN = "qwen3-14b-q4-k-m-40960"
+_JURAT = (
+    "I declare under penalty of perjury under the laws of the State of "
+    "California that the foregoing is true and correct."
+)
+_CAPTION = "BOARD OF EXAMPLE"
+
+
+class _IntakeCtx:
+    def __init__(
+        self,
+        options: dict[str, Any],
+        messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.options = options
+        self.messages = messages
+
+
+def _gate_outputs(
+    *,
+    body: str,
+    drift: dict[str, Any],
+    v2_raw: str | None = None,
+    v2_drift: dict[str, Any] | None = None,
+    v2_error: str | None = None,
+    channel: str | None = None,
+    filing_frame: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    assemble_payload: dict[str, Any] = {
+        "ok": True,
+        "refused": None,
+        "pin_ledger": [],
+        "writer_seat": "local",
+        "reviewer_seat": "local",
+        "output": "envelope",
+    }
+    if channel:
+        assemble_payload["channel"] = channel
+    if filing_frame is not None:
+        assemble_payload["filing_frame"] = filing_frame
+    outputs: dict[str, Any] = {
+        "assemble": _Out(assemble_payload),
+        "draft": _Out({"draft": body, "claims": []}, model_id=_HERMES),
+        "independence": _Out({"ok": True, "refused": None}),
+        "fact_ceiling_audit": _Out(
+            {"verdict": "ship", "findings": [], "status": "ok"},
+            model_id=_QWEN,
+        ),
+        "provenance_check": _Out(
+            {
+                "violations": [],
+                "pass": True,
+                "added_facts": [],
+                "drift_check": drift,
+            }
+        ),
+    }
+    if v2_raw is not None or v2_error is not None:
+        outputs["prose_rhythm_pass"] = _Out(
+            None,
+            error=v2_error,
+            raw=v2_raw or "",
+        )
+        outputs["fact_ceiling_final"] = _Out(
+            {
+                "violations": [],
+                "pass": True,
+                "drift_check": v2_drift or {"passed": True, "flagged_sentences": []},
+            }
+        )
+    return outputs
+
+
+def _run_finalize(outputs: dict[str, Any]) -> dict[str, Any]:
+    payload = asyncio.run(
+        finalize_mod.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    return payload
+
+
+def test_documented_fact_inventory_call_ignores_message_content() -> None:
+    prior = (
+        f"I, Ada Example, state:\n\nThe rent was unpaid for April 2026.\n\n{_JURAT}\n"
+    )
+    payload = asyncio.run(
+        assemble_mod.WritingAssembleHandler().execute(
+            None,
+            _IntakeCtx(
+                {
+                    "intake": {
+                        "mode": "fact_inventory",
+                        "prior_draft": prior,
+                        "purpose": "Hearing",
+                        "audience": "Board of Example",
+                        "channel": "filing",
+                    }
+                },
+                [{"role": "user", "content": "Write it"}],
+            ),
+        )
+    ).json
+    assert payload["ok"] is True
+    assert payload["intake"]["prior_draft"] == prior
+    assert payload["intake"]["prior_draft"] != "Write it"
+    blob = "\n".join(
+        str(payload.get(key) or "")
+        for key in (
+            "packet",
+            "verbatim_notes_block",
+            "brief_block",
+            "documents_block",
+        )
+    )
+    assert "Write it" not in blob
+
+
+def test_partial_fact_inventory_does_not_adopt_message_as_prior_draft() -> None:
+    message = "UNIQUE_MESSAGE_NOT_A_DRAFT"
+    intake, refusal = validate_intake_payload(
+        {
+            "mode": "fact_inventory",
+            "purpose": "Reinstatement",
+            "audience": "ALJ",
+        },
+        messages=[{"role": "user", "content": message}],
+    )
+    assert intake is None
+    assert refusal is not None
+    assert refusal["refused"] == "intake_invalid"
+    assert message not in str(refusal)
+
+
+def test_inventory_drift_flags_paraphrase_qualifier_and_attribution() -> None:
+    claims = [
+        "She called a few times a month.",
+        "The housing department billed 40 and the board posted the notice.",
+        "I stated the rent was unpaid.",
+    ]
+    paraphrase = (
+        "She called monthly. The housing billed and posted the notice. "
+        "The rent was unpaid."
+    )
+    bad = run_drift_check(
+        paraphrase,
+        channel="email",
+        pin_ledger=[],
+        load_bearing_claims=claims,
+    )
+    assert bad["passed"] is False
+    flags = [
+        row
+        for row in bad["flagged_sentences"]
+        if row["reason"] == "fact_inventory_drift"
+    ]
+    missing = {token for row in flags for token in row["missing_tokens"]}
+    assert {"few", "times", "month"} <= missing
+    assert {"department", "40", "board"} <= missing
+    assert "stated" in missing
+    good = run_drift_check(
+        " ".join(claims),
+        channel="email",
+        pin_ledger=[],
+        load_bearing_claims=claims,
+    )
+    assert good["passed"] is True
+    assert good["flagged_sentences"] == []
+
+
+def test_revision_delta_flags_pin_keeping_content_drop() -> None:
+    provenance = importlib.import_module("writing_v1_handlers.provenance_check")
+    v1 = "I stated she called a few times a month."
+    v2 = "She called."
+    clauses = [{"text": v1, "pin_ids": ["P1"], "disposition": "express"}]
+    v2_clauses = [{"text": v2, "pin_ids": ["P1"], "disposition": "express"}]
+    delta = provenance.revision_delta(
+        {"draft": v1, "claims": clauses},
+        {"draft": v2, "claims": v2_clauses},
+        v1_clauses=clauses,
+        v2_clauses=v2_clauses,
+    )
+    assert delta != []
+    assert any(row["type"] == "fact_dropped" for row in delta)
+
+
+def test_ship_gate_fails_when_v2_paraphrases_even_if_v1_is_clean() -> None:
+    claims = ["I stated she called a few times a month."]
+    v1 = claims[0]
+    v2 = "She called monthly."
+    v1_drift = run_drift_check(
+        v1, channel="email", pin_ledger=[], load_bearing_claims=claims
+    )
+    v2_drift = run_drift_check(
+        v2, channel="email", pin_ledger=[], load_bearing_claims=claims
+    )
+    assert v1_drift["passed"] is True
+    assert v2_drift["passed"] is False
+    payload = _run_finalize(
+        _gate_outputs(body=v1, drift=v1_drift, v2_raw=v2, v2_drift=v2_drift)
+    )
+    assert payload["provenance"]["drift_check"]["passed"] is False
+    assert payload["ship_gate"]["pass"] is False
+    assert payload["ship_gate"]["selected"] != "draft_v2"
+
+
+def test_errored_reviser_is_not_selected() -> None:
+    clean = run_drift_check(
+        "The rent was unpaid.",
+        channel="email",
+        pin_ledger=[],
+        load_bearing_claims=["The rent was unpaid."],
+    )
+    payload = _run_finalize(
+        _gate_outputs(
+            body="The rent was unpaid.",
+            drift=clean,
+            v2_raw="upstream_transport_error",
+            v2_error="upstream_transport_error",
+        )
+    )
+    assert payload["revision"] is None
+    assert payload["ship_gate"]["selected"] != "draft_v2"
+    assert payload["ship_gate"]["selected"] == "draft_v1"
+
+
+def test_prose_rhythm_prompt_does_not_strip_trailing_qualifiers() -> None:
+    text = (Path(__file__).resolve().parents[1] / "prompts.yaml").read_text(
+        encoding="utf-8"
+    )
+    rhythm = text.split("prose_rhythm:", 1)[1].split("\n  reviser:", 1)[0]
+    assert "strip trailing qualifiers" not in rhythm
+    assert "Orwell" not in rhythm
+    assert "Keep every content word" in rhythm
+    assert "I stated" in rhythm
+    assert "I said" in rhythm
+
+
+def test_filing_stitch_keeps_source_frame_and_fails_unnumbered_body() -> None:
+    from writing_intake.inventory_drift import filing_frame
+
+    opener = "I, Ada Example, state:"
+    claim_a = "The department billed 40 a few times a month."
+    claim_b = "I stated the board received notice."
+    prior = f"{_CAPTION}\n\n{opener}\n\n{claim_a}\n\n{_JURAT}\n"
+    frame = filing_frame(prior)
+    assert frame["caption"] == _CAPTION
+    assert frame["opener"] == opener
+    assert frame["jurat"] == _JURAT
+    assembled = asyncio.run(
+        assemble_mod.WritingAssembleHandler().execute(
+            None,
+            _IntakeCtx(
+                {
+                    "intake": {
+                        "mode": "fact_inventory",
+                        "prior_draft": prior,
+                        "purpose": "Hearing",
+                        "audience": "Board of Example",
+                        "channel": "filing",
+                    }
+                }
+            ),
+        )
+    ).json
+    assert assembled["filing_frame"]["caption"] == _CAPTION
+    assert assembled["filing_frame"]["jurat"] == _JURAT
+    claims = [claim_a, claim_b]
+    numbered = f"1. {claim_a}\n2. {claim_b}"
+    unnumbered = f"{claim_a} {claim_b}"
+    numbered_drift = run_drift_check(
+        numbered, channel="filing", pin_ledger=[], load_bearing_claims=claims
+    )
+    unnumbered_drift = run_drift_check(
+        unnumbered, channel="filing", pin_ledger=[], load_bearing_claims=claims
+    )
+    assert numbered_drift["passed"] is True
+    assert unnumbered_drift["passed"] is True
+    failed = _run_finalize(
+        _gate_outputs(
+            body=unnumbered,
+            drift=unnumbered_drift,
+            channel="filing",
+            filing_frame=frame,
+        )
+    )
+    assert _CAPTION in failed["filing_text"]
+    assert _JURAT in failed["filing_text"]
+    assert failed["ship_gate"]["pass"] is False
+    assert any(
+        row.get("type") == "filing_shape" for row in failed["ship_gate"]["unresolved"]
+    )
+    passed = _run_finalize(
+        _gate_outputs(
+            body=numbered,
+            drift=numbered_drift,
+            channel="filing",
+            filing_frame=frame,
+        )
+    )
+    assert passed["ship_gate"]["pass"] is True
+    assert _CAPTION in passed["filing_text"]
+    assert _JURAT in passed["filing_text"]
+    assert passed["filing_text"].index(_CAPTION) < passed["filing_text"].index(_JURAT)

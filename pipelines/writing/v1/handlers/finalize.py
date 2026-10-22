@@ -9,6 +9,7 @@ revision, and a ship gate. Nothing here sends or writes.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -70,6 +71,62 @@ def _step_ok(step: Any) -> bool:
     if isinstance(step, dict):
         return not step.get("error")
     return not getattr(step, "error", None)
+
+
+_NUMBERED_PARAGRAPH = re.compile(r"(?m)^\d+\.\s")
+
+
+def _drift_failed(row: Any) -> bool:
+    return isinstance(row, dict) and row.get("passed") is False
+
+
+def _merge_drift(v1: dict[str, Any], v2: dict[str, Any] | None) -> dict[str, Any]:
+    """Envelope drift fails when the v1 check or the v2 check fails.
+
+    Flag rows from both passes are kept. A missing v2 check does not fail
+    the envelope. Callers use the merged ``passed`` bit for the ship gate
+    so a clean v1 cannot hide a drifted rhythm draft.
+    """
+    flags = list(v1.get("flagged_sentences") or [])
+    if isinstance(v2, dict):
+        flags.extend(list(v2.get("flagged_sentences") or []))
+    return {
+        **v1,
+        "passed": not _drift_failed(v1) and not _drift_failed(v2),
+        "flagged_sentences": flags,
+    }
+
+
+def _selected_body(selected: str, draft: Any, revision: dict[str, Any] | None) -> str:
+    if selected == "draft_v2" and isinstance(revision, dict):
+        text = revision.get("draft_v2")
+        if isinstance(text, str):
+            return text
+    if isinstance(draft, dict):
+        inner = draft.get("draft")
+        if isinstance(inner, str):
+            return inner
+    return ""
+
+
+def _stitch_filing(frame: dict[str, Any], body: str) -> str:
+    """Join source caption, opener, and jurat around the model body.
+
+    Only non-empty source slices are copied. A missing caption or jurat is
+    left out rather than replaced with a stock line. The body is the model
+    text already checked for fact tokens.
+    """
+    parts: list[str] = []
+    for key in ("caption", "opener"):
+        piece = frame.get(key)
+        if isinstance(piece, str) and piece.strip():
+            parts.append(piece.strip("\n"))
+    if body.strip():
+        parts.append(body.strip("\n"))
+    jurat = frame.get("jurat")
+    if isinstance(jurat, str) and jurat.strip():
+        parts.append(jurat.strip("\n"))
+    return "\n\n".join(parts)
 
 
 def _json_of(outputs: dict[str, Any], name: str) -> dict[str, Any] | None:
@@ -251,6 +308,16 @@ class WritingFinalizeHandler(BaseHandler):
         initial_payload = _json_of(outputs, "provenance_check")
         initial = list((initial_payload or {}).get("violations") or [])
         dropped_facts = list((initial_payload or {}).get("dropped_facts") or [])
+        for row in (initial_payload or {}).get("purpose_drops") or []:
+            if not isinstance(row, dict):
+                continue
+            dropped_facts.append(
+                {
+                    "claim": row.get("sentence") or row.get("claim") or "",
+                    "reason": "not_purpose_relevant",
+                    "provenance": row.get("provenance") or "operator_account",
+                }
+            )
         added_facts = list((initial_payload or {}).get("added_facts") or [])
         drift_check = (initial_payload or {}).get("drift_check") or {
             "passed": True,
@@ -280,7 +347,8 @@ class WritingFinalizeHandler(BaseHandler):
                 if isinstance(rhythm_step, dict)
                 else getattr(rhythm_step, "raw", None)
             )
-        revision_ran = rhythm is not None or bool(rhythm_raw)
+        rhythm_failed = rhythm_step is not None and not _step_ok(rhythm_step)
+        revision_ran = (not rhythm_failed) and (rhythm is not None or bool(rhythm_raw))
         final_payload = _json_of(outputs, "fact_ceiling_final")
         final = (
             list(final_payload.get("violations") or [])
@@ -290,6 +358,15 @@ class WritingFinalizeHandler(BaseHandler):
         rhythm_reverted = False
         selected = "draft_v2" if revision_ran and final == [] else "draft_v1"
         if final and len(final) > 0:
+            selected = "draft_v1"
+            rhythm_reverted = True
+        v2_drift = None
+        if isinstance(final_payload, dict):
+            raw_v2_drift = final_payload.get("drift_check")
+            if isinstance(raw_v2_drift, dict):
+                v2_drift = raw_v2_drift
+        drift_check = _merge_drift(drift_check, v2_drift)
+        if _drift_failed(v2_drift) and selected == "draft_v2":
             selected = "draft_v1"
             rhythm_reverted = True
         if held_review or not review_ok:
@@ -401,6 +478,24 @@ class WritingFinalizeHandler(BaseHandler):
                 "dispositions": [],
                 "rhythm_reverted": rhythm_reverted,
             }
+        filing_text = None
+        if str(assemble.get("channel") or "") == "filing":
+            frame = assemble.get("filing_frame")
+            if not isinstance(frame, dict):
+                frame = {}
+            body = _selected_body(selected, draft, revision)
+            filing_text = _stitch_filing(frame, body)
+            caption = str(frame.get("caption") or "").strip()
+            jurat = str(frame.get("jurat") or "").strip()
+            if caption and jurat and _NUMBERED_PARAGRAPH.search(body) is None:
+                passed = False
+                unresolved.append(
+                    {
+                        "type": "filing_shape",
+                        "claim_id": None,
+                        "detail": "numbered_paragraphs_required",
+                    }
+                )
         usage = {
             name: _usage_of(_raw_step(outputs, name)) for name, _role in _GENERATE_STEPS
         }
@@ -461,4 +556,6 @@ class WritingFinalizeHandler(BaseHandler):
         }
         if cost_note:
             payload["cost_note"] = cost_note
+        if filing_text is not None:
+            payload["filing_text"] = filing_text
         return _step(_attach_status(payload))

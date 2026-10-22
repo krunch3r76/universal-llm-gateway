@@ -3684,6 +3684,7 @@ tools:
   fol_descriptor: >
     Structured outbound write intake relay to writing/writer-specialist-v1.
     Pass options.intake (or top-level intake fields); raw messages/prompt are refused.
+    Non-empty chat messages are ignored when intake validates, and they are refused when it does not.
     mode=standard requires verbatim_notes, recipient, objective, channel.
     mode=fact_inventory requires prior_draft, purpose/objective, audience/recipient;
     channel defaults to filing. divergent-ideation-v1 uses options.problem JSON plus

@@ -51,6 +51,7 @@ prompts:
       <task>
       Return JSON {"briefs": [{"abstract_index": 0, "domain_statement": "...", "hard_constraint_coverage": [...], "falsifier": "...", "cost_to_test": "...", "time_to_signal": "..."}]}.
       abstract_index is the 0-based index of the input abstract brief in the Abstract briefs list for this model.
+      Indexes are only 0 .. len(this list)-1; extra ideas still use that range or they are kept as unresolved. No remap onto 0..2 when those slots are already filled.
       </task>
 
   audit:

@@ -1,4 +1,9 @@
-"""Fact-inventory mode: extract claims from prior_draft and classify load-bearing."""
+"""Fact-inventory mode: extract claims from prior_draft and classify load-bearing.
+
+Provenance calls ``run_drift_check``, which delegates content-token drift to
+``writing_intake.inventory_drift.fact_token_flags`` when ``load_bearing_claims``
+is supplied.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ from .claim_gates import (
     map_claim_to_purpose,
     parse_purpose_points,
 )
+from .inventory_drift import fact_token_flags
 
 check_class_for_channel = check_profile_for_channel
 
@@ -296,6 +302,7 @@ def build_fact_inventory(
     *,
     purpose: str,
     audience: str,
+    channel: str = "filing",
     attested_sources: list[str] | None = None,
     verbatim_notes: list[str] | None = None,
     purpose_points: list[str] | None = None,
@@ -305,6 +312,7 @@ def build_fact_inventory(
 ) -> dict[str, Any]:
     """Classify claims and produce load-bearing inventory + dropped_facts with provenance."""
     del audience
+    channel_profile = check_profile_for_channel(channel)
     attested_sources = list(attested_sources or [])
     notes = list(verbatim_notes or []) if verbatim_notes is not None else []
     strict = (
@@ -364,7 +372,6 @@ def build_fact_inventory(
             if evaluation.provenance == "intake_answer":
                 context_facts.append(row)
     attested = list(dict.fromkeys([*notes, *attested_sources]))
-    channel_profile = check_profile_for_channel("filing")
     result: dict[str, Any] = {
         "input_sha256": hashlib.sha256(prior_draft.encode("utf-8")).hexdigest(),
         "checked_sha256": hashlib.sha256(checked_body.encode("utf-8")).hexdigest(),
@@ -379,7 +386,10 @@ def build_fact_inventory(
         "attested_sources": attested,
         "check_profile": channel_profile,
     }
-    result["sworn_body_word_count"] = _measure_sworn_body_words(prior_draft)
+    if channel_profile == "sworn":
+        result["sworn_body_word_count"] = _measure_sworn_body_words(prior_draft)
+    else:
+        result["body_word_count"] = len(checked_body.split())
     return result
 
 
@@ -425,6 +435,15 @@ _VALEDICTION = re.compile(
     re.I,
 )
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
+_EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\b", re.I)
+_POSTSCRIPT = re.compile(r"^\s*P\.?\s*S\.?\b", re.I)
+
+
+def _append_units_from_text(units: list[str], text: str) -> None:
+    for sent in _split_sentences(text):
+        sent = sent.strip()
+        if len(sent) >= 12:
+            units.append(sent)
 
 
 def _correspondence_units(text: str) -> list[str]:
@@ -445,19 +464,24 @@ def _correspondence_units(text: str) -> list[str]:
                         units.append(stripped)
         else:
             joined = " ".join(ln.strip() for ln in paragraph_lines if ln.strip())
-            for sent in _split_sentences(joined):
-                sent = sent.strip()
-                if len(sent) >= 12:
-                    units.append(sent)
+            _append_units_from_text(units, joined)
         paragraph_lines = []
 
     for line in text.splitlines():
-        if past_valediction:
-            break
         stripped = line.strip()
         if _HEADER_LINE.match(line):
             continue
-        if stripped and len(stripped) <= 80 and _SALUTATION.match(stripped):
+        if stripped and _EXHIBIT_LINE.match(stripped):
+            continue
+        if stripped and len(stripped) <= 120 and _SALUTATION.match(stripped):
+            if "," in stripped:
+                after_comma = stripped.split(",", 1)[1].strip()
+                if len(after_comma.split()) > 4:
+                    _append_units_from_text(units, stripped)
+            continue
+        if past_valediction:
+            if stripped and _POSTSCRIPT.match(stripped):
+                _append_units_from_text(units, stripped)
             continue
         if stripped and _VALEDICTION.match(stripped):
             past_valediction = True
@@ -502,7 +526,7 @@ def drift_check_sentence(
     if profile == "sworn" and exhibit_ids:
         if _EXHIBIT_LEDGER.search(sentence) and not _EXHIBIT_TAG.search(sentence):
             return "exhibit_fact_missing_inline_tag"
-    if purpose_points and map_claim_to_purpose(sentence, purpose_points) is None:
+    if points and map_claim_to_purpose(sentence, points) is None:
         return "not_purpose_relevant"
     return None
 
@@ -516,14 +540,19 @@ def run_drift_check(
     purpose_points: Sequence[str] | None = None,
     purpose: str | None = None,
     intake_answers: Sequence[str] | None = None,
+    load_bearing_claims: list[str] | None = None,
 ) -> dict[str, Any]:
     """Sentence-level drift check; branches on channel profile."""
     check_class = check_profile_for_channel(channel)
-    points = [p for p in (purpose_points or []) if str(p).strip()]
-    parsed_points = (
-        parse_purpose_points(purpose or "", list(points) if points else None)
-        if purpose or points
-        else []
+    points = [str(p).strip() for p in (purpose_points or []) if str(p).strip()]
+    if points:
+        parsed_points = parse_purpose_points(purpose or "", points)
+    elif purpose and str(purpose).strip():
+        parsed_points = parse_purpose_points(str(purpose).strip(), None)
+    else:
+        parsed_points = []
+    purpose_gate = (
+        "applied" if parsed_points else "skipped_no_purpose_points"
     )
     verbatim_required_excerpts = [
         str(pin["excerpt"])
@@ -574,6 +603,13 @@ def run_drift_check(
         if len(normalized) > 40 and normalized in seen_propositions:
             flagged.append({"sentence": sent, "reason": "re_explanation_same_draft"})
         seen_propositions.add(normalized)
+    if load_bearing_claims:
+        flagged.extend(
+            fact_token_flags(
+                checked_body,
+                [str(item) for item in load_bearing_claims],
+            )
+        )
     result: dict[str, Any] = {
         "passed": not flagged,
         "input_sha256": hashlib.sha256(draft_text.encode("utf-8")).hexdigest(),
@@ -585,7 +621,7 @@ def run_drift_check(
         "channel": channel,
         "check_class": check_class,
         "check_profile": check_class,
-        "purpose_gate": "applied" if points else "skipped_no_purpose_points",
+        "purpose_gate": purpose_gate,
     }
     if check_class == "sworn":
         result["sworn_body_word_count"] = _measure_sworn_body_words(draft_text)

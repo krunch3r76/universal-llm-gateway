@@ -9,7 +9,7 @@ from typing import Any, Literal
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.fact_inventory import run_drift_check
-from writing_intake.purpose_gate import check_class_for_channel
+from writing_intake.claim_gates import check_class_for_channel
 
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",
@@ -797,14 +797,25 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     added_facts.append(text.strip())
         effective_channel = str(channel or "email")
         purpose_points: list[str] = []
+        purpose_text = ""
+        intake_answers: list[str] = []
         if isinstance(assemble_json, dict):
             raw_points = assemble_json.get("purpose_points")
-            if not isinstance(raw_points, list):
-                intake_block = assemble_json.get("intake") or {}
-                if isinstance(intake_block, dict):
-                    raw_points = intake_block.get("purpose_points")
+            intake_block = assemble_json.get("intake") or {}
+            if not isinstance(raw_points, list) and isinstance(intake_block, dict):
+                raw_points = intake_block.get("purpose_points")
             if isinstance(raw_points, list):
                 purpose_points = [str(item) for item in raw_points]
+            if isinstance(intake_block, dict):
+                purpose_text = str(
+                    intake_block.get("purpose")
+                    or intake_block.get("objective")
+                    or assemble_json.get("objective")
+                    or ""
+                ).strip()
+                raw_answers = intake_block.get("intake_answers")
+                if isinstance(raw_answers, list):
+                    intake_answers = [str(item) for item in raw_answers]
         drift: dict[str, Any] = {
             "passed": True,
             "flagged_sentences": [],
@@ -816,6 +827,8 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 channel=effective_channel,
                 pin_ledger=ledger,
                 purpose_points=purpose_points or None,
+                purpose=purpose_text or None,
+                intake_answers=intake_answers or None,
             )
         flagged = drift.get("flagged_sentences") or []
         purpose_drops = [

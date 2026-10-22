@@ -16,7 +16,7 @@ models:
   drafter_anthropic:
     model: anthropic/claude-sonnet-5-5
   reviser:
-    model: qwen3-5-9b-q8-0-131072
+    model: google/gemini-2.5-pro
   reviewer:
     model: qwen3-5-9b-q8-0-131072
   verifier:

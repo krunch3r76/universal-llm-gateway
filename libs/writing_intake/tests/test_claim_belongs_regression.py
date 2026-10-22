@@ -132,8 +132,22 @@ def test_short_purpose_header_preserves_good_cause_claims() -> None:
         claim,
         purpose="AAB reinstatement declaration",
         audience="Board",
+        purpose_points=[
+            "Good cause for reinstatement, including when the tenant was away."
+        ],
     )
     assert claim in inv["load_bearing_claims"]
+
+
+def test_short_purpose_header_drops_unrelated_landlord_deposit_claims() -> None:
+    inv = build_fact_inventory(
+        "Ask landlord to return deposit.\nThe deposit was $2,000.",
+        purpose="AAB reinstatement declaration",
+        audience="Board",
+    )
+    assert inv["load_bearing_claims"] == []
+    reasons = {row["reason"] for row in inv["dropped_facts"]}
+    assert "not_purpose_relevant" in reasons
 
 
 def test_negative_detector_preserves_past_tense_good_cause_knowledge() -> None:

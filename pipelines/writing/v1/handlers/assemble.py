@@ -19,7 +19,8 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 from writing_intake.fact_inventory import build_fact_inventory
-from writing_intake.purpose_gate import check_class_for_channel
+from writing_intake.claim_gates import check_class_for_channel
+from writing_intake.inventory_drift import filing_frame
 from writing_intake.schema import validate_intake_payload
 
 from ._working_set import WorkingSetClient, WorkingSetUnavailable
@@ -345,11 +346,12 @@ class WritingAssembleHandler(BaseHandler):
             str(data.get("prior_draft") or ""),
             purpose=str(data.get("purpose") or data.get("objective") or ""),
             audience=str(data.get("audience") or data.get("recipient") or ""),
+            channel=str(data.get("channel") or "filing"),
             attested_sources=list(data.get("attested_sources") or []),
             verbatim_notes=list(data.get("verbatim_notes") or []) or None,
             purpose_points=list(data.get("purpose_points") or []) or None,
             intake_answers=list(data.get("intake_answers") or []) or None,
-            fact_sources=list(data.get("fact_sources") or []) or None,
+            fact_sources=_coerce_fact_sources(data.get("fact_sources")),
         )
         data = {
             **data,
@@ -394,6 +396,7 @@ class WritingAssembleHandler(BaseHandler):
                     "error": "max_pins_exceeded",
                 }
             )
+        frame = filing_frame(str(data.get("prior_draft") or ""))
         blocks = _intake_blocks(data, pins)
         if str(data.get("channel") or "") == "filing":
             blocks["brief_block"] = (
@@ -427,10 +430,24 @@ class WritingAssembleHandler(BaseHandler):
                 "mode": "fact_inventory",
                 "dropped_facts": inventory["dropped_facts"],
                 "load_bearing_claims": inventory["load_bearing_claims"],
+                "filing_frame": frame,
                 "packet": packet,
                 "output": output,
             }
         )
+
+
+def _coerce_fact_sources(raw: Any) -> list[dict[str, Any]] | None:
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        return [
+            {"claim": str(key), "provenance": str(value)}
+            for key, value in raw.items()
+        ]
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return None
 
 
 def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
@@ -831,6 +848,7 @@ async def _resolve_pins(
             thread, turn = value
             record = await client.bus_read(thread, turn)
             excerpt, digest = _bus_text(record), None
+        prov = "document" if kind in {"entity", "assertion", "note"} else "document"
         pins.append(
             {
                 "pin_id": f"P{index}",
@@ -839,6 +857,7 @@ async def _resolve_pins(
                 "excerpt": _truncate(_fence(excerpt)),
                 "sha256": digest,
                 "attested": True,
+                "provenance": prov,
             }
         )
     return pins
@@ -878,10 +897,15 @@ def _claim_ledger_pins(
         if not claim:
             continue
         attested = provenance in {"operator_account", "document"}
+        kind = (
+            "prior_draft"
+            if provenance == "prior_draft_only"
+            else "verbatim_note"
+        )
         pin: dict[str, Any] = {
             "pin_id": f"P{start + offset}",
             "source_uri": f"intake:claim_ledger[{offset}]",
-            "kind": "verbatim_note",
+            "kind": kind,
             "excerpt": _truncate(_fence(claim)),
             "sha256": hashlib.sha256(claim.encode("utf-8")).hexdigest(),
             "attested": attested,
@@ -908,6 +932,7 @@ def _verbatim_note_pins(
             "excerpt": _truncate(_fence(item)),
             "sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
             "attested": True,
+            "provenance": "operator_account",
         }
         if offset in required:
             pin["verbatim_required"] = True
@@ -944,6 +969,9 @@ def _intake_blocks(
         f"Check class: {check_class}",
     ]
     purpose_points = intake.get("purpose_points") or []
+    purpose_text = str(
+        intake.get("purpose") or intake.get("objective") or ""
+    ).strip()
     if purpose_points:
         brief_lines.append(
             "Purpose points: "
@@ -974,7 +1002,7 @@ def _intake_blocks(
             'tag as type "omission"; flag a sentence that serves no purpose point as type '
             '"not_purpose_relevant".'
         )
-    if purpose_points:
+    if purpose_points or purpose_text:
         brief_lines.append(
             "Purpose rule: every body sentence must serve a listed purpose point. "
             "Do not add requests or courtesies no purpose point asks for, such as a receipt-confirmation request."

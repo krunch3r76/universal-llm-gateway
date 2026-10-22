@@ -1,4 +1,9 @@
-"""Clean-room prompt architect with deterministic fallback."""
+"""Clean-room prompt architect with a deterministic fallback brief.
+
+Assemble is the only caller. A model brief that invents nouns or numbers
+is rejected. Filing channels require numbered paragraphs and forbid a
+caption, opener, or jurat. The handler does not send or write a draft.
+"""
 
 from __future__ import annotations
 
@@ -27,10 +32,14 @@ def _architect_template() -> str:
 
     prompts_path = Path(__file__).resolve().parents[1] / "prompts.yaml"
     data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
-    return str((data.get("prompts") or {}).get("prompt_architect", {}).get("template") or "")
+    return str(
+        (data.get("prompts") or {}).get("prompt_architect", {}).get("template") or ""
+    )
 
 
-def _allowed_tokens(intake: dict[str, Any], pin_ledger: list[dict[str, Any]]) -> set[str]:
+def _allowed_tokens(
+    intake: dict[str, Any], pin_ledger: list[dict[str, Any]]
+) -> set[str]:
     allowed: set[str] = set()
     for pin in pin_ledger:
         allowed |= set(_NAME.findall(str(pin.get("excerpt") or "")))
@@ -79,7 +88,9 @@ def _filing_exhibit_rule(intake: dict[str, Any]) -> str:
         return ""
     return (
         "negative_constraints: require (Exhibit N) on every exhibit-backed fact; "
-        "no listicle paragraphs without exhibit tags."
+        "no listicle paragraphs without exhibit tags. "
+        "Use numbered paragraphs (1. 2. 3.) grouped from the attested claims. "
+        "Do not emit a caption, an opener, or a jurat."
     )
 
 
@@ -87,12 +98,14 @@ def _fallback_brief(blocks: dict[str, str], intake: dict[str, Any]) -> str:
     max_chars = intake.get("max_chars")
     budget = str(max_chars) if max_chars else "none"
     filing_rule = _filing_exhibit_rule(intake)
-    constraints = filing_rule or "negative_constraints: no new facts; attested pins only"
+    constraints = (
+        filing_rule or "negative_constraints: no new facts; attested pins only"
+    )
     return "\n".join(
         [
             "lead_pin_id: P1",
             "beat_order: verbatim order",
-            f"audience_posture: { _fence(str(intake.get('channel') or 'email')) }",
+            f"audience_posture: {_fence(str(intake.get('channel') or 'email'))}",
             constraints,
             f"char_budget: {budget}",
             blocks.get("verbatim_notes_block") or "",
@@ -102,6 +115,14 @@ def _fallback_brief(blocks: dict[str, str], intake: dict[str, Any]) -> str:
 
 
 class WritingPromptArchitectHandler(BaseHandler):
+    """Build the architect brief from assemble blocks, with a local fallback.
+
+    The executor calls ``execute`` once. A model reply that names new nouns
+    or numbers is discarded and the deterministic fallback is returned.
+    Filing channels add the numbered-paragraph rule. No bus post and no file
+    write.
+    """
+
     step_type = "writing_prompt_architect_v1"
 
     def __init__(self, caller: Any | None = None) -> None:

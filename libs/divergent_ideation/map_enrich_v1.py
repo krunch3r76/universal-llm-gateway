@@ -1,4 +1,11 @@
-"""Inject engine identity into map outputs and align audits to assignments."""
+"""Inject engine identity into map outputs and align audits to assignments.
+
+Collate and audit-assign call ``briefs_from_re_instantiate`` to bind each
+domain brief to an engine brief_id. A local slot hit keeps that id. An index
+outside the pool item's slots, or a ref that does not parse, stays in the
+result as ``{run_id}-{pool_index}-unresolved-{ordinal}`` and still records
+the parse-failure row. Author on that row is the iteration model.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,11 @@ def inject_decontextualizer_model(
     abstract: dict[str, Any],
     decontextualizer_model: str | None,
 ) -> dict[str, Any]:
+    """Copy ``decontextualizer_model`` onto an abstract record when it is set.
+
+    The input dict is not mutated. A missing model id leaves the copy
+    unchanged. Callers are the decontextualize step and its tests. No I/O.
+    """
     out = dict(abstract)
     if decontextualizer_model:
         out["decontextualizer_model"] = decontextualizer_model
@@ -26,7 +38,11 @@ def abstract_briefs_from_map_ideate(
     run_id: str,
     briefs_per_model: int,
 ) -> list[dict[str, Any]]:
-    """Inject brief_id, author_model, author_family into abstract brief records."""
+    """Inject brief_id, author_model, and author_family into abstract brief records.
+
+    Pool index and slot form ``{run_id}-{pool_index}-{slot}``. A missing
+    output is skipped. Callers are audit-assign and collate. No I/O.
+    """
     families = _family_lookup(pool_manifest)
     result: list[dict[str, Any]] = []
     for pool_index, output in enumerate(map_outputs):
@@ -69,10 +85,57 @@ def _parse_abstract_index(brief: dict[str, Any]) -> int | None:
     return None
 
 
+def _slot_indexes(
+    abstract_briefs: list[dict[str, Any]],
+    run_id: str,
+    pool_index: int,
+) -> set[int]:
+    """Return filled slot numbers for one pool item under ``run_id``.
+
+    Ids look like ``{run_id}-{pool_index}-{slot}``. A different run namespace
+    yields an empty set, so a foreign run_id does not count as an extra idea.
+    """
+    prefix = f"{run_id}-{pool_index}-"
+    slots: set[int] = set()
+    for brief in abstract_briefs:
+        bid = str(brief.get("brief_id") or "")
+        if not bid.startswith(prefix):
+            continue
+        suffix = bid[len(prefix) :]
+        if suffix.isdigit():
+            slots.add(int(suffix))
+    return slots
+
+
 def _ideate_pool_index(compact_index: int, output_positions: list[int] | None) -> int:
     if output_positions and compact_index < len(output_positions):
         return int(output_positions[compact_index])
     return compact_index
+
+
+def _append_unresolved_brief(
+    result: list[dict[str, Any]],
+    enriched: dict[str, Any],
+    *,
+    run_id: str,
+    pool_index: int,
+    author_model: str,
+    author_family: str,
+    ordinals: dict[int, int],
+) -> None:
+    """Keep a brief whose index missed this pool item's slots.
+
+    ``brief_id`` is ``{run_id}-{pool_index}-unresolved-{ordinal}``.
+    ``domain_statement`` and the other model fields stay. ``author_model``
+    is the iteration model id, and ``author_family`` comes from the pool
+    manifest. The caller still records the parse-failure row.
+    """
+    ordinal = ordinals.get(pool_index, 0)
+    ordinals[pool_index] = ordinal + 1
+    enriched["brief_id"] = f"{run_id}-{pool_index}-unresolved-{ordinal}"
+    enriched["author_model"] = author_model
+    enriched["author_family"] = author_family
+    result.append(enriched)
 
 
 def briefs_from_re_instantiate(
@@ -84,11 +147,19 @@ def briefs_from_re_instantiate(
     ideate_output_positions: list[int] | None = None,
     step: str = "re_instantiate",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Resolve domain briefs to engine brief_id via abstract_index and pool position."""
+    """Bind domain briefs to engine ids, keeping out-of-range indexes.
+
+    A local hit on this pool item's slots binds ``brief_id`` and author from
+    the abstract brief, as before. An index outside those slots, or a ref
+    that does not parse, still appends the brief and keeps the parse-failure
+    row. Out-of-range ids use ``unresolved-{ordinal}`` so filled slots 0..2
+    are not remapped. No I/O.
+    """
     families = _family_lookup(pool_manifest)
     abstract_by_id = {str(b.get("brief_id", "")): b for b in abstract_briefs}
     result: list[dict[str, Any]] = []
     parse_failures: list[dict[str, Any]] = []
+    unresolved_ordinal: dict[int, int] = {}
     for compact_index, output in enumerate(map_outputs):
         if output is None:
             continue
@@ -110,6 +181,15 @@ def briefs_from_re_instantiate(
                         "error": "abstract_index missing or not a non-negative integer",
                     }
                 )
+                _append_unresolved_brief(
+                    result,
+                    enriched,
+                    run_id=run_id,
+                    pool_index=pool_index,
+                    author_model=author_model,
+                    author_family=author_family,
+                    ordinals=unresolved_ordinal,
+                )
                 continue
             bid = f"{run_id}-{pool_index}-{index}"
             abstract = abstract_by_id.get(bid)
@@ -122,11 +202,24 @@ def briefs_from_re_instantiate(
                         "error": f"abstract_index {index} did not resolve to brief_id {bid!r}",
                     }
                 )
+                slots = _slot_indexes(abstract_briefs, run_id, pool_index)
+                if slots and index not in slots:
+                    _append_unresolved_brief(
+                        result,
+                        enriched,
+                        run_id=run_id,
+                        pool_index=pool_index,
+                        author_model=author_model,
+                        author_family=author_family,
+                        ordinals=unresolved_ordinal,
+                    )
                 continue
             enriched["brief_id"] = bid
             enriched["abstract_ref"] = bid
             enriched["author_model"] = str(abstract.get("author_model") or author_model)
-            enriched["author_family"] = str(abstract.get("author_family") or author_family)
+            enriched["author_family"] = str(
+                abstract.get("author_family") or author_family
+            )
             result.append(enriched)
     return result, parse_failures
 
@@ -170,7 +263,9 @@ def model_id_mismatches(
 ) -> list[dict[str, Any]]:
     """Record StepOutput.model_id differing from the planned model for an iteration."""
     failures: list[dict[str, Any]] = []
-    for index, (output, planned) in enumerate(zip(map_outputs, planned_models, strict=False)):
+    for index, (output, planned) in enumerate(
+        zip(map_outputs, planned_models, strict=False)
+    ):
         if output is None or not planned:
             continue
         actual = str(getattr(output, "model_id", "") or "")
@@ -192,7 +287,11 @@ def map_parse_failures_from_collection(
     planned_models: list[str] | None = None,
     failed_hints: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Collect json_parse_error rows and failed_iteration_hints for a map step."""
+    """Collect json_parse_error rows and failed_iteration_hints for a map step.
+
+    Planned model ids fill a blank StepOutput model id. Hint indexes that
+    fall outside the plan keep an empty model string. No I/O.
+    """
     failures: list[dict[str, Any]] = []
     for index, output in enumerate(map_outputs):
         if output is None:

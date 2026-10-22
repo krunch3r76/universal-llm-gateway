@@ -46,7 +46,7 @@ _CORRESPONDENCE_GENERIC = frozenset(
         "writing",
     }
 )
-_PURPOSE_MIN_OVERLAP = 2
+_PURPOSE_MIN_OVERLAP = 1
 _NUMBERED_CLAUSE = re.compile(r"\(\s*(\d+)\s*\)")
 
 _VOLUNTEERED_NEGATIVE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -100,46 +100,6 @@ _DECLARATION_REGISTER = re.compile(
     r"|\bdeclare\s+under\s+penalty\s+of\s+perjury\b",
     re.I,
 )
-
-_TIMELINESS_ANCHORS: tuple[tuple[str, frozenset[str]], ...] = (
-    (
-        "purpose[0]",
-        frozenset(
-            "applicant appeal 25 7489 7490 apn flintridge reinstatement personal "
-            "knowledge support".split()
-        ),
-    ),
-    (
-        "purpose[1]",
-        frozenset(
-            "notification base year value prop 19 december january supplemental assessment "
-            "assessed reappraised conflicted notices notice civil code complied tenant rent "
-            "landlord service lease hearing".split()
-        ),
-    ),
-    (
-        "purpose[2]",
-        frozenset(
-            "bathurst assessor contacted called calls returned unreturned referred aranda "
-            "emergency leave away relief".split()
-        ),
-    ),
-    (
-        "purpose[3]",
-        frozenset(
-            "march april chase servicer escrow tax collections bills understand concern paid "
-            "knowledge issue".split()
-        ),
-    ),
-    (
-        "purpose[4]",
-        frozenset(
-            "may june july delivered green clerk emailed untimely closed 60 days filed deadline "
-            "perjury".split()
-        ),
-    ),
-)
-
 
 @dataclass(frozen=True, slots=True)
 class PurposePoint:
@@ -254,16 +214,6 @@ def parse_purpose_points(
                 )
                 for index, item in enumerate(segments)
             ]
-    if _is_short_domain_header(purpose):
-        return [
-            PurposePoint(
-                point_id=point_id,
-                text=purpose.strip(),
-                anchor_tokens=anchors,
-                allows_negative_or_concession=_allows_negative(purpose),
-            )
-            for point_id, anchors in _TIMELINESS_ANCHORS
-        ]
     tokens = purpose_content_tokens(purpose)
     if not tokens:
         return []
@@ -311,15 +261,7 @@ def map_claim_to_purpose(
         if score > best_score:
             best_score = score
             best_id = point.point_id
-    if (
-        isinstance(purpose_points, list)
-        and purpose_points
-        and isinstance(purpose_points[0], str)
-    ):
-        if best_score >= _PURPOSE_MIN_OVERLAP:
-            return best_id
-        return None
-    if best_score >= 1:
+    if best_score >= _PURPOSE_MIN_OVERLAP:
         return best_id
     return None
 
@@ -405,10 +347,6 @@ def resolve_claim_provenance(
             return "operator_account"
     if _EXHIBIT_CITE_RE.search(claim):
         return "document"
-    if strict_attestation:
-        return "prior_draft_only"
-    if map_claim_to_purpose(claim, purpose_points) is not None:
-        return "operator_account"
     return "prior_draft_only"
 
 

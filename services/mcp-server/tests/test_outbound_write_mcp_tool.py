@@ -25,9 +25,18 @@ def test_intake_schema_mcp_and_pipeline_assemble_parity() -> None:
     intake2, err2 = validate_intake_payload(payload, messages=[])
     assert err2 is None
     assert intake.model_dump() == intake2.model_dump()
-    _, refused = validate_intake_payload(payload, messages=[{"role": "user", "content": "hi"}])
-    assert refused is not None
-    assert refused["refused"] == "raw_prompt_prohibited_use_intake_schema"
+    kept, refused = validate_intake_payload(
+        payload, messages=[{"role": "user", "content": "hi"}]
+    )
+    assert refused is None
+    assert kept is not None
+    assert kept.model_dump() == intake.model_dump()
+    assert "hi" not in str(kept.model_dump())
+    _, option_refused = validate_intake_payload(
+        {**payload, "messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert option_refused is not None
+    assert option_refused["refused"] == "raw_prompt_prohibited_use_intake_schema"
 
 
 @pytest.mark.asyncio
@@ -41,7 +50,9 @@ async def test_outbound_write_tool_schema_and_relay() -> None:
         names = {tool.name for tool in tools}
         assert "outbound_write" in names
         outbound = next(tool for tool in tools if tool.name == "outbound_write")
-        schema = getattr(outbound, "parameters", None) or getattr(outbound, "input_schema", None)
+        schema = getattr(outbound, "parameters", None) or getattr(
+            outbound, "input_schema", None
+        )
         props: set[str] = set()
         if isinstance(schema, dict):
             props = set(schema.get("properties", {}).keys())
