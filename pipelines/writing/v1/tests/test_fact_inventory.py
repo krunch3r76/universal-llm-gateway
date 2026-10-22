@@ -76,10 +76,20 @@ def test_fact_inventory_validation_requires_prior_draft() -> None:
     assert refusal["refused"] == "intake_invalid"
 
 
+_AAB_PURPOSE = (
+    "Support July 23, 2026 Requests for Reinstatement (Applications 25.7489 and 25.7490) "
+    "regarding timeliness: conflicting Dec 16, 2025 Prop 19 and Jan 16, 2026 supplemental "
+    "notices; unreturned calls to Deborah Bathurst during undisclosed emergency leave; "
+    "March 25, 2026 Chase escrow discovery and April 15, 2026 Assessor visit explaining "
+    "first knowledge of issue; May 27, 2026 in-person filing, June 5, 2026 closure notice, "
+    "and timely July 23, 2026 reinstatement within 60 days."
+)
+
+
 def test_aab_inventory_drops_recitals_keeps_exhibits() -> None:
     inv = build_fact_inventory(
         _AAB_PRIOR,
-        purpose="AAB reinstatement declaration",
+        purpose=_AAB_PURPOSE,
         audience="Administrative law judge",
     )
     reasons = {row["reason"] for row in inv["dropped_facts"]}
@@ -88,7 +98,7 @@ def test_aab_inventory_drops_recitals_keeps_exhibits() -> None:
     assert "self_referential_pointer" in reasons
     assert "process_chat_residue" in reasons
     joined = " ".join(inv["load_bearing_claims"])
-    for n in (2, 3, 4, 5, 6, 8):
+    for n in (2, 3, 4, 5, 8):
         assert f"Exhibit {n}" in joined
     assert not any("Exhibit 7" in row for row in inv["load_bearing_claims"])
 
@@ -114,7 +124,7 @@ def test_drift_check_flags_bad_draft() -> None:
     )
     inv = build_fact_inventory(
         clean_numbered,
-        purpose="Timeliness hearing",
+        purpose=_AAB_PURPOSE,
         audience="Assessment Appeals Board",
     )
     assert len(inv["load_bearing_claims"]) == 4

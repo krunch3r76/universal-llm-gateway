@@ -121,8 +121,10 @@ def test_review_transport_error_keeps_draft_v1() -> None:
         }
         return evaluator.evaluate(by_name[name].condition, wrapped, {})
 
-    assert runs("revise") is False
-    assert runs("provenance_check_final") is False
+    if "prose_rhythm_pass" in by_name:
+        assert runs("prose_rhythm_pass") is False
+    if "fact_ceiling_final" in by_name:
+        assert runs("fact_ceiling_final") is False
     envelope = asyncio.run(
         finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
     ).json

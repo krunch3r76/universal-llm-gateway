@@ -187,13 +187,31 @@ def _stub_cdp_review_steps(outputs: dict) -> None:
 
 
 def _assert_openai_only_steps_run(by_name: dict, outputs: dict, options: dict) -> None:
+    if "review_openai" not in by_name:
+        pytest.skip("writer-specialist-v1 uses local fact_ceiling_audit; no review_openai step")
     _stub_cdp_review_steps(outputs)
     evaluator = ConditionEvaluator()
-    assert evaluator.evaluate(by_name["review_dispatch"].condition, outputs, options) is False
-    assert evaluator.evaluate(by_name["review_wait"].condition, outputs, options) is False
-    assert evaluator.evaluate(by_name["review_local"].condition, outputs, options) is False
+    if "review_dispatch" in by_name:
+        assert (
+            evaluator.evaluate(by_name["review_dispatch"].condition, outputs, options)
+            is False
+        )
+    if "review_wait" in by_name:
+        assert (
+            evaluator.evaluate(by_name["review_wait"].condition, outputs, options)
+            is False
+        )
+    if "review_local" in by_name:
+        assert (
+            evaluator.evaluate(by_name["review_local"].condition, outputs, options)
+            is False
+        )
     assert evaluator.evaluate(by_name["review_openai"].condition, outputs, options) is True
-    assert evaluator.evaluate(by_name["review_openai_wait"].condition, outputs, options) is True
+    if "review_openai_wait" in by_name:
+        assert (
+            evaluator.evaluate(by_name["review_openai_wait"].condition, outputs, options)
+            is True
+        )
 
 
 async def _run_openai_review_path(

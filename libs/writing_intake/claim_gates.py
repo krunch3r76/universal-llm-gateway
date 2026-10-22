@@ -374,9 +374,13 @@ def evaluate_candidate_claim(
         return ClaimEvaluation(False, neg_reason, prov, None)
     if prov == "intake_answer":
         return ClaimEvaluation(False, "intake_answer_context_only", prov, None)
-    if prov == "prior_draft_only":
-        return ClaimEvaluation(False, "prior_draft_not_attested", prov, None)
     point_id = map_claim_to_purpose(claim, purpose_points)
+    if prov == "prior_draft_only":
+        if point_id is None:
+            return ClaimEvaluation(
+                False, "prior_draft_not_attested", prov, None
+            )
+        return ClaimEvaluation(True, None, prov, point_id)
     if point_id is None:
         return ClaimEvaluation(False, "not_purpose_relevant", prov, None)
     return ClaimEvaluation(True, None, prov, point_id)

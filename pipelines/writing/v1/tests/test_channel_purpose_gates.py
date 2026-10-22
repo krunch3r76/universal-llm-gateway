@@ -201,6 +201,22 @@ def _standard_email_intake(**extra: Any) -> dict[str, Any]:
     return base
 
 
+def test_schema_accepts_intake_answers_and_fact_sources() -> None:
+    intake, refusal = validate_intake_payload(
+        {
+            "intake": _standard_email_intake(
+                intake_answers=["No phone records remain."],
+                fact_sources={"Exhibit 2 notice": "document"},
+            )
+        },
+        None,
+    )
+    assert refusal is None
+    assert intake is not None
+    assert intake.intake_answers == ["No phone records remain."]
+    assert intake.fact_sources == {"Exhibit 2 notice": "document"}
+
+
 def test_schema_purpose_and_verbatim_required() -> None:
     intake, refusal = validate_intake_payload(
         {

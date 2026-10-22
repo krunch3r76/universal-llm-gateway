@@ -589,8 +589,10 @@ def revision_delta(
                 derived_unpinned_new = True
                 break
 
+    lost_content = v1_tokens - v2_tokens - join_words
     if (
         not derived_unpinned_new
+        and not lost_content
         and v1_order
         and v2_order
         and v1_order == v2_order
@@ -668,6 +670,9 @@ def revision_delta(
                 detail = detail[:_CLAUSE_DETAIL_MAX]
             violations.append(_violation("v2_new_unpinned_clause", None, detail))
             violations.append(_violation("fact_added", None, detail))
+    if lost_content:
+        for token in sorted(lost_content):
+            violations.append(_violation("fact_dropped", None, token))
     return violations
 
 

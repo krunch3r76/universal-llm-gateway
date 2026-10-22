@@ -119,7 +119,10 @@ def test_assemble_builds_pin_ledger() -> None:
     assert len(pins[1]["excerpt"]) <= 1200
     assert pins[1]["excerpt"].endswith(" [truncated]")
     documents = payload["documents_block"]
-    assert '<pin id="P1" source="entity:alpha" attested="true">' in documents
+    assert (
+        '<pin id="P1" source="entity:alpha" attested="true" provenance="document">'
+        in documents
+    )
     assert 'attested="false">' in documents
     assert documents.count("</pin>") == len(pins)
     lines = payload["brief_block"].splitlines()

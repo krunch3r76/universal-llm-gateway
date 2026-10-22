@@ -154,40 +154,19 @@ class OutboundWriteIntake(BaseModel):
         return value
 
 
-def validate_intake_payload(
-    options: Mapping[str, Any],
-    messages: Sequence[Mapping[str, Any]] | None = None,
-) -> tuple[OutboundWriteIntake | None, dict[str, Any] | None]:
-    """Validate structured intake; refuse raw prompt / messages."""
-    if messages:
-        non_empty = [
-            m
-            for m in messages
-            if isinstance(m, dict) and str(m.get("content") or "").strip()
-        ]
-        if non_empty:
-            return None, _refusal(
-                "raw_prompt_prohibited_use_intake_schema",
-                "messages/prompt prohibited; pass structured intake fields",
-            )
-    if "prompt" in options or "messages" in options:
-        return None, _refusal(
-            "raw_prompt_prohibited_use_intake_schema",
-            "messages/prompt prohibited; pass structured intake fields",
-        )
+def _structured_intake_raw(options: Mapping[str, Any]) -> dict[str, Any]:
     intake_raw = options.get("intake")
     if isinstance(intake_raw, str):
         try:
             parsed_intake = json.loads(intake_raw)
-        except json.JSONDecodeError as exc:
-            return None, _refusal(
-                "intake_invalid", f"intake JSON parse failed: {exc.msg}"
-            )
-        if not isinstance(parsed_intake, dict):
-            return None, _refusal("intake_invalid", "intake must be a JSON object")
-        raw = dict(parsed_intake)
-    else:
-        raw = dict(intake_raw or {})
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed_intake, dict):
+            return dict(parsed_intake)
+        return {}
+    if isinstance(intake_raw, dict):
+        return dict(intake_raw)
+    raw = dict(intake_raw or {})
     if not raw and (
         "verbatim_notes" in options or options.get("mode") == "fact_inventory"
     ):
@@ -214,6 +193,43 @@ def validate_intake_payload(
         ):
             if key in options:
                 raw[key] = options[key]
+    return raw
+
+
+def validate_intake_payload(
+    options: Mapping[str, Any],
+    messages: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[OutboundWriteIntake | None, dict[str, Any] | None]:
+    """Validate structured intake; refuse raw prompt / messages."""
+    if "prompt" in options or "messages" in options:
+        return None, _refusal(
+            "raw_prompt_prohibited_use_intake_schema",
+            "messages/prompt prohibited; pass structured intake fields",
+        )
+    intake_raw = options.get("intake")
+    if isinstance(intake_raw, str):
+        try:
+            parsed_intake = json.loads(intake_raw)
+        except json.JSONDecodeError as exc:
+            return None, _refusal(
+                "intake_invalid", f"intake JSON parse failed: {exc.msg}"
+            )
+        if not isinstance(parsed_intake, dict):
+            return None, _refusal("intake_invalid", "intake must be a JSON object")
+        raw = dict(parsed_intake)
+    else:
+        raw = _structured_intake_raw(options)
+    if messages:
+        non_empty = [
+            m
+            for m in messages
+            if isinstance(m, dict) and str(m.get("content") or "").strip()
+        ]
+        if non_empty and not raw:
+            return None, _refusal(
+                "raw_prompt_prohibited_use_intake_schema",
+                "messages/prompt prohibited; pass structured intake fields",
+            )
     if raw.get("mode") != "fact_inventory" and "verbatim_notes" not in raw:
         return None, None
     if raw.get("mode") == "fact_inventory" and "prior_draft" not in raw:

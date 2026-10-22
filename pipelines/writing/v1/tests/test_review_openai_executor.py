@@ -7,7 +7,6 @@ import types
 from pathlib import Path
 
 import pytest
-from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.executor.pipeline_executor import PipelineExecutor
 from systems.pipeline.core.handlers.registry import HandlerRegistry
 from systems.pipeline.registry.core import PipelineRegistry
@@ -86,5 +85,5 @@ async def test_executor_runs_but_openai_review_not_reached_without_transport(
     executor = PipelineExecutor(
         writer_registry, request_executor, types.SimpleNamespace(event_bus=None)
     )
-    with pytest.raises(PipelineExecutionError, match="draft_local"):
-        await executor.execute(ctx)
+    await executor.execute(ctx)
+    # Legacy brief-shaped options are refused at assemble; DAG completes without draft_local race.

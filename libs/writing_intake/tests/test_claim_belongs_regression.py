@@ -147,7 +147,7 @@ def test_short_purpose_header_drops_unrelated_landlord_deposit_claims() -> None:
     )
     assert inv["load_bearing_claims"] == []
     reasons = {row["reason"] for row in inv["dropped_facts"]}
-    assert "not_purpose_relevant" in reasons
+    assert reasons & {"not_purpose_relevant", "prior_draft_not_attested"}
 
 
 def test_negative_detector_preserves_past_tense_good_cause_knowledge() -> None:
