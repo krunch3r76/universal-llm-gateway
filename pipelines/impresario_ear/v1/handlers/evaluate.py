@@ -187,12 +187,16 @@ async def evaluate_impresario_ear(
     sdk_harvest: Any | None = None,
 ) -> dict[str, Any]:
     mode = str(resolve.get("mode") or "deep")
-    if patrol_prescreen is not None:
+    pre: dict[str, Any] | None = None
+    if mode == "patrol" and isinstance(options.get("patrol_prescreen_result"), dict):
+        pre = options["patrol_prescreen_result"]
+    elif patrol_prescreen is not None:
         pre = await patrol_prescreen(
             resolve=resolve,
             gather=gather,
             fetch_turns=options.get("_fetch_turns"),
         )
+    if pre is not None:
         if pre.get("skip_model"):
             signals = pre.get("signals") or []
             if signals:

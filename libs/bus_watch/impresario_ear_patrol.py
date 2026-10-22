@@ -427,6 +427,7 @@ def run_patrol_pass(
                     mode=mode,
                     trigger="patrol",
                     to_agent=patrol_mailbox_for_agent(agent),
+                    patrol_prescreen_result=pre,
                 ),
                 blocking=False,
             )

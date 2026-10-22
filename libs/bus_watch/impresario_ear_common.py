@@ -168,6 +168,7 @@ def build_pipeline_options(
     hop_turn: int | None = None,
     to_agent: str | None = None,
     model: str | None = None,
+    patrol_prescreen_result: dict | None = None,
 ) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "root": root_thread,
@@ -185,6 +186,8 @@ def build_pipeline_options(
         opts["to_agent"] = to_agent
     if model:
         opts["model"] = model
+    if isinstance(patrol_prescreen_result, dict):
+        opts["patrol_prescreen_result"] = patrol_prescreen_result
     return opts
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -731,6 +732,107 @@ async def test_evaluate_patrol_prescreen_remiss_delivers_ear() -> None:
         bus_send=_send,
     )
     assert sent["subject"] == f"EAR | {_ROOT} — remiss_duty"
+
+
+_PATROL_SPECIMEN = (
+    Path(__file__).resolve().parents[3]
+    / "libs"
+    / "bus_watch"
+    / "fixtures"
+    / "patrol_specimen_18374.json"
+)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_patrol_uses_carried_prescreen_after_patrol_pass(
+    tmp_path: Path,
+) -> None:
+    from bus_watch.impresario_ear_patrol import (
+        clear_patrol_state_for_tests,
+        run_patrol_pass,
+        set_patrol_cooldown_path_for_tests,
+    )
+
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    payload = json.loads(_PATROL_SPECIMEN.read_text(encoding="utf-8"))
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": _ROOT,
+            "agent_id": "81fb6960-950d-59c5-88b4-af3839f170d1",
+            "glass_status": "completed",
+        }
+    ]
+    admitted: list[dict[str, Any]] = []
+
+    def _admit(opts: dict[str, Any], **_: Any) -> None:
+        admitted.append(opts)
+
+    with patch(
+        "bus_watch.impresario_ear_patrol.load_patrol_prescreen_inputs",
+        return_value=payload,
+    ):
+        stats = run_patrol_pass(store, now=10_000.0, admit_pipeline=_admit)
+    assert stats["enqueued"] >= 1
+    pipeline_opts = admitted[0]
+    carried = pipeline_opts.get("patrol_prescreen_result")
+    assert isinstance(carried, dict)
+    assert carried.get("signals")
+
+    generate = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": _ROOT})
+    poll = AsyncMock(return_value={"terminal": True, "status": "completed"})
+    harvest = AsyncMock(return_value="VERDICT: healthy")
+    out = await evaluate_impresario_ear(
+        resolve={
+            "skip": False,
+            "root_thread": _ROOT,
+            "mode": "patrol",
+            "trigger": "patrol",
+        },
+        gather={"jsonl": {"glass_status": "completed", "transcript_id": _ROOT}},
+        options=pipeline_opts,
+        sdk_generate=generate,
+        sdk_poll=poll,
+        sdk_harvest=harvest,
+    )
+    assert generate.await_count == 1
+    assert out.get("model") != "zero-token"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_patrol_repriscreens_when_no_carried_result(
+    tmp_path: Path,
+) -> None:
+    from bus_watch.impresario_ear_patrol import (
+        clear_patrol_state_for_tests,
+        set_patrol_cooldown_path_for_tests,
+    )
+
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    prescreen = AsyncMock(
+        return_value={
+            "skip_model": True,
+            "signals": ["pending_dispatch"],
+            "imperative": "NEXT_ADMIT: team_dispatch",
+        }
+    )
+    out = await evaluate_impresario_ear(
+        resolve={
+            "skip": False,
+            "root_thread": _ROOT,
+            "mode": "patrol",
+            "trigger": "patrol",
+        },
+        gather={"jsonl": {}},
+        options={},
+        patrol_prescreen=prescreen,
+    )
+    prescreen.assert_awaited_once()
+    assert out.get("model") == "zero-token"
+    assert out.get("verdict") == "remiss_duty"
 
 
 @pytest.mark.asyncio
