@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from writing_intake.fact_inventory import run_drift_check
 from writing_intake.claim_gates import check_class_for_channel
+from writing_intake.fact_inventory import run_drift_check
 
 _PERSONA = re.compile(
     r"^(as an? |i am an? (ai|assistant|language model))",

@@ -18,8 +18,8 @@ import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
-from writing_intake.fact_inventory import build_fact_inventory
 from writing_intake.claim_gates import check_class_for_channel
+from writing_intake.fact_inventory import build_fact_inventory
 from writing_intake.inventory_drift import filing_frame
 from writing_intake.schema import validate_intake_payload
 

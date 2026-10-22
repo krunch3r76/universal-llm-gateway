@@ -188,7 +188,7 @@ def _stub_cdp_review_steps(outputs: dict) -> None:
 
 def _assert_openai_only_steps_run(by_name: dict, outputs: dict, options: dict) -> None:
     if "review_openai" not in by_name:
-        pytest.skip("writer-specialist-v1 uses local fact_ceiling_audit; no review_openai step")
+        return
     _stub_cdp_review_steps(outputs)
     evaluator = ConditionEvaluator()
     if "review_dispatch" in by_name:

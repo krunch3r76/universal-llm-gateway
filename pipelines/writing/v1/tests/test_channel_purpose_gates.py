@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from writing_intake.fact_inventory import run_drift_check
 from writing_intake.claim_gates import map_claim_to_purpose
+from writing_intake.fact_inventory import run_drift_check
 from writing_intake.schema import validate_intake_payload
 
 _PKG = "writing_v1_handlers"
