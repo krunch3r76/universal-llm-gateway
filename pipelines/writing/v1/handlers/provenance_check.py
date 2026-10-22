@@ -125,6 +125,7 @@ def classify_sentence_modality(
     sentence: str,
     not_attested_pins: list[dict[str, Any]],
 ) -> Literal["request", "need_marker", "declarative"]:
+    """Classify a draft sentence as request, NEED marker, or declarative for provenance rules."""
     stripped = sentence.strip()
     if "[NEED:" in stripped:
         return "need_marker"
@@ -144,6 +145,7 @@ def check_provenance(
     draft_json: Any,
     verifier_clauses: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Return provenance violations for unattested pins, restate gaps, and draft parse errors."""
     parsed = _parse_draft(draft_json)
     if parsed is None:
         return [_violation("draft_unparseable", None, "malformed")]
@@ -251,6 +253,7 @@ def check_fact_ceiling(
     channel: str | None = None,
     include_claim_loop: bool = True,
 ) -> list[dict[str, Any]]:
+    """Detect fact-ceiling violations: unsupported claims, length limits, and channel-specific gates."""
     del include_claim_loop
     violations: list[dict[str, Any]] = []
     if max_chars is not None and len(draft_text) > max_chars:
@@ -565,6 +568,7 @@ def revision_delta(
     pin_ledger: list[dict[str, Any]] | None = None,
     v2_clauses_from_derive: bool = False,
 ) -> list[dict[str, Any]]:
+    """List provenance violations introduced between an earlier draft revision and the current one."""
     prior = _parse_draft(draft_v1)
     current = _parse_draft(draft_v2)
     if prior is None or current is None:
@@ -711,6 +715,8 @@ def _resolve_binding(step: Any, context: Any, field_name: str) -> Any:
 
 
 class WritingProvenanceCheckHandler(BaseHandler):
+    """Pipeline step handler that runs provenance, fact-ceiling, and email polish checks on drafts."""
+
     step_type = "writing_provenance_check_v1"
 
     async def execute(self, step: Any, context: Any) -> StepOutput:

@@ -20,7 +20,6 @@ from .independence import (
     _allow_partial,
     is_independent,
     load_writing_models,
-    model_family,
 )
 
 _GENERATE_STEPS = (
