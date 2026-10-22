@@ -8,25 +8,9 @@ from typing import Any
 _DIGIT_DASH = re.compile(r"(\d)\s*[\u2013\u2014]\s*(\d)")
 _SUBJECT = re.compile(r"(?m)^Subject\s*:", re.I)
 _TO = re.compile(r"(?m)^To\s*:", re.I)
-_SUBJECT_OR_RE_LINE = re.compile(r"(?m)^(?:Subject|Re)\s*:\s*(.+)$", re.I)
-_MATTER_SPAN = re.compile(
-    r"\b(?:Assessment Appeals?|Appeal|Case|Matter|Application|Account|Claim)\s+"
-    r"(?:Nos?\.?\s*)?[0-9A-Z][0-9A-Z.\s,&-]*?[0-9A-Z](?=,|\s+APN|\s+for|\s+regarding|\s+on|\.|$)",
-    re.I,
-)
-_APN_SPAN = re.compile(r"\bAPN\s+[0-9-]+", re.I)
-_HEARING_PHRASE = re.compile(r"\b(?:[A-Z][a-z]+\s+){0,2}Hearing\b")
-_DATE_SPAN = re.compile(
-    r"\b(?:January|February|March|April|May|June|July|August|September|"
-    r"October|November|December)\s+\d{1,2},\s*\d{4}\b",
-    re.I,
-)
+_SUBJECT_OR_RE_LINE = re.compile(r"^\s*(?:Subject|Re)\s*:\s*(.+)$", re.I)
 _FORMAL_APPOSITIVE = re.compile(
     r"(?m)^(\s*)I,\s+[^,\n]{2,80},\s+am\s+(submitting|attaching|writing|requesting|enclosing)\b",
-    re.I,
-)
-_FORMAL_APPOSITIVE_BODY = re.compile(
-    r"(?<=\n\n)I,\s+[^,\n]{2,80},\s+am\s+(submitting|attaching|writing|requesting|enclosing)\b",
     re.I,
 )
 _DECLARATION_OPEN = re.compile(
@@ -43,44 +27,22 @@ def normalize_email_dashes(text: str) -> str:
 
 
 def derive_email_subject(intake: dict[str, Any]) -> str:
-    """Build a subject only from intake subject field or matched spans in intake text."""
+    """Return an explicit subject from intake['subject'] or a Subject:/Re: line, else ''."""
     explicit = str(intake.get("subject") or "").strip()
     if explicit:
         return normalize_email_dashes(explicit)
-    blob = " ".join(
-        [
-            str(intake.get("objective") or ""),
-            *[
-                str(note)
-                for note in (intake.get("verbatim_notes") or [])
-                if str(note).strip()
-            ],
-        ]
-    )
-    header = _SUBJECT_OR_RE_LINE.search(blob)
-    if header:
-        return normalize_email_dashes(header.group(1).strip())
-    parts: list[str] = []
-    matter = _MATTER_SPAN.search(blob)
-    if matter:
-        parts.append(normalize_email_dashes(matter.group(0).strip()))
-    apn = _APN_SPAN.search(blob)
-    if apn:
-        parts.append(normalize_email_dashes(apn.group(0).strip()))
-    hearing_m = _HEARING_PHRASE.search(blob)
-    if hearing_m:
-        hearing_text = re.sub(r"\s+", " ", hearing_m.group(0).strip())
-        date_m = _DATE_SPAN.search(blob)
-        if date_m:
-            parts.append(
-                normalize_email_dashes(
-                    f"{hearing_text} on {date_m.group(0).strip()}"
-                )
-            )
-        else:
-            parts.append(normalize_email_dashes(hearing_text))
-    if parts:
-        return ", ".join(parts)
+    candidates: list[str] = []
+    objective = str(intake.get("objective") or "")
+    if objective.strip():
+        candidates.extend(objective.splitlines())
+    for note in intake.get("verbatim_notes") or []:
+        note_str = str(note or "")
+        if note_str.strip():
+            candidates.extend(note_str.splitlines())
+    for line in candidates:
+        match = _SUBJECT_OR_RE_LINE.match(line.strip())
+        if match and match.group(1).strip():
+            return normalize_email_dashes(match.group(1).strip())
     return ""
 
 
@@ -104,7 +66,6 @@ def rewrite_email_opening(text: str) -> str:
         text,
     )
     text = _FORMAL_APPOSITIVE.sub(r"\1I am \2", text)
-    text = _FORMAL_APPOSITIVE_BODY.sub(r"I am \1", text)
     return text
 
 

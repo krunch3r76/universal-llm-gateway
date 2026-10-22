@@ -86,6 +86,28 @@ async def test_outbound_write_forwards_signer_standing_limits_voice_anchor() -> 
 
 
 @pytest.mark.asyncio
+async def test_outbound_write_forwards_subject() -> None:
+    with patch("tools.pipeline._pipeline_run") as run:
+        run.return_value = {"ok": True}
+        with patch("tools.pipeline._refresh_pipeline_timeouts"):
+            mcp = FastMCP("outbound-write-subject")
+            register_pipeline_tools(mcp)
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "outbound_write",
+                {
+                    "verbatim_notes": ["Fact A"],
+                    "recipient": "Ada",
+                    "objective": "Status",
+                    "channel": "email",
+                    "subject": "Exhibits for Appeal 99.0001",
+                },
+            )
+        intake = run.call_args.kwargs["options"]["intake"]
+        assert intake["subject"] == "Exhibits for Appeal 99.0001"
+
+
+@pytest.mark.asyncio
 async def test_outbound_write_forwards_extended_intake_fields() -> None:
     with patch("tools.pipeline._pipeline_run") as run:
         run.return_value = {"ok": True}

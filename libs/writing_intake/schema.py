@@ -19,6 +19,7 @@ _INTAKE_SCHEMA_HINT: dict[str, Any] = {
         "not_attested",
         "working_set",
         "signer",
+        "subject",
         "voice_anchor",
         "standing_limits",
         "purpose_points",
@@ -70,6 +71,8 @@ def _refusal(refused: str, error: str) -> dict[str, Any]:
 
 
 class OutboundWriteIntake(BaseModel):
+    """Structured writer-specialist intake validated for outbound_write and assemble steps."""
+
     model_config = ConfigDict(extra="forbid")
 
     mode: IntakeMode = "standard"
@@ -81,6 +84,7 @@ class OutboundWriteIntake(BaseModel):
     not_attested: list[str] = Field(default_factory=list)
     working_set: list[str] = Field(default_factory=list)
     signer: str | None = None
+    subject: str | None = None
     voice_anchor: str | None = None
     standing_limits: str | None = None
     prior_draft: str | None = None
@@ -160,7 +164,7 @@ class OutboundWriteIntake(BaseModel):
             )
         return cleaned
 
-    @field_validator("recipient", "objective", "purpose", "audience")
+    @field_validator("recipient", "objective", "purpose", "audience", "subject")
     @classmethod
     def _strip_optional(cls, value: str | None) -> str | None:
         if value is None:
@@ -202,6 +206,7 @@ def _structured_intake_raw(options: Mapping[str, Any]) -> dict[str, Any]:
             "not_attested",
             "working_set",
             "signer",
+            "subject",
             "voice_anchor",
             "standing_limits",
             "prior_draft",

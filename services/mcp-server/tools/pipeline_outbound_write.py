@@ -33,6 +33,7 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
         audience: str | None = None,
         attested_sources: list[str] | None = None,
         signer: str | None = None,
+        subject: str | None = None,
         standing_limits: str | None = None,
         voice_anchor: str | None = None,
         async_exec: bool = False,
@@ -58,6 +59,7 @@ def register_outbound_write_tool(mcp: FastMCP) -> None:
             "audience": audience,
             "attested_sources": attested_sources,
             "signer": signer,
+            "subject": subject,
             "standing_limits": standing_limits,
             "voice_anchor": voice_anchor,
         }

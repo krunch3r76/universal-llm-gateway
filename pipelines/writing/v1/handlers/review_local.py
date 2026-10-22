@@ -43,6 +43,31 @@ def _refusal(exc: BaseException) -> StepOutput:
     )
 
 
+def _independent_review_candidates(
+    independence_json: dict[str, Any] | None,
+    draft: dict[str, Any] | None,
+    models: dict[str, Any],
+) -> tuple[str, str, list[str]]:
+    """Resolve writer model, primary reviewer, and cross-family fallback candidates."""
+    writer_model = ""
+    if isinstance(independence_json, dict) and independence_json.get("writer_model"):
+        writer_model = str(independence_json["writer_model"])
+    elif isinstance(draft, dict):
+        writer_model = str(draft.get("model_id") or draft.get("model") or "")
+    primary = ""
+    if isinstance(independence_json, dict) and independence_json.get("reviewer_model"):
+        primary = str(independence_json["reviewer_model"])
+    if not primary:
+        primary = models.get("reviewer") or models.get("verifier") or ""
+    raw_candidates = [primary, *load_review_fallback_models()]
+    candidates = [
+        c
+        for c in raw_candidates
+        if c and (not writer_model or is_independent(writer_model, c))
+    ]
+    return writer_model, primary, candidates
+
+
 class WritingReviewLocalHandler(BaseHandler):
     """Call the local reviewer and convert transport or model errors to JSON.
 
@@ -86,50 +111,22 @@ class WritingReviewLocalHandler(BaseHandler):
             if isinstance(independence, dict)
             else getattr(independence, "json", None)
         )
-        writer_model = ""
-        if isinstance(independence_json, dict) and independence_json.get("writer_model"):
-            writer_model = str(independence_json["writer_model"])
-        elif isinstance(draft, dict):
-            writer_model = str(draft.get("model_id") or draft.get("model") or "")
+        draft_dict = draft if isinstance(draft, dict) else None
         used_model = ""
         try:
+            models = load_writing_models()
+            _writer, primary, candidates = _independent_review_candidates(
+                independence_json if isinstance(independence_json, dict) else None,
+                draft_dict,
+                models,
+            )
             if self._caller is not None:
-                models = load_writing_models()
-                primary = ""
-                if isinstance(independence_json, dict) and independence_json.get(
-                    "reviewer_model"
-                ):
-                    primary = str(independence_json["reviewer_model"])
-                if not primary:
-                    primary = models.get("reviewer") or models.get("verifier") or ""
-                raw_candidates = [primary, *load_review_fallback_models()]
-                candidates = [
-                    c
-                    for c in raw_candidates
-                    if c
-                    and (not writer_model or is_independent(writer_model, c))
-                ]
                 if primary and primary in candidates:
                     used_model = primary
                 elif candidates:
                     used_model = candidates[0]
                 content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
             else:
-                models = load_writing_models()
-                primary = ""
-                if isinstance(independence_json, dict) and independence_json.get(
-                    "reviewer_model"
-                ):
-                    primary = str(independence_json["reviewer_model"])
-                if not primary:
-                    primary = models.get("reviewer") or models.get("verifier") or ""
-                raw_candidates = [primary, *load_review_fallback_models()]
-                candidates = [
-                    c
-                    for c in raw_candidates
-                    if c
-                    and (not writer_model or is_independent(writer_model, c))
-                ]
                 seen: set[str] = set()
                 content = None
                 last_exc: BaseException | None = None
@@ -170,5 +167,5 @@ class WritingReviewLocalHandler(BaseHandler):
             parsed["clauses"] = []
         if used_model:
             parsed = dict(parsed)
-            parsed.setdefault("reviewer_model", used_model)
+            parsed["reviewer_model"] = used_model
         return _step(parsed)
