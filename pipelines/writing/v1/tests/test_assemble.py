@@ -562,6 +562,12 @@ def test_assemble_fact_inventory_marks_prior_draft_only_unattested_and_handles_w
     assert matching
     assert matching[0]["provenance"] == "prior_draft_only"
     assert matching[0]["attested"] is False
+    assert "garage door" not in payload["verbatim_notes_block"]
+    assert not any(
+        pin.get("attested") is True
+        and "garage door" in str(pin.get("excerpt") or "")
+        for pin in payload["pin_ledger"]
+    )
     http = _Http(status=503, body={"error": "unavailable"})
     down = _Ctx(
         intake={

@@ -40,6 +40,30 @@ def test_intake_schema_mcp_and_pipeline_assemble_parity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_outbound_write_forwards_intake_answers_and_fact_sources() -> None:
+    with patch("tools.pipeline._pipeline_run") as run:
+        run.return_value = {"ok": True}
+        with patch("tools.pipeline._refresh_pipeline_timeouts"):
+            mcp = FastMCP("outbound-write-forward")
+            register_pipeline_tools(mcp)
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "outbound_write",
+                {
+                    "verbatim_notes": ["Fact A"],
+                    "recipient": "Ada",
+                    "objective": "Status",
+                    "channel": "email",
+                    "intake_answers": ["No phone records remain."],
+                    "fact_sources": {"Exhibit 2 notice": "document"},
+                },
+            )
+        intake = run.call_args.kwargs["options"]["intake"]
+        assert intake["intake_answers"] == ["No phone records remain."]
+        assert intake["fact_sources"] == {"Exhibit 2 notice": "document"}
+
+
+@pytest.mark.asyncio
 async def test_outbound_write_tool_schema_and_relay() -> None:
     with patch("tools.pipeline._pipeline_run") as run:
         run.return_value = {"ok": True}

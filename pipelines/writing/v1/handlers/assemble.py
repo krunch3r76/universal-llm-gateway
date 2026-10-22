@@ -429,7 +429,13 @@ class WritingAssembleHandler(BaseHandler):
                 "purpose_points": list(data.get("purpose_points") or []),
                 "mode": "fact_inventory",
                 "dropped_facts": inventory["dropped_facts"],
-                "load_bearing_claims": inventory["load_bearing_claims"],
+                "load_bearing_claims": [
+                    str(r["claim"])
+                    for r in inventory.get("claim_ledger") or []
+                    if isinstance(r, dict)
+                    and r.get("provenance") in {"operator_account", "document"}
+                    and str(r.get("claim", "")).strip()
+                ],
                 "filing_frame": frame,
                 "packet": packet,
                 "output": output,

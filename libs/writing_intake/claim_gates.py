@@ -85,16 +85,6 @@ _VOLUNTEERED_CONCESSION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
-_INTAKE_ANSWER_SIGNATURES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bI\s+(?:do\s+not|don't)\s+have\s+(?:any\s+)?phone\s+records\b", re.I),
-    re.compile(
-        r"\bI\s+received\s+the\s+January\s+16,\s*2026\s+notice\b[^.]+"
-        r"\b(?:close\s+to|shortly\s+after)\s+its\s+date\b",
-        re.I,
-    ),
-    re.compile(r"\bno\s+longer\s+have\s+the\s+envelope\b", re.I),
-)
-
 _DECLARATION_REGISTER = re.compile(
     r"^\s*I,\s+[^,\n]{2,80},\s+(?:am|do|hereby|state|declare|submit|certify)\b"
     r"|\bdeclare\s+under\s+penalty\s+of\s+perjury\b",
@@ -313,6 +303,12 @@ def resolve_claim_provenance(
     strict_attestation: bool,
     purpose_points: list[PurposePoint],
 ) -> FactProvenance:
+    """Classify claim provenance from caller-supplied pins and intake answers.
+
+    ``strict_attestation`` is retained as a deprecated no-op keyword: unbacked
+    prior-draft text is always ``prior_draft_only`` (never promoted).
+    """
+    del strict_attestation, purpose_points
     for row in fact_sources:
         if not isinstance(row, dict):
             continue
@@ -329,18 +325,12 @@ def resolve_claim_provenance(
     for answer in intake_answers:
         if _matches_note(claim, answer):
             return "intake_answer"
-    for sig in _INTAKE_ANSWER_SIGNATURES:
-        if sig.search(claim):
-            return "intake_answer"
     for src in attested_sources:
         if _matches_note(claim, src):
             return "document"
     if _EXHIBIT_CITE_RE.search(claim):
         for answer in intake_answers:
             if _matches_note(claim, answer):
-                return "intake_answer"
-        for sig in _INTAKE_ANSWER_SIGNATURES:
-            if sig.search(claim):
                 return "intake_answer"
     for note in verbatim_notes:
         if _matches_note(claim, note):
@@ -360,6 +350,7 @@ def evaluate_candidate_claim(
     fact_sources: list[dict[str, Any]],
     strict_attestation: bool,
 ) -> ClaimEvaluation:
+    """Evaluate load-bearing status; ``strict_attestation`` is deprecated (no-op)."""
     neg_reason, _ = detect_volunteered_negative_or_concession(claim, purpose_points)
     prov = resolve_claim_provenance(
         claim,

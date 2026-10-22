@@ -383,6 +383,60 @@ BASELINE_INTAKE = {
 }
 
 
+def test_provenance_fact_inventory_drift_on_paraphrase() -> None:
+    load_bearing = ["I stated she called a few times a month."]
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _ProvStep(),
+            _ProvCtx(
+                {
+                    "assemble": _Out(
+                        {
+                            "channel": "email",
+                            "load_bearing_claims": load_bearing,
+                            "pin_ledger": [],
+                        }
+                    ),
+                    "draft": _Out({"draft": "She called monthly.", "claims": []}),
+                }
+            ),
+        )
+    ).json
+    drift = payload["drift_check"]
+    assert any(
+        row.get("reason") == "fact_inventory_drift"
+        for row in drift.get("flagged_sentences") or []
+    )
+    assert "purpose_drift" in [row["type"] for row in payload["violations"]]
+
+
+def test_provenance_objective_only_applies_purpose_gate() -> None:
+    assembled = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(intake=BASELINE_INTAKE, working_set=[]),
+        )
+    ).json
+    assert assembled.get("ok") is True
+    assert not assembled.get("purpose_points")
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _ProvStep(),
+            _ProvCtx(
+                {
+                    "assemble": _Out(assembled),
+                    "draft": _Out({"draft": BASELINE, "claims": []}),
+                }
+            ),
+        )
+    ).json
+    assert payload["drift_check"]["purpose_gate"] == "applied"
+    assert {
+        "sentence": CONFIRM_RECEIPT,
+        "reason": "not_purpose_relevant",
+    } in payload["purpose_drops"]
+
+
 def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:
     payload = asyncio.run(
         assemble.WritingAssembleHandler().execute(

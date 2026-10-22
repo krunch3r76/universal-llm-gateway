@@ -331,7 +331,7 @@ def build_fact_inventory(
         trimmed_claim, sub_drops = _trim_non_load_subclauses(claim)
         for drop in sub_drops:
             dropped_facts.append(
-                {**drop, "provenance": "operator_account", "claim": drop["claim"]}
+                {**drop, "provenance": "prior_draft_only", "claim": drop["claim"]}
             )
         clerical_reason: str | None = None
         for pattern, reason in _NON_LOAD_PATTERNS:
@@ -435,7 +435,7 @@ _VALEDICTION = re.compile(
     re.I,
 )
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
-_EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\b", re.I)
+_EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\s*:", re.I)
 _POSTSCRIPT = re.compile(r"^\s*P\.?\s*S\.?\b", re.I)
 
 

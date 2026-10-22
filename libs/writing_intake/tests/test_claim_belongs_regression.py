@@ -28,6 +28,11 @@ REGRESSION_S3 = (
     "(Exhibit 4)."
 )
 
+AAB_REGRESSION_INTAKE_ANSWERS = [
+    REGRESSION_S1,
+    REGRESSION_S2_V60,
+]
+
 AAB_REV6_0_SWORN_BODY = """
 I, Kaywan Joseph Mansubi, state:
 
@@ -60,6 +65,7 @@ def test_rev6_0_drops_all_three_regression_sentences() -> None:
         AAB_REV6_0_SWORN_BODY,
         purpose=AAB_PURPOSE,
         audience="Assessment Appeals Board",
+        intake_answers=AAB_REGRESSION_INTAKE_ANSWERS,
     )
     lb = inv["load_bearing_claims"]
     assert REGRESSION_S1 not in lb
@@ -81,6 +87,7 @@ def test_rev6_3_drops_remaining_two_and_drift_check() -> None:
         AAB_REV6_3_SWORN_BODY,
         purpose=AAB_PURPOSE,
         audience="Assessment Appeals Board",
+        intake_answers=AAB_REGRESSION_INTAKE_ANSWERS,
     )
     lb = inv["load_bearing_claims"]
     assert REGRESSION_S2_V63 not in lb
@@ -105,12 +112,28 @@ def test_intake_answer_precedence_over_inline_exhibit_tag() -> None:
         purpose_points=points,
         verbatim_notes=[],
         attested_sources=[],
-        intake_answers=[],
+        intake_answers=[claim],
         fact_sources=[],
         strict_attestation=False,
     )
     assert evaluation.provenance == "intake_answer"
     assert evaluation.reason == "volunteered_concession"
+
+
+def test_verbatim_note_wins_over_absent_intake_answer_signature() -> None:
+    claim = REGRESSION_S1
+    points = parse_purpose_points(AAB_PURPOSE)
+    evaluation = evaluate_candidate_claim(
+        claim,
+        purpose_points=points,
+        verbatim_notes=[claim],
+        attested_sources=[],
+        intake_answers=[],
+        fact_sources=[],
+        strict_attestation=False,
+    )
+    assert evaluation.provenance == "operator_account"
+    assert evaluation.reason != "intake_answer_context_only"
 
 
 def test_purpose_gate_drops_unmapped_attested_fact() -> None:

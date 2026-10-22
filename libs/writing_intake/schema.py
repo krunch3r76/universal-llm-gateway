@@ -23,11 +23,14 @@ _INTAKE_SCHEMA_HINT: dict[str, Any] = {
         "standing_limits",
         "purpose_points",
         "verbatim_required",
+        "intake_answers",
+        "fact_sources",
     ],
     "call_shape": (
-        "pipeline_options.intake only; messages may be omitted or []. "
-        "An empty-content user message is also accepted. "
-        "Non-empty messages or a prompt are refused."
+        "Structured intake via pipeline_options.intake (or top-level intake fields). "
+        "messages may be omitted, empty, or non-empty when structured intake is present; "
+        "non-empty messages are refused only when no structured intake block is provided. "
+        "options.messages or options.prompt are always refused."
     ),
     "fact_inventory_fields": [
         "mode='fact_inventory'",

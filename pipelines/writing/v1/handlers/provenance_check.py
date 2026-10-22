@@ -821,6 +821,11 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 raw_answers = intake_block.get("intake_answers")
                 if isinstance(raw_answers, list):
                     intake_answers = [str(item) for item in raw_answers]
+        load_bearing_claims = [
+            str(i)
+            for i in (assemble_json or {}).get("load_bearing_claims") or []
+            if str(i).strip()
+        ] or None
         drift: dict[str, Any] = {
             "passed": True,
             "flagged_sentences": [],
@@ -834,6 +839,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 purpose_points=purpose_points or None,
                 purpose=purpose_text or None,
                 intake_answers=intake_answers or None,
+                load_bearing_claims=load_bearing_claims,
             )
         flagged = drift.get("flagged_sentences") or []
         purpose_drops = [

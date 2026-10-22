@@ -315,7 +315,7 @@ class WritingFinalizeHandler(BaseHandler):
                 {
                     "claim": row.get("sentence") or row.get("claim") or "",
                     "reason": "not_purpose_relevant",
-                    "provenance": row.get("provenance") or "operator_account",
+                    "provenance": row.get("provenance"),
                 }
             )
         added_facts = list((initial_payload or {}).get("added_facts") or [])
