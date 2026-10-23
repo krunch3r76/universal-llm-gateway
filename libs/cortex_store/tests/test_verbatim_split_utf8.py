@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from cortex_store.verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
+from cortex_store.verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+)
 
 pytestmark = pytest.mark.offline
 
