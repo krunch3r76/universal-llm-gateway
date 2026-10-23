@@ -508,6 +508,38 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     assert "Sleep at most 290" not in refusals
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_GIT_POSTURE_SKILL = (
+    _REPO_ROOT
+    / "cursor-plugins"
+    / "ulg-ecosystem"
+    / "skills"
+    / "git-posture"
+    / "SKILL.md"
+)
+
+
+def _git_posture_forward_only_section() -> str:
+    text = _GIT_POSTURE_SKILL.read_text(encoding="utf-8")
+    start = text.index("## Forward only")
+    next_heading = text.find("\n## ", start + 1)
+    assert next_heading != -1
+    return text[start:next_heading]
+
+
+def test_git_posture_forward_only_section_contains_forward_only_marker() -> None:
+    """Stale parity item 7 pointer breaks if the canonical section loses forward_only."""
+    section = _git_posture_forward_only_section()
+    assert "forward_only" in section
+
+
+def test_hop_refusal_forward_only_cites_git_posture_section() -> None:
+    """Hop hard refusal must not name parity note item 7 as the rule body."""
+    assert "grok-bot-ulg-cursor-parity.md item 7" not in _HOP_SUCCESSOR_TEMPLATE
+    assert "git-posture/SKILL.md" in _HOP_SUCCESSOR_TEMPLATE
+    assert "Forward only" in _HOP_SUCCESSOR_TEMPLATE
+
+
 def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop() -> (
     None
 ):
