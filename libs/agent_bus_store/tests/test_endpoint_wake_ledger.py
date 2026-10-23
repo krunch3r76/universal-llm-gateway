@@ -138,6 +138,42 @@ def test_claim_once_and_ttl_folds_unknown(db: TestClient) -> None:
     assert state == "unknown"
 
 
+def test_claim_includes_turn_body_and_from_agent(db: TestClient) -> None:
+    """Break: claim without turn join leaves exchange_lines empty for 19627 paste."""
+    detail = create_thread(thread_id=None, slug="claim-body")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _claimed = insert_turn(
+        thread=thread,
+        from_agent="cursor-sdk",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="stage message body",
+    )
+    item = {
+        "agent": "grok-bot-gc1",
+        "thread_id": thread,
+        "turn_id": turn_id,
+        "turn_number": number,
+    }
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [item],
+        now="2020-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert claimed["wake_id"]
+    row = claimed["rows"][0]
+    assert row["state"] == "claimed"
+    assert row["body"] == "stage message body"
+    assert row["from_agent"] == "cursor-sdk"
+
+
 def test_stage_manager_equivalence_already_answered_and_debounce(
     db: TestClient,
 ) -> None:

@@ -388,7 +388,15 @@ def claim_due_wakes(
         claimed = [
             dict(r)
             for r in conn.execute(
-                "SELECT * FROM endpoint_wake_ledger WHERE wake_id=? ORDER BY turn_id",
+                """
+                SELECT endpoint_wake_ledger.*,
+                       turns.body AS body,
+                       turns.from_agent AS from_agent
+                FROM endpoint_wake_ledger
+                LEFT JOIN turns ON turns.id = endpoint_wake_ledger.turn_id
+                WHERE endpoint_wake_ledger.wake_id=?
+                ORDER BY endpoint_wake_ledger.turn_id
+                """,
                 (wake_id,),
             ).fetchall()
         ]
