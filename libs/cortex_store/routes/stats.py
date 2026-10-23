@@ -6,6 +6,7 @@ from universal_logging import get_logger
 
 from ..compaction import POINTER_SQL_LIKE
 from ..db import cortex_conn, query
+from ..entity_fts import entities_fts_stats
 from ..status_trait_read import entity_has_trait_columns
 
 logger = get_logger("cortex-api.stats")
@@ -51,6 +52,7 @@ def get_stats() -> dict:
 
         return {
             "entities": entity_stats,
+            "entities_fts": entities_fts_stats(conn),
             "assertions": {
                 "total": a_total,
                 "active_content": a_total - a_pointers,

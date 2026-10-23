@@ -12,6 +12,7 @@ import datetime
 import sqlite3
 from dataclasses import dataclass
 
+from .entity_fts import reindex_entity_fts_conn
 from .status_trait_read import entity_has_trait_columns
 from .trait_vocabulary import (
     CONFIDENCE_BAND_VALUES,
@@ -113,17 +114,19 @@ def materialize_graduated_lifecycle(conn: sqlite3.Connection, entity_id: str) ->
 
 
 def write_entity_reaped(conn: sqlite3.Connection, entity_id: str, now_iso: str) -> None:
-    """Soft-delete lifecycle: trait ``lifecycle=reaped`` when columns exist."""
+    """Mark entity reaped (trait lifecycle or legacy status) and drop its FTS row."""
     if entity_has_trait_columns(conn):
         conn.execute(
             "UPDATE entities SET lifecycle = 'reaped', updated_at = ? WHERE id = ?",
             (now_iso, entity_id),
         )
+        reindex_entity_fts_conn(conn, entity_id)
     else:
         conn.execute(
             "UPDATE entities SET status = 'reaped', updated_at = ? WHERE id = ?",
             (now_iso, entity_id),
         )
+        reindex_entity_fts_conn(conn, entity_id)
 
 
 def trait_insert_extras(
