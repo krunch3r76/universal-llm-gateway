@@ -319,7 +319,7 @@ async def test_evaluate_patrol_pick_critic_does_not_typeerror() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evaluate_deep_uses_grok_effort_high() -> None:
+async def test_evaluate_deep_uses_argon_effort_high() -> None:
     load_impresario_policy.cache_clear()
     generate = AsyncMock(
         return_value={"dispatch_id": "d1", "thread_id": _ROOT},
@@ -335,7 +335,7 @@ async def test_evaluate_deep_uses_grok_effort_high() -> None:
         sdk_poll=poll,
         sdk_harvest=harvest,
     )
-    assert out["model"] == "cursor/grok-4.7"
+    assert out["model"] == "cursor/gemini-4-argon"
     assert out["effort"] == "high"
     assert generate.await_args.kwargs["model_knobs"]["effort"] == "high"
 
