@@ -270,9 +270,10 @@ async def seal_predecessor_cse_to_tape(
             data={"registration_id": rid},
         ) from exc
     status = getattr(response, "status_code", None)
+    status_ok = isinstance(status, int) and 200 <= status <= 299
     body: dict[str, Any] = {}
     json_failed = False
-    if status == 200:
+    if status_ok:
         try:
             parsed = response.json()
         except Exception as exc:
@@ -285,7 +286,9 @@ async def seal_predecessor_cse_to_tape(
     already = bool(body.get("already_closed"))
     journal_row_id = body.get("journal_row_id")
     seal_refused = (
-        status != 200 or not path or (journal_row_id in (None, "") and not already)
+        not status_ok
+        or not path
+        or (journal_row_id in (None, "") and not already)
     )
     close_url = cortex_session_close_url()
     status_exc: RuntimeError | None = None

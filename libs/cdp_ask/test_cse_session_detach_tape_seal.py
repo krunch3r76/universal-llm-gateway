@@ -88,6 +88,54 @@ def test_detach_tape_seal_mapping(
         assert "tape_seal_detail" in body
 
 
+def test_detach_tape_seal_ok_when_cortex_close_returns_201(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detach maps tape_seal=ok when the real seal path accepts Cortex 201 Created."""
+    row = {
+        "port": 9333,
+        "chat_url": "https://claude.ai/cowork/cse_pred_detach",
+        "parent_thread": "12286",
+        "started_at": 1_792_224_619.0,
+    }
+
+    def _post(_payload: dict) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {
+            "journal_row_id": "j-201",
+            "transcript_path": "cortex://tape/detach-201.md",
+        }
+        return response
+
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: True)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {"rid-detach": row},
+    )
+
+    async def _scrape(_port: int, _url: str) -> list[dict]:
+        return [{"author": "user", "text": "predecessor turn", "ordinal": 1}]
+
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
+        _scrape,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.archive.archive_chat_transcript",
+        lambda **_k: ("cortex://x", "sha", "new"),
+    )
+    client = _client(monkeypatch)
+    response = client.post(
+        "/v1/cse-session/detach",
+        json={"registration_id": "rid-detach", "reason": "hop_detach"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("tape_seal") == "ok"
+
+
 def test_detach_tape_seal_failed_on_seal_protocol_error_before_detach(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

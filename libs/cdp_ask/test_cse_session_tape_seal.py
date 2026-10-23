@@ -232,6 +232,79 @@ async def test_cortex_non_200_emits_failed_then_raises(
     assert "503" in events[0].payload["detail"]
 
 
+def _seal_close_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: True)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {"rid-39528": _listening_row()},
+    )
+
+    async def _scrape(_port: int, _url: str) -> list[dict]:
+        return [
+            {"author": "user", "text": "keep the predecessor reasoning", "ordinal": 1}
+        ]
+
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
+        _scrape,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.archive.archive_chat_transcript",
+        lambda **_k: ("cortex://x", "sha", "new"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_seal_201_with_valid_close_body_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cortex session close returns 201 Created; seal accepts any 2xx with body."""
+    from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
+
+    _seal_close_mocks(monkeypatch)
+
+    def _post(_payload: dict) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {
+            "journal_row_id": "row-201",
+            "transcript_path": "cortex://tape/sealed-201.md",
+        }
+        return response
+
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+    result = await seal_predecessor_cse_to_tape("rid-39528")
+    assert result == {
+        "registration_id": "rid-39528",
+        "journal_row_id": "row-201",
+        "transcript_path": "cortex://tape/sealed-201.md",
+        "already_closed": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_seal_201_empty_body_raises_tape_seal_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 201 without seal fields still refuses — status class alone is not success."""
+    from universal_protocol.errors import ProtocolError
+
+    from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
+
+    _seal_close_mocks(monkeypatch)
+
+    def _post(_payload: dict) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {}
+        return response
+
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+    with pytest.raises(ProtocolError) as exc_info:
+        await seal_predecessor_cse_to_tape("rid-39528")
+    assert exc_info.value.code == "standdown.tape_seal_failed"
+
+
 @pytest.mark.asyncio
 async def test_listener_down_emits_degraded_and_returns_same_dict(
     monkeypatch: pytest.MonkeyPatch,
