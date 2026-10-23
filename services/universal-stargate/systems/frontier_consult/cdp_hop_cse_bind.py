@@ -14,17 +14,37 @@ logger = get_logger(__name__)
 _STAMP_POSTED: set[tuple[str, str, str]] = set()
 
 
-def _resolve_successor_birth_id_from_lane(lane: str) -> str | None:
-    from agent_bus_store.db.turns import get_turns
+def _read_prompt_uri_text(prompt_uri: str | None) -> str | None:
+    uri = (prompt_uri or "").strip()
+    if not uri:
+        return None
+    try:
+        from systems.frontier_consult.prompt_expand_prelude import read_prompt_uri
+
+        return read_prompt_uri(uri)
+    except Exception as exc:  # noqa: BLE001 — birth resolution must not fail seating
+        logger.warning(
+            "hop seated could not read prompt_uri=%s for successor_birth_id: %s",
+            uri,
+            exc,
+        )
+        return None
+
+
+def _resolve_successor_birth_id_for_stamp(
+    *,
+    successor_birth_id: str | None,
+    prompt_uri: str | None,
+) -> str | None:
     from hop_handoff.body import parse_successor_birth_id
 
-    rows = get_turns(thread=lane, last=100)
-    for row in reversed(rows):
-        body = str(row.get("body") or "")
-        birth = parse_successor_birth_id(body)
-        if birth:
-            return birth
-    return None
+    birth = (successor_birth_id or "").strip()
+    if birth:
+        return birth
+    prompt_text = _read_prompt_uri_text(prompt_uri)
+    if not prompt_text:
+        return None
+    return parse_successor_birth_id(prompt_text)
 
 
 def _post_tab_bind_seat_registration_stamp(
@@ -34,6 +54,7 @@ def _post_tab_bind_seat_registration_stamp(
     registration_id: str,
     execution_id: str,
     successor_birth_id: str | None,
+    prompt_uri: str | None,
     parent_thread: str,
 ) -> None:
     reg = registration_id.strip()
@@ -43,8 +64,9 @@ def _post_tab_bind_seat_registration_stamp(
     dedupe_key = (lane, exec_id, reg)
     if dedupe_key in _STAMP_POSTED:
         return
-    birth = (successor_birth_id or "").strip() or _resolve_successor_birth_id_from_lane(
-        lane
+    birth = _resolve_successor_birth_id_for_stamp(
+        successor_birth_id=successor_birth_id,
+        prompt_uri=prompt_uri,
     )
     if not birth:
         logger.warning(
@@ -89,6 +111,7 @@ def associate_hop_seated_cse(
     registration_id: str | None,
     execution_id: str = "",
     successor_birth_id: str | None = None,
+    prompt_uri: str | None = None,
 ) -> None:
     """Append the lane CSE association once a hop successor chat URL is known.
 
@@ -133,5 +156,6 @@ def associate_hop_seated_cse(
             registration_id=reg,
             execution_id=execution_id,
             successor_birth_id=successor_birth_id,
+            prompt_uri=prompt_uri,
             parent_thread=lane,
         )
