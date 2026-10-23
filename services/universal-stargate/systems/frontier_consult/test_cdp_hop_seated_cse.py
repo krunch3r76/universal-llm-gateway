@@ -211,3 +211,61 @@ async def test_worker_seated_hook_calls_hop_associate(
     assert seen["thread_id"] == "child"
     assert seen["chat_url"] == _SUCCESSOR
     assert seen["registration_id"] == _REG
+    assert seen["prompt_uri"] == "cortex://notes/system/ephemeral/prompt.md"
+
+
+def test_hop_seated_stamp_uses_prompt_uri_not_lane_decoy_act6(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tab bind must read successor_birth_id from staged prompt, not lane Act 6."""
+    from agent_bus_store.db import create_thread, get_turns, insert_turn
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hop-prompt-birth")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    old_birth = "a" * 32
+    new_birth = "b" * 32
+    insert_turn(
+        thread=thread_id,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="Act 6 decoy",
+        body=f"TYPE: SEAT_REGISTRATION\nsuccessor_birth_id: {old_birth}\n",
+    )
+    prompt_path = tmp_path / "handoff.md"
+    prompt_path.write_text(
+        f"TYPE: CONTINUITY_HANDOFF\nsuccessor_birth_id: {new_birth}\n",
+        encoding="utf-8",
+    )
+    prompt_uri = f"file://{prompt_path}"
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with (
+        patch("agent_bus_store.db.cse_associations.associate_cse"),
+        patch(
+            "systems.frontier_consult.prompt_expand_prelude.read_prompt_uri",
+            return_value=prompt_path.read_text(encoding="utf-8"),
+        ),
+    ):
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id="child",
+            parent_thread=thread_id,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="exec-prompt-birth",
+            prompt_uri=prompt_uri,
+        )
+    turns = get_turns(thread=thread_id, last=10)
+    stamp_turns = [
+        t
+        for t in turns
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+        and "source: cursor-auto" in str(t.get("body") or "")
+    ]
+    assert len(stamp_turns) == 1
+    body = stamp_turns[0]["body"]
+    assert f"successor_birth_id: {new_birth}" in body
+    assert old_birth not in body

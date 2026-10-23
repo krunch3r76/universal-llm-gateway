@@ -455,17 +455,21 @@ class SeatRegistrationSnapshot:
 
 
 def _seat_registration_header_fields(body: str) -> dict[str, str]:
+    """Column-0 header keys only — indented quoted lines must not impersonate stamps."""
     text = str(body or "")
     lines = text.splitlines()
     if not lines or not lines[0].strip().startswith(_SEAT_REGISTRATION_HEAD):
         return {}
     fields: dict[str, str] = {}
     for line in lines[1:]:
-        stripped = line.strip()
-        for key in ("registration_id", "chat_url", "successor_birth_id"):
-            if stripped.startswith(f"{key}:"):
-                fields[key] = stripped.split(":", 1)[1].strip()
-                break
+        if line.startswith("registration_id:"):
+            fields["registration_id"] = line.split(":", 1)[1].strip()
+        elif line.startswith("chat_url:"):
+            fields["chat_url"] = line.split(":", 1)[1].strip()
+        elif line.startswith("successor_birth_id:"):
+            fields["successor_birth_id"] = line.split(":", 1)[1].strip()
+        elif line.startswith("source: cursor-auto"):
+            fields["source_cursor_auto"] = "1"
     return fields
 
 
@@ -481,14 +485,15 @@ def parse_seat_registration_stamp(body: str) -> tuple[str, str] | None:
 
 def _parse_bind_seat_registration(
     body: str,
-) -> tuple[str, str, str | None] | None:
-    """Tab-bind stamp: line-start ``registration_id`` and ``chat_url`` (K63 / B1)."""
+) -> tuple[str, str, str | None, bool] | None:
+    """Tab-bind stamp: column-0 ``registration_id`` and ``chat_url`` (K63 / B1)."""
     fields = _seat_registration_header_fields(body)
     registration_id = fields.get("registration_id", "")
     chat_url = fields.get("chat_url", "")
     if registration_id and chat_url:
         birth = fields.get("successor_birth_id") or None
-        return registration_id, chat_url, birth
+        cursor_auto = bool(fields.get("source_cursor_auto"))
+        return registration_id, chat_url, birth, cursor_auto
     return None
 
 
@@ -524,6 +529,7 @@ def load_latest_seat_registration_stamp(
     seat_birth: str | None = None
     seat_chat_url: str | None = None
     seat_turn = -1
+    seen_cursor_auto_bind = False
     after_turn = 0
     while True:
         payload = store.turns(
@@ -539,9 +545,15 @@ def load_latest_seat_registration_stamp(
                 continue
             body = str(row.get("body") or "")
             bind_parsed = _parse_bind_seat_registration(body)
-            if bind_parsed is not None and turn_number > bind_turn:
-                bind_turn = turn_number
-                bind = bind_parsed
+            if bind_parsed is not None:
+                reg, url, birth, cursor_auto = bind_parsed
+                if cursor_auto:
+                    seen_cursor_auto_bind = True
+                if seen_cursor_auto_bind and not cursor_auto:
+                    continue
+                if turn_number > bind_turn:
+                    bind_turn = turn_number
+                    bind = (reg, url, birth)
                 seat_birth = None
                 seat_chat_url = None
                 seat_turn = -1

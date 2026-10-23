@@ -498,6 +498,7 @@ async def run_cdp_worker(
                 chat_url=chat_url,
                 registration_id=registration_id,
                 execution_id=execution_id,
+                prompt_uri=prompt_uri,
             )
 
         loop.call_soon_threadsafe(_publish)
