@@ -527,7 +527,7 @@ ask. Otherwise do not reach for git.
 |---|---|
 | `git reset` (any mode) on master or a shared/lane branch; `checkout -B` / `branch -f` / `switch -C` onto an existing branch; `push --force` / `--force-with-lease`; rebase of pushed or landed commits; `checkout origin/master -B master` | `git checkout -b <new> master` (or `worktree add -b <new> <path> master`) from the local tip; local ≠ origin ⇒ stop, report DRIFT; recover by merge or cherry-pick |
 
-Specimen: GIW dispatch ebda76fee569-229874b7 (lane-16053, 2026-10-08 22:43 PT) ran `git checkout master || git checkout origin/master -B master` from its worktree and dropped 33 unpushed commits from hub master incl. seal 53f24125 (15851#169/#170). Shared SoT: cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md item 7.
+Specimen: GIW dispatch ebda76fee569-229874b7 (lane-16053, 2026-10-08 22:43 PT) ran `git checkout master || git checkout origin/master -B master` from its worktree and dropped 33 unpushed commits from hub master incl. seal 53f24125 (15851#169/#170). Shared SoT: this section (§ Forward only).
 
 ## Cursor IDE seat scope (folded from `commit-and-git-scope`)
 
