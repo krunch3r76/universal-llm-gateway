@@ -110,6 +110,31 @@ def test_run_dispatcher_pass_calls_patrol_beside_context_hops() -> None:
     assert "run_patrol_pass" in src
 
 
+def test_prescreen_lane_commit_review_suppressed_flag_blocks_imperative(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    tail = (
+        "Where this is going: review lane commit 7139b60eec14. "
+        "Who carries it: this seat."
+    )
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        in_flight=0,
+        assistant_tail=tail,
+        tool_blob="",
+        tick={"now_row": "quiet"},
+        unmerged_child=True,
+        recent_turns=[{"from_agent": "cursor", "body": "status only"}],
+        lane_commit_review_suppressed=True,
+    )
+    assert "7139b60" not in out.get("imperative", "")
+    assert "team_dispatch review lane commit" not in out.get("imperative", "")
+
+
 def test_prescreen_tail_7139b60_suppressed_after_explicit_reject(
     tmp_path: Path,
 ) -> None:
@@ -311,6 +336,47 @@ def test_hop_enqueue_sets_to_agent_for_grok() -> None:
         )
     opts = enqueue.call_args.args[0]
     assert opts["to_agent"] == "grok-bot"
+
+
+def test_load_patrol_prescreen_inputs_sticky_suppress_beyond_last_10(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    reject = {
+        "from_agent": "web-anthropic",
+        "body": "Explicit reject at 16416#2865: no land, no merge, no second review.",
+    }
+    # Newest-first listing: refusal older than the last-10 window.
+    recent_only = [
+        {"from_agent": "cursor", "body": f"recent {i}"} for i in range(10)
+    ]
+    store = MagicMock()
+
+    def _turns(*, thread: str, last: int, **_: Any) -> dict[str, Any]:
+        del thread
+        if last <= 10:
+            return {"turns": recent_only}
+        return {"turns": recent_only + [reject]}
+
+    store.turns.side_effect = _turns
+    with patch(
+        "bus_watch.impresario_ear_patrol.fetch_giw_active_work_payload",
+        return_value=None,
+    ), patch(
+        "bus_watch.impresario_ear_patrol._transcript_probe",
+        return_value=("", "", 120.0, None),
+    ):
+        loaded = load_patrol_prescreen_inputs(
+            store,
+            root_id=_ROOT,
+            transcript_id=_TRANSCRIPT,
+        )
+    assert loaded["lane_commit_review_suppressed"] is True
+    latch = tmp_path / (
+        f"impresario-ear-lane-commit-review-suppressed-{_ROOT}-7139b60.json"
+    )
+    assert latch.is_file()
 
 
 def test_load_patrol_prescreen_inputs_merges_turns_and_tick(tmp_path: Path) -> None:

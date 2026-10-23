@@ -88,6 +88,7 @@ _UNMERGED_CHILD_RE = re.compile(
     r"unharvested_or_unlanded)",
 )
 _LANE_COMMIT_REVIEW_SHA = "7139b60"
+_LANE_COMMIT_REVIEW_SUPPRESS_LOOKBACK = 100
 _NON_TERMINAL_HOLDER = frozenset(
     {
         "acting",
@@ -166,6 +167,12 @@ def clear_patrol_state_for_tests() -> None:
     path = patrol_cooldown_path()
     if path.is_file():
         path.unlink(missing_ok=True)
+    patrol_dir = path.parent
+    if patrol_dir.is_dir():
+        for latch in patrol_dir.glob(
+            "impresario-ear-lane-commit-review-suppressed-*.json"
+        ):
+            latch.unlink(missing_ok=True)
 
 
 def _turns_listing(store: Any, root_id: str, *, last: int = 10) -> list[dict[str, Any]]:
@@ -304,6 +311,54 @@ def _lane_commit_review_suppressed(
     return False
 
 
+def _lane_commit_review_latch_path(root_id: str) -> Path:
+    patrol_dir = patrol_cooldown_path().parent
+    patrol_dir.mkdir(parents=True, exist_ok=True)
+    safe_root = re.sub(r"[^\w-]", "_", root_id)
+    return (
+        patrol_dir
+        / f"impresario-ear-lane-commit-review-suppressed-{safe_root}-{_LANE_COMMIT_REVIEW_SHA}.json"
+    )
+
+
+def _lane_commit_review_latch_active(root_id: str) -> bool:
+    path = _lane_commit_review_latch_path(root_id)
+    if not path.is_file():
+        return False
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(isinstance(raw, dict) and raw.get("suppressed"))
+
+
+def _stamp_lane_commit_review_latch(root_id: str) -> None:
+    path = _lane_commit_review_latch_path(root_id)
+    path.write_text(
+        json.dumps({"suppressed": True, "sha": _LANE_COMMIT_REVIEW_SHA}),
+        encoding="utf-8",
+    )
+
+
+def _resolve_lane_commit_review_suppressed(
+    store: Any,
+    root_id: str,
+    recent_turns: list[dict[str, Any]],
+) -> bool:
+    """Sticky suppress flag: last-10 window, wider thread read, or latch file."""
+    if _lane_commit_review_suppressed(recent_turns):
+        return True
+    if _lane_commit_review_latch_active(root_id):
+        return True
+    wider = _turns_listing(
+        store, root_id, last=_LANE_COMMIT_REVIEW_SUPPRESS_LOOKBACK
+    )
+    if _lane_commit_review_suppressed(wider):
+        _stamp_lane_commit_review_latch(root_id)
+        return True
+    return False
+
+
 def load_patrol_prescreen_inputs(
     store: Any,
     *,
@@ -362,6 +417,9 @@ def load_patrol_prescreen_inputs(
         "hop_failed": _detect_hop_failed(recent_turns, tick_state),
         "unmerged_child": _detect_unmerged_child(recent_turns),
         "recent_turns": recent_turns,
+        "lane_commit_review_suppressed": _resolve_lane_commit_review_suppressed(
+            store, root_id, recent_turns
+        ),
     }
 
 
@@ -458,6 +516,7 @@ def prescreen_house(
     hop_failed: bool = False,
     unmerged_child: bool = False,
     recent_turns: list[dict[str, Any]] | None = None,
+    lane_commit_review_suppressed: bool = False,
 ) -> dict[str, Any]:
     signals: list[str] = []
     if glass_status == "generating":
@@ -503,7 +562,9 @@ def prescreen_house(
             "fingerprint": fp,
         }
     imperative = ""
-    review_blocked = _lane_commit_review_suppressed(recent_turns)
+    review_blocked = lane_commit_review_suppressed or _lane_commit_review_suppressed(
+        recent_turns
+    )
     tail_names_commit = _LANE_COMMIT_REVIEW_SHA in tail
     if tail_names_commit and not review_blocked:
         imperative = _lane_commit_review_imperative()
