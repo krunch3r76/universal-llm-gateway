@@ -41,6 +41,45 @@ def test_post_session_close_posts_sessions_close_path(
     assert captured["json"] is payload
 
 
+def test_close_url_uses_uds_when_socket_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Hub cdp_ask keeps the local cortex-api socket when it is present."""
+    from cdp_ask.cse_session_tape_seal import cortex_session_close_url
+
+    sock = tmp_path / "cortex-api.sock"
+    sock.write_text("")
+    monkeypatch.delenv("CORTEX_API_HTTP", raising=False)
+    monkeypatch.setenv("CORTEX_API_SOCK", str(sock))
+    assert cortex_session_close_url() == f"unix://{sock}"
+
+
+def test_close_url_http_when_socket_missing_on_satellite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jupiter cdp_ask has no hub UDS; EVENTS_INGEST_TCP host is the HTTP target."""
+    from cdp_ask.cse_session_tape_seal import cortex_session_close_url
+
+    monkeypatch.delenv("CORTEX_API_HTTP", raising=False)
+    monkeypatch.setenv("CORTEX_API_SOCK", "/tmp/does-not-exist-cortex-api.sock")
+    monkeypatch.setenv("EVENTS_INGEST_TCP", "10.0.0.67:7101")
+    monkeypatch.delenv("CORTEX_API_HTTP_PORT", raising=False)
+    assert cortex_session_close_url() == "http://10.0.0.67:8202"
+
+
+def test_close_url_explicit_http_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """CORTEX_API_HTTP is the remote-start contract and beats a local socket."""
+    from cdp_ask.cse_session_tape_seal import cortex_session_close_url
+
+    sock = tmp_path / "cortex-api.sock"
+    sock.write_text("")
+    monkeypatch.setenv("CORTEX_API_SOCK", str(sock))
+    monkeypatch.setenv("CORTEX_API_HTTP", "9.9.9.9:8202")
+    assert cortex_session_close_url() == "http://9.9.9.9:8202"
+
+
 def _listening_row() -> dict:
     return {
         "port": 9333,

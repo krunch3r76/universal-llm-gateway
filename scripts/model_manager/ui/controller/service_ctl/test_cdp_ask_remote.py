@@ -43,6 +43,7 @@ def test_start_command_goes_through_user_unit() -> None:
     assert '"$REPO/scripts/cdp-ask-start";' not in cmd
     # Hub Event Service TCP ingest must be written into the unit EnvironmentFile.
     assert "EVENTS_INGEST_TCP=" in cmd
+    assert "CORTEX_API_HTTP=" in cmd
     # Seal process code_version at start so /health is not permanently unknown.
     assert "ULG_CODE_VERSION=" in cmd
     # Remote git on a hung NFS mount pinned SSH; version is sealed on the hub.
@@ -91,3 +92,15 @@ def test_resolve_hub_events_ingest_tcp_host_env(
         lambda: type("C", (), {"tcp_ingest_port": 7101})(),
     )
     assert cdp_ask_remote.resolve_hub_events_ingest_tcp() == "10.0.0.67:7101"
+
+
+def test_resolve_hub_cortex_http_prefers_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORTEX_API_HTTP", "http://9.9.9.9:8202/")
+    assert cdp_ask_remote.resolve_hub_cortex_http() == "9.9.9.9:8202"
+
+
+def test_fallback_start_also_exports_cortex_http() -> None:
+    src = Path(cdp_ask_remote.__file__).read_text(encoding="utf-8")
+    assert src.count("CORTEX_API_HTTP=") >= 2
