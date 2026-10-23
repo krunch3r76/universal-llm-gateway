@@ -105,6 +105,7 @@ its **packet**, not its label. Never costume a child. Bare **Composer** (product
 | continuo | `cursor/grok-4.7` low **or** `cursor/composer-2.5` | bug-class sweep across a service; applying a reviewed diff pattern |
 | concertino | `cursor/grok-4.7` high+ | two plausible root causes; a fix shape to choose — fork inside the work item |
 | critic | `cdp/opus-5.5` high | independent review (default reviewer; Fix-loop step 4) |
+| advisor | `cursor/gemini-4-argon` high | intent-to-plan, problem-to-solution, open fork, or stuck leg only; packet carries `Use the lean-dispatch skill`; advise next move — do not author or review |
 | dramaturg | `cdp/fable-5.1` | architecture-open / stack-killing **consult only** (ask/review); never an implement leg from the parent seat |
 
 Choose the lowest sufficient tier first.

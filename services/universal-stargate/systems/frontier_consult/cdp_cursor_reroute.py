@@ -94,7 +94,12 @@ def resolve_cdp_reroute(
         return None
     for prefix in prefixes:
         if isinstance(prefix, str) and model.startswith(prefix):
-            target_model = str(cfg.get("target_model") or "cursor/gemini-4-argon")
+            raw_target = cfg.get("target_model")
+            if not isinstance(raw_target, str) or not raw_target.strip():
+                return None
+            target_model = raw_target.strip()
+            if target_model == "cursor/gemini-4-argon":
+                return None
             if impresario_role:
                 from implement_admission.impresario_events import (
                     ImpresarioCriticResolved,

@@ -1235,6 +1235,7 @@ def critic_reroute_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
             cdp_reroute_for_critic=True,
             ear=policy.ear,
             ear_patrol=policy.ear_patrol,
+            advisor=policy.advisor,
             policy_sha256=policy.policy_sha256,
         ),
     )
