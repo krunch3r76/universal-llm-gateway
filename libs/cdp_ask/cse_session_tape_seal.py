@@ -1,8 +1,8 @@
 """Seal a predecessor Cowork transcript onto continuity tape before detach.
 
 cdp_ask detach and typed-ack harvest call ``seal_predecessor_cse_to_tape``.
-A live Chrome port is scraped and posted to Cortex ``/sessions/close`` over
-the Cortex unix socket. Failures emit ``cdp.tape.seal.failed`` and raise
+A live Chrome port is scraped and posted to Cortex ``/sessions/close``
+(hub UDS, or HTTP when that socket is absent on the satellite). Failures emit ``cdp.tape.seal.failed`` and raise
 ``standdown.tape_seal_failed`` so the listener stays attached. A dead port
 or a missing registry row emits ``cdp.tape.seal.degraded`` and returns a
 degraded dict; this module does not detach.
@@ -10,6 +10,7 @@ degraded dict; this module does not detach.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from universal_event_bus.events.event import Event
@@ -80,11 +81,35 @@ def _emit_seal_degraded(registration_id: str, reason: str) -> None:
     )
 
 
-def _post_session_close(payload: dict[str, Any]) -> Any:
-    """POST a session-close body to Cortex over its UDS. Tests replace this."""
-    from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+def cortex_session_close_url() -> str:
+    """URL for ``/sessions/close``.
 
-    with make_sync_client(DEFAULT_CORTEX_URL, timeout=30.0) as client:
+    Hub ``cdp_ask`` reaches cortex-api on the local UDS. Jupiter ``cdp_ask``
+    has no ``/tmp/universal-protocol/cortex-api.sock`` (that inode is created
+    only by hub cortex-api). Explicit ``CORTEX_API_HTTP`` wins; otherwise a
+    missing socket falls back to HTTP on the ``EVENTS_INGEST_TCP`` host.
+    """
+    explicit = os.environ.get("CORTEX_API_HTTP", "").strip()
+    if explicit:
+        if "://" not in explicit:
+            explicit = f"http://{explicit}"
+        return explicit.rstrip("/")
+    sock = os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
+    if os.path.exists(sock):
+        return f"unix://{sock}"
+    ingest = os.environ.get("EVENTS_INGEST_TCP", "").strip()
+    host = ingest.rpartition(":")[0].strip() if ":" in ingest else ""
+    if host:
+        port = os.environ.get("CORTEX_API_HTTP_PORT", "").strip() or "8202"
+        return f"http://{host}:{port}"
+    return f"unix://{sock}"
+
+
+def _post_session_close(payload: dict[str, Any]) -> Any:
+    """POST a session-close body to Cortex. Tests replace this."""
+    from transport_utils import make_sync_client
+
+    with make_sync_client(cortex_session_close_url(), timeout=30.0) as client:
         return client.post("/sessions/close", json=payload)
 
 

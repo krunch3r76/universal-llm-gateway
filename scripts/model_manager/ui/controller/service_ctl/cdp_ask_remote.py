@@ -21,6 +21,7 @@ from universal_logging import get_logger
 
 from ..service_config import (
     cdp_ask_url_config,
+    load_cortex_api_config,
     load_event_service_config,
     resolve_cdp_ask_remote_target,
 )
@@ -113,6 +114,29 @@ def resolve_hub_events_ingest_tcp() -> str:
     port = int(port_s) if port_s.isdigit() else _hub_ingest_tcp_port()
     if not host:
         host = _hub_lan_ipv4()
+    return f"{host}:{port}"
+
+
+def resolve_hub_cortex_http() -> str:
+    """``host:port`` for remote cdp-ask → hub cortex-api HTTP (``/sessions/close``).
+
+    Jupiter has no hub UDS. Order matches event ingest: explicit
+    ``CORTEX_API_HTTP`` ≺ ingest-host + cortex HTTP port ≺ this host's LAN IPv4.
+    """
+    explicit = os.environ.get("CORTEX_API_HTTP", "").strip()
+    if explicit:
+        return explicit.removeprefix("http://").removeprefix("https://").rstrip("/")
+    host = ""
+    ingest = os.environ.get("EVENTS_INGEST_TCP", "").strip()
+    if ":" in ingest:
+        host = ingest.rpartition(":")[0].strip()
+    if not host:
+        host = (
+            os.environ.get("EVENT_SERVICE_INGEST_HOST", "").strip()
+            or os.environ.get("EVENTS_INGEST_HOST", "").strip()
+            or _hub_lan_ipv4()
+        )
+    port = load_cortex_api_config().http_port
     return f"{host}:{port}"
 
 
@@ -250,6 +274,7 @@ async def start_cdp_ask_remote(root: Path) -> str:
     """
     port = _port()
     ingest_tcp = resolve_hub_events_ingest_tcp()
+    cortex_http = resolve_hub_cortex_http()
     version = _hub_code_version(root)
     nfs = await _nfs_checkout_ready()
     if not nfs:
@@ -267,6 +292,7 @@ async def start_cdp_ask_remote(root: Path) -> str:
         f"{_graceful_stop_snippet(port)}"
         f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
         f"EVENTS_INGEST_TCP={ingest_tcp}\n"
+        f"CORTEX_API_HTTP={cortex_http}\n"
         f"CORTEX_FILES_ROOT={files_root}\n"
         f"ULG_CODE_VERSION={version}\n"
         "ULG_REPO=$REPO\n"
@@ -285,6 +311,7 @@ async def start_cdp_ask_remote(root: Path) -> str:
         f"{_graceful_stop_snippet(port)}"
         f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
         f"EVENTS_INGEST_TCP={ingest_tcp}\n"
+        f"CORTEX_API_HTTP={cortex_http}\n"
         f"CORTEX_FILES_ROOT={_LOCAL_FILES_FALLBACK}\n"
         f"ULG_CODE_VERSION={version}\n"
         "ULG_REPO=$REPO\n"
@@ -292,10 +319,10 @@ async def start_cdp_ask_remote(root: Path) -> str:
         "PROJECT_ROOT=$REPO\n"
         "EOF\n"
         "set -a; . ~/.gateway/cdp-ask.env; set +a; "
-        "mkdir -p \"$CORTEX_FILES_ROOT\"; "
-        "cd \"$ULG_REPO\" || exit 1; "
+        'mkdir -p "$CORTEX_FILES_ROOT"; '
+        'cd "$ULG_REPO" || exit 1; '
         "nohup $HOME/.venvs/universal/bin/python "
-        "\"$ULG_REPO/scripts/cdp-ask\" --port \"$PORT\" "
+        '"$ULG_REPO/scripts/cdp-ask" --port "$PORT" '
         "</dev/null >/tmp/logs/cdp-ask/start.log 2>&1 & "
         "echo $! > ~/.gateway/cdp-ask.pid; "
         "echo started"
