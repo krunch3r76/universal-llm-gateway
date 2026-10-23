@@ -42,6 +42,7 @@ from cdp_ask.cse_session_models import (
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
 from cdp_ask.execution_ladder import finish_execution, guard_execution
+from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from cdp_ask.execution_resume import hydrate_in_flight, spawn_resume
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
@@ -190,6 +191,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 "boot adopted in-flight executions: %s",
                 [rec.execution_id for rec in adopted],
             )
+        await asyncio.to_thread(reap_dead_holder_tab_rows)
         reaped = await execution_store.boot_reconcile()
         if reaped:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)
