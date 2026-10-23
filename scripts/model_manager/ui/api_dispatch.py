@@ -29,6 +29,7 @@ from .controller.restart_drain import (
     LocalServiceDrainSupervisor,
     StargateIdleDrainSupervisor,
     arm_agent_bus_busy_drain,
+    arm_mcp_busy_drain,
     run_gated,
     run_gated_deferred,
     run_gated_drain_supervised,
@@ -1498,6 +1499,39 @@ async def _mcp_deferred_sync_restart(
             caller_agent=caller_agent_from_manage_request(ctx),
             code_ref=_optional_attr_str(ctx, "code_ref") or "HEAD",
             row_id=_optional_attr_str(ctx, "row_id"),
+        )
+        if armed is not None:
+            return armed
+    if not force:
+        action = gate_action or method
+
+        async def lifecycle() -> str:
+            t0 = time.monotonic()
+            try:
+                message = await _mcp_deferred_lifecycle(ctl, no_cache=no_cache)
+            except Exception as exc:
+                if on_fail is not None:
+                    await on_fail(str(exc), time.monotonic() - t0)
+                raise
+            if on_ok is not None:
+                await on_ok(message, time.monotonic() - t0)
+            return message
+
+        supervisor = LocalServiceDrainSupervisor(
+            gate=ctl.restart_gate,
+            service="mcp",
+            store=ctl.restart_intent_store,
+            lifecycle=lifecycle,
+        )
+        armed = await arm_mcp_busy_drain(
+            ctl.restart_gate,
+            action=action,
+            store=ctl.restart_intent_store,
+            supervisor=supervisor,
+            reason=f"manage {action} (mcp busy drain)",
+            code_ref=_optional_attr_str(ctx, "code_ref") or "HEAD",
+            row_id=_optional_attr_str(ctx, "row_id"),
+            caller_agent=caller_agent_from_manage_request(ctx),
         )
         if armed is not None:
             return armed
