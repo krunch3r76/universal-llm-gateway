@@ -10,7 +10,6 @@ from fastapi import HTTPException
 
 from ..db import query
 from ..entity_aliases import resolve_entity_reference
-from ..entity_crud import list_entities_impl
 from .registry import LifeVocabRegistry
 
 _METADATA_KEYS = frozenset(
@@ -73,10 +72,14 @@ def _surface_form_matches(conn: sqlite3.Connection, mention: str) -> list[dict[s
 
 
 def _search_matches(conn: sqlite3.Connection, mention: str) -> list[dict[str, str]]:
-    result = list_entities_impl(conn, query=mention, limit=10)
+    from ..entity_fts import search_entities_fts
+
     return [
-        {"entity_id": str(item["id"]), "name": str(item.get("name") or "")}
-        for item in result.get("items", [])
+        {
+            "entity_id": str(hit["entity_id"]),
+            "name": str(hit.get("entity_name") or ""),
+        }
+        for hit in search_entities_fts(conn, mention, limit=10)
     ]
 
 

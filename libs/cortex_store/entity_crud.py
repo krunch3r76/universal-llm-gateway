@@ -673,6 +673,10 @@ def update_entity_impl(
 
         name_change_emit = _deferred_name_emit
 
+    from .entity_fts import reindex_entity_fts_conn
+
+    reindex_entity_fts_conn(conn, entity_id)
+
     if commit:
         conn.commit()
         if closure_gap_emit is not None:
@@ -976,6 +980,9 @@ def create_entity_impl(
             exhibit_id=body.id,
             case_id=exhibit_parent_case_id,
         )
+    from .entity_fts import reindex_entity_fts_conn
+
+    reindex_entity_fts_conn(conn, str(body.id))
     if commit:
         conn.commit()
         if minted_create:

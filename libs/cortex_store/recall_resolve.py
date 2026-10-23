@@ -123,7 +123,7 @@ def _resolve_bare_q(conn: sqlite3.Connection, q: str) -> ResolveOutcome:
 
 
 def _search_seed_entity_ids(conn: sqlite3.Connection, q: str) -> list[str]:
-    from .entity_discover import search_entities_by_query
+    from .entity_fts import search_entities_fts
 
     result = _search_assertions_impl(
         q=q,
@@ -148,7 +148,7 @@ def _search_seed_entity_ids(conn: sqlite3.Connection, q: str) -> list[str]:
             break
     if ids:
         return ids
-    for hit in search_entities_by_query(conn, q, limit=_SEARCH_SEED_CAP):
+    for hit in search_entities_fts(conn, q, limit=_SEARCH_SEED_CAP):
         if not hit.get("identity_match"):
             continue
         eid_str = str(hit["entity_id"])

@@ -18,7 +18,8 @@ from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...compaction import filter_compaction_pointers
 from ...db import cortex_conn, decode_row, query
-from ...entity_discover import merge_entity_seed_hits, search_entities_by_query
+from ...entity_discover import merge_entity_seed_hits
+from ...entity_fts import search_entities_fts
 from ...event_publisher import cortex_search_failed, cortex_search_vector_degraded
 from ...models import (
     ActionHint,
@@ -377,7 +378,7 @@ def _search_assertions_impl(
     )
 
     with cortex_conn() as conn:
-        entity_hits = search_entities_by_query(
+        entity_hits = search_entities_fts(
             conn,
             q,
             entity_type=entity_type,

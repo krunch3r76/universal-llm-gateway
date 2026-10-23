@@ -7,14 +7,10 @@ description, alias index, and source_uri without requiring assertion rows.
 from __future__ import annotations
 
 import re
-import sqlite3
 import zlib
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
-
-from .db import query
-from .entity_aliases import live_alias_rows
 
 _TOKEN_SPLIT = re.compile(r"[^\w]+", re.UNICODE)
 
@@ -257,65 +253,6 @@ def _group_aliases_by_entity(
     for ent_id, _etype, alias in alias_rows:
         grouped.setdefault(ent_id, []).append(str(alias))
     return grouped
-
-
-def search_entities_by_query(
-    conn: sqlite3.Connection,
-    q: str,
-    *,
-    entity_type: str | None = None,
-    limit: int = 10,
-) -> list[dict[str, Any]]:
-    """Rank live entities by token overlap on name, description, aliases, source_uri."""
-    tokens = _normalize_tokens(q)
-    if not tokens:
-        return []
-
-    clauses = ["1=1"]
-    params: list[Any] = []
-    if entity_type:
-        clauses.append("type = ?")
-        params.append(entity_type)
-
-    sql = (
-        "SELECT id, type, name, description, source_uri, aliases, lifecycle "
-        f"FROM entities WHERE {' AND '.join(clauses)}"
-    )
-    rows = query(conn, sql, tuple(params))
-    alias_index = live_alias_rows(conn)
-    aliases_by_entity = _group_aliases_by_entity(alias_index)
-    scored: list[tuple[tuple[float, float, int], dict[str, Any]]] = []
-    for row in rows:
-        lifecycle = row.get("lifecycle")
-        if lifecycle in ("merged", "deprecated", "reaped"):
-            continue
-        eid = str(row["id"])
-        name = str(row.get("name") or "")
-        source_uri = str(row.get("source_uri") or "")
-        entity_aliases = _aliases_for_entity(eid, row, aliases_by_entity)
-        description = str(row.get("description") or "")
-        identity_match, score, specificity = _identity_match_and_score(
-            tokens,
-            entity_id=eid,
-            name=name,
-            aliases=entity_aliases,
-            source_uri=source_uri,
-            description=description,
-        )
-        if score <= 0:
-            continue
-        hit = {
-            "entity_id": eid,
-            "entity_name": row.get("name"),
-            "entity_type": row.get("type"),
-            "combmax_score": round(score, 4),
-            "retrieval_source": "entity",
-            "identity_match": identity_match,
-            "identity_specificity": round(specificity, 4),
-        }
-        scored.append((_entity_identity_sort_key(hit), hit))
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    return [item for _key, item in scored[:limit]]
 
 
 def entity_synthetic_assertion_id(entity_id: str) -> int:

@@ -146,6 +146,13 @@ _ENTITY_ID_REFERENCES: tuple[EntityIdReference, ...] = (
         (),
     ),
     EntityIdReference(
+        "entities_fts",
+        "entity_id",
+        "fts",
+        "repoint",
+        (),
+    ),
+    EntityIdReference(
         "session_journals",
         "entity_ids",
         "json",

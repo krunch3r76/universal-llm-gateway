@@ -12,7 +12,7 @@ from .db import json_encode, query
 from .dispatch_ops._shared import record
 from .enrichment import reindex_assertions_fts_batch
 from .entity_aliases import sync_entity_aliases
-from .guidance_entity import entity_slug_from_id
+from .entity_fts import reindex_entity_fts_conn
 from .entity_rekey_core import (
     _load_entity,
     _parse_attributes,
@@ -27,6 +27,7 @@ from .entity_rekey_core import (
     rewrite_session_journal_entity_ids,
     rewrite_simple_column,
 )
+from .guidance_entity import entity_slug_from_id
 
 
 def _preflight_merge(
@@ -303,6 +304,9 @@ def _execute_entity_merge(
         drop_salience_cache(conn, source_id)
         drop_salience_cache(conn, target_id)
         _tombstone_source(conn, source, target_id, now)
+
+        reindex_entity_fts_conn(conn, source_id)
+        reindex_entity_fts_conn(conn, target_id)
 
         if affected_assertions:
             reindex_assertions_fts_batch(conn, sorted(affected_assertions))
