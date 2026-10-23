@@ -15,6 +15,7 @@ import httpx
 from agent_bus_store.routes.threads.send_prep import MAESTRO_MILESTONE_PREFIXES
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
+from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
 from bus_watch.endpoint_wake_transport import (
@@ -23,7 +24,6 @@ from bus_watch.endpoint_wake_transport import (
     classify_display,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
-from cursor_bridge.chat_target import exchange_lines
 
 # ``ACK`` is in ``MAESTRO_MILESTONE_PREFIXES`` so compose keeps ``ACK|`` on maestro;
 # ``qualifies()`` suppresses ``ACK|`` wakes to maestro / ``web-anthropic``.
