@@ -182,7 +182,12 @@ def _maybe_rotate_house_rules_after_image(
         archive_path=_archive_path_for_rulings(sandbox),
     )
     if rotation is None:
-        raise HouseRulesSizeRejectedError(decision)
+        compaction = dict(decision)
+        compaction["error"] = (
+            f"{decision['error']} No unretracted ruling row may be rotated out; "
+            "compact or archive retracted rows explicitly, then retry."
+        )
+        raise HouseRulesSizeRejectedError(compaction)
     return rotation.trimmed_text, {
         "rotated_rows": rotation.rotated_rows,
         "archive_uri": rotation.archive_uri,

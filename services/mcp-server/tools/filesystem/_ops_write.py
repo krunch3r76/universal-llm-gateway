@@ -33,6 +33,7 @@ from ._share_uri_response import attach_dual_carry
 from ._write_authority import (
     classify_artifact_path,
     evaluate_house_rules_post_edit_size,
+    evaluate_register_post_edit_size,
     evaluate_write_authority,
 )
 
@@ -228,6 +229,11 @@ def write_file_impl(
             )
             if size_decision is not None:
                 return _apply_authority_rejection(path, dest, content, size_decision)
+            register_decision = evaluate_register_post_edit_size(
+                path=path, post_edit_text=content
+            )
+            if register_decision is not None:
+                return _apply_authority_rejection(path, dest, content, register_decision)
             if if_absent and dest.exists():
                 return write_rejection(
                     path=path,

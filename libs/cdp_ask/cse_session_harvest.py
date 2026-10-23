@@ -72,9 +72,8 @@ async def _retire_closed_seat_after_typed_ack(
     try:
         await seal_predecessor_cse_to_tape(rid)
     except ProtocolError as exc:
-        if exc.code == "standdown.tape_seal_failed":
-            return
-        raise
+        if exc.code != "standdown.tape_seal_failed":
+            raise
     try:
         cdp_registry.detach(rid, reason="standdown_ack_harvested")
     except ProtocolError as exc:

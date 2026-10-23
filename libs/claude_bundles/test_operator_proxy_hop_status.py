@@ -63,6 +63,7 @@ _SECTION_ORDER = (
     "## CURRENT LEG (rendered checkpoint)",
     "## Lessons in force",
     "## Register",
+    "## Induction (K44)",
     "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
@@ -225,7 +226,7 @@ def test_rendered_prompt_section_order() -> None:
 
 def test_first_acts_are_numbered_in_order() -> None:
     out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
+        "thread_id: 12286\n",
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text="",
@@ -239,7 +240,13 @@ def test_first_acts_are_numbered_in_order() -> None:
     assert "read_multi" not in block
     assert "2." in block
     assert block.index("1. Use") < block.index("2.")
-    assert block.index("2.") < block.index("7. Act")
+    assert block.index("2.") < block.index("8. Act")
+    assert "## Induction (K44)" in out
+    assert (
+        "induction open: greet me, volunteer what the handoff underweights, then answer my "
+        "questions and follow-ups citing a file or turn. We continue until we both agree I am "
+        "strongly oriented; then I send the stand-down and you detach."
+    ) in out
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:
@@ -346,7 +353,9 @@ def test_register_absent_is_named() -> None:
         read_cortex_uri=lambda _uri: None,
     )
     assert f"Register card absent at {MAESTRO_REGISTER_URI}" in out
-    assert "Kaywan" not in out.split("## Register", 1)[1].split("## Live leg", 1)[0]
+    register_tail = out.split("## Register", 1)[1].split("## Induction (K44)", 1)[0]
+    assert "Register card absent" in register_tail
+    assert "Kaywan" not in register_tail
 
 
 def test_inflight_projection_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:

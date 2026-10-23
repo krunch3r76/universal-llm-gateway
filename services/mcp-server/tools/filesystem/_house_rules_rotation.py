@@ -13,6 +13,7 @@ from ._write_authority import HOUSE_RULES_MAX_BYTES, RULINGS_ARCHIVE_URI
 
 _HOUSE_RULES_SECTION = "HOUSE RULES"
 _RULING_LINE = re.compile(r"^- (K\d+|a:\d+|\|)")
+_RETRACTED_RE = re.compile(r"\bretract", re.IGNORECASE)
 _ROTATION_POINTER = (
     f"<!-- rotated rulings archived in {RULINGS_ARCHIVE_URI} -->\n"
 )
@@ -66,6 +67,26 @@ def _ruling_k_number(line: str) -> int | None:
     return int(match.group(1))
 
 
+def _row_may_rotate(line: str) -> bool:
+    """Only retracted ruling rows may leave house-rules via rotation (a:39902)."""
+    return bool(_RETRACTED_RE.search(line))
+
+
+def _oldest_rotatable_ruling_line_index(
+    lines: list[str], indices: list[int]
+) -> int | None:
+    scored: list[tuple[int, int]] = []
+    for idx in indices:
+        if not _row_may_rotate(lines[idx]):
+            continue
+        kid = _ruling_k_number(lines[idx])
+        if kid is not None:
+            scored.append((kid, idx))
+    if scored:
+        return min(scored, key=lambda pair: pair[0])[1]
+    return None
+
+
 def _oldest_ruling_line_index(lines: list[str], indices: list[int]) -> int | None:
     scored: list[tuple[int, int]] = []
     for idx in indices:
@@ -94,7 +115,7 @@ def _trim_oldest_rulings(text: str, *, limit_bytes: int) -> tuple[str, list[str]
             break
         lines = section_body.splitlines(keepends=True)
         indices = _ruling_line_indices(section_body)
-        drop_idx = _oldest_ruling_line_index(lines, indices)
+        drop_idx = _oldest_rotatable_ruling_line_index(lines, indices)
         if drop_idx is None:
             break
         row = lines.pop(drop_idx)
@@ -112,7 +133,7 @@ def _trim_oldest_rulings(text: str, *, limit_bytes: int) -> tuple[str, list[str]
             indices = _ruling_line_indices(section_body)
             if len(indices) <= 1:
                 break
-            drop_idx = _oldest_ruling_line_index(lines, indices)
+            drop_idx = _oldest_rotatable_ruling_line_index(lines, indices)
             if drop_idx is None:
                 break
             row = lines.pop(drop_idx)
@@ -142,6 +163,8 @@ def rotate_house_rules_to_fit(
         return None
     trimmed, rotated = _trim_oldest_rulings(house_rules_text, limit_bytes=limit_bytes)
     if not rotated or len(trimmed.encode("utf-8")) > limit_bytes:
+        return None
+    if len(house_rules_text.encode("utf-8")) > limit_bytes and not rotated:
         return None
     append_body = "".join(_format_archive_block(row) for row in rotated)
     try:

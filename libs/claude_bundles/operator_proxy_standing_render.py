@@ -97,6 +97,18 @@ def _prefix_live_leg_head(line: str, room: int) -> str:
     return _prefix_on_word_boundary(line, room)
 
 
+def trim_hop_block_whole_lines(text: str, max_bytes: int) -> str:
+    """Drop trailing whole lines until *text* fits *max_bytes* (no budget flag)."""
+    body = (text or "").rstrip()
+    if _utf8_len(body) <= max_bytes:
+        return body + ("\n" if body and not body.endswith("\n") else "")
+    lines = body.splitlines()
+    while lines and _utf8_len("\n".join(lines)) > max_bytes:
+        lines.pop()
+    trimmed = "\n".join(lines).rstrip()
+    return (trimmed + "\n") if trimmed else ""
+
+
 def cap_utf8_for_hop(text: str, max_bytes: int, *, label: str) -> str:
     """Truncate hop slot text on a line boundary and flag when over *max_bytes*.
 
@@ -926,7 +938,7 @@ def render_pointers_block(
     )
     if max_bytes is None:
         return block
-    return cap_utf8_for_hop(block, max_bytes, label="pointers")
+    return trim_hop_block_whole_lines(block, max_bytes)
 
 
 def runbook_refuse_steps_bytes(body: str | None) -> int | None:
