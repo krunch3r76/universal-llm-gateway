@@ -1205,6 +1205,46 @@ async def arm_agent_bus_busy_drain(
     )
 
 
+async def arm_mcp_busy_drain(
+    gate: RestartDrainGate,
+    *,
+    action: str,
+    store: Any,
+    supervisor: Any,
+    reason: str,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+    caller_agent: str | None = None,
+) -> dict[str, Any] | None:
+    """Arm a durable MCP drain when ``McpBusyProbe`` still reports busy.
+
+    Returns ``None`` when the probe fails or the probe is idle (caller should
+    fall through to ``run_gated_deferred``). When busy, mints ``restart_intent_id``
+    and lets the supervisor wait until idle before lifecycle.
+    """
+    try:
+        work = await gate.probe("mcp")
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.warning(
+            "mcp busy probe failed; deferring to run_gated_deferred: %s",
+            describe_probe_exc(exc),
+        )
+        return None
+    if not work.busy:
+        return None
+    return await run_gated_drain_supervised(
+        gate,
+        action,
+        "mcp",
+        store=store,
+        supervisor=supervisor,
+        reason=reason,
+        code_ref=code_ref,
+        row_id=row_id,
+        caller_agent=caller_agent,
+    )
+
+
 async def run_gated_self_holder_drain_supervised(
     gate: RestartDrainGate,
     action: str,
@@ -1416,6 +1456,7 @@ __all__ = [
     "STARGATE_PROBE_URL",
     "agent_bus_restart_would_defer",
     "arm_agent_bus_busy_drain",
+    "arm_mcp_busy_drain",
     "describe_probe_exc",
     "exclude_caller_from_agent_bus_census",
     "holder_dispatch_id_from_active_work",
