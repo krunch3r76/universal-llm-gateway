@@ -74,7 +74,7 @@ def test_id_diff_pass_repairs_when_stats_stale_is_zero(
     mock_record.assert_called_once()
     assert mock_record.call_args.args[0] == "cortex.entities_fts.reconciled"
     payload = mock_record.call_args.kwargs
-    assert payload["pass"] == "id_diff"
+    assert payload["pass_kind"] == "id_diff"
     assert payload["missing"] == 1
 
 

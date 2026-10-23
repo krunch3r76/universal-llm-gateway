@@ -17,6 +17,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from universal_event_bus.events import Event
+from universal_event_bus.events.factory import event_factory
 from universal_logging import get_logger
 
 from .db import WRITE_LOCK, cortex_conn
@@ -154,16 +156,38 @@ def _expected_fts_row(
     }
 
 
-def _emit_pass_result(result: ReconcilePassResult) -> None:
-    record(
-        "cortex.entities_fts.reconciled",
-        **{
-            "pass": result.pass_kind,
-            "missing": result.missing,
-            "mismatched": result.mismatched,
-            "repaired": result.repaired,
-            "duration_ms": round(result.duration_ms, 2),
+@event_factory
+def entities_fts_reconciled(
+    *,
+    pass_kind: str,
+    missing: int,
+    mismatched: int,
+    repaired: int,
+    duration_ms: int,
+) -> Event:
+    ev = Event(
+        signal="cortex.entities_fts.reconciled",
+        role="observation",
+        scope="global",
+        payload={
+            "pass_kind": pass_kind,
+            "missing": missing,
+            "mismatched": mismatched,
+            "repaired": repaired,
+            "duration_ms": duration_ms,
         },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+def _emit_pass_result(result: ReconcilePassResult) -> None:
+    entities_fts_reconciled(
+        pass_kind=result.pass_kind,
+        missing=result.missing,
+        mismatched=result.mismatched,
+        repaired=result.repaired,
+        duration_ms=int(round(result.duration_ms)),
     )
 
 
@@ -274,7 +298,7 @@ async def run_entity_fts_reconcile() -> None:
         _pass_running = True
         try:
             await asyncio.to_thread(_run_wake_passes)
-        except Exception as exc:
+        except Exception:
             logger.warning("entities_fts reconcile wake failed", exc_info=True)
         finally:
             _pass_running = False

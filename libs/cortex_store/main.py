@@ -31,6 +31,7 @@ from universal_workspace import get_workspace_root
 from . import embeddings as cortex_embeddings
 from . import vector_store
 from .db import check_cortex_db, cortex_conn, run_migrations
+from .entity_fts_reconcile import run_entity_fts_reconcile
 from .routes import (
     assertions,
     boot,
@@ -66,7 +67,6 @@ from .routes import (
     todo_retrieval,
 )
 from .scoring import compact_access_log
-from .entity_fts_reconcile import run_entity_fts_reconcile
 from .skill_graph_drift_monitor import run_skill_graph_drift_monitor
 
 logger = get_logger("cortex-api")
