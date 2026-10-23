@@ -10,11 +10,14 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
 _RETRIABLE_DISPLAY = {
     "active_chat_busy",
+    "agent_id_mismatch",
     "composer_not_empty",
     "debug_unreachable",
+    "no_active_chat",
     "no_composer",
     "no_page",
     "surface_probe_failed",
+    "unknown",
 }
 _CSE_PENDING_ERRORS = {"no_identity", "project_ask_unconfigured"}
 _GIW = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091")

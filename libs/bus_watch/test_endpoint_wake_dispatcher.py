@@ -21,6 +21,7 @@ from bus_watch.endpoint_wake_dispatcher import (
     CSE_WAKE_SUBJECT_HEADS,
     GROK_WAKE_SUBJECT_HEADS,
     _effective_to_agent,
+    _reset_no_composer_state,
     classify_cse,
     classify_display,
     fire_due_wakes,
@@ -1174,6 +1175,23 @@ def test_outcome_table() -> None:
     )
 
 
+def test_classify_display_hydration_reasons_stay_pending() -> None:
+    pending_body = {"ok": False, "pasted": False}
+    for reason in ("unknown", "no_active_chat", "agent_id_mismatch"):
+        assert classify_display(200, {**pending_body, "reason": reason}, None) == (
+            "pending",
+            reason,
+        )
+    assert classify_display(
+        200, {"ok": False, "reason": "debug_unreachable", "pasted": False}, None
+    ) == ("pending", "debug_unreachable")
+    for reason in ("signed_out", "ambiguous_title"):
+        assert classify_display(200, {**pending_body, "reason": reason}, None) == (
+            "refused",
+            reason,
+        )
+
+
 def test_fire_holders_exception_records_unknown_and_does_not_propagate(
     db: None,
 ) -> None:
@@ -1850,7 +1868,8 @@ def test_supervise_respawns_after_connect_error() -> None:
 def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """18460#176 specimen: exact cursor route + subscribed agent_id + no_composer -> pending & unsubscribed."""
+    """18460#176: no_composer pending; first strike under grace keeps sub; second drops."""
+    _reset_no_composer_state()
     from unittest.mock import AsyncMock, patch
 
     from agent_bus_store.db.endpoint_subscriptions import (
@@ -1989,9 +2008,11 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
                 now="2026-10-20 22:59:57",
             )
 
+    display_ret = classify_display(200, wake_out, None)
+
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=classify_display(200, wake_out, None),
+        return_value=display_ret,
     ):
         fire_due_wakes(Store())  # type: ignore[arg-type]
 
@@ -2007,6 +2028,78 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     assert ledger_row["route"] == "exact"
     assert ledger_row["subscription_id"] == sub_row["id"]
     assert ledger_row["finished_at"] == "2026-10-20 22:59:57"
+
+    assert len(unsub_calls) == 0
+    assert resolve_endpoint("cursor", thread) is not None
+    cur_sub = current_subscription("cursor", thread)
+    assert cur_sub is not None
+    assert cur_sub["state"] == "subscribed"
+
+    turn2_id, _ts2, number2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REQUEST|freeform|follow-up",
+        body="TYPE: REQUEST\nBody2",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        turn_id,
+        turn2_id,
+        [
+            {
+                "agent": "cursor",
+                "thread_id": thread,
+                "turn_id": turn2_id,
+                "turn_number": number2,
+            }
+        ],
+        now="2026-10-20 23:00:00",
+    )
+    claimed2 = claim_due_wakes(now="2026-10-20 23:00:01")
+    assert claimed2["wake_id"]
+
+    class Store2:
+        def claim(self) -> dict:
+            return claimed2
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+            expected_agent_id: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope, bound_by, evidence))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+                expected_agent_id=expected_agent_id,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now="2026-10-20 23:00:01",
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=display_ret,
+    ):
+        fire_due_wakes(Store2())  # type: ignore[arg-type]
 
     assert len(unsub_calls) == 1
     assert unsub_calls[0][0] == "cursor"
@@ -2192,6 +2285,364 @@ def test_mark_expired_with_landed_transcript_drops_different_agent(
     assert cur is not None
     assert cur["state"] == "unsubscribed"
     assert str(cur.get("evidence") or "").startswith("hop_expired:")
+
+
+def _cursor_no_composer_wake_fixture(
+    *,
+    agent_id: str = "agent-dead-001",
+    scan_now: str = "2026-10-21 12:00:00",
+    claim_now: str = "2026-10-21 12:00:01",
+) -> tuple[str, dict, dict]:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    detail = create_thread(thread_id=None, slug="no-composer-threshold")
+    assert detail is not None
+    thread = str(detail["id"])
+    title = f"{thread} no-composer-threshold"
+    sub_res = subscribe_endpoint(
+        agent="cursor",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title=title,
+        agent_id=agent_id,
+        bound_by="test",
+    )
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REQUEST|sync",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "cursor",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now=scan_now,
+    )
+    claimed = claim_due_wakes(now=claim_now)
+    assert claimed["wake_id"]
+    return thread, claimed, sub_res["row"]
+
+
+def _make_display_wake_store(
+    claimed: dict,
+    unsub_calls: list[tuple[str, str]],
+    *,
+    result_now: str,
+) -> object:
+    from agent_bus_store.db.endpoint_subscriptions import (
+        resolve_endpoint,
+        unsubscribe_endpoint,
+    )
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            return resolve_endpoint(agent, thread_id)
+
+        def unsubscribe(
+            self,
+            agent: str,
+            thread_scope: str,
+            *,
+            bound_by: str = "endpoint-wake-dispatcher",
+            evidence: str | None = None,
+            expected_agent_id: str | None = None,
+        ) -> dict:
+            unsub_calls.append((agent, thread_scope))
+            return unsubscribe_endpoint(
+                agent=agent,
+                thread_scope=thread_scope,
+                bound_by=bound_by,
+                evidence=evidence,
+                expected_agent_id=expected_agent_id,
+            )
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+                now=result_now,
+            )
+
+    return Store()
+
+
+def test_first_no_composer_under_grace_does_not_unsubscribe(db: None) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+    )
+
+    from bus_watch import endpoint_wake_dispatcher as ewd
+
+    _reset_no_composer_state()
+    thread, claimed, _sub = _cursor_no_composer_wake_fixture()
+    unsub_calls: list[tuple[str, str]] = []
+    mono = {"t": 5000.0}
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ewd.time, "monotonic", lambda: mono["t"])
+    try:
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed, unsub_calls, result_now="2026-10-21 12:00:01"
+                )
+            )  # type: ignore[arg-type]
+    finally:
+        monkeypatch.undo()
+    assert unsub_calls == []
+    assert resolve_endpoint("cursor", thread) is not None
+    cur = current_subscription("cursor", thread)
+    assert cur is not None
+    assert cur["state"] == "subscribed"
+
+
+def test_second_consecutive_no_composer_unsubscribes(db: None) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import (
+        current_subscription,
+        resolve_endpoint,
+    )
+
+    from bus_watch import endpoint_wake_dispatcher as ewd
+
+    _reset_no_composer_state()
+    thread, claimed, _sub = _cursor_no_composer_wake_fixture()
+    unsub_calls: list[tuple[str, str]] = []
+    mono = {"t": 6000.0}
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ewd.time, "monotonic", lambda: mono["t"])
+    try:
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed, unsub_calls, result_now="2026-10-21 12:00:01"
+                )
+            )  # type: ignore[arg-type]
+        assert unsub_calls == []
+        turn2_id, _ts2, number2, _c2 = insert_turn(
+            thread=thread,
+            from_agent="maestro",
+            to_agent="cursor",
+            subject="REQUEST|again",
+            body="b2",
+        )
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            int(claimed["rows"][0]["turn_id"]),
+            turn2_id,
+            [
+                {
+                    "agent": "cursor",
+                    "thread_id": thread,
+                    "turn_id": turn2_id,
+                    "turn_number": number2,
+                }
+            ],
+            now="2026-10-21 12:00:10",
+        )
+        claimed2 = claim_due_wakes(now="2026-10-21 12:00:11")
+        mono["t"] = 6001.0
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed2, unsub_calls, result_now="2026-10-21 12:00:11"
+                )
+            )  # type: ignore[arg-type]
+    finally:
+        monkeypatch.undo()
+    assert len(unsub_calls) == 1
+    assert resolve_endpoint("cursor", thread) is None
+    cur = current_subscription("cursor", thread)
+    assert cur is not None
+    assert cur["state"] == "unsubscribed"
+
+
+def test_delivered_resets_no_composer_streak(db: None) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import resolve_endpoint
+
+    from bus_watch import endpoint_wake_dispatcher as ewd
+
+    _reset_no_composer_state()
+    thread, claimed, _sub = _cursor_no_composer_wake_fixture()
+    unsub_calls: list[tuple[str, str]] = []
+    mono = {"t": 8000.0}
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ewd.time, "monotonic", lambda: mono["t"])
+    try:
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed, unsub_calls, result_now="2026-10-21 12:00:01"
+                )
+            )  # type: ignore[arg-type]
+        turn2_id, _ts2, number2, _c2 = insert_turn(
+            thread=thread,
+            from_agent="maestro",
+            to_agent="cursor",
+            subject="REQUEST|delivered",
+            body="b2",
+        )
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            int(claimed["rows"][0]["turn_id"]),
+            turn2_id,
+            [
+                {
+                    "agent": "cursor",
+                    "thread_id": thread,
+                    "turn_id": turn2_id,
+                    "turn_number": number2,
+                }
+            ],
+            now="2026-10-21 12:00:05",
+        )
+        claimed2 = claim_due_wakes(now="2026-10-21 12:00:06")
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("delivered", "delivered"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed2, unsub_calls, result_now="2026-10-21 12:00:06"
+                )
+            )  # type: ignore[arg-type]
+        turn3_id, _ts3, number3, _c3 = insert_turn(
+            thread=thread,
+            from_agent="maestro",
+            to_agent="cursor",
+            subject="REQUEST|after-delivered",
+            body="b3",
+        )
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            turn2_id,
+            turn3_id,
+            [
+                {
+                    "agent": "cursor",
+                    "thread_id": thread,
+                    "turn_id": turn3_id,
+                    "turn_number": number3,
+                }
+            ],
+            now="2026-10-21 12:00:10",
+        )
+        claimed3 = claim_due_wakes(now="2026-10-21 12:00:11")
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed3, unsub_calls, result_now="2026-10-21 12:00:11"
+                )
+            )  # type: ignore[arg-type]
+    finally:
+        monkeypatch.undo()
+    assert unsub_calls == []
+    assert resolve_endpoint("cursor", thread) is not None
+
+
+def test_no_composer_after_uptime_grace_unsubscribes(db: None) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+    from bus_watch import endpoint_wake_dispatcher as ewd
+
+    _reset_no_composer_state()
+    thread, claimed, _sub = _cursor_no_composer_wake_fixture()
+    unsub_calls: list[tuple[str, str]] = []
+    mono = {"t": 7000.0}
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ewd.time, "monotonic", lambda: mono["t"])
+    try:
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "unknown"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed, unsub_calls, result_now="2026-10-21 12:00:01"
+                )
+            )  # type: ignore[arg-type]
+        assert unsub_calls == []
+        turn2_id, _ts2, number2, _c2 = insert_turn(
+            thread=thread,
+            from_agent="maestro",
+            to_agent="cursor",
+            subject="REQUEST|grace",
+            body="b2",
+        )
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            int(claimed["rows"][0]["turn_id"]),
+            turn2_id,
+            [
+                {
+                    "agent": "cursor",
+                    "thread_id": thread,
+                    "turn_id": turn2_id,
+                    "turn_number": number2,
+                }
+            ],
+            now="2026-10-21 12:00:30",
+        )
+        claimed2 = claim_due_wakes(now="2026-10-21 12:00:31")
+        mono["t"] = 7031.0
+        with patch(
+            "bus_watch.endpoint_wake_dispatcher._display_post",
+            return_value=("pending", "no_composer"),
+        ):
+            fire_due_wakes(
+                _make_display_wake_store(
+                    claimed2, unsub_calls, result_now="2026-10-21 12:00:31"
+                )
+            )  # type: ignore[arg-type]
+    finally:
+        monkeypatch.undo()
+    assert len(unsub_calls) == 1
+    cur = current_subscription("cursor", thread)
+    assert cur is not None
+    assert cur["state"] == "unsubscribed"
 
 
 def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(

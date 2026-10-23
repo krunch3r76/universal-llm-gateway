@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,66 @@ from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 _MAESTRO_MILESTONE_WAKE_HEADS = MAESTRO_MILESTONE_PREFIXES
 
 logger = logging.getLogger(__name__)
+
+_no_composer_streaks: dict[tuple[str, str], int] = {}
+_display_reachable_since: float | None = None
+
+
+def _reset_no_composer_state() -> None:
+    """Clear in-process no_composer streak and display-reachable clock (test isolation)."""
+    _no_composer_streaks.clear()
+    global _display_reachable_since
+    _display_reachable_since = None
+
+
+def _note_display_post_reason(reason: str) -> float:
+    """Update display-reachable clock; return display-reachable age in seconds."""
+    global _display_reachable_since
+    if reason in {"debug_unreachable", "connect"}:
+        _display_reachable_since = None
+        return 0.0
+    now = time.monotonic()
+    if _display_reachable_since is None:
+        _display_reachable_since = now
+    return now - _display_reachable_since
+
+
+def _cursor_no_composer_subscription_key(
+    sub: dict[str, Any], thread: str
+) -> tuple[str, str] | None:
+    if str(sub.get("surface") or "") != "cursor":
+        return None
+    dead_agent_id = str(sub.get("agent_id") or "").strip()
+    scope = str(sub.get("thread_scope") or thread).strip()
+    if not dead_agent_id or scope in {"", "*"}:
+        return None
+    return dead_agent_id, scope
+
+
+def _update_no_composer_streak_and_gate_unsubscribe(
+    sub: dict[str, Any],
+    thread: str,
+    reason: str,
+    *,
+    display_reachable_age: float,
+) -> bool:
+    """Update streak state; return True when unsubscribe gate is met."""
+    key_tuple = _cursor_no_composer_subscription_key(sub, thread)
+    if key_tuple is None:
+        return False
+    key = key_tuple
+    if reason != "no_composer":
+        _no_composer_streaks.pop(key, None)
+        return False
+    streak = _no_composer_streaks.get(key, 0) + 1
+    _no_composer_streaks[key] = streak
+    gate = streak >= 2 or (
+        _display_reachable_since is not None and display_reachable_age >= 30.0
+    )
+    if gate:
+        _no_composer_streaks.pop(key, None)
+    return gate
+
 
 CSE_WAKE_SUBJECT_HEADS = frozenset(
     {
@@ -946,7 +1007,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         else ",".join(str(n) for n in turn_numbers)
     )
     state, reason = _display_post(rows[0], sub, turn_arg)
-    if reason == "no_composer" and str(sub.get("surface") or "") == "cursor":
+    display_reachable_age = _note_display_post_reason(reason)
+    if _update_no_composer_streak_and_gate_unsubscribe(
+        sub, thread, reason, display_reachable_age=display_reachable_age
+    ):
         _drop_dead_agent_subscription(
             store, agent=agent, thread=thread, sub=sub, reason=reason
         )
