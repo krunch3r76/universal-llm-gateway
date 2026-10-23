@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
 from claude_bundles import cdp_registry as reg
+from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.offline
 
