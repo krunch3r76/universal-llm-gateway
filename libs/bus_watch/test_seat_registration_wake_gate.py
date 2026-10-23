@@ -455,7 +455,7 @@ def _stamp_turn(
 ) -> dict[str, object]:
     row: dict[str, object] = {"turn_number": turn_number, "body": body}
     if from_agent is not None:
-        row["from_agent"] = from_agent
+        row["from"] = from_agent
     return row
 
 
@@ -692,7 +692,7 @@ def test_maestro_authored_stamp_delivers_before_cursor_auto_bind_era(
                     {
                         "turn_number": 4490,
                         "body": _FIXTURE_4490_BODY,
-                        "from_agent": "maestro",
+                        "from": "maestro",
                     }
                 ]
             }
@@ -765,7 +765,7 @@ def test_cursor_auto_bind_after_maestro_stamp_refuses_stale_holder(
                     {
                         "turn_number": 4490,
                         "body": _FIXTURE_4490_BODY,
-                        "from_agent": "maestro",
+                        "from": "maestro",
                     },
                     _stamp_turn(5000, machine_body, from_agent="cursor-auto"),
                 ]

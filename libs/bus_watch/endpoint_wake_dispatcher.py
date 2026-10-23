@@ -544,7 +544,7 @@ def load_latest_seat_registration_stamp(
             except (TypeError, ValueError):
                 continue
             body = str(row.get("body") or "")
-            from_agent = str(row.get("from_agent") or "")
+            from_agent = str(row.get("from") or row.get("from_agent") or "")
             bind_parsed = _parse_bind_seat_registration(body)
             if bind_parsed is not None:
                 reg, url, birth, cursor_auto = bind_parsed
