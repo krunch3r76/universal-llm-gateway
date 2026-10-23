@@ -11,9 +11,17 @@ from scripts.model_manager.ui.controller.service_ctl import cdp_ask_remote
 
 
 def _start_cmd_static_text() -> str:
-    """Concatenate string parts of the ``cmd`` assignment (ignore f-expr slots)."""
+    """Collect ``ast.Constant`` strings from the ``cmd`` assignment and, one level only, from a same-module function called inside that assignment.
+
+    The start command interpolates ``_graceful_stop_snippet``; those constants are the kill fallback the assertion checks.
+    """
     src = Path(cdp_ask_remote.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
+    module_funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {
+        n.name: n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
     start_fn = next(
         n
         for n in tree.body
@@ -28,6 +36,17 @@ def _start_cmd_static_text() -> str:
                 for chunk in ast.walk(node.value):
                     if isinstance(chunk, ast.Constant) and isinstance(chunk.value, str):
                         parts.append(chunk.value)
+                for chunk in ast.walk(node.value):
+                    if not isinstance(chunk, ast.Call):
+                        continue
+                    if not isinstance(chunk.func, ast.Name):
+                        continue
+                    fn_node = module_funcs.get(chunk.func.id)
+                    if fn_node is None:
+                        continue
+                    for inner in ast.walk(fn_node):
+                        if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                            parts.append(inner.value)
                 return "".join(parts)
     raise AssertionError("cmd assignment not found in start_cdp_ask_remote")
 
