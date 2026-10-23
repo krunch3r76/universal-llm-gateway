@@ -51,6 +51,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     rebuild_hop_state,
     record_hop_notified,
 )
+from scripts.model_manager.ui.controller.grokbot_seat_repoint import run_gc1_repoint
 from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
     fetch_health,
     resolve_a_records,
@@ -329,6 +330,10 @@ class GrokbotEgressWatchLoop:
     ) -> None:
         """Roster read and one combined notice. Skipped when desktop is down."""
         rows = await probe_grok_agent_context()
+        try:
+            run_gc1_repoint(rows)
+        except Exception:
+            logger.exception("grokbot gc1 seat repoint failed")
         notice = decide_context_hop(
             rows=rows,
             now=now,
