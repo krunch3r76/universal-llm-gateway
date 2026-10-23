@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from cortex_store._test_db_bootstrap import materialize_head_schema_template
 from cortex_store.db import run_migrations
@@ -21,6 +24,23 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CANONICAL_MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 
 
+def _lowest_tracked_migration_number() -> int | None:
+    for path in sorted(_CANONICAL_MIGRATIONS.glob("*"), key=lambda p: p.name):
+        match = re.match(r"^(\d+)", path.name)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _skip_g2_empty_replay_when_base_chain_absent() -> None:
+    lowest = _lowest_tracked_migration_number()
+    if lowest is None or lowest > 1:
+        pytest.skip(
+            "G2 empty replay skipped: lowest tracked migration is "
+            f"{lowest}; 001-base migration chain absent from this worktree"
+        )
+
+
 def test_g1_no_numbered_migrations_outside_canonical_tree() -> None:
     offenders = find_numbered_migrations_outside_canonical_tree(
         _REPO_ROOT,
@@ -33,6 +53,7 @@ def test_g1_no_numbered_migrations_outside_canonical_tree() -> None:
 
 
 def test_g2_empty_replay_matches_live_snapshot_modulo_allowlist() -> None:
+    _skip_g2_empty_replay_when_base_chain_absent()
     with tempfile.NamedTemporaryFile(suffix=".db") as handle:
         conn = sqlite3.connect(handle.name)
         conn.execute("PRAGMA foreign_keys=ON")
@@ -91,15 +112,24 @@ def test_g2_head_template_carries_version_stamp_and_registry_seed() -> None:
             conn.close()
 
 
-def test_g2_guard_trips_on_unlisted_divergence() -> None:
-    """Prove G2 is not vacuously green — unlisted drift must fail."""
+def test_g2_full_chain_run_migrations_applies_head_version() -> None:
+    """Empty DB replay must apply the head migration, not vacuously match snapshot."""
+    _skip_g2_empty_replay_when_base_chain_absent()
     with tempfile.NamedTemporaryFile(suffix=".db") as handle:
         conn = sqlite3.connect(handle.name)
         conn.execute("PRAGMA foreign_keys=ON")
-        run_migrations(conn)
-        replay = dump_sqlite_schema(conn)
+        applied = run_migrations(conn)
         conn.close()
 
+    assert 83 in applied, (
+        "full-chain empty-database run_migrations must apply head version 83; "
+        f"got {applied}"
+    )
+
+
+def test_g2_guard_trips_on_unlisted_divergence() -> None:
+    """Prove G2 is not vacuously green — unlisted drift must fail."""
+    replay = load_canonical_live_snapshot()
     perturbed = copy.deepcopy(replay)
     del perturbed["tables"]["entities"]
 
