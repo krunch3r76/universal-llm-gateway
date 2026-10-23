@@ -377,6 +377,8 @@ def hop_journal_projection_fields(
     else:
         lessons = project_lessons_in_force(text, role=role, lane=lane)
 
+    lessons = _trim_lessons_whole_entries(lessons, HOP_LESSONS_CAP_B)
+
     over_budget_flag = ""
     try:
         flags = _journal_head_flags(
@@ -414,7 +416,6 @@ def hop_journal_projection_fields(
         else:
             register = render_register_card(reg_body)
 
-    lessons = _trim_lessons_whole_entries(lessons, HOP_LESSONS_CAP_B)
     register = trim_hop_block_whole_lines(register, HOP_REGISTER_CAP_B)
 
     fields = {"lessons_in_force": lessons, "register_card": register}

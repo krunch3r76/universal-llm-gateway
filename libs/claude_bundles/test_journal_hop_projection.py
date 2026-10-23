@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from claude_bundles.journal_hop_projection import (
+    JOURNAL_HEAD_BYTES,
     hop_journal_projection_fields,
     project_lessons_in_force,
 )
@@ -73,3 +74,45 @@ def test_hop_lessons_keeps_single_entry_over_byte_cap() -> None:
     assert "(none)" not in lessons
     assert "entry 400" in lessons
     assert len(lessons.encode("utf-8")) > HOP_LESSONS_CAP_B
+
+
+def _over_cap_lane_12286_journal() -> str:
+    """Newest hop-lane entry renders over HOP_LESSONS_CAP_B; journal head over JOURNAL_HEAD_BYTES."""
+    heading = "2026-10-20 — entry 341 — lane 12286"
+    pad = "x" * (HOP_LESSONS_CAP_B + 200)
+    entry = f"## {heading}\nRULE: [route] bulk-{pad}\n"
+    tail_pad = "y" * (JOURNAL_HEAD_BYTES - len(entry.encode("utf-8")) + 100)
+    return entry + tail_pad
+
+
+def test_hop_lessons_over_budget_flag_keeps_lane_entry_heading() -> None:
+    """Trim before prepending journal flags so the over-budget line is not treated as preamble."""
+    journal = _over_cap_lane_12286_journal()
+    fields = hop_journal_projection_fields(
+        journal_text=journal,
+        lane="12286",
+        register_text="",
+    )
+    lessons = fields["lessons_in_force"]
+    assert fields.get("journal_over_budget_flag") or "[journal_over_budget" in lessons
+    assert "entry 341" in lessons
+    assert "RULE: [route]" in lessons
+    assert lessons.strip() != "[journal_over_budget"
+
+
+def test_hop_lessons_inflight_line_keeps_lane_entry_heading() -> None:
+    """Trim before in-flight insert so the projection line is not split as a lesson entry."""
+    journal = _over_cap_lane_12286_journal()
+
+    def _lookup() -> str:
+        return "exec-proj-123"
+
+    lessons = hop_journal_projection_fields(
+        journal_text=journal,
+        lane="12286",
+        register_text="",
+        inflight_projection_lookup=_lookup,
+    )["lessons_in_force"]
+    assert "entry 341" in lessons
+    assert "In-flight journal projection: exec-proj-123" in lessons
+    assert "RULE: [route]" in lessons
