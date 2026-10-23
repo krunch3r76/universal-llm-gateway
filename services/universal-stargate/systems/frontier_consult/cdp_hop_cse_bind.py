@@ -31,20 +31,49 @@ def _read_prompt_uri_text(prompt_uri: str | None) -> str | None:
         return None
 
 
+_HOP_REQUEST_DATA_MARKER = "## Hop request (data)"
+_CONTINUITY_HANDOFF_MARKER = "TYPE: CONTINUITY_HANDOFF"
+_BIRTH_ID_LINE_PREFIX = "successor_birth_id:"
+
+
+def _prompt_segment_for_successor_birth_id(prompt_text: str) -> str:
+    """Slice rendered prompt; predecessor handoff prose is not authoritative."""
+    text = prompt_text or ""
+    hop_idx = text.rfind(_HOP_REQUEST_DATA_MARKER)
+    handoff_idx = text.rfind(_CONTINUITY_HANDOFF_MARKER)
+    if hop_idx >= 0 and hop_idx >= handoff_idx:
+        return text[hop_idx + len(_HOP_REQUEST_DATA_MARKER) :].lstrip("\n")
+    if handoff_idx >= 0:
+        return text[handoff_idx:]
+    return text
+
+
+def _parse_successor_birth_id_from_rendered_prompt(prompt_text: str) -> str | None:
+    from hop_handoff.body import is_successor_birth_id
+
+    segment = _prompt_segment_for_successor_birth_id(prompt_text)
+    found: str | None = None
+    for line in segment.splitlines():
+        if not line.startswith(_BIRTH_ID_LINE_PREFIX):
+            continue
+        value = line.split(":", 1)[1].strip()
+        if is_successor_birth_id(value):
+            found = value
+    return found
+
+
 def _resolve_successor_birth_id_for_stamp(
     *,
     successor_birth_id: str | None,
     prompt_uri: str | None,
 ) -> str | None:
-    from hop_handoff.body import parse_successor_birth_id
-
     birth = (successor_birth_id or "").strip()
     if birth:
         return birth
     prompt_text = _read_prompt_uri_text(prompt_uri)
     if not prompt_text:
         return None
-    return parse_successor_birth_id(prompt_text)
+    return _parse_successor_birth_id_from_rendered_prompt(prompt_text)
 
 
 def _post_tab_bind_seat_registration_stamp(

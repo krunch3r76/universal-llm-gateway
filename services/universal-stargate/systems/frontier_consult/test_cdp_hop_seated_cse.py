@@ -269,3 +269,74 @@ def test_hop_seated_stamp_uses_prompt_uri_not_lane_decoy_act6(
     body = stamp_turns[0]["body"]
     assert f"successor_birth_id: {new_birth}" in body
     assert old_birth not in body
+
+
+def test_hop_seated_stamp_uses_hop_request_birth_over_standing_handoff_render(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Column-0 birth in CURRENT LEG must not win over hop request data."""
+    from agent_bus_store.db import create_thread, get_turns
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+    )
+
+    def _noop_fetch(_lane: str) -> list[object]:
+        return []
+
+    old_birth = "a" * 32
+    new_birth = "b" * 32
+    sidecar = (
+        f"## CURRENT LEG\nsuccessor_birth_id: {old_birth}\nLEG 1\n### OWED / NEXT\nok\n"
+    )
+    hop_body = (
+        f"TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\nsuccessor_birth_id: {new_birth}\n"
+    )
+    rendered = ensure_operator_proxy_mission_prompt(
+        hop_body,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    before_hop_data, _after = rendered.split("## Hop request (data)", 1)
+    assert f"successor_birth_id: {old_birth}" in before_hop_data
+    assert f"successor_birth_id: {new_birth}" in rendered
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hop-render-birth")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    prompt_path = tmp_path / "mission.md"
+    prompt_path.write_text(rendered, encoding="utf-8")
+    prompt_uri = f"file://{prompt_path}"
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with (
+        patch("agent_bus_store.db.cse_associations.associate_cse"),
+        patch(
+            "systems.frontier_consult.prompt_expand_prelude.read_prompt_uri",
+            return_value=rendered,
+        ),
+    ):
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id="child",
+            parent_thread=thread_id,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="exec-render-birth",
+            prompt_uri=prompt_uri,
+        )
+    turns = get_turns(thread=thread_id, last=10)
+    stamp_turns = [
+        t
+        for t in turns
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+        and "source: cursor-auto" in str(t.get("body") or "")
+    ]
+    assert len(stamp_turns) == 1
+    body = stamp_turns[0]["body"]
+    assert f"successor_birth_id: {new_birth}" in body
+    assert old_birth not in body

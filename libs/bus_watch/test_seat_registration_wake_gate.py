@@ -126,6 +126,7 @@ def test_post_wake_registration_refused_alerts_logs_when_create_turn_missing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Missing store.create_turn logs a warning instead of raising to the caller."""
+
     class Store:
         pass
 
@@ -446,6 +447,18 @@ def _bind_stamp_body(
     )
 
 
+def _stamp_turn(
+    turn_number: int,
+    body: str,
+    *,
+    from_agent: str | None = None,
+) -> dict[str, object]:
+    row: dict[str, object] = {"turn_number": turn_number, "body": body}
+    if from_agent is not None:
+        row["from_agent"] = from_agent
+    return row
+
+
 def _seat_side_stamp_body(*, birth_id: str) -> str:
     return f"TYPE: SEAT_REGISTRATION\nsuccessor_birth_id: {birth_id}\n"
 
@@ -480,7 +493,11 @@ def test_a_fresh_hop_delivers_with_tab_bind_stamp_only(db: None) -> None:
             )
 
         def turns(self, thread: str, **params: object) -> dict:
-            return {"turns": [{"turn_number": 5000, "body": bind_body}]}
+            return {
+                "turns": [
+                    _stamp_turn(5000, bind_body, from_agent="cursor-auto"),
+                ]
+            }
 
         def create_turn(self, **kwargs: object) -> dict:
             return {"id": 1}
@@ -550,7 +567,7 @@ def test_a_delivers_after_seat_act6_matching_birth_without_registration_id(
         def turns(self, thread: str, **params: object) -> dict:
             return {
                 "turns": [
-                    {"turn_number": 5000, "body": bind_body},
+                    _stamp_turn(5000, bind_body, from_agent="cursor-auto"),
                     {"turn_number": 5001, "body": seat_body},
                 ]
             }
@@ -611,7 +628,11 @@ def test_b_foreign_lane_holder_registration_refused(db: None) -> None:
             )
 
         def turns(self, thread: str, **params: object) -> dict:
-            return {"turns": [{"turn_number": 5000, "body": bind_body}]}
+            return {
+                "turns": [
+                    _stamp_turn(5000, bind_body, from_agent="cursor-auto"),
+                ]
+            }
 
         def create_turn(self, **kwargs: object) -> dict:
             return {"id": 1}
@@ -635,6 +656,145 @@ def test_b_foreign_lane_holder_registration_refused(db: None) -> None:
     assert result_calls[0]["reason"] == "seat_registration_mismatch"
 
 
+def test_maestro_authored_stamp_delivers_before_cursor_auto_bind_era(
+    db: None,
+) -> None:
+    """12286#4490-style stamp without cursor-auto author still gates delivery pre-era."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {
+                "turns": [
+                    {
+                        "turn_number": 4490,
+                        "body": _FIXTURE_4490_BODY,
+                        "from_agent": "maestro",
+                    }
+                ]
+            }
+
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"id": 1}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch(
+        "bus_watch.cse_followup.fire_cse_followup",
+        return_value={
+            "ok": True,
+            "registration_id": holder["registration_id"],
+            "url": holder["chat_url"],
+        },
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "delivered"
+
+
+def test_cursor_auto_bind_after_maestro_stamp_refuses_stale_holder(
+    db: None,
+) -> None:
+    """Once a machine tab bind exists, holder from the maestro era must refuse."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    alert_calls: list[dict[str, object]] = []
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+    machine_body = _bind_stamp_body(
+        registration_id="new-machine-reg-id",
+        chat_url="https://claude.ai/cowork/cse_NEWBIND",
+    )
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {
+                "turns": [
+                    {
+                        "turn_number": 4490,
+                        "body": _FIXTURE_4490_BODY,
+                        "from_agent": "maestro",
+                    },
+                    _stamp_turn(5000, machine_body, from_agent="cursor-auto"),
+                ]
+            }
+
+        def create_turn(self, **kwargs: object) -> dict:
+            alert_calls.append(dict(kwargs))
+            return {"id": len(alert_calls)}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch("bus_watch.cse_followup.fire_cse_followup") as fire:
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    fire.assert_not_called()
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "skipped"
+    assert result_calls[0]["reason"] == "seat_registration_mismatch"
+    assert len(alert_calls) == 2
+
+
 def test_cursor_auto_bind_not_overwritten_by_seat_authored_registration(
     db: None,
 ) -> None:
@@ -646,13 +806,19 @@ registration_id: seat-forged-reg-id
 chat_url: https://claude.ai/cowork/cse_FORGED
 successor_birth_id: ffffffffffffffffffffffffffffffff
 """
+    copied_stamp = _bind_stamp_body(
+        birth_id="cccccccccccccccccccccccccccccccc",
+        registration_id="copied-reg-id",
+        chat_url="https://claude.ai/cowork/cse_COPIED",
+    )
 
     class Store:
         def turns(self, thread: str, **params: object) -> dict[str, object]:
             return {
                 "turns": [
-                    {"turn_number": 5000, "body": bind_body},
-                    {"turn_number": 5001, "body": impostor},
+                    _stamp_turn(5000, bind_body, from_agent="cursor-auto"),
+                    _stamp_turn(5001, impostor, from_agent="web-anthropic"),
+                    _stamp_turn(5002, copied_stamp, from_agent="web-anthropic"),
                 ],
                 "truncated": False,
             }
@@ -707,7 +873,7 @@ def test_c_birth_id_mismatch_between_bind_and_seat_refused(db: None) -> None:
         def turns(self, thread: str, **params: object) -> dict:
             return {
                 "turns": [
-                    {"turn_number": 5000, "body": bind_body},
+                    _stamp_turn(5000, bind_body, from_agent="cursor-auto"),
                     {"turn_number": 5001, "body": seat_body},
                 ]
             }
