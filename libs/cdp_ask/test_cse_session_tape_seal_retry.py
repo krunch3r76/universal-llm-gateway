@@ -54,7 +54,7 @@ async def test_retry_after_partial_archive_conflict_supersedes(
         lambda: {"rid-retry": _listening_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [{"author": "user", "text": "partial then full", "ordinal": 1}]
 
     monkeypatch.setattr(

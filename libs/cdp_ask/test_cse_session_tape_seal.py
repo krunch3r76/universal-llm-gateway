@@ -109,7 +109,7 @@ async def test_seal_exception_emits_failed_event_before_protocol_error(
         lambda: {"rid-39528": _listening_row()},
     )
 
-    async def _boom(_port: int, _url: str) -> list[dict]:
+    async def _boom(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         raise RuntimeError("scrape down")
 
     monkeypatch.setattr(
@@ -144,7 +144,7 @@ async def test_close_body_parse_failure_emits_before_falling_through(
         lambda: {"rid-39528": _listening_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [
             {"author": "user", "text": "keep the predecessor reasoning", "ordinal": 1}
         ]
@@ -193,7 +193,7 @@ async def test_cortex_non_200_emits_failed_then_raises(
         lambda: {"rid-39528": _listening_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [
             {"author": "user", "text": "keep the predecessor reasoning", "ordinal": 1}
         ]
@@ -239,7 +239,7 @@ def _seal_close_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: {"rid-39528": _listening_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [
             {"author": "user", "text": "keep the predecessor reasoning", "ordinal": 1}
         ]

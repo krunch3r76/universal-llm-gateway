@@ -135,7 +135,7 @@ async def test_typed_ack_seals_to_tape_and_detaches_closed_predecessor(
         lambda: {"4f3e647918c64ab18f8c3f9403d24999": _closed_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [
             {"author": "user", "text": _USER_TURN, "ordinal": 1},
             {
@@ -250,7 +250,7 @@ async def test_tape_seal_failure_still_detaches_on_live_port(
         lambda: {"4f3e647918c64ab18f8c3f9403d24999": _closed_row()},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> list[dict]:
         return [{"author": "user", "text": _USER_TURN, "ordinal": 1}]
 
     monkeypatch.setattr(
