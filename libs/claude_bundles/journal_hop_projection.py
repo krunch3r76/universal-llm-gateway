@@ -35,6 +35,7 @@ _RULE_LINE_RE = re.compile(
 )
 _FACET_TAG_RE = re.compile(r"\[([a-z]+)\]")
 _ENTRY_HEADING_RE = re.compile(r"(?m)^## (.+?)\s*\n")
+_ENTRY_NUM_RE = re.compile(r"entry\s+(\d+)", re.IGNORECASE)
 _STANDING_RULE_HEADING = "STANDING RULE"
 
 
@@ -92,6 +93,14 @@ def _entry_on_hop_lane(heading: str, *, lane: str | None) -> bool:
         return False
     needle = f"lane {lane.strip()}"
     return needle in (heading or "")
+
+
+def _entry_number_sort_key(heading: str) -> tuple[bool, int]:
+    """Numbered journal entries first, highest entry N first; unnumbered last."""
+    match = _ENTRY_NUM_RE.search(heading or "")
+    if match:
+        return (False, -int(match.group(1)))
+    return (True, 0)
 
 
 def _lessons_blocks_from_projected(
@@ -159,6 +168,8 @@ def project_lessons_in_force(
             continue
         bucket = hop_entries if _entry_on_hop_lane(heading, lane=lane) else other_entries
         bucket.append((heading, lines))
+    hop_entries.sort(key=lambda item: _entry_number_sort_key(item[0]))
+    other_entries.sort(key=lambda item: _entry_number_sort_key(item[0]))
     chosen: list[tuple[str, list[str]]] = []
     for group in (hop_entries, other_entries):
         for heading, lines in group:
@@ -366,6 +377,8 @@ def hop_journal_projection_fields(
     else:
         lessons = project_lessons_in_force(text, role=role, lane=lane)
 
+    lessons = _trim_lessons_whole_entries(lessons, HOP_LESSONS_CAP_B)
+
     over_budget_flag = ""
     try:
         flags = _journal_head_flags(
@@ -403,7 +416,6 @@ def hop_journal_projection_fields(
         else:
             register = render_register_card(reg_body)
 
-    lessons = _trim_lessons_whole_entries(lessons, HOP_LESSONS_CAP_B)
     register = trim_hop_block_whole_lines(register, HOP_REGISTER_CAP_B)
 
     fields = {"lessons_in_force": lessons, "register_card": register}
