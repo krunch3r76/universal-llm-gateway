@@ -43,6 +43,35 @@ def _add_turn(client, *, thread, frm, to, subject, body):
     assert resp.status_code == 201, resp.text
 
 
+def test_get_turns_thread_unread_honors_limit(tmp_path) -> None:
+    """Thread-scoped fetch_unread(limit=N) maps to GET /turns unread cap."""
+    with TestClient(_app(tmp_path)) as client:
+        thread = _new_thread(
+            client,
+            slug="unread-limit-root",
+            frm="cursor",
+            to="maestro",
+            subject="t0",
+            body="b0",
+        )
+        for i in range(1, 4):
+            _add_turn(
+                client,
+                thread=thread,
+                frm="cursor",
+                to="maestro",
+                subject=f"t{i}",
+                body=f"b{i}",
+            )
+        resp = client.get(
+            "/turns",
+            params={"thread": thread, "unread": True, "limit": 2},
+        )
+        assert resp.status_code == 200, resp.text
+        turns = resp.json()["turns"]
+        assert len(turns) == 2
+
+
 def test_unread_toc_enriched_recipient_scoped(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         root_resp = client.post("/threads", json={"slug": "toc-root"})

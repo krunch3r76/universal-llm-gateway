@@ -66,8 +66,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # Closed-park re-admits per row. Gear presets do not override this.
     "max_readmits": 2,
     # Pattern A critic when cdp/opus-5.5 is paused (liaison policy key: critic_model).
-    "critic_model": "cursor/gemini-4-argon",
-    "critic_model_knobs": {"effort": "high", "fast": "false"},
+    "critic_model": "cursor/grok-4.7",
+    "critic_model_knobs": {"effort": "high"},
     "hop_model_query": "Grok 4.7",
     # Glass createAgent: extra-high (xhigh) and fast. Per-house tick overrides merge on top.
     "hop_model_knobs": {"effort": "xhigh", "fast": "true"},

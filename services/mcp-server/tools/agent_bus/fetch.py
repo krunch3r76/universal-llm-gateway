@@ -80,6 +80,7 @@ def _fetch_impl(
     compact: bool,
     after_turn: int | None = None,
     mark_read_seat: str | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     if to is None and thread is None:
         return {"error": "fetch requires at least one of: to, thread"}
@@ -95,6 +96,8 @@ def _fetch_impl(
         params["compact"] = "true"
     if last is not None:
         params["last"] = last
+    if limit is not None:
+        params["limit"] = limit
     if after_turn is not None:
         params["after_turn"] = after_turn
     if mark_read:
@@ -277,6 +280,7 @@ def _fetch_unread_dispatch(
         mark_read=apply_mark,
         compact=compact,
         mark_read_seat=mark_read_seat,
+        limit=limit,
     )
     return _merge_advisories(result, advisories)
 

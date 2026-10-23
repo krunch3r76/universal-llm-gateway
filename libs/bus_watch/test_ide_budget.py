@@ -364,7 +364,8 @@ def test_policy_defaults_grok_successor_and_row_bind() -> None:
     assert policy["successor_model"] == POLICY_DEFAULTS["successor_model"]
     assert policy["successor_model"] == "cursor/grok-4.7"
     assert policy["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
-    assert policy["critic_model"] == "cursor/gemini-4-argon"
+    assert policy["critic_model"] == "cursor/grok-4.7"
+    assert policy["critic_model_knobs"] == {"effort": "high"}
     assert policy["hop_model_query"] == "Grok 4.7"
     assert policy["hop_model_knobs"] == {"effort": "xhigh", "fast": "true"}
     assert policy["under_pattern"] == "grok-confer-argon"

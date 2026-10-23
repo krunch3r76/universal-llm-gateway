@@ -265,3 +265,21 @@ def test_fetch_unread_thread_scope_still_returns_turn_list() -> None:
     assert captured["thread"] == "1138"
     assert captured["unread"] == "true"
     assert "/turns/unread-toc" not in captured["path"]
+
+
+def test_fetch_unread_thread_scope_forwards_limit() -> None:
+    """Thread-scoped fetch_unread(limit=N) must bound GET /turns unread fan-out."""
+    captured: dict[str, str] = {}
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, method, kwargs
+        captured["path"] = path
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
+        return {"turns": []}
+
+    with patch("tools.agent_bus._relay", side_effect=relay):
+        _fetch_unread_dispatch(thread="1138", limit=5)
+
+    assert captured.get("limit") == "5"
+    assert captured["thread"] == "1138"
+    assert captured["unread"] == "true"

@@ -319,6 +319,7 @@ async def list_turns(
     unread: bool = Query(False),
     turn_status: TurnStatus | None = Query(None, alias="status"),
     last: int | None = Query(None),
+    limit: int | None = Query(None, ge=1, le=500),
     compact: bool = Query(False),
     mark_read_flag: bool = Query(False, alias="mark_read"),
     include_superseded: bool = Query(False),
@@ -341,7 +342,7 @@ async def list_turns(
     """List turns with optional filters and optional mark-read side effects."""
     if thread is not None:
         thread = normalize_thread_id(thread)
-    fetch_last = last
+    fetch_last = last if last is not None else limit
     mark_read_limit: int | None = None
     if after_turn is not None and last is not None:
         fetch_last = last + 1
