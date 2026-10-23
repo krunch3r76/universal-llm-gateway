@@ -1,7 +1,7 @@
 """Seal a predecessor Cowork transcript onto continuity tape before detach.
 
 cdp_ask detach and typed-ack harvest call ``seal_predecessor_cse_to_tape``.
-A live Chrome port is scraped and posted to Cortex ``/sessions/close``
+A live Chrome port is scraped and posted to Cortex ``/session-journals/close``
 (hub UDS, or HTTP when that socket is absent on the satellite). Failures emit ``cdp.tape.seal.failed`` and raise
 ``standdown.tape_seal_failed`` so the listener stays attached. A dead port
 or a missing registry row emits ``cdp.tape.seal.degraded`` and returns a
@@ -82,7 +82,7 @@ def _emit_seal_degraded(registration_id: str, reason: str) -> None:
 
 
 def cortex_session_close_url() -> str:
-    """URL for ``/sessions/close``.
+    """URL for ``/session-journals/close``.
 
     Hub ``cdp_ask`` reaches cortex-api on the local UDS. Jupiter ``cdp_ask``
     has no ``/tmp/universal-protocol/cortex-api.sock`` (that inode is created
@@ -110,7 +110,7 @@ def _post_session_close(payload: dict[str, Any]) -> Any:
     from transport_utils import make_sync_client
 
     with make_sync_client(cortex_session_close_url(), timeout=30.0) as client:
-        return client.post("/sessions/close", json=payload)
+        return client.post("/session-journals/close", json=payload)
 
 
 async def _scrape_predecessor_turns(port: int, chat_url: str) -> list[dict[str, Any]]:
@@ -193,7 +193,7 @@ async def seal_predecessor_cse_to_tape(
 ) -> dict[str, Any]:
     """Seal a predecessor Cowork transcript onto continuity tape before detach.
 
-    A listening Chrome port is scraped and posted to Cortex ``/sessions/close``.
+    A listening Chrome port is scraped and posted to Cortex ``/session-journals/close``.
     HTTP errors, timeouts, and a missing ``transcript_path`` emit
     ``cdp.tape.seal.failed`` and raise ``standdown.tape_seal_failed``, leaving
     the listener up. A dead port or missing row emits ``cdp.tape.seal.degraded``

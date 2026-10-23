@@ -37,7 +37,7 @@ def test_post_session_close_posts_sessions_close_path(
     monkeypatch.setattr("transport_utils.make_sync_client", _factory)
     payload = {"session_id": "web-anthropic-test"}
     _post_session_close(payload)
-    assert captured["path"] == "/sessions/close"
+    assert captured["path"] == "/session-journals/close"
     assert captured["json"] is payload
 
 
