@@ -132,6 +132,16 @@ def validate_profile_dir(profile_dir: Path, *, forbidden: Path = FORBIDDEN_PROFI
             )
 
 
+def _display_keys(displays: Mapping[str, Any]) -> set[int]:
+    keys: set[int] = set()
+    for key in displays:
+        try:
+            keys.add(int(key))
+        except (TypeError, ValueError):
+            continue
+    return keys
+
+
 def _read_state(state_path: Path) -> dict[str, Any]:
     if not state_path.is_file():
         return {"displays": {}}
@@ -153,13 +163,13 @@ def allocate_display(state_path: Path) -> int:
     """Pick the lowest free display in :200–:219 without reserving (tests only)."""
     with path_flock(state_path):
         data = _read_state(state_path)
-        in_use = {int(k) for k in data["displays"]}
+        in_use = _display_keys(data["displays"])
         for display in display_band():
             if display in POOL_DISPLAYS:
                 continue
             if display not in in_use:
                 return display
-    raise SessionError("display_band_exhausted", code="display_band_exhausted")
+        raise SessionError("display_band_exhausted", code="display_band_exhausted")
 
 
 def reserve_display(
@@ -170,7 +180,7 @@ def reserve_display(
     """Atomically allocate and claim the lowest free display in the band."""
     with path_flock(state_path):
         data = _read_state(state_path)
-        in_use = {int(k) for k in data["displays"]}
+        in_use = _display_keys(data["displays"])
         for display in display_band():
             if display in POOL_DISPLAYS:
                 continue
@@ -181,7 +191,7 @@ def reserve_display(
                 }
                 _write_state(state_path, data)
                 return display
-    raise SessionError("display_band_exhausted", code="display_band_exhausted")
+        raise SessionError("display_band_exhausted", code="display_band_exhausted")
 
 
 def claim_display(state_path: Path, display: int, session_id: str, profile_dir: Path) -> None:
@@ -221,13 +231,26 @@ def wait_for_x11_socket(
     raise SessionError(f"X11 socket missing for :{display} after {timeout_s}s", code="xvfb_timeout")
 
 
-def _require_binary(name: str, resolved: str | None, *, path: str | None) -> str:
+def lookup_on_path(name: str, path: str | None) -> str | None:
+    """Resolve *name* only inside *path* (``os.pathsep`` list). Never the ambient PATH.
+
+    An empty entry is skipped so a trailing ``:`` cannot pick up ``./Xvfb``.
+    """
+    if not path:
+        return None
+    for entry in path.split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def _require_binary(name: str, resolved: str | None) -> str:
     if resolved:
         return resolved
-    found = shutil.which(name, path=path)
-    if not found:
-        raise SessionError(f"missing binary: {name}", code="missing_binary")
-    return found
+    raise SessionError(f"missing binary: {name}", code="missing_binary")
 
 
 def start_session(
@@ -252,10 +275,10 @@ def start_session(
     profile_dir.mkdir(parents=True, exist_ok=False)
 
     path_env = runtime_env.get("PATH")
-    xvfb_path = shutil.which(XVFB_BIN, path=path_env)
-    x11vnc_path = shutil.which(X11VNC_BIN, path=path_env)
-    _require_binary(XVFB_BIN, xvfb_path, path=path_env)
-    _require_binary(X11VNC_BIN, x11vnc_path, path=path_env)
+    xvfb_path = lookup_on_path(XVFB_BIN, path_env)
+    x11vnc_path = lookup_on_path(X11VNC_BIN, path_env)
+    _require_binary(XVFB_BIN, xvfb_path)
+    _require_binary(X11VNC_BIN, x11vnc_path)
     chrome_bin = resolve_chrome_bin(runtime_env)
 
     display = reserve_display(state_path, session_id, profile_dir)
