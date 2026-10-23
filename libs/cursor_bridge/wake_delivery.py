@@ -183,6 +183,7 @@ async def deliver_wake(
     agent_id: object = "",
     select: bool = True,
     turn: object,
+    text: str = "",
 ) -> dict[str, Any]:
     """Paste one wake into the target sidebar chat and report whether it landed.
 
@@ -203,10 +204,20 @@ async def deliver_wake(
     aid_s = str(agent_id or "").strip()
     if number is None or not thread_s or (not title_s and not slug_s and not aid_s):
         return _refuse("bad_options", display=target["display"], app=target["app"])
-    try:
-        line = wake_line(thread_s, number)
-    except ValueError:
-        return _refuse("bad_options", display=target["display"], app=target["app"])
+    text_s = (text or "").strip()
+    if text_s:
+        if target["app"] != "cursor" or thread_s != "19627":
+            return _refuse(
+                "exchange_paste_cursor_stage_manager_only",
+                display=target["display"],
+                app=target["app"],
+            )
+        line = text_s
+    else:
+        try:
+            line = wake_line(thread_s, number)
+        except ValueError:
+            return _refuse("bad_options", display=target["display"], app=target["app"])
 
     async with _display_lock(target["display"]):
         return await _deliver_locked(

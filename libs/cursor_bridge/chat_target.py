@@ -59,6 +59,44 @@ def name_instruction(title: str) -> str:
     )
 
 
+def exchange_line(sender: str, seat: str, body: str) -> str:
+    """Composer paste for one bus turn body (stage-manager exchange, not BRIDGE_WAKE).
+
+    Three header lines (``from``, ``seat``, ``relayed: no``), blank line, then
+    ``body``. Raises ``ValueError`` when any argument is empty after strip.
+    No I/O.
+    """
+    sender_s = (sender or "").strip()
+    seat_s = (seat or "").strip()
+    body_s = (body or "").strip()
+    if not sender_s or not seat_s or not body_s:
+        raise ValueError("sender, seat, and body must be non-empty after strip")
+    return f"from: {sender_s}\nseat: {seat_s}\nrelayed: no\n\n{body_s}"
+
+
+def exchange_lines(rows: Sequence[dict[str, Any]]) -> str:
+    """Join exchange pastes for claimed wake rows, or empty when any row is incomplete.
+
+    Returns ``""`` when ``rows`` is empty, when any row lacks a non-empty
+    ``body``, or when no sender is present in ``from`` or ``from_agent``.
+    Otherwise sorts by ``turn_number`` and joins ``exchange_line(sender, sender, body)``
+    blocks separated by a blank line. No I/O.
+    """
+    if not rows:
+        return ""
+    ordered = sorted(rows, key=lambda r: int(r.get("turn_number") or 0))
+    blocks: list[str] = []
+    for row in ordered:
+        body = str(row.get("body") or "").strip()
+        if not body:
+            return ""
+        sender = str(row.get("from") or row.get("from_agent") or "").strip()
+        if not sender:
+            return ""
+        blocks.append(exchange_line(sender, sender, body))
+    return "\n\n".join(blocks)
+
+
 def wake_line(thread: str, turn: int | str | Sequence[int]) -> str:
     """Fixed paste for one or more bus turns. The turn body is not included.
 

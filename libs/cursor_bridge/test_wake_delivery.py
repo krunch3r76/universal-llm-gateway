@@ -440,6 +440,44 @@ async def test_cursor_human_draft_blocks_selection(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_deliver_wake_exchange_text_refuses_non_stage_manager_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: exchange paste must not open CDP for threads other than 19627."""
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: (_ for _ in ()).throw(AssertionError("must not open debug socket")),
+    )
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="1",
+        slug="slug",
+        turn=1,
+        text="hello",
+    )
+    assert out["reason"] == "exchange_paste_cursor_stage_manager_only"
+    assert out["pasted"] is False
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_exchange_text_refuses_grok_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = await deliver_wake(
+        display="10",
+        app="grok",
+        thread="19627",
+        title="Grok Coordinator 1",
+        turn=1,
+        text="hello",
+    )
+    assert out["reason"] == "exchange_paste_cursor_stage_manager_only"
+    assert out["pasted"] is False
+
+
+@pytest.mark.asyncio
 async def test_deliver_wake_timer_win_classifies_unknown_not_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

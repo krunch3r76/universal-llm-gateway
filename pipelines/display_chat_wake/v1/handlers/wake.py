@@ -20,7 +20,8 @@ class DisplayChatWakeHandler(BaseHandler):
     """Select (when needed) and paste ``BRIDGE_WAKE`` into the target chat.
 
     Options are ``display``, ``app``, ``thread``, ``slug``, ``title``,
-    ``agent_id``, ``select``, and ``turn``. ``agent_id`` matches first when
+    ``agent_id``, ``select``, ``turn``, and optional ``text`` (exchange paste
+    for thread 19627 cursor only). ``agent_id`` matches first when
     provided; ``title`` overrides ``"<thread> <slug>"``. The step awaits
     ``deliver_wake`` and returns that dict as JSON without raising on gate
     refusals. No model call.
@@ -41,6 +42,7 @@ class DisplayChatWakeHandler(BaseHandler):
             agent_id=opts.get("agent_id"),
             select=True if select_opt is None else bool(select_opt),
             turn=opts.get("turn"),
+            text=str(opts.get("text") or ""),
         )
         raw = json.dumps(result)
         return StepOutput(raw=raw, json=result)

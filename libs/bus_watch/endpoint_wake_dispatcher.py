@@ -23,6 +23,7 @@ from bus_watch.endpoint_wake_transport import (
     classify_display,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
+from cursor_bridge.chat_target import exchange_lines
 
 # ``ACK`` is in ``MAESTRO_MILESTONE_PREFIXES`` so compose keeps ``ACK|`` on maestro;
 # ``qualifies()`` suppresses ``ACK|`` wakes to maestro / ``web-anthropic``.
@@ -451,7 +452,11 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
 
 
 def _display_post(
-    row: dict[str, Any], sub: dict[str, Any], turn: int | str
+    row: dict[str, Any],
+    sub: dict[str, Any],
+    turn: int | str,
+    *,
+    text: str = "",
 ) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
@@ -462,6 +467,8 @@ def _display_post(
         "select": True,
         "turn": turn,
     }
+    if (text or "").strip():
+        options["text"] = text.strip()
     body = {
         "model": "display-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],
@@ -1006,7 +1013,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         if len(turn_numbers) == 1
         else ",".join(str(n) for n in turn_numbers)
     )
-    state, reason = _display_post(rows[0], sub, turn_arg)
+    paste_text = ""
+    if str(rows[0]["thread_id"]) == "19627" and str(sub.get("surface") or "") == "cursor":
+        paste_text = exchange_lines(rows)
+    state, reason = _display_post(rows[0], sub, turn_arg, text=paste_text)
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age
