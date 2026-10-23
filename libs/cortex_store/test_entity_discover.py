@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 
 from cortex_store.dispatch_ops.ops_assertions_write import _op_assert
 from cortex_store.dispatch_ops.ops_entities import _op_entity_create, _op_entity_update
-from cortex_store.entity_discover import mint_entity_create_aliases
+from cortex_store.entity_discover import (
+    entity_synthetic_assertion_id,
+    mint_entity_create_aliases,
+    search_entities_by_query,
+)
 from cortex_store.recall_resolve import _search_seed_entity_ids
 
 
@@ -167,3 +171,33 @@ def test_recall_seeds_from_entity_fields_without_assertions(
     )
     ids = _search_seed_entity_ids(migrated_conn, "recall alias target")
     assert ids == ["document:recall-alias-doc"]
+
+
+def test_whole_token_search_rejects_substring_noise(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """Short queries must not match unrelated tokens embedded inside longer name tokens."""
+    from cortex_store.entity_crud import create_entity_impl
+
+    create_entity_impl(
+        migrated_conn,
+        {
+            "id": "note:part-of-speech",
+            "type": "note",
+            "name": "part of speech",
+            "description": "grammar reference",
+        },
+    )
+    for query in ("art", "of"):
+        hits = search_entities_by_query(migrated_conn, query, limit=5)
+        assert all(hit["entity_id"] != "note:part-of-speech" for hit in hits)
+
+
+def test_entity_synthetic_assertion_id_is_crc32_deterministic() -> None:
+    """Synthetic search row ids must be stable across processes (zlib crc32, not hash())."""
+    import zlib
+
+    eid = "document:confirmation-wells-fargo"
+    expected = -(abs(zlib.crc32(eid.encode("utf-8"))) % (2**30)) - 1
+    assert entity_synthetic_assertion_id(eid) == expected
+    assert entity_synthetic_assertion_id(eid) == expected

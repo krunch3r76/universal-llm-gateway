@@ -529,6 +529,95 @@ def test_repromote_renames_existing_document_from_generic_sidecar_heading(
 
     assert cortex_mock.get("update_calls") == 1
     updated = cortex_mock["entities"]["document:confirmation-wells-fargo"]
-    assert updated["name"] == "Confirmation - Wells Fargo"
-    assert result["entity_name"] == "Confirmation - Wells Fargo"
+    expected = "Confirmation — Wells Fargo Autograph Visa Card"
+    assert updated["name"] == expected
+    assert result["entity_name"] == expected
     assert result["entity_created"] is False
+
+
+def test_extract_last4_ignores_tax_year_and_invoice_hash() -> None:
+    """Masked last-4 regex must not treat tax years or ``#`` invoice ids as account suffixes."""
+    from tools._promote_sidecar_linking import extract_last4_digits
+
+    noise = "Tax 2025 filing\nInvoice #2024 renewal\nBox 1234\n"
+    assert extract_last4_digits(noise) == set()
+
+    positive = (
+        "Autograph Visa ...9062\n"
+        "From **EVERYDAY CHECKING** ...4310\n"
+        "masked xxxx1234 and ending in 9062\n"
+    )
+    assert extract_last4_digits(positive) == {"9062", "4310", "1234"}
+
+
+def test_title_from_sidecar_generic_heading_uses_body_not_stem() -> None:
+    """Generic ATX headings enrich from bold To/From lines, ignoring fallback file stems."""
+    from tools._promote_sidecar_linking import title_from_sidecar_content
+
+    wells_body = (
+        "# Confirmation\n\n"
+        "From **EVERYDAY CHECKING** ...4310\n"
+        "To **WELLS FARGO AUTOGRAPH VISA CARD®** ...9062\n"
+    )
+    title = title_from_sidecar_content(wells_body, fallback_stem="scan_001")
+    assert title is not None
+    assert "Confirmation" in title
+    assert "Wells Fargo" in title
+    assert "scan_001" not in title.lower()
+
+    chase_body = (
+        "# Confirmation\n\n"
+        "To **CHASE SAPPHIRE RESERVE** ...1111\n"
+    )
+    chase_title = title_from_sidecar_content(chase_body, fallback_stem="scan_001")
+    assert chase_title == "Confirmation — Chase Sapphire Reserve"
+
+
+def test_account_link_skips_failed_relay_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``accounts_linked`` / ``accounts_asserted`` append only when cortex relay calls succeed."""
+    from tools._promote_sidecar_linking import link_promoted_document_to_accounts
+
+    sidecar = tmp_path / "sidecar.extracted.md"
+    sidecar.write_text(
+        "# Stmt\n\nCard ending in 9062\n",
+        encoding="utf-8",
+    )
+
+    def cx(
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        assert method == "POST" and path == "/dispatch"
+        tool = body["tool"]
+        if tool == "entities":
+            return {
+                "items": [
+                    {
+                        "id": "account:wells-fargo-credit_card-9062",
+                        "type": "account",
+                        "attributes": {"last4": "9062"},
+                    }
+                ]
+            }
+        if tool == "relationship_create":
+            return {"error": "relay down"}
+        if tool == "assert":
+            return {"id": 1}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr("tools._promote_sidecar_linking.cx", cx)
+
+    summary = link_promoted_document_to_accounts(
+        document_entity_id="document:test",
+        sidecar_path=sidecar,
+        sidecar_uri="cortex://evidence/test/sidecar.extracted.md",
+        document_name="Stmt",
+    )
+    assert summary["last4_found"] == ["9062"]
+    assert summary["accounts_linked"] == []
+    assert summary["accounts_asserted"] == ["account:wells-fargo-credit_card-9062"]

@@ -149,6 +149,8 @@ def _search_seed_entity_ids(conn: sqlite3.Connection, q: str) -> list[str]:
     if ids:
         return ids
     for hit in search_entities_by_query(conn, q, limit=_SEARCH_SEED_CAP):
+        if not hit.get("identity_match"):
+            continue
         eid_str = str(hit["entity_id"])
         if eid_str in seen:
             continue

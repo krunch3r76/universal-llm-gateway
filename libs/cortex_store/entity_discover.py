@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import zlib
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
@@ -22,6 +23,10 @@ _GENERIC_IDENTITY_TYPES = frozenset({"service", "todo"})
 
 def _normalize_tokens(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_SPLIT.split(text.strip()) if len(t) >= 2]
+
+
+def _token_set(text: str) -> set[str]:
+    return set(_normalize_tokens(text))
 
 
 def mint_entity_create_aliases(
@@ -78,21 +83,31 @@ def _source_uri_identity_fragments(source_uri: str) -> list[str]:
     return out
 
 
-def _entity_identity_text(row: dict[str, Any], alias_rows: list[tuple[str, str, str]]) -> str:
-    eid = str(row.get("id") or "")
-    parts = [eid]
-    if ":" in eid:
-        slug = eid.split(":", 1)[1]
-        parts.extend([slug, slug.replace("-", " ").replace("_", " ")])
-    parts.append(str(row.get("name") or ""))
+def _slug_from_entity_id(entity_id: str) -> str:
+    if ":" in entity_id:
+        return entity_id.split(":", 1)[1]
+    return entity_id
+
+
+def _aliases_for_entity(
+    entity_id: str,
+    row: dict[str, Any],
+    aliases_by_entity: dict[str, list[str]],
+) -> list[str]:
+    out: list[str] = list(aliases_by_entity.get(entity_id, []))
     raw_aliases = row.get("aliases")
     if isinstance(raw_aliases, list):
-        parts.extend(str(alias) for alias in raw_aliases)
-    for ent_id, _etype, alias in alias_rows:
-        if ent_id == eid:
-            parts.append(alias)
-    parts.extend(_source_uri_identity_fragments(str(row.get("source_uri") or "")))
-    return " ".join(p for p in parts if p).lower()
+        for alias in raw_aliases:
+            text = str(alias).strip()
+            if text and text not in out:
+                out.append(text)
+    return out
+
+
+def _query_tokens_subset_of(field_tokens: set[str], query_tokens: list[str]) -> bool:
+    if not query_tokens:
+        return False
+    return set(query_tokens) <= field_tokens
 
 
 def _single_token_identity_match(
@@ -100,53 +115,123 @@ def _single_token_identity_match(
     *,
     entity_id: str,
     name: str,
-    alias_rows: list[tuple[str, str, str]],
+    aliases: list[str],
 ) -> bool:
-    slug = entity_id.split(":", 1)[-1].lower() if ":" in entity_id else entity_id.lower()
+    slug = _slug_from_entity_id(entity_id).lower()
     if token == slug or token == entity_id.lower():
         return True
     if token == name.lower():
         return True
-    for ent_id, _etype, alias in alias_rows:
-        if ent_id == entity_id and token == str(alias).lower():
+    for alias in aliases:
+        if token == str(alias).lower():
             return True
+    return False
+
+
+def _identity_field_match(
+    query_tokens: list[str],
+    *,
+    entity_id: str,
+    name: str,
+    aliases: list[str],
+    source_uri: str,
+) -> bool:
+    """True when all query tokens appear as whole tokens in one identity field."""
+    if not query_tokens:
+        return False
+
+    if len(query_tokens) == 1:
+        return _single_token_identity_match(
+            query_tokens[0],
+            entity_id=entity_id,
+            name=name,
+            aliases=aliases,
+        )
+
+    name_tokens = _token_set(name)
+    if _query_tokens_subset_of(name_tokens, query_tokens):
+        return True
+
+    slug = _slug_from_entity_id(entity_id)
+    slug_tokens = _token_set(slug.replace("-", " ").replace("_", " "))
+    slug_tokens |= _token_set(slug)
+    if _query_tokens_subset_of(slug_tokens, query_tokens):
+        return True
+
+    for alias in aliases:
+        if _query_tokens_subset_of(_token_set(alias), query_tokens):
+            return True
+
+    uri_parts = _source_uri_identity_fragments(source_uri)
+    for fragment in uri_parts:
+        if _query_tokens_subset_of(_token_set(fragment), query_tokens):
+            return True
+
+    combined = name_tokens | slug_tokens
+    if _query_tokens_subset_of(combined, query_tokens):
+        return True
+
     return False
 
 
 def _identity_match_and_score(
     query_tokens: list[str],
     *,
-    identity_text: str,
-    full_text: str,
     entity_id: str,
     name: str,
-    alias_rows: list[tuple[str, str, str]],
+    aliases: list[str],
+    source_uri: str,
+    description: str,
 ) -> tuple[bool, float, float]:
     """Return (identity_match, combmax_score, identity_specificity)."""
     if not query_tokens:
         return False, 0.0, 0.0
 
-    identity_tokens = set(_normalize_tokens(identity_text))
-    hits_identity = sum(1 for tok in query_tokens if tok in identity_text)
-    hits_full = sum(1 for tok in query_tokens if tok in full_text)
+    query_set = set(query_tokens)
+    desc_tokens = _token_set(description)
+    name_tokens = _token_set(name)
+    slug_tokens = _token_set(_slug_from_entity_id(entity_id).replace("-", " ").replace("_", " "))
+    slug_tokens |= _token_set(_slug_from_entity_id(entity_id))
+
+    full_token_union = set(name_tokens)
+    full_token_union |= slug_tokens
+    full_token_union |= desc_tokens
+    for alias in aliases:
+        full_token_union |= _token_set(alias)
+    for fragment in _source_uri_identity_fragments(source_uri):
+        full_token_union |= _token_set(fragment)
+
+    hits_full = len(query_set & full_token_union)
     if hits_full == 0:
         return False, 0.0, 0.0
-    if hits_full < len(query_tokens):
-        partial = min(0.55, 0.25 + 0.15 * hits_full)
-        return False, partial, 0.0
 
-    if hits_identity == len(query_tokens):
-        if len(query_tokens) >= 2 or _single_token_identity_match(
-            query_tokens[0],
-            entity_id=entity_id,
-            name=str(name or ""),
-            alias_rows=alias_rows,
-        ):
-            specificity = len(query_tokens) / max(len(identity_tokens), 1)
-            return True, 1.0, specificity
+    identity_match = _identity_field_match(
+        query_tokens,
+        entity_id=entity_id,
+        name=name,
+        aliases=aliases,
+        source_uri=source_uri,
+    )
+
+    if identity_match:
+        identity_tokens = name_tokens | slug_tokens
+        for alias in aliases:
+            identity_tokens |= _token_set(alias)
+        for fragment in _source_uri_identity_fragments(source_uri):
+            identity_tokens |= _token_set(fragment)
+        specificity = len(query_tokens) / max(len(identity_tokens), 1)
+        return True, 1.0, specificity
+
+    if len(query_tokens) == 1:
+        return False, 0.0, 0.0
+
     if hits_full == len(query_tokens):
         return False, 0.88, 0.0
-    return False, min(0.55, 0.25 + 0.15 * hits_full), 0.0
+
+    partial = min(0.55, 0.25 + 0.15 * hits_full)
+    if partial >= 0.85:
+        partial = 0.84
+    return False, partial, 0.0
 
 
 def _entity_identity_sort_key(hit: dict[str, Any]) -> tuple[float, float, int]:
@@ -163,6 +248,15 @@ def _entity_identity_sort_key(hit: dict[str, Any]) -> tuple[float, float, int]:
         float(hit.get("identity_specificity") or 0.0),
         type_rank,
     )
+
+
+def _group_aliases_by_entity(
+    alias_rows: list[tuple[str, str, str]],
+) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for ent_id, _etype, alias in alias_rows:
+        grouped.setdefault(ent_id, []).append(str(alias))
+    return grouped
 
 
 def search_entities_by_query(
@@ -189,6 +283,7 @@ def search_entities_by_query(
     )
     rows = query(conn, sql, tuple(params))
     alias_index = live_alias_rows(conn)
+    aliases_by_entity = _group_aliases_by_entity(alias_index)
     scored: list[tuple[tuple[float, float, int], dict[str, Any]]] = []
     for row in rows:
         lifecycle = row.get("lifecycle")
@@ -196,16 +291,16 @@ def search_entities_by_query(
             continue
         eid = str(row["id"])
         name = str(row.get("name") or "")
-        identity_text = _entity_identity_text(row, alias_index)
-        description = str(row.get("description") or "").lower()
-        full_text = f"{identity_text} {description}".strip()
+        source_uri = str(row.get("source_uri") or "")
+        entity_aliases = _aliases_for_entity(eid, row, aliases_by_entity)
+        description = str(row.get("description") or "")
         identity_match, score, specificity = _identity_match_and_score(
             tokens,
-            identity_text=identity_text,
-            full_text=full_text,
             entity_id=eid,
             name=name,
-            alias_rows=alias_index,
+            aliases=entity_aliases,
+            source_uri=source_uri,
+            description=description,
         )
         if score <= 0:
             continue
@@ -225,7 +320,8 @@ def search_entities_by_query(
 
 def entity_synthetic_assertion_id(entity_id: str) -> int:
     """Stable negative id for entity-only search hits (not a real assertion row)."""
-    return -(abs(hash(entity_id)) % (2**30)) - 1
+    digest = zlib.crc32(entity_id.encode("utf-8"))
+    return -(abs(digest) % (2**30)) - 1
 
 
 def entity_hit_to_search_row(entity_hit: dict[str, Any], *, q: str) -> dict[str, Any]:
@@ -260,7 +356,6 @@ def merge_entity_seed_hits(
         return assertion_hits[:limit]
 
     identity_hits = [h for h in entity_hits if h.get("identity_match")]
-    other_entity_hits = [h for h in entity_hits if not h.get("identity_match")]
     identity_hits.sort(key=_entity_identity_sort_key, reverse=True)
     top_identity = [
         h
@@ -268,10 +363,13 @@ def merge_entity_seed_hits(
         if float(h.get("combmax_score") or 0.0) >= 1.0
     ][:2]
 
-    top_assertion = max(
-        (float(h.get("combmax_score") or 0.0) for h in assertion_hits),
-        default=0.0,
-    )
+    strong_whole_token = [
+        h
+        for h in entity_hits
+        if not h.get("identity_match")
+        and float(h.get("combmax_score") or 0.0) >= 0.88
+    ]
+    strong_whole_token.sort(key=_entity_identity_sort_key, reverse=True)
 
     merged: list[dict[str, Any]] = []
     front_entities: set[str] = set()
@@ -291,14 +389,12 @@ def merge_entity_seed_hits(
         str(h.get("entity_id")) for h in merged if h.get("entity_id")
     }
 
-    for hit in other_entity_hits:
+    for hit in strong_whole_token:
         eid = str(hit["entity_id"])
         if eid in seen_entities:
             continue
         score = float(hit.get("combmax_score") or 0.0)
-        if top_assertion >= 0.75 and score < top_assertion + 0.05:
-            continue
-        if top_assertion >= 0.5 and score < 0.85:
+        if score < 0.88:
             continue
         row = entity_hit_to_search_row(hit, q=q)
         merged.append(row)
