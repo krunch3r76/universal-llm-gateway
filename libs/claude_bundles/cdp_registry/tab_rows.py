@@ -1,4 +1,4 @@
-"""Elastic tab pool — disposable views on shared CDP host Chromes."""
+"""Elastic tab pool rows are disposable views on shared CDP host Chromes, not capacity hosts."""
 
 from __future__ import annotations
 
@@ -17,13 +17,19 @@ from claude_bundles import cdp_registry_store as _store
 
 from .driver_locks import _release_driver_lock
 from .models import (
+    _CAPACITY_STATUSES,
     STATUS_TAB,
     Registration,
     RegistryError,
-    _CAPACITY_STATUSES,
     _row_to_registration,
 )
 from .ports import PORT_RANGE, _pin_port_block
+from .tab_rows_reopen import (  # noqa: F401 — re-export; reopen lives beside this module
+    finish_tab_on_exit,
+    host_accepts_borrow_bind,
+    release_tab_row,
+    reopen_tab_row,
+)
 
 _TAB_MINT_LOCK = Path.home() / ".gateway" / "cdp-registry" / "tab_host_mint.lock"
 
@@ -53,7 +59,7 @@ def eligible_host(
     *,
     listen: Callable[[int], bool] | None = None,
 ) -> dict[str, Any] | None:
-    """First eligible host on candidate displays, in candidate order."""
+    """Return the first eligible host on candidate displays, walking candidates in order."""
     is_up = listen or cdp_lane.is_listening
     for display in candidates:
         for row in active.values():
@@ -70,6 +76,7 @@ def eligible_host(
 def tab_rows_for_host(
     active: Mapping[str, Any], host_registration_id: str
 ) -> list[dict[str, Any]]:
+    """Return every STATUS_TAB row whose host registration id matches the given host."""
     hid = str(host_registration_id or "").strip()
     out: list[dict[str, Any]] = []
     for row in active.values():
@@ -83,6 +90,7 @@ def tab_rows_for_host(
 def live_tab_rows_for_host(
     active: Mapping[str, Any], host_registration_id: str
 ) -> list[dict[str, Any]]:
+    """Return tab rows on this host that still record a live CDP target id."""
     return [
         row
         for row in tab_rows_for_host(active, host_registration_id)
@@ -91,8 +99,9 @@ def live_tab_rows_for_host(
 
 
 def inflight_row_for_chat_url(chat_url: str) -> dict[str, Any] | None:
-    from claude_bundles.cse_url import normalize_cse_url
+    """Return the in-flight host row for this URL, else an in-flight tab row."""
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cse_url import normalize_cse_url
 
     target = normalize_cse_url(chat_url or "")
     if not target:
@@ -116,26 +125,6 @@ def inflight_row_for_chat_url(chat_url: str) -> dict[str, Any] | None:
     return None
 
 
-def host_accepts_borrow_bind(
-    active: Mapping[str, Any], host_id: str, chat_url: str
-) -> bool:
-    from claude_bundles.cse_url import normalize_cse_url
-
-    row = active.get(host_id)
-    if not isinstance(row, dict):
-        return True
-    if str(row.get("purpose") or "").strip() == "tab_host":
-        return False
-    target = normalize_cse_url(chat_url or "")
-    for tab in tab_rows_for_host(active, host_id):
-        tid = str(tab.get("target_id") or "").strip()
-        if not tid:
-            continue
-        if normalize_cse_url(str(tab.get("chat_url") or "")) == target:
-            return False
-    return True
-
-
 @contextlib.contextmanager
 def tab_host_mint_lock() -> Iterator[None]:
     """Serialize pool-host mint across concurrent tab asks."""
@@ -148,9 +137,7 @@ def tab_host_mint_lock() -> Iterator[None]:
         except OSError:
             started_wait = True
             with contextlib.suppress(Exception):
-                _events.emit(
-                    _events.cdp_tab_host_mint_lock_wait(phase="started")
-                )
+                _events.emit(_events.cdp_tab_host_mint_lock_wait(phase="started"))
             fcntl.flock(fd, fcntl.LOCK_EX)
         with contextlib.suppress(Exception):
             _events.emit(
@@ -165,54 +152,13 @@ def tab_host_mint_lock() -> Iterator[None]:
         os.close(fd)
 
 
-def _close_target_on_port(port: int, target_id: str) -> None:
-    cdp_lane.close_cdp_target(port, target_id)
-
-
-def release_tab_row(registration_id: str) -> None:
-    rid = str(registration_id or "").strip()
-    if not rid:
-        return
-    with _store.ports_lock():
-        active = _store.load_active()
-        row = active.get(rid)
-        if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
-            return
-        port = row.get("port")
-        target_id = str(row.get("target_id") or "").strip()
-        if isinstance(port, int) and target_id:
-            with contextlib.suppress(Exception):
-                _close_target_on_port(port, target_id)
-        chat_url = str(row.get("chat_url") or "").strip()
-        active.pop(rid, None)
-        _store.write_active(active)
-        _store.append_log("tab_released", {"registration_id": rid, **row})
-        with contextlib.suppress(Exception):
-            _events.emit(
-                _events.cdp_tab_closed(
-                    registration_id=rid,
-                    host_registration_id=str(row.get("host_registration_id") or ""),
-                    reason="exit",
-                )
-            )
-        if chat_url and isinstance(port, int):
-            from claude_bundles.cse_provenance import append_episode
-
-            with contextlib.suppress(Exception):
-                append_episode(
-                    chat_url=chat_url,
-                    registration_id=rid,
-                    cdp_url=f"http://127.0.0.1:{port}",
-                    state="tab_released",
-                )
-
-
 def set_tab_chat_url(
     registration_id: str,
     *,
     chat_url: str,
     execution_id: str | None = None,
 ) -> None:
+    """Write chat_url onto an existing STATUS_TAB row without touching host rows."""
     rid = str(registration_id or "").strip()
     url = str(chat_url or "").strip()
     if not rid or not url:
@@ -230,60 +176,10 @@ def set_tab_chat_url(
         _store.write_active(active)
 
 
-def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
-    from claude_bundles.cse_wake_retain import registration_has_wake_debt
-
-    rid = reg.registration_id
-    if branch == "normal":
-        release_tab_row(rid)
-        return
-    if branch == "wake_debt" or registration_has_wake_debt(rid):
-        _keep_tab_row(rid, reason="wake_debt", close_target=False)
-        return
-    if branch == "abort":
-        _keep_tab_row(rid, reason="abort_unattested", close_target=False)
-        return
-    # retain_host, teardown, host_lost escape
-    _keep_tab_row(
-        rid,
-        reason="retain_host" if branch == "retain_host" else branch,
-        close_target=True,
-    )
-
-
-def _keep_tab_row(
-    registration_id: str, *, reason: str, close_target: bool
-) -> None:
-    rid = str(registration_id or "").strip()
-    with _store.ports_lock():
-        active = _store.load_active()
-        row = active.get(rid)
-        if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
-            return
-        port = row.get("port")
-        target_id = str(row.get("target_id") or "").strip()
-        if close_target and isinstance(port, int) and target_id:
-            with contextlib.suppress(Exception):
-                _close_target_on_port(port, target_id)
-        updated = dict(row)
-        updated["target_id"] = None
-        updated["tab_kept_reason"] = reason
-        active[rid] = updated
-        _store.write_active(active)
-        with contextlib.suppress(Exception):
-            _events.emit(
-                _events.cdp_tab_kept(
-                    registration_id=rid,
-                    host_registration_id=str(row.get("host_registration_id") or ""),
-                    reason=reason,
-                    target_closed=close_target,
-                )
-            )
-
-
 def sweep_kept_tab_rows() -> list[str]:
-    from claude_bundles.cse_wake_retain import registration_has_wake_debt
+    """Release kept tab rows whose host is dead, port is down, or a keep reason is set."""
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
     released: list[str] = []
     active = _store.load_active()
@@ -297,60 +193,15 @@ def sweep_kept_tab_rows() -> list[str]:
             continue
         host_id = str(row.get("host_registration_id") or "").strip()
         host = active.get(host_id) if host_id else None
-        host_dead = not isinstance(host, dict) or host.get("status") not in _CAPACITY_STATUSES
+        host_dead = (
+            not isinstance(host, dict) or host.get("status") not in _CAPACITY_STATUSES
+        )
         port = row.get("port")
         port_dead = isinstance(port, int) and not listen(port)
         if row.get("tab_kept_reason") or host_dead or port_dead:
             release_tab_row(str(rid))
             released.append(str(rid))
     return released
-
-
-def reopen_tab_row(registration_id: str, host_registration_id: str) -> None:
-    rid = str(registration_id or "").strip()
-    hid = str(host_registration_id or "").strip()
-    with _store.ports_lock():
-        active = _store.load_active()
-        row = active.get(rid)
-        host = active.get(hid)
-        if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
-            raise RegistryError(f"tab row {rid!r} missing")
-        if not isinstance(host, dict):
-            raise RegistryError(f"host {hid!r} missing")
-        port = int(host["port"])
-        stale = str(row.get("target_id") or "").strip()
-        stale_closed = False
-        if stale and cdp_lane.is_listening(port):
-            with contextlib.suppress(Exception):
-                _close_target_on_port(port, stale)
-                stale_closed = True
-        prior_host = str(row.get("host_registration_id") or "").strip()
-        updated = dict(row)
-        updated["host_registration_id"] = hid
-        updated["port"] = port
-        updated["holder_pid"] = os.getpid()
-        updated["tab_kept_reason"] = None
-        updated["target_id"] = None
-        active[rid] = updated
-        _store.write_active(active)
-    url = str(row.get("chat_url") or "").strip()
-    target_id = cdp_lane.open_cdp_tab_target(port, url or "about:blank")
-    with _store.ports_lock():
-        active = _store.load_active()
-        current = active.get(rid)
-        if isinstance(current, dict):
-            active[rid] = {**current, "target_id": target_id}
-            _store.write_active(active)
-    with contextlib.suppress(Exception):
-        _events.emit(
-            _events.cdp_tab_reopened(
-                registration_id=rid,
-                host_registration_id=hid,
-                prior_host_registration_id=prior_host or None,
-                trigger="boot",
-                stale_target_closed=stale_closed,
-            )
-        )
 
 
 def open_tab_row_for_ask(

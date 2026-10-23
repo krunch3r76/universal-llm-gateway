@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -21,6 +22,10 @@ from claude_bundles.skills_ui_panel import connect_cdp
 logger = logging.getLogger(__name__)
 
 _CSE_PATH_MARKER = "/cowork/cse_"
+# Fixed cadence for a STATUS_TAB row that still owns the URL. No new deadline:
+# the row's execution TTL is what ends the wait.
+_REOPEN_INFLIGHT_POLL_S = 0.25
+_PAGE_ONLY = "page_only_borrow"
 
 
 @dataclass(frozen=True)
@@ -121,15 +126,60 @@ async def _navigate_new_page(
         return None
 
 
+def _borrow_refusal(registration_id: str, chat_url: str) -> str | None:
+    """``pool_host`` or ``live_tab_same_url`` when the host must not gain *chat_url*.
+
+    Read under the ports lock. None means the ordinary bind may write the row.
+    """
+    from claude_bundles.cdp_registry.tab_rows_reopen import host_accepts_borrow_bind
+
+    store = cdp_registry._store
+    with store.ports_lock():
+        active = store.load_active()
+        if host_accepts_borrow_bind(active, registration_id, chat_url):
+            return None
+        row = active.get(registration_id)
+        holder = str(row.get("holder") or "") if isinstance(row, dict) else ""
+        reason = (
+            "pool_host"
+            if isinstance(row, dict)
+            and str(row.get("purpose") or "").strip() == "tab_host"
+            else "live_tab_same_url"
+        )
+    from cdp_ask.followup_events import (
+        cdp_ask_reattach_borrow_unbound,
+    )
+    from cdp_ask.followup_events import (
+        emit as emit_followup_event,
+    )
+
+    with contextlib.suppress(Exception):
+        emit_followup_event(
+            cdp_ask_reattach_borrow_unbound(
+                registration_id=registration_id,
+                chat_url=chat_url,
+                holder=holder,
+                reason=reason,
+            )
+        )
+    return _PAGE_ONLY
+
+
 def _bind_chat_url(registration_id: str, chat_url: str) -> str | None:
     """Return None when *chat_url* is bound. ``attachment.conflict`` if a live holder remains.
 
-    A dead ``orphaned_alive`` row that still claims the URL is not an attachment.
-    Release it with the registry reaper and retry the bind once.
+    A pool host, or a host that already has a live tab for this URL, returns
+    ``page_only_borrow`` and writes nothing. A dead ``orphaned_alive`` row that
+    still claims the URL is not an attachment. Release it with the registry
+    reaper and retry the bind once.
     """
     from claude_bundles import cdp_lane
     from claude_bundles.cdp_lane_reaper import release_dead_chat_url_holders
     from universal_protocol.errors import ProtocolError
+
+    refused_borrow = _borrow_refusal(registration_id, chat_url)
+    if refused_borrow:
+        return refused_borrow
 
     def _once() -> str | None:
         if not cdp_registry.bind_chat_url_only(registration_id, chat_url=chat_url):
@@ -174,14 +224,22 @@ async def _bind_or_drop(
     chat_url: str,
     page: Any,
     pw: Any,
-) -> tuple[str | None, str | None, str | None]:
-    """Bind, or close *page* and return ``(error, prior_chat_url, bound_chat_url)``."""
-    prior = (cdp_registry.chat_url_for_registration(registration_id) or "").strip() or None
+) -> tuple[str | None, str | None, str | None, bool]:
+    """Bind, or close *page* and return ``(error, prior, bound, page_only)``.
+
+    ``page_only`` keeps the opened page without a row write. Teardown closes
+    that page; this helper does not.
+    """
+    prior = (
+        cdp_registry.chat_url_for_registration(registration_id) or ""
+    ).strip() or None
     err = _bind_chat_url(registration_id, chat_url)
+    if err == _PAGE_ONLY:
+        return None, prior, None, True
     if err:
         await _teardown_attempt(page, pw)
-        return err, prior, None
-    return None, prior, chat_url
+        return err, prior, None, False
+    return None, prior, chat_url, False
 
 
 def restore_borrowed_chat_url_on_refusal(outcome: ReattachOutcome) -> None:
@@ -261,6 +319,8 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
             if host is not None:
                 from cdp_ask.followup_events import (
                     cdp_ask_dormant_relaunch_deferred,
+                )
+                from cdp_ask.followup_events import (
                     emit as emit_followup_event,
                 )
 
@@ -287,7 +347,7 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
     found = await find_page_on_lane(reg.cdp_url, chat_url)
     if found is not None:
         page, pw = found
-        err, prior, bound = await _bind_or_drop(
+        err, prior, bound, page_only = await _bind_or_drop(
             reg.registration_id, chat_url, page, pw
         )
         if err:
@@ -301,6 +361,7 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
             pw=pw,
             prior_chat_url=prior,
             reattach_bound_chat_url=bound,
+            page_only_borrow=page_only,
         )
     opened = await _navigate_new_page(reg, chat_url)
     if opened is None:
@@ -318,6 +379,32 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
         page=page,
         pw=pw,
     )
+
+
+def _emit_reopen_wait(
+    emit_followup_event: Any,
+    factory: Any,
+    *,
+    phase: str,
+    chat_url: str,
+    row: dict[str, Any],
+    waited_s: float | None,
+) -> None:
+    entry = row.get("execution_state")
+    execution_id = None
+    if isinstance(entry, dict):
+        execution_id = str(entry.get("execution_id") or "").strip() or None
+    registration_id = str(row.get("registration_id") or "").strip() or None
+    with contextlib.suppress(Exception):
+        emit_followup_event(
+            factory(
+                phase=phase,
+                chat_url=chat_url,
+                registration_id=registration_id,
+                execution_id=execution_id,
+                waited_s=waited_s,
+            )
+        )
 
 
 async def ensure_cse_attached(
@@ -352,12 +439,39 @@ async def ensure_cse_attached(
 
     from claude_bundles.cdp_registry.tab_rows import inflight_row_for_chat_url
 
-    _REOPEN_INFLIGHT_POLL_S = 0.25
+    from cdp_ask.followup_events import (
+        cdp_ask_reopen_inflight_wait,
+    )
+    from cdp_ask.followup_events import (
+        emit as emit_followup_event,
+    )
 
+    waited_from: float | None = None
+    waiting_on: dict[str, Any] | None = None
     while True:
         inflight = await asyncio.to_thread(inflight_row_for_chat_url, chat_url)
-        if inflight is None or inflight.get("status") != "tab":
+        if inflight is None or str(inflight.get("status") or "") != "tab":
+            if waiting_on is not None:
+                _emit_reopen_wait(
+                    emit_followup_event,
+                    cdp_ask_reopen_inflight_wait,
+                    phase="cleared",
+                    chat_url=chat_url,
+                    row=waiting_on,
+                    waited_s=time.monotonic() - (waited_from or time.monotonic()),
+                )
             break
+        if waiting_on is None:
+            waiting_on = inflight
+            waited_from = time.monotonic()
+            _emit_reopen_wait(
+                emit_followup_event,
+                cdp_ask_reopen_inflight_wait,
+                phase="started",
+                chat_url=chat_url,
+                row=inflight,
+                waited_s=None,
+            )
         await asyncio.sleep(_REOPEN_INFLIGHT_POLL_S)
 
     def _done(
@@ -392,7 +506,7 @@ async def ensure_cse_attached(
         found = await find_page_on_lane(lane.cdp_url, chat_url)
         if found is not None:
             page, pw = found
-            err, prior, bound = await _bind_or_drop(
+            err, prior, bound, page_only = await _bind_or_drop(
                 lane.registration_id, chat_url, page, pw
             )
             if err:
@@ -407,13 +521,14 @@ async def ensure_cse_attached(
                     pw=pw,
                     prior_chat_url=prior,
                     reattach_bound_chat_url=bound,
+                    page_only_borrow=page_only,
                 )
             )
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
             continue
         page, pw = opened
-        err, prior, bound = await _bind_or_drop(
+        err, prior, bound, page_only = await _bind_or_drop(
             lane.registration_id, chat_url, page, pw
         )
         if err:
@@ -428,6 +543,7 @@ async def ensure_cse_attached(
                 pw=pw,
                 prior_chat_url=prior,
                 reattach_bound_chat_url=bound,
+                page_only_borrow=page_only,
             )
         )
 
@@ -445,7 +561,9 @@ async def ensure_cse_attached(
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error="reattach_navigate_failed")
     page, pw = opened
-    err, prior, bound = await _bind_or_drop(reg.registration_id, chat_url, page, pw)
+    err, prior, bound, page_only = await _bind_or_drop(
+        reg.registration_id, chat_url, page, pw
+    )
     if err:
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error=err)
@@ -459,5 +577,6 @@ async def ensure_cse_attached(
             pw=pw,
             prior_chat_url=prior,
             reattach_bound_chat_url=bound,
+            page_only_borrow=page_only,
         )
     )

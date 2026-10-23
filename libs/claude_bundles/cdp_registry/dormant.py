@@ -348,9 +348,7 @@ def relaunch_dormant(
         # clear seat_closed_at and close the hop that just won the seat.
         current = _store.load_active().get(registration_id) or {}
         if current.get("seat_closed_at") is not None:
-            _abandon_superseded_relaunch(
-                registration_id, row, current.get("port")
-            )
+            _abandon_superseded_relaunch(registration_id, row, current.get("port"))
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -358,9 +356,7 @@ def relaunch_dormant(
         bind_driving_seat(registration_id)
         bound = _store.load_active().get(registration_id) or {}
         if bound.get("seat_closed_at") is not None:
-            _abandon_superseded_relaunch(
-                registration_id, row, bound.get("port")
-            )
+            _abandon_superseded_relaunch(registration_id, row, bound.get("port"))
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -404,10 +400,7 @@ def _restore_dormant(registration_id: str, prior: dict[str, Any]) -> None:
         with _store.ports_lock():
             active = _store.load_active()
             current = active.get(registration_id)
-            if (
-                isinstance(current, dict)
-                and current.get("seat_closed_at") is not None
-            ):
+            if isinstance(current, dict) and current.get("seat_closed_at") is not None:
                 closed = dict(current)
                 closed["status"] = STATUS_DORMANT
                 closed["chrome_pid"] = None
@@ -469,3 +462,34 @@ def reclaim_dormant_rows(
                 )
             )
     return reclaimed
+
+
+def reap_dead_holder_tab_rows() -> list[str]:
+    """Close or delete tab rows whose holder process is already dead.
+
+    In-flight rows stay address-only with ``tab_kept_reason=holder_dead`` and
+    the stale target closed. Rows with no execution in flight are deleted.
+    A live ``holder_pid`` is skipped, so this reap and ``hydrate_in_flight``
+    can run in either order and leave the same rows.
+    """
+    from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cdp_registry.hygiene import _pid_alive
+    from claude_bundles.cdp_registry.tab_rows_reopen import (
+        _keep_tab_row,
+        release_tab_row,
+    )
+
+    touched: list[str] = []
+    active = _store.load_active()
+    for rid, row in list(active.items()):
+        if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
+            continue
+        holder_pid = row.get("holder_pid")
+        if not isinstance(holder_pid, int) or _pid_alive(holder_pid):
+            continue
+        if row_execution_in_flight(row) is not None:
+            _keep_tab_row(str(rid), reason="holder_dead", close_target=True)
+        else:
+            release_tab_row(str(rid))
+        touched.append(str(rid))
+    return touched
