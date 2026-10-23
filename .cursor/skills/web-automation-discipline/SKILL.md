@@ -13,12 +13,29 @@ Load `jupiter-browser-bringup` for Jupiter Chrome bring-up and `jupiter-browser-
 
 ## Seat routing
 
-| Need | Seat | Why |
+**Default automation pattern (all signed-in flows):** from the **io** seat, tunnel Jupiter CDP →
+`playwright.chromium.connect_over_cdp("http://127.0.0.1:<local_port>")` → reattach the live tab →
+probe → act. **Do not** `launch()` / `launch_persistent_context()` for flows that need Jupiter cookies
+(DoorDash, ESS, messages, fleet portals). Health check:
+`python scripts/web-automation-substrate-status.py`.
+
+| Need | Local CDP (io tunnel) | Lane / ensure |
 |---|---|---|
-| Signed-in Jupiter profile (`claude-ai-chrome-profile`, NeoGov, Uber, Scribd) | **SSH + Playwright `connect_over_cdp("http://127.0.0.1:9222")` on Jupiter** | Cookies live on Jupiter; cursor-ide-browser and CDP Cowork are different sessions |
-| Quick read / short verify on public page | `cursor-ide-browser` | Fine for smoke; no file-input on IDE proxy |
-| Stuck after one probe + one fix attempt | **CDP Opus consult** (`team_dispatch(model=cdp/opus-5)`; `project_ask` escape only) | Cowork cannot reach Jupiter CDP — ask for selector strategy, execute on Jupiter yourself |
-| Long-form extraction | `dispatch(tool="browse")` | See jupiter-browser — not for file uploads |
+| Fleet / claude.ai profile / issuer portals | **19222** | `cdp-lane-ensure fleet` |
+| Google Messages OTP | **19250** | `messages` |
+| Walgreens ESS | **19260** | `ess` |
+| **DoorDash** (9758 provisions) | **19270** (`DOORDASH_CDP_URL`) | `cdp-lane-ensure doordash` (gopuff unit) |
+| Google Calendar reconcile | **19290** | `calendar` |
+| Uber on-demand | **19280** | `uber` |
+| Bot-heavy **retail PDP** (O'Reilly, etc.) | **n/a** — **io `:11` system Firefox + VNC 5911** | attended; Playwright `launch()` hits Akamai |
+| Quick public read | `cursor-ide-browser` | smoke only |
+| Long-form read-only extract | `dispatch(tool="browse")` | fleet profile — not uploads |
+| Stuck after probe + one fix | **CDP Opus consult** | selector strategy; still execute on Jupiter CDP |
+
+**Playwright hygiene (io venv):** after `pip install -U playwright` →
+`$HOME/.venvs/universal/bin/playwright install chromium firefox`. Bundled Firefox (**~146**) ≠ system
+Firefox (**~158**); CDP automation does not need them to match. Set **`HOME=$HOME`** and
+**`PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright`** when any `launch()` is unavoidable.
 
 `CDP Cowork ¬ substitute for Jupiter Playwright` when the task is mutating an authenticated form.
 

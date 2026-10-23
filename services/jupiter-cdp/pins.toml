@@ -1,5 +1,8 @@
 # Pin edits go live on Jupiter only — from io run: services/jupiter-cdp/pin-go-live [lane ...]
 # See runbook:walgreens-sync-shift § Leg B (Pin go-live).
+#
+# Jupiter :3 = automation lanes (view-only VNC 5903). Never fleet (:2 / claude.ai profile).
+# Attended retail / one-off shopping = io display :11 playground (VNC 5911), not pinned here.
 
 [lanes.fleet]
 port = 9222

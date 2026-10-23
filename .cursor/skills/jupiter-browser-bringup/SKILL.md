@@ -22,10 +22,10 @@ Standing stack (Xvfb, fleet/messages/ess lanes, web-fetcher, cdp-ask):
 ssh <user>@jupiter 'systemctl --user start jupiter-cdp.target'
 ```
 
-Single lane (on-demand or non-standing pins such as gopuff/uber):
+Single lane (on-demand or non-standing pins such as gopuff/doordash, uber):
 
 ```bash
-ssh <user>@jupiter 'cdp-lane-ensure fleet'    # or messages, ess, gopuff, uber
+ssh <user>@jupiter 'cdp-lane-ensure fleet'    # or messages, ess, doordash, uber
 ```
 
 Status without starting:
@@ -49,7 +49,7 @@ MCP server container
     ↓  HTTP POST /fetch
 web-fetcher service on Jupiter  (port 8765, FastAPI, libs/web_fetcher/)
     ↓  CDP  BROWSER_CDP_URL=http://127.0.0.1:9222
-Chrome on Jupiter  (DISPLAY=:2 fleet, :3 messages/ess/gopuff/uber — Xvfb-backed)
+Chrome on Jupiter  (DISPLAY=:2 fleet, :3 messages/ess/doordash/calendar/uber — Xvfb-backed)
 ```
 
 ```
@@ -75,6 +75,10 @@ dispatch(tool="browse", arguments='{"url":"...", "mode":"browser"}')
 ---
 
 ## Quick Status Check (run first)
+
+**io seat (local tunnels + Playwright bundles):** from the ULG repo on io, run
+`HOME=/home/io python scripts/web-automation-substrate-status.py` — standing CDP
+lanes, bundle paths, attended `:11` retail note. See skill `web-automation-discipline`.
 
 ```bash
 ssh <user>@<satellite-host> 'bash -s' << 'EOF'
@@ -109,7 +113,7 @@ Prefer `cdp-lane-ensure` or systemd — do not hand-launch Chrome with `pkill`/`
 ssh <user>@jupiter 'cdp-lane-ensure fleet'
 ```
 
-**On-demand lanes** (messages, ess, gopuff, uber):
+**On-demand lanes** (messages, ess, doordash, uber):
 
 ```bash
 ssh <user>@jupiter 'cdp-lane-ensure doordash'  # :3, port 9270 (alias of gopuff unit)
@@ -209,7 +213,7 @@ Expected: `{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_ro
 ```bash
 ssh <user>@jupiter 'systemctl --user start jupiter-cdp.target'
 # on-demand lane example:
-ssh <user>@jupiter 'cdp-lane-ensure doordash'  # 9270; gopuff remains an alias
+ssh <user>@jupiter 'cdp-lane-ensure doordash'  # 9270; gopuff remains systemd unit name
 ```
 
 Verify standing stack:
@@ -279,7 +283,41 @@ and `browse-waf-and-pagination-gotchas` instead — this table covers only
 ## io seat — SSH CDP tunnels
 
 From the **io IDE seat**, Jupiter CDP ports are reached via SSH `-L` forwards.
-Local port convention: `local_port = 10000 + jupiter_port` (fleet → **19222**, messages → **19250**, ess → **19260**, calendar → **19290**).
+Local port convention: `local_port = 10000 + jupiter_port` (fleet → **19222**, messages → **19250**, ess → **19260**, doordash → **19270**, calendar → **19290**). **Attended retail / one-off carts** (O'Reilly, etc.) use the **io `:11` playground**, not fleet or a Jupiter pin. **DoorDash on thread 9758** uses **doordash** / **19270**, not `:11`.
+
+---
+
+## io seat — attended browsing playground (`:11`)
+
+Isolated from Jupiter **fleet** and from Jupiter **`:3`** (view-only automation desk).
+
+| Piece | Value |
+|---|---|
+| Xvfb | `io-agent-xvfb-11.service` → **DISPLAY=:11** |
+| VNC | **localhost:5911** on `io`, **interactive** (no `-viewonly`) |
+| Profile | e.g. `~/.gateway/chrome-playground` or `~/.gateway/firefox-oreilly-profile` |
+
+**Bring up:**
+
+```bash
+systemctl --user start io-agent-xvfb-11.service io-agent-vnc-5911.service
+```
+
+**Tunnel from laptop** (when not on `io` console):
+
+```bash
+ssh -N -L 5911:127.0.0.1:5911 io
+```
+
+Connect VNC client to **127.0.0.1:5911** (no password). Launch browser on `io`:
+
+```bash
+DISPLAY=:11 firefox --profile ~/.gateway/firefox-oreilly-profile 'https://www.oreillyauto.com/' &
+# or Chrome when installed:
+# DISPLAY=:11 google-chrome --user-data-dir=$HOME/.gateway/chrome-playground URL &
+```
+
+Rare automation for these sites does not get a `pins.toml` lane — operator drives the playground; agents use Jupiter lanes only when a standing runbook requires CDP.
 
 **Config (authoritative):** `~/.gateway/cdp-tunnels.toml` — lane names, Jupiter ports, local ports, purpose, consumers. Mirrors `services/jupiter-cdp/pins.toml` standing lanes.
 
