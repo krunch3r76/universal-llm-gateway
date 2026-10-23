@@ -28,6 +28,7 @@ from .confidence_field import DISCOVERABLE_SKILL_LIFECYCLE, confidence_field
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
+from .entity_discover import mint_entity_create_aliases
 from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
     insert_exhibit_belongs_to_relationship,
@@ -821,6 +822,14 @@ def create_entity_impl(
         source_uri_supplied=source_uri_set,
         content_hash_supplied=content_hash_set,
     )
+
+    merged_aliases = mint_entity_create_aliases(
+        str(body.id),
+        body.name,
+        list(body.aliases) if body.aliases else None,
+    )
+    if merged_aliases != (body.aliases or []):
+        body = body.model_copy(update={"aliases": merged_aliases})
 
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 

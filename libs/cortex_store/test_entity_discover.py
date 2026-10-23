@@ -1,0 +1,110 @@
+"""Entity discoverability — default aliases and search/recall entity seeding (40072)."""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from cortex_store.dispatch_ops.ops_assertions import _op_search
+from cortex_store.dispatch_ops.ops_entities import _op_entity_create
+from cortex_store.entity_discover import mint_entity_create_aliases
+from cortex_store.recall_resolve import _search_seed_entity_ids
+
+
+@pytest.fixture()
+def migrated_db(migrated_db_path, monkeypatch):
+    from cortex_store import db
+
+    monkeypatch.setattr(db, "_CORTEX_DB", migrated_db_path)
+    return migrated_db_path
+
+
+def test_mint_entity_create_aliases_merges_without_duplicating_caller(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    aliases = mint_entity_create_aliases(
+        "runbook:claude-ai-mcp-connect",
+        "Claude AI MCP Connect",
+        ["custom-alias"],
+    )
+    assert "custom-alias" in aliases
+    assert "runbook:claude-ai-mcp-connect" in aliases
+    assert "claude-ai-mcp-connect" in aliases
+    assert "claude ai mcp connect" in aliases
+
+
+def test_entity_create_writes_default_aliases(migrated_db) -> None:
+    result = _op_entity_create(
+        id="document:confirmation-wells-fargo",
+        type="document",
+        name="Confirmation - Wells Fargo",
+        description="Wells Fargo payment confirmation",
+        source_uri="cortex://evidence/2026-10-22_stub/Confirmation - Wells Fargo.pdf.extracted.md",
+    )
+    assert "error" not in result
+    stored = result.get("aliases") or []
+    assert "document:confirmation-wells-fargo" in stored
+    assert "confirmation-wells-fargo" in stored
+
+
+def test_search_wells_fargo_confirmation_ranks_document_first(migrated_db) -> None:
+    _op_entity_create(
+        id="document:confirmation-wells-fargo",
+        type="document",
+        name="Confirmation - Wells Fargo",
+        description="Wells Fargo payment confirmation",
+        source_uri="cortex://evidence/2026-10-22_stub/Confirmation - Wells Fargo.pdf.extracted.md",
+    )
+    hits = _op_search(query="Wells Fargo confirmation", limit=5)
+    assert hits.get("items")
+    first = hits["items"][0]
+    assert first.get("entity_id") == "document:confirmation-wells-fargo"
+
+
+def test_search_preserves_strong_assertion_hit_ranking(migrated_db) -> None:
+    from cortex_store.dispatch_ops.ops_assertions_write import _op_assert
+
+    _op_entity_create(
+        id="todo:fts-search-projection-mode",
+        type="todo",
+        name="FTS projection",
+        attributes={"density_triage": "mechanical"},
+    )
+    _op_assert(
+        entity_id="todo:fts-search-projection-mode",
+        claim="cortex projection mode summary intent keeps assertion hits stable",
+        confidence="confirmed",
+        evidence="unit test seed",
+        derivation_type="direct_observation",
+    )
+    _op_entity_create(
+        id="document:wells-noise",
+        type="document",
+        name="Wells partial overlap only",
+        description="unrelated",
+    )
+    hits = _op_search(
+        query="cortex projection mode summary intent",
+        limit=3,
+    )
+    assert hits["items"][0]["entity_id"] == "todo:fts-search-projection-mode"
+
+
+def test_recall_seeds_from_entity_fields_without_assertions(
+    migrated_db,  # noqa: ARG001 — binds cortex_conn for search seed path
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    from cortex_store.entity_crud import create_entity_impl
+
+    create_entity_impl(
+        migrated_conn,
+        {
+            "id": "document:recall-alias-doc",
+            "type": "document",
+            "name": "Recall Alias Target",
+            "description": "find me via alias seed",
+        },
+    )
+    ids = _search_seed_entity_ids(migrated_conn, "recall alias target")
+    assert ids == ["document:recall-alias-doc"]

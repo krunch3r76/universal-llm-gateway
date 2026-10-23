@@ -32,6 +32,10 @@ from ._promote_document_helpers import (
     resolve_sidecar_path,
     write_manifest_atomic,
 )
+from ._promote_sidecar_linking import (
+    link_promoted_document_to_accounts,
+    title_from_sidecar_content,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -78,7 +82,21 @@ def _promote(
         sidecar_basename=resolved.path.name if resolved else None,
     )
 
-    name = _entity_name_from_id(entity_id, Path(path).stem)
+    fallback_name = Path(path).stem
+    name = _entity_name_from_id(entity_id, fallback_name)
+    sidecar_text_for_link: str | None = None
+    if resolved is not None:
+        try:
+            sidecar_text_for_link = resolved.path.read_text(encoding="utf-8")
+        except OSError:
+            sidecar_text_for_link = None
+        title = (
+            title_from_sidecar_content(sidecar_text_for_link)
+            if sidecar_text_for_link
+            else None
+        )
+        if title:
+            name = title
     entity_created, _existing = ensure_entity(
         entity_id=entity_id,
         name=name,
@@ -144,7 +162,17 @@ def _promote(
     write_manifest_atomic(bundle.bundle_abs, manifest)
 
     evidence_path = f"{bundle.bundle_rel}{bundle.source_rel_in_bundle}"
-    return {
+    account_link_summary: dict[str, Any] | None = None
+    if resolved is not None and bundle.source_uri and bundle.sidecar_rel_in_bundle:
+        sidecar_in_bundle = bundle.bundle_abs / bundle.sidecar_rel_in_bundle
+        account_link_summary = link_promoted_document_to_accounts(
+            document_entity_id=entity_id,
+            sidecar_path=sidecar_in_bundle,
+            sidecar_uri=bundle.source_uri,
+            document_name=name,
+        )
+
+    result: dict[str, Any] = {
         "entity_created": entity_created,
         "entity_id": entity_id,
         "content_hash": content_hash,
@@ -154,7 +182,11 @@ def _promote(
         "sidecar_moved": sidecar_moved,
         "canonical": resolved.canonical if resolved else None,
         "partial": resolved.partial if resolved else None,
+        "entity_name": name,
     }
+    if account_link_summary is not None:
+        result["account_link"] = account_link_summary
+    return result
 
 
 def run_promote_document(

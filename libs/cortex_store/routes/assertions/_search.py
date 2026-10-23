@@ -18,6 +18,7 @@ from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...compaction import filter_compaction_pointers
 from ...db import cortex_conn, decode_row, query
+from ...entity_discover import merge_entity_seed_hits, search_entities_by_query
 from ...event_publisher import cortex_search_failed, cortex_search_vector_degraded
 from ...models import (
     ActionHint,
@@ -374,7 +375,20 @@ def _search_assertions_impl(
     fused, _ = filter_compaction_pointers(
         fused, include_compaction_pointers=include_compaction_pointers
     )
-    fused = fused[:limit]
+
+    with cortex_conn() as conn:
+        entity_hits = search_entities_by_query(
+            conn,
+            q,
+            entity_type=entity_type,
+            limit=limit * fetch_multiplier,
+        )
+    fused = merge_entity_seed_hits(
+        fused,
+        entity_hits,
+        q=q,
+        limit=limit,
+    )
 
     if intent == "summary":
         summary = _summary_items(fused)
