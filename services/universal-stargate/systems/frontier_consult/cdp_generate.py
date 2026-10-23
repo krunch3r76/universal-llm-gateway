@@ -805,6 +805,10 @@ async def dispatch_cdp_generate(
             "parent_thread": parent_thread,
             "topic": dispatch_topic,
         }
+        if (mission_kind or "").strip() == "hop":
+            worker_kwargs["predecessor_registration_id"] = getattr(
+                body, "predecessor_registration_id", None
+            )
         if contract is not None:
             worker_kwargs["contract"] = contract
         if impresario_role is not None:

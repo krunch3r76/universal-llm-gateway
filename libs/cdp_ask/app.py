@@ -398,29 +398,53 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     @app.post("/v1/cse-session/detach")
     async def cse_session_detach(req: DetachRequest) -> JSONResponse:
         """Authority-side detach relay — seal the predecessor tape, then pop the row."""
+        from typing import Any
+
         from claude_bundles import cdp_registry
 
         from cdp_ask.cse_session_harvest import seal_predecessor_cse_to_tape
 
+        def _tape_seal_fields(
+            seal_result: dict[str, Any] | None,
+            seal_error: ProtocolError | None,
+        ) -> dict[str, str]:
+            if seal_error is not None:
+                return {
+                    "tape_seal": "failed",
+                    "tape_seal_detail": seal_error.message,
+                }
+            if isinstance(seal_result, dict) and seal_result.get("degraded"):
+                reason = seal_result.get("reason")
+                if reason == "listener_down":
+                    return {"tape_seal": "skipped_listener_down"}
+                return {"tape_seal": "degraded"}
+            if isinstance(seal_result, dict) and seal_result.get("transcript_path"):
+                return {"tape_seal": "ok"}
+            return {"tape_seal": "degraded"}
+
+        seal_result: dict[str, Any] | None = None
         seal_error: ProtocolError | None = None
         try:
-            await seal_predecessor_cse_to_tape(
+            seal_result = await seal_predecessor_cse_to_tape(
                 req.registration_id, store=execution_store
             )
         except ProtocolError as exc:
             if exc.code != "standdown.tape_seal_failed":
-                return JSONResponse(status_code=409, content=exc.to_dict())
+                body = {
+                    **exc.to_dict(),
+                    **_tape_seal_fields(None, exc),
+                }
+                return JSONResponse(status_code=409, content=body)
             seal_error = exc
         try:
             result = cdp_registry.detach(req.registration_id, reason=req.reason)
         except ProtocolError as exc:
-            return JSONResponse(status_code=409, content=exc.to_dict())
-        if seal_error is not None:
-            result = {
-                **result,
-                "tape_seal": "failed",
-                "tape_seal_detail": seal_error.message,
+            body = {
+                **exc.to_dict(),
+                **_tape_seal_fields(seal_result, seal_error),
             }
+            return JSONResponse(status_code=409, content=body)
+        result = {**result, **_tape_seal_fields(seal_result, seal_error)}
         return JSONResponse(status_code=200, content=result)
 
     @app.post("/v1/cse-session/paste")

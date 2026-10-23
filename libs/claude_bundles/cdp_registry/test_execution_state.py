@@ -191,3 +191,18 @@ def test_row_drain_protection_still_sees_followup_in_flight() -> None:
         row_drain_protection(row, registration_id="reg-fu", now=now)
         == "execution_in_flight"
     )
+
+
+def test_row_drain_protection_hop_predecessor_hold() -> None:
+    from claude_bundles.cdp_registry.dormant_drain import row_drain_protection
+
+    now = 5000.0
+    row = {"predecessor_hold_until": now + 600}
+    assert (
+        row_drain_protection(row, registration_id="pred-reg", now=now)
+        == "hop_predecessor_hold"
+    )
+    assert (
+        row_drain_protection(row, registration_id="pred-reg", now=now + 601)
+        != "hop_predecessor_hold"
+    )

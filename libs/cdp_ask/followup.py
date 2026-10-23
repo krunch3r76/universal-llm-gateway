@@ -238,6 +238,22 @@ async def _maybe_reattach(
         )
     )
     if not outcome.ok:
+        if (
+            outcome.error == "dormant_relaunch_failed"
+            and (req.envelope or "").strip().lower() == "stand_down"
+            and (outcome.registration_id or "").strip()
+        ):
+            from cdp_ask.cse_session_paste import _append_standdown_token
+
+            _append_standdown_token(
+                registration_id=outcome.registration_id or "",
+                chat_url=chat_url,
+                envelope="stand_down",
+                pasted=False,
+                receipt=None,
+                error="dormant_relaunch_failed",
+                detail=None,
+            )
         skipped = skipped_reason_for_miss(
             reason=reason, chat_url=chat_url, outcome_error=outcome.error
         )

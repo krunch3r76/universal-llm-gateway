@@ -249,7 +249,11 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
     try:
         reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)
     except Exception:
-        return ReattachOutcome(ok=False, error="dormant_relaunch_failed")
+        return ReattachOutcome(
+            ok=False,
+            error="dormant_relaunch_failed",
+            registration_id=seat.registration_id,
+        )
     found = await find_page_on_lane(reg.cdp_url, chat_url)
     if found is not None:
         page, pw = found

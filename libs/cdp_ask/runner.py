@@ -104,6 +104,23 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     purpose = (req.purpose or "").strip()
     kind = (req.mission_kind or "").strip()
     parent = (req.parent_thread or "").strip()
+    pred = (req.predecessor_registration_id or "").strip()
+    if kind == "hop" and pred:
+        from claude_bundles import cdp_registry_store as store
+        from claude_bundles.cdp_registry.models import RegistryError, SeatContended
+
+        try:
+            cdp_registry.relaunch_dormant(pred, holder=holder)
+            active = store.load_active()
+            row = active.get(pred)
+            if isinstance(row, dict):
+                active = {
+                    **active,
+                    pred: {**row, "predecessor_hold_until": time.time() + 1800},
+                }
+                store.write_active(active)
+        except (RegistryError, SeatContended):
+            pass
     joined: list = []
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
         seat = ensure_driving_operator_seat(

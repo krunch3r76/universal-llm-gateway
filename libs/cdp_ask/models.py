@@ -78,6 +78,7 @@ class SubmitProjectAskRequest(BaseModel):
             "Not SDK nest_under."
         ),
     )
+    predecessor_registration_id: str | None = None
     model: str = "opus-5"
     converse: bool = False
     no_project_uuid: bool = False

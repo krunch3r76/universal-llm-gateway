@@ -36,6 +36,7 @@ _STANDDOWN_UNREACHABLE_ERRORS = frozenset(
         "cdp_ask_unreachable",
         "lane_not_attached",
         "not_attached",
+        "dormant_relaunch_failed",
     }
 )
 

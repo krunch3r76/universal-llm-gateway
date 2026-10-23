@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -151,6 +152,10 @@ def row_drain_protection(
     """
     from .execution_state import row_execution_in_flight
 
+    clock = time.time() if now is None else now
+    hold_until = row.get("predecessor_hold_until")
+    if isinstance(hold_until, (int, float)) and clock < hold_until:
+        return "hop_predecessor_hold"
     if row_execution_in_flight(row, now=now) is not None:
         return "execution_in_flight"
     if process_holds_driver_lock(registration_id):

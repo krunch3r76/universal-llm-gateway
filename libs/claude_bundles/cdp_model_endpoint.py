@@ -1010,6 +1010,7 @@ def run_cdp_generate(
     purpose: str | None = None,
     mission_kind: str | None = None,
     parent_thread: str | None = None,
+    predecessor_registration_id: str | None = None,
     holder: str = "cdp-model-endpoint",
     harvest_source: HarvestSource = "auto",
     expected_size: ExpectedSize = "auto",
@@ -1105,6 +1106,7 @@ def run_cdp_generate(
         purpose=submit_purpose,
         mission_kind=mission_kind,
         parent_thread=parent_thread,
+        predecessor_registration_id=predecessor_registration_id,
         model=picker,
         converse=converse,
         no_project_uuid=no_project_uuid
