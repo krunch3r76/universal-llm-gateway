@@ -145,7 +145,7 @@ def reindex_entity_fts_conn(conn: sqlite3.Connection, entity_id: str) -> None:
 
 
 def backfill_entities_fts_conn(conn: sqlite3.Connection) -> int:
-    """Backfill live entities into entities_fts. Idempotent per entity."""
+    """Reindex every live entity into entities_fts and delete stale FTS rows."""
     if not entities_fts_table_exists(conn):
         return 0
     rows = conn.execute(
@@ -154,6 +154,14 @@ def backfill_entities_fts_conn(conn: sqlite3.Connection) -> int:
     ).fetchall()
     for (entity_id,) in rows:
         reindex_entity_fts_conn(conn, str(entity_id))
+    conn.execute(
+        "DELETE FROM entities_fts WHERE entity_id IN ("
+        "SELECT ef.entity_id FROM entities_fts ef "
+        "LEFT JOIN entities e ON e.id = ef.entity_id "
+        "WHERE e.id IS NULL "
+        "OR e.lifecycle IN ('merged', 'deprecated', 'reaped')"
+        ")"
+    )
     return len(rows)
 
 
@@ -171,6 +179,21 @@ def entities_fts_drift(conn: sqlite3.Connection) -> tuple[int, int]:
     ).fetchone()[0]
     fts = conn.execute("SELECT COUNT(*) FROM entities_fts").fetchone()[0]
     return int(live), int(fts)
+
+
+def entities_fts_stats(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return live entity count, FTS row count, and stale (non-live) FTS rows."""
+    live, rows = entities_fts_drift(conn)
+    if not entities_fts_table_exists(conn):
+        return {"live": live, "rows": rows, "stale": 0}
+    stale_row = conn.execute(
+        "SELECT COUNT(*) FROM entities_fts ef "
+        "LEFT JOIN entities e ON e.id = ef.entity_id "
+        "WHERE e.id IS NULL "
+        "OR e.lifecycle IN ('merged', 'deprecated', 'reaped')"
+    ).fetchone()
+    stale = int(stale_row[0]) if stale_row else 0
+    return {"live": live, "rows": rows, "stale": stale}
 
 
 def _bm25_expr() -> str:

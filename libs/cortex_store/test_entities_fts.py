@@ -11,9 +11,11 @@ from cortex_store.entity_crud import create_entity_impl, update_entity_impl
 from cortex_store.entity_fts import (
     backfill_entities_fts_conn,
     entities_fts_drift,
+    entities_fts_stats,
     reindex_entity_fts_conn,
     search_entities_fts,
 )
+from cortex_store.status_trait_write import write_entity_reaped
 
 
 def _count_entities_fts(conn: sqlite3.Connection) -> int:
@@ -203,3 +205,98 @@ def test_search_entities_by_query_removed() -> None:
     import cortex_store.entity_discover as ed
 
     assert not hasattr(ed, "search_entities_by_query")
+
+
+def test_backfill_removes_stale_fts_rows_then_second_run_noop(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    create_entity_impl(
+        migrated_conn,
+        {
+            "id": "note:fts-backfill-stale-cleanup",
+            "type": "note",
+            "name": "live backfill witness",
+            "description": "",
+        },
+        commit=True,
+    )
+    migrated_conn.execute(
+        "INSERT INTO entities_fts "
+        "(name, aliases, slug, src_fname, description, entity_id, etype) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("orphan", "", "orphan", "", "", "note:fts-orphan-nonlive", "note"),
+    )
+    assert _count_entities_fts(migrated_conn) >= 2
+    backfill_entities_fts_conn(migrated_conn)
+    orphan = migrated_conn.execute(
+        "SELECT 1 FROM entities_fts WHERE entity_id = ?",
+        ("note:fts-orphan-nonlive",),
+    ).fetchone()
+    assert orphan is None
+    count_after_first = _count_entities_fts(migrated_conn)
+    snapshot = migrated_conn.execute(
+        "SELECT entity_id, name, aliases, slug, src_fname, description "
+        "FROM entities_fts ORDER BY entity_id"
+    ).fetchall()
+    backfill_entities_fts_conn(migrated_conn)
+    assert _count_entities_fts(migrated_conn) == count_after_first
+    after_second = migrated_conn.execute(
+        "SELECT entity_id, name, aliases, slug, src_fname, description "
+        "FROM entities_fts ORDER BY entity_id"
+    ).fetchall()
+    assert after_second == snapshot
+
+
+def test_write_entity_reaped_drops_fts_row(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    entity_id = "note:fts-reap-sync"
+    create_entity_impl(
+        migrated_conn,
+        {
+            "id": entity_id,
+            "type": "note",
+            "name": "reap fts witness",
+            "description": "",
+        },
+        commit=True,
+    )
+    row = migrated_conn.execute(
+        "SELECT entity_id FROM entities_fts WHERE entity_id = ?",
+        (entity_id,),
+    ).fetchone()
+    assert row is not None
+    write_entity_reaped(migrated_conn, entity_id, "2026-10-23T09:00:00Z")
+    gone = migrated_conn.execute(
+        "SELECT entity_id FROM entities_fts WHERE entity_id = ?",
+        (entity_id,),
+    ).fetchone()
+    assert gone is None
+
+
+def test_entities_fts_stats_live_rows_stale(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    create_entity_impl(
+        migrated_conn,
+        {
+            "id": "note:fts-stats-live",
+            "type": "note",
+            "name": "stats witness",
+            "description": "",
+        },
+        commit=True,
+    )
+    stats = entities_fts_stats(migrated_conn)
+    assert set(stats.keys()) == {"live", "rows", "stale"}
+    assert stats["stale"] == 0
+    assert stats["live"] == stats["rows"]
+    migrated_conn.execute(
+        "INSERT INTO entities_fts "
+        "(name, aliases, slug, src_fname, description, entity_id, etype) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("stale", "", "stale", "", "", "note:fts-stats-stale-only", "note"),
+    )
+    stats_with_stale = entities_fts_stats(migrated_conn)
+    assert stats_with_stale["stale"] == 1
+    assert stats_with_stale["rows"] == stats["rows"] + 1
