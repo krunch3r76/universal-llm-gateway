@@ -282,6 +282,9 @@ def subject_allowed(
         return True
     allowed = CSE_WAKE_SUBJECT_HEADS if cse else GROK_WAKE_SUBJECT_HEADS
     head = text.split("|", 1)[0].strip().upper()
+    if not cse and head == "NOTICE":
+        parts = [p.strip().lower() for p in text.split("|")]
+        return len(parts) >= 2 and parts[1] == "gap"
     if head in allowed:
         return True
     if "|" in text and head:
