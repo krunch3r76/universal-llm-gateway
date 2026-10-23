@@ -12,8 +12,8 @@ from cortex_store.dispatch_ops.ops_entities import _op_entity_create, _op_entity
 from cortex_store.entity_discover import (
     entity_synthetic_assertion_id,
     mint_entity_create_aliases,
-    search_entities_by_query,
 )
+from cortex_store.entity_fts import search_entities_fts
 from cortex_store.recall_resolve import _search_seed_entity_ids
 
 
@@ -189,7 +189,7 @@ def test_whole_token_search_rejects_substring_noise(
         },
     )
     for query in ("art", "of"):
-        hits = search_entities_by_query(migrated_conn, query, limit=5)
+        hits = search_entities_fts(migrated_conn, query, limit=5)
         assert all(hit["entity_id"] != "note:part-of-speech" for hit in hits)
 
 

@@ -135,6 +135,7 @@ def _delete_children(
             f"WHERE assertion_id IN ({ph}) OR duplicate_of IN ({ph})",
             ids + ids,
         )
+    conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (entity_id,))
     conn.execute("DELETE FROM tag_assignments WHERE entity_id = ?", (entity_id,))
     conn.execute("DELETE FROM surface_forms WHERE entity_id = ?", (entity_id,))
     conn.execute(

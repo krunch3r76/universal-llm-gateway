@@ -293,6 +293,10 @@ def entity_rekey_impl(
             aliases=alias_list,
             lifecycle=old_row.get("lifecycle"),
         )
+        from .entity_fts import reindex_entity_fts_conn
+
+        conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (old_id,))
+        reindex_entity_fts_conn(conn, canonical_new)
         if assertion_ids:
             reindex_assertions_fts_batch(conn, assertion_ids)
         check_foreign_keys(conn)
@@ -429,6 +433,10 @@ def entity_retype_impl(
         # scopes alias lookups by that prefix, so register the old id as a
         # cross-type alias under the old type as well.
         _register_cross_type_alias(conn, canonical_new, old_type, old_id)
+        from .entity_fts import reindex_entity_fts_conn
+
+        conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (old_id,))
+        reindex_entity_fts_conn(conn, canonical_new)
         if assertion_ids:
             reindex_assertions_fts_batch(conn, assertion_ids)
         check_foreign_keys(conn)
