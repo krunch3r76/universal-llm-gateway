@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Start isolated Chrome on the box (:200–:219 band, per-session profile).
+
+Usage:
+    scripts/box-isolated-chrome start
+
+Prints JSON with session_id, display, profile_dir, cdp_port, and live_view.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT / "libs") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "libs"))
+
+from box_isolated_chrome.session import main_cli  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main_cli())
