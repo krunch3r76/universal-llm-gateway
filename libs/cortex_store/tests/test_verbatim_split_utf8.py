@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from cortex_store.verbatim_succession import split_verbatim_layer
+from cortex_store.verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
 
 pytestmark = pytest.mark.offline
 
@@ -22,6 +22,16 @@ def test_split_verbatim_layer_mid_prime_does_not_raise() -> None:
     out = split_verbatim_layer(text, verbatim_bytes=cut)
     assert "BIND A" in out
     assert "′" not in out
+
+
+def test_journal_verbatim_bytes_messages_v1_returns_none() -> None:
+    row = {"verbatim_codec": "messages-v1", "verbatim_bytes": 9999}
+    assert journal_verbatim_bytes(row) is None
+
+
+def test_journal_verbatim_bytes_md_v1_without_codec_column() -> None:
+    row = {"verbatim_bytes": 42}
+    assert journal_verbatim_bytes(row) == 42
 
 
 def test_split_verbatim_layer_exact_boundary_keeps_prime() -> None:

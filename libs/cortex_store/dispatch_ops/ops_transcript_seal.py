@@ -190,6 +190,12 @@ def _write_messages_seal_verified(
         )
         + "\n"
     )
+    prior_snapshot: str | None = None
+    if seal_abs.is_file():
+        try:
+            prior_snapshot = seal_abs.read_text(encoding="utf-8")
+        except OSError:
+            prior_snapshot = None
     try:
         durable_write_text(seal_abs, payload, retain_store_root=_FILES_ROOT)
     except OSError as exc:
@@ -206,7 +212,15 @@ def _write_messages_seal_verified(
         or (messages and readback.meta.message_count == 0)
         or readback.meta.messages_sha256 != expected_sha
     ):
-        seal_abs.unlink(missing_ok=True)
+        if prior_snapshot is not None:
+            try:
+                durable_write_text(
+                    seal_abs, prior_snapshot, retain_store_root=_FILES_ROOT
+                )
+            except OSError:
+                pass
+        elif seal_abs.is_file():
+            seal_abs.unlink(missing_ok=True)
         return {
             "error": "seal readback failed or message_count mismatch",
             "reason": "empty_readback",
@@ -230,8 +244,6 @@ def _commit_pretranscribed_journal(
 ) -> int:
     from ..db import cortex_conn, json_encode
     from ..routes.session_close_helpers import _ensure_transcript_entity
-
-    from ._shared import _FILES_ROOT
 
     seal_rel = _seal_rel_path(session_id)
     entity_ids = [f"agent-bus:{thread_id}"]
