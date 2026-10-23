@@ -228,10 +228,10 @@ async def test_typed_ack_seals_to_tape_and_detaches_closed_predecessor(
 
 
 @pytest.mark.asyncio
-async def test_tape_seal_failure_blocks_detach_on_live_port(
+async def test_tape_seal_failure_still_detaches_on_live_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cortex 500 on a live port refuses detach and leaves the listener up."""
+    """Cortex 500 on a live port records seal failure but detach proceeds (a:40105)."""
     from fastapi.testclient import TestClient
 
     from cdp_ask.app import create_app
@@ -261,7 +261,9 @@ async def test_tape_seal_failure_blocks_detach_on_live_port(
         "chat_harvest.archive.archive_chat_transcript",
         lambda **_k: ("cortex://x", "sha", "new"),
     )
-    detach = MagicMock()
+    detach = MagicMock(
+        return_value={"registration_id": "4f3e647918c64ab18f8c3f9403d24999"}
+    )
     monkeypatch.setattr("claude_bundles.cdp_registry.detach", detach)
     client = TestClient(create_app())
     response = client.post(
@@ -271,6 +273,8 @@ async def test_tape_seal_failure_blocks_detach_on_live_port(
             "reason": "hop_detach",
         },
     )
-    assert response.status_code == 409
-    assert response.json()["code"] == "standdown.tape_seal_failed"
-    detach.assert_not_called()
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("registration_id") == "4f3e647918c64ab18f8c3f9403d24999"
+    assert body.get("tape_seal") == "failed"
+    detach.assert_called_once()

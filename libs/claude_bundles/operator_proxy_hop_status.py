@@ -38,6 +38,7 @@ from claude_bundles.operator_proxy_live_leg import (
     project_live_leg,
     render_live_leg,
 )
+from claude_bundles.operator_proxy_induction_render import render_induction_k44_block
 from claude_bundles.operator_proxy_standing_render import (
     HOP_INFLIGHT_CAP_B,
     HOP_LIVE_LEG_CAP_B,
@@ -420,6 +421,7 @@ def hop_successor_fields(
             read_journal_head=read_journal_head or read_cortex_journal_head,
             archive_path_exists=archive_path_exists,
             role=role,
+            lane=lane,
             inflight_projection_lookup=inflight_projection_lookup,
         )
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
@@ -480,6 +482,9 @@ def hop_successor_fields(
         if hop_kind == "mission"
         else ""
     )
+    induction_k44 = (
+        render_induction_k44_block(lane=lane) if hop_kind == "mission" else ""
+    )
 
     return {
         "hop_kind": hop_kind,
@@ -493,6 +498,7 @@ def hop_successor_fields(
         "inflight_block": inflight_block,
         "lessons_in_force": journal_fields["lessons_in_force"],
         "register_card": journal_fields["register_card"],
+        "induction_k44_block": induction_k44,
         "live_leg": live_leg,
         "pointers": pointers,
         "first_act_call1_line": call1_line,

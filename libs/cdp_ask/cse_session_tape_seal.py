@@ -212,13 +212,25 @@ async def seal_predecessor_cse_to_tape(
             for index, row_turn in enumerate(turns)
             if row_turn.get("author") in {"user", "assistant"}
         ]
-        archive_chat_transcript(
-            site="claude",
-            conversation_id=cse_id,
-            url=chat_url,
-            turns=archive_turns,
-            streaming=False,
-        )
+        from chat_harvest.archive import ArchiveConflictError
+
+        try:
+            archive_chat_transcript(
+                site="claude",
+                conversation_id=cse_id,
+                url=chat_url,
+                turns=archive_turns,
+                streaming=False,
+            )
+        except ArchiveConflictError:
+            archive_chat_transcript(
+                site="claude",
+                conversation_id=cse_id,
+                url=chat_url,
+                turns=archive_turns,
+                streaming=False,
+                supersede=True,
+            )
         payload = _succession_close_payload(row, registration_id=rid, turns=turns)
         response = _post_session_close(payload)
     except ProtocolError:

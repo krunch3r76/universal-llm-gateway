@@ -402,13 +402,25 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
         from cdp_ask.cse_session_harvest import seal_predecessor_cse_to_tape
 
+        seal_error: ProtocolError | None = None
         try:
             await seal_predecessor_cse_to_tape(
                 req.registration_id, store=execution_store
             )
+        except ProtocolError as exc:
+            if exc.code != "standdown.tape_seal_failed":
+                return JSONResponse(status_code=409, content=exc.to_dict())
+            seal_error = exc
+        try:
             result = cdp_registry.detach(req.registration_id, reason=req.reason)
         except ProtocolError as exc:
             return JSONResponse(status_code=409, content=exc.to_dict())
+        if seal_error is not None:
+            result = {
+                **result,
+                "tape_seal": "failed",
+                "tape_seal_detail": seal_error.message,
+            }
         return JSONResponse(status_code=200, content=result)
 
     @app.post("/v1/cse-session/paste")

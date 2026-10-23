@@ -209,11 +209,12 @@ def test_markdown_dispatcher_house_rules_growth_refused(
     assert (sandbox_root / rel).read_bytes() == before
 
 
-def _house_rules_near_cap(root: Path, rel: str) -> None:
+def _house_rules_near_cap(root: Path, rel: str, *, retract_oldest: bool = True) -> None:
     intro = "## HOUSE RULES\n"
+    retract_tag = " (RETRACTED by K99)" if retract_oldest else ""
     oldest = (
-        "- K1 oldest ruling row for rotation archive "
-        + ("x" * 85)
+        f"- K1 oldest ruling row for rotation archive{retract_tag} "
+        + ("x" * (60 if retract_oldest else 85))
         + "\n"
     )
     second = "- K2 second oldest ruling row for rotation archive\n"
@@ -252,6 +253,27 @@ def test_house_rules_append_rotates_in_one_call(
     assert "- K99 new ruling row" in live
     assert authority.RULINGS_ARCHIVE_URI in live
     assert "K99 new ruling row" not in archive_text
+
+
+def test_house_rules_over_budget_refuses_when_only_unretracted_rows(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/12286-house-rules.md"
+    _house_rules_near_cap(sandbox_root, rel, retract_oldest=False)
+    rejected = markdown_tool._section_write_result(
+        sandbox_root / rel,
+        rel,
+        "cortex",
+        "HOUSE RULES",
+        "mcp.tool.markdown.section.appended",
+        "appended",
+        lambda t: t + "\n- K100 another binding row\n",
+        mutation_op="md_append",
+    )
+    assert rejected.get("reason") == "house_rules.over_budget"
+    assert "unretracted" in rejected.get("error", "")
 
 
 def test_house_rules_rotation_archive_failure_leaves_file_unchanged(

@@ -20,6 +20,34 @@ ArtifactClass = Literal["consult", "shared", "unclassified"]
 HOUSE_RULES_MAX_BYTES = 8192
 RULINGS_ARCHIVE_REL = "notes/system/threads/12286-rulings-archive.md"
 RULINGS_ARCHIVE_URI = f"cortex://{RULINGS_ARCHIVE_REL}"
+MAESTRO_REGISTER_REL = "notes/system/maestro/register.md"
+MAESTRO_REGISTER_URI = f"cortex://{MAESTRO_REGISTER_REL}"
+REGISTER_CARD_MAX_LINES = 8
+
+
+def is_maestro_register_path(path: str) -> bool:
+    return _norm_rel(path) == MAESTRO_REGISTER_REL
+
+
+def evaluate_register_post_edit_size(*, path: str, post_edit_text: str) -> dict[str, Any] | None:
+    """Refuse register cards over eight non-empty lines (not cut)."""
+    if not is_maestro_register_path(path):
+        return None
+    lines = [ln for ln in (post_edit_text or "").splitlines() if ln.strip()]
+    if len(lines) <= REGISTER_CARD_MAX_LINES:
+        return None
+    rel = _norm_rel(path)
+    return {
+        "error": (
+            f"Refusing write to {rel!r}: register card has {len(lines)} lines; "
+            f"maximum is {REGISTER_CARD_MAX_LINES}. Split or compact — do not cut."
+        ),
+        "reason": "register.over_line_cap",
+        "path": rel,
+        "artifact_class": "shared",
+        "line_count": len(lines),
+        "limit_lines": REGISTER_CARD_MAX_LINES,
+    }
 
 
 def is_house_rules_path(path: str) -> bool:

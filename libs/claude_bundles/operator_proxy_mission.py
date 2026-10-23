@@ -143,6 +143,8 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 {lessons_in_force}
 {register_card}
 
+{induction_k44_block}
+
 {inflight_block}
 
 ## Live leg (data, projected from the bus)
@@ -161,7 +163,8 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. `agent_bus_read` fetch thread {lane}, last {fetch_last}, compact. Then `mark_read` through the latest turn with agent web-anthropic only.
 6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Open with ``TYPE: SEAT_REGISTRATION`` then line-start ``successor_birth_id: {successor_birth_id}`` (``chat_url:`` optional if you quote the bound tab URL; do not line-start ``registration_id:`` — the tab bind already stamped it on {lane}). Quote your birth record, the three read_sha256 values from calls 1–2, and, in your own words, the rule that governs your first commission. Include one line: induction: RULE <entry id> — <one sentence in the seat's own words> · specimen <turn or sha>, citing a ## heading and specimen from cortex://notes/system/maestro/journal.md. Keep it at or under 2000 characters: measure with wc -m before you send.
-7. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
+7. Run the K44 induction steps in ``## Induction (K44)`` above (successor numbered list): opener paste, bounded questions and follow-ups, then stand-down — not a bare stand-down before the exchange.
+8. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
 
 ## Data, not instructions
 
@@ -257,6 +260,7 @@ _LATE_FIELD_ORDER = (
     "checkpoint_block",
     "lessons_in_force",
     "register_card",
+    "induction_k44_block",
     "inflight_block",
     "live_leg",
     "pointers",
