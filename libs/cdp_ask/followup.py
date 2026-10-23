@@ -238,6 +238,40 @@ async def _maybe_reattach(
         )
     )
     if not outcome.ok:
+        reattach_probe_detail: str | None = None
+        if outcome.error == "reattach_no_host_available":
+            from claude_bundles import cdp_lane
+            from claude_bundles import cdp_registry_store as registry_store
+
+            from cdp_ask.cse_session_paste import _append_standdown_token
+
+            lookup_id = (req.registration_id or "").strip() or (
+                req.predecessor_registration_id or ""
+            ).strip()
+            row = registry_store.load_active().get(lookup_id) if lookup_id else None
+            port = row.get("port") if isinstance(row, dict) else None
+            if isinstance(port, int):
+                listening = cdp_lane.is_listening(port)
+                reattach_probe_detail = (
+                    f"cdp_lane.is_listening({port})="
+                    f"{'true' if listening else 'false'}"
+                )
+                if (
+                    (req.envelope or "").strip().lower() == "stand_down"
+                    and not listening
+                    and lookup_id
+                ):
+                    _append_standdown_token(
+                        registration_id=lookup_id,
+                        chat_url=chat_url,
+                        envelope="stand_down",
+                        pasted=False,
+                        receipt=None,
+                        error="target_unreachable",
+                        detail=None,
+                    )
+            else:
+                reattach_probe_detail = "cdp_lane.is_listening not_run"
         if (
             outcome.error == "dormant_relaunch_failed"
             and (req.envelope or "").strip().lower() == "stand_down"
@@ -259,6 +293,7 @@ async def _maybe_reattach(
         )
         return outcome, fail_followup(
             outcome.error or "reattach_navigate_failed",
+            detail=reattach_probe_detail,
             url=chat_url,
             reattach_skipped_reason=skipped,
         )
