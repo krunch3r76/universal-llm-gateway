@@ -327,6 +327,14 @@ A land waits for a bound APPROVE on the tip. `REQUEST_CHANGES` is a forward fix,
 are clean on master; otherwise commit overlapping dirty paths, merge, and
 resolve keep-both. **Never stash instead of merge. Never leave a stash unpopped.**
 
+### Reviewed tip whose fast-forward failed
+
+When a fast-forward of an already-reviewed tip fails because `master` advanced, re-read the live `master` tip. If that advance does not touch the reviewed paths and raises no rule conflict, land with `git merge --no-ff <reviewed_sha>` so the reviewed SHA stays a parent. Do not replay the diff into a new SHA. Do not run a second review.
+
+Path-disjoint is not enough to call the advance safe. Before that merge lands, run on the merge result the reviewed diff's own tests plus every test module that imports a module the diff touched. A red test means reconcile and re-review, the same as path overlap or a rule conflict.
+
+That merge is forward-only, as defined in § Forward only. Do not reset, rebase, or force the shared branch to manufacture a fast-forward.
+
 Authority: **a:29557** (`confirmed`, `user_statement`, 2026-08-15, ring
 agent-bus:7281) — *"lane work reaches master by MERGING the lane branch … not by
 `git checkout <branch> -- <paths>` + commit on the shared master checkout."*
