@@ -12,6 +12,7 @@ import logging
 import os
 import time
 
+from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import peek_tree_state, refresh_tree_state
 from fastapi import FastAPI, HTTPException, Request
@@ -42,7 +43,6 @@ from cdp_ask.cse_session_models import (
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
 from cdp_ask.execution_ladder import finish_execution, guard_execution
-from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from cdp_ask.execution_resume import hydrate_in_flight, spawn_resume
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
