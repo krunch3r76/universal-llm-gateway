@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+
+from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
 
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from universal_logging import get_logger
@@ -12,6 +15,41 @@ logger = get_logger(__name__)
 
 BUS_MAX_BODY_CHARS = 64_000
 _POST_RETRY_SLEEP_S = 0.5
+
+# Same shape as master_review_owed.CANONICAL_VERDICT_RE (binder contract).
+_CANONICAL_VERDICT_RE = re.compile(
+    r"(?im)^VERDICT:[ \t]+(APPROVE|REQUEST_CHANGES)[ \t]+"
+    r"range=([0-9a-f]{40})\.\.([0-9a-f]{40})[ \t]+head=\3"
+    r"(?:[ \t]+fixes=([0-9a-f]{40}))?[ \t]*$"
+)
+
+
+def collapse_identical_unfenced_canonical_verdicts(harvest: str) -> str:
+    """Drop repeat unfenced canonical VERDICT lines; keep first; fences unchanged."""
+    if not harvest:
+        return harvest
+    spans = _fenced_spans(harvest)
+    seen: set[str] = set()
+    kept: list[str] = []
+    offset = 0
+    for line in harvest.splitlines(keepends=True):
+        in_fence = any(start <= offset < end for start, end in spans)
+        stripped = line.rstrip("\r\n")
+        if (
+            not in_fence
+            and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None
+            and stripped in seen
+        ):
+            offset += len(line)
+            continue
+        if (
+            not in_fence
+            and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None
+        ):
+            seen.add(stripped)
+        kept.append(line)
+        offset += len(line)
+    return "".join(kept)
 
 
 @dataclass(frozen=True)
@@ -122,7 +160,12 @@ async def build_cdp_success_delivery_body(
     ``pointer_only`` writes the harvest to cortex and posts uri, sha256, and
     execution id. The bus body has no harvest text and no summary.
     """
-    harvest = result.body or "_empty harvest_"
+    raw_harvest = result.body
+    harvest = (
+        collapse_identical_unfenced_canonical_verdicts(raw_harvest)
+        if raw_harvest
+        else "_empty harvest_"
+    )
     if pointer_only:
         body_chars = len(result.body or "")
         if result.archive_uri:
