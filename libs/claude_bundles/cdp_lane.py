@@ -696,3 +696,38 @@ def _emit(signal: str, info: LaneInfo) -> None:
             s.settimeout(1.0)
             s.connect(sock_path)
             s.sendall((json.dumps(payload) + "\n").encode())
+
+
+def _cdp_http_json(port: int, path: str, *, method: str = "GET") -> dict | list:
+    import urllib.error
+    import urllib.request
+
+    url = f"http://127.0.0.1:{port}{path}"
+    req = urllib.request.Request(url, method=method)
+    with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+        raw = resp.read()
+    return json.loads(raw.decode("utf-8"))
+
+
+def open_cdp_tab_target(port: int, url: str) -> str:
+    """Open a new CDP target on an existing host and return its target id."""
+    from urllib.parse import quote
+
+    encoded = quote(url, safe="")
+    created = _cdp_http_json(port, f"/json/new?{encoded}", method="PUT")
+    if isinstance(created, dict) and created.get("id"):
+        return str(created["id"])
+    raise LaneError(f"CDP /json/new failed on port {port}")
+
+
+def close_cdp_target(port: int, target_id: str) -> None:
+    tid = str(target_id or "").strip()
+    if not tid:
+        return
+    import urllib.error
+    import urllib.request
+
+    url = f"http://127.0.0.1:{port}/json/close/{tid}"
+    req = urllib.request.Request(url, method="GET")
+    with contextlib.suppress(urllib.error.URLError, OSError, TimeoutError):
+        urllib.request.urlopen(req, timeout=5)  # noqa: S310

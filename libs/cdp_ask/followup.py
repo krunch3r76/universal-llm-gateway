@@ -273,7 +273,8 @@ async def _maybe_reattach(
             else:
                 reattach_probe_detail = "cdp_lane.is_listening not_run"
         if (
-            outcome.error == "dormant_relaunch_failed"
+            outcome.error
+            in ("dormant_relaunch_failed", "dormant_relaunch_deferred_x_headroom")
             and (req.envelope or "").strip().lower() == "stand_down"
             and (outcome.registration_id or "").strip()
         ):

@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cdp_registry.driving_seat import ensure_driving_operator_seat
+from claude_bundles.cdp_registry.driving_seat import (
+    ensure_driving_operator_seat,
+    launch_or_defer,
+)
 from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
@@ -91,6 +94,20 @@ def _compose_witness_satellite_id(error: str | None, execution_id: str) -> str |
     return execution_id or None
 
 
+def _open_tab_lane(
+    req: SubmitProjectAskRequest, *, holder: str, host_row: dict | None = None
+):
+    from claude_bundles.cdp_registry.tab_rows import open_tab_row_for_ask
+
+    return open_tab_row_for_ask(
+        holder=holder,
+        purpose=req.purpose,
+        mission_kind=req.mission_kind,
+        parent_thread=req.parent_thread,
+        host_row=host_row,
+    )
+
+
 def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     """Bind the Chrome host for one project-ask execution.
 
@@ -110,7 +127,10 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
         from claude_bundles.cdp_registry.models import RegistryError, SeatContended
 
         try:
-            cdp_registry.relaunch_dormant(pred, holder=holder)
+            launch_or_defer(
+                "hop_predecessor_relaunch",
+                lambda: cdp_registry.relaunch_dormant(pred, holder=holder),
+            )
             active = store.load_active()
             row = active.get(pred)
             if isinstance(row, dict):
@@ -121,32 +141,50 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
                 store.write_active(active)
         except (RegistryError, SeatContended):
             pass
+    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
+
     joined: list = []
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
-        seat = ensure_driving_operator_seat(
-            holder=holder,
-            parent_thread=parent,
-            purpose=purpose,
-            mission_kind=kind or "root",
-            joined=joined,
-        )
+        try:
+            seat = ensure_driving_operator_seat(
+                holder=holder,
+                parent_thread=parent,
+                purpose=purpose,
+                mission_kind=kind or "root",
+                joined=joined,
+            )
+        except OperatorSeatDeferred:
+            seat = _open_tab_lane(req, holder=holder)
+    elif kind == "hop":
+        if purpose in OPERATOR_PURPOSES:
+            try:
+                seat = launch_or_defer(
+                    "hop_register_lane_mint",
+                    lambda: cdp_registry.register_lane(
+                        holder=holder,
+                        purpose=req.purpose,
+                        mission_kind=req.mission_kind,
+                        parent_thread=req.parent_thread,
+                    ),
+                )
+            except OperatorSeatDeferred:
+                seat = _open_tab_lane(req, holder=holder)
+        else:
+            seat = _open_tab_lane(req, holder=holder)
     else:
-        seat = cdp_registry.register_lane(
-            holder=holder,
-            purpose=req.purpose,
-            mission_kind=req.mission_kind,
-            parent_thread=req.parent_thread,
-        )
+        seat = _open_tab_lane(req, holder=holder)
     reg_id = str(getattr(seat, "registration_id", "") or "").strip()
     if purpose in OPERATOR_PURPOSES and parent and reg_id:
         from claude_bundles import cdp_registry_store as store
+        from claude_bundles.cdp_registry.models import STATUS_TAB
         from claude_bundles.cdp_registry.session_address import (
             retire_predecessor_identity,
         )
 
         row = store.load_active().get(reg_id)
+        is_tab = isinstance(row, dict) and row.get("status") == STATUS_TAB
         allocating = isinstance(row, dict) and row.get("status") == "allocating"
-        if not joined and not allocating:
+        if not is_tab and not joined and not allocating:
             retire_predecessor_identity(reg_id, parent_thread=parent)
     return seat
 
@@ -160,6 +198,18 @@ def _persist_session_address(
     """Record CSE chat_url on the registry row as soon as it is observed."""
     raw = (url or "").strip()
     if not raw or _CSE_URL_MARKER not in raw:
+        return
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+
+    row = cdp_registry._load_active().get(registration_id)
+    if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+        from claude_bundles.cdp_registry.tab_rows import set_tab_chat_url
+
+        set_tab_chat_url(
+            registration_id,
+            chat_url=raw,
+            execution_id=execution_id or None,
+        )
         return
     cdp_registry.bind_session_address(
         registration_id,
@@ -948,7 +998,22 @@ async def run_execution(
             # resume address) for execution_ladder's host_lost branch.
             pass
         elif not await abort_check():
-            if not registration_has_wake_debt(reg.registration_id):
+            from claude_bundles.cdp_registry.models import STATUS_TAB
+            from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
+
+            row = cdp_registry._load_active().get(reg.registration_id)
+            if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+                if retain_host or (
+                    escaped is not None and is_host_lost_error(str(escaped))
+                ):
+                    finish_tab_on_exit(reg, branch="retain_host")
+                elif teardown_check is not None and teardown_check():
+                    finish_tab_on_exit(reg, branch="teardown")
+                elif registration_has_wake_debt(reg.registration_id):
+                    finish_tab_on_exit(reg, branch="wake_debt")
+                else:
+                    finish_tab_on_exit(reg, branch="normal")
+            elif not registration_has_wake_debt(reg.registration_id):
                 deregister_on_exit(reg, purpose=req.purpose)
 
 

@@ -45,6 +45,7 @@ class ReattachOutcome:
     seat_snapshot_lane: str | None = None
     seat_snapshot_holder_id: str | None = None
     seat_snapshot_bound_at: float | None = None
+    page_only_borrow: bool = False
 
 
 def _lane_order(
@@ -248,7 +249,36 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
         return None
     try:
         reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)
-    except Exception:
+    except Exception as exc:
+        from claude_bundles import cdp_lane
+        from claude_bundles import cdp_registry_store as store
+        from claude_bundles.cdp_registry.tab_rows import eligible_host
+        from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+        if isinstance(exc, XDisplayCapacityError):
+            active = store.load_active()
+            host = eligible_host(active, cdp_lane.cdp_display_candidates())
+            if host is not None:
+                from cdp_ask.followup_events import (
+                    cdp_ask_dormant_relaunch_deferred,
+                    emit as emit_followup_event,
+                )
+
+                with contextlib.suppress(Exception):
+                    emit_followup_event(
+                        cdp_ask_dormant_relaunch_deferred(
+                            registration_id=seat.registration_id,
+                            chat_url=chat_url,
+                            display=str(host.get("display") or ""),
+                            host_registration_id=str(host["registration_id"]),
+                            error_code="dormant_relaunch_deferred_x_headroom",
+                        )
+                    )
+                return ReattachOutcome(
+                    ok=False,
+                    error="dormant_relaunch_deferred_x_headroom",
+                    registration_id=seat.registration_id,
+                )
         return ReattachOutcome(
             ok=False,
             error="dormant_relaunch_failed",
@@ -317,6 +347,18 @@ async def ensure_cse_attached(
     snap_holder, snap_bound = (
         open_lane_seat_holder(lane_key) if lane_key else (None, None)
     )
+
+    import asyncio
+
+    from claude_bundles.cdp_registry.tab_rows import inflight_row_for_chat_url
+
+    _REOPEN_INFLIGHT_POLL_S = 0.25
+
+    while True:
+        inflight = await asyncio.to_thread(inflight_row_for_chat_url, chat_url)
+        if inflight is None or inflight.get("status") != "tab":
+            break
+        await asyncio.sleep(_REOPEN_INFLIGHT_POLL_S)
 
     def _done(
         outcome: ReattachOutcome, *, refresh_seat: bool = False

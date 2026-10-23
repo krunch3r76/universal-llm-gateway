@@ -707,3 +707,111 @@ async def test_run_execution_bind_yields_the_event_loop(
         release.set()
     assert payload["ok"] is True
     assert delta["sleep0"] < 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "hop_with_predecessor",
+        "hop_no_predecessor",
+        "hop_admit_display_raises",
+    ],
+)
+def test_tab_ask_when_x_headroom_below_one_chrome_hop(
+    case: str,
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_registry.models import STATUS_TAB, OperatorSeatDeferred
+
+    host = {
+        "registration_id": "host-hop",
+        "status": "active",
+        "port": 9225,
+        "display": ":2",
+        "profile_suffix": "reg-hop",
+        "holder": "pool",
+        "started_at": 1.0,
+    }
+    pred = {
+        "registration_id": "pred-hop",
+        "status": "dormant",
+        "port": 9224,
+        "display": ":2",
+        "profile_suffix": "reg-pred",
+        "chat_url": "https://claude.ai/cowork/cse_pred",
+        "holder": "hop",
+    }
+    reg._store.write_active({"host-hop": host, "pred-hop": pred})
+
+    def _defer_register(**_kwargs):  # noqa: ANN003
+        raise OperatorSeatDeferred(
+            "deferred",
+            display=":2",
+            host_registration_id="host-hop",
+            branch="hop_register_lane_mint",
+        )
+
+    monkeypatch.setattr(
+        "cdp_ask.runner.cdp_registry.register_lane",
+        _defer_register,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.runner.launch_or_defer",
+        lambda branch, call: call(),
+    )
+    if case == "hop_with_predecessor":
+        monkeypatch.setattr(
+            "cdp_ask.runner.cdp_registry.relaunch_dormant",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                OperatorSeatDeferred(
+                    "deferred",
+                    display=":2",
+                    host_registration_id="host-hop",
+                    branch="hop_predecessor_relaunch",
+                )
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            "cdp_ask.runner.cdp_registry.relaunch_dormant",
+            MagicMock(),
+        )
+    with patch(
+        "cdp_ask.runner._open_tab_lane",
+        return_value=MagicMock(registration_id="tab-hop", host_registration_id="host-hop"),
+    ) as open_tab:
+        req = SubmitProjectAskRequest(
+            prompt_text="x",
+            holder="hop",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            parent_thread="9497",
+            predecessor_registration_id="pred-hop" if case != "hop_no_predecessor" else None,
+        )
+        out = bind_execution_lane(req, holder="hop")
+        open_tab.assert_called_once()
+    row = reg._store.load_active().get(getattr(out, "registration_id", ""))
+    assert row is None or row.get("status") != "allocating"
+
+
+def test_tab_ask_when_x_headroom_below_one_chrome_hop_no_eligible_host(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    monkeypatch.setattr(
+        "cdp_ask.runner.launch_or_defer",
+        lambda _branch, _call: (_ for _ in ()).throw(XDisplayCapacityError("exhausted")),
+    )
+    req = SubmitProjectAskRequest(
+        prompt_text="x",
+        holder="hop",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="9497",
+    )
+    with pytest.raises(XDisplayCapacityError):
+        bind_execution_lane(req, holder="hop")

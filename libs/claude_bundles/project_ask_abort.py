@@ -164,6 +164,19 @@ def deregister_on_exit(
     remains — the satellite execution terminalizes while Chrome stays retained.
     """
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+    from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
+
+    try:
+        row = cdp_registry._load_active().get(reg.registration_id)
+    except Exception:
+        row = None
+    if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+        if not skip_wake_debt and registration_has_wake_debt(reg.registration_id):
+            finish_tab_on_exit(reg, branch="wake_debt")
+            return
+        finish_tab_on_exit(reg, branch="normal")
+        return
 
     if not skip_wake_debt and registration_has_wake_debt(reg.registration_id):
         return

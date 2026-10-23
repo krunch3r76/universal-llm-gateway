@@ -62,7 +62,7 @@ def select_free_registry_port(
     blocked = set(exclude)
     blocked |= _pin_port_block()
     for port in port_range:
-        if port in blocked:
+        if port in blocked or port == 9222:
             continue
         if not is_listening(port):
             return port

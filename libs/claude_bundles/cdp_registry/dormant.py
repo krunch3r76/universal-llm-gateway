@@ -29,6 +29,7 @@ from .driver_locks import (
 from .lifecycle import activate_allocating_row, reserve_allocating_row
 from .models import (
     STATUS_DORMANT,
+    STATUS_TAB,
     DormantSeat,
     Registration,
     RegistryError,
@@ -130,6 +131,11 @@ def host_protection_reason(row: dict[str, Any], *, registration_id: str) -> str 
 
     if registration_has_wake_debt(registration_id):
         return "wake_debt"
+    active = _store.load_active()
+    from .tab_rows import live_tab_rows_for_host
+
+    if live_tab_rows_for_host(active, registration_id):
+        return "tab_sharers"
     return None
 
 
@@ -145,6 +151,8 @@ def dormant_candidate_reason(
     """
     if row.get("status") == STATUS_DORMANT:
         return "already_dormant"
+    if row.get("status") == STATUS_TAB:
+        return "status_tab"
     if row.get("status") == "allocating":
         return "allocating"
     protection = host_protection_reason(row, registration_id=registration_id)
@@ -204,6 +212,14 @@ def make_dormant(
             _store.append_log(
                 "dormant_refused",
                 {"registration_id": registration_id, "reason": "allocating"},
+            )
+            return None
+        from .tab_rows import live_tab_rows_for_host
+
+        if live_tab_rows_for_host(active, registration_id):
+            _store.append_log(
+                "dormant_refused",
+                {"registration_id": registration_id, "reason": "tab_sharers"},
             )
             return None
         port = row.get("port")

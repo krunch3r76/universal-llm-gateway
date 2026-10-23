@@ -88,6 +88,8 @@ def skipped_reason_for_miss(
     """Typed skip so a seat cannot treat the miss as session-gone."""
     if outcome_error == "dormant_relaunch_failed":
         return "dormant_relaunch_failed"
+    if outcome_error == "dormant_relaunch_deferred_x_headroom":
+        return "dormant_relaunch_deferred_x_headroom"
     if reason == "bound_seat":
         return "bound_host_unlistable"
     if reason == "dormant_seat":

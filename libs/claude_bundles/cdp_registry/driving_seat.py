@@ -18,6 +18,7 @@ from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from .models import (
     _HOST_LISTABLE_STATUSES,
     STATUS_DORMANT,
+    OperatorSeatDeferred,
     Registration,
     RegistryError,
     SeatContended,
@@ -29,6 +30,40 @@ _ListenFn = Callable[[int], bool]
 
 _HOP_KIND = "hop"
 _ROOT_KIND = "root"
+
+
+def launch_or_defer(branch: str, call):
+    """Run a Chrome launch; defer to tab path when X headroom is short."""
+    from claude_bundles import cdp_lane
+    from claude_bundles import cdp_registry_store as store
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    from .tab_rows import eligible_host
+
+    try:
+        return call()
+    except XDisplayCapacityError as exc:
+        active = store.load_active()
+        host = eligible_host(active, cdp_lane.cdp_display_candidates())
+        if host is None:
+            raise
+        display = str(host.get("display") or cdp_lane.cdp_display())
+        host_id = str(host["registration_id"])
+        with contextlib.suppress(Exception):
+            _events.emit(
+                _events.cdp_operator_seat_deferred(
+                    parent_thread=None,
+                    display=display,
+                    host_registration_id=host_id,
+                    branch=branch,
+                )
+            )
+        raise OperatorSeatDeferred(
+            f"operator seat deferred to tab on {host_id}",
+            display=display,
+            host_registration_id=host_id,
+            branch=branch,
+        ) from exc
 
 
 def _is_driving_kind(mission_kind: str | None) -> bool:
@@ -175,11 +210,14 @@ def ensure_driving_operator_seat(
             row = open_seats[0]
             rid = str(row["registration_id"])
             if row.get("status") == STATUS_DORMANT:
-                reg = cdp_registry.relaunch_dormant(
-                    rid,
-                    holder=holder,
-                    launch_chrome=launch_chrome,
-                    is_listening=is_listening,
+                reg = launch_or_defer(
+                    "open_seat_relaunch",
+                    lambda: cdp_registry.relaunch_dormant(
+                        rid,
+                        holder=holder,
+                        launch_chrome=launch_chrome,
+                        is_listening=is_listening,
+                    ),
                 )
                 return reg, "open_seat_relaunch"
             if url:
@@ -192,11 +230,14 @@ def ensure_driving_operator_seat(
         if dormant_unbound:
             rid = str(dormant_unbound[0]["registration_id"])
             cdp_registry.bind_driving_seat(rid)
-            reg = cdp_registry.relaunch_dormant(
-                rid,
-                holder=holder,
-                launch_chrome=launch_chrome,
-                is_listening=is_listening,
+            reg = launch_or_defer(
+                "dormant_unbound_relaunch",
+                lambda: cdp_registry.relaunch_dormant(
+                    rid,
+                    holder=holder,
+                    launch_chrome=launch_chrome,
+                    is_listening=is_listening,
+                ),
             )
             return reg, "dormant_unbound_relaunch"
 
@@ -209,15 +250,18 @@ def ensure_driving_operator_seat(
             return _row_registration(found), "live_bind"
 
         joined_len_before = len(joined) if joined is not None else 0
-        reg = cdp_registry.register_lane(
-            holder=holder,
-            purpose=purpose_norm,
-            mission_kind=kind,
-            parent_thread=parent,
-            launch=launch,
-            launch_chrome=launch_chrome,
-            is_listening=is_listening,
-            joined=joined,
+        reg = launch_or_defer(
+            "register_lane_mint",
+            lambda: cdp_registry.register_lane(
+                holder=holder,
+                purpose=purpose_norm,
+                mission_kind=kind,
+                parent_thread=parent,
+                launch=launch,
+                launch_chrome=launch_chrome,
+                is_listening=is_listening,
+                joined=joined,
+            ),
         )
         fresh = store.load_active().get(reg.registration_id) or {}
         if joined or fresh.get("status") == "allocating":

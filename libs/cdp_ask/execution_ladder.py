@@ -164,6 +164,11 @@ def _park_for_resume(registration_id: str) -> bool:
         return False
     if row.get("status") == cdp_registry.STATUS_DORMANT:
         return True
+    if (
+        row.get("status") == cdp_registry.STATUS_TAB
+        and str(row.get("chat_url") or "").strip()
+    ):
+        return True
     return cdp_registry.make_dormant(registration_id, reason="host_lost") is not None
 
 

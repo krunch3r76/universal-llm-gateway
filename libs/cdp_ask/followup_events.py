@@ -368,6 +368,74 @@ def _parse_tcp_target(raw: str) -> tuple[str, int] | None:
     return host, int(port_s)
 
 
+@event_factory
+def cdp_ask_dormant_relaunch_deferred(
+    *,
+    registration_id: str,
+    chat_url: str,
+    display: str,
+    host_registration_id: str,
+    error_code: str,
+) -> Event:
+    return Event(
+        signal="cdp_ask.dormant_relaunch_deferred",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "display": display,
+            "host_registration_id": host_registration_id,
+            "error_code": error_code,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_reopen_inflight_wait(
+    *,
+    phase: str,
+    chat_url: str,
+    registration_id: str | None = None,
+    execution_id: str | None = None,
+    waited_s: float | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"phase": phase, "chat_url": chat_url}
+    if registration_id is not None:
+        payload["registration_id"] = registration_id
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
+    if waited_s is not None:
+        payload["waited_s"] = waited_s
+    return Event(
+        signal="cdp_ask.reopen.inflight_wait",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
+def cdp_ask_reattach_borrow_unbound(
+    *,
+    registration_id: str,
+    chat_url: str,
+    holder: str,
+    reason: str,
+) -> Event:
+    return Event(
+        signal="cdp_ask.reattach.borrow_unbound",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "holder": holder,
+            "reason": reason,
+        },
+    )
+
+
 def _resolve_tcp_target() -> tuple[str, int] | None:
     """TCP target when set: ``EVENTS_INGEST_TCP`` or host+port env pair."""
     combined = os.environ.get("EVENTS_INGEST_TCP", "").strip()

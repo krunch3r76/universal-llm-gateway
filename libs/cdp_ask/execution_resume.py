@@ -51,7 +51,9 @@ logger = logging.getLogger(__name__)
 # execution TTL (7200 s) is the outer bound the reaper still enforces.
 RESUME_POLL_S = 10.0
 RESUME_WAIT_S = 3600.0
-_RESUMABLE_ROW_STATUSES = frozenset({"active", "dormant", "orphaned_alive", "retained"})
+_RESUMABLE_ROW_STATUSES = frozenset(
+    {"active", "dormant", "orphaned_alive", "retained", "tab"}
+)
 
 __all__ = ["hydrate_in_flight", "resume_execution", "spawn_resume"]
 
@@ -286,9 +288,7 @@ async def resume_execution(
     finally:
         with contextlib.suppress(Exception):
             await _teardown_opened(outcome)
-        if not store.shutting_down:
-            # Teardown mid-resume keeps the host; the next process resumes again.
-            await asyncio.to_thread(_dispose_host, record)
+        await asyncio.to_thread(_dispose_host, record, teardown=store.shutting_down)
 
 
 async def _transfer_row(
@@ -298,6 +298,10 @@ async def _transfer_row(
     from claude_bundles.cdp_registry.execution_state import set_execution_state
 
     old_rid = record.registration_id
+    old_row = _row_for(old_rid)
+    if old_row is not None and old_row.get("status") == "tab":
+        logger.warning("transfer refused for tab row %s", old_rid)
+        return
     if old_rid:
         with contextlib.suppress(Exception):
             await asyncio.to_thread(
@@ -339,10 +343,21 @@ async def _harvest_until_idle(
         await asyncio.sleep(RESUME_POLL_S)
 
 
-def _dispose_host(record: ExecutionRecord) -> None:
+def _dispose_host(record: ExecutionRecord, *, teardown: bool = False) -> None:
     """Apply the ordinary exit policy to the resumed host (kill for ask, park otherwise)."""
+    from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
+
     row = _row_for(record.registration_id)
-    if row is None or row.get("status") != "active":
+    if row is None:
+        return
+    if row.get("status") == "tab":
+        branch = "teardown" if teardown else "normal"
+        with contextlib.suppress(Exception):
+            finish_tab_on_exit(_row_to_registration(row), branch=branch)
+        return
+    if teardown:
+        return
+    if row.get("status") != "active":
         return
     if registration_has_wake_debt(str(record.registration_id)):
         return

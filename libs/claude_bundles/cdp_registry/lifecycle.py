@@ -27,6 +27,7 @@ from .hygiene import reclaim_best_effort, reclaim_profile_for_detached_row
 from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
+    STATUS_TAB,
     JoinedReentryExhausted,
     Registration,
     RegistryError,
@@ -604,6 +605,13 @@ def deregister_lane(
         if row is None:
             raise RegistryError(f"unknown registration_id: {registration_id!r}")
         status = row.get("status")
+        if status == STATUS_TAB:
+            from .tab_rows import release_tab_row
+
+            release_tab_row(registration_id)
+            _release_driver_lock(registration_id)
+            return
+        status = row.get("status")
         if status == "released":
             if kill:
                 if seat_open(row):
@@ -633,6 +641,36 @@ def deregister_lane(
 
         port = int(row["port"])
         if kill and listen(port):
+            from .tab_rows import live_tab_rows_for_host
+
+            live_tabs = live_tab_rows_for_host(active, registration_id)
+            if live_tabs:
+                _store.append_log(
+                    "deregister_kill_refused_tab_sharers",
+                    {
+                        "registration_id": registration_id,
+                        "live_tabs": len(live_tabs),
+                    },
+                )
+                with contextlib.suppress(Exception):
+                    _events.emit(
+                        _events.cdp_host_kill_refused_tab_sharers(
+                            registration_id=registration_id,
+                            site="deregister_lane",
+                            live_tabs=len(live_tabs),
+                        )
+                    )
+                if status == "released":
+                    _release_driver_lock(registration_id)
+                    return
+                row = dict(row)
+                row["status"] = "retained"
+                row["retained_at"] = time.time()
+                row["retain_reason"] = "tab_sharers"
+                active[registration_id] = row
+                _store.write_active(active)
+                _release_driver_lock(registration_id)
+                return
             registry_package()._kill_listener(port)
 
         row = dict(row)
@@ -732,6 +770,8 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
                 other_port = other_row.get("port")
                 if not isinstance(other_port, int) or other_port != port:
                     continue
+                if other_row.get("status") == STATUS_TAB:
+                    return True
                 if other_row.get("status") == "active" or seat_open(other_row):
                     return True
             return False
