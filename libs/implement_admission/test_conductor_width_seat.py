@@ -42,7 +42,7 @@ def _render_templates(seat_clause: str) -> tuple[str, str]:
 @pytest.mark.offline
 def test_default_critic_renders_in_clause_and_materialize() -> None:
     roles = resolve_roles()
-    assert roles.critic.model == "cursor/gemini-4-argon"
+    assert roles.critic.model == "cdp/opus-5.5"
     clause = g3_g5_score_ratify_clause()
     hop, attended = _render_templates(clause)
     for rendered in (
@@ -52,14 +52,14 @@ def test_default_critic_renders_in_clause_and_materialize() -> None:
         hop_invariant_g3_g5_fragment(),
         attended_g3_g5_task_sentence(),
     ):
-        assert "cursor/gemini-4-argon" in rendered
+        assert "cdp/opus-5.5" in rendered
 
 
 @pytest.mark.offline
 def test_width_seat_block_names_critic_render_module() -> None:
     block = width_seat_block()
     assert "conductor_critic_render.py" in block
-    assert "cursor/gemini-4-argon" in block
+    assert "cdp/opus-5.5" in block
 
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "cursor-plugins" / "ulg-ecosystem"
