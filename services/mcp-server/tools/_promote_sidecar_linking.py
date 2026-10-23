@@ -18,7 +18,7 @@ from ._cortex_relay import cx
 logger = get_logger(__name__)
 
 _LAST4_MASKED = re.compile(
-    r"(?:\.{2,}|…+|(?:\*|#|x|X){1,4})\s*(\d{4})\b",
+    r"(?<![A-Za-z0-9])(?:\.{2,4}|…+|(?:\*|x|X){2,4})\s*(\d{4})\b",
     re.IGNORECASE,
 )
 _LAST4_ENDING_IN = re.compile(
@@ -38,10 +38,18 @@ _GENERIC_ATX_HEADINGS = frozenset(
     }
 )
 _BOLD_SPAN = re.compile(r"\*\*([^*]+)\*\*")
+_TO_FROM_BOLD = re.compile(
+    r"(?:To|From)\s+\*\*([^*]+)\*\*",
+    re.IGNORECASE,
+)
+_TRAILING_MASK_OR_BALANCE = re.compile(
+    r"(?:\s*(?:\.{2,}|…+|(?:\*|x|X){2,})\s*\d{4}|\s*\([^)]*\)|\s+ending\s+in\s+\d{4}).*$",
+    re.IGNORECASE,
+)
 
 
 def sidecar_body_after_frontmatter(content: str) -> str:
-    """Return markdown body after a leading ``---`` frontmatter block."""
+    """Return markdown body after a leading ``---`` YAML frontmatter block, if present."""
     if not content.startswith("---\n"):
         return content.strip()
     end_marker = content.find("\n---\n", 4)
@@ -63,17 +71,39 @@ def _is_generic_heading(heading: str) -> bool:
     return False
 
 
+def _title_case_phrase(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+    letters = [c for c in stripped if c.isalpha()]
+    if letters and all(c.isupper() for c in letters):
+        return stripped.title()
+    return stripped
+
+
+def _clean_bold_entity(span: str) -> str:
+    cleaned = span.strip()
+    cleaned = cleaned.replace("®", "").replace("™", "").strip()
+    cleaned = _TRAILING_MASK_OR_BALANCE.sub("", cleaned).strip()
+    return _title_case_phrase(cleaned)
+
+
 def _counterparty_from_body(body: str) -> str | None:
+    to_from: list[tuple[int, str]] = []
+    for match in _TO_FROM_BOLD.finditer(body):
+        prefix = match.group(0)[:2].lower()
+        rank = 0 if prefix == "to" else 1
+        phrase = _clean_bold_entity(match.group(1))
+        if len(_heading_tokens(phrase)) >= 2:
+            to_from.append((rank, phrase))
+    if to_from:
+        to_from.sort(key=lambda pair: pair[0])
+        return to_from[0][1]
+
     for match in _BOLD_SPAN.finditer(body):
-        span = match.group(1).strip()
-        lowered = span.lower()
-        if "wells fargo" in lowered:
-            return "Wells Fargo"
-        if len(_heading_tokens(span)) >= 2:
-            return span
-    wf = re.search(r"\b(Wells Fargo(?:\s+[A-Za-z®]+)*)\b", body, re.IGNORECASE)
-    if wf:
-        return wf.group(1).strip()
+        phrase = _clean_bold_entity(match.group(1))
+        if len(_heading_tokens(phrase)) >= 2:
+            return phrase
     return None
 
 
@@ -82,17 +112,16 @@ def _enrich_generic_heading(
     body: str,
     fallback_stem: str | None,
 ) -> str:
-    if fallback_stem:
-        stem = fallback_stem.strip().replace("_", " ")
-        if len(_heading_tokens(stem)) >= 2:
-            return stem
     counterparty = _counterparty_from_body(body)
     if counterparty:
         if counterparty.lower() == heading.strip().lower():
             return counterparty
-        return f"{heading.strip()} - {counterparty}"
+        return f"{heading.strip()} — {counterparty}"
     if fallback_stem and fallback_stem.strip():
-        return fallback_stem.strip().replace("_", " ")
+        stem = fallback_stem.strip().replace("_", " ")
+        if len(_heading_tokens(stem)) >= 2:
+            return stem
+        return stem
     return heading.strip()
 
 
@@ -120,7 +149,7 @@ def title_from_sidecar_content(
 
 
 def extract_last4_digits(sidecar_text: str) -> set[str]:
-    """Collect masked last-4 account suffixes from sidecar body text."""
+    """Collect masked last-4 account suffixes from sidecar body text (strict mask patterns)."""
     found: set[str] = set()
     for pattern in (_LAST4_MASKED, _LAST4_ENDING_IN):
         for match in pattern.finditer(sidecar_text):
@@ -155,22 +184,29 @@ def _account_last4(entity: dict[str, Any]) -> str | None:
     return None
 
 
-def resolve_account_ids_for_last4(last4: str) -> list[str]:
-    """Return ``account:*`` entity ids matching ``last4`` via cortex list."""
+def _fetch_account_entities(limit: int = 500) -> list[dict[str, Any]]:
     result = cx(
         "POST",
         "/dispatch",
-        {"tool": "entities", "arguments": {"type": "account", "limit": 200}},
+        {"tool": "entities", "arguments": {"type": "account", "limit": limit}},
     )
     if result.get("error"):
         logger.warning(
-            "promote account link: entities list failed for last4=%s: %s",
-            last4,
+            "promote account link: entities list failed: %s",
             result.get("error"),
         )
         return []
+    items = result.get("items", [])
+    return [row for row in items if isinstance(row, dict)]
+
+
+def resolve_account_ids_for_last4(
+    last4: str,
+    account_rows: list[dict[str, Any]],
+) -> list[str]:
+    """Return ``account:*`` entity ids matching ``last4`` from a pre-fetched list."""
     matches: list[str] = []
-    for row in result.get("items", []):
+    for row in account_rows:
         if _account_last4(row) == last4:
             eid = row.get("id")
             if eid:
@@ -178,7 +214,7 @@ def resolve_account_ids_for_last4(last4: str) -> list[str]:
     return matches
 
 
-def _relationship_create(document_id: str, account_id: str, *, sidecar_uri: str) -> None:
+def _relationship_create(document_id: str, account_id: str, *, sidecar_uri: str) -> bool:
     result = cx(
         "POST",
         "/dispatch",
@@ -199,6 +235,8 @@ def _relationship_create(document_id: str, account_id: str, *, sidecar_uri: str)
             account_id,
             result.get("error"),
         )
+        return False
+    return True
 
 
 def _assert_account_observation(
@@ -206,7 +244,7 @@ def _assert_account_observation(
     *,
     sidecar_uri: str,
     claim: str,
-) -> None:
+) -> bool:
     result = cx(
         "POST",
         "/dispatch",
@@ -230,6 +268,8 @@ def _assert_account_observation(
             account_id,
             result.get("error"),
         )
+        return False
+    return True
 
 
 def _summarize_sidecar_for_claim(sidecar_text: str, *, document_name: str) -> str:
@@ -269,18 +309,19 @@ def link_promoted_document_to_accounts(
         return summary
 
     claim = _summarize_sidecar_for_claim(sidecar_text, document_name=document_name)
+    account_rows = _fetch_account_entities()
     linked: set[str] = set()
     for digits in last4s:
-        for account_id in resolve_account_ids_for_last4(digits):
+        for account_id in resolve_account_ids_for_last4(digits, account_rows):
             if account_id in linked:
                 continue
             linked.add(account_id)
-            _relationship_create(document_entity_id, account_id, sidecar_uri=sidecar_uri)
-            summary["accounts_linked"].append(account_id)
-            _assert_account_observation(
+            if _relationship_create(document_entity_id, account_id, sidecar_uri=sidecar_uri):
+                summary["accounts_linked"].append(account_id)
+            if _assert_account_observation(
                 account_id,
                 sidecar_uri=sidecar_uri,
                 claim=claim,
-            )
-            summary["accounts_asserted"].append(account_id)
+            ):
+                summary["accounts_asserted"].append(account_id)
     return summary
