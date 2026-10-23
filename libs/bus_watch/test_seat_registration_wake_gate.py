@@ -14,8 +14,10 @@ from agent_bus_store.db.endpoint_wake_ledger import (
     get_cursor,
     record_wake_result,
 )
+from hop_handoff.body import build_seat_registration_stamp
 
 from bus_watch.endpoint_wake_dispatcher import (
+    SeatRegistrationSnapshot,
     fire_due_wakes,
     holder_matches_seat_registration,
     load_latest_seat_registration_stamp,
@@ -63,6 +65,7 @@ def test_parse_seat_registration_fixture_4490_parseable() -> None:
 
 
 def test_holder_matches_chat_url_via_holder_id_not_exact_string() -> None:
+    """Holder chat URL may differ by trailing slash when holder ids match."""
     stamp = (
         "48e59d388f634e9f9dd991f02040d4d0",
         "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
@@ -106,7 +109,13 @@ def test_load_latest_seat_registration_scans_beyond_last_100_window() -> None:
 
     store = Store()
     loaded = load_latest_seat_registration_stamp(store)  # type: ignore[arg-type]
-    assert loaded == parse_seat_registration_stamp(stamp_body)
+    parsed_pair = parse_seat_registration_stamp(stamp_body)
+    assert parsed_pair is not None
+    assert loaded == SeatRegistrationSnapshot(
+        registration_id=parsed_pair[0],
+        chat_url=parsed_pair[1],
+        bind_successor_birth_id="580897db041a4f7c99cf7f56f36a5b8d",
+    )
     tip_rows = store.turns("12286", last=100)["turns"]
     assert not any(
         parse_seat_registration_stamp(str(r["body"])) is not None for r in tip_rows
@@ -116,6 +125,7 @@ def test_load_latest_seat_registration_scans_beyond_last_100_window() -> None:
 def test_post_wake_registration_refused_alerts_logs_when_create_turn_missing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Missing store.create_turn logs a warning instead of raising to the caller."""
     class Store:
         pass
 
@@ -166,7 +176,6 @@ def _maestro_wake_claimed(db: None) -> tuple[dict[str, Any], str, int]:
 def test_fire_maestro_mismatch_records_result_before_alert_failure(db: None) -> None:
     """Alert failure after store.result must not leave the wake undelivered for retry."""
     claimed, _bus_thread, _number = _maestro_wake_claimed(db)
-    wake_id = str(claimed["wake_id"])
     result_calls: list[dict[str, object]] = []
     alert_calls: list[object] = []
 
@@ -420,3 +429,267 @@ def test_fire_maestro_post_paste_mismatch_via_real_fire_cse_followup(
         body = str(call["body"])
         assert "rejected_registration_id: other-reg" in body
         assert "stamp_registration_id: 48e59d388f634e9f9dd991f02040d4d0" in body
+
+
+def _bind_stamp_body(
+    *,
+    birth_id: str = "580897db041a4f7c99cf7f56f36a5b8d",
+    registration_id: str = "48e59d388f634e9f9dd991f02040d4d0",
+    chat_url: str = "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+) -> str:
+    return build_seat_registration_stamp(
+        successor_birth_id=birth_id,
+        registration_id=registration_id,
+        execution_id="43a0e794-c7ce-46cd-af56-0401ec7c8214",
+        parent_thread="12286",
+        chat_url=chat_url,
+    )
+
+
+def _seat_side_stamp_body(*, birth_id: str) -> str:
+    return f"TYPE: SEAT_REGISTRATION\nsuccessor_birth_id: {birth_id}\n"
+
+
+def test_a_fresh_hop_delivers_with_tab_bind_stamp_only(db: None) -> None:
+    """(a) Tab-bind SEAT_REGISTRATION alone — no seat-side Act 6 turn yet."""
+    claimed, bus_thread, number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+    bind_body = _bind_stamp_body()
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {"turns": [{"turn_number": 5000, "body": bind_body}]}
+
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"id": 1}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    bodies: list[str] = []
+
+    def _capture(induction: str, root_id: str, **kwargs: object) -> dict:
+        bodies.append(induction)
+        return {
+            "ok": True,
+            "dry_run": kwargs.get("dry_run"),
+            "registration_id": holder["registration_id"],
+            "url": holder["chat_url"],
+        }
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_capture):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "delivered"
+    assert bodies
+
+
+def test_a_delivers_after_seat_act6_matching_birth_without_registration_id(
+    db: None,
+) -> None:
+    """(a) Seat Act 6 with matching successor_birth_id and no registration_id line."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    birth = "580897db041a4f7c99cf7f56f36a5b8d"
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+    bind_body = _bind_stamp_body(birth_id=birth)
+    seat_body = _seat_side_stamp_body(birth_id=birth)
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {
+                "turns": [
+                    {"turn_number": 5000, "body": bind_body},
+                    {"turn_number": 5001, "body": seat_body},
+                ]
+            }
+
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"id": 1}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch(
+        "bus_watch.cse_followup.fire_cse_followup",
+        return_value={
+            "ok": True,
+            "registration_id": holder["registration_id"],
+            "url": holder["chat_url"],
+        },
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "delivered"
+
+
+def test_b_foreign_lane_holder_registration_refused(db: None) -> None:
+    """(b) Holder on 12286 from another lane's registration — pre-paste refuse."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    bind_body = _bind_stamp_body()
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return {
+                "chat_url": "https://claude.ai/cowork/cse_OTHER",
+                "registration_id": "foreign-reg-id",
+            }
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {"turns": [{"turn_number": 5000, "body": bind_body}]}
+
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"id": 1}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch("bus_watch.cse_followup.fire_cse_followup") as fire:
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    fire.assert_not_called()
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "skipped"
+    assert result_calls[0]["reason"] == "seat_registration_mismatch"
+
+
+def test_c_birth_id_mismatch_between_bind_and_seat_refused(db: None) -> None:
+    """(c) Seat Act 6 successor_birth_id disagrees with tab-bind stamp and refuses."""
+    claimed, _bus_thread, _number = _maestro_wake_claimed(db)
+    result_calls: list[dict[str, object]] = []
+    holder = {
+        "chat_url": "https://claude.ai/cowork/cse_01AZzTx44N9V7d413GmnyBME",
+        "registration_id": "48e59d388f634e9f9dd991f02040d4d0",
+    }
+    bind_body = _bind_stamp_body(birth_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    seat_body = _seat_side_stamp_body(birth_id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def holder(self, lane_thread_id: str) -> dict:
+            return holder
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "wildcard",
+                {
+                    "id": 9,
+                    "surface": "cse",
+                    "display": "cse",
+                    "agent_id": "12286",
+                    "title": None,
+                },
+            )
+
+        def turns(self, thread: str, **params: object) -> dict:
+            return {
+                "turns": [
+                    {"turn_number": 5000, "body": bind_body},
+                    {"turn_number": 5001, "body": seat_body},
+                ]
+            }
+
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"id": 1}
+
+        def result(self, **payload: object) -> int:
+            result_calls.append(payload)
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch("bus_watch.cse_followup.fire_cse_followup") as fire:
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    fire.assert_not_called()
+    assert len(result_calls) == 1
+    assert result_calls[0]["outcome"] == "skipped"
+    assert result_calls[0]["reason"] == "seat_registration_mismatch"

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -442,23 +443,67 @@ _WAKE_REGISTRATION_REFUSED_SUBJECT = "FACT|wake-registration-refused"
 _WAKE_REGISTRATION_REFUSED_TARGETS = ("maestro", "grok-bot-gc1")
 
 
-def parse_seat_registration_stamp(body: str) -> tuple[str, str] | None:
-    """Return ``(registration_id, chat_url)`` when ``body`` is a valid SEAT_REGISTRATION stamp."""
+@dataclass(frozen=True)
+class SeatRegistrationSnapshot:
+    """Merged tab-bind stamp plus optional seat-side Act 6 turn on the hop lane."""
+
+    registration_id: str
+    chat_url: str
+    bind_successor_birth_id: str | None = None
+    seat_successor_birth_id: str | None = None
+    seat_chat_url: str | None = None
+
+
+def _seat_registration_header_fields(body: str) -> dict[str, str]:
     text = str(body or "")
     lines = text.splitlines()
     if not lines or not lines[0].strip().startswith(_SEAT_REGISTRATION_HEAD):
-        return None
-    registration_id = ""
-    chat_url = ""
+        return {}
+    fields: dict[str, str] = {}
     for line in lines[1:]:
         stripped = line.strip()
-        if stripped.startswith("registration_id:"):
-            registration_id = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("chat_url:"):
-            chat_url = stripped.split(":", 1)[1].strip()
+        for key in ("registration_id", "chat_url", "successor_birth_id"):
+            if stripped.startswith(f"{key}:"):
+                fields[key] = stripped.split(":", 1)[1].strip()
+                break
+    return fields
+
+
+def parse_seat_registration_stamp(body: str) -> tuple[str, str] | None:
+    """Return ``(registration_id, chat_url)`` for a tab-bind ``SEAT_REGISTRATION`` stamp."""
+    fields = _seat_registration_header_fields(body)
+    registration_id = fields.get("registration_id", "")
+    chat_url = fields.get("chat_url", "")
     if registration_id and chat_url:
         return registration_id, chat_url
     return None
+
+
+def _parse_bind_seat_registration(
+    body: str,
+) -> tuple[str, str, str | None] | None:
+    """Tab-bind stamp: line-start ``registration_id`` and ``chat_url`` (K63 / B1)."""
+    fields = _seat_registration_header_fields(body)
+    registration_id = fields.get("registration_id", "")
+    chat_url = fields.get("chat_url", "")
+    if registration_id and chat_url:
+        birth = fields.get("successor_birth_id") or None
+        return registration_id, chat_url, birth
+    return None
+
+
+def _parse_seat_side_registration(
+    body: str,
+) -> tuple[str, str | None] | None:
+    """Successor Act 6 stamp: ``successor_birth_id`` without ``registration_id``."""
+    fields = _seat_registration_header_fields(body)
+    if fields.get("registration_id"):
+        return None
+    birth = fields.get("successor_birth_id", "")
+    if not birth:
+        return None
+    seat_url = fields.get("chat_url") or None
+    return birth, seat_url
 
 
 _SEAT_REGISTRATION_SCAN_PAGE = 500
@@ -466,15 +511,19 @@ _SEAT_REGISTRATION_SCAN_PAGE = 500
 
 def load_latest_seat_registration_stamp(
     store: StoreClient, *, thread: str = _MAESTRO_SEAT_REGISTRATION_THREAD
-) -> tuple[str, str] | None:
-    """Load the newest parseable ``TYPE: SEAT_REGISTRATION`` on ``thread`` by ``turn_number``.
+) -> SeatRegistrationSnapshot | None:
+    """Load bind + seat-side ``SEAT_REGISTRATION`` state on ``thread`` by ``turn_number``.
 
     Walks the full thread in ascending pages (not the tip ``last=100`` window) so an
     authoritative stamp is not dropped when more than 100 newer non-registration turns
-    follow it (specimen 12286#4490 vs #4482).
+    follow it (specimen 12286#4490 vs #4482). The tab bind supplies ``registration_id``
+    and ``chat_url``; a later seat Act 6 turn may add ``successor_birth_id`` only.
     """
-    best_num = -1
-    best: tuple[str, str] | None = None
+    bind_turn = -1
+    bind: tuple[str, str, str | None] | None = None
+    seat_birth: str | None = None
+    seat_chat_url: str | None = None
+    seat_turn = -1
     after_turn = 0
     while True:
         payload = store.turns(
@@ -488,24 +537,63 @@ def load_latest_seat_registration_stamp(
                 turn_number = int(row.get("turn_number") or 0)
             except (TypeError, ValueError):
                 continue
-            parsed = parse_seat_registration_stamp(str(row.get("body") or ""))
-            if parsed is None or turn_number <= best_num:
+            body = str(row.get("body") or "")
+            bind_parsed = _parse_bind_seat_registration(body)
+            if bind_parsed is not None and turn_number > bind_turn:
+                bind_turn = turn_number
+                bind = bind_parsed
+                seat_birth = None
+                seat_chat_url = None
+                seat_turn = -1
                 continue
-            best_num = turn_number
-            best = parsed
+            seat_parsed = _parse_seat_side_registration(body)
+            if (
+                bind is not None
+                and seat_parsed is not None
+                and turn_number > bind_turn
+                and turn_number > seat_turn
+            ):
+                seat_turn = turn_number
+                seat_birth, seat_chat_url = seat_parsed
         after_turn = int(turns[-1]["turn_number"])
         if not payload.get("truncated"):
             break
-    return best
+    if bind is None:
+        return None
+    reg, url, bind_birth = bind
+    return SeatRegistrationSnapshot(
+        registration_id=reg,
+        chat_url=url,
+        bind_successor_birth_id=bind_birth,
+        seat_successor_birth_id=seat_birth,
+        seat_chat_url=seat_chat_url,
+    )
 
 
 def holder_matches_seat_registration(
-    holder: dict[str, Any], stamp: tuple[str, str] | None
+    holder: dict[str, Any], stamp: SeatRegistrationSnapshot | tuple[str, str] | None
 ) -> bool:
-    """True when holder registration and chat URL agree with the stamp pair."""
+    """True when holder agrees with the bind stamp and seat birth ids do not conflict."""
     if stamp is None:
         return False
-    stamp_reg, stamp_url = stamp
+    if isinstance(stamp, tuple):
+        snapshot = SeatRegistrationSnapshot(
+            registration_id=stamp[0],
+            chat_url=stamp[1],
+        )
+    else:
+        snapshot = stamp
+    bind_birth = snapshot.bind_successor_birth_id
+    seat_birth = snapshot.seat_successor_birth_id
+    if bind_birth and seat_birth and bind_birth != seat_birth:
+        return False
+    if snapshot.seat_chat_url:
+        seat_hid = holder_id_from_chat_url(snapshot.seat_chat_url)
+        bind_hid = holder_id_from_chat_url(snapshot.chat_url)
+        if seat_hid and bind_hid and seat_hid != bind_hid:
+            return False
+    stamp_reg = snapshot.registration_id
+    stamp_url = snapshot.chat_url
     holder_reg = str(holder.get("registration_id") or "").strip()
     if holder_reg != stamp_reg:
         return False
@@ -780,11 +868,12 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
             return claimed
-        maestro_stamp: tuple[str, str] | None = None
+        maestro_stamp: SeatRegistrationSnapshot | None = None
         if agent == "maestro":
             maestro_stamp = load_latest_seat_registration_stamp(store)
             if not holder_matches_seat_registration(holder, maestro_stamp):
-                stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+                stamp_reg = maestro_stamp.registration_id if maestro_stamp else ""
+                stamp_url = maestro_stamp.chat_url if maestro_stamp else ""
                 store.result(
                     wake_id=wake_id,
                     outcome="skipped",
@@ -802,7 +891,8 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 )
                 return claimed
         state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
-        stamp_reg, stamp_url = maestro_stamp if maestro_stamp else ("", "")
+        stamp_reg = maestro_stamp.registration_id if maestro_stamp else ""
+        stamp_url = maestro_stamp.chat_url if maestro_stamp else ""
         post_paste_mismatch = (
             agent == "maestro"
             and state == "delivered"
