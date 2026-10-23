@@ -242,7 +242,11 @@ def test_first_acts_are_numbered_in_order() -> None:
     assert block.index("1. Use") < block.index("2.")
     assert block.index("2.") < block.index("8. Act")
     assert "## Induction (K44)" in out
-    assert "Ask follow-ups until you're oriented" in out
+    assert (
+        "induction open: greet me, volunteer what the handoff underweights, then answer my "
+        "questions and follow-ups citing a file or turn. We continue until we both agree I am "
+        "strongly oriented; then I send the stand-down and you detach."
+    ) in out
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:
