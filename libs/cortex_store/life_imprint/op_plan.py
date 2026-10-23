@@ -73,6 +73,17 @@ def _surface_form_matches(conn: sqlite3.Connection, mention: str) -> list[dict[s
 
 
 def _search_matches(conn: sqlite3.Connection, mention: str) -> list[dict[str, str]]:
+    from ..entity_discover import search_entities_by_query
+
+    hits = search_entities_by_query(conn, mention, limit=10)
+    if hits:
+        return [
+            {
+                "entity_id": str(item["entity_id"]),
+                "name": str(item.get("entity_name") or ""),
+            }
+            for item in hits
+        ]
     result = list_entities_impl(conn, query=mention, limit=10)
     return [
         {"entity_id": str(item["id"]), "name": str(item.get("name") or "")}

@@ -123,6 +123,8 @@ def _resolve_bare_q(conn: sqlite3.Connection, q: str) -> ResolveOutcome:
 
 
 def _search_seed_entity_ids(conn: sqlite3.Connection, q: str) -> list[str]:
+    from .entity_discover import search_entities_by_query
+
     result = _search_assertions_impl(
         q=q,
         superseded=False,
@@ -138,6 +140,16 @@ def _search_seed_entity_ids(conn: sqlite3.Connection, q: str) -> list[str]:
         if not eid:
             continue
         eid_str = str(eid)
+        if eid_str in seen:
+            continue
+        seen.add(eid_str)
+        ids.append(eid_str)
+        if len(ids) >= _SEARCH_SEED_CAP:
+            break
+    if ids:
+        return ids
+    for hit in search_entities_by_query(conn, q, limit=_SEARCH_SEED_CAP):
+        eid_str = str(hit["entity_id"])
         if eid_str in seen:
             continue
         seen.add(eid_str)

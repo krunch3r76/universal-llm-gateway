@@ -342,3 +342,144 @@ def test_promote_partial_sidecar_explicit_path(
     assert result["canonical"] is False
     bundle = tmp_path / result["bundle_path"].rstrip("/")
     assert (bundle / "bill.pdf.pages-2-4.extracted.md").is_file()
+
+
+def test_promote_uses_sidecar_title_not_file_stem(
+    tmp_path: Path,
+    cortex_mock: dict[str, Any],
+) -> None:
+    rel, _sha = _stage_dropbox(tmp_path)
+    sidecar = tmp_path / rel.replace(".pdf", ".pdf.extracted.md")
+    fm = _frontmatter(rel, _source_sha())
+    _write_sidecar(
+        sidecar,
+        fm,
+        body="# Confirmation - Wells Fargo\n\nPayment sent.\n",
+    )
+    result = promote_mod._promote(
+        path=rel,
+        entity_id="document:confirmation-wells-fargo",
+        entity_description="WF confirmation",
+        entity_attributes=None,
+        sidecar="auto",
+    )
+    created = cortex_mock["entities"]["document:confirmation-wells-fargo"]
+    assert created["name"] == "Confirmation - Wells Fargo"
+    assert result["entity_name"] == "Confirmation - Wells Fargo"
+
+
+def test_promote_links_accounts_by_last4_no_match_still_succeeds(
+    tmp_path: Path,
+    cortex_mock: dict[str, Any],
+) -> None:
+    rel, _sha = _stage_dropbox(tmp_path)
+    sidecar = tmp_path / rel.replace(".pdf", ".pdf.extracted.md")
+    fm = _frontmatter(rel, _source_sha())
+    _write_sidecar(
+        sidecar,
+        fm,
+        body="# Stmt\n\nCard ending in 9999 balance $1.\n",
+    )
+    result = promote_mod._promote(
+        path=rel,
+        entity_id="document:no-account-match",
+        entity_description="desc",
+        entity_attributes=None,
+        sidecar="auto",
+    )
+    assert result["entity_created"] is True
+    assert result["account_link"]["accounts_linked"] == []
+
+
+def test_promote_wells_fargo_falsifier_links_account_and_names_from_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falsifier fixture: sidecar ...9062 + account:wells-fargo-credit_card-9062."""
+    state: dict[str, Any] = {
+        "entities": {
+            "account:wells-fargo-credit_card-9062": {
+                "id": "account:wells-fargo-credit_card-9062",
+                "type": "account",
+                "attributes": {"last4": "9062"},
+            }
+        },
+        "relationships": [],
+        "assertions": [],
+    }
+
+    def cx(
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        assert method == "POST" and path == "/dispatch"
+        tool = body["tool"]
+        args = body["arguments"]
+        if tool == "entity_get":
+            eid = args["entity_id"]
+            if eid not in state["entities"]:
+                return {"error": "not found", "status_code": 404}
+            return copy.deepcopy(state["entities"][eid])
+        if tool == "entities":
+            type_filter = args.get("type")
+            rows = [
+                {"id": eid, **row}
+                for eid, row in state["entities"].items()
+                if type_filter is None or row.get("type") == type_filter
+            ]
+            return {"items": rows}
+        if tool == "entity_create":
+            eid = args["id"]
+            if eid in state["entities"]:
+                return {"error": "conflict", "status_code": 409}
+            state["entities"][eid] = {**args, "type": "document"}
+            return {"id": eid}
+        if tool == "relationship_create":
+            state["relationships"].append(args)
+            return {"created": True}
+        if tool == "assert":
+            state["assertions"].append(args)
+            return {"id": len(state["assertions"])}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(evidence_entity_ops, "cx", cx)
+    monkeypatch.setattr(
+        "tools._promote_sidecar_linking.cx",
+        cx,
+    )
+
+    rel = "dropbox/cortex_finance/2026-10-21/Confirmation - Wells Fargo.pdf"
+    payload = _source_bytes()
+    sha = _source_sha(payload)
+    abs_path = tmp_path / rel
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_bytes(payload)
+    sidecar = abs_path.parent / f"{abs_path.name}{SIDECAR_SUFFIX}"
+    fm = _frontmatter(rel, sha)
+    body = (
+        "# Confirmation - Wells Fargo\n\n"
+        "Autograph Visa ...9062 outstanding $9,543.64\n"
+        "confirmation IB03QZRW3Z amount $252.00\n"
+    )
+    _write_sidecar(sidecar, fm, body=body)
+
+    result = promote_mod._promote(
+        path=rel,
+        entity_id="document:confirmation-wells-fargo",
+        entity_description="Wells Fargo payment confirmation",
+        entity_attributes=None,
+        sidecar="auto",
+    )
+    assert result["entity_name"] == "Confirmation - Wells Fargo"
+    assert result["account_link"]["accounts_linked"] == [
+        "account:wells-fargo-credit_card-9062"
+    ]
+    rels = state["relationships"]
+    assert rels
+    assert rels[0]["source_id"] == "document:confirmation-wells-fargo"
+    assert rels[0]["target_id"] == "account:wells-fargo-credit_card-9062"
+    assert state["assertions"]
+    assert state["assertions"][0]["entity_id"] == "account:wells-fargo-credit_card-9062"
+    assert result["source_uri"] in state["assertions"][0]["evidence_uris"]
