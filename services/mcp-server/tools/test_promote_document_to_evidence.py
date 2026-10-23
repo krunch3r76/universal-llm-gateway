@@ -212,6 +212,14 @@ def cortex_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                 }
             state["entities"][eid] = {**args, "type": "document"}
             return {"id": eid, "created": True}
+        if tool == "entity_update":
+            eid = args["entity_id"]
+            if eid not in state["entities"]:
+                return {"error": "not found", "status_code": 404}
+            row = state["entities"][eid]
+            row.update({k: v for k, v in args.items() if k != "entity_id"})
+            state["update_calls"] = state.get("update_calls", 0) + 1
+            return {"id": eid, "updated": True}
         raise AssertionError(f"unexpected tool {tool!r}")
 
     monkeypatch.setattr(evidence_entity_ops, "cx", cx)
@@ -483,3 +491,44 @@ def test_promote_wells_fargo_falsifier_links_account_and_names_from_sidecar(
     assert state["assertions"]
     assert state["assertions"][0]["entity_id"] == "account:wells-fargo-credit_card-9062"
     assert result["source_uri"] in state["assertions"][0]["evidence_uris"]
+
+
+def test_repromote_renames_existing_document_from_generic_sidecar_heading(
+    tmp_path: Path,
+    cortex_mock: dict[str, Any],
+) -> None:
+    rel = "dropbox/cortex_finance/2026-10-21/Confirmation - Wells Fargo.pdf"
+    payload = _source_bytes()
+    sha = _source_sha(payload)
+    abs_path = tmp_path / rel
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_bytes(payload)
+    sidecar = abs_path.parent / f"{abs_path.name}{SIDECAR_SUFFIX}"
+    fm = _frontmatter(rel, sha)
+    sidecar_body = (
+        "# Confirmation\n\n"
+        "To **WELLS FARGO AUTOGRAPH VISA CARD®** ending in 9062 "
+        "(Outstanding balance = $9,543.64)\n"
+    )
+    _write_sidecar(sidecar, fm, body=sidecar_body)
+
+    cortex_mock["entities"]["document:confirmation-wells-fargo"] = {
+        "id": "document:confirmation-wells-fargo",
+        "type": "document",
+        "name": "confirmation wells fargo",
+        "content_hash": sha,
+    }
+
+    result = promote_mod._promote(
+        path=rel,
+        entity_id="document:confirmation-wells-fargo",
+        entity_description="Wells Fargo payment confirmation",
+        entity_attributes=None,
+        sidecar="auto",
+    )
+
+    assert cortex_mock.get("update_calls") == 1
+    updated = cortex_mock["entities"]["document:confirmation-wells-fargo"]
+    assert updated["name"] == "Confirmation - Wells Fargo"
+    assert result["entity_name"] == "Confirmation - Wells Fargo"
+    assert result["entity_created"] is False
