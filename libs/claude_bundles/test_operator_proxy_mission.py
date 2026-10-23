@@ -407,16 +407,19 @@ def test_mission_skill_slugs_include_lane_act_gates() -> None:
 
 
 def test_ulg_code_primary_ui_titles_match_tool_count() -> None:
-    """Playwright allowlist stays 1:1 with the MCP-name mirror constant."""
+    """MCP-name mirror stays aligned with Customize UI titles."""
     import sys
 
     cortex_scripts = Path(__file__).resolve().parents[2] / "scripts" / "cortex"
     if str(cortex_scripts) not in sys.path:
         sys.path.insert(0, str(cortex_scripts))
-    from claude_code_tool_permissions import CODE_OPS_ALLOW
+    from claude_code_tool_permissions import CODE_BLANKET_GROUPS, resolve_policy
 
     assert len(ULG_CODE_PRIMARY_TOOLS) == len(ULG_CODE_PRIMARY_UI_TITLES) == 13
-    assert CODE_OPS_ALLOW == ULG_CODE_PRIMARY_UI_TITLES
+    assert resolve_policy("https://mcp.k-1.me/mcp/code", "ulg-code", None) == (
+        "code-blanket"
+    )
+    assert CODE_BLANKET_GROUPS == ("Read-only tools", "Other tools")
     assert "panel_dispatch" not in ULG_CODE_PRIMARY_TOOLS
     assert LIFE_SURFACE_FORBIDDEN_TOOLS <= {"panel_dispatch", "claudeburst"}
 

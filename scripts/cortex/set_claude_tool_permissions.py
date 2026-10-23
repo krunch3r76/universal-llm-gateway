@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Repair claude.ai Customize radios for the toys and ulg-code connectors.
+"""Repair claude.ai Customize blanket radios for toys and ulg-code connectors.
 
 Callers are ``claude-ai-sync-jupiter set-tool-permissions`` and
-``refresh-connector``. ``toys`` on ``/mcp/life`` gets the Other-tools blanket
-set to Always allow. ``ulg-code`` on ``/mcp/code`` gets the ops allowlist in
-``claude_code_tool_permissions``: Manage Services, Observability, and Team
-Dispatch stay Always allow, and every other tool radio is Blocked. The script
-reloads and checks the saved control before it prints a status.
+``refresh-connector``. ``toys`` on ``/mcp/life`` sets **Other tools** → Always
+allow. ``ulg-code`` on ``/mcp/code`` sets **Read-only tools** and **Other
+tools** → Always allow. Reload verifies persistence before printing status.
 """
 
 from __future__ import annotations
@@ -23,15 +21,16 @@ if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
-from claude_code_tool_permissions import apply_code_ops, resolve_policy  # noqa: E402
+from claude_code_tool_permissions import (  # noqa: E402
+    apply_code_blanket,
+    apply_life_blanket,
+    resolve_policy,
+)
 from claude_settings_page import pick_claude_settings_page  # noqa: E402
 from playwright.async_api import Page  # noqa: E402
 
 DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/life"
 DEFAULT_CONNECTOR_NAME = "toys"
-PERMISSION_GROUP = "Other tools"
-ALLOWED_POLICY = "Always allow"
-NO_TOOLS_MESSAGE = "This connector has no tools available."
 
 
 def _host(mcp_url: str) -> str:
@@ -125,8 +124,6 @@ async def _row_matching(page: Page, *needles: str):
         row = page.locator("tr").filter(has_text=re.compile(re.escape(needle), re.I))
         if await row.count():
             return row.first
-        # The Yours list is not a table. The connector name is its own element,
-        # and the MCP URL is not shown until the detail opens.
         if needle.startswith("http"):
             continue
         label = page.get_by_text(needle, exact=True)
@@ -143,7 +140,6 @@ async def _open_connector_detail(
     body = await page.locator("body").inner_text()
     if connector_name in body and mcp_url in body:
         return page
-    # Discover hides custom connectors. Yours is the list that names them.
     if connector_name not in body:
         yours = page.get_by_text("Yours", exact=True)
         if await yours.count() and await yours.first.is_visible():
@@ -165,57 +161,6 @@ async def _open_connector_detail(
     return page
 
 
-async def _set_permission_group(page: Page) -> str:
-    """Set the fixed Other tools group and return ``changed`` or ``already_set``."""
-    group_heading = page.get_by_text(PERMISSION_GROUP, exact=True)
-    if await group_heading.count() != 1:
-        raise RuntimeError(
-            f"Expected exactly one {PERMISSION_GROUP!r} permission group"
-        )
-
-    group_row = group_heading.locator("xpath=../..")
-    policy_button = group_row.get_by_role(
-        "button", name="Blanket permission for group"
-    )
-    if await policy_button.count() != 1:
-        raise RuntimeError("Other tools blanket permission control not found")
-
-    current = (await policy_button.inner_text()).strip()
-    if ALLOWED_POLICY in current:
-        return "already_set"
-
-    await policy_button.click(force=True)
-    await page.wait_for_timeout(300)
-    menu = page.locator('[role="menu"][data-open]')
-    if await menu.count() != 1:
-        raise RuntimeError("Other tools permission menu did not open")
-
-    allowed = menu.get_by_role("menuitemradio").filter(has_text=ALLOWED_POLICY)
-    if await allowed.count() != 1:
-        raise RuntimeError("Always allow option is not uniquely identifiable")
-    await allowed.first.click(force=True)
-    await page.wait_for_timeout(700)
-    return "changed"
-
-
-async def _verify_persisted(page: Page) -> None:
-    """Reload the page and verify the permission and tools-list indicators."""
-    await page.reload(wait_until="domcontentloaded")
-    await page.get_by_text(PERMISSION_GROUP, exact=True).wait_for(
-        state="visible"
-    )
-    group_heading = page.get_by_text(PERMISSION_GROUP, exact=True)
-    group_row = group_heading.locator("xpath=../..")
-    policy_button = group_row.get_by_role(
-        "button", name="Blanket permission for group"
-    )
-    current = (await policy_button.inner_text()).strip()
-    if ALLOWED_POLICY not in current:
-        raise RuntimeError(f"Permission did not persist: {current!r}")
-    if NO_TOOLS_MESSAGE in await page.locator("body").inner_text():
-        raise RuntimeError("Claude still reports that the connector has no tools")
-
-
 async def set_tool_permissions(
     *,
     cdp_url: str,
@@ -224,13 +169,7 @@ async def set_tool_permissions(
     timeout_s: float,
     policy: str | None = None,
 ) -> str:
-    """Apply the connector tool policy and return changed or already_set.
-
-    ``policy`` None selects from the URL and connector name. Life repair
-    checks the Other-tools blanket and returns one status word. Code-ops
-    repair returns a second line, ``code-ops allow=<n> blocked=<n>``. The
-    Jupiter page is reloaded on the connector detail before the status returns.
-    """
+    """Apply the connector blanket policy and return status plus group summary."""
     playwright, _browser, _context, page = await connect_cdp(cdp_url)
     timeout_ms = int(timeout_s * 1000)
     page.set_default_timeout(timeout_ms)
@@ -245,21 +184,15 @@ async def set_tool_permissions(
             page = await _open_connector_detail(page, connector_name, mcp_url)
             return page
 
-        if selected == "code-ops":
-            return await apply_code_ops(page, reopen=reopen)
-        result = await _set_permission_group(page)
-        await _verify_persisted(page)
-        return result
+        if selected == "code-blanket":
+            return await apply_code_blanket(page, reopen=reopen)
+        return await apply_life_blanket(page, reopen=reopen)
     finally:
         await playwright.stop()
 
 
 def main() -> int:
-    """Parse CLI arguments, run the permission repair, and print its status.
-
-    Stdout is the status word the wrapper quotes. Code-ops adds a second line
-    with the allow and blocked counts after the reload check succeeds.
-    """
+    """Parse CLI arguments, run the permission repair, and print its status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cdp-url",
@@ -270,10 +203,10 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument(
         "--policy",
-        choices=("life-blanket", "code-ops"),
+        choices=("life-blanket", "code-blanket", "code-ops"),
         default=None,
-        help="Override URL-based policy. life-blanket is toys; "
-        "code-ops is the ulg-code allowlist.",
+        help="Override URL-based policy. code-ops is a legacy alias for "
+        "code-blanket.",
     )
     args = parser.parse_args()
 
