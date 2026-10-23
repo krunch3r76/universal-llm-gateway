@@ -262,13 +262,40 @@ _MAESTRO_OBS_WAKE_PROMPT = (
     "Action: read agent_bus unread for this house and continue the arc.\n"
 )
 
+# Castle operator-proxy lane — same parent_thread as cse_session(op=resolve_attended).
+_MAESTRO_OPERATOR_PROXY_PARENT_THREAD = "12286"
+
+
+def _attended_binding_from_resolve(resolved: dict[str, Any]) -> dict[str, str | None] | None:
+    """Live paste target from relay_attended / resolve_attended, or None to retry."""
+    if resolved.get("code"):
+        return None
+    current = resolved.get("current")
+    if not isinstance(current, dict):
+        return None
+    chat_url = str(current.get("chat_url") or "").strip() or None
+    registration_id = str(current.get("registration_id") or "").strip() or None
+    execution_id = str(current.get("execution_id") or "").strip() or None
+    if not any((chat_url, registration_id, execution_id)):
+        return None
+    return {
+        "chat_url": chat_url,
+        "registration_id": registration_id,
+        "execution_id": execution_id,
+    }
+
 
 def dispatch_cse_holder_followup(*, holder: dict[str, Any]) -> bool:
     """One mechanical followup for a driving/dormant CSE holder (producer 1/2)."""
+    _ = holder  # holder row may be superseded; wake target comes from resolve_attended.
+    resolved = relay_attended(parent_thread=_MAESTRO_OPERATOR_PROXY_PARENT_THREAD)
+    binding = _attended_binding_from_resolve(resolved)
+    if binding is None:
+        return False
     result = relay_followup(
-        chat_url=str(holder.get("chat_url") or "") or None,
-        registration_id=str(holder.get("registration_id") or "") or None,
-        execution_id=str(holder.get("execution_id") or "") or None,
+        chat_url=binding["chat_url"],
+        registration_id=binding["registration_id"],
+        execution_id=binding["execution_id"],
         cdp_url=None,
         prompt_text=_MAESTRO_OBS_WAKE_PROMPT,
         prompt_uri=None,
@@ -278,7 +305,7 @@ def dispatch_cse_holder_followup(*, holder: dict[str, Any]) -> bool:
         reattach=True,
         retain_lane=True,
         min_receipt="dom_paste",
-        parent_thread=str(holder.get("lane_thread_id") or "") or None,
+        parent_thread=_MAESTRO_OPERATOR_PROXY_PARENT_THREAD,
         envelope="free",
     )
     return bool(result.get("ok")) or result.get("send_verified") is True

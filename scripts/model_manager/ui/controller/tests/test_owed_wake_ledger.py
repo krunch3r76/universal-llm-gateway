@@ -805,3 +805,125 @@ def test_failure_clock_sets_backoff_and_holds_at_fifth(
     assert final.attempt_count == 5
     assert final.dispatched_at is not None
     assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_stale_unread_milestone_16min_one_row_one_followup_resolve_at_wake(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """16-minute unread milestone: one row, one followup; resolve_attended at wake."""
+    import tools.cse_session_warm as warm
+
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    stale = _stale_turn(turn_number=5, age_minutes=16)
+    monkeypatch.setattr(owed_wake_mod, "_lanes_for_stale_projection", lambda: ["18460"])
+    monkeypatch.setattr(owed_wake_mod, "_fetch_turns_for_lane", lambda _lane: [stale])
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        lambda _lane: "holder-maestro",
+    )
+    assert project_stale_unread_milestone_owed_wakes(store) == 1
+    assert len(store.list_open_undispatched_owed_wakes()) == 1
+
+    stored_url = "https://claude.ai/cowork/cse_stored"
+    live_url = "https://claude.ai/cowork/cse_live"
+    resolve_threads: list[str | None] = []
+    followup_calls: list[dict] = []
+
+    def _relay_attended(*, parent_thread=None, timeout_s=30.0):
+        resolve_threads.append(parent_thread)
+        return {
+            "state": "current",
+            "current": {"chat_url": live_url, "registration_id": "reg-live"},
+        }
+
+    def _relay_followup(**kwargs):
+        followup_calls.append(dict(kwargs))
+        return {"ok": True, "send_verified": True}
+
+    monkeypatch.setattr(warm, "relay_attended", _relay_attended)
+    monkeypatch.setattr(warm, "relay_followup", _relay_followup)
+
+    holder = {
+        "holder_id": "holder-maestro",
+        "seat_state": "driving",
+        "chat_url": stored_url,
+        "registration_id": "reg-stored",
+        "lane_thread_id": "18460",
+    }
+    deps = _deps(holder=holder)
+    deps.endpoint_wake = (  # type: ignore[method-assign]
+        lambda *, holder_id, lane_thread_id, wake_kind, context: warm.dispatch_cse_holder_followup(
+            holder=context["holder"]
+        )
+    )
+
+    assert flush_pending_owed_wakes(store, deps=deps) == 1
+    assert resolve_threads == ["12286"]
+    assert len(followup_calls) == 1
+    assert followup_calls[0]["chat_url"] == live_url
+    assert followup_calls[0]["chat_url"] != stored_url
+    assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_read_milestone_and_young_unread_no_row_no_followup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """read_at milestone and 10-minute unread produce no row and no followup."""
+    import tools.cse_session_warm as warm
+
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    read_turn = _stale_turn(turn_number=5, age_minutes=16)
+    read_turn["read_at"] = datetime.now(UTC).isoformat()
+    young = _stale_turn(turn_number=6, age_minutes=10)
+    monkeypatch.setattr(owed_wake_mod, "_lanes_for_stale_projection", lambda: ["18460"])
+    monkeypatch.setattr(
+        owed_wake_mod, "_fetch_turns_for_lane", lambda _lane: [read_turn, young]
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        lambda _lane: "holder-maestro",
+    )
+    followup = MagicMock()
+    monkeypatch.setattr(warm, "relay_followup", followup)
+    assert project_stale_unread_milestone_owed_wakes(store) == 0
+    assert store.list_open_undispatched_owed_wakes() == []
+    assert flush_pending_owed_wakes(store, deps=_deps()) == 0
+    followup.assert_not_called()
+
+
+def test_two_allowlisted_milestones_one_burst_one_followup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two allowlisted milestones in one open burst coalesce to one followup."""
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    endpoint_calls: list[dict] = []
+    deps = _deps()
+    deps.endpoint_wake = lambda **kw: endpoint_calls.append(kw) or True  # type: ignore[method-assign]
+    first = maybe_producer1_milestone(
+        store,
+        subject="MILESTONE|a|one",
+        to_agent="maestro",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=1,
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        deps=deps,
+    )
+    second = maybe_producer1_milestone(
+        store,
+        subject="MILESTONE|a|two",
+        to_agent="maestro",
+        from_agent="cursor",
+        thread_id="18460",
+        turn_number=2,
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        deps=deps,
+    )
+    assert first["created"] is True and first["dispatched"] is True
+    assert second["created"] is False and second["dispatched"] is False
+    assert len(endpoint_calls) == 1

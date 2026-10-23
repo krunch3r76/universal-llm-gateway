@@ -241,20 +241,58 @@ def test_dispatch_cse_holder_followup_relays_mechanical_prompt(
 ) -> None:
     import tools.cse_session_warm as warm
 
+    stored_url = "https://claude.ai/cowork/cse_superseded"
+    live_url = "https://claude.ai/cowork/cse_live"
+    resolve_calls: list[str | None] = []
     captured: dict = {}
+
+    def _relay_attended(*, parent_thread=None, timeout_s=30.0):
+        resolve_calls.append(parent_thread)
+        return {
+            "state": "current",
+            "current": {
+                "chat_url": live_url,
+                "registration_id": "reg-live",
+            },
+        }
 
     def _relay_followup(**kwargs):
         captured.update(kwargs)
         return {"ok": True, "send_verified": True}
 
+    monkeypatch.setattr(warm, "relay_attended", _relay_attended)
     monkeypatch.setattr(warm, "relay_followup", _relay_followup)
     ok = warm.dispatch_cse_holder_followup(
         holder={
-            "chat_url": "https://claude.ai/c/x",
-            "registration_id": "reg-1",
+            "chat_url": stored_url,
+            "registration_id": "reg-stale",
             "lane_thread_id": "18460",
         }
     )
     assert ok is True
+    assert resolve_calls == ["12286"]
+    assert captured["chat_url"] == live_url
+    assert captured["chat_url"] != stored_url
+    assert captured["registration_id"] == "reg-live"
+    assert captured["parent_thread"] == "12286"
     assert captured["purpose"] == "owed_wake"
     assert "owed_wake" in captured["prompt_text"]
+
+
+def test_dispatch_cse_holder_followup_no_attended_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.cse_session_warm as warm
+
+    monkeypatch.setattr(
+        warm,
+        "relay_attended",
+        lambda **_: {"code": "no_attended_cse", "retryable": True},
+    )
+    followup = MagicMock()
+    monkeypatch.setattr(warm, "relay_followup", followup)
+    ok = warm.dispatch_cse_holder_followup(
+        holder={"chat_url": "https://claude.ai/c/x", "registration_id": "reg-1"}
+    )
+    assert ok is False
+    followup.assert_not_called()
