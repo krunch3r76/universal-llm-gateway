@@ -20,6 +20,7 @@ from background_supervisor import supervise
 from bus_watch.endpoint_wake_dispatcher import (
     CSE_WAKE_SUBJECT_HEADS,
     GROK_WAKE_SUBJECT_HEADS,
+    _effective_to_agent,
     classify_cse,
     classify_display,
     fire_due_wakes,
@@ -27,6 +28,7 @@ from bus_watch.endpoint_wake_dispatcher import (
     scan_once,
     subject_allowed,
 )
+from bus_watch.endpoint_wake_transport import StoreClient
 
 
 @pytest.fixture()
@@ -531,6 +533,291 @@ def test_cdp_reply_to_dispatch_on_child_lane_wakes_cursor() -> None:
             "to_agent": "dispatch",
             "from_agent": "web-anthropic",
             "subject": "cdp reply — 8fec4c00",
+        },
+        cse=False,
+    )
+
+
+def test_subscription_depth2_chain_19521_19510_19263() -> None:
+    lane_map = {
+        "19521": "19510",
+        "19510": "19263",
+        "19263": None,
+    }
+    subs = [
+        {"id": 1, "state": "subscribed", "thread_scope": "19263"},
+        {"id": 2, "state": "subscribed", "thread_scope": "*"},
+    ]
+    lane_gets: list[str] = []
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> object:
+            if path == "/endpoint-subscriptions":
+                return {"subscriptions": subs}
+            if path.startswith("/threads/") and path.endswith("/lane-current"):
+                tid = path.split("/")[2]
+                lane_gets.append(path)
+                parent = lane_map.get(tid)
+                if parent is None:
+                    return {"parent_thread": None}
+                return {"parent_thread": parent}
+            raise AssertionError(f"unexpected _bus {method} {path}")
+
+    result = StubStore().subscription("cursor", "19521")
+    assert result is not None
+    kind, row = result
+    assert kind == "parent"
+    assert row["id"] == 1
+    assert lane_gets == [
+        "/threads/19521/lane-current",
+        "/threads/19510/lane-current",
+        "/threads/19263/lane-current",
+    ]
+
+
+def test_subscription_rank_and_depth3_cap() -> None:
+    lane_map = {
+        "19521": "19510",
+        "19510": "19263",
+        "19263": "90001",
+        "90001": "90002",
+        "90002": None,
+    }
+    lane_gets: list[str] = []
+
+    def make_store(extra_subs: list[dict]) -> StoreClient:
+        class StubStore(StoreClient):
+            def _bus(self, method: str, path: str, **kwargs: object) -> object:
+                if path == "/endpoint-subscriptions":
+                    return {"subscriptions": extra_subs}
+                if path.startswith("/threads/") and path.endswith("/lane-current"):
+                    tid = path.split("/")[2]
+                    lane_gets.append(path)
+                    parent = lane_map.get(tid)
+                    if parent is None:
+                        return {"parent_thread": None}
+                    return {"parent_thread": parent}
+                raise AssertionError(f"unexpected _bus {method} {path}")
+
+        return StubStore()
+
+    lane_gets.clear()
+    r = make_store(
+        [
+            {"id": 10, "state": "subscribed", "thread_scope": "90002"},
+            {"id": 11, "state": "subscribed", "thread_scope": "*"},
+        ]
+    ).subscription("cursor", "19521")
+    assert r is not None
+    assert r[0] == "wildcard"
+    assert lane_gets == [
+        "/threads/19521/lane-current",
+        "/threads/19510/lane-current",
+        "/threads/19263/lane-current",
+    ]
+
+    lane_gets.clear()
+    r = make_store(
+        [
+            {"id": 20, "state": "subscribed", "thread_scope": "90001"},
+            {"id": 21, "state": "subscribed", "thread_scope": "*"},
+        ]
+    ).subscription("cursor", "19521")
+    assert r is not None
+    assert r[0] == "parent"
+    assert r[1]["thread_scope"] == "90001"
+
+    lane_gets.clear()
+    r = make_store(
+        [
+            {"id": 30, "state": "subscribed", "thread_scope": "19510"},
+            {"id": 31, "state": "subscribed", "thread_scope": "19263"},
+            {"id": 32, "state": "subscribed", "thread_scope": "90001"},
+            {"id": 33, "state": "subscribed", "thread_scope": "*"},
+        ]
+    ).subscription("cursor", "19521")
+    assert r is not None
+    assert r[0] == "parent"
+    assert r[1]["thread_scope"] == "19510"
+
+    lane_gets.clear()
+    r = make_store(
+        [
+            {"id": 40, "state": "subscribed", "thread_scope": "19521"},
+            {"id": 41, "state": "subscribed", "thread_scope": "19510"},
+            {"id": 42, "state": "subscribed", "thread_scope": "19263"},
+            {"id": 43, "state": "subscribed", "thread_scope": "90001"},
+            {"id": 44, "state": "subscribed", "thread_scope": "*"},
+        ]
+    ).subscription("cursor", "19521")
+    assert r is not None
+    assert r[0] == "exact"
+    assert r[1]["thread_scope"] == "19521"
+
+    lane_gets.clear()
+    r = make_store(
+        [
+            {"id": 50, "state": "subscribed", "thread_scope": "19510"},
+            {"id": 55, "state": "subscribed", "thread_scope": "19510"},
+        ]
+    ).subscription("cursor", "19521")
+    assert r is not None
+    assert r[1]["id"] == 55
+
+
+def test_subscription_parent_cycle_stops() -> None:
+    lane_map = {"19521": "19510", "19510": "19521"}
+    lane_gets: list[str] = []
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> object:
+            if path == "/endpoint-subscriptions":
+                return {
+                    "subscriptions": [
+                        {"id": 3, "state": "subscribed", "thread_scope": "19510"},
+                    ]
+                }
+            if path.startswith("/threads/") and path.endswith("/lane-current"):
+                tid = path.split("/")[2]
+                lane_gets.append(path)
+                return {"parent_thread": lane_map[tid]}
+            raise AssertionError(f"unexpected _bus {method} {path}")
+
+    result = StubStore().subscription("cursor", "19521")
+    assert result is not None
+    assert result[0] == "parent"
+    assert len(lane_gets) == 2
+
+
+def test_subscription_http_error_keeps_prior_ancestors() -> None:
+    hop = {"n": 0}
+
+    class StubStoreHop2Fail(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> object:
+            if path == "/endpoint-subscriptions":
+                return {
+                    "subscriptions": [
+                        {"id": 1, "state": "subscribed", "thread_scope": "19510"},
+                        {"id": 2, "state": "subscribed", "thread_scope": "*"},
+                    ]
+                }
+            if path == "/threads/19521/lane-current":
+                hop["n"] += 1
+                return {"parent_thread": "19510"}
+            if path == "/threads/19510/lane-current":
+                raise RuntimeError("lane-current down")
+            raise AssertionError(f"unexpected _bus {method} {path}")
+
+    result = StubStoreHop2Fail().subscription("cursor", "19521")
+    assert result is not None
+    assert result[0] == "parent"
+    assert result[1]["thread_scope"] == "19510"
+
+    class StubStoreHop1Fail(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> object:
+            if path == "/endpoint-subscriptions":
+                return {
+                    "subscriptions": [
+                        {"id": 1, "state": "subscribed", "thread_scope": "19510"},
+                    ]
+                }
+            if path == "/threads/19521/lane-current":
+                raise RuntimeError("hop1 down")
+            raise AssertionError(f"unexpected _bus {method} {path}")
+
+    assert StubStoreHop1Fail().subscription("cursor", "19521") is None
+
+
+def test_quiet_with_work_in_flight_routes_to_cursor() -> None:
+    subject = "Quiet with work in flight"
+    for to_agent in (
+        "git-integration-worker",
+        "frontier-admit",
+        "dispatch",
+        "conductor-hop",
+        "cursor",
+    ):
+        assert _effective_to_agent(to_agent, subject) == "cursor"
+    for to_agent in ("git-integration-worker", "frontier-admit", "conductor-hop", "cursor"):
+        assert qualifies(
+            {
+                "to_agent": to_agent,
+                "from_agent": "dispatch",
+                "subject": subject,
+            },
+            cse=False,
+        )
+    assert not qualifies(
+        {"to_agent": "dispatch", "from_agent": "dispatch", "subject": subject},
+        cse=False,
+    )
+
+    child_thread = "19510-child"
+
+    class Store:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, high: int) -> list:
+            return [
+                {
+                    "id": 50,
+                    "to_agent": "git-integration-worker",
+                    "from_agent": "dispatch",
+                    "thread": child_thread,
+                    "turn_number": 16,
+                    "subject": subject,
+                }
+            ]
+
+        def subscription(self, agent: str, thread: str):
+            if agent == "cursor" and thread == child_thread:
+                return (
+                    "exact",
+                    {
+                        "id": 8,
+                        "surface": "cursor",
+                        "display": "1",
+                        "title": "house",
+                        "agent_id": None,
+                    },
+                )
+            return None
+
+        def scan(self, high: int, new_hw: int, pending: list) -> None:
+            self.pending = pending
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert len(store.pending) == 1
+    assert store.pending[0]["agent"] == "cursor"
+    assert store.pending[0]["thread_id"] == child_thread
+
+
+def test_degraded_conductor_hop_closeout_routes_to_cursor() -> None:
+    healthy = (
+        "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "
+        "contract=conductor caller=conductor-hop"
+    )
+    assert _effective_to_agent("conductor-hop", healthy) == "conductor-hop"
+    assert not qualifies(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": healthy,
+        },
+        cse=False,
+    )
+    degraded = healthy + " degraded exit"
+    assert _effective_to_agent("conductor-hop", degraded) == "cursor"
+    assert qualifies(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": degraded,
         },
         cse=False,
     )

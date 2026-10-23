@@ -104,7 +104,8 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
 _CURSOR_GATE_WAKE_RE = re.compile(
     r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
     r"PARKED_TRANSPORT|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
-    r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b)"
+    r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b|"
+    r"Quiet with work in flight)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _PEER_WAKE_FROM = frozenset(
@@ -122,15 +123,27 @@ _POLL_S = 2.0
 
 
 def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str:
-    """Route child-lane gate wakes addressed to dispatch/conductor-hop to cursor."""
+    """Route gate-wake subjects to cursor.
+
+    Addresses in {dispatch, conductor-hop, git-integration-worker, frontier-admit}
+    whose subject matches `_CURSOR_GATE_WAKE_RE` return cursor, except a
+    conductor-hop subject that contains contract=conductor and caller=conductor-hop
+    and does not contain degraded.
+    """
     agent = normalize_bus_address(str(to_agent or ""))
     text = str(subject or "")
-    if agent == "dispatch" and _CURSOR_GATE_WAKE_RE.search(text):
-        return "cursor"
-    if agent == "conductor-hop" and _CURSOR_GATE_WAKE_RE.search(text):
+    if agent in {
+        "dispatch",
+        "conductor-hop",
+        "git-integration-worker",
+        "frontier-admit",
+    } and _CURSOR_GATE_WAKE_RE.search(text):
+        lowered = text.lower()
         if (
-            "contract=conductor" in text.lower()
-            and "caller=conductor-hop" in text.lower()
+            agent == "conductor-hop"
+            and "contract=conductor" in lowered
+            and "caller=conductor-hop" in lowered
+            and "degraded" not in lowered
         ):
             return agent
         return "cursor"
