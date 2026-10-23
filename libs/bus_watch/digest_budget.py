@@ -71,7 +71,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "hop_model_query": "Grok 4.7",
     # Glass createAgent: extra-high (xhigh) and fast. Per-house tick overrides merge on top.
     "hop_model_knobs": {"effort": "xhigh", "fast": "true"},
-    "under_pattern": "grok-confer-argon",
+    "under_pattern": "grok-advisor-opus-check",
     # Default distributed posture (operator ruling 2026-10-19); explicit house override only.
     "judgment_posture": "distributed",
 }

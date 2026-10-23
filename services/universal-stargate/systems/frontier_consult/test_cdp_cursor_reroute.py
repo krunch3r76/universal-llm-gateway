@@ -30,7 +30,7 @@ def _future_expires_at(*, days: int = 30) -> str:
 _ENABLED_REROUTE_POLICY = {
     "enabled": True,
     "expires_at": _future_expires_at(),
-    "target_model": "cursor/gemini-4-argon",
+    "target_model": "cursor/grok-4.7",
     "match_prefixes": ["cdp/opus", "cdp/fable"],
 }
 
@@ -77,6 +77,21 @@ def test_resolve_cdp_reroute_respects_disabled(
         {
             "enabled": False,
             "expires_at": _future_expires_at(),
+            "match_prefixes": ["cdp/opus"],
+        },
+    )
+    assert resolve_cdp_reroute("cdp/opus-5") is None
+
+
+def test_resolve_cdp_reroute_rejects_argon_target_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_cdp_reroute_route_policy(
+        monkeypatch,
+        tmp_path,
+        {
+            "enabled": True,
+            "expires_at": _future_expires_at(),
             "target_model": "cursor/gemini-4-argon",
             "match_prefixes": ["cdp/opus"],
         },
@@ -90,7 +105,7 @@ def test_resolve_cdp_reroute_requires_future_expires_at(
     """Breaks when enabled+prefix match without a future expires_at still reroutes."""
     base = {
         "enabled": True,
-        "target_model": "cursor/gemini-4-argon",
+        "target_model": "cursor/grok-4.7",
         "match_prefixes": ["cdp/opus"],
     }
     _patch_cdp_reroute_route_policy(monkeypatch, tmp_path, base)
@@ -151,7 +166,7 @@ async def test_run_cdp_reroute_harvests_and_archives(
     async def _fake_dispatch(**kwargs: object) -> dict[str, object]:
         assert kwargs.get("read_only") is True
         assert kwargs.get("lane") == "B"
-        assert kwargs.get("model") == "cursor/gemini-4-argon"
+        assert kwargs.get("model") == "cursor/grok-4.7"
         assert kwargs.get("model_knobs") == {"effort": "high"}
         assert kwargs.get("contract") == "freeform"
         return admit

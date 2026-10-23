@@ -40,7 +40,6 @@ CURSOR_CHECK_REVIEW_MODELS = frozenset(
         "cursor/gpt-5.6-sol",
         "cursor/gpt-5.6-luna",
         "cursor/grok-4.7",
-        "cursor/gemini-4-argon",
     }
 )
 MECHANICAL_CURSOR_MODELS = frozenset(

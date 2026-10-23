@@ -24,6 +24,23 @@ RESTORE_MODEL = "cdp/fable-5.1"
 _HYBRID_MECHANICAL_MODEL = "cursor/composer-2.5"
 _HYBRID_MECHANICAL_SEAT = "cursor-sdk"
 _HYBRID_MECHANICAL_EFFORT = "medium"
+ADVISOR_MODEL = "cursor/gemini-4-argon"
+ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
+ADVISOR_FALLBACK_MODEL = "cursor/grok-4.7"
+_ARGON_BARRED_IMPRESARIO_ROLES = frozenset(
+    {
+        "critic",
+        "sketch",
+        "skeptic",
+        "review",
+        "ear",
+        "ear_patrol",
+        "implement",
+        "sweep",
+        "mechanical",
+        "driver",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +52,29 @@ class SeatSpec:
     transport: Transport
     seat: str = "cursor-sdk"
     fast: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AdvisorSpec:
+    """Advisor duty — consult-only; not in ``allowed_critics``."""
+
+    seat: SeatSpec
+    paused: bool
+    role_sentence: str
+    triggers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AdvisorAdmitResult:
+    """Pure advisor-route admission outcome (no model I/O)."""
+
+    admitted: bool
+    resolved_model: str | None
+    code: str | None = None
+    message: str | None = None
+    provider_fallback: bool = False
+    event_signal: str | None = None
+    event_payload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +93,7 @@ class ImpresarioPolicy:
     cdp_reroute_for_critic: bool
     ear: SeatSpec
     ear_patrol: SeatSpec
+    advisor: AdvisorSpec
     policy_sha256: str
 
 
@@ -162,7 +203,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     )
     critic = _parse_seat_entry(
         critic_raw,
-        default_model="cursor/gemini-4-argon",
+        default_model="cdp/opus-5.5",
         default_effort="high",
         allowed_critics=frozenset(),  # set below after allowed_critics parsed
         require_allowed_critic=False,
@@ -185,6 +226,42 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         default_model="cursor/composer-2.5",
         default_effort="low",
         require_allowed_critic=False,
+    )
+    advisor_raw = raw.get("advisor") or {}
+    if not isinstance(advisor_raw, dict):
+        msg = "impresario.advisor must be a mapping"
+        raise ValueError(msg)
+    advisor_seat = _parse_seat_entry(
+        advisor_raw,
+        default_model=ADVISOR_MODEL,
+        default_effort="high",
+        require_allowed_critic=False,
+    )
+    advisor_fast = bool(advisor_raw.get("fast"))
+    advisor_seat = SeatSpec(
+        model=advisor_seat.model,
+        effort_rung=advisor_seat.effort_rung,
+        transport=advisor_seat.transport,
+        seat=advisor_seat.seat,
+        fast=advisor_fast,
+    )
+    if advisor_seat.model != ADVISOR_MODEL:
+        msg = f"impresario.advisor.model must be {ADVISOR_MODEL!r}"
+        raise ValueError(msg)
+    role_sentence = str(
+        advisor_raw.get("role_sentence")
+        or "You advise the next move. You do not author the change and you do not review it."
+    ).strip()
+    triggers_raw = advisor_raw.get("triggers") or []
+    if not isinstance(triggers_raw, list) or len(triggers_raw) < 1:
+        msg = "impresario.advisor.triggers must be a non-empty list"
+        raise ValueError(msg)
+    advisor_triggers = tuple(str(t).strip() for t in triggers_raw if str(t).strip())
+    advisor = AdvisorSpec(
+        seat=advisor_seat,
+        paused=bool(advisor_raw.get("paused")),
+        role_sentence=role_sentence,
+        triggers=advisor_triggers,
     )
     roles_raw = raw.get("critic_roles") or {}
     if not isinstance(roles_raw, dict):
@@ -218,6 +295,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         cdp_reroute_for_critic=bool(raw.get("cdp_reroute_for_critic")),
         ear=ear,
         ear_patrol=ear_patrol,
+        advisor=advisor,
         policy_sha256=sha,
     )
 
@@ -391,4 +469,113 @@ def resolve_roles(
         review=review,
         restore=restore,
         policy=pol,
+    )
+
+
+def argon_barred_for_role(impresario_role: str | None) -> bool:
+    """True when ``impresario_role`` must not use ``cursor/gemini-4-argon``."""
+    if not impresario_role:
+        return False
+    return impresario_role.strip().lower() in _ARGON_BARRED_IMPRESARIO_ROLES
+
+
+def refuse_argon_non_advisor_route(
+    *,
+    model: str,
+    impresario_role: str | None,
+) -> AdvisorAdmitResult | None:
+    """Refuse argon when the role is critic, ear, implement, or sweep."""
+    normalized = (model or "").strip()
+    if normalized != ADVISOR_MODEL:
+        return None
+    role = (impresario_role or "").strip().lower()
+    if role == "advisor":
+        return None
+    if argon_barred_for_role(impresario_role):
+        return AdvisorAdmitResult(
+            admitted=False,
+            resolved_model=None,
+            code="ARGON_ROLE_BARRED",
+            message=f"cursor/gemini-4-argon is barred for impresario role {impresario_role!r}",
+        )
+    return None
+
+
+def resolve_advisor_provider_fallback(
+    *,
+    provider_error: str,
+    policy: ImpresarioPolicy | None = None,
+) -> AdvisorAdmitResult:
+    """Advisor-leg provider_error → grok fallback + event payload (not a calendar pause)."""
+    _ = policy or load_impresario_policy()
+    return AdvisorAdmitResult(
+        admitted=True,
+        resolved_model=ADVISOR_FALLBACK_MODEL,
+        code="ADVISOR_PROVIDER_FALLBACK",
+        message=provider_error.strip(),
+        provider_fallback=True,
+        event_signal="impresario.advisor.provider_fallback",
+        event_payload={
+            "requested_model": ADVISOR_MODEL,
+            "resolved_model": ADVISOR_FALLBACK_MODEL,
+            "provider_error": provider_error.strip(),
+        },
+    )
+
+
+def evaluate_advisor_dispatch_admission(
+    *,
+    model: str,
+    packet_body: str,
+    item_author: str | None = None,
+    impresario_role: str | None = "advisor",
+    policy: ImpresarioPolicy | None = None,
+    provider_error: str | None = None,
+) -> AdvisorAdmitResult:
+    """Pure advisor admission — no live model call."""
+    pol = policy or load_impresario_policy()
+    barred = refuse_argon_non_advisor_route(
+        model=model, impresario_role=impresario_role
+    )
+    if barred is not None:
+        return barred
+    normalized = (model or "").strip()
+    if normalized != ADVISOR_MODEL:
+        return AdvisorAdmitResult(
+            admitted=False,
+            resolved_model=None,
+            code="NOT_ADVISOR_MODEL",
+            message=f"model {model!r} is not the advisor wire",
+        )
+    if provider_error and provider_error.strip():
+        return resolve_advisor_provider_fallback(
+            provider_error=provider_error, policy=pol
+        )
+    if pol.advisor.paused:
+        return AdvisorAdmitResult(
+            admitted=False,
+            resolved_model=None,
+            code="ADVISOR_PAUSED",
+            message="impresario.advisor.paused is true",
+        )
+    if ADVISOR_LEAN_DISPATCH_LINE not in (packet_body or ""):
+        return AdvisorAdmitResult(
+            admitted=False,
+            resolved_model=None,
+            code="ADVISOR_LEAN_DISPATCH_REQUIRED",
+            message=f"advisor packet must contain {ADVISOR_LEAN_DISPATCH_LINE!r}",
+        )
+    author = (item_author or "").strip()
+    if author == ADVISOR_MODEL:
+        return AdvisorAdmitResult(
+            admitted=False,
+            resolved_model=None,
+            code="ADVISOR_K40_AUTHOR",
+            message="advisor route refuses when the item author is cursor/gemini-4-argon",
+        )
+    return AdvisorAdmitResult(
+        admitted=True,
+        resolved_model=pol.advisor.seat.model,
+        code=None,
+        message=None,
     )

@@ -277,15 +277,20 @@ def live_watcher_labels(
     return labels
 
 
+_ADVISOR_TRIGGER_BLOCK = (
+    "Advisor (cursor/gemini-4-argon, effort=high, fast=false) on triggers only: "
+    "(1) intent to plan (2) problem to solution (3) an open fork (4) a stuck leg. "
+    "Every advisor packet includes: Use the lean-dispatch skill. "
+    "You advise the next move. You do not author the change and you do not review it."
+)
+
 _DISTRIBUTED_JUDGMENT = (
     "Explore recon in-tab · orchestrate in-tab on cursor/grok-4.7 (effort=xhigh) · "
-    "outsource regular judgment/design/advice → cursor/gemini-4-argon "
-    "(effort=high, fast=false) after retrieval-before-authoring (rag scopes + "
+    f"{_ADVISOR_TRIGGER_BLOCK} · after retrieval-before-authoring (rag scopes + "
     "targeted reads → retrieval report) · independent check → cdp/opus-5.5 "
     "(checker ≠ author ≠ advisor). divergent-ideation-v1 failure at operator_split "
-    "⇒ ¬ block: pass the retrieval report + 2-3 rival frames straight to "
-    "cursor/gemini-4-argon under exception: divergent_ideation_degraded_18362; "
-    "consult_ref is still required. Before any STAY verdict. "
+    "⇒ ¬ block: bind in-seat on cursor/grok-4.7 (effort=xhigh) with the retrieval "
+    "report; advisor only when a trigger matches. Before any STAY verdict. "
 )
 _IN_SEAT_JUDGMENT = (
     "Explore recon in-tab · Judgment forks bind IN-SEAT under the house's explicit "
@@ -296,9 +301,8 @@ _IN_SEAT_JUDGMENT = (
 _PEER_HOUSE_DISTRIBUTED = (
     "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
     "cursor-sdk; life repo-write → life_dispatch; orchestration stays in-tab on "
-    "cursor/grok-4.7 (effort=xhigh); then cursor/gemini-4-argon (effort=high, "
-    "design/judgment/advice, after retrieval-before-authoring) → cdp/opus-5.5 "
-    "(independent check); cursor/grok-4.7 for live checkout; "
+    "cursor/grok-4.7 (effort=xhigh); advisor on the four triggers only (see above) "
+    "→ cdp/opus-5.5 (independent check); cursor/grok-4.7 for live checkout; "
     "¬ cursor/claude-*; page human only on "
     "OPERATOR_GATE after that ladder. ¬ hop away unreconciled."
 )
@@ -315,9 +319,9 @@ _DIVERGENT_DISTRIBUTED = (
     "wide/frontier detents, or retry(same_AC), run pipeline(op='run', "
     "pipeline_id='divergent-ideation-v1', messages=[...]) before binding; on high-stakes "
     "outbound prose, chain divergent-ideation-v1 -> writer-specialist-v1 under "
-    "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: hand the "
-    "retrieval report + 2-3 rival frames to cursor/gemini-4-argon under "
-    "exception: divergent_ideation_degraded_18362, record consult_ref, proceed. "
+    "outbound-voice-spec. Failure at operator_split ⇒ ¬ block and ¬ retry: bind "
+    "in-seat on cursor/grok-4.7 (effort=xhigh) or advisor when trigger (3) matches; "
+    "record consult_ref when an advisor leg runs. "
     "Skip only on closed-spec mechanical/trivial first passes."
 )
 _DIVERGENT_IN_SEAT = (

@@ -38,15 +38,19 @@ def test_policy_defaults_judgment_posture_is_distributed() -> None:
     assert POLICY_DEFAULTS["judgment_posture"] == "distributed"
 
 
-def test_build_ide_hop_message_default_includes_argon_confer_line() -> None:
+def test_build_ide_hop_message_default_includes_advisor_triggers() -> None:
     msg = build_ide_hop_message(
         "18291",
         row="R1 test row",
         arm_labels=[],
         register="attended",
     )
-    assert "outsource regular judgment/design/advice" in msg
+    assert "intent to plan" in msg
+    assert "Use the lean-dispatch skill" in msg
+    assert "You advise the next move" in msg
     assert "cursor/gemini-4-argon" in msg
+    assert "no live argon call while K73" not in msg
+    assert "2026-11-13" not in msg
 
 
 def test_in_seat_posture_keeps_in_seat_ladder() -> None:
@@ -79,7 +83,7 @@ def test_operator_loop_and_hop_message_bind_proactive_offer_on_issue() -> None:
     assert "cursor/gemini-4-argon" not in msg
 
 
-def test_hop_message_distributed_binds_argon_and_opus_check() -> None:
+def test_hop_message_distributed_binds_advisor_triggers_and_opus_check() -> None:
     msg = build_ide_hop_message(
         "18291",
         row="R1 test row",
@@ -91,18 +95,20 @@ def test_hop_message_distributed_binds_argon_and_opus_check() -> None:
     assert "cursor/gemini-4-argon" in msg
     assert "cdp/opus-5.5" in msg
     assert "muse-wonder" not in msg
-    assert "divergent_ideation_degraded_18362" in msg
+    assert "an open fork" in msg
+    assert "outsource regular judgment/design/advice" not in msg
 
 
-def test_hop_message_carries_divergent_degraded_exception() -> None:
+def test_hop_message_divergent_mentions_advisor_or_grok_not_unconditional_argon() -> None:
     msg = build_ide_hop_message(
         "18291",
         row="R1 test row",
         arm_labels=[],
         register="attended",
     )
-    assert "divergent_ideation_degraded_18362" in msg
+    assert "divergent-ideation-v1" in msg
     assert "consult_ref" in msg
+    assert "divergent_ideation_degraded_18362" not in msg
 
 
 def test_hop_message_ladder_drops_cdp_opus_5_design_route() -> None:

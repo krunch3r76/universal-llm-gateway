@@ -5,7 +5,6 @@ lead_claim_authority: server_contract_overrides_packet_prose
 
 cdp_reroute:
   enabled: false
-  target_model: cursor/gemini-4-argon
   effort: high
   match_prefixes:
     - cdp/opus
@@ -26,8 +25,19 @@ impresario:
     sketch: {}
     skeptic: {}
     review: {}
+  advisor:
+    model: cursor/gemini-4-argon
+    effort: high
+    fast: false
+    paused: false
+    role_sentence: >-
+      You advise the next move. You do not author the change and you do not review it.
+    triggers:
+      - intent to plan
+      - problem to solution
+      - an open fork
+      - a stuck leg
   allowed_critics:
-    - cursor/gemini-4-argon
     - cdp/opus-5.5
     - cdp/opus-5.1
     - cdp/opus-5
