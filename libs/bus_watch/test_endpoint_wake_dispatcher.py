@@ -395,6 +395,16 @@ def test_cse_allowlist_not_display(db: None) -> None:
     )
 
 
+def test_git_integration_worker_notice_gap_grok_wake() -> None:
+    gap_subject = "NOTICE|gap|abc123def"
+    ride_along_subject = "NOTICE|ride_along|abc123def"
+    turn_base = {"to_agent": "grok-bot-gc1", "from_agent": "git-integration-worker"}
+    assert qualifies({**turn_base, "subject": gap_subject}, cse=False)
+    assert not qualifies({**turn_base, "subject": ride_along_subject}, cse=False)
+    assert subject_allowed(gap_subject, cse=False, to_agent="grok-bot-gc1")
+    assert not subject_allowed(ride_along_subject, cse=False, to_agent="grok-bot-gc1")
+
+
 def test_dispatch_and_conductor_hop_gate_wakes_route_to_cursor() -> None:
     freeform_closeout = "cursor-sdk CLOSEOUT 940a9f86d053-8e0c8ad5 contract=freeform"
     assert qualifies(
