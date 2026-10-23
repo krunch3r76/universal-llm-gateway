@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 
 import pytest
-from universal_protocol.errors import ProtocolError
 
 from implement_admission.impresario_policy import (
     load_impresario_policy,
@@ -19,22 +18,21 @@ from implement_admission.workflow_registry import registry_errors
 pytestmark = pytest.mark.offline
 
 
-def test_default_critic_is_gemini_argon_high() -> None:
+def test_default_critic_is_cdp_opus_high() -> None:
     roles = resolve_roles()
-    assert roles.critic.model == "cursor/gemini-4-argon"
+    assert roles.critic.model == "cdp/opus-5.5"
     assert roles.critic.effort_rung == "high"
 
 
 def test_empty_skeptic_inherits_high_not_extra() -> None:
     roles = resolve_roles()
-    assert roles.skeptic.model == "cursor/gemini-4-argon"
+    assert roles.skeptic.model == "cdp/opus-5.5"
     assert roles.skeptic.effort_rung == "high"
 
 
-def test_explicit_extra_on_argon_fails_closed() -> None:
-    with pytest.raises(ProtocolError) as excinfo:
-        resolve_roles(critic_effort="extra")
-    assert excinfo.value.code == "CRITIC_EFFORT_UNSUPPORTED"
+def test_explicit_extra_on_cdp_critic_resolves() -> None:
+    roles = resolve_roles(critic_effort="extra")
+    assert roles.critic.model == "cdp/opus-5.5"
 
 
 def test_hybrid_mechanical_binds_composer() -> None:

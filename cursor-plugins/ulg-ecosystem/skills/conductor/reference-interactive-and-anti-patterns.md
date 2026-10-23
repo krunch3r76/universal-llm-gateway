@@ -1,6 +1,6 @@
 ## Interactive entry
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` · usage channel **Cursor**. SKETCH (G1) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}`. SKEPTIC (G4) = `cursor/gemini-4-argon` · `model_knobs={'effort': 'high'}` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 

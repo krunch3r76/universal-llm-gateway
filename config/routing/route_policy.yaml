@@ -34,8 +34,9 @@ impresario:
     - cdp/fable-5.1
     - cdp/fable-5
     - cursor/muse-wonder-1.0
+    - cursor/grok-4.7
   cdp_reroute_for_critic: false
-  ear: {model: cdp/opus-5.5, effort: high}
+  ear: {model: cursor/grok-4.7, effort: high}
   ear_patrol: {model: cursor/composer-2.5, effort: low, fast: true}
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
