@@ -811,7 +811,11 @@ def test_stale_unread_milestone_16min_one_row_one_followup_resolve_at_wake(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """16-minute unread milestone: one row, one followup; resolve_attended at wake."""
-    import tools.cse_session_warm as warm
+    from services.git_integration_worker.cse_session_holders import (
+        _import_cse_session_warm_module,
+    )
+
+    warm = _import_cse_session_warm_module()
 
     monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
     store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
@@ -870,7 +874,11 @@ def test_read_milestone_and_young_unread_no_row_no_followup(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """read_at milestone and 10-minute unread produce no row and no followup."""
-    import tools.cse_session_warm as warm
+    from services.git_integration_worker.cse_session_holders import (
+        _import_cse_session_warm_module,
+    )
+
+    warm = _import_cse_session_warm_module()
 
     monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
     store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
