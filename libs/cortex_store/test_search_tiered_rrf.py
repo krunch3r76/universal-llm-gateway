@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from cortex_store.conftest import bind_cortex_db
 from cortex_store.dispatch_ops.ops_assertions_write import _op_assert
 from cortex_store.dispatch_ops.ops_entities import _op_entity_create
+from cortex_store.routes.assertions import _search as search_mod
 from cortex_store.routes.assertions._search import _rrf_fuse, _tier0_strict_entity_cards
 
 
@@ -119,3 +120,85 @@ def test_search_items_expose_kind(
     for row in assertion_hits:
         if row.get("kind") == "assertion":
             assert int(row["id"]) > 0
+
+
+def test_tier0_multitoken_identity_column_binds_every_token(
+    migrated_db_path,
+    migrated_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict tier0 MATCH must bind every token to identity columns, not just the first."""
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    entity_id = "document:tier0-multitoken-zorblax"
+    _op_entity_create(
+        id=entity_id,
+        type="document",
+        name="Zorblax",
+        description="onlyquux",
+    )
+
+    cards = _tier0_strict_entity_cards(
+        migrated_conn,
+        "Zorblax onlyquux",
+        entity_type=None,
+        limit=5,
+    )
+    ids = {c["entity_id"] for c in cards}
+    assert entity_id not in ids
+
+
+def test_vector_only_compaction_pointer_is_excluded(
+    cortex_client: TestClient,
+    migrated_db,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vector-only hits must respect compaction-pointer exclusion when FTS missed them."""
+    _op_entity_create(
+        id="document:vector-only-compaction-fixture",
+        type="document",
+        name="Vector Only Compaction Fixture",
+        description="host entity for compaction pointer search test",
+    )
+    unique_phrase = "vectoronlycompaction unique nonpointer phrase xyzzy"
+    live_result = _op_assert(
+        entity_id="document:vector-only-compaction-fixture",
+        claim=unique_phrase,
+        confidence="confirmed",
+        evidence="unit test",
+        derivation_type="direct_observation",
+    )
+    assert "error" not in live_result
+    pointer_result = _op_assert(
+        entity_id="document:vector-only-compaction-fixture",
+        claim="Compacted into archive summary 8170",
+        confidence="confirmed",
+        evidence="unit test",
+        derivation_type="direct_observation",
+    )
+    assert "error" not in pointer_result
+    pointer_id = int(pointer_result["item"]["id"])
+
+    def _vector_only_pointer(_query_text: str, n_results: int) -> list[dict]:
+        return [
+            {
+                "assertion_id": pointer_id,
+                "cosine_similarity": 0.99,
+            }
+        ][:n_results]
+
+    monkeypatch.setattr(search_mod, "_vector_search", _vector_only_pointer)
+
+    resp = cortex_client.post(
+        "/dispatch",
+        json={
+            "tool": "search",
+            "arguments": {"query": unique_phrase, "limit": 5},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    item_ids = {
+        int(row["id"])
+        for row in (resp.json().get("items") or [])
+        if row.get("kind") == "assertion" and row.get("id") is not None
+    }
+    assert pointer_id not in item_ids

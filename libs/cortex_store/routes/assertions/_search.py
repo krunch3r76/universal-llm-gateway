@@ -250,7 +250,7 @@ def _tier0_strict_entity_cards(
     if not sanitized:
         return []
 
-    strict_match = f"{_STRICT_IDENTITY_COLS}: {sanitized}"
+    strict_match = f"{_STRICT_IDENTITY_COLS}: ({sanitized})"
     strict_rows = _fetch_fts_lane(
         conn, strict_match, entity_type=entity_type, cap=_STRICT_FETCH_CAP
     )
@@ -355,6 +355,7 @@ def _tier1_rrf_items(
     loose_entity_hits: dict[str, dict[str, Any]],
     limit: int,
     intent: Literal["summary", "full"],
+    include_compaction_pointers: bool = False,
 ) -> list[dict[str, Any]]:
     fts_by_id: dict[int, dict[str, Any]] = {}
     for row in fts_rows:
@@ -369,6 +370,18 @@ def _tier1_rrf_items(
 
     vector_only_ids = set(vector_by_id) - set(fts_by_id)
     _hydrate_vector_only(fts_by_id, vector_results, vector_only_ids, intent=intent)
+
+    if not include_compaction_pointers and vector_only_ids:
+        hydrated_aids = [aid for aid in vector_only_ids if aid in fts_by_id]
+        hydrated_rows = [fts_by_id[aid] for aid in hydrated_aids]
+        kept, _ = filter_compaction_pointers(
+            hydrated_rows, include_compaction_pointers=False
+        )
+        kept_ids = {int(row["id"]) for row in kept}
+        for aid in hydrated_aids:
+            if aid not in kept_ids:
+                vector_by_id.pop(aid, None)
+                fts_by_id.pop(aid, None)
 
     fts_ranked = [
         f"{_ASSERTION_KEY_PREFIX}{int(row['id'])}" for row in fts_rows
@@ -654,6 +667,7 @@ def _search_assertions_impl(
             loose_entity_hits=loose_hits,
             limit=tier1_limit,
             intent=intent,
+            include_compaction_pointers=include_compaction_pointers,
         )
 
     fused = tier0 + tier1
