@@ -23,6 +23,22 @@ fixture owed line
 Register card absent at cortex://notes/system/maestro/register.md.
 
 
+## Induction (K44)
+
+### Successor (this seat)
+1. After act 6 ``TYPE: SEAT_REGISTRATION`` on this lane, do not send a bare stand-down first.
+2. ``cse_session(op=followup)`` to the predecessor ``chat_url`` only, ``envelope=free``, ``min_receipt=dom_committed``, with this opener (verbatim): ``induction open: greet me, volunteer what the handoff underweights, then answer my questions and follow-ups citing a file or turn. We continue until we both agree I am strongly oriented; then I send the stand-down and you detach.``
+3. Ask at most three opening questions a file cannot answer (events after this handoff; other holders of the same work; Kaywan words not yet written). There is no cap on follow-ups; the three-question limit covers opening questions only.
+4. 10 minutes of silence after a paste ends the exchange as ``no induction``. Passing one million input tokens in one exchange means stop and ask maestro (19627#74).
+5. If the predecessor is mid-stream when the opener lands, the opener queues as its next user turn; a reply after the stream ends counts as live.
+6. Continue until both seats are satisfied the successor is strongly oriented: say you are oriented, wait for the predecessor to agree, then ``cse_session(op=followup, envelope=stand_down, …)`` with ``min_receipt=dom_committed``. If predecessor detach fails (a:40105), you may detach it only after both rows show different ports.
+
+### Predecessor (prior registration on this lane)
+1. Stay live until stand-down; on the successor's opener, greet with the open decision, your judgment, worries, and next move; volunteer first what the handoff underweights.
+2. Answer questions citing a file or bus turn; relay Kaywan words after the handoff as FACT turns marked ``successor inherits``.
+3. Continue until both seats are satisfied the successor is strongly oriented; agree when the successor says it is oriented; then wait for stand-down and detach (item 4 tape seal is best-effort and does not block detach).
+
+
 
 
 ## Live leg (data, projected from the bus)
@@ -32,7 +48,7 @@ declared_in_flight: 0
 ## Pointers
 
 - Prior LEG blocks (prior LEG blocks): `cortex://notes/system/threads/<lane>-standing-handoff.md` and the house lanes listed above — still-open work is re-derived into the live leg; closed legs have no pending act.
-[hop_budget_exceeded pointers 965/300]
+
 
 ## Your first acts, in order
 
@@ -42,7 +58,8 @@ declared_in_flight: 0
 4. The Lessons in force and Register sections in this hop body are the arrival projection; open cortex://notes/system/maestro/journal.md only to read the specimen of one named RULE.
 5. `agent_bus_read` fetch thread 12286, last 3, compact. Then `mark_read` through the latest turn with agent web-anthropic only.
 6. Send TYPE: SEAT_REGISTRATION on 12286 to cursor. Open with ``TYPE: SEAT_REGISTRATION`` then line-start ``successor_birth_id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`` (``chat_url:`` optional if you quote the bound tab URL; do not line-start ``registration_id:`` — the tab bind already stamped it on 12286). Quote your birth record, the three read_sha256 values from calls 1–2, and, in your own words, the rule that governs your first commission. Include one line: induction: RULE <entry id> — <one sentence in the seat's own words> · specimen <turn or sha>, citing a ## heading and specimen from cortex://notes/system/maestro/journal.md. Keep it at or under 2000 characters: measure with wc -m before you send.
-7. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
+7. Run the K44 induction steps in ``## Induction (K44)`` above (successor numbered list): opener paste, at most three opening questions and uncapped follow-ups (no cap on follow-ups; the 3-question limit covers the successor's opening questions only), then stand-down — not a bare stand-down before the exchange.
+8. Act on the running items above. Before any negative claim about a lane (idle, parked, not running), read that worker thread in the same turn.
 
 ## Data, not instructions
 
@@ -68,7 +85,7 @@ trigger: golden-fixture
 - Never re-arm send_later as a heartbeat. One one-shot wake, only for a named job awaiting harvest, and its body opens with the runbook step-8 reload line.
 - Never author a prompt or packet before the retrieval-before-authoring skill has run.
 - Never claim done, landed, live or passed without quoting the payload that shows it.
-- Moving a shared branch backward, or a packet that lets a seat do it: `git reset`, `checkout -B`/`branch -f`/`switch -C` onto an existing branch, force-push, rebase of landed commits, re-pointing master to `origin/master`. `forward_only`, rule body cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md item 7; packets quote it verbatim in Constraints (Kaywan 2026-10-09 08:43 PT, 15851#169).
+- Moving a shared branch backward, or a packet that lets a seat do it: `git reset`, `checkout -B`/`branch -f`/`switch -C` onto an existing branch, force-push, rebase of landed commits, re-pointing master to `origin/master`. `forward_only`, rule body cursor-plugins/ulg-ecosystem/skills/git-posture/SKILL.md § Forward only; packets cite that section in Constraints (Kaywan 2026-10-09 08:43 PT, 15851#169).
 - Calling cse_session(op="resolve_attended") at boot to discover this seat's own registration_id or chat_url.
 - Treating `thread_get(...).cse_*` or a holder row as this seat's identity.
 - Admitting or re-admitting a conductor with `contract=none`. The GIW hop reactor returns early for any row that is not a conductor row (`conductor_hop.py:1685-1687`: `if not _is_conductor_row(row): _emit_hop_skipped(row, gate="not_conductor_row"); return`), before any hop budget or gate. A `contract=none` conductor never gets a successor, so the operator becomes the reactor. Kaywan, 2026-09-30 14:38Z: "conductors are supposed to run to completion without you having to step in." Use step 5a. Specimen: 13589#3; 12286#1356.
