@@ -21,6 +21,7 @@ _RETRIABLE_DISPLAY = {
 }
 _CSE_PENDING_ERRORS = {"no_identity", "project_ask_unconfigured"}
 _GIW = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091")
+_MAX_PARENT_HOPS = 3
 
 
 def classify_display(
@@ -133,7 +134,6 @@ class StoreClient:
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
-        _MAX_PARENT_HOPS = 3
         ancestors: list[str] = []
         seen: set[str] = {thread_id}
         cur: str | None = thread_id
