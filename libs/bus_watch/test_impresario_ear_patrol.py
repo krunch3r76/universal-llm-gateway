@@ -110,6 +110,62 @@ def test_run_dispatcher_pass_calls_patrol_beside_context_hops() -> None:
     assert "run_patrol_pass" in src
 
 
+def test_prescreen_tail_7139b60_suppressed_after_explicit_reject(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    tail = (
+        "Where this is going: review lane commit 7139b60eec14. "
+        "Who carries it: this seat."
+    )
+    reject_turn = {
+        "from_agent": "web-anthropic",
+        "body": (
+            "Explicit reject at 16416#2865: no land, no merge, no second review."
+        ),
+    }
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        in_flight=0,
+        assistant_tail=tail,
+        tool_blob="",
+        tick={"now_row": "quiet"},
+        unmerged_child=True,
+        recent_turns=[reject_turn],
+    )
+    assert "unharvested_or_unlanded_child" in out["signals"]
+    assert "7139b60" not in out.get("imperative", "")
+    assert "team_dispatch review lane commit" not in out.get("imperative", "")
+
+
+def test_prescreen_unmerged_child_without_tail_commit_omits_7139b60(
+    tmp_path: Path,
+) -> None:
+    set_patrol_cooldown_path_for_tests(tmp_path / "cd.json")
+    clear_patrol_state_for_tests()
+    abandonment = {
+        "from_agent": "cursor-sdk",
+        "body": "NOT landed@local-master for lane 18947 — abandonment notice.",
+    }
+    out = prescreen_house(
+        root_id=_ROOT,
+        transcript_id=_TRANSCRIPT,
+        activity_age_s=999.0,
+        in_flight=0,
+        assistant_tail="Going. Stay here until the next push.",
+        tool_blob="",
+        tick={"now_row": "quiet"},
+        hop_failed=False,
+        unmerged_child=True,
+        recent_turns=[abandonment],
+    )
+    assert "unharvested_or_unlanded_child" in out["signals"]
+    assert "7139b60" not in out.get("imperative", "")
+
+
 def test_patrol_specimen_18374_promised_act_hop_failed_quiet_unmerged(
     tmp_path: Path,
 ) -> None:

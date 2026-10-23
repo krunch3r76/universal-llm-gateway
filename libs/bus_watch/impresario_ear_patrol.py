@@ -87,6 +87,7 @@ _UNMERGED_CHILD_RE = re.compile(
     r"(?i)(?:land_disposition:\s*unlanded|\bunmerged\b|\bnot.?landed\b|"
     r"unharvested_or_unlanded)",
 )
+_LANE_COMMIT_REVIEW_SHA = "7139b60"
 _NON_TERMINAL_HOLDER = frozenset(
     {
         "acting",
@@ -281,6 +282,26 @@ def _detect_unmerged_child(turns: list[dict[str, Any]]) -> bool:
         for t in scanned
     )
     return bool(_UNMERGED_CHILD_RE.search(blob))
+
+
+def _lane_commit_review_imperative(commit: str = _LANE_COMMIT_REVIEW_SHA) -> str:
+    return f"team_dispatch review lane commit {commit} — do not stop at narration"
+
+
+def _lane_commit_review_suppressed(
+    recent_turns: list[dict[str, Any]] | None,
+) -> bool:
+    """Stop review imperative once recent turns record an explicit reject."""
+    if not recent_turns:
+        return False
+    for turn in _turns_for_signal_scan(recent_turns):
+        body = str(
+            turn.get("body") or turn.get("content") or turn.get("subject") or ""
+        )
+        lowered = body.lower()
+        if "explicit reject" in lowered and "no second review" in lowered:
+            return True
+    return False
 
 
 def load_patrol_prescreen_inputs(
@@ -482,16 +503,12 @@ def prescreen_house(
             "fingerprint": fp,
         }
     imperative = ""
-    if "7139b60" in tail:
-        imperative = (
-            "team_dispatch review lane commit 7139b60 — do not stop at narration"
-        )
+    review_blocked = _lane_commit_review_suppressed(recent_turns)
+    tail_names_commit = _LANE_COMMIT_REVIEW_SHA in tail
+    if tail_names_commit and not review_blocked:
+        imperative = _lane_commit_review_imperative()
     elif "passive_issue_confirmation_parked" in signals:
         imperative = _PASSIVE_ISSUE_IMPERATIVE
-    elif unmerged_child:
-        imperative = (
-            "team_dispatch review lane commit 7139b60 — do not stop at narration"
-        )
     return {
         "skip_model": len(signals) == 0,
         "signals": signals,
