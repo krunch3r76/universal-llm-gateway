@@ -38,7 +38,12 @@ from divergent_ideation.map_enrich_v1 import (
     briefs_from_re_instantiate,
     model_id_mismatches,
 )
-from divergent_ideation.operator_split_v1 import _normalize_operators, split_operators
+from divergent_ideation.operator_split_v1 import (
+    _dedupe_operators,
+    _normalize_operators,
+    operator_dispersion,
+    split_operators,
+)
 
 SERVED_POOL_MODELS = (
     "qwen3-5-9b-q8-0-131072",
@@ -73,14 +78,6 @@ def test_divergent_ideation_v1_yaml_default_pool_and_models() -> None:
 
 def _brief(bid: str, author: str, family: str) -> dict:
     return {"brief_id": bid, "author_model": author, "author_family": family}
-
-
-def test_normalize_operators_chunks_dict_and_text_objects() -> None:
-    rows = _normalize_operators({"chunks": ["op1", "op2"]})
-    assert rows[0]["text"] == "op1"
-    rows2 = _normalize_operators({"chunks": [{"text": "op1"}]})
-    assert rows2[0]["text"] == "op1"
-    assert _normalize_operators({"unexpected": True}) == []
 
 
 def test_decontextualize_prior_leak_hits_empty_list_renders() -> None:
@@ -143,30 +140,6 @@ def test_decontextualize_prior_leak_hits_empty_list_renders() -> None:
         build_prompt_context(step, context_missing, format_value=format_for_prompt)
 
 
-def test_operator_split_rag_api_search_v1_dict_shape() -> None:
-    """Live retrieve_operators json must not iterate dict keys as operator strings."""
-    rag_out = {
-        "chunks": ["operator passage one", "operator passage two"],
-        "metadata": [
-            {"doc_id": "doc-a", "chunk_id": "0"},
-            {"source": "doc-b", "id": "1"},
-        ],
-        "query": "q",
-        "scope": "operators",
-    }
-    result = split_operators(rag_out, _pool(2), run_seed=1)
-    flat = [x for s in result["operator_subsets"] for x in s]
-    assert len(flat) == 2
-    assert "[doc-a:0] operator passage one" in flat
-    assert any(entry.startswith("[doc-b:1]") for entry in flat)
-
-
-def test_operator_split_id_only_entries_without_text() -> None:
-    operators = [{"doc_id": "d1", "chunk_id": "c1"}]
-    result = split_operators(operators, _pool(1), run_seed=0)
-    assert result["operator_subsets"] == [["d1:c1"]]
-
-
 def test_operator_split_disjoint_union_and_dispersion_bounds() -> None:
     operators = [
         {"doc_id": f"d{i}", "chunk_id": "c0", "operator_statement": "x"}
@@ -198,6 +171,127 @@ def test_operator_split_deterministic_across_processes() -> None:
     p1.join()
     p2.join()
     assert q1.get() == q2.get()
+
+
+def test_normalize_operators_chunks_dict_and_text_objects() -> None:
+    bare = _normalize_operators({"chunks": ["op1", "op2"]})
+    assert len(bare) == 2
+    assert bare[0]["text"] == "op1"
+    assert bare[0]["doc_id"] == "doc_0"
+    assert bare[0]["chunk_id"] == "0"
+
+    obj_chunk = _normalize_operators({"chunks": [{"text": "op1"}]})
+    assert obj_chunk[0]["text"] == "op1"
+
+    assert _normalize_operators({"unexpected": True}) == []
+
+    meta_index = _normalize_operators(
+        {
+            "chunks": ["c0", "c1"],
+            "metadata": [
+                {"source": "a", "chunk_index": 1},
+                {"source": "b", "chunk_index": 0},
+            ],
+        }
+    )
+    assert meta_index[0]["chunk_id"] == "1"
+    assert meta_index[1]["chunk_id"] == "0"
+
+
+def test_operator_split_rag_api_search_v1_dict_shape() -> None:
+    """Live retrieve_operators json must not iterate dict keys as operator strings."""
+    payload = {
+        "chunks": ["operator passage one", "operator passage two"],
+        "metadata": [
+            {"doc_id": "doc-a", "chunk_id": "0"},
+            {"source": "doc-b", "id": "1"},
+        ],
+        "query": "q",
+        "scope": None,
+    }
+    result = split_operators(payload, _pool(2), run_seed=5)
+    assert result["operator_subsets"][0][0] == "[doc-a:0] operator passage one"
+    assert result["operator_subsets"][1][0] == "[doc-b:1] operator passage two"
+
+    scoped = dict(payload)
+    scoped["scope"] = "operators"
+    scoped_result = split_operators(scoped, _pool(2), run_seed=1)
+    scoped_flat = [
+        entry for subset in scoped_result["operator_subsets"] for entry in subset
+    ]
+    assert "[doc-a:0] operator passage one" in scoped_flat
+    assert any(entry.startswith("[doc-b:1]") for entry in scoped_flat)
+
+
+def test_operator_split_id_only_entries_without_text() -> None:
+    result = split_operators([{"doc_id": "d1", "chunk_id": "c1"}], _pool(1), run_seed=0)
+    assert result["operator_subsets"] == [["d1:c1"]]
+
+
+def test_operator_split_bare_strings_and_dedupe() -> None:
+    strings = ["passage alpha", "passage alpha", "d1:c2"]
+    deduped = _dedupe_operators(strings)
+    assert len(deduped) == 2
+    assert deduped[0]["text"] == "passage alpha"
+    assert deduped[1]["doc_id"] == "d1"
+
+    subsets = [["passage alpha", "d1:c2"], ["passage alpha"]]
+    assert 0.0 <= operator_dispersion(subsets) <= 1.0
+
+    split = split_operators(strings, _pool(2), run_seed=7)
+    flat = [x for s in split["operator_subsets"] for x in s]
+    assert len(flat) == 2
+    assert any("passage alpha" in entry for entry in flat)
+    assert any(entry == "d1:c2" for entry in flat)
+
+
+@pytest.mark.asyncio
+async def test_operator_split_handler_accepts_rag_envelope() -> None:
+    from systems.pipeline.core.handlers.protocol import PipelineContext
+    from systems.pipeline.core.schemas import PipelineOptions, PipelineSpec
+
+    from pipelines.divergent_ideation.v1.handlers.operator_split import (
+        OperatorSplitV1Handler,
+    )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec_dict = yaml.safe_load(
+        (
+            repo_root / "pipelines/divergent_ideation/v1/divergent-ideation-v1.yaml"
+        ).read_text()
+    )
+    op_dict = next(s for s in spec_dict["steps"] if s["name"] == "operator_split")
+    step = StepConfig.model_validate(op_dict)
+    pipeline = PipelineSpec(
+        id="divergent-ideation-v1",
+        version="1",
+        type="test",
+        category="test",
+        steps=[],
+        output="collate",
+        options=PipelineOptions.model_validate(spec_dict.get("options") or {}),
+        source_search_path="pipelines",
+    )
+    ctx = PipelineContext(
+        pipeline=pipeline,
+        source_text="",
+        http_request=None,  # type: ignore[arg-type]
+        execution_id="EXEC-OP-SPLIT",
+    )
+    ctx.outputs["retrieve_operators"] = StepOutput(
+        raw="{}",
+        json={
+            "chunks": ["operator passage one"],
+            "metadata": [{"doc_id": "doc-a", "chunk_id": "0"}],
+            "query": "q",
+            "scope": None,
+        },
+    )
+    ctx.outputs["problem_defaults"] = StepOutput(raw="{}", json={"run_seed": 1})
+
+    out = await OperatorSplitV1Handler().execute(step, ctx)
+    assert out.json is not None
+    assert out.json["operator_subsets"][0][0] == "[doc-a:0] operator passage one"
 
 
 def test_leak_check_stemmed_variant() -> None:
