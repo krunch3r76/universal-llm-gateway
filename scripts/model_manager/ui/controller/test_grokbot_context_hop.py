@@ -572,7 +572,9 @@ def test_ac10_reply_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert built == seen[0]
 
 
-def test_ac11_event_factories(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ac11_event_factories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from scripts.model_manager.ui.controller import grokbot_egress_watch_loop
     from scripts.model_manager.ui.controller.grokbot_egress_watch_loop import (
         GrokbotEgressWatchLoop,
@@ -644,6 +646,7 @@ def test_ac11_event_factories(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     loop = GrokbotEgressWatchLoop(
         workspace_root=Path("."),
+        hop_cooldown_path=tmp_path / "hop-cooldown.json",
         snapshot_fn=lambda: asyncio.sleep(0, result=snap),
     )
     asyncio.run(loop._context_hop(now=100.0, now_ms=_NOW_MS, snapshot=snap))
