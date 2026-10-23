@@ -91,7 +91,10 @@ def _promote(
         except OSError:
             sidecar_text_for_link = None
         title = (
-            title_from_sidecar_content(sidecar_text_for_link)
+            title_from_sidecar_content(
+                sidecar_text_for_link,
+                fallback_stem=fallback_name,
+            )
             if sidecar_text_for_link
             else None
         )

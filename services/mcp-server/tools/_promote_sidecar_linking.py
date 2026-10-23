@@ -26,6 +26,18 @@ _LAST4_ENDING_IN = re.compile(
     re.IGNORECASE,
 )
 _ATX_TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+_TOKEN_SPLIT = re.compile(r"[^\w]+", re.UNICODE)
+_GENERIC_ATX_HEADINGS = frozenset(
+    {
+        "confirmation",
+        "receipt",
+        "statement",
+        "invoice",
+        "document",
+        "notice",
+    }
+)
+_BOLD_SPAN = re.compile(r"\*\*([^*]+)\*\*")
 
 
 def sidecar_body_after_frontmatter(content: str) -> str:
@@ -38,7 +50,56 @@ def sidecar_body_after_frontmatter(content: str) -> str:
     return content[end_marker + 5 :].strip()
 
 
-def title_from_sidecar_content(content: str) -> str | None:
+def _heading_tokens(heading: str) -> list[str]:
+    return [t.lower() for t in _TOKEN_SPLIT.split(heading.strip()) if len(t) >= 2]
+
+
+def _is_generic_heading(heading: str) -> bool:
+    tokens = _heading_tokens(heading)
+    if len(tokens) < 2:
+        if len(tokens) == 1 and tokens[0] in _GENERIC_ATX_HEADINGS:
+            return True
+        return len(tokens) == 0
+    return False
+
+
+def _counterparty_from_body(body: str) -> str | None:
+    for match in _BOLD_SPAN.finditer(body):
+        span = match.group(1).strip()
+        lowered = span.lower()
+        if "wells fargo" in lowered:
+            return "Wells Fargo"
+        if len(_heading_tokens(span)) >= 2:
+            return span
+    wf = re.search(r"\b(Wells Fargo(?:\s+[A-Za-z®]+)*)\b", body, re.IGNORECASE)
+    if wf:
+        return wf.group(1).strip()
+    return None
+
+
+def _enrich_generic_heading(
+    heading: str,
+    body: str,
+    fallback_stem: str | None,
+) -> str:
+    if fallback_stem:
+        stem = fallback_stem.strip().replace("_", " ")
+        if len(_heading_tokens(stem)) >= 2:
+            return stem
+    counterparty = _counterparty_from_body(body)
+    if counterparty:
+        if counterparty.lower() == heading.strip().lower():
+            return counterparty
+        return f"{heading.strip()} - {counterparty}"
+    if fallback_stem and fallback_stem.strip():
+        return fallback_stem.strip().replace("_", " ")
+    return heading.strip()
+
+
+def title_from_sidecar_content(
+    content: str,
+    fallback_stem: str | None = None,
+) -> str | None:
     """Derive a human document title from sidecar markdown (ATX heading first)."""
     body = sidecar_body_after_frontmatter(content)
     if not body:
@@ -46,10 +107,14 @@ def title_from_sidecar_content(content: str) -> str | None:
     match = _ATX_TITLE.search(body)
     if match:
         title = match.group(1).strip()
+        if title and _is_generic_heading(title):
+            return _enrich_generic_heading(title, body, fallback_stem)
         return title or None
     for line in body.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
+            if _is_generic_heading(stripped):
+                return _enrich_generic_heading(stripped, body, fallback_stem)
             return stripped
     return None
 

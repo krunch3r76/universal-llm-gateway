@@ -138,6 +138,25 @@ def ensure_entity(
                 f"Entity {entity_id!r} exists with content_hash {stored!r}, "
                 f"but source SHA is {content_hash!r}.",
             )
+        needs_update = name != existing.get("name") or (
+            source_uri is not None and source_uri != existing.get("source_uri")
+        )
+        if needs_update:
+            update_args: dict[str, Any] = {
+                "entity_id": entity_id,
+                "name": name,
+            }
+            if source_uri is not None:
+                update_args["source_uri"] = source_uri
+            result = cx(
+                "POST",
+                "/dispatch",
+                {"tool": "entity_update", "arguments": update_args},
+            )
+            if result.get("error"):
+                raise RuntimeError(result["error"])
+            refreshed = entity_get(entity_id)
+            return False, refreshed if refreshed is not None else existing
         return False, existing
 
     duplicate = find_document_with_content_hash(

@@ -480,6 +480,21 @@ def update_entity_impl(
         elif prior_name_retained:
             updates = {**updates, "aliases": alias_list}
 
+    if "name" in updates or "aliases" in updates:
+        resolved_name = str(updates.get("name", prior.get("name")) or "")
+        caller_aliases = updates.get("aliases") if "aliases" in updates else prior.get("aliases")
+        alias_input = (
+            list(caller_aliases) if isinstance(caller_aliases, list) else None
+        )
+        updates = {
+            **updates,
+            "aliases": mint_entity_create_aliases(
+                entity_id,
+                resolved_name,
+                alias_input,
+            ),
+        }
+
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():
         if value is None:
