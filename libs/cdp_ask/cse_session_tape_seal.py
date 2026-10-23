@@ -113,8 +113,17 @@ def _post_session_close(payload: dict[str, Any]) -> Any:
         return client.post("/session-journals/close", json=payload)
 
 
-async def _scrape_predecessor_turns(port: int, chat_url: str) -> list[dict[str, Any]]:
-    """Scrape the live Cowork page for one predecessor port."""
+async def _scrape_predecessor_turns(
+    port: int,
+    chat_url: str,
+    *,
+    match_chat_url_only: bool = False,
+) -> list[dict[str, Any]] | None:
+    """Scrape the live Cowork page for one predecessor port.
+
+    When *match_chat_url_only* is true (shared listener port), only a tab whose
+    URL normalizes to *chat_url* is used; if none exists, returns ``None``.
+    """
     from claude_bundles.cse_turns_harvest import harvest_turns
     from claude_bundles.skills_ui_panel import connect_cdp
 
@@ -123,7 +132,10 @@ async def _scrape_predecessor_turns(port: int, chat_url: str) -> list[dict[str, 
 
     pw, _browser, ctx, page = await connect_cdp(f"http://127.0.0.1:{port}")
     try:
-        page = await pick_page_for_chat_url(ctx, chat_url, fallback=page)
+        fallback = None if match_chat_url_only else page
+        page = await pick_page_for_chat_url(ctx, chat_url, fallback=fallback)
+        if page is None:
+            return None
         raw = await harvest_turns(page, limit=HARVEST_HARD_CAP)
     finally:
         await pw.stop()
@@ -213,28 +225,19 @@ async def seal_predecessor_cse_to_tape(
         _emit_seal_degraded(rid, "missing_row")
         return {"degraded": True, "registration_id": rid, "reason": "missing_row"}
     port = row.get("port")
+    port_shared = False
     if isinstance(port, int):
+        from claude_bundles.cdp_registry.models import seat_open
 
-        def _another_row_shares_port() -> bool:
-            from claude_bundles.cdp_registry.models import seat_open
-
-            for other_rid, other_row in active.items():
-                if other_rid == rid or not isinstance(other_row, dict):
-                    continue
-                other_port = other_row.get("port")
-                if not isinstance(other_port, int) or other_port != port:
-                    continue
-                if other_row.get("status") == "active" or seat_open(other_row):
-                    return True
-            return False
-
-        if _another_row_shares_port():
-            _emit_seal_degraded(rid, "port_shared")
-            return {
-                "degraded": True,
-                "reason": "port_shared",
-                "registration_id": rid,
-            }
+        for other_rid, other_row in active.items():
+            if other_rid == rid or not isinstance(other_row, dict):
+                continue
+            other_port = other_row.get("port")
+            if not isinstance(other_port, int) or other_port != port:
+                continue
+            if other_row.get("status") == "active" or seat_open(other_row):
+                port_shared = True
+                break
     if not isinstance(port, int) or not cdp_lane.is_listening(port):
         _emit_seal_degraded(rid, "listener_down")
         return {
@@ -245,7 +248,17 @@ async def seal_predecessor_cse_to_tape(
         }
     chat_url = str(row.get("chat_url") or "").strip()
     try:
-        turns = await _scrape_predecessor_turns(port, chat_url)
+        turns = await _scrape_predecessor_turns(
+            port, chat_url, match_chat_url_only=port_shared
+        )
+        if turns is None:
+            _emit_seal_degraded(rid, "tab_absent")
+            return {
+                "degraded": True,
+                "registration_id": rid,
+                "transcript_path": None,
+                "reason": "tab_absent",
+            }
         from chat_harvest.archive import archive_chat_transcript
         from chat_harvest.models import ChatTurn
 

@@ -1,8 +1,9 @@
-"""Detach skips Chrome kill and tape scrape when another row holds the same port (a:40126)."""
+"""Detach skips Chrome kill when another row holds the same port (a:40126)."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from claude_bundles import cdp_registry as reg
@@ -50,31 +51,7 @@ def _detach_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app())
 
 
-def test_detach_shared_port_skips_kill_and_tape_scrape(
-    isolated_registry: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Two rows on one port: dormant detach must not kill the shared listener."""
-    killed: list[int] = []
-    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
-    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _p: True)
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.hygiene.reclaim_profile_for_detached_row",
-        lambda *_a, **_k: "success",
-    )
-    monkeypatch.setattr(
-        "services.git_integration_worker.cse_session_holders.release_holder_remote",
-        lambda **_k: True,
-    )
-
-    async def _forbidden_scrape(_port: int, _url: str) -> list:
-        raise AssertionError("scrape must not run when port is shared")
-
-    monkeypatch.setattr(
-        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
-        _forbidden_scrape,
-    )
-
+def _write_shared_port_rows() -> tuple[str, str]:
     pred_rid = "rid-pred-shared-port"
     succ_rid = "rid-succ-shared-port"
     reg._store.write_active(
@@ -108,7 +85,55 @@ def test_detach_shared_port_skips_kill_and_tape_scrape(
         "standdown_pasted",
         {"registration_id": pred_rid, "chat_url": _CSE_PRED, "pasted_at": 1.0},
     )
+    return pred_rid, succ_rid
 
+
+def test_detach_shared_port_seals_matching_tab(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared port with a tab for the predecessor chat_url: harvest and close POST run."""
+    killed: list[int] = []
+    close_payloads: list[dict] = []
+
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _p: True)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.hygiene.reclaim_profile_for_detached_row",
+        lambda *_a, **_k: "success",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.release_holder_remote",
+        lambda **_k: True,
+    )
+
+    async def _scrape(_port: int, chat_url: str, *, match_chat_url_only: bool = False) -> list:
+        assert match_chat_url_only is True
+        assert chat_url == _CSE_PRED
+        return [{"author": "user", "text": "pred turn", "ordinal": 1}]
+
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
+        _scrape,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.archive.archive_chat_transcript",
+        lambda **_k: ("cortex://x", "sha", "new"),
+    )
+
+    def _post(payload: dict) -> MagicMock:
+        close_payloads.append(payload)
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {
+            "journal_row_id": "j-shared",
+            "transcript_path": "cortex://tape/shared.md",
+        }
+        return response
+
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+
+    pred_rid, succ_rid = _write_shared_port_rows()
     client = _detach_client(monkeypatch)
     response = client.post(
         "/v1/cse-session/detach",
@@ -116,9 +141,61 @@ def test_detach_shared_port_skips_kill_and_tape_scrape(
     )
     assert response.status_code == 200
     body = response.json()
-    assert body.get("tape_seal") == "skipped_port_shared"
+    assert body.get("tape_seal") == "ok"
     assert body.get("listener_killed") is False
     assert killed == []
+    assert len(close_payloads) == 1
+    assert close_payloads[0]["conversation_uuid"] == "cse_port_shared_pred"
+    assert pred_rid not in reg._load_active()
+    assert succ_rid in reg._load_active()
+
+
+def test_detach_shared_port_tab_absent_skips_harvest_and_close(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared port without a predecessor tab: no harvest, no close POST, tab_absent."""
+    killed: list[int] = []
+    close_called: list[bool] = []
+
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _p: True)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.hygiene.reclaim_profile_for_detached_row",
+        lambda *_a, **_k: "success",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.release_holder_remote",
+        lambda **_k: True,
+    )
+
+    async def _scrape(_port: int, _url: str, *, match_chat_url_only: bool = False) -> None:
+        assert match_chat_url_only is True
+        return None
+
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_tape_seal._scrape_predecessor_turns",
+        _scrape,
+    )
+
+    def _forbidden_close(_payload: dict) -> MagicMock:
+        close_called.append(True)
+        raise AssertionError("close POST must not run when tab is absent")
+
+    monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _forbidden_close)
+
+    pred_rid, succ_rid = _write_shared_port_rows()
+    client = _detach_client(monkeypatch)
+    response = client.post(
+        "/v1/cse-session/detach",
+        json={"registration_id": pred_rid, "reason": "hop_detach"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("tape_seal") == "skipped_tab_absent"
+    assert body.get("listener_killed") is False
+    assert killed == []
+    assert close_called == []
     assert pred_rid not in reg._load_active()
     assert succ_rid in reg._load_active()
 
