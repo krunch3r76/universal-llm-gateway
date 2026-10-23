@@ -263,8 +263,8 @@ def _load_sealed_segment(session_id: str) -> TapeSegment | None:
     conn = cortex_conn()
     try:
         journal = conn.execute(
-            "SELECT file_path, conversation_uuid, closed_by, verbatim_bytes "
-            "FROM session_journals WHERE session_id = ?",
+            "SELECT file_path, conversation_uuid, closed_by, verbatim_bytes, "
+            "verbatim_codec FROM session_journals WHERE session_id = ?",
             (session_id,),
         ).fetchone()
     finally:
