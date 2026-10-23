@@ -690,6 +690,7 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
     listen = cdp_lane.is_listening
     chat_url: str | None = None
     profile_outcome: str | None = None
+    listener_killed = False
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(rid)
@@ -720,8 +721,24 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
         chat_url = str(row.get("chat_url") or "").strip() or None
         row_copy = dict(row)
         port = row.get("port")
-        if isinstance(port, int) and listen(port):
+        listener_killed = False
+
+        def _another_row_shares_port() -> bool:
+            if not isinstance(port, int):
+                return False
+            for other_rid, other_row in active.items():
+                if other_rid == rid or not isinstance(other_row, dict):
+                    continue
+                other_port = other_row.get("port")
+                if not isinstance(other_port, int) or other_port != port:
+                    continue
+                if other_row.get("status") == "active" or seat_open(other_row):
+                    return True
+            return False
+
+        if isinstance(port, int) and listen(port) and not _another_row_shares_port():
             registry_package()._kill_listener(port)
+            listener_killed = True
         profile_outcome = reclaim_profile_for_detached_row(rid, row_copy)
         detached_at = time.time()
         log_row = {
@@ -764,6 +781,7 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
         "chat_url": chat_url,
         "reason": reason,
         "profile_reclaim": profile_outcome,
+        "listener_killed": listener_killed,
     }
 
 

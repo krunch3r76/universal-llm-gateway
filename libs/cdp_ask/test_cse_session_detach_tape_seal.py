@@ -43,6 +43,15 @@ def _client(monkeypatch: pytest.MonkeyPatch):
             "skipped_listener_down",
         ),
         (
+            {
+                "degraded": True,
+                "registration_id": "rid-detach",
+                "reason": "tab_absent",
+            },
+            None,
+            "skipped_tab_absent",
+        ),
+        (
             {"degraded": True, "registration_id": "rid-detach", "reason": "missing_row"},
             None,
             "degraded",
@@ -115,7 +124,9 @@ def test_detach_tape_seal_ok_when_cortex_close_returns_201(
         lambda: {"rid-detach": row},
     )
 
-    async def _scrape(_port: int, _url: str) -> list[dict]:
+    async def _scrape(
+        _port: int, _url: str, *, match_chat_url_only: bool = False
+    ) -> list[dict]:
         return [{"author": "user", "text": "predecessor turn", "ordinal": 1}]
 
     monkeypatch.setattr(
