@@ -130,21 +130,37 @@ class StoreClient:
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
-        parent_thread: str | None = None
-        try:
-            payload_lane = self._bus("GET", f"/threads/{thread_id}/lane-current")
-            if isinstance(payload_lane, dict):
-                parent_thread = payload_lane.get("parent_thread")
-        except Exception:
-            parent_thread = None
+        _MAX_PARENT_HOPS = 3
+        ancestors: list[str] = []
+        seen: set[str] = {thread_id}
+        cur: str | None = thread_id
+        for _hop in range(_MAX_PARENT_HOPS):
+            if not cur:
+                break
+            try:
+                payload_lane = self._bus("GET", f"/threads/{cur}/lane-current")
+            except Exception:
+                break
+            parent = (
+                payload_lane.get("parent_thread")
+                if isinstance(payload_lane, dict)
+                else None
+            )
+            if not isinstance(parent, str) or parent == "" or parent in seen:
+                break
+            ancestors.append(parent)
+            seen.add(parent)
+            cur = parent
+
+        ancestor_rank = {scope: idx + 1 for idx, scope in enumerate(ancestors)}
 
         def _rank(scope: str) -> int:
             if scope == thread_id:
                 return 0
+            if scope in ancestor_rank:
+                return ancestor_rank[scope]
             if scope == "*":
-                return 2
-            if parent_thread and scope == parent_thread:
-                return 1
+                return 4
             return 99
 
         subscribed = [r for r in rows if r.get("state") == "subscribed"]
@@ -152,7 +168,7 @@ class StoreClient:
             r
             for r in subscribed
             if r.get("thread_scope") in {thread_id, "*"}
-            or (parent_thread and r.get("thread_scope") == parent_thread)
+            or str(r.get("thread_scope") or "") in ancestor_rank
         ]
         if not candidates:
             return None
