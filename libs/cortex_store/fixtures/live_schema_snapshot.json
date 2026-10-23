@@ -338,7 +338,12 @@
     75,
     76,
     77,
-    78
+    78,
+    79,
+    80,
+    81,
+    82,
+    83
   ],
   "seed_rows": {
     "relationship_types": [
@@ -999,7 +1004,7 @@
         "type": "child_of"
       },
       {
-        "description": "Temporal continuation — this session resumes a prior session",
+        "description": "Temporal continuation \u2014 this session resumes a prior session",
         "directional": 1,
         "type": "continues"
       },
@@ -1022,6 +1027,11 @@
         "description": "from_node was derived from or produced using to_node",
         "directional": 1,
         "type": "derived_from"
+      },
+      {
+        "description": "from_node is a duplicate report of to_node",
+        "directional": 1,
+        "type": "duplicates"
       },
       {
         "description": "Multiple claims form a behavioral or temporal pattern",
@@ -1077,6 +1087,11 @@
         "description": "Evidence suggests motive behind an action or pattern",
         "directional": 1,
         "type": "reveals_motive"
+      },
+      {
+        "description": "Both nodes are instances of the same defect or phenomenon class",
+        "directional": 0,
+        "type": "same_class_as"
       },
       {
         "description": "Indicates that the from_node is superseded by the to_node (inverse of supersedes)",
@@ -2159,6 +2174,204 @@
         ]
       ],
       "sql": "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, description TEXT, notes TEXT, aliases TEXT, attributes TEXT, source_uri TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, content_hash TEXT, retention_policy TEXT NOT NULL DEFAULT 'permanent', retention_ttl_days INTEGER DEFAULT NULL, last_accessed_at TEXT DEFAULT NULL, workflow_state TEXT, lifecycle TEXT, confidence_band TEXT, confidence_score REAL, adoption TEXT)"
+    },
+    "entities_fts": {
+      "columns": [
+        [
+          "name",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "aliases",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "slug",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "src_fname",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "description",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "entity_id",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "etype",
+          "",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE VIRTUAL TABLE entities_fts USING fts5(  name,  aliases,  slug,  src_fname,  description,  entity_id UNINDEXED,  etype UNINDEXED,  tokenize='porter unicode61')"
+    },
+    "entities_fts_config": {
+      "columns": [
+        [
+          "k",
+          "",
+          1,
+          null,
+          1
+        ],
+        [
+          "v",
+          "",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE 'entities_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+    },
+    "entities_fts_content": {
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "c0",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c1",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c2",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c3",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c4",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c5",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c6",
+          "",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE 'entities_fts_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3, c4, c5, c6)"
+    },
+    "entities_fts_data": {
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "block",
+          "BLOB",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE 'entities_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+    },
+    "entities_fts_docsize": {
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "sz",
+          "BLOB",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE 'entities_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+    },
+    "entities_fts_idx": {
+      "columns": [
+        [
+          "segid",
+          "",
+          1,
+          null,
+          1
+        ],
+        [
+          "term",
+          "",
+          1,
+          null,
+          2
+        ],
+        [
+          "pgno",
+          "",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE 'entities_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
     },
     "entity_access_log": {
       "columns": [
@@ -3434,9 +3647,16 @@
           0,
           null,
           0
+        ],
+        [
+          "verbatim_codec",
+          "TEXT",
+          0,
+          null,
+          0
         ]
       ],
-      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER, dominant_lane TEXT)"
+      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER, dominant_lane TEXT, verbatim_codec TEXT)"
     },
     "surface_forms": {
       "columns": [

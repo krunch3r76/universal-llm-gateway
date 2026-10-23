@@ -1,12 +1,6 @@
 {
   "replay_only_tables": [
-    "extraction_staging",
-    "entities_fts",
-    "entities_fts_config",
-    "entities_fts_content",
-    "entities_fts_data",
-    "entities_fts_docsize",
-    "entities_fts_idx"
+    "extraction_staging"
   ],
   "replay_only_columns": {
     "chunks": [

@@ -170,6 +170,33 @@ def _parse_sql_statements(sql: str) -> list[str]:
     return stmts
 
 
+_SCHEMA_VERSION_DDL = (
+    "CREATE TABLE IF NOT EXISTS schema_version ("
+    "    version INTEGER PRIMARY KEY,"
+    "    applied_at TEXT NOT NULL DEFAULT (datetime('now')),"
+    "    description TEXT"
+    ")"
+)
+
+
+def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
+    conn.execute(_SCHEMA_VERSION_DDL)
+
+
+def _maybe_bootstrap_incremental_migrations(
+    conn: sqlite3.Connection, migration_files: list[Path]
+) -> None:
+    """Lane-B / CI sandboxes track only post-base migrations; bootstrap from snapshot."""
+    if not migration_files or table_exists(conn, "entities"):
+        return
+    match = re.match(r"^(\d+)", migration_files[0].name)
+    if not match or int(match.group(1)) <= 1:
+        return
+    from cortex_store.schema_snapshot import apply_canonical_schema_snapshot
+
+    apply_canonical_schema_snapshot(conn)
+
+
 def _get_applied_versions(conn: sqlite3.Connection) -> set[int]:
     try:
         rows = conn.execute("SELECT version FROM schema_version").fetchall()
@@ -225,10 +252,11 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
         logger.info("No migrations directory at %s — skipping", _MIGRATIONS_DIR)
         return []
 
-    applied = _get_applied_versions(conn)
     sql_files = list(_MIGRATIONS_DIR.glob("*.sql"))
     py_files = list(_MIGRATIONS_DIR.glob("*.py"))
     migration_files = sorted(sql_files + py_files, key=lambda p: p.name)
+    _maybe_bootstrap_incremental_migrations(conn, migration_files)
+    applied = _get_applied_versions(conn)
     newly_applied: list[int] = []
 
     for path in migration_files:
@@ -249,6 +277,7 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
         elif path.suffix == ".py":
             _apply_py_migration(conn, path, version)
 
+        _ensure_schema_version_table(conn)
         conn.execute(
             "INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)",
             (version, path.stem),
