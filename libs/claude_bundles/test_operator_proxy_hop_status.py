@@ -247,6 +247,14 @@ def test_first_acts_are_numbered_in_order() -> None:
         "questions and follow-ups citing a file or turn. We continue until we both agree I am "
         "strongly oriented; then I send the stand-down and you detach."
     ) in out
+    assert (
+        "no cap on follow-ups; the 3-question limit covers the successor's opening questions only"
+    ) in block
+    assert "bounded questions and follow-ups" not in out
+    assert (
+        "10 minutes of silence after a paste ends the exchange as ``no induction``"
+    ) in out
+    assert "after the opener paste" not in out
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:

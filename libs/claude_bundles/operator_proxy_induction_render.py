@@ -18,7 +18,7 @@ def render_induction_k44_block(*, lane: str) -> str:
 1. After act 6 ``TYPE: SEAT_REGISTRATION`` on this lane, do not send a bare stand-down first.
 2. ``cse_session(op=followup)`` to the predecessor ``chat_url`` only, ``envelope=free``, ``min_receipt=dom_committed``, with this opener (verbatim): ``{INDUCTION_OPENER_TEXT}``
 3. Ask at most three opening questions a file cannot answer (events after this handoff; other holders of the same work; Kaywan words not yet written). There is no cap on follow-ups; the three-question limit covers opening questions only.
-4. Ten minutes of silence after the opener paste ends the exchange as ``no induction``. Passing one million input tokens in one exchange means stop and ask maestro (19627#74).
+4. 10 minutes of silence after a paste ends the exchange as ``no induction``. Passing one million input tokens in one exchange means stop and ask maestro (19627#74).
 5. If the predecessor is mid-stream when the opener lands, the opener queues as its next user turn; a reply after the stream ends counts as live.
 6. Continue until both seats are satisfied the successor is strongly oriented: say you are oriented, wait for the predecessor to agree, then ``cse_session(op=followup, envelope=stand_down, …)`` with ``min_receipt=dom_committed``. If predecessor detach fails (a:40105), you may detach it.
 
