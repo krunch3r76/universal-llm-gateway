@@ -252,8 +252,9 @@ def launch_new_agent_tab_js(
 ) -> str:
     """CDP expression: create agent tab, set model from label plus house knobs, submit."""
     msg = json.dumps(message)
-    mq = json.dumps(str(model_query or "").strip())
-    if model_knobs is not None:
+    mq_stripped = str(model_query or "").strip()
+    mq = json.dumps(mq_stripped)
+    if mq_stripped and model_knobs is not None:
         knobs_line = f"  const houseKnobs = {json.dumps(model_knobs)};\n"
     else:
         knobs_line = "  const houseKnobs = null;\n"
