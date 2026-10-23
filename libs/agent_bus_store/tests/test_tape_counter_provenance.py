@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from agent_bus_store.tape_harvest import render_tape_with_harvest
-from agent_bus_store.tape_membership import build_lane_segments
+from agent_bus_store.tape_membership import build_chain_segments, build_lane_segments
 from agent_bus_store.tape_pour import _excluded_counts_projection
 from agent_bus_store.tape_render import segment_codec_counts
 
@@ -49,6 +49,34 @@ def test_segment_codec_counts_preserves_unknown_codecs() -> None:
     counts = segment_codec_counts(segments)
     assert counts == {"messages-v2": 1, "md-v1": 1}
     assert sum(counts.values()) == len(segments)
+
+
+def test_build_chain_segments_messages_v1_uses_structural_marker_not_bytes(
+    tmp_path: Path,
+) -> None:
+    """Stale NDJSON verbatim_bytes must not truncate md-v1 turn count for messages-v1 rows."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    sid = "cursor-2026-09-07-100000-mv1-marker"
+    rel_path = f"notes/system/transcripts/{sid}.md"
+    path = files_root / rel_path
+    path.parent.mkdir(parents=True)
+    path.write_text(_verbatim_md(2, sid), encoding="utf-8")
+    stale_bytes = 80
+
+    journals = [
+        {
+            "session_id": sid,
+            "conversation_uuid": _UUID,
+            "prior_session_id": None,
+            "file_path": rel_path,
+            "verbatim_codec": "messages-v1",
+            "verbatim_bytes": stale_bytes,
+        }
+    ]
+    segments = build_chain_segments(journals, files_root=files_root)
+    assert len(segments) == 1
+    assert segments[0]["turn_hi"] == 2
 
 
 def test_build_lane_segments_propagates_verbatim_codec(tmp_path: Path) -> None:

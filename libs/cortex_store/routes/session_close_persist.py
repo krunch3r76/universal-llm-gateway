@@ -555,7 +555,8 @@ def persist_session_close(
                 _pb_conn = cortex_conn()
                 try:
                     _prow = _pb_conn.execute(
-                        "SELECT verbatim_bytes FROM session_journals WHERE id = ?",
+                        "SELECT verbatim_bytes, verbatim_codec FROM session_journals "
+                        "WHERE id = ?",
                         (reuse_journal_row_id,),
                     ).fetchone()
                     _prior_bytes = journal_verbatim_bytes(_prow)

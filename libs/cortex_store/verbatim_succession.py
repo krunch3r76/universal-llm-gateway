@@ -294,8 +294,20 @@ def build_seal_envelope_meta(
 
 
 def journal_verbatim_bytes(row: dict[str, Any] | Any) -> int | None:
-    """Read ``verbatim_bytes`` from a journal row mapping or sqlite Row."""
+    """Read ``verbatim_bytes`` from a journal row mapping or sqlite Row.
+
+    When ``verbatim_codec`` is ``messages-v1``, returns ``None`` so callers split
+    at ``STRUCTURAL_MARKER`` instead of a stale NDJSON byte length on composed md.
+    If ``verbatim_codec`` is absent from the row, ``verbatim_bytes`` is still used
+    (legacy SELECTs that omit the codec column).
+    """
     if row is None:
+        return None
+    try:
+        codec = row["verbatim_codec"]
+    except (KeyError, TypeError, IndexError):
+        codec = None
+    if codec == "messages-v1":
         return None
     try:
         val = row["verbatim_bytes"]

@@ -433,6 +433,52 @@ def test_pretranscribed_prefix_extend(session_env: dict[str, Path]) -> None:
     assert len(stored["messages"]) == 4
 
 
+def test_pretranscribed_readback_failure_restores_prior_seal(
+    session_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files_root = session_env["files_root"]
+    sid = "grok-bot-2026-10-17-120000-prior"
+    conv = "conv-prior-readback"
+    base = [
+        {"role": "user", "content": "one", "turn_index": 1},
+        {"role": "assistant", "content": "two", "turn_index": 1},
+    ]
+    first = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id=conv,
+        messages=base,
+    )
+    assert "error" not in first, first
+    seal_path = files_root / f"notes/system/seals/{sid}.messages.json"
+    prior_bytes = seal_path.read_bytes()
+
+    def _bad_readback(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "continuity_tape.seal_reader.load_sealed_envelope_from_path",
+        _bad_readback,
+    )
+    extended = _op_transcript_seal(
+        thread="15851",
+        session_id=sid,
+        agent="grok-bot-hm1",
+        surface="grok-bot",
+        transcript_id=conv,
+        messages=base
+        + [
+            {"role": "user", "content": "three", "turn_index": 2},
+            {"role": "assistant", "content": "four", "turn_index": 2},
+        ],
+    )
+    assert extended.get("code") == "transcript_seal.empty_readback"
+    assert seal_path.read_bytes() == prior_bytes
+
+
 def test_pretranscribed_empty_readback(
     session_env: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
