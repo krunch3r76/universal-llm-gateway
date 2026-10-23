@@ -207,11 +207,34 @@ async def seal_predecessor_cse_to_tape(
 
     del store
     rid = (registration_id or "").strip()
-    row = registry_store.load_active().get(rid)
+    active = registry_store.load_active()
+    row = active.get(rid)
     if not isinstance(row, dict):
         _emit_seal_degraded(rid, "missing_row")
         return {"degraded": True, "registration_id": rid, "reason": "missing_row"}
     port = row.get("port")
+    if isinstance(port, int):
+
+        def _another_row_shares_port() -> bool:
+            from claude_bundles.cdp_registry.models import seat_open
+
+            for other_rid, other_row in active.items():
+                if other_rid == rid or not isinstance(other_row, dict):
+                    continue
+                other_port = other_row.get("port")
+                if not isinstance(other_port, int) or other_port != port:
+                    continue
+                if other_row.get("status") == "active" or seat_open(other_row):
+                    return True
+            return False
+
+        if _another_row_shares_port():
+            _emit_seal_degraded(rid, "port_shared")
+            return {
+                "degraded": True,
+                "reason": "port_shared",
+                "registration_id": rid,
+            }
     if not isinstance(port, int) or not cdp_lane.is_listening(port):
         _emit_seal_degraded(rid, "listener_down")
         return {

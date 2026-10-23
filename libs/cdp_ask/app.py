@@ -417,6 +417,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 reason = seal_result.get("reason")
                 if reason == "listener_down":
                     return {"tape_seal": "skipped_listener_down"}
+                if reason == "port_shared":
+                    return {"tape_seal": "skipped_port_shared"}
                 return {"tape_seal": "degraded"}
             if isinstance(seal_result, dict) and seal_result.get("transcript_path"):
                 return {"tape_seal": "ok"}

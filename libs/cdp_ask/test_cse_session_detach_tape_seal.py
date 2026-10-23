@@ -43,6 +43,15 @@ def _client(monkeypatch: pytest.MonkeyPatch):
             "skipped_listener_down",
         ),
         (
+            {
+                "degraded": True,
+                "registration_id": "rid-detach",
+                "reason": "port_shared",
+            },
+            None,
+            "skipped_port_shared",
+        ),
+        (
             {"degraded": True, "registration_id": "rid-detach", "reason": "missing_row"},
             None,
             "degraded",
