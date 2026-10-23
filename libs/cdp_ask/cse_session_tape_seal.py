@@ -287,16 +287,20 @@ async def seal_predecessor_cse_to_tape(
     seal_refused = (
         status != 200 or not path or (journal_row_id in (None, "") and not already)
     )
+    close_url = cortex_session_close_url()
+    status_exc: RuntimeError | None = None
     if seal_refused and not json_failed:
-        _emit_seal_failed(
-            rid,
-            RuntimeError(f"status_code={status}"),
-            "cortex_status",
-        )
+        status_exc = RuntimeError(f"status_code={status}")
+        _emit_seal_failed(rid, status_exc, "cortex_status")
     if seal_refused:
+        if status_exc is None:
+            status_exc = RuntimeError(f"status_code={status}")
         raise ProtocolError(
             code="standdown.tape_seal_failed",
-            message="stand-down tape seal failed before detach",
+            message=(
+                "stand-down tape seal failed before detach: "
+                f"{type(status_exc).__name__}: {status_exc} url={close_url}"
+            ),
             source="rpc",
             retryable=True,
             data={

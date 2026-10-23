@@ -209,6 +209,11 @@ async def test_cortex_non_200_emits_failed_then_raises(
         _scrape,
     )
     monkeypatch.setattr("cdp_ask.cse_session_tape_seal._post_session_close", _post)
+    monkeypatch.delenv("CORTEX_API_HTTP", raising=False)
+    monkeypatch.setenv("CORTEX_API_SOCK", "/tmp/does-not-exist-cortex-api.sock")
+    monkeypatch.setenv("EVENTS_INGEST_TCP", "10.0.0.67:7101")
+    monkeypatch.delenv("CORTEX_API_HTTP_PORT", raising=False)
+    close_url = "http://10.0.0.67:8202"
     monkeypatch.setattr(
         "chat_harvest.archive.archive_chat_transcript",
         lambda **_k: ("cortex://x", "sha", "new"),
@@ -217,6 +222,10 @@ async def test_cortex_non_200_emits_failed_then_raises(
         await seal_predecessor_cse_to_tape("rid-39528")
     assert exc_info.value.code == "standdown.tape_seal_failed"
     assert exc_info.value.data["status_code"] == 503
+    msg = exc_info.value.message
+    assert "RuntimeError" in msg
+    assert "status_code=503" in msg
+    assert f"url={close_url}" in msg
     assert len(events) == 1
     assert events[0].signal == "cdp.tape.seal.failed"
     assert events[0].payload["stage"] == "cortex_status"
