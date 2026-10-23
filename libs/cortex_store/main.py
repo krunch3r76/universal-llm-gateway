@@ -31,6 +31,7 @@ from universal_workspace import get_workspace_root
 from . import embeddings as cortex_embeddings
 from . import vector_store
 from .db import check_cortex_db, cortex_conn, run_migrations
+from .entity_fts_reconcile import run_entity_fts_reconcile
 from .routes import (
     assertions,
     boot,
@@ -212,14 +213,18 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
             monitor_task = asyncio.create_task(run_skill_graph_drift_monitor())
             logger.info("skill-graph drift monitor started")
 
+        fts_reconcile_task = asyncio.create_task(run_entity_fts_reconcile())
+        logger.info("entities_fts reconcile task started")
+
         logger.info("cortex-api started")
         try:
             yield
         finally:
-            if monitor_task is not None:
-                monitor_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await monitor_task
+            for bg_task in (monitor_task, fts_reconcile_task):
+                if bg_task is not None:
+                    bg_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await bg_task
 
     app = FastAPI(
         title="cortex-api",
