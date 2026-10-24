@@ -1,7 +1,8 @@
 """Density harness watchdog — conductor gate for in-row context steer.
 
 ``cursor_sdk_closeout.conductor_hop_watchdog`` owns terminal ROW_HOP reactor
-timing; this module ticks **live** conductor rows against the stream-backed
+timing; this module ticks **live** conductor and Tier-B judgment rows
+(``contract`` ∈ conductor, investigate, confer) against the stream-backed
 visible-context meter and deposits at most one density steer per dispatch.
 """
 
@@ -15,7 +16,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
-    is_conductor_dispatch_row,
+    is_density_harness_steer_row,
 )
 from services.git_integration_worker.cursor_sdk_row_density_harness_meter import (
     maybe_deposit_density_steer,
@@ -54,8 +55,8 @@ def maybe_tick_density_harness_steer(
     row = running_dispatch_row(dispatch_id)
     if row is None:
         return {"steered": False, "reason": "not_live"}
-    if not is_conductor_dispatch_row(row):
-        return {"steered": False, "reason": "not_conductor"}
+    if not is_density_harness_steer_row(row):
+        return {"steered": False, "reason": "not_density_steer_eligible"}
     sync_density_steer_delivery(row, tool_call_count=tool_call_count)
     row = running_dispatch_row(dispatch_id) or row
     park = maybe_park_ignored_density_steer(row, tool_call_count=tool_call_count)
@@ -73,19 +74,24 @@ def maybe_tick_density_harness_steer(
 
 
 def sweep_density_harness_steers(ledger: CursorDispatchLedger | None = None) -> int:
-    """Backstop tick for live conductor rows (~30s stale-lease reconcile).
+    """Backstop tick for live density-steer rows (~30s stale-lease reconcile).
 
-    The worker ``_on_tool_call`` path owns delivery sync, +8 park, and fresh tool
-    counts. The sweep only retries steer deposit when the worker loop is slow or
-    stuck; ``try_claim_density_steer_deposit`` prevents double posts alongside
-    the live tick.
+    For ``contract`` ∈ conductor, investigate, confer, each sweep calls
+    ``maybe_tick_density_harness_steer`` — the full tick (delivery sync via
+    ``sync_density_steer_delivery``, ignored-steer park via
+    ``maybe_park_ignored_density_steer``, then steer deposit via
+    ``maybe_deposit_density_steer``). That full tick backs up the worker
+    ``_on_tool_call`` per-tool-call tick when that path is slow or stalled;
+    ``try_claim_density_steer_deposit`` prevents double posts alongside either
+    tick path.
     """
     led = ledger or CursorDispatchLedger.instance()
     steered = 0
     with led._connect() as conn:
         rows = conn.execute(
             "SELECT dispatch_id FROM cursor_sdk_dispatches "
-            "WHERE status IN ('admitted','running') AND contract='conductor'"
+            "WHERE status IN ('admitted','running') "
+            "AND contract IN ('conductor','investigate','confer')"
         ).fetchall()
     for row in rows:
         dispatch_id = str(row["dispatch_id"])

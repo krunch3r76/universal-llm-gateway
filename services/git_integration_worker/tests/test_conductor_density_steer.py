@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from services.git_integration_worker.conductor_hop_watchdog import (
     maybe_tick_density_harness_steer,
+    sweep_density_harness_steers,
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_row_density_harness_meter import (
     DensityHarnessStreamHook,
     apply_synthetic_density_trajectory,
+    build_density_steer_directive,
     density_harness_control_patch,
     density_harness_record_patch,
     read_density_harness_meter,
@@ -130,6 +133,80 @@ def test_conductor_at_threshold_steers_once(
     assert first["steered"] is True
     assert second["steered"] is False
     assert len(deposits) == 1
+
+
+def test_investigate_at_threshold_steers_wrap_up_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="dens-investigate-1", execution_id="exec-inv-1")
+    _admit_row(ledger, req, contract="investigate")
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[_THRESHOLD],
+        ledger=ledger,
+    )
+    captured: dict[str, str] = {}
+
+    def _deposit(**kwargs: object) -> SteerDepositResult:
+        captured["directive"] = str(kwargs["directive"])
+        return SteerDepositResult(
+            dispatch_id=req.dispatch_id,
+            entry_id="e-inv",
+            authority_turn_id="9",
+            spool_path="/tmp/spool",
+        )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_row_density_harness_meter.deposit_steer_directive",
+        _deposit,
+    )
+    first = maybe_tick_density_harness_steer(dispatch_id=req.dispatch_id)
+    second = maybe_tick_density_harness_steer(dispatch_id=req.dispatch_id)
+    assert first["steered"] is True
+    assert second["steered"] is False
+    assert "stop: WRAP_UP" in captured["directive"]
+    assert "ROW_HOP" not in captured["directive"]
+
+
+def test_build_density_steer_directive_tier_b_vs_conductor() -> None:
+    tier_b = build_density_steer_directive({"contract": "investigate"})
+    conductor = build_density_steer_directive(
+        {"contract": "conductor", "record_json": '{"hop_entry_gate":"G3"}'}
+    )
+    assert "stop: WRAP_UP" in tier_b
+    assert "stop: ROW_HOP" in conductor
+
+
+def test_sweep_density_harness_steers_includes_investigate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="dens-sweep-inv", execution_id="exec-sweep-inv")
+    _admit_row(ledger, req, contract="investigate")
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[_THRESHOLD],
+        ledger=ledger,
+    )
+    calls: list[str] = []
+
+    def _deposit(**kwargs: object) -> SteerDepositResult:
+        calls.append(str(kwargs["dispatch_id"]))
+        return SteerDepositResult(
+            dispatch_id=req.dispatch_id,
+            entry_id="e-sweep",
+            authority_turn_id="9",
+            spool_path="/tmp/spool",
+        )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_row_density_harness_meter.deposit_steer_directive",
+        _deposit,
+    )
+    steered = sweep_density_harness_steers(ledger=ledger)
+    assert steered == 1
+    assert calls == [req.dispatch_id]
 
 
 def test_conductor_at_threshold_steers_directive_body(
@@ -421,3 +498,109 @@ def test_row_hop_planned_infer_stays_planned() -> None:
         )
         == "planned"
     )
+
+
+def test_run_sdk_on_tool_call_ticks_density_steer_for_investigate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Route ``_on_tool_call`` gate must tick investigate rows, not only conductor."""
+    from unittest.mock import MagicMock
+
+    from services.git_integration_worker import (
+        cursor_sdk_bridge_launch as bridge_launch_mod,
+    )
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        StreamCapture,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.tests.conftest import _ctx
+
+    tick_calls: list[dict[str, object]] = []
+
+    def _record_tick(**kwargs: object) -> dict[str, object]:
+        tick_calls.append(dict(kwargs))
+        return {"steered": False}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.conductor_hop_watchdog.maybe_tick_density_harness_steer",
+        _record_tick,
+    )
+
+    repo_venv = tmp_path / "repo-venv"
+    bindir = repo_venv / "bin"
+    bindir.mkdir(parents=True)
+    for exe in ("python", "pytest", "ruff"):
+        (bindir / exe).touch()
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
+
+    def _observe(*_a: object, **kwargs: object) -> StreamCapture:
+        on_tool_call = kwargs.get("on_tool_call")
+        if on_tool_call is not None:
+            on_tool_call(
+                MagicMock(tool_name="Shell", status="completed", args=None)
+            )
+        return StreamCapture(tool_calls=())
+
+    class _Run:
+        def stream(self):
+            return iter([])
+
+        def wait(self) -> MagicMock:
+            return MagicMock(result="ok", status="finished", duration_ms=100)
+
+        def conversation(self) -> list[object]:
+            return []
+
+    class _Agent:
+        id = "agent-inv"
+
+        def send(self, _prompt: str) -> _Run:
+            return _Run()
+
+        def list_artifacts(self) -> list[str]:
+            return []
+
+    def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
+        client = MagicMock()
+        client.create_agent.return_value = _Agent()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
+    )
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="grok-4.7")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _cfg, _ov: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
+    monkeypatch.setattr(route_mod, "observe_run_stream", _observe)
+
+    route_mod._run_sdk_sync(
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="dens-route-inv",
+            thread_id="20442",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            contract="investigate",
+        ),
+        prompt="recon",
+        config_model_id="cursor/grok-4.7",
+        selection_overrides=None,
+        resolved_model="grok-4.7",
+        gate_loop=MagicMock(),
+    )
+    assert len(tick_calls) == 1
+    assert tick_calls[0]["dispatch_id"] == "dens-route-inv"
+    assert tick_calls[0]["tool_call_count"] == 1

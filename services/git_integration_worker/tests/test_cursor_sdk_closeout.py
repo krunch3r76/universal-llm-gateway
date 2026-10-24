@@ -4492,7 +4492,8 @@ def test_tier_preambles_in_resolve_prompt_preamble() -> None:
         resolved_model="cursor/grok-4.7",
     )
     assert "TIER-B RECON / JUDGMENT INVARIANT" in tier_b
-    assert "BREADTH RECON — EXPLORE DEFAULT" in tier_b
+    assert "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT" in tier_b
+    assert "TIER-B READ/TOOL-CALL BUDGET" in tier_b
 
     tier_c = resolve_prompt_preamble(
         handoff_contract="implement",
@@ -4503,5 +4504,5 @@ def test_tier_preambles_in_resolve_prompt_preamble() -> None:
         resolved_model="cursor/composer-2.5",
     )
     assert "LEAF EXECUTION INVARIANT" in tier_c
-    assert "BREADTH RECON — EXPLORE DEFAULT" not in tier_c
+    assert "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT" not in tier_c
     assert "propagation_residue" in tier_c

@@ -86,11 +86,21 @@ _LEAN_DISPATCH_PREAMBLE = (
     "closeout sidecars with offset=0, limit=60."
 )
 
+# Deterministic in-seat budgets surfaced in Tier-B preambles (instruction tripwire).
+TIER_B_MAX_IN_SEAT_READ_TOOL_CALLS = 12
+TIER_B_MAX_TOTAL_TOOL_CALLS = 28
+
 _TIER_B_SPLIT_PREAMBLE = (
     "TIER-B RECON / JUDGMENT INVARIANT: Scoped recon reads in-seat are permitted "
     "until judgment closes. Do not hand-implement mechanical remainders on this "
     "seat — once judgment closes (judgment_closed ∧ mechanical_remainder ⇒ split), "
-    "return the bound spec/closeout or split to cursor/composer-2.5 via nest_under."
+    "return the bound spec/closeout or split to cursor/composer-2.5 via nest_under.\n"
+    "TIER-B READ/TOOL-CALL BUDGET (deterministic tripwire): Bound in-seat recon — "
+    f"at most {TIER_B_MAX_IN_SEAT_READ_TOOL_CALLS} Read/Grep/Glob tool calls and "
+    f"{TIER_B_MAX_TOTAL_TOOL_CALLS} total tool calls on this dispatch. Once anchors "
+    "are found OR either budget is reached, stop new reads/tool calls and emit "
+    "closeout (with `OPEN FORK:` for unresolved forks) in this turn — do not "
+    "speculative second-pass sweeps."
 )
 
 _TIER_C_LEAF_PREAMBLE = (
@@ -106,19 +116,21 @@ _TIER_C_LANE_B_NO_RESTART = (
 )
 
 _BREADTH_RECON_PREAMBLE = (
-    "BREADTH RECON — EXPLORE DEFAULT (mandatory when owed):\n"
+    "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT (mandatory when owed):\n"
+    "Native Cursor Task subagents (explore, generalPurpose, shell, etc.) are "
+    "PROHIBITED on cursor-sdk — use bounded in-seat Grep/Read/Glob or "
+    "`team_dispatch(seat=cursor-sdk, …)` when breadth exceeds the Tier-B budgets.\n"
     "When breadth recon is owed — loci unknown, question spans ≥3 files or an "
     "unfamiliar subsystem, you are about a 2nd speculative Grep/Glob round, or "
-    "the packet contract is investigate/none recon — your default read "
-    'move is Task(subagent_type="explore", …). Explore is the Cursor subagent '
-    "(¬ in-seat Grep spray, ¬ a separate tool).\n"
+    "the packet contract is investigate/none recon — default to bounded in-seat "
+    "reads first; fire team_dispatch for breadth you cannot bound in-seat.\n"
     "Anti-triggers (in-seat Grep/Read OK): loci known (path in hand ∨ one grep "
     "away); you need file contents verbatim because you are about to edit them; "
     "latency-sensitive tight-loop debugging.\n"
     "Closeout MUST include a recon_method line: "
-    "`recon_method: explore` | `recon_method: in-seat` + one-line anti-trigger reason "
-    "| `recon_method: waived` + packet cite. Omitting recon_method when breadth recon "
-    "was owed is a scope-delta defect the relay may flag (advisory)."
+    "`recon_method: in-seat` + one-line reason | `recon_method: team_dispatch` "
+    "+ wire | `recon_method: waived` + packet cite. Omitting recon_method when "
+    "breadth recon was owed is a scope-delta defect the relay may flag (advisory)."
 )
 
 _LANE_B_REPO_EDIT_PREAMBLE = (
