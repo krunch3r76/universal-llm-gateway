@@ -87,7 +87,7 @@ def test_play_dispatch_body_uses_successor_model() -> None:
         todo_slug="cse-attachment-hop",
     )
     assert body["model"] == "cursor/grok-4.7"
-    assert body["model_knobs"] == {"effort": "high", "fast": "true"}
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
     assert body["job"] == "conductor"
     assert body["subject"] == "conductor todo:cse-attachment-hop"
     assert "prompt" not in body
@@ -296,7 +296,7 @@ def test_consult_reply_on_terminal_conductor_open_thread_admits(
     assert body["source_ref"] == "todo:cse-attachment-hop"
     assert body["work_key"] == "todo:cse-attachment-hop"
     assert body["model"] == "cursor/grok-4.7"
-    assert body["model_knobs"] == {"effort": "high", "fast": "true"}
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
     assert digest["lanes"][0]["seat_empty"] is True
 
 
