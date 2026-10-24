@@ -6,6 +6,7 @@ import sqlite3
 
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
+    is_density_harness_steer_row,
 )
 
 
@@ -23,6 +24,14 @@ def test_is_conductor_dispatch_row_sqlite_row() -> None:
     row = conn.execute("SELECT contract FROM t").fetchone()
     assert row is not None
     assert is_conductor_dispatch_row(row) is True
+
+
+def test_is_density_harness_steer_row_tier_b_and_conductor() -> None:
+    assert is_density_harness_steer_row({"contract": "conductor"}) is True
+    assert is_density_harness_steer_row({"contract": "investigate"}) is True
+    assert is_density_harness_steer_row({"contract": "confer"}) is True
+    assert is_density_harness_steer_row({"contract": "implement"}) is False
+    assert is_density_harness_steer_row({"contract": "freeform"}) is False
 
 
 def test_is_conductor_dispatch_row_ignores_record_json_packet_kind() -> None:

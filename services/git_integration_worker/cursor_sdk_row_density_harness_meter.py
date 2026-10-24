@@ -1,7 +1,8 @@
 """In-row density harness — chars/4 visible context meter (GIW stream source).
 
-Generic reader over ``record_json``; conductor-only steer is gated in
-``conductor_hop_watchdog`` (contract=conductor). Trigger: latest visible
+Generic reader over ``record_json``; steer eligibility is gated in
+``conductor_hop_watchdog`` (contract ∈ conductor, investigate, confer).
+Trigger: latest visible
 estimate >= visible_fraction × ``context_window_tokens(model)`` — not a
 cumulative-sum arm (operator ruling 2026-10-02).
 
@@ -241,6 +242,23 @@ def should_steer_density_hop(
 
 
 def build_density_steer_directive(row: Mapping[str, Any]) -> str:
+    contract = str(row.get("contract") or "").lower()
+    if contract in {"investigate", "confer"}:
+        return "\n".join(
+            [
+                "CHECKPOINT — density harness context saturation (Tier B wrap-up).",
+                "Anchor: this dispatch.",
+                "Mission: unchanged.",
+                "Judgment: visible context crossed the harness threshold.",
+                "Action: stop new in-seat reads and tool calls; emit closeout with "
+                "anchors found, `status:`, `recon_method:` when breadth recon was "
+                "owed, and `OPEN FORK:` for unresolved forks — no native Task "
+                "subagents and no new team_dispatch from this seat without parent "
+                "re-admit.",
+                "RESUME: relay harvests this closeout.",
+                "stop: WRAP_UP",
+            ]
+        )
     record_json = str(row.get("record_json") or "")
     try:
         rec = json.loads(record_json) if record_json else {}

@@ -16,7 +16,11 @@ from services.git_integration_worker.cursor_sdk_breadth_recon import (
     breadth_recon_deviation,
     packet_owes_breadth_recon,
 )
-from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+from services.git_integration_worker.cursor_sdk_packet import (
+    TIER_B_MAX_IN_SEAT_READ_TOOL_CALLS,
+    TIER_B_MAX_TOTAL_TOOL_CALLS,
+    resolve_prompt_preamble,
+)
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
     SUBAGENTS_SURFACE,
 )
@@ -28,9 +32,13 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
-    assert 'Task(subagent_type="explore"' in preamble
+    assert "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT" in preamble
+    assert "PROHIBITED on cursor-sdk" in preamble
+    assert 'Task(subagent_type="explore"' not in preamble
     assert "recon_method:" in preamble
+    assert "TIER-B READ/TOOL-CALL BUDGET" in preamble
+    assert str(TIER_B_MAX_IN_SEAT_READ_TOOL_CALLS) in preamble
+    assert str(TIER_B_MAX_TOTAL_TOOL_CALLS) in preamble
 
 
 def test_packet_preamble_implement_omits_breadth_recon_block() -> None:
@@ -41,7 +49,7 @@ def test_packet_preamble_implement_omits_breadth_recon_block() -> None:
         resolved_model="cursor/composer-2.5",
         lane="B",
     )
-    assert "BREADTH RECON — EXPLORE DEFAULT" not in preamble
+    assert "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT" not in preamble
     assert "LEAF EXECUTION INVARIANT" in preamble
 
 
@@ -56,7 +64,7 @@ def test_packet_preamble_none_is_freeform() -> None:
     )
     assert preamble.startswith("/reasoning-posture")
     assert "Use the `reasoning-posture` skill" in preamble
-    assert "BREADTH RECON — EXPLORE DEFAULT" not in preamble
+    assert "BREADTH RECON — IN-SEAT / DISPATCH DEFAULT" not in preamble
     assert "DURABLE DELIVERABLE ROUTING" not in preamble
     assert "LANE-B BRANCH CONTRACT" not in preamble
 
