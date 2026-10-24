@@ -253,6 +253,23 @@ class _Ctx:
         self.options = options
 
 
+def test_assemble_intake_passes_source_message_block_to_drafters() -> None:
+    inbound = "Hi Kaywan,\n\nSan Jose location fits you well."
+    payload = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(
+                intake={
+                    **_standard_email_intake(working_set=[]),
+                    "source_message": inbound,
+                },
+            ),
+        )
+    ).json
+    assert inbound in payload["source_message_block"]
+    assert "Source rule:" in payload["brief_block"]
+
+
 def test_assemble_email_intake_brief_and_check_class() -> None:
     payload = asyncio.run(
         assemble.WritingAssembleHandler().execute(

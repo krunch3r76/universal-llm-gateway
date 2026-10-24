@@ -15,6 +15,7 @@ from typing import Any
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
+from writing_intake.source_premise import unsupported_source_claims
 
 from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
 from .independence import load_writing_models, model_family
@@ -188,9 +189,10 @@ class WritingDraftSelectorHandler(BaseHandler):
             or ""
         )
         standing_limits = ""
+        source_message = ""
         if isinstance(intake, dict):
             standing_limits = str(intake.get("standing_limits") or "")
-
+            source_message = str(intake.get("source_message") or "")
         aliases = load_writing_models()
         candidates: list[dict[str, Any]] = []
         for step_name, role in _DRAFTER_STEPS:
@@ -215,6 +217,15 @@ class WritingDraftSelectorHandler(BaseHandler):
                 or ""
             )
             unresolved_need = _NEED_TOKEN.search(text) is not None
+            premise_violations = unsupported_source_claims(
+                source_message=source_message,
+                draft_text=text,
+            )
+            rejected: str | None = None
+            if unresolved_need:
+                rejected = "unresolved_need"
+            elif premise_violations:
+                rejected = premise_violations[0]
             candidates.append(
                 {
                     "role": role,
@@ -249,7 +260,7 @@ class WritingDraftSelectorHandler(BaseHandler):
                         ),
                     ),
                     "signer_band": _signer_band(text, signer),
-                    "rejected": "unresolved_need" if unresolved_need else None,
+                    "rejected": rejected,
                 }
             )
 
@@ -263,11 +274,22 @@ class WritingDraftSelectorHandler(BaseHandler):
             )
         eligible = [row for row in candidates if row["rejected"] is None]
         if not eligible:
+            refused = "unresolved_need_placeholder"
+            error = "every candidate contains an unresolved [NEED:] token"
+            if all(
+                row.get("rejected")
+                and str(row["rejected"]).startswith("draft:link_missing")
+                for row in candidates
+            ):
+                refused = "unsupported_source_claim"
+                error = (
+                    "every candidate claims a missing link unsupported by source_message"
+                )
             return _step(
                 {
                     "ok": False,
-                    "refused": "unresolved_need_placeholder",
-                    "error": "every candidate contains an unresolved [NEED:] token",
+                    "refused": refused,
+                    "error": error,
                     "candidates": candidates,
                 }
             )

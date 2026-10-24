@@ -19,6 +19,9 @@ prompts:
       <verbatim_notes>
       {verbatim_notes}
       </verbatim_notes>
+      <source_message>
+      {source_message}
+      </source_message>
       <documents>
       {documents}
       </documents>

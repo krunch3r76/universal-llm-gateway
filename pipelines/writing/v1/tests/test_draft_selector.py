@@ -187,6 +187,27 @@ def test_selector_none_signer_brief_first_person_beats_higher_pin_third_person()
     assert by_role["drafter_google"]["signer_band"] == 0
 
 
+def test_selector_rejects_link_claim_when_source_message_has_no_url() -> None:
+    source = "Hi Kaywan, your San Jose location is a good fit for this role."
+    link_draft = 'The application link did not come through. Please send the apply link.'
+    clean = "I am interested. San Jose works well for me. What are the next steps?"
+    selected = _select(
+        {
+            "assemble": _Out(
+                payload={
+                    "pin_ledger": _PINS,
+                    "intake": {"source_message": source},
+                }
+            ),
+            "drafter_openai": _Out(link_draft),
+            "drafter_google": _Out(clean),
+        }
+    )
+    assert selected["ok"] is True
+    assert selected["draft"] == clean
+    assert selected["selected_role"] == "drafter_google"
+
+
 def test_selector_honors_requested_signer_kaywan() -> None:
     """A conflicting declarant loses to a Kaywan draft even with fewer pins."""
     ada = (
