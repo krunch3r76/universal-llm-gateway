@@ -26,6 +26,8 @@ Birth when the house is missing is the **Attended lowering** — whether the ope
 `/orchestrate`, or opened the tab with a durable objective. `checkpoint` is `checkpoint-discipline` lean fire,
 not birth.
 
+**Tab title (attended Cursor only).** Once this tab's root id and slug are known (`thread_get`), `rename_chat` `{id} {slug}` before other work. Switchboard erect and house birth are that ask. Detail: `operator-posture` Step 0. Headless ⇒ no-op.
+
 `liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
 the Impresario (liaison seat) **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
 ¬ implement what a live dispatch owns (`in-flight-work-guard`). Consolidated name for *coordinator*;
