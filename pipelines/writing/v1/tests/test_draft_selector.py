@@ -131,6 +131,62 @@ def test_selector_refuses_when_every_draft_has_need_token() -> None:
     assert selected["refused"] == "unresolved_need_placeholder"
 
 
+def test_requested_signer_none_literal_in_brief_block_is_empty() -> None:
+    """Brief line Signer: none must not become a requested signer token."""
+    signer = draft_selector._requested_signer(
+        {"brief_block": "Recipient: Board\nSigner: none\nObjective: Notify\n"}
+    )
+    assert signer == ""
+
+
+def test_requested_signer_blank_line_does_not_capture_next_line() -> None:
+    """Signer regex stays on one line; Voice anchor: none is not the signer."""
+    signer = draft_selector._requested_signer(
+        {
+            "brief_block": (
+                "Recipient: Board\nSigner:\nVoice anchor: none\nObjective: Notify\n"
+            )
+        }
+    )
+    assert signer == ""
+
+
+def test_requested_signer_kaywan_from_brief_block() -> None:
+    signer = draft_selector._requested_signer(
+        {"brief_block": "Signer: Kaywan\nVoice anchor: plain\n"}
+    )
+    assert signer == "Kaywan"
+
+
+def test_selector_none_signer_brief_first_person_beats_higher_pin_third_person() -> None:
+    """Absent signer (Signer: none): word none in draft must not outrank first person."""
+    pins = [
+        {"pin_id": "P1", "attested": True, "excerpt": "Fill was 251 on Saturday"},
+        {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
+    ]
+    third_with_none = (
+        "Fill was 251 on Saturday. It was 213 Sunday morning. "
+        "There is none left to dispute."
+    )
+    first = "I saw the notice on Saturday."
+    brief_block = (
+        "Recipient: Board\nSigner: none\nVoice anchor: none\nObjective: Notify\n"
+    )
+    selected = _select(
+        {
+            "assemble": _Out(payload={"pin_ledger": pins, "brief_block": brief_block}),
+            "drafter_openai": _Out(third_with_none),
+            "drafter_google": _Out(first),
+        }
+    )
+    assert selected["ok"] is True
+    assert selected["draft"] == first
+    assert selected["selected_role"] == "drafter_google"
+    by_role = {c["role"]: c for c in selected["candidates"]}
+    assert by_role["drafter_openai"]["signer_band"] == 0
+    assert by_role["drafter_google"]["signer_band"] == 0
+
+
 def test_selector_honors_requested_signer_kaywan() -> None:
     """A conflicting declarant loses to a Kaywan draft even with fewer pins."""
     ada = (

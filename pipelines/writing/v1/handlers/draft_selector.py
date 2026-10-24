@@ -91,10 +91,13 @@ def _requested_signer(assemble_json: dict[str, Any]) -> str:
         if isinstance(source, str) and source.strip():
             return source.strip()
     block = str(assemble_json.get("brief_block") or "")
-    match = re.search(r"(?m)^Signer:\s*(.+?)\s*$", block)
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    return ""
+    match = re.search(r"(?m)^Signer:[ \t]*([^\n]*?)[ \t]*$", block)
+    if not match:
+        return ""
+    token = match.group(1).strip()
+    if not token or token.casefold() == "none":
+        return ""
+    return token
 
 
 def _signer_band(draft_text: str, signer: str) -> int:
