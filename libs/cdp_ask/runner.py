@@ -1002,20 +1002,24 @@ async def run_execution(
         from claude_bundles.cdp_registry.models import STATUS_TAB
         from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
 
-        row = cdp_registry._load_active().get(reg.registration_id)
+        try:
+            row = cdp_registry._load_active().get(reg.registration_id)
+        except Exception:
+            row = None
         if isinstance(row, dict) and row.get("status") == STATUS_TAB:
             if await abort_check():
-                finish_tab_on_exit(reg, branch="abort")
+                branch = "abort"
             elif retain_host or (
                 escaped is not None and is_host_lost_error(str(escaped))
             ):
-                finish_tab_on_exit(reg, branch="retain_host")
+                branch = "retain_host"
             elif teardown_check is not None and teardown_check():
-                finish_tab_on_exit(reg, branch="teardown")
+                branch = "teardown"
             elif registration_has_wake_debt(reg.registration_id):
-                finish_tab_on_exit(reg, branch="wake_debt")
+                branch = "wake_debt"
             else:
-                finish_tab_on_exit(reg, branch="normal")
+                branch = "normal"
+            await asyncio.to_thread(finish_tab_on_exit, reg, branch=branch)
         elif (
             retain_host
             or (teardown_check is not None and teardown_check())

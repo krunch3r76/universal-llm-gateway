@@ -217,12 +217,7 @@ def reopen_tab_row(
             raise RegistryError(f"host {hid!r} missing")
         port = int(host["port"])
         stale = str(row.get("target_id") or "").strip()
-        old_port = row.get("port")
-        stale_closed = False
-        if stale and isinstance(old_port, int) and cdp_lane.is_listening(old_port):
-            with contextlib.suppress(Exception):
-                _close_target_on_port(old_port, stale)
-                stale_closed = True
+        old_port = row.get("port") if isinstance(row.get("port"), int) else None
         prior_host = str(row.get("host_registration_id") or "").strip()
         updated = dict(row)
         updated["host_registration_id"] = hid
@@ -232,6 +227,11 @@ def reopen_tab_row(
         updated["target_id"] = None
         active[rid] = updated
         _store.write_active(active)
+    stale_closed = False
+    if stale and isinstance(old_port, int) and cdp_lane.is_listening(old_port):
+        with contextlib.suppress(Exception):
+            _close_target_on_port(old_port, stale)
+            stale_closed = True
     url = str(row.get("chat_url") or "").strip()
     target_id: str | None = None
     try:

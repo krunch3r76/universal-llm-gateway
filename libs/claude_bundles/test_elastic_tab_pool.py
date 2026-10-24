@@ -110,6 +110,25 @@ def _tab_row(
     }
 
 
+def test_deregister_lane_tab_row_does_not_deadlock(isolated_registry: Path) -> None:
+    active = {
+        "host-1": _host_row(),
+        "tab-1": _tab_row("tab-1", "host-1", target_id="tgt-dl"),
+    }
+    reg._store.write_active(active)
+
+    def _run() -> None:
+        reg.deregister_lane("tab-1", reason="probe_failed")
+
+    with patch("claude_bundles.cdp_lane.close_cdp_target") as close_mock:
+        t = threading.Thread(target=_run)
+        t.start()
+        t.join(timeout=3.0)
+        assert not t.is_alive()
+        close_mock.assert_called_once_with(9225, "tgt-dl")
+    assert "tab-1" not in reg._store.load_active()
+
+
 def test_idle_tab_closed_after_scrape(isolated_registry: Path) -> None:
     active = {"host-1": _host_row(), "tab-1": _tab_row("tab-1", "host-1")}
     reg._store.write_active(active)

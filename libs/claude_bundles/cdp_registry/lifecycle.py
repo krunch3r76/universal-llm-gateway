@@ -599,18 +599,19 @@ def deregister_lane(
     if kill:
         # Explicit kill wins over probe_failed / keep-alive retain.
         error_release = False
+    pre_row = _store.load_active().get(registration_id)
+    if isinstance(pre_row, dict) and pre_row.get("status") == STATUS_TAB:
+        from .tab_rows import release_tab_row
+
+        release_tab_row(registration_id)
+        _release_driver_lock(registration_id)
+        return
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(registration_id)
         if row is None:
             raise RegistryError(f"unknown registration_id: {registration_id!r}")
         status = row.get("status")
-        if status == STATUS_TAB:
-            from .tab_rows import release_tab_row
-
-            release_tab_row(registration_id)
-            _release_driver_lock(registration_id)
-            return
         if status == "released":
             if kill:
                 if seat_open(row):
