@@ -527,8 +527,9 @@ def test_assemble_intake_brief_includes_signer_voice_and_standing_limits() -> No
     )
     assert none_ok["ok"] is True
     none_brief = none_ok["brief_block"]
-    for label in ("Signer:", "Voice anchor:", "Standing limits:"):
-        assert label in none_brief
+    assert "Signer: none" in none_brief
+    assert "Voice anchor: none" in none_brief
+    assert "Standing limits: none" in none_brief
 
 
 def test_assemble_intake_schema_fencing_and_refusal() -> None:
