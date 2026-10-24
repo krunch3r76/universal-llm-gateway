@@ -25,24 +25,25 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
 
 1. **Boot.** Full harness before any task step, never abridged: `runbook:coding-boot` end to end (parity Paste packet, lean-dispatch, hypothesize-simulate with `frame:`/`rival:`/`killed:` on judgment steps, retrieval-before-authoring).
    Falsifier: a task step precedes the harness, or a prompt goes out with no retrieval report. Specimen: 15609#38; a:37295.
-2. **Claim.** `PICKUP|<work_key>` + boot receipt (what loaded, lean-dispatch read_sha256) to the owning Sidekick by agent message within 10 min. Report-to = owning Sidekick on a Sidekick packet; = the commissioning operator seat on a house-root commission. Read the REQUEST and every AMEND live; the latest AMEND governs.
+2. **Claim.** `PICKUP|<work_key>` + boot receipt (loaded slugs, `lean-dispatch` sha256) to the owning Sidekick by agent message within 10 min (house-root: commissioning operator seat). Read the REQUEST and every AMEND live; latest AMEND governs.
    Falsifier: work before PICKUP, or no receipt. Specimen: 15609#40 amends #17.
 3. **Route each leg** — lowest sufficient (`lean-dispatch`); name it in the DONE.
    | Leg | Route |
    |---|---|
+   | seed / shape `todo:{slug}` or actionable `friction` | `team_dispatch(seat=cursor-sdk, model="cursor/gemini-4-argon", contract=freeform, lane=B)` (`Use the lean-dispatch skill`) for Fast (`G5`), Mid (`G2`), or Slow (`G1`) (`decision:argon-advisor-todo-seeding` · `a:40189`) |
    | few edits, files in view, no checkout process | own `fs` edit |
    | checkout process or multi-file implement | `team_dispatch seat=cursor-sdk lane=B contract=freeform work_key=…` |
    | one friction end to end | `/cursor-paste-resolve friction <id> cursor_sdk` |
-   | a `todo:` arc | conductor per `runbook:maestro-loop` §5a; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject`; or run the arc yourself as a REQUEST chain when its slices are few and mechanical |
-   | diff review | a fresh grok-bot per-REQUEST successor (not the author) sends `VERDICT\|<work_key>` to the Sidekick; cdp/opus-5.5 only when the REQUEST names it |
-   | next REQUEST in a chain | propose it to the owning Sidekick |
-   | open design / strategy / retry(same_AC) fork (non-mechanical) | `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON>"}])` before binding |
-   | high-stakes outbound prose | Bind OUTBOUND SPEC (outbound-voice-spec) -> pipeline(divergent-ideation-v1) -> pipeline(writer-specialist-v1) |
+   | a `todo:` arc | conductor per `runbook:maestro-loop` §5a; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject` |
+   | diff review | fresh grok-bot per-REQUEST successor (not author) sends `VERDICT\|<work_key>` to Sidekick; `cdp/opus-5.5` when REQUEST names it |
+   | next REQUEST in a chain | propose to owning Sidekick |
+   | open design / strategy / retry(same_AC) fork | `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON>"}])` before binding |
+   | high-stakes outbound prose | Bind OUTBOUND SPEC (`outbound-voice-spec`) -> `pipeline(divergent-ideation-v1)` -> `pipeline(writer-specialist-v1)` |
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
 4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick (house-root: the commissioning operator seat, Step 2) only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.
-5. **Land.** Green ⇒ land, quote sha; land is standing under a REQUEST unless it says no-land. Push is optional (15722#33): after `VERDICT APPROVE` (a:38830), or when the REQUEST says publish, push hub master to origin unless the REQUEST says no-push — fast-forward only, never force — and quote the origin sha in the DONE. Not pushing is not a breach. Restart owed ⇒ name service + sha. Never move a shared branch backward (`forward_only`, `git-posture` § Forward only): worktrees branch from the local tip, never reset or `-B` master onto origin.
-   Falsifier: a land claim without sha; a push with neither gate; a forced or non-fast-forward push; a push with no origin sha. Any reset / `checkout -B` / `branch -f` / rebase of a landed commit. Specimens: a:38732; lane-16053 (15851#169).
+5. **Land.** Green ⇒ land, quote sha (standing under a REQUEST unless no-land). Push optional (15722#33): after `VERDICT APPROVE` (a:38830) or when REQUEST says publish, push hub master to origin fast-forward only (never force) and quote origin sha in DONE. Restart owed ⇒ name service + sha. Never move a shared branch backward (`forward_only`, `git-posture` § Forward only): branch from local tip, never reset or `-B` master onto origin.
+   Falsifier: land claim without sha; push with neither gate or non-ff/force; any reset / `checkout -B` / `branch -f` / rebase of landed commit. Specimens: a:38732; lane-16053 (15851#169).
 6. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick (house-root: the commissioning operator seat, Step 2) by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`), `proposals: <list>|none`, and `live-probe: <result>|n/a` (n/a when no service path was touched — landed is not live).
    Falsifier: a DONE without wall time, nested usage, proposals, or live-probe. Specimen: a:38765; a:38838 finding 3.
 
