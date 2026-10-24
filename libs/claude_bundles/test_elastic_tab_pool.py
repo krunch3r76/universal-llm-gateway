@@ -377,6 +377,192 @@ async def test_tab_closed_when_scrape_fails(
     active = reg._store.load_active()
     assert live_tab_rows_for_host(active, "host-1") == []
 
+    retain_a = ProjectAskResult(
+        ok=False,
+        body="",
+        url=CSE,
+        project_uuid="p",
+        project_url="https://claude.ai/new",
+        model={},
+        body_len=0,
+        delete_after=None,
+        error="scrape timed out",
+    )
+    with (
+        patch(
+            "claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-retain-a"
+        ),
+        patch("cdp_ask.runner.run_project_ask", new=AsyncMock(return_value=retain_a)),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("claude_bundles.cdp_lane.close_cdp_target") as close_a,
+    ):
+        await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="x",
+                project_uuid="p",
+                purpose="ask",
+                holder="h",
+            ),
+            execution_id="exec-retain-a",
+            abort_check=AsyncMock(return_value=False),
+        )
+        close_a.assert_called_with(9225, "tgt-retain-a")
+    active = reg._store.load_active()
+    tab_rows = [
+        row
+        for row in active.values()
+        if isinstance(row, dict) and row.get("status") == STATUS_TAB
+    ]
+    assert len(tab_rows) == 1
+    kept = tab_rows[0]
+    assert kept.get("target_id") is None
+    assert kept.get("tab_kept_reason") == "retain_host"
+    assert live_tab_rows_for_host(active, "host-1") == []
+
+    from claude_bundles.project_ask import HarvestArchiveError
+
+    ok_turn = ProjectAskResult(
+        ok=True,
+        body="ans",
+        url=CSE,
+        project_uuid="",
+        project_url="https://claude.ai/new",
+        model={},
+        body_len=3,
+        delete_after=None,
+    )
+
+    with (
+        patch(
+            "claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-retain-b"
+        ),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[ok_turn]),
+        ),
+        patch(
+            "cdp_ask.runner.archive_harvest",
+            side_effect=HarvestArchiveError("mismatch"),
+        ),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("claude_bundles.cdp_lane.close_cdp_target") as close_b,
+    ):
+        await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="x",
+                project_uuid="p",
+                purpose="ask",
+                holder="h",
+                converse=True,
+            ),
+            execution_id="exec-retain-b",
+            abort_check=AsyncMock(return_value=False),
+        )
+        close_b.assert_called_with(9225, "tgt-retain-b")
+    active = reg._store.load_active()
+    tab_rows = [
+        row
+        for row in active.values()
+        if isinstance(row, dict) and row.get("status") == STATUS_TAB
+    ]
+    assert len(tab_rows) == 2
+    kept_b = next(r for r in tab_rows if r.get("tab_kept_reason") == "retain_host")
+    assert kept_b.get("target_id") is None
+    assert live_tab_rows_for_host(active, "host-1") == []
+
+
+def test_abort_tab_ask_stops_own_target_and_cleans_up(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_bundles import project_ask_abort as paa
+    from claude_bundles.project_ask_abort import AttestResult
+
+    active = {
+        "host-1": _host_row(),
+        "tab-other": _tab_row(
+            "tab-other", "host-1", target_id="tgt-other", chat_url=CSE + "-other"
+        ),
+        "tab-abort": _tab_row("tab-abort", "host-1", target_id="tgt-abort"),
+    }
+    reg._store.write_active(active)
+    paa._ABORT_DONE = False
+    monkeypatch.setattr(
+        "claude_bundles.cse_wake_retain.registration_has_wake_debt",
+        lambda _rid: False,
+    )
+    stop_targets: list[str | None] = []
+
+    def _fake_stop(_url: str, *, target_id: str | None = None, **_kw: object):
+        stop_targets.append(target_id)
+        return AttestResult(has_stop=False, probe_ok=True)
+
+    monkeypatch.setattr(paa, "bounded_stop_via_cdp", _fake_stop)
+    reg_abort = paa.lookup_active_registration("tab-abort")
+    assert reg_abort is not None
+    assert reg_abort.target_id == "tgt-abort"
+
+    with patch("claude_bundles.cdp_lane.close_cdp_target") as close:
+        outcome = paa.abort_cleanup(reg_abort, purpose="ask")
+        assert outcome == "attested_stopped_and_deregistered"
+        assert stop_targets == ["tgt-abort"]
+        close.assert_called_with(9225, "tgt-abort")
+
+    after = reg._store.load_active()
+    assert "tab-abort" not in after
+    assert after["tab-other"]["target_id"] == "tgt-other"
+
+
+@pytest.mark.asyncio
+async def test_abort_tab_run_execution_closes_target(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import run_execution
+
+    from claude_bundles.project_ask import ProjectAskResult
+
+    reg._store.write_active({"host-1": _host_row()})
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _p: True)
+    ok = ProjectAskResult(
+        ok=True,
+        body="x",
+        url=CSE,
+        project_uuid="p",
+        project_url="https://claude.ai/new",
+        model={},
+        body_len=1,
+        delete_after=None,
+    )
+    with (
+        patch(
+            "claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-abort-run"
+        ),
+        patch("cdp_ask.runner.run_project_ask", new=AsyncMock(return_value=ok)),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("claude_bundles.cdp_lane.close_cdp_target") as close,
+    ):
+        await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="x",
+                project_uuid="p",
+                purpose="ask",
+                holder="h",
+            ),
+            execution_id="exec-abort-tab",
+            abort_check=AsyncMock(side_effect=[False, True]),
+        )
+        close.assert_called_with(9225, "tgt-abort-run")
+    active = reg._store.load_active()
+    tab_rows = [
+        row
+        for row in active.values()
+        if isinstance(row, dict) and row.get("status") == STATUS_TAB
+    ]
+    assert len(tab_rows) == 1
+    assert tab_rows[0].get("target_id") is None
+    assert tab_rows[0].get("tab_kept_reason") == "abort_unattested"
+    assert live_tab_rows_for_host(active, "host-1") == []
+
 
 def test_orphan_tabs_reaped_after_cdp_ask_restart(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch

@@ -611,7 +611,6 @@ def deregister_lane(
             release_tab_row(registration_id)
             _release_driver_lock(registration_id)
             return
-        status = row.get("status")
         if status == "released":
             if kill:
                 if seat_open(row):
@@ -660,9 +659,6 @@ def deregister_lane(
                             live_tabs=len(live_tabs),
                         )
                     )
-                if status == "released":
-                    _release_driver_lock(registration_id)
-                    return
                 row = dict(row)
                 row["status"] = "retained"
                 row["retained_at"] = time.time()

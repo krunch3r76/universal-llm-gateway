@@ -84,46 +84,53 @@ def release_tab_row(registration_id: str) -> None:
     rid = str(registration_id or "").strip()
     if not rid:
         return
+    port: int | None = None
+    target_id = ""
+    chat_url = ""
+    row_copy: dict[str, Any] | None = None
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(rid)
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
             return
-        port = row.get("port")
+        row_copy = dict(row)
+        port = row.get("port") if isinstance(row.get("port"), int) else None
         target_id = str(row.get("target_id") or "").strip()
-        if isinstance(port, int) and target_id:
-            with contextlib.suppress(Exception):
-                _close_target_on_port(port, target_id)
         chat_url = str(row.get("chat_url") or "").strip()
         active.pop(rid, None)
         _store.write_active(active)
-        _store.append_log("tab_released", {"registration_id": rid, **row})
+    if isinstance(port, int) and target_id:
         with contextlib.suppress(Exception):
-            _events.emit(
-                _events.cdp_tab_closed(
-                    registration_id=rid,
-                    host_registration_id=str(row.get("host_registration_id") or ""),
-                    reason="exit",
-                )
+            _close_target_on_port(port, target_id)
+    if row_copy is None:
+        return
+    _store.append_log("tab_released", {"registration_id": rid, **row_copy})
+    with contextlib.suppress(Exception):
+        _events.emit(
+            _events.cdp_tab_closed(
+                registration_id=rid,
+                host_registration_id=str(row_copy.get("host_registration_id") or ""),
+                reason="exit",
             )
-        if chat_url and isinstance(port, int):
-            from claude_bundles.cse_provenance import append_episode
+        )
+    if chat_url and isinstance(port, int):
+        from claude_bundles.cse_provenance import append_episode
 
-            with contextlib.suppress(Exception):
-                append_episode(
-                    chat_url=chat_url,
-                    registration_id=rid,
-                    cdp_url=f"http://127.0.0.1:{port}",
-                    state="tab_released",
-                )
+        with contextlib.suppress(Exception):
+            append_episode(
+                chat_url=chat_url,
+                registration_id=rid,
+                cdp_url=f"http://127.0.0.1:{port}",
+                state="tab_released",
+            )
 
 
 def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
     """Apply the tab exit branch: release, or keep the row address-only.
 
-    ``normal`` deletes the row. ``wake_debt`` and ``abort`` keep the target.
-    Every other branch, including ``teardown`` and ``reopen_failed``, closes
-    the target and records *branch* as ``tab_kept_reason``.
+    ``normal`` deletes the row. ``wake_debt`` keeps the target open.
+    ``abort`` and every other kept branch close the target and record
+    *branch* as ``tab_kept_reason`` (address-only row).
     """
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
@@ -135,7 +142,7 @@ def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
         _keep_tab_row(rid, reason="wake_debt", close_target=False)
         return
     if branch == "abort":
-        _keep_tab_row(rid, reason="abort_unattested", close_target=False)
+        _keep_tab_row(rid, reason="abort_unattested", close_target=True)
         return
     _keep_tab_row(
         rid,
@@ -146,30 +153,34 @@ def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
 
 def _keep_tab_row(registration_id: str, *, reason: str, close_target: bool) -> None:
     rid = str(registration_id or "").strip()
+    port: int | None = None
+    target_id = ""
+    host_id = ""
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(rid)
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
             return
-        port = row.get("port")
+        port = row.get("port") if isinstance(row.get("port"), int) else None
         target_id = str(row.get("target_id") or "").strip()
-        if close_target and isinstance(port, int) and target_id:
-            with contextlib.suppress(Exception):
-                _close_target_on_port(port, target_id)
+        host_id = str(row.get("host_registration_id") or "")
         updated = dict(row)
         updated["target_id"] = None
         updated["tab_kept_reason"] = reason
         active[rid] = updated
         _store.write_active(active)
+    if close_target and isinstance(port, int) and target_id:
         with contextlib.suppress(Exception):
-            _events.emit(
-                _events.cdp_tab_kept(
-                    registration_id=rid,
-                    host_registration_id=str(row.get("host_registration_id") or ""),
-                    reason=reason,
-                    target_closed=close_target,
-                )
+            _close_target_on_port(port, target_id)
+    with contextlib.suppress(Exception):
+        _events.emit(
+            _events.cdp_tab_kept(
+                registration_id=rid,
+                host_registration_id=host_id,
+                reason=reason,
+                target_closed=close_target,
             )
+        )
 
 
 def mark_tab_reopen_failed(registration_id: str) -> None:

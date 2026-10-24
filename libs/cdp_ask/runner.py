@@ -113,10 +113,12 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
 
     Operator-proxy (non-hop) executions on a named ``parent_thread`` reuse or
     mint the driving operator seat so census can see the seated window after
-    hop Chromes go dormant. Hops and non-operator purposes still mint a fresh
-    ``register_lane`` row. Either operator-purpose bind then retires every
-    other registry row on that lane so a Cowork hop with no occupy target
-    does not leave ``ambiguous_matches``.
+    hop Chromes go dormant. Non-operator purposes (and operator fallbacks)
+    open a disposable tab row via ``_open_tab_lane`` / ``open_tab_row_for_ask``.
+    Hop operator binds mint a fresh ``register_lane`` host row when seat defer
+    does not apply. Operator-purpose bind then retires every other registry
+    row on that lane so a Cowork hop with no occupy target does not leave
+    ``ambiguous_matches``.
     """
     purpose = (req.purpose or "").strip()
     kind = (req.mission_kind or "").strip()
@@ -997,7 +999,24 @@ async def run_execution(
         return payload
     finally:
         escaped = sys.exc_info()[1]
-        if (
+        from claude_bundles.cdp_registry.models import STATUS_TAB
+        from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
+
+        row = cdp_registry._load_active().get(reg.registration_id)
+        if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+            if await abort_check():
+                finish_tab_on_exit(reg, branch="abort")
+            elif retain_host or (
+                escaped is not None and is_host_lost_error(str(escaped))
+            ):
+                finish_tab_on_exit(reg, branch="retain_host")
+            elif teardown_check is not None and teardown_check():
+                finish_tab_on_exit(reg, branch="teardown")
+            elif registration_has_wake_debt(reg.registration_id):
+                finish_tab_on_exit(reg, branch="wake_debt")
+            else:
+                finish_tab_on_exit(reg, branch="normal")
+        elif (
             retain_host
             or (teardown_check is not None and teardown_check())
             or (escaped is not None and is_host_lost_error(str(escaped)))
@@ -1008,22 +1027,7 @@ async def run_execution(
             # resume address) for execution_ladder's host_lost branch.
             pass
         elif not await abort_check():
-            from claude_bundles.cdp_registry.models import STATUS_TAB
-            from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
-
-            row = cdp_registry._load_active().get(reg.registration_id)
-            if isinstance(row, dict) and row.get("status") == STATUS_TAB:
-                if retain_host or (
-                    escaped is not None and is_host_lost_error(str(escaped))
-                ):
-                    finish_tab_on_exit(reg, branch="retain_host")
-                elif teardown_check is not None and teardown_check():
-                    finish_tab_on_exit(reg, branch="teardown")
-                elif registration_has_wake_debt(reg.registration_id):
-                    finish_tab_on_exit(reg, branch="wake_debt")
-                else:
-                    finish_tab_on_exit(reg, branch="normal")
-            elif not registration_has_wake_debt(reg.registration_id):
+            if not registration_has_wake_debt(reg.registration_id):
                 deregister_on_exit(reg, purpose=req.purpose)
 
 

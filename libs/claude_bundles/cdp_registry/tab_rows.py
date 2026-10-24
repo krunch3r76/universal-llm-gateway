@@ -125,11 +125,11 @@ def tab_rows_for_host(
 def live_tab_rows_for_host(
     active: Mapping[str, Any], host_registration_id: str
 ) -> list[dict[str, Any]]:
-    """Return tab rows on this host that still record a live CDP target id."""
+    """Return tab rows on this host that still hold a live target or are opening."""
     return [
         row
         for row in tab_rows_for_host(active, host_registration_id)
-        if str(row.get("target_id") or "").strip()
+        if str(row.get("target_id") or "").strip() or not row.get("tab_kept_reason")
     ]
 
 
@@ -178,7 +178,7 @@ def tab_host_mint_lock() -> Iterator[None]:
             _events.emit(
                 _events.cdp_tab_host_mint_lock_wait(
                     phase="acquired",
-                    outcome="minting" if started_wait else "joined_existing",
+                    outcome="joined_existing" if started_wait else "minting",
                 )
             )
         yield
@@ -320,7 +320,11 @@ def open_tab_row_for_ask(
             active[tab_id] = tab_row
             _store.write_active(active)
             _store.append_log("tab_opened", tab_row)
-        target_id = cdp_lane.open_cdp_tab_target(port, "about:blank")
+        try:
+            target_id = cdp_lane.open_cdp_tab_target(port, "about:blank")
+        except Exception:
+            release_tab_row(tab_id)
+            raise
         with _store.ports_lock():
             active = _store.load_active()
             row = active.get(tab_id)
