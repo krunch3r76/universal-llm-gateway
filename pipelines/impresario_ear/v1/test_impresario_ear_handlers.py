@@ -112,7 +112,8 @@ def test_ear_echo_does_not_skip_when_newer_non_ear_follows_older_ear() -> None:
         dispatch_thread_id=_ROOT,
         fetch_turns=_fetch,
     )
-    assert out.get("skip") is False
+    assert out.get("skip") is True
+    assert out.get("reason") == "deep_mode_disabled"
 
 
 def test_ear_echo_does_not_skip_when_live_from_cursor_before_older_ear() -> None:
@@ -129,10 +130,63 @@ def test_ear_echo_does_not_skip_when_live_from_cursor_before_older_ear() -> None
         dispatch_thread_id=_ROOT,
         fetch_turns=_fetch,
     )
+    assert out.get("skip") is True
+    assert out.get("reason") == "deep_mode_disabled"
+
+
+def test_ear_echo_does_not_skip_when_newer_non_ear_follows_older_ear_patrol() -> None:
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from_agent": "cursor", "body": "fresh work after ear posted"},
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "patrol"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
+    assert out.get("skip") is False
+
+
+def test_ear_echo_does_not_skip_when_live_from_cursor_before_older_ear_patrol() -> None:
+    def _fetch(**_: Any) -> dict[str, Any]:
+        return {
+            "turns": [
+                {"from": "cursor", "subject": "status", "body": "working"},
+                {"from_agent": "impresario-ear", "subject": "EAR | 18374 — healthy"},
+            ]
+        }
+
+    out = resolve_impresario_ear(
+        options={"root_thread": _ROOT, "mode": "patrol"},
+        dispatch_thread_id=_ROOT,
+        fetch_turns=_fetch,
+    )
     assert out.get("skip") is False
 
 
 def test_hop_ear_echo_skip_does_not_consume_watermark(tmp_path: Path) -> None:
+    set_watermark_path_for_tests(tmp_path / "wm.json")
+    clear_hop_watermarks_for_tests()
+    key = hop_watermark_key(_ROOT, departing_transcript_id="tx-echo")
+
+    out = resolve_impresario_ear(
+        options={
+            "root_thread": _ROOT,
+            "trigger": "hop",
+            "departing_transcript_id": "tx-echo",
+        },
+        dispatch_thread_id=_ROOT,
+    )
+    assert out.get("reason") == "deep_mode_disabled"
+    assert hop_watermark_present(key) is False
+    assert try_claim_hop_watermark(key) is True
+
+
+def test_hop_ear_echo_skip_patrol_does_not_consume_watermark(tmp_path: Path) -> None:
     set_watermark_path_for_tests(tmp_path / "wm.json")
     clear_hop_watermarks_for_tests()
     key = hop_watermark_key(_ROOT, departing_transcript_id="tx-echo")
@@ -147,6 +201,7 @@ def test_hop_ear_echo_skip_does_not_consume_watermark(tmp_path: Path) -> None:
     out = resolve_impresario_ear(
         options={
             "root_thread": _ROOT,
+            "mode": "patrol",
             "trigger": "hop",
             "departing_transcript_id": "tx-echo",
         },
@@ -162,14 +217,14 @@ def test_hop_enqueue_cursor_sets_to_agent() -> None:
     with patch(
         "bus_watch.impresario_ear_common.enqueue_impresario_ear",
     ) as enqueue:
-        maybe_enqueue_after_hop(
+        ok = maybe_enqueue_after_hop(
             root_thread=_ROOT,
             departing_transcript_id="dep-tx",
             channel="hop",
             to_agent="cursor",
         )
-    opts = enqueue.call_args.args[0]
-    assert opts["to_agent"] == "cursor"
+    assert ok is False
+    enqueue.assert_not_called()
 
 
 def test_extract_harvest_prose_strips_sidecar_keeps_verdict() -> None:
@@ -396,6 +451,7 @@ def test_hop_watermark_second_enqueue_is_noop(tmp_path: Path) -> None:
     out = resolve_impresario_ear(
         options={
             "root_thread": _ROOT,
+            "mode": "patrol",
             "trigger": "hop",
             "departing_transcript_id": "tx-1",
         },

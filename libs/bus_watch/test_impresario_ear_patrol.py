@@ -328,14 +328,14 @@ def test_patrol_mailbox_for_agent() -> None:
 
 def test_hop_enqueue_sets_to_agent_for_grok() -> None:
     with patch("bus_watch.impresario_ear_common.enqueue_impresario_ear") as enqueue:
-        maybe_enqueue_after_hop(
+        ok = maybe_enqueue_after_hop(
             root_thread=_ROOT,
             departing_transcript_id="grok-tab",
             channel="hop",
             to_agent="grok-bot",
         )
-    opts = enqueue.call_args.args[0]
-    assert opts["to_agent"] == "grok-bot"
+    assert ok is False
+    enqueue.assert_not_called()
 
 
 def test_load_patrol_prescreen_inputs_sticky_suppress_beyond_last_10(
