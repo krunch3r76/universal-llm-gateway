@@ -32,9 +32,9 @@ the Impresario (liaison seat) **harvests → folds → decides → admits one co
 Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor = session to a designed stop),
 `decision:conductor-attended-vs-unattended-routing`.
 
-**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`.
+**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end` (if `todo:{slug}` or an actionable `friction` is unshaped, first shape its attributes via `cursor/gemini-4-argon` per `decision:argon-advisor-todo-seeding` · `a:40189`).
 Sketch, Compose, densify, and `contract=implement` are that conductor's steps — this seat does not fire them.
-This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
+This binding wins over the dispatch ladder, Seat stays, and a digest one-step.
 
 | Bad | Good |
 |---|---|
@@ -111,12 +111,12 @@ House wakes, cheapest first:
 
 Binds. Later prose that conflicts loses.
 
-1. **One conductor.** This seat holds `team_dispatch` and the checkout. Played `todo:{slug}` → `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)` then end. Repo write = that conductor's nested `contract=implement`. ¬ this seat `contract=implement` or Sketch for a house row. `cursor_request` is life-only (life has no `team_dispatch`). On code, AutoJob admit door = `agent_bus(tool="request")`, not this seat's implement path.
-2. **¬ close house on dead tail or empty wake.** Closeout already relayed + tail still `stall-pop:` → finished: `watch-supervise.sh stop --label <label>`. That tail ≠ watcher, hop, or seat-end reason. No playable next ∧ no live watcher ⇒ ¬ arm `--loop`; SIGTERM if running. Tick that only repeats CHECKPOINT ≠ play instruction. House stays; wake stops.
-3. **Friction → house row → play gate.** Row cannot proceed: `friction()` on owner same turn + continuity card `## Rows`. **Gate** = friction current row cannot pass until resolved. Gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). Blocked row becomes next. Play gate same turn on ladder in (1). ¬ STAY on blocked. ¬ page unless armed `OPERATOR_GATE`.
-4. **Played row → todo-close → add next.** Played = land on master for that `todo:{slug}`. Same turn before next: `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. Open card still = work: clock admits another conductor (re-admit ≠ replace operator overnight). After close, add every next ungated deliverable to `## Rows` + `--set now_row=`, then play. Clears `now_row=quiet`; re-arms `--loop --heartbeat 1200` if down. Ungated rows may run concurrent. Row waiting on prior play stays off NOW. `now_row=quiet` / empty NOW legal only when no open deliverable. ¬ close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
-5. **No turn-by-turn watch.** `conductor_live ⇒ ¬arm(turn_watcher)`. Review closeout or designed stop. Turn-by-turn only when operator names that run. ¬ rebuild start+tail for every in-flight lane on wake.
-6. **Owed park-harvest resume — GIW single-admit, ¬ hand `team_dispatch`.** Harvest `stop: PARKED_TRANSPORT` whose worker thread already has `web-anthropic` reply after `closeout_turn`: check predecessor successor (`hop_successor` / ledger `hop_from`). If none after one GIW reconcile sweep → fire GIW park-harvest continue (`fire_park_harvest_continue` under `claim_stop_service`, `caller_agent=conductor-hop`). ¬ build `team_dispatch` with `hop_from`/`hop_reason`. ¬ status-report-and-wait. ¬ treat operator "resume the conductor" as gate. `HOLD_MERGE` holds land, not resume. Consult reply naming operator question ≠ armed `OPERATOR_GATE`. Distinct from GIW `park_live` cancel (a:38111) and hop-body refuse (a:38115).
+1. **One conductor.** This seat holds `team_dispatch` and the checkout. Played `todo:{slug}` → `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)` then end. Repo write = that conductor's nested `contract=implement`. ¬ this seat `contract=implement` or Sketch for a house row. `cursor_request` is life-only. On code, AutoJob admit = `agent_bus(tool="request")`, ¬ this seat's implement path.
+2. **¬ close house on dead tail or empty wake.** Closeout already relayed + tail still `stall-pop:` → `watch-supervise.sh stop --label <label>`. That tail ≠ watcher, hop, or seat-end reason. No playable next ∧ no live watcher ⇒ ¬ arm `--loop`; SIGTERM if running. Tick repeating CHECKPOINT ≠ play instruction. House stays; wake stops.
+3. **Friction → house row → play gate.** Row cannot proceed: `friction()` on owner same turn + card `## Rows`. **Gate** = friction current row cannot pass until resolved; swaps into NOW (`--set now_row=` `Friction a:<n> …`). Blocked row becomes next. Play gate same turn on ladder in (1). ¬ STAY on blocked. ¬ page unless armed `OPERATOR_GATE`.
+4. **Played row → todo-close → add next.** Played = land on master for `todo:{slug}`. Same turn before next: `pipeline(op=run, pipeline_id=todo-close)` (`workflow_state=done`). Open card = work: clock admits another conductor. After close, add next ungated deliverables to `## Rows` + `--set now_row=`, then play. Clears `now_row=quiet`; re-arms `--loop --heartbeat 1200` if down. Ungated rows may run concurrent; row waiting on prior play stays off NOW. `now_row=quiet` legal only when no open deliverable. ¬ close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
+5. **No turn-by-turn watch.** `conductor_live ⇒ ¬arm(turn_watcher)`. Review closeout or designed stop. Turn-by-turn only when operator names that run. ¬ rebuild start+tail for in-flight lanes on wake.
+6. **Owed park-harvest resume — GIW single-admit, ¬ hand `team_dispatch`.** Harvest `stop: PARKED_TRANSPORT` with `web-anthropic` reply after `closeout_turn`: check `hop_successor` / ledger `hop_from`. If none after one GIW sweep → fire `fire_park_harvest_continue` (`claim_stop_service`, `caller_agent=conductor-hop`). ¬ build `team_dispatch` with `hop_from`/`hop_reason`. ¬ status-report-and-wait. `HOLD_MERGE` holds land, ¬ resume. Distinct from GIW `park_live` cancel (a:38111) and hop-body refuse (a:38115).
 
 | Bad | Good |
 |---|---|
@@ -213,22 +213,23 @@ Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout 
 
 | Work | Executor | Bind / review |
 |---|---|---|
+| Seed / shape unshaped `todo:{slug}` or actionable `friction` | `cursor/gemini-4-argon` (`Use the lean-dispatch skill`) | stamps Fast (`G5` `mechanical`), Mid (`G2` `derived_from`), or Slow (`G1`) (`decision:argon-advisor-todo-seeding` · `a:40189`) |
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
-| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; successor **dispatches** instead) | none — commit path-explicit same turn |
+| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class default; successor **dispatches** instead) | none — commit path-explicit same turn |
 | Play a `todo:{slug}` | `team_dispatch(… contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
 | Mechanical implement with dense spec | conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
-| Repo write when this seat lacks `team_dispatch` or checkout (life) | **`cursor_request(job=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
+| Repo write when this seat lacks `team_dispatch` or checkout (life) | **`cursor_request(job=implement)`** — ¬ STAY, ¬ needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
 | Design / judgment fork on played row | conductor's nest | one round inside conductor; disagreement ⇒ CONSULT_PENDING |
-| Judgment fork (independent check) | this seat binds inline when Opus-class; below Opus, § Reasoning recon first | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
+| Judgment fork (independent check) | inline when Opus-class; below Opus, § Reasoning recon first | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>` | one round; disagreement ⇒ CONSULT_PENDING |
-| Long-context reasoning inside work tab | `cursor/grok-4.7` (card 256k, knob 500k) | **`cdp/fable`** only when Kaywan asks — never `cursor/claude-*` |
+| Long-context reasoning inside work tab | `cursor/grok-4.7` (card 256k, knob 500k) | **`cdp/fable`** only when Kaywan asks — ¬ `cursor/claude-*` |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <uuid>`; autonomous: § Headless successor | — |
 
 **Reasoning recon** (2026-09-10): before judgment bind, send *wide read* to `cdp/opus-5.5` (`CDP: <trigger> — <why>`, tape/CP residue + decision as context); bind on returned compact. Premium seat spends window on the bind, not breadth.
 
 Reasoning strength low→high: `cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`, `cdp/fable-5`. Walk `high` → `extra` → `max` inside a rung before next wire.
 
-Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. `anthropic/*` API is admitted when the credit gate is healthy (prohibition retired 2026-10-18); it is not the default judgment wire. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ no more retries of that input; one attempt of a different kind (replace the input) is allowed before REPEATED_FAILURE; a third retry of the same input is forbidden.
+Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. `anthropic/*` API admitted when credit-healthy; ¬ default judgment wire. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ ¬ retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE; third retry of same input forbidden.
 
 ## Economy gears
 

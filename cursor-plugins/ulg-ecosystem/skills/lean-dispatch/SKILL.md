@@ -73,7 +73,7 @@ line; the ladder still names the default reviewer duty.
 
 ## Cursor IDE tabs — `team_dispatch` (`seat=cursor-sdk`), not native `Task` subagents
 
-In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and have gaps (cold start without GIW worktree isolation, `resolve_prompt_preamble` harness injection, or closeout sidecars) that a proper `team_dispatch` does not; transitively, `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`, `cursor/muse-wonder-1.0`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
+In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and lack GIW worktree isolation, `resolve_prompt_preamble` harness injection, and closeout sidecars; `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`, `cursor/muse-wonder-1.0`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
 
 ## Grok Bot seats
 
@@ -90,8 +90,7 @@ has (browser/desktop, SendToAgent/CreateAgent wake path, connected apps, a
 user's registered machine). It does not implement and does not sweep; those
 leave as packets. Hand a leg to a bot subagent or peer bot only for a
 bot-only tool.
-Weekly Grok Bot usage is capped; that is a reason to spread load, not a ban
-on bot work.
+Weekly Grok Bot usage is capped; spread load across pools.
 
 ## Duty → wire
 
@@ -105,7 +104,7 @@ its **packet**, not its label. Never costume a child. Bare **Composer** (product
 | continuo | `cursor/grok-4.7` low **or** `cursor/composer-2.5` | bug-class sweep across a service; applying a reviewed diff pattern |
 | concertino | `cursor/grok-4.7` high+ | two plausible root causes; a fix shape to choose — fork inside the work item |
 | critic | `cdp/opus-5.5` high | independent review (default reviewer; Fix-loop step 4) |
-| advisor | `cursor/gemini-4-argon` high | intent-to-plan, problem-to-solution, open fork, or stuck leg only; packet carries `Use the lean-dispatch skill`; advise next move — do not author or review |
+| advisor | `cursor/gemini-4-argon` high | optimal `todo:{slug}` seeding (Fast `G5`, Mid `G2`, Slow `G1` + routine friction→todo, `decision:argon-advisor-todo-seeding`), intent-to-plan, problem-to-solution, open fork, or stuck leg; packet carries `Use the lean-dispatch skill` |
 | dramaturg | `cdp/fable-5.1` | architecture-open / stack-killing **consult only** (ask/review); never an implement leg from the parent seat |
 
 Choose the lowest sufficient tier first.
