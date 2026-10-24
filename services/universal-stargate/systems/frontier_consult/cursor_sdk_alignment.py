@@ -40,7 +40,11 @@ _MECHANICAL_CONTRACTS = frozenset({"pure-mechanical", "none"})
 @dataclass(frozen=True, slots=True)
 class KnobOutcome:
     status: Literal[
-        "accepted", "dropped_unsupported", "invalid_value", "policy_default"
+        "accepted",
+        "dropped_unsupported",
+        "invalid_value",
+        "policy_default",
+        "policy_override",
     ]
     requested: str
     forwarded: str | None
@@ -52,6 +56,7 @@ class Warning:
     code: Literal[
         "sdk_cost_risk",
         "knob_dropped",
+        "knob_policy_override",
         "max_tool_turns_ignored",
     ]
     message: str
@@ -195,6 +200,50 @@ def _fill_policy_knob(
     aligned_knobs[name] = value
 
 
+def _enforce_grok_fast_false(
+    *,
+    model_id: str,
+    wire: Mapping[str, str],
+    warnings: list[Warning],
+    knob_resolution: dict[str, KnobOutcome],
+    aligned_knobs: dict[str, str],
+) -> None:
+    """cursor-sdk grok-4.7 always admits with fast=false (usage cap)."""
+    if model_id != "grok-4.7":
+        return
+    spec = supported_knobs(model_id).get("fast")
+    if spec is None:
+        return
+    supported_values = tuple(spec.accepted)
+    forwarded = "false"
+    requested = wire.get("fast")
+    if requested == "true":
+        knob_resolution["fast"] = KnobOutcome(
+            status="policy_override",
+            requested="true",
+            forwarded=forwarded,
+            supported=supported_values,
+        )
+        warnings.append(
+            Warning(
+                code="knob_policy_override",
+                message=(
+                    "knob 'fast' is forced to 'false' for cursor-sdk grok-4.7 "
+                    "dispatches; explicit fast=true was ignored"
+                ),
+                model=model_id,
+            )
+        )
+    elif requested is None:
+        knob_resolution["fast"] = KnobOutcome(
+            status="policy_default",
+            requested="",
+            forwarded=forwarded,
+            supported=supported_values,
+        )
+    aligned_knobs["fast"] = forwarded
+
+
 def align_cursor_knobs(
     *,
     resolved_model: str,
@@ -237,14 +286,7 @@ def align_cursor_knobs(
                 knob_resolution=knob_resolution,
                 aligned_knobs=aligned_knobs,
             )
-    if (
-        (
-            model_id == "composer-2.5"
-            or (model_id == "grok-4.7" and contract == "conductor")
-        )
-        and "fast" not in wire
-        and "fast" in card
-    ):
+    if model_id == "composer-2.5" and "fast" not in wire and "fast" in card:
         _fill_policy_knob(
             model_id=model_id,
             name="fast",
@@ -252,6 +294,14 @@ def align_cursor_knobs(
             knob_resolution=knob_resolution,
             aligned_knobs=aligned_knobs,
         )
+
+    _enforce_grok_fast_false(
+        model_id=model_id,
+        wire=wire,
+        warnings=warnings,
+        knob_resolution=knob_resolution,
+        aligned_knobs=aligned_knobs,
+    )
 
     if max_tool_turns is not None:
         warnings.append(
