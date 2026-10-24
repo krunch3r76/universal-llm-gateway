@@ -1,9 +1,10 @@
 """Deterministic multi-weight draft selector for writer-specialist-v1.
 
-Assemble and the six drafter steps are the callers. Pin coverage stays the
-fact score. A first-person bonus breaks near ties. A requested signer
-outranks both. Drafts that still contain an unresolved ``[NEED:]`` token
-are ineligible. The handler does not call a model or write a file.
+Assemble and the six drafter steps are the callers. Ranking is requested
+signer band, then first-person voice, then pin coverage minus email penalty,
+then earlier drafter order. Drafts that still contain an unresolved
+``[NEED:]`` token are ineligible. The handler does not call a model or write
+a file.
 """
 
 from __future__ import annotations
@@ -113,13 +114,14 @@ def _signer_band(draft_text: str, signer: str) -> int:
     return 0
 
 
-def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
-    """Sort eligible drafts: signer, then pins plus voice minus penalties, then order."""
+def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int]:
+    """Sort eligible drafts: signer, voice, pin coverage minus email penalty, order."""
     index, row = pair
-    effective = int(row["score"]) + int(row["voice_bonus"]) - int(row["email_penalty"])
+    pin_tier = int(row["score"]) - int(row["email_penalty"])
     return (
         -int(row["signer_band"]),
-        -effective,
+        -int(row["voice_bonus"]),
+        -pin_tier,
         index,
     )
 
@@ -148,8 +150,9 @@ class WritingDraftSelectorHandler(BaseHandler):
 
     Candidates come from context outputs in fixed drafter order. An
     unresolved ``[NEED:]`` token removes a candidate. The winner is the
-    highest signer band, then pin coverage plus a first-person bonus, then
-    the earlier drafter. If every candidate is ineligible the step refuses
+    highest signer band, then first-person voice, then pin coverage minus
+    email penalty, then the earlier drafter. If every candidate is ineligible
+    the step refuses
     and does not emit a bus event.
     """
 

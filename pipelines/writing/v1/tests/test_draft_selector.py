@@ -84,11 +84,14 @@ _PINS = [
 ]
 
 
-def test_selector_weights_first_person_over_equal_pin_coverage() -> None:
-    """A third-person draft must not beat a first-person draft with the same pins."""
-    pins = [{"pin_id": "P1", "attested": True, "excerpt": "Fill was 251 on Saturday"}]
-    third = "Fill was 251 on Saturday."
-    first = "Fill was 251 on Saturday. I saw the notice."
+def test_selector_weights_first_person_over_lower_pin_coverage() -> None:
+    """First-person voice outranks higher pin coverage when signer band ties."""
+    pins = [
+        {"pin_id": "P1", "attested": True, "excerpt": "Fill was 251 on Saturday"},
+        {"pin_id": "P2", "attested": True, "excerpt": "It was 213 Sunday morning"},
+    ]
+    third = "Fill was 251 on Saturday. It was 213 Sunday morning."
+    first = "I saw the notice on Saturday."
     selected = _select(
         {
             "assemble": _Out(payload={"pin_ledger": pins}),
