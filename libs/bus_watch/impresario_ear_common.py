@@ -1,4 +1,8 @@
-"""Shared impresario-ear enqueue, hop watermark, echo guard, Grok mailboxes."""
+"""Impresario-ear shared helpers: enqueue, hop watermarks, echo guard, Grok routing.
+
+``bus_watch.ide_hop``, patrol, and ``impresario-ear-v1`` import this module.
+Deep hop enqueue is decommissioned (K77); patrol uses ``run_patrol_pass`` separately.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ _watermark_path_override: Path | None = None
 
 
 def watermark_path() -> Path:
+    """Return the JSON file path storing hop-enqueue watermark keys (creates parent dir)."""
     if _watermark_path_override is not None:
         return _watermark_path_override
     root = Path(os.environ.get("IMPRESARIO_EAR_WATERMARK_DIR", WATCH_DIR))
@@ -36,6 +41,7 @@ def watermark_path() -> Path:
 
 
 def set_watermark_path_for_tests(path: Path | None) -> None:
+    """Redirect ``watermark_path()`` to a temp file; ``None`` restores production default."""
     global _watermark_path_override
     _watermark_path_override = path
 
@@ -46,6 +52,7 @@ def hop_watermark_key(
     departing_transcript_id: str | None = None,
     hop_turn: int | None = None,
 ) -> str:
+    """Stable id for one hop-triggered ear run (root, departing transcript, or turn)."""
     root = str(root_thread or "").strip()
     dep = str(departing_transcript_id or "").strip()
     if dep:
@@ -92,6 +99,7 @@ def try_claim_hop_watermark(key: str) -> bool:
 
 
 def hop_watermark_present(key: str) -> bool:
+    """Return whether ``key`` is already recorded in the hop watermark store."""
     token = str(key or "").strip()
     if not token:
         return False
@@ -99,6 +107,7 @@ def hop_watermark_present(key: str) -> bool:
 
 
 def clear_hop_watermarks_for_tests() -> None:
+    """Remove the watermark JSON file under the current ``watermark_path()`` (tests only)."""
     with _watermark_lock:
         path = watermark_path()
         if path.is_file():
@@ -122,6 +131,7 @@ def normalize_grok_to_agent(raw: str | None) -> str | None:
 
 
 def is_ear_turn(turn: dict[str, Any]) -> bool:
+    """True when the bus turn is from impresario-ear or carries an ``EAR |`` subject."""
     subject = str(turn.get("subject") or "")
     sender = str(
         turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
@@ -170,6 +180,7 @@ def build_pipeline_options(
     model: str | None = None,
     patrol_prescreen_result: dict | None = None,
 ) -> dict[str, Any]:
+    """Build ``pipeline_options`` dict for ``enqueue_impresario_ear`` and the Stargate capability POST body."""
     opts: dict[str, Any] = {
         "root": root_thread,
         "root_thread": root_thread,
@@ -267,6 +278,12 @@ def maybe_enqueue_after_hop(
     duplicate: bool = False,
     to_agent: str | None = None,
 ) -> bool:
+    """Hop hook after IDE/Grok seal: deep ear decommissioned (K77); patrol unchanged.
+
+    Called from ``ide_hop.finalize_xvfb_hop_sidebar`` and checkpoint ``post`` handlers.
+    Returns ``False`` without enqueueing or claiming a hop watermark so a skipped deep
+    run cannot burn the watermark. Patrol enqueue remains ``run_patrol_pass`` only.
+    """
     if seal_refused or replayed or duplicate:
         return False
     if channel and channel != "hop":

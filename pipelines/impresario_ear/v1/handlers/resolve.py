@@ -1,4 +1,7 @@
-"""impresario_ear_resolve_v1 — bind root, mode, hop watermark, echo guard."""
+"""impresario_ear_resolve_v1 — bind root, mode, hop watermark, and ear echo guard.
+
+Deep ``mode`` is rejected per K77 before watermark claim; patrol mode continues unchanged.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +25,11 @@ def resolve_impresario_ear(
     dispatch_thread_id: str | None,
     fetch_turns: Any = None,
 ) -> dict[str, Any]:
+    """Bind impresario-ear pipeline options; deep mode is off per house rule K77.
+
+    Omitted ``mode`` defaults to ``deep`` and is rejected before hop watermark claim.
+    ``mode=patrol`` proceeds through echo guard and hop watermark as before.
+    """
     root = str(
         options.get("root_thread") or options.get("root") or dispatch_thread_id or ""
     ).strip()
@@ -77,6 +85,8 @@ def resolve_impresario_ear(
 
 
 class ImpresarioEarResolveHandler(BaseHandler):
+    """Pipeline step wrapper that runs ``resolve_impresario_ear`` and returns JSON skip payload."""
+
     step_type = "impresario_ear_resolve_v1"
 
     @override
