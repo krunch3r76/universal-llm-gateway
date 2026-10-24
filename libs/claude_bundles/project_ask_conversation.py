@@ -509,13 +509,34 @@ async def run_project_conversation(
             anchor = probe.after(
                 await harvest_assistant(page, min_msg_chars=10, anchor=probe)
             )
-            await send_prompt(
-                page,
-                prompts[0],
-                stargate_execution_id=stargate_execution_id,
-                satellite_execution_id=satellite_execution_id,
-                await_induction_reply=True,
-            )
+            try:
+                await send_prompt(
+                    page,
+                    prompts[0],
+                    stargate_execution_id=stargate_execution_id,
+                    satellite_execution_id=satellite_execution_id,
+                    await_induction_reply=True,
+                    on_harvest=on_harvest,
+                )
+            except SkillReceiptUnverifiedError as exc:
+                if not exc.submitted:
+                    raise
+                first = await _harvest_after_skill_receipt_unverified(
+                    page,
+                    exc=exc,
+                    anchor=anchor,
+                    project_uuid="",
+                    project_url=url,
+                    model_info=model_info,
+                    model=model,
+                    timeout_s=timeout_s,
+                    min_growth=min_growth,
+                    min_body=min_body,
+                    on_harvest=on_harvest,
+                    purpose=purpose,
+                )
+                results.append(first)
+                return results
             await _emit_page_url(on_harvest, page)
             try:
                 state = await wait_assistant_reply(

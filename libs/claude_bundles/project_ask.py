@@ -496,6 +496,7 @@ async def send_prompt(
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
     await_induction_reply: bool = False,
+    on_harvest: Callable[[dict], Awaitable[None]] | None = None,
 ) -> dict | None:
     """Clear the composer, attach leading slash skills, then click submit.
 
@@ -594,7 +595,9 @@ async def send_prompt(
         await page.wait_for_timeout(600)
         await _submit_composer_draft(page, composer=composer, draft_text=draft)
         try:
-            panel = await wait_for_induction_panel(page, induction_slugs)
+            panel = await wait_for_induction_panel(
+                page, induction_slugs, on_harvest=on_harvest
+            )
             induction_observed = list(panel.skills)
             attest_delivery_channels(
                 required_for_induction,
@@ -622,7 +625,9 @@ async def send_prompt(
             await _submit_composer_draft(
                 page, composer=composer, draft_text=induction_text
             )
-            panel = await wait_for_induction_panel(page, induction_slugs)
+            panel = await wait_for_induction_panel(
+                page, induction_slugs, on_harvest=on_harvest
+            )
             induction_observed = list(panel.skills)
             if await_induction_reply:
                 from claude_bundles.induction_reply_baseline import (
@@ -829,6 +834,7 @@ async def project_ask_on_page(
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=str(execution_id or ""),
             await_induction_reply=True,
+            on_harvest=on_harvest,
         )
         state = await wait_assistant_reply(
             page,

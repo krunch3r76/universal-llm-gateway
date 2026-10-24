@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from claude_bundles import skill_induction_panel as panel
@@ -27,11 +29,22 @@ def _report(*skills: str) -> LoadedSkillsReport:
 
 
 class _Page:
-    def __init__(self) -> None:
+    url = "https://claude.ai/cowork/cse_x"
+
+    def __init__(self, *, liveness: dict | None = None) -> None:
         self.waits: list[int] = []
+        self._liveness = liveness or {
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "url": "https://claude.ai/cowork/cse_x",
+        }
 
     async def wait_for_timeout(self, ms: int) -> None:
         self.waits.append(ms)
+
+    async def evaluate(self, _js: str) -> dict:
+        return dict(self._liveness)
 
 
 @pytest.mark.asyncio
@@ -169,6 +182,130 @@ async def test_pre_use_rail_is_retried_until_post_use_population(monkeypatch) ->
     )
     assert report.skills == ("reasoning-posture",)
     assert page.waits == [1000]
+
+
+@pytest.mark.asyncio
+async def test_active_page_past_wall_idle_budget_succeeds(monkeypatch) -> None:
+    """Streaming past 45s wall-clock still succeeds when slugs land after quiet."""
+    clock = {"t": 100.0}
+
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+    pre = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=(),
+        context_found=True,
+        skills_heading_found=False,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    post = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture",),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="Skills\nreasoning-posture",
+    )
+    snapshots = [pre] * 50 + [post]
+
+    async def scrape(_page):
+        return snapshots.pop(0)
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+
+    page = _Page(liveness={"streaming": True, "stop": False, "tool_pause": False})
+
+    async def wait_for_timeout(ms: int) -> None:
+        clock["t"] += ms / 1000.0
+        page.waits.append(ms)
+
+    page.wait_for_timeout = wait_for_timeout  # type: ignore[method-assign]
+
+    report = await panel.wait_for_induction_panel(
+        page, ["reasoning-posture"], timeout_s=45, interval_ms=1000
+    )
+    assert report.skills == ("reasoning-posture",)
+    assert clock["t"] >= 49.0
+
+
+@pytest.mark.asyncio
+async def test_quiet_pre_use_rail_raises_pre_use_timeout_after_idle(
+    monkeypatch,
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+    pre_use = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=(),
+        context_found=True,
+        skills_heading_found=False,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    emitted: list[dict] = []
+
+    async def scrape(_page):
+        return pre_use
+
+    def _emit(**kwargs):
+        emitted.append(kwargs)
+        return None
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", _emit)
+    page = _Page()
+
+    async def wait_for_timeout(ms: int) -> None:
+        clock["t"] += ms / 1000.0
+        page.waits.append(ms)
+
+    page.wait_for_timeout = wait_for_timeout  # type: ignore[method-assign]
+
+    with pytest.raises(SkillDeliveryError, match=r"reason=pre_use_timeout"):
+        await panel.wait_for_induction_panel(
+            page, ["reasoning-posture"], timeout_s=45, interval_ms=1000
+        )
+    assert clock["t"] >= 45.0
+    assert emitted and emitted[0]["reason"] == "pre_use_timeout"
+
+
+@pytest.mark.asyncio
+async def test_on_harvest_receives_liveness_samples(monkeypatch) -> None:
+    pre = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture",),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="Skills\nreasoning-posture",
+    )
+    samples: list[dict] = []
+
+    async def scrape(_page):
+        return pre
+
+    async def on_harvest(state: dict) -> None:
+        samples.append(state)
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+    page = _Page(liveness={"streaming": True, "tool_pause": True, "stop": False})
+    await panel.wait_for_induction_panel(
+        page,
+        ["reasoning-posture"],
+        timeout_s=30,
+        on_harvest=on_harvest,
+    )
+    assert len(samples) == 1
+    assert samples[0]["streaming"] is True
+    assert samples[0]["tool_pause"] is True
+    assert samples[0]["liveness_observed_at"]
 
 
 @pytest.mark.asyncio
