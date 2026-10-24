@@ -68,10 +68,12 @@ RESUME_REFUSAL_SAME_PROCESS = "same_process"
 # Boot stamps this reason when rewiring unparked running orphans; same-process
 # refuse must not apply — park and worker start share this boot (cdp-ask parity).
 BOOT_REWIRE_REASON = "giw_boot_rewire"
-# Density ignored-steer is not a restart. Refusing until the next GIW boot
-# strands the conductor (and any CDP reply still unread) until the worktree
-# is gone (a:37450).
+# Density ignored-steer on conductor rows is not a restart. Refusing until the
+# next GIW boot strands the conductor (and any CDP reply still unread) until
+# the worktree is gone (a:37450). Tier-B investigate/confer rows close out
+# instead of PARK-RESUME (wrap-up steer was the terminal instruction).
 DENSITY_HARNESS_IGNORED_STEER_REASON = "density-harness-ignored-steer"
+_TIER_B_DENSITY_STEER_CONTRACTS = frozenset({"investigate", "confer"})
 _SAME_PROCESS_RESUME_EXEMPT = frozenset(
     {BOOT_REWIRE_REASON, DENSITY_HARNESS_IGNORED_STEER_REASON}
 )
@@ -214,6 +216,7 @@ class ParkResumeSummary:
     refused: list[tuple[str, str]] = field(default_factory=list)
     expired: list[str] = field(default_factory=list)
     reconciled: list[tuple[str, str]] = field(default_factory=list)
+    closed: list[str] = field(default_factory=list)
 
 
 def _existing_child(parent_id: str) -> str | None:
@@ -298,6 +301,42 @@ async def _post_resumed_turn(
         )
 
 
+async def _close_tier_b_ignored_density_park(
+    row: ParkRow, bus: CursorBusClient
+) -> bool:
+    """Terminal close for Tier-B ignored wrap-up steer — no ``resume_of`` child."""
+    from services.git_integration_worker.routes.cursor_sdk import _terminate_link
+
+    if not mark_park_expired(parent_id=row.dispatch_id):
+        return False
+    emit_sdk_park_expired(
+        parent_dispatch_id=row.dispatch_id,
+        parked_at=row.parked_at,
+        ttl_s=0,
+    )
+    await _terminate_link(
+        bus,
+        thread_id=row.thread_id,
+        terminal_status="cancelled",
+        execution_id=row.execution_id or row.dispatch_id,
+    )
+    await bus.reply(
+        thread_id=row.thread_id,
+        to_agent=row.caller_agent or "dispatch",
+        from_agent="cursor-sdk",
+        subject=(
+            f"cursor-sdk dispatch {row.dispatch_id} CLOSED "
+            "(density harness Tier-B wrap-up; no auto-resume)"
+        ),
+        body=(
+            f"Park reason {DENSITY_HARNESS_IGNORED_STEER_REASON} on contract "
+            f"{row.contract or 'unknown'}: substrate closes the row without a "
+            "PARK-RESUME child. Relay harvests the partial sidecar if present."
+        ),
+    )
+    return True
+
+
 async def _expire(row: ParkRow, bus: CursorBusClient) -> bool:
     """Stamp expiry once; emit, close the link, post the awareness turn. False if already done."""
     from services.git_integration_worker.routes.cursor_sdk import _terminate_link
@@ -352,10 +391,18 @@ async def resume_parked_dispatches(
             if await _expire(row, bus):
                 summary.expired.append(row.dispatch_id)
             continue
+        park_reason = str(row.park.get("reason") or "")
+        if (
+            park_reason == DENSITY_HARNESS_IGNORED_STEER_REASON
+            and str(row.contract or "").lower() in _TIER_B_DENSITY_STEER_CONTRACTS
+        ):
+            if await _close_tier_b_ignored_density_park(row, bus):
+                summary.closed.append(row.dispatch_id)
+            continue
         if not process_started_after_park(controller.worker_started_at, row.parked_at):
-            # Boot-rewire parks share this boot. Density ignored-steer parks
-            # are not restarts — same-process refuse strands them (a:37450).
-            if row.park.get("reason") not in _SAME_PROCESS_RESUME_EXEMPT:
+            # Boot-rewire parks share this boot. Conductor density ignored-steer
+            # parks are not restarts — same-process refuse strands them (a:37450).
+            if park_reason not in _SAME_PROCESS_RESUME_EXEMPT:
                 if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
                     _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
                     logger.info(

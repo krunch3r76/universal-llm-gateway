@@ -1362,7 +1362,13 @@ def _run_sdk_sync(
                     status=str(getattr(observation, "status", "") or ""),
                     args=getattr(observation, "args", None),
                 )
-            if str(ctx.handoff_contract or "").lower() == "conductor":
+            from services.git_integration_worker.cursor_sdk_conductor_identity import (
+                is_density_harness_steer_row,
+            )
+
+            if is_density_harness_steer_row(
+                {"contract": ctx.handoff_contract or ""}
+            ):
                 from services.git_integration_worker.conductor_hop_watchdog import (
                     maybe_tick_density_harness_steer,
                 )

@@ -292,13 +292,14 @@ async def test_same_process_park_is_not_auto_resumed(
 async def test_density_harness_park_resumes_on_same_process(
     tmp_path: Path, _admit_stubs: MagicMock
 ) -> None:
-    """a:37450 — ignored-steer is not a restart; same-process refuse strands it."""
+    """a:37450 — conductor ignored-steer is not a restart; same-process resume."""
     _seed_parked(
         "p-density",
         thread_id="14724",
         tmp_path=tmp_path,
         parked_offset_s=0,
         reason="density-harness-ignored-steer",
+        conductor=True,
     )
     started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     summary = await resume_parked_dispatches(
@@ -309,6 +310,35 @@ async def test_density_harness_park_resumes_on_same_process(
     )
     assert summary.refused == []
     assert summary.admitted == [("p-density", "p-density-r1")]
+
+
+@pytest.mark.asyncio
+async def test_tier_b_ignored_density_park_closes_without_resume(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """Tier-B wrap-up steer ignored ⇒ close row; no PARK-RESUME child."""
+    _seed_parked(
+        "p-tier-b",
+        thread_id="14725",
+        tmp_path=tmp_path,
+        parked_offset_s=0,
+        reason="density-harness-ignored-steer",
+    )
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET contract=? WHERE dispatch_id=?",
+            ("investigate", "p-tier-b"),
+        )
+    started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    summary = await resume_parked_dispatches(
+        cfg=load_config(),
+        controller=_controller(started_at=started),
+        code_version="6e1cd6755",
+        bus=_bus(),
+    )
+    assert summary.admitted == []
+    assert summary.closed == ["p-tier-b"]
+    assert park_projection(load_park_row(dispatch_id="p-tier-b"))["expired_at"]
 
 
 @pytest.mark.asyncio
