@@ -787,6 +787,164 @@ def cdp_occupancy_updated(
     )
 
 
+@event_factory
+def cdp_operator_seat_deferred(
+    *,
+    parent_thread: str | None,
+    display: str,
+    host_registration_id: str,
+    branch: str,
+) -> Event:
+    return Event(
+        signal="cdp.operator_seat.deferred",
+        role="observation",
+        scope="node",
+        payload={
+            "parent_thread": parent_thread,
+            "display": display,
+            "host_registration_id": host_registration_id,
+            "branch": branch,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_opened(
+    *,
+    registration_id: str,
+    host_registration_id: str,
+    port: int,
+    minted_host: bool,
+) -> Event:
+    return Event(
+        signal="cdp.tab.opened",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "host_registration_id": host_registration_id,
+            "port": port,
+            "minted_host": minted_host,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_closed(
+    *,
+    registration_id: str,
+    host_registration_id: str,
+    reason: str,
+) -> Event:
+    return Event(
+        signal="cdp.tab.closed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "host_registration_id": host_registration_id,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_kept(
+    *,
+    registration_id: str,
+    host_registration_id: str,
+    reason: str,
+    target_closed: bool,
+) -> Event:
+    return Event(
+        signal="cdp.tab.kept",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "host_registration_id": host_registration_id,
+            "reason": reason,
+            "target_closed": target_closed,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_reopened(
+    *,
+    registration_id: str,
+    host_registration_id: str,
+    prior_host_registration_id: str | None,
+    trigger: str,
+    stale_target_closed: bool,
+) -> Event:
+    return Event(
+        signal="cdp.tab.reopened",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "host_registration_id": host_registration_id,
+            "prior_host_registration_id": prior_host_registration_id,
+            "trigger": trigger,
+            "stale_target_closed": stale_target_closed,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_host_minted(
+    *,
+    registration_id: str,
+    display: str,
+    port: int,
+    trigger: str,
+) -> Event:
+    return Event(
+        signal="cdp.tab.host.minted",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "display": display,
+            "port": port,
+            "trigger": trigger,
+        },
+    )
+
+
+@event_factory
+def cdp_tab_host_mint_lock_wait(*, phase: str, outcome: str | None = None) -> Event:
+    payload: dict[str, object] = {"phase": phase}
+    if outcome is not None:
+        payload["outcome"] = outcome
+    return Event(
+        signal="cdp.tab.host.mint_lock_wait",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
+def cdp_host_kill_refused_tab_sharers(
+    *,
+    registration_id: str,
+    site: str,
+    live_tabs: int,
+) -> Event:
+    return Event(
+        signal="cdp.host.kill_refused_tab_sharers",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "site": site,
+            "live_tabs": live_tabs,
+        },
+    )
+
+
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,

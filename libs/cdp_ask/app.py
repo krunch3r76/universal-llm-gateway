@@ -12,6 +12,7 @@ import logging
 import os
 import time
 
+from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import peek_tree_state, refresh_tree_state
 from fastapi import FastAPI, HTTPException, Request
@@ -190,6 +191,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 "boot adopted in-flight executions: %s",
                 [rec.execution_id for rec in adopted],
             )
+        await asyncio.to_thread(reap_dead_holder_tab_rows)
         reaped = await execution_store.boot_reconcile()
         if reaped:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)

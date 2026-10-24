@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from claude_bundles import cdp_registry
 from claude_bundles import cdp_registry_events as _events
+from claude_bundles.cdp_registry.models import STATUS_TAB
 
 _ABORT_STOP_TIMEOUT_S = 5.0
 _ATTEST_POLL_INTERVAL_S = 0.25
@@ -106,7 +107,7 @@ def registration_owns_port(registration_id: str, expected_port: int) -> bool:
         row = cdp_registry._load_active().get(registration_id)
     except Exception:
         return False
-    if row is None or row.get("status") != "active":
+    if row is None or row.get("status") not in {"active", STATUS_TAB}:
         return False
     return int(row.get("port", -1)) == expected_port
 
@@ -150,7 +151,9 @@ def _park_dormant(registration_id: str) -> bool:
     leaving the host unaccounted for.
     """
     try:
-        return cdp_registry.make_dormant(registration_id, reason="idle_exit") is not None
+        return (
+            cdp_registry.make_dormant(registration_id, reason="idle_exit") is not None
+        )
     except cdp_registry.RegistryError:
         return False
 
@@ -163,7 +166,19 @@ def deregister_on_exit(
     When ``skip_wake_debt`` is True (retain-idle abort), deregister even if wake debt
     remains — the satellite execution terminalizes while Chrome stays retained.
     """
+    from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+    try:
+        row = cdp_registry._load_active().get(reg.registration_id)
+    except Exception:
+        row = None
+    if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+        if not skip_wake_debt and registration_has_wake_debt(reg.registration_id):
+            finish_tab_on_exit(reg, branch="wake_debt")
+            return
+        finish_tab_on_exit(reg, branch="normal")
+        return
 
     if not skip_wake_debt and registration_has_wake_debt(reg.registration_id):
         return
@@ -194,10 +209,18 @@ def deregister_on_exit(
     cdp_registry.reclaim_best_effort()
 
 
-def _claude_page(cdp_url: str) -> dict[str, Any] | None:
+def _claude_page(
+    cdp_url: str, *, target_id: str | None = None
+) -> dict[str, Any] | None:
     base = cdp_url.rstrip("/")
     with urllib.request.urlopen(f"{base}/json", timeout=2) as resp:
         tabs: list[dict[str, Any]] = json.loads(resp.read())
+    tid = str(target_id or "").strip()
+    if tid:
+        return next(
+            (t for t in tabs if str(t.get("id") or "").strip() == tid),
+            None,
+        )
     return next(
         (
             t
@@ -208,10 +231,12 @@ def _claude_page(cdp_url: str) -> dict[str, Any] | None:
     )
 
 
-async def _evaluate_js_async(cdp_url: str, expression: str) -> Any:
+async def _evaluate_js_async(
+    cdp_url: str, expression: str, *, target_id: str | None = None
+) -> Any:
     import websockets
 
-    page = _claude_page(cdp_url)
+    page = _claude_page(cdp_url, target_id=target_id)
     if not page:
         return None
     async with websockets.connect(
@@ -232,10 +257,12 @@ async def _evaluate_js_async(cdp_url: str, expression: str) -> Any:
     return result.get("value")
 
 
-async def _probe_has_stop_async(cdp_url: str) -> tuple[bool, bool]:
+async def _probe_has_stop_async(
+    cdp_url: str, *, target_id: str | None = None
+) -> tuple[bool, bool]:
     """Return (has_stop, probe_ok) — probe_ok requires composer root fidelity (H1)."""
     try:
-        value = await _evaluate_js_async(cdp_url, _HAS_STOP_JS)
+        value = await _evaluate_js_async(cdp_url, _HAS_STOP_JS, target_id=target_id)
     except Exception:
         return True, False
     if not isinstance(value, dict):
@@ -243,17 +270,19 @@ async def _probe_has_stop_async(cdp_url: str) -> tuple[bool, bool]:
     return bool(value.get("hasStop")), bool(value.get("probeOk"))
 
 
-async def _click_stop_cdp_async(cdp_url: str) -> bool:
+async def _click_stop_cdp_async(cdp_url: str, *, target_id: str | None = None) -> bool:
     try:
-        value = await _evaluate_js_async(cdp_url, _STOP_CLICK_JS)
+        value = await _evaluate_js_async(cdp_url, _STOP_CLICK_JS, target_id=target_id)
     except Exception:
         raise
     return bool(value)
 
 
-async def _stop_and_attest_async(cdp_url: str, *, timeout_s: float) -> AttestResult:
+async def _stop_and_attest_async(
+    cdp_url: str, *, timeout_s: float, target_id: str | None = None
+) -> AttestResult:
     deadline = time.monotonic() + timeout_s
-    has_stop, probe_ok = await _probe_has_stop_async(cdp_url)
+    has_stop, probe_ok = await _probe_has_stop_async(cdp_url, target_id=target_id)
     if not probe_ok:
         return AttestResult(has_stop=True, probe_ok=False)
     if not has_stop:
@@ -263,14 +292,15 @@ async def _stop_and_attest_async(cdp_url: str, *, timeout_s: float) -> AttestRes
         return AttestResult(has_stop=True, probe_ok=True, click_failed=True)
     try:
         stop_clicked = await asyncio.wait_for(
-            _click_stop_cdp_async(cdp_url), timeout=min(2.0, remaining)
+            _click_stop_cdp_async(cdp_url, target_id=target_id),
+            timeout=min(2.0, remaining),
         )
     except Exception:
         return AttestResult(has_stop=True, probe_ok=True, click_failed=True)
     polls = 0
     while polls < _MAX_ATTEST_POLLS and time.monotonic() < deadline:
         await asyncio.sleep(_ATTEST_POLL_INTERVAL_S)
-        has_stop, probe_ok = await _probe_has_stop_async(cdp_url)
+        has_stop, probe_ok = await _probe_has_stop_async(cdp_url, target_id=target_id)
         if not probe_ok:
             return AttestResult(
                 has_stop=True, probe_ok=False, stop_clicked=stop_clicked
@@ -284,7 +314,10 @@ async def _stop_and_attest_async(cdp_url: str, *, timeout_s: float) -> AttestRes
 
 
 def bounded_stop_via_cdp(
-    cdp_url: str, *, timeout_s: float = _ABORT_STOP_TIMEOUT_S
+    cdp_url: str,
+    *,
+    timeout_s: float = _ABORT_STOP_TIMEOUT_S,
+    target_id: str | None = None,
 ) -> AttestResult:
     """Bounded Stop + ¬hasStop attest — offloaded from the FastAPI event loop (L3)."""
 
@@ -296,7 +329,9 @@ def bounded_stop_via_cdp(
         try:
             result_holder[0] = asyncio.run(
                 asyncio.wait_for(
-                    _stop_and_attest_async(cdp_url, timeout_s=timeout_s),
+                    _stop_and_attest_async(
+                        cdp_url, timeout_s=timeout_s, target_id=target_id
+                    ),
                     timeout=timeout_s,
                 )
             )
@@ -349,7 +384,7 @@ def abort_cleanup(
         return "ownership_lost"
 
     row = cdp_registry._load_active().get(reg.registration_id)
-    if row is None or row.get("status") != "active":
+    if row is None or row.get("status") not in {"active", STATUS_TAB}:
         return "lane_inactive"
 
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
@@ -367,7 +402,9 @@ def abort_cleanup(
     if retain_idle:
         return _try_deregister(reg, purpose=purpose, skip_wake_debt=True)
 
-    attest = bounded_stop_via_cdp(reg.cdp_url)
+    attest = bounded_stop_via_cdp(
+        reg.cdp_url, target_id=getattr(reg, "target_id", None)
+    )
     if not attest.probe_ok:
         return "probe_inconclusive"
     if attest.click_failed and attest.has_stop:
@@ -381,6 +418,7 @@ def install_abort_handlers(
     reg: cdp_registry.Registration, *, purpose: str | None
 ) -> None:
     """Register SIGTERM/SIGHUP handlers that run ``abort_cleanup`` for this registration."""
+
     def _handle(_signum: int, _frame: object | None) -> None:
         outcome = abort_cleanup(reg, purpose=purpose)
         print(f"abort_cleanup outcome={outcome}", flush=True)
@@ -396,6 +434,9 @@ def lookup_active_registration(
     for reg in cdp_registry.list_active():
         if reg.registration_id == registration_id:
             return reg
+    row = cdp_registry._load_active().get(registration_id)
+    if isinstance(row, dict) and row.get("status") == STATUS_TAB:
+        return cdp_registry._row_to_registration(row)
     return None
 
 

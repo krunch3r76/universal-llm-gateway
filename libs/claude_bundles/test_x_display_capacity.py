@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from admission_common.qualified_scalar import SurfaceDecl
@@ -266,7 +267,9 @@ def test_max_clients_belief_uses_live_argv_when_env_unset(
     monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
     monkeypatch.setattr(
         "claude_bundles.x_display_capacity._proc_cmdlines",
-        lambda proc_root=None: [["Xvfb", ":2", "-auth", "/tmp/x", "-maxclients", "256"]],
+        lambda proc_root=None: [
+            ["Xvfb", ":2", "-auth", "/tmp/x", "-maxclients", "256"]
+        ],
     )
     assert probe_x_display(display=":2", count=0)["x_max_clients"] == 256
     assert probe_x_display(display=":3", count=0)["x_max_clients"] == 64
@@ -615,3 +618,98 @@ def test_admit_display_reserves_one_budget_per_pin_on_that_display(
             chrome_budget=8,
             auth_resolves=lambda _display: True,
         )
+
+
+@pytest.mark.parametrize(
+    "branch",
+    ["register_lane_mint", "open_seat_relaunch", "dormant_unbound_relaunch"],
+)
+def test_tab_ask_when_x_headroom_below_one_chrome(
+    branch: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.driving_seat import launch_or_defer
+    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setattr(reg._store, "REGISTRY_DIR", root)
+    monkeypatch.setattr(reg._store, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(reg._store, "PORTS_LOCK", root / "ports.lock")
+    monkeypatch.setattr(reg._store, "REGISTRY_LOG", root / "registry.jsonl")
+    monkeypatch.setattr(reg._store, "REGISTRATIONS_DIR", regs)
+    host = {
+        "registration_id": "host-eligible",
+        "status": "active",
+        "port": 9225,
+        "display": ":2",
+        "profile_suffix": "reg-h",
+        "holder": "pool",
+        "purpose": "tab_host",
+        "started_at": 1.0,
+    }
+    seat = {
+        "registration_id": "seat-dormant",
+        "status": "dormant",
+        "port": 9224,
+        "display": ":2",
+        "profile_suffix": "reg-seat",
+        "chat_url": "https://claude.ai/cowork/cse_seat1",
+        "parent_thread": "lane-1",
+        "purpose": "operator-proxy",
+        "seat_lane": "lane-1",
+        "seat_bound_at": 1.0,
+    }
+    reg._store.write_active({"host-eligible": host, "seat-dormant": dict(seat)})
+
+    def _raise_x() -> None:
+        raise XDisplayCapacityError("X display :2 exhausted")
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_lane.is_listening",
+        lambda port: port in (9224, 9225),
+    )
+    with pytest.raises(OperatorSeatDeferred) as caught:
+        launch_or_defer(branch, _raise_x)
+    assert caught.value.data["branch"] == branch
+    after = reg._store.load_active()["seat-dormant"]
+    assert after["chat_url"] == seat["chat_url"]
+    assert after["profile_suffix"] == seat["profile_suffix"]
+
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+    from claude_bundles.cdp_registry.tab_rows import open_tab_row_for_ask
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.probe_x_display",
+        lambda **kw: {
+            "x_display": ":2",
+            "x_clients": 62,
+            "x_max_clients": 64,
+            "x_headroom": 2,
+            "x_exhausted": True,
+            "x_chrome_client_budget": 8,
+            "x_probe": "injected",
+        },
+    )
+    mint_lock = tmp_path / "mint.lock"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows._TAB_MINT_LOCK",
+        mint_lock,
+    )
+    with patch(
+        "claude_bundles.cdp_lane.open_cdp_tab_target",
+        return_value="tgt-low-x",
+    ):
+        tab = open_tab_row_for_ask(
+            holder="ask-1",
+            purpose="ask",
+            mission_kind="root",
+            parent_thread="lane-1",
+        )
+    assert tab.target_id == "tgt-low-x"
+    assert tab.host_registration_id == "host-eligible"
+    tab_row = reg._store.load_active()[tab.registration_id]
+    assert tab_row["status"] == STATUS_TAB

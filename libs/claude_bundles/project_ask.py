@@ -1007,6 +1007,7 @@ async def run_project_ask(
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
     purpose: str = "ask",
+    target_id: str | None = None,
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect.
 
@@ -1015,7 +1016,14 @@ async def run_project_ask(
     """
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     try:
-        page = await pick_chat_page(ctx, prefer_url_substr="/new")
+        if target_id:
+            from claude_bundles.cdp_registry.tab_rows_reopen import (
+                select_page_by_target_id,
+            )
+
+            page = await select_page_by_target_id(ctx, target_id)
+        else:
+            page = await pick_chat_page(ctx, prefer_url_substr="/new")
         return await project_ask_on_page(
             page,
             prompt,

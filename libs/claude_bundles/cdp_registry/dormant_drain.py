@@ -272,9 +272,5 @@ def _release_unbound_host(
 ) -> None:
     """Kill and release a host that holds no recoverable CSE session."""
     registry = registry_package()
-    port = row.get("port")
-    if isinstance(port, int) and listen(port):
-        with contextlib.suppress(Exception):
-            registry._kill_listener(port)
     with contextlib.suppress(Exception):
         registry.deregister_lane(registration_id, kill=True, reason="released")

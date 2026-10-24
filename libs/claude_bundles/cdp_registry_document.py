@@ -6,7 +6,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from claude_bundles.cdp_registry.models import _RESERVED_STATUSES, STATUS_DORMANT
+from claude_bundles.cdp_registry.models import (
+    STATUS_DORMANT,
+    STATUS_TAB,
+    _RESERVED_STATUSES,
+)
 
 _VOCABULARY_STATUSES = _RESERVED_STATUSES | {STATUS_DORMANT}
 
@@ -74,6 +78,8 @@ def build_registry_document(active: Mapping[str, Any]) -> dict[str, Any]:
             blank_omitted += 1
             continue
         status = str(status_raw)
+        if status == STATUS_TAB:
+            continue
         if status not in _VOCABULARY_STATUSES:
             unknown_omitted += 1
             continue

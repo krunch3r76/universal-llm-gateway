@@ -41,6 +41,9 @@ def run_hygiene_once() -> dict[str, Any]:
     from cdp_ask.followup import lane_in_flight
 
     drain = drain_live_hosts_to_dormant(is_busy=lane_in_flight)
+    from claude_bundles.cdp_registry.tab_rows import sweep_kept_tab_rows
+
+    kept_tabs_released = sweep_kept_tab_rows()
     dormant_reclaimed = cdp_registry.reclaim_dormant_rows()
     result = cdp_registry.hygiene_reclaim_extended()
     wake_alarms = sweep_wake_owed_ttl(
@@ -52,6 +55,7 @@ def run_hygiene_once() -> dict[str, Any]:
         "wake_alarms": wake_alarms,
         "drained": drain.as_dict(),
         "dormant_reclaimed": dormant_reclaimed,
+        "kept_tabs_released": kept_tabs_released,
     }
 
 

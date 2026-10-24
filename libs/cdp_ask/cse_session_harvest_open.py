@@ -38,7 +38,9 @@ async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> 
     del response
     if outcome is None or not outcome.ok:
         return
-    await _teardown_attempt(outcome.page, outcome.pw, close_page=False)
+    # A page-only borrow never wrote a row. Closing the page is what drops it.
+    close_page = bool(getattr(outcome, "page_only_borrow", False))
+    await _teardown_attempt(outcome.page, outcome.pw, close_page=close_page)
 
 
 def _with_opened(

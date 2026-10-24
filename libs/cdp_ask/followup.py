@@ -253,8 +253,7 @@ async def _maybe_reattach(
             if isinstance(port, int):
                 listening = cdp_lane.is_listening(port)
                 reattach_probe_detail = (
-                    f"cdp_lane.is_listening({port})="
-                    f"{'true' if listening else 'false'}"
+                    f"cdp_lane.is_listening({port})={'true' if listening else 'false'}"
                 )
                 if (
                     (req.envelope or "").strip().lower() == "stand_down"
@@ -273,7 +272,8 @@ async def _maybe_reattach(
             else:
                 reattach_probe_detail = "cdp_lane.is_listening not_run"
         if (
-            outcome.error == "dormant_relaunch_failed"
+            outcome.error
+            in ("dormant_relaunch_failed", "dormant_relaunch_deferred_x_headroom")
             and (req.envelope or "").strip().lower() == "stand_down"
             and (outcome.registration_id or "").strip()
         ):
@@ -313,6 +313,9 @@ async def _reattach_teardown(
     Never park, close the operator tab, or deregister the host.
     """
     if outcome is None or not outcome.ok:
+        return
+    if outcome.page_only_borrow:
+        await _teardown_attempt(outcome.page, outcome.pw, close_page=True)
         return
     if restore_borrowed_chat_url and not (
         skip_inflight_restore and _skip_borrow_restore_for_inflight_paste(outcome)

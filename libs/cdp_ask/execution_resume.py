@@ -51,7 +51,9 @@ logger = logging.getLogger(__name__)
 # execution TTL (7200 s) is the outer bound the reaper still enforces.
 RESUME_POLL_S = 10.0
 RESUME_WAIT_S = 3600.0
-_RESUMABLE_ROW_STATUSES = frozenset({"active", "dormant", "orphaned_alive", "retained"})
+_RESUMABLE_ROW_STATUSES = frozenset(
+    {"active", "dormant", "orphaned_alive", "retained", "tab"}
+)
 
 __all__ = ["hydrate_in_flight", "resume_execution", "spawn_resume"]
 
@@ -173,14 +175,17 @@ async def resume_execution(
         return
 
     try:
-        outcome = await ensure_cse_attached(
-            chat_url,
-            holder=record.holder or "cdp-ask-satellite",
-            purpose=record.purpose,
-            parent_thread=record.parent_thread,
-            mission_kind=record.mission_kind,
-            allow_mint=True,
-        )
+        if str((row or {}).get("status") or "") == "tab":
+            outcome = await _attach_tab_row(record, row or {}, trigger=trigger)
+        else:
+            outcome = await ensure_cse_attached(
+                chat_url,
+                holder=record.holder or "cdp-ask-satellite",
+                purpose=record.purpose,
+                parent_thread=record.parent_thread,
+                mission_kind=record.mission_kind,
+                allow_mint=True,
+            )
     except Exception as exc:  # noqa: BLE001 — attach failure is a resume failure
         logger.warning("resume %s attach raised", record.execution_id, exc_info=True)
         await _fail(
@@ -286,9 +291,21 @@ async def resume_execution(
     finally:
         with contextlib.suppress(Exception):
             await _teardown_opened(outcome)
-        if not store.shutting_down:
-            # Teardown mid-resume keeps the host; the next process resumes again.
-            await asyncio.to_thread(_dispose_host, record)
+        await asyncio.to_thread(_dispose_host, record, teardown=store.shutting_down)
+
+
+async def _attach_tab_row(
+    record: ExecutionRecord, row: dict[str, Any], *, trigger: str
+) -> Any:
+    """Reopen a STATUS_TAB row onto its own target. Never calls ensure_cse_attached.
+
+    Host choice, the CDP reopen, and the target-id page select live in
+    ``execution_resume_tab`` so this module stays inside the SLOC cap. The
+    outcome names the tab row, so ``_transfer_row`` is not reached.
+    """
+    from cdp_ask.execution_resume_tab import attach_reopened_tab
+
+    return await attach_reopened_tab(record, row, trigger=trigger)
 
 
 async def _transfer_row(
@@ -298,6 +315,10 @@ async def _transfer_row(
     from claude_bundles.cdp_registry.execution_state import set_execution_state
 
     old_rid = record.registration_id
+    old_row = _row_for(old_rid)
+    if old_row is not None and old_row.get("status") == "tab":
+        logger.warning("transfer_refused_status_tab registration_id=%s", old_rid)
+        return
     if old_rid:
         with contextlib.suppress(Exception):
             await asyncio.to_thread(
@@ -339,10 +360,36 @@ async def _harvest_until_idle(
         await asyncio.sleep(RESUME_POLL_S)
 
 
-def _dispose_host(record: ExecutionRecord) -> None:
+def _tab_has_wake_debt(registration_id: str | None) -> bool:
+    if not registration_id:
+        return False
+    with contextlib.suppress(Exception):
+        return bool(registration_has_wake_debt(str(registration_id)))
+    return False
+
+
+def _dispose_host(record: ExecutionRecord, *, teardown: bool = False) -> None:
     """Apply the ordinary exit policy to the resumed host (kill for ask, park otherwise)."""
+    from claude_bundles.cdp_registry.tab_rows import finish_tab_on_exit
+
     row = _row_for(record.registration_id)
-    if row is None or row.get("status") != "active":
+    if row is None:
+        return
+    if row.get("status") == "tab":
+        if teardown:
+            branch = "teardown"
+        elif record.abort_requested:
+            branch = "abort"
+        elif _tab_has_wake_debt(record.registration_id):
+            branch = "wake_debt"
+        else:
+            branch = "normal"
+        with contextlib.suppress(Exception):
+            finish_tab_on_exit(_row_to_registration(row), branch=branch)
+        return
+    if teardown:
+        return
+    if row.get("status") != "active":
         return
     if registration_has_wake_debt(str(record.registration_id)):
         return

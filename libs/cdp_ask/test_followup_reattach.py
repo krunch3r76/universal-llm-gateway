@@ -205,9 +205,7 @@ def _borrow_seat_mismatch_setup(
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.find_page_on_lane", AsyncMock(return_value=None)
     )
-    monkeypatch.setattr(
-        "cdp_ask.followup_reattach.connect_cdp", _connect_factory()
-    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
     return reg, reg_borrowed, reg_holder_id, store
 
 
@@ -1812,7 +1810,9 @@ async def test_borrow_reattach_refusal_with_retain_lane_restores_binding(
         store,
     )
     assert resp.error == "operator_seat_mismatch"
-    assert reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    assert (
+        reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    )
 
 
 @pytest.mark.asyncio
@@ -1881,7 +1881,10 @@ async def test_restore_session_address_clears_when_prior_held_elsewhere(
     assert reg.bind_session_address(other.registration_id, chat_url=CSE_PRIOR_38282)
     assert reg.bind_session_address(borrowed.registration_id, chat_url=CSE_TARGET_38282)
 
-    from cdp_ask.followup_reattach import ReattachOutcome, restore_borrowed_chat_url_on_refusal
+    from cdp_ask.followup_reattach import (
+        ReattachOutcome,
+        restore_borrowed_chat_url_on_refusal,
+    )
 
     restore_borrowed_chat_url_on_refusal(
         ReattachOutcome(
@@ -2002,7 +2005,9 @@ async def test_second_resolve_exception_runs_restore_teardown(
             store,
         )
     pw.stop.assert_awaited()
-    assert reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    assert (
+        reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    )
 
 
 @pytest.mark.asyncio
@@ -2054,7 +2059,9 @@ async def test_paste_miss_after_reattach_restores_borrowed_chat_url(
     )
     assert resp.error == "cse_not_found_on_lane"
     assert resp.reattach_used is True
-    assert reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    assert (
+        reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
+    )
 
 
 @pytest.mark.asyncio
@@ -2130,9 +2137,7 @@ async def test_identity_omitted_second_resolve_mismatch_restores_borrow(
         launch_chrome=_noop_launch,
         is_listening=lambda _p: False,
     )
-    assert reg.bind_session_address(
-        borrowed.registration_id, chat_url=CSE_PRIOR_38282
-    )
+    assert reg.bind_session_address(borrowed.registration_id, chat_url=CSE_PRIOR_38282)
     parked = reg.register_lane(
         holder="holder-parked",
         purpose="operator-proxy",
@@ -2362,9 +2367,7 @@ def test_step0_full_bind_second_gate_accepts_matched_reattach_host(
     )
     lane = "15404"
     reg, holder, borrowed = _open_operator_pair(lane)
-    assert reg.bind_session_address(
-        borrowed.registration_id, chat_url=CSE_TARGET_38282
-    )
+    assert reg.bind_session_address(borrowed.registration_id, chat_url=CSE_TARGET_38282)
     active = reg._store.load_active()
     assert seat_open(active[borrowed.registration_id], lane)
     assert active[holder.registration_id].get("seat_closed_at") is not None
@@ -2504,9 +2507,7 @@ async def test_successful_borrow_commits_seat_once_after_acquire(
     lane = "15404"
     reg, holder, borrowed = _open_operator_pair(lane)
     store = ExecutionStore()
-    order = _arm_split_borrow(
-        monkeypatch, reg, borrowed.registration_id, store=store
-    )
+    order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
     upserts = _upsert_spy(monkeypatch)
     real_gate = resolve_mod._lane_seat_followup_gate
     real_acquire = followup_mod._acquire_lane
@@ -2560,9 +2561,7 @@ async def test_concurrent_seat_change_refuses_commit_without_seating(
     lane = "15404"
     reg, holder, borrowed = _open_operator_pair(lane)
     store = ExecutionStore()
-    order = _arm_split_borrow(
-        monkeypatch, reg, borrowed.registration_id, store=store
-    )
+    order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
     real_acquire = followup_mod._acquire_lane
 
     async def _acquire(*args: Any, **kwargs: Any) -> bool:
@@ -2645,9 +2644,7 @@ async def test_commit_raise_restores_borrow_without_paste(
     lane = "15404"
     reg, holder, borrowed = _open_operator_pair(lane)
     store = ExecutionStore()
-    order = _arm_split_borrow(
-        monkeypatch, reg, borrowed.registration_id, store=store
-    )
+    order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
 
     def _boom(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("commit failed")
@@ -2942,3 +2939,248 @@ async def test_paste_failure_after_commit_keeps_borrow_chat_url(
     assert seat_open(active[borrowed.registration_id], lane)
     assert active[holder.registration_id].get("seat_closed_at") is not None
     assert reg.chat_url_for_registration(borrowed.registration_id) == CSE_TARGET_38282
+
+
+def _pool_host(host_id: str = "pool-h", *, port: int = 9225) -> dict[str, Any]:
+    return {
+        "registration_id": host_id,
+        "status": "active",
+        "port": port,
+        "display": ":2",
+        "profile_suffix": "pool",
+        "holder": "cdp-tab-pool",
+        "purpose": "tab_host",
+        "holder_pid": 1,
+        "started_at": 1.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_harvest_pool_host_writes_no_row_and_closes_page(
+    isolated_registry: Path,
+) -> None:
+    """A pool host borrow writes no chat_url and harvest teardown closes the page."""
+    from claude_bundles import cdp_registry as registry
+
+    from cdp_ask import followup_reattach as reattach
+    from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+    from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
+
+    registry._store.write_active({"pool-h": _pool_host()})
+    page = _FakePage()
+    pw = _FakePw()
+    binds: list[str] = []
+
+    async def _find(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def _open(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
+        return page, pw
+
+    def _bind(registration_id: str, chat_url: str) -> bool:
+        binds.append(registration_id)
+        return True
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(reattach, "find_page_on_lane", _find)
+    monkeypatch.setattr(reattach, "_navigate_new_page", _open)
+    monkeypatch.setattr(registry, "bind_chat_url_only", _bind)
+    try:
+
+        async def _harvest(*_args: Any, **_kwargs: Any) -> HarvestResponse:
+            return HarvestResponse(outcome="harvested")
+
+        response = await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_poolharvest",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_poolharvest"),
+            {},
+            _harvest,
+        )
+    finally:
+        monkeypatch.undo()
+    assert response.outcome == "harvested"
+    assert binds == []
+    assert page.closed is True
+    host = registry._store.load_active()["pool-h"]
+    assert not str(host.get("chat_url") or "").strip()
+
+
+@pytest.mark.asyncio
+async def test_followup_reattach_live_tab_is_page_only_borrow(
+    isolated_registry: Path,
+) -> None:
+    """Reattach onto a pool host that already shows the URL does not bind the row."""
+    from claude_bundles import cdp_registry as registry
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+
+    from cdp_ask import followup_reattach as reattach
+    from cdp_ask.followup import _reattach_teardown
+
+    url = "https://claude.ai/cowork/cse_livetab"
+    registry._store.write_active(
+        {
+            "pool-h": _pool_host(),
+            "T1": {
+                "registration_id": "T1",
+                "status": STATUS_TAB,
+                "host_registration_id": "pool-h",
+                "port": 9225,
+                "holder": "ask",
+                "purpose": "ask",
+                "profile_suffix": "pool",
+                "target_id": "live-tgt",
+                "chat_url": url,
+                "display": ":2",
+            },
+        }
+    )
+    page = _FakePage()
+    page.url = url
+    pw = _FakePw()
+
+    async def _find(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
+        return page, pw
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(reattach, "find_page_on_lane", _find)
+    try:
+        outcome = await reattach.ensure_cse_attached(url, holder="followup")
+    finally:
+        monkeypatch.undo()
+    assert outcome.ok is True
+    assert outcome.page_only_borrow is True
+    host = registry._store.load_active()["pool-h"]
+    assert not str(host.get("chat_url") or "").strip()
+    await _reattach_teardown(outcome, retain_lane=False)
+    assert page.closed is True
+
+
+@pytest.mark.asyncio
+async def test_reopened_tab_waits_for_inflight_turn(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Call-site leg: harvest and ensure wait while a tab row is in flight."""
+    import asyncio
+
+    from claude_bundles import cdp_registry as registry
+    from claude_bundles.cdp_registry.execution_state import set_execution_state
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+
+    from cdp_ask import followup_reattach as reattach
+    from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+    from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
+    from cdp_ask.followup_events import emit as real_emit
+
+    url_x = "https://claude.ai/cowork/cse_waitx"
+    url_y = "https://claude.ai/cowork/cse_waity"
+    events: list[Any] = []
+    calls: list[str] = []
+
+    def _capture(event: Any) -> None:
+        events.append(event)
+        real_emit(event)
+
+    monkeypatch.setattr("cdp_ask.followup_events.emit", _capture)
+    monkeypatch.setattr(reattach, "_REOPEN_INFLIGHT_POLL_S", 0.05)
+
+    async def _find(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
+        calls.append("find_page_on_lane")
+        return _FakePage(), _FakePw()
+
+    async def _open(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
+        calls.append("_navigate_new_page")
+        return _FakePage(), _FakePw()
+
+    def _bind(*_args: Any, **_kwargs: Any) -> bool:
+        calls.append("bind_chat_url_only")
+        return True
+
+    def _register(*_args: Any, **_kwargs: Any) -> None:
+        calls.append("register_lane")
+        raise AssertionError("register_lane")
+
+    monkeypatch.setattr(reattach, "find_page_on_lane", _find)
+    monkeypatch.setattr(reattach, "_navigate_new_page", _open)
+    monkeypatch.setattr(registry, "bind_chat_url_only", _bind)
+    monkeypatch.setattr(registry, "register_lane", _register)
+
+    registry._store.write_active(
+        {
+            "R": {
+                "registration_id": "R",
+                "status": "active",
+                "port": 9226,
+                "display": ":2",
+                "profile_suffix": "host-r",
+                "holder": "ask",
+                "purpose": "operator-proxy",
+                "chat_url": url_y,
+                "holder_pid": 1,
+                "started_at": 1.0,
+            }
+        }
+    )
+    set_execution_state("R", execution_id="exec-y", state="streaming", reason="test")
+    host_task = asyncio.create_task(
+        reattach.ensure_cse_attached(url_y, holder="followup")
+    )
+    await asyncio.wait_for(host_task, timeout=2)
+    assert "find_page_on_lane" in calls
+    assert not any(
+        getattr(event, "signal", "") == "cdp_ask.reopen.inflight_wait"
+        and (getattr(event, "payload", {}) or {}).get("chat_url") == url_y
+        for event in events
+    )
+
+    calls.clear()
+    registry._store.write_active(
+        {
+            "H": _pool_host(),
+            "T": {
+                "registration_id": "T",
+                "status": STATUS_TAB,
+                "host_registration_id": "H",
+                "port": 9225,
+                "holder": "ask",
+                "purpose": "ask",
+                "profile_suffix": "pool",
+                "target_id": "tgt-t",
+                "chat_url": url_x,
+                "display": ":2",
+            },
+        }
+    )
+    set_execution_state("T", execution_id="exec-x", state="streaming", reason="test")
+    events.clear()
+
+    async def _harvest(*_args: Any, **_kwargs: Any) -> HarvestResponse:
+        return HarvestResponse(outcome="harvested")
+
+    harvest_task = asyncio.create_task(
+        harvest_by_opening_url(
+            url_x,
+            HarvestRequest(chat_url=url_x),
+            {},
+            _harvest,
+        )
+    )
+    ensure_task = asyncio.create_task(
+        reattach.ensure_cse_attached(url_x, holder="followup")
+    )
+    await asyncio.sleep(0.1)
+    assert calls == []
+    assert any(
+        getattr(event, "signal", "") == "cdp_ask.reopen.inflight_wait"
+        and (getattr(event, "payload", {}) or {}).get("phase") == "started"
+        for event in events
+    )
+    set_execution_state("T", execution_id="exec-x", state="completed", reason="test")
+    outcome = await asyncio.wait_for(ensure_task, timeout=2)
+    await asyncio.wait_for(harvest_task, timeout=2)
+    assert outcome.ok is True
+    assert "find_page_on_lane" in calls
+    assert any(
+        getattr(event, "signal", "") == "cdp_ask.reopen.inflight_wait"
+        and (getattr(event, "payload", {}) or {}).get("phase") == "cleared"
+        for event in events
+    )

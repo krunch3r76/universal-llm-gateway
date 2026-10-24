@@ -13,6 +13,7 @@ from universal_protocol.errors import error_envelope
 # A dormant row owns no Chrome process and no port: the CSE URL and the seeded
 # profile are the durable identity, so relaunch picks whatever port is free.
 STATUS_DORMANT = "dormant"
+STATUS_TAB = "tab"
 
 _RESERVED_STATUSES = frozenset(
     {
@@ -88,6 +89,40 @@ class RegistryExhaustedError(RegistryError):
     """Raised when the configured CDP registry port pool has no free port remaining for a new host."""
 
 
+class OperatorSeatDeferred(RegistryError):  # noqa: N818 — spec-bound name
+    """Driving-seat mint refused for X headroom while an eligible host exists."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        display: str,
+        host_registration_id: str,
+        branch: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "display": display,
+            "host_registration_id": host_registration_id,
+            "branch": branch,
+            **(data or {}),
+        }
+        envelope = error_envelope(
+            code="cdp.operator_seat_deferred",
+            message=message,
+            source="rpc",
+            retryable=False,
+            data=payload,
+        )
+        self.code = str(envelope["code"])
+        self.message = str(envelope["message"])
+        self.display = display
+        self.host_registration_id = host_registration_id
+        self.branch = branch
+        self.data = dict(envelope.get("data") or {})
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class Registration:
     """One listable Chrome host projected from active.json.
@@ -114,6 +149,10 @@ class Registration:
     seat_closed_at: float | None = None
     seat_close_reason: str | None = None
     superseded_by: str | None = None
+    host_registration_id: str | None = None
+    target_id: str | None = None
+    tab_kept_reason: str | None = None
+    account_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,4 +273,8 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         seat_closed_at=_optional_float(row.get("seat_closed_at")),
         seat_close_reason=_optional_str(row.get("seat_close_reason")),
         superseded_by=_optional_str(row.get("superseded_by")),
+        host_registration_id=_optional_str(row.get("host_registration_id")),
+        target_id=_optional_str(row.get("target_id")),
+        tab_kept_reason=_optional_str(row.get("tab_kept_reason")),
+        account_id=_optional_str(row.get("account_id")),
     )
