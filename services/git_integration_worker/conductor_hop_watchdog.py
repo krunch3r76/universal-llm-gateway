@@ -76,10 +76,14 @@ def maybe_tick_density_harness_steer(
 def sweep_density_harness_steers(ledger: CursorDispatchLedger | None = None) -> int:
     """Backstop tick for live density-steer rows (~30s stale-lease reconcile).
 
-    The worker ``_on_tool_call`` path owns per-tool-call delivery sync, +8 park,
-    and fresh tool counts for ``contract`` ∈ conductor, investigate, confer. The
-    sweep retries steer deposit when that live path is slow or stuck;
-    ``try_claim_density_steer_deposit`` prevents double posts alongside the tick.
+    For ``contract`` ∈ conductor, investigate, confer, each sweep calls
+    ``maybe_tick_density_harness_steer`` — the full tick (delivery sync via
+    ``sync_density_steer_delivery``, ignored-steer park via
+    ``maybe_park_ignored_density_steer``, then steer deposit via
+    ``maybe_deposit_density_steer``). That full tick backs up the worker
+    ``_on_tool_call`` per-tool-call tick when that path is slow or stalled;
+    ``try_claim_density_steer_deposit`` prevents double posts alongside either
+    tick path.
     """
     led = ledger or CursorDispatchLedger.instance()
     steered = 0
