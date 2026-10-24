@@ -266,6 +266,19 @@ def test_fail_closed_no_cred_no_key(
         setup_cursor_dispatch_home("d1", real_home=real, root=root)
 
 
+def test_secrets_env_key_satisfies_gate_without_process_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = _fake_real_home(tmp_path, with_credential=False)
+    gateway = real / ".gateway"
+    gateway.mkdir()
+    (gateway / "secrets.env").write_text("CURSOR_API_KEY=file-key\n", encoding="utf-8")
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
+    assert not (home / ".config" / "cursor" / "auth.json").exists()
+
+
 def test_api_key_satisfies_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -615,7 +628,9 @@ def test_bare_dispatch_home_omits_rules_and_plugins_but_keeps_mcp(
         encoding="utf-8",
     )
     (real / ".gateway").mkdir(parents=True, exist_ok=True)
-    (real / ".gateway" / "mcp.yaml").write_text("auth_token: secret\n", encoding="utf-8")
+    (real / ".gateway" / "mcp.yaml").write_text(
+        "auth_token: secret\n", encoding="utf-8"
+    )
     root = tmp_path / "homes"
 
     # First seed non-bare, then reuse with bare=True to verify cleanup too
@@ -625,4 +640,3 @@ def test_bare_dispatch_home_omits_rules_and_plugins_but_keeps_mcp(
     assert not (home / ".cursor" / "plugins").exists()
     assert (home / ".cursor" / "mcp.json").is_file()
     assert (home / ".gateway" / "mcp.yaml").is_file()
-

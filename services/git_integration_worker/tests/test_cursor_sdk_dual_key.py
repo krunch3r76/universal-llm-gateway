@@ -46,7 +46,7 @@ def test_resolve_cursor_api_key_primary_env() -> None:
     }
     res = resolve_cursor_api_key("cursor/composer-2.5", env=env)
     assert res.provenance == "env:CURSOR_API_KEY"
-    assert res.api_key is None
+    assert res.api_key == "primary-key"
 
 
 def test_resolve_cursor_api_key_grok_primary_pool() -> None:
@@ -56,7 +56,47 @@ def test_resolve_cursor_api_key_grok_primary_pool() -> None:
     }
     res = resolve_cursor_api_key("cursor/grok-4.7", env=env)
     assert res.provenance == "env:CURSOR_API_KEY"
-    assert res.api_key is None
+    assert res.api_key == "primary-key"
+
+
+def test_resolve_cursor_api_key_secrets_env_hot_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A secrets.env edit is visible on the next resolve. Process env stays put."""
+    monkeypatch.setenv("CURSOR_API_KEY", "stale-primary")
+    monkeypatch.setenv(CURSOR_API_KEY_OTHER_MODELS_ENV, "stale-other")
+    gateway = tmp_path / ".gateway"
+    gateway.mkdir()
+    secrets = gateway / "secrets.env"
+    secrets.write_text(
+        "# pool keys\nexport CURSOR_API_KEY=first-primary\n"
+        "CURSOR_API_KEY_OTHER_MODELS=first-other # secondary\n",
+        encoding="utf-8",
+    )
+    before = (
+        os.environ.get("CURSOR_API_KEY"),
+        os.environ.get(CURSOR_API_KEY_OTHER_MODELS_ENV),
+    )
+
+    primary = resolve_cursor_api_key("cursor/composer-2.5", real_home=tmp_path)
+    other = resolve_cursor_api_key("cursor/claude-opus-5", real_home=tmp_path)
+    assert primary.provenance == "env:CURSOR_API_KEY"
+    assert primary.api_key == "first-primary"
+    assert other.api_key == "first-other"
+
+    secrets.write_text(
+        'CURSOR_API_KEY="second-primary"\n'
+        "export CURSOR_API_KEY_OTHER_MODELS='second-other'\n",
+        encoding="utf-8",
+    )
+    primary = resolve_cursor_api_key("cursor/grok-4.7", real_home=tmp_path)
+    other = resolve_cursor_api_key("cursor/gemini-4-argon", real_home=tmp_path)
+    assert primary.api_key == "second-primary"
+    assert other.api_key == "second-other"
+    assert (
+        os.environ.get("CURSOR_API_KEY"),
+        os.environ.get(CURSOR_API_KEY_OTHER_MODELS_ENV),
+    ) == before
 
 
 def test_resolve_cursor_api_key_primary_auth_file(tmp_path: Path) -> None:

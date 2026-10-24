@@ -69,15 +69,21 @@ def test_dead_key_refuses_admit_before_home_or_bridge(
 
 
 def test_startup_probe_marks_key_and_successful_probe_clears(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CURSOR_API_KEY", "primary-secret")
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY_OTHER_MODELS", raising=False)
+    gateway = tmp_path / ".gateway"
+    gateway.mkdir()
+    (gateway / "secrets.env").write_text(
+        "CURSOR_API_KEY=primary-secret\n", encoding="utf-8"
+    )
 
     def _dead(_provenance: str, *, api_key: str | None) -> str:
         assert api_key == "primary-secret"
         return "not_entitled"
 
-    rows = probe_configured_keys(probe=_dead)
+    rows = probe_configured_keys(probe=_dead, real_home=tmp_path)
     assert rows[0]["verdict"] == "not_entitled"
     assert is_not_entitled("env:CURSOR_API_KEY")
 
@@ -85,7 +91,7 @@ def test_startup_probe_marks_key_and_successful_probe_clears(
         del api_key
         return "entitled"
 
-    probe_configured_keys(probe=_live)
+    probe_configured_keys(probe=_live, real_home=tmp_path)
     assert is_not_entitled("env:CURSOR_API_KEY") is False
 
 
@@ -104,3 +110,13 @@ def test_plan_required_marks_key_and_bridge_abort_envelope_carries_auth() -> Non
         "bridge abort plan_required",
     )
     assert env_data["cursor_auth"] == "env:CURSOR_API_KEY"
+
+
+def test_rotated_api_key_clears_not_entitled_mark() -> None:
+    note_plan_required(
+        "Error: plan_required for this account",
+        provenance="env:CURSOR_API_KEY",
+        api_key="old-key",
+    )
+    assert is_not_entitled("env:CURSOR_API_KEY", api_key="old-key") is True
+    assert is_not_entitled("env:CURSOR_API_KEY", api_key="new-key") is False

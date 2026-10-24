@@ -70,6 +70,72 @@ def _operator_home(real_home: Path | str | None = None) -> Path:
     return Path(os.environ.get("HOME") or "~").expanduser()
 
 
+def _parse_secrets_env_value(raw: str) -> str:
+    """Strip one secrets.env value: quotes, or an unquoted ``#`` comment."""
+    value = raw.strip()
+    if len(value) >= 2 and value[0] in {"'", '"'}:
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end != -1:
+            return value[1:end]
+    return value.split("#", 1)[0].strip()
+
+
+def load_cursor_secrets_env(real_home: Path | str | None = None) -> dict[str, str]:
+    """Read ``~/.gateway/secrets.env`` for this operator home.
+
+    git_integration_worker is a long-lived process, so ``os.environ`` stays
+    frozen at startup. Callers overlay this file on each key lookup so an
+    edit is visible on the next cursor-sdk dispatch. A missing file, or a
+    delete between the existence check and the read, yields an empty map.
+    """
+    path = _operator_home(real_home) / ".gateway" / "secrets.env"
+    if not path.is_file():
+        return {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return {}
+    parsed: dict[str, str] = {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            parsed[key] = _parse_secrets_env_value(raw_value)
+    return parsed
+
+
+def effective_cursor_key_env(
+    *,
+    real_home: Path | str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Mapping[str, str]:
+    """Env map for Cursor key resolution. Does not write ``os.environ``.
+
+    An explicit *env* is the hermetic test seam and is returned as-is unless
+    *real_home* also points at a ``secrets.env`` on disk, in which case that
+    file wins. Production (*env* is None) copies ``os.environ`` and overlays
+    the live file so a rotated key beats the daemon's startup environment.
+    """
+    secrets = _operator_home(real_home) / ".gateway" / "secrets.env"
+    if env is not None:
+        if real_home is not None and secrets.is_file():
+            merged = dict(env)
+            merged.update(load_cursor_secrets_env(real_home))
+            return merged
+        return env
+    merged = dict(os.environ)
+    merged.update(load_cursor_secrets_env(real_home))
+    return merged
+
+
 def _observe_home(real_home: Path | str | None = None) -> tuple[Path, str]:
     """Return ``(home, observed_home_kind)`` for the path a token/auth read uses."""
     home = _operator_home(real_home)
@@ -114,8 +180,12 @@ def resolve_mcp_token(*, real_home: Path | str | None = None) -> tuple[str, str]
 
 
 def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
-    """Return how this dispatch will authenticate to Cursor (env key or auth.json)."""
-    if os.environ.get("CURSOR_API_KEY", "").strip():
+    """Return how this dispatch will authenticate to Cursor (env key or auth.json).
+
+    ``CURSOR_API_KEY`` is read from the live ``secrets.env`` overlay, not the
+    worker's startup ``os.environ``, so a file edit counts without a recycle.
+    """
+    if effective_cursor_key_env(real_home=real_home).get("CURSOR_API_KEY", "").strip():
         return "env:CURSOR_API_KEY"
     auth_path = _operator_home(real_home) / _CURSOR_XDG_AUTH
     if auth_path.is_file():
@@ -131,13 +201,14 @@ def resolve_cursor_api_key(
 ) -> CursorApiKeyResolution:
     """Resolve effective Cursor auth for *resolved_model* without mutating GIW env.
 
-    Other Models pool members require ``CURSOR_API_KEY_OTHER_MODELS`` in the
-    worker unit environment (typically via ``~/.gateway/secrets.env``); the
-    value is carried on ``AgentOptions.api_key``. Primary-pool models
-    (Composer, Grok, …) return ``api_key=None`` so the SDK falls back to
-    ``CURSOR_API_KEY`` or dispatch-home ``auth.json``.
+    Both pools read the live ``~/.gateway/secrets.env`` overlay (see
+    :func:`effective_cursor_key_env`). Other Models pool members require
+    ``CURSOR_API_KEY_OTHER_MODELS`` and carry it on ``AgentOptions.api_key``.
+    Primary-pool models (Composer, Grok, …) do the same with ``CURSOR_API_KEY``
+    when it is set. ``api_key=None`` remains only for the ``auth.json`` file
+    fallback, which the bridge would otherwise prefer over a stale OAuth copy.
     """
-    environ = env if env is not None else os.environ
+    environ = effective_cursor_key_env(real_home=real_home, env=env)
     if is_other_models_pool(resolved_model):
         secondary = environ.get(CURSOR_API_KEY_OTHER_MODELS_ENV, "").strip()
         if not secondary:
@@ -150,8 +221,9 @@ def resolve_cursor_api_key(
             provenance=f"env:{CURSOR_API_KEY_OTHER_MODELS_ENV}",
             api_key=secondary,
         )
-    if environ.get("CURSOR_API_KEY", "").strip():
-        return CursorApiKeyResolution(provenance="env:CURSOR_API_KEY")
+    primary = environ.get("CURSOR_API_KEY", "").strip()
+    if primary:
+        return CursorApiKeyResolution(provenance="env:CURSOR_API_KEY", api_key=primary)
     auth_path = _operator_home(real_home) / _CURSOR_XDG_AUTH
     if auth_path.is_file():
         return CursorApiKeyResolution(provenance=f"file:{auth_path}")

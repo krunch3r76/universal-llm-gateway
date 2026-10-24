@@ -539,7 +539,14 @@ def setup_cursor_dispatch_home(
     xdg_dir = home / CURSOR_XDG_CONFIG_RELPATH
     xdg_dir.mkdir(parents=True, exist_ok=True)
     real_cred = real / CURSOR_XDG_CONFIG_RELPATH / CURSOR_CREDENTIAL_FILENAME
-    have_api_key = bool(os.environ.get("CURSOR_API_KEY"))
+    # Lazy import: cursor_sdk_context imports observed_home_kind from this module.
+    from services.git_integration_worker.cursor_sdk_context import (
+        effective_cursor_key_env,
+    )
+
+    have_api_key = bool(
+        effective_cursor_key_env(real_home=real).get("CURSOR_API_KEY", "").strip()
+    )
     if real_cred.exists():
         shutil.copy2(real_cred, xdg_dir / CURSOR_CREDENTIAL_FILENAME)
     elif not have_api_key:

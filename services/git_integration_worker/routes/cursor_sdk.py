@@ -3766,7 +3766,15 @@ async def admit_cursor_dispatch(
         parity,
     )
     auth_source = str(parity.get("cursor_auth_source") or "")
-    if auth_source and is_not_entitled(auth_source):
+    # Re-read the live key so a secrets.env rotation clears a dead-key mark
+    # for the previous value. The raw key stays off the parity log.
+    auth_key: str | None = None
+    if auth_source.startswith("env:"):
+        try:
+            auth_key = resolve_cursor_api_key(config.model_id).api_key
+        except CursorSdkParityError:
+            auth_key = None
+    if auth_source and is_not_entitled(auth_source, api_key=auth_key):
         return _reject_pre_admission(
             req,
             worker_error_code="cursor_key_not_entitled",
