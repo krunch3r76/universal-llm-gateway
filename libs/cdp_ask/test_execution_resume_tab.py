@@ -420,9 +420,22 @@ async def test_tab_closed_when_scrape_fails(
     assert host is None or host.get("status") == "released"
     assert active["S"]["chat_url"] == seat_url
 
-    # H dead: the three tabs reopen on S, and S's listener is not killed.
+    # H dead: pool tabs mint a shared tab_host (operator-proxy is not a pool host).
     tab_registry["kills"].clear()
     tab_registry["live"].discard(9225)
+    tab_registry["live"].add(9226)
+
+    def _mint_pool_host(**_kwargs: Any) -> reg.Registration:
+        row = _host("Pool", 9226, "tab_host")
+        active = reg._store.load_active()
+        active["Pool"] = row
+        reg._store.write_active(active)
+        return reg._row_to_registration(row)
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.lifecycle.register_lane",
+        _mint_pool_host,
+    )
     reg._store.write_active(
         {
             "H": _host("H", 9225, "tab_host", status="released"),
@@ -471,7 +484,7 @@ async def test_tab_closed_when_scrape_fails(
             asyncio.create_task(resume_execution(store, record, trigger="host_lost"))
         )
     await _wait_attached(tasks, list(started.values()))
-    assert hosts_seen == ["S", "S", "S"] or set(hosts_seen) == {"S"}
+    assert set(hosts_seen) == {"Pool"}
     assert 9224 not in tab_registry["kills"]
     assert 9225 not in tab_registry["kills"]
     for event in release.values():

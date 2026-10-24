@@ -9,6 +9,7 @@ under the ports lock; events here are advisory.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 from collections.abc import Callable
@@ -32,7 +33,7 @@ def host_row_eligible(
     the registry range, not a pin and not 9222, and a display
     ``cdp_display_candidates`` would mint on.
     """
-    from .tab_rows import _host_eligible_row
+    from .tab_rows import _host_capacity_eligible_row
 
     is_up = listen or cdp_lane.is_listening
     display = str(row.get("display") or "").strip()
@@ -43,7 +44,7 @@ def host_row_eligible(
     }
     if cdp_lane._display_key(display) not in candidates:
         return False
-    return _host_eligible_row(row, display=display, listen=is_up)
+    return _host_capacity_eligible_row(row, display=display, listen=is_up)
 
 
 def host_accepts_borrow_bind(
@@ -245,3 +246,32 @@ def reopen_tab_row(
                 stale_target_closed=stale_closed,
             )
         )
+
+
+async def select_page_by_target_id(ctx: Any, target_id: str | None) -> Any:
+    """Return the Playwright page whose CDP target id matches *target_id*."""
+    tid = str(target_id or "").strip()
+    if not tid:
+        raise RegistryError("target_id required")
+    for _ in range(8):
+        for page in list(getattr(ctx, "pages", []) or []):
+            direct = getattr(page, "target_id", None)
+            resolved = str(direct or "").strip()
+            if not resolved:
+                new_session = getattr(ctx, "new_cdp_session", None)
+                if new_session is None:
+                    page_ctx = getattr(page, "context", None)
+                    new_session = getattr(page_ctx, "new_cdp_session", None)
+                if new_session is not None:
+                    session = await new_session(page)
+                    try:
+                        info = await session.send("Target.getTargetInfo")
+                        resolved = str(
+                            (info.get("targetInfo") or {}).get("targetId") or ""
+                        ).strip()
+                    finally:
+                        await session.detach()
+            if resolved == tid:
+                return page
+        await asyncio.sleep(0.1)
+    raise RegistryError(f"CDP target {tid!r} not found in browser context")

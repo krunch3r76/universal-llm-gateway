@@ -1,25 +1,28 @@
-"""Hermetic tests for elastic tab pool (tests 2–10)."""
+"""Hermetic tests for elastic tab pool (tests 2–11)."""
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import os
+import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from claude_bundles import cdp_registry as reg
 from claude_bundles.cdp_registry.models import STATUS_TAB
+from claude_bundles.cdp_registry.ports import select_free_registry_port
 from claude_bundles.cdp_registry.tab_rows import (
     eligible_host,
     finish_tab_on_exit,
     inflight_row_for_chat_url,
     live_tab_rows_for_host,
     open_tab_row_for_ask,
-    release_tab_row,
 )
-from claude_bundles.cdp_registry.ports import select_free_registry_port
-from claude_bundles.project_ask_abort import deregister_on_exit
+from claude_bundles.cdp_registry.tab_rows_reopen import select_page_by_target_id
 
 pytestmark = pytest.mark.offline
 
@@ -53,11 +56,21 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     )
     monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: True)
     monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    mint_lock = tmp_path / "tab_host_mint.lock"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows._TAB_MINT_LOCK",
+        mint_lock,
+    )
     return root
 
 
-def _host_row(host_id: str = "host-1", *, port: int = 9225) -> dict:
-    return {
+def _host_row(
+    host_id: str = "host-1",
+    *,
+    port: int = 9225,
+    account_id: str | None = None,
+) -> dict:
+    row = {
         "registration_id": host_id,
         "status": "active",
         "port": port,
@@ -68,6 +81,9 @@ def _host_row(host_id: str = "host-1", *, port: int = 9225) -> dict:
         "holder_pid": os.getpid(),
         "started_at": time.time(),
     }
+    if account_id is not None:
+        row["account_id"] = account_id
+    return row
 
 
 def _tab_row(
@@ -76,18 +92,20 @@ def _tab_row(
     *,
     target_id: str | None = "tgt-1",
     chat_url: str = CSE,
+    port: int = 9225,
+    holder_pid: int | None = None,
 ) -> dict:
     return {
         "registration_id": tab_id,
         "status": STATUS_TAB,
         "host_registration_id": host_id,
-        "port": 9225,
+        "port": port,
         "holder": "ask-holder",
         "purpose": "ask",
         "profile_suffix": "reg-tab",
         "target_id": target_id,
         "chat_url": chat_url,
-        "holder_pid": os.getpid(),
+        "holder_pid": holder_pid if holder_pid is not None else os.getpid(),
         "started_at": time.time(),
     }
 
@@ -98,11 +116,18 @@ def test_idle_tab_closed_after_scrape(isolated_registry: Path) -> None:
     with patch("claude_bundles.cdp_lane.close_cdp_target") as close:
         reg_obj = reg._row_to_registration(active["tab-1"])
         finish_tab_on_exit(reg_obj, branch="normal")
-        close.assert_called_once()
-    assert "tab-1" not in reg._store.load_active()
+        close.assert_called_once_with(9225, "tgt-1")
+    after = reg._store.load_active()
+    assert "tab-1" not in after
+    assert after["host-1"]["status"] == "active"
 
 
-def test_reopened_tab_waits_for_inflight_turn(isolated_registry: Path) -> None:
+@pytest.mark.asyncio
+async def test_reopened_tab_waits_for_inflight_turn(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdp_ask.followup_reattach import ReattachOutcome, ensure_cse_attached
+
     from claude_bundles.cdp_registry.execution_state import set_execution_state
 
     active = {"host-1": _host_row(), "tab-1": _tab_row("tab-1", "host-1")}
@@ -116,16 +141,42 @@ def test_reopened_tab_waits_for_inflight_turn(isolated_registry: Path) -> None:
     found = inflight_row_for_chat_url(CSE)
     assert found is not None
     assert found["registration_id"] == "tab-1"
-    set_execution_state(
-        "tab-1",
-        execution_id="exec-inflight",
-        state="completed",
-        reason="test",
-    )
-    assert inflight_row_for_chat_url(CSE) is None
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._REOPEN_INFLIGHT_POLL_S", 0.02)
+
+    async def _fake_wake(*_a, **_k) -> ReattachOutcome:
+        return ReattachOutcome(
+            ok=True, registration_id="tab-1", cdp_url="http://127.0.0.1:9225"
+        )
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.open_lane_seat_holder",
+            return_value=(None, None),
+        ),
+        patch("cdp_ask.followup_reattach._wake_dormant_seat", side_effect=_fake_wake),
+    ):
+        task = asyncio.create_task(
+            ensure_cse_attached(CSE, holder="reattach-caller", purpose="ask")
+        )
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        set_execution_state(
+            "tab-1",
+            execution_id="exec-inflight",
+            state="completed",
+            reason="test",
+        )
+        outcome = await task
+    assert outcome.ok
 
 
-def test_port_9222_not_allocated_as_disposable_tab() -> None:
+def test_port_9222_not_allocated_as_disposable_tab(isolated_registry: Path) -> None:
+    active = {
+        "pin": {**_host_row("pin", port=9222), "purpose": "operator-proxy"},
+        "good": _host_row("good", port=9225),
+    }
+    reg._store.write_active(active)
     with patch("claude_bundles.cdp_lane.is_listening", return_value=False):
         port = select_free_registry_port(
             lambda _p: False,
@@ -133,6 +184,9 @@ def test_port_9222_not_allocated_as_disposable_tab() -> None:
             port_range=range(9222, 9226),
         )
     assert port != 9222
+    host = eligible_host(active, [":2"], listen=lambda p: p == 9225)
+    assert host is not None
+    assert host["registration_id"] == "good"
 
 
 def test_dormant_park_does_not_refuse_tab_ask(isolated_registry: Path) -> None:
@@ -146,13 +200,7 @@ def test_dormant_park_does_not_refuse_tab_ask(isolated_registry: Path) -> None:
         "live-host": _host_row("live-host"),
     }
     reg._store.write_active(active)
-    with (
-        patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="t-new"),
-        patch(
-            "claude_bundles.cdp_registry.tab_rows.tab_host_mint_lock",
-            side_effect=lambda: __import__("contextlib").contextmanager(lambda: (yield))(),
-        ),
-    ):
+    with patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="t-new"):
         tab = open_tab_row_for_ask(
             holder="h",
             purpose="ask",
@@ -162,10 +210,11 @@ def test_dormant_park_does_not_refuse_tab_ask(isolated_registry: Path) -> None:
     assert tab.host_registration_id == "live-host"
 
 
-def test_no_chrome_and_x_exhausted_reroutes(monkeypatch: pytest.MonkeyPatch) -> None:
-    from claude_bundles.x_display_capacity import XDisplayCapacityError
-
+def test_no_chrome_and_x_exhausted_reroutes(
+    isolated_registry: Path,
+) -> None:
     from claude_bundles.cdp_registry.driving_seat import launch_or_defer
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
 
     def _raise_x() -> None:
         raise XDisplayCapacityError("X display :2 exhausted")
@@ -176,31 +225,67 @@ def test_no_chrome_and_x_exhausted_reroutes(monkeypatch: pytest.MonkeyPatch) -> 
     ):
         with pytest.raises(XDisplayCapacityError):
             launch_or_defer("register_lane_mint", _raise_x)
+        with patch(
+            "claude_bundles.cdp_registry.lifecycle.register_lane",
+            side_effect=lambda **_kw: _raise_x(),
+        ):
+            with pytest.raises(XDisplayCapacityError):
+                open_tab_row_for_ask(
+                    holder="h",
+                    purpose="ask",
+                    mission_kind="root",
+                    parent_thread="1",
+                )
 
 
-def test_many_concurrent_tab_asks_one_chrome(isolated_registry: Path) -> None:
+def test_many_concurrent_tab_asks_one_chrome(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     reg._store.write_active({"host-1": _host_row()})
-    tabs: list[str] = []
-    with (
-        patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt"),
-        patch(
-            "claude_bundles.cdp_registry.tab_rows.tab_host_mint_lock",
-            side_effect=lambda: __import__("contextlib").contextmanager(lambda: (yield))(),
-        ),
-    ):
-        for i in range(10):
-            tab = open_tab_row_for_ask(
-                holder=f"h{i}",
-                purpose="ask",
-                mission_kind="root",
-                parent_thread=str(9000 + i),
-            )
-            tabs.append(tab.registration_id)
-    active = reg._store.load_active()
-    assert len(tabs) == 10
-    assert live_tab_rows_for_host(active, "host-1") != [] or all(
-        active[t]["target_id"] for t in tabs if t in active
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.probe_x_display",
+        lambda **kw: {
+            "x_display": ":2",
+            "x_clients": 62,
+            "x_max_clients": 64,
+            "x_headroom": 2,
+            "x_exhausted": True,
+            "x_chrome_client_budget": 8,
+            "x_probe": "injected",
+        },
     )
+    barrier = threading.Barrier(10)
+    results: list[reg.Registration] = []
+
+    def _ask(idx: int) -> reg.Registration:
+        barrier.wait(timeout=5)
+        return open_tab_row_for_ask(
+            holder=f"h{idx}",
+            purpose="ask",
+            mission_kind="root",
+            parent_thread=str(9000 + idx),
+        )
+
+    target_ids = iter(f"tgt-{i}" for i in range(10))
+
+    def _fake_open(_port: int, _url: str) -> str:
+        return next(target_ids)
+
+    with (
+        patch("claude_bundles.cdp_lane.open_cdp_tab_target", side_effect=_fake_open),
+        concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool,
+    ):
+        futs = [pool.submit(_ask, i) for i in range(10)]
+        results = [f.result(timeout=30) for f in futs]
+    active = reg._store.load_active()
+    assert len(results) == 10
+    assert all(r.host_registration_id == "host-1" for r in results)
+    assert all(
+        active[r.registration_id]["status"] == STATUS_TAB
+        for r in results
+        if r.registration_id in active
+    )
+    assert len(live_tab_rows_for_host(active, "host-1")) == 10
 
 
 def test_first_chrome_mint_race(isolated_registry: Path) -> None:
@@ -208,64 +293,196 @@ def test_first_chrome_mint_race(isolated_registry: Path) -> None:
 
     def fake_register_lane(**kwargs):  # noqa: ANN003
         mint_calls.append("mint")
-        rid = f"host-{len(mint_calls)}"
+        rid = "host-1"
         row = _host_row(rid)
         active = reg._store.load_active()
         active[rid] = row
         reg._store.write_active(active)
         return reg._row_to_registration(row)
 
+    barrier = threading.Barrier(2)
+    out: list[reg.Registration] = []
+
+    def _worker(holder: str) -> None:
+        barrier.wait(timeout=5)
+        out.append(
+            open_tab_row_for_ask(
+                holder=holder,
+                purpose="ask",
+                mission_kind=None,
+                parent_thread=holder,
+            )
+        )
+
     with (
-        patch("claude_bundles.cdp_registry.lifecycle.register_lane", side_effect=fake_register_lane),
-        patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt"),
         patch(
-            "claude_bundles.cdp_registry.tab_rows.tab_host_mint_lock",
-            side_effect=lambda: __import__("contextlib").contextmanager(lambda: (yield))(),
+            "claude_bundles.cdp_registry.lifecycle.register_lane",
+            side_effect=fake_register_lane,
+        ),
+        patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt"),
+    ):
+        t1 = threading.Thread(target=_worker, args=("a",))
+        t2 = threading.Thread(target=_worker, args=("b",))
+        t1.start()
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+    assert len(mint_calls) == 1
+    assert len(out) == 2
+    assert out[0].host_registration_id == out[1].host_registration_id == "host-1"
+
+
+@pytest.mark.asyncio
+async def test_tab_closed_when_scrape_fails(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import run_execution
+
+    from claude_bundles.project_ask import ProjectAskResult
+
+    reg._store.write_active({"host-1": _host_row()})
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _p: True)
+
+    fail = ProjectAskResult(
+        ok=False,
+        body="",
+        url="",
+        project_uuid="proj",
+        project_url="",
+        model={},
+        body_len=0,
+        delete_after=True,
+        error="scrape timed out",
+    )
+
+    with (
+        patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-fail"),
+        patch("cdp_ask.runner.run_project_ask", new=AsyncMock(return_value=fail)),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("claude_bundles.cdp_lane.close_cdp_target") as close,
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="x",
+                project_uuid="proj",
+                purpose="ask",
+                holder="h",
+            ),
+            execution_id="exec-fail",
+            abort_check=AsyncMock(return_value=False),
+        )
+        assert payload["ok"] is False
+        close.assert_called_with(9225, "tgt-fail")
+    active = reg._store.load_active()
+    assert live_tab_rows_for_host(active, "host-1") == []
+
+
+def test_orphan_tabs_reaped_after_cdp_ask_restart(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
+
+    active = {
+        "host-1": {**_host_row("host-1", port=9228), "port": 9228},
+        "operator-seat": {
+            "registration_id": "operator-seat",
+            "status": "active",
+            "port": 9225,
+            "display": ":2",
+            "profile_suffix": "reg-op",
+            "purpose": "operator-proxy",
+            "seat_lane": "12286",
+            "chat_url": "https://claude.ai/cowork/cse_operator",
+            "holder_pid": os.getpid(),
+            "started_at": time.time(),
+        },
+        "dead-tab": _tab_row(
+            "dead-tab",
+            "host-1",
+            target_id="tgt-dead",
+            port=9228,
+            holder_pid=99999999,
+        ),
+    }
+    reg._store.write_active(active)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.hygiene._pid_alive",
+        lambda pid: pid != 99999999,
+    )
+    with patch("claude_bundles.cdp_lane.close_cdp_target") as close:
+        reap_dead_holder_tab_rows()
+        close.assert_called_once_with(9228, "tgt-dead")
+    after = reg._store.load_active()
+    assert "dead-tab" not in after
+    assert after["operator-seat"]["status"] == "active"
+    assert after["operator-seat"]["port"] == 9225
+
+
+@pytest.mark.asyncio
+async def test_multi_account_tab_routing_and_target_isolation(
+    isolated_registry: Path,
+) -> None:
+    active = {
+        "operator-seat": {
+            **_host_row("operator-seat", port=9225),
+            "purpose": "operator-proxy",
+            "seat_lane": "12286",
+        },
+        "host-a": {**_host_row("host-a", port=9226, account_id="acct-a")},
+        "host-b": {**_host_row("host-b", port=9227, account_id="acct-b")},
+        "tab-a1": _tab_row("tab-a1", "host-a", port=9226),
+        "tab-a2": _tab_row("tab-a2", "host-a", port=9226, target_id="tgt-a2"),
+    }
+    reg._store.write_active(active)
+    host = eligible_host(active, [":2"], listen=lambda _p: True)
+    assert host is not None
+    assert host["registration_id"] == "host-b"
+
+    with patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-new"):
+        picked = open_tab_row_for_ask(
+            holder="h",
+            purpose="ask",
+            mission_kind="root",
+            parent_thread="1",
+            account_id="acct-a",
+        )
+    assert picked.host_registration_id == "host-a"
+
+    page1 = MagicMock()
+    page1.target_id = "tgt-1"
+    page1.bring_to_front = MagicMock()
+    page2 = MagicMock()
+    page2.target_id = "tgt-2"
+    page2.bring_to_front = MagicMock()
+    ctx = MagicMock()
+    ctx.pages = [page1, page2]
+
+    page = await select_page_by_target_id(ctx, "tgt-2")
+    assert page is page2
+    page2.bring_to_front.assert_not_called()
+
+    pw = MagicMock()
+    pw.stop = AsyncMock()
+
+    with (
+        patch(
+            "claude_bundles.project_ask.connect_cdp",
+            new=AsyncMock(return_value=(pw, MagicMock(), ctx, page1)),
+        ),
+        patch(
+            "claude_bundles.project_ask.pick_chat_page",
+            new=AsyncMock(side_effect=AssertionError("pick_chat_page")),
+        ),
+        patch(
+            "claude_bundles.project_ask.project_ask_on_page",
+            new=AsyncMock(
+                return_value=MagicMock(ok=True, body="x", url="", project_uuid="")
+            ),
         ),
     ):
-        open_tab_row_for_ask(holder="a", purpose="ask", mission_kind=None, parent_thread="1")
-        open_tab_row_for_ask(holder="b", purpose="ask", mission_kind=None, parent_thread="2")
-    assert len(mint_calls) == 1
+        from claude_bundles.project_ask import run_project_ask
 
-
-def test_tab_closed_when_scrape_fails(isolated_registry: Path) -> None:
-    active = {"host-1": _host_row(), "tab-1": _tab_row("tab-1", "host-1")}
-    reg._store.write_active(active)
-    with patch("claude_bundles.cdp_lane.close_cdp_target") as close:
-        deregister_on_exit(reg._row_to_registration(active["tab-1"]), purpose="ask")
-        close.assert_called()
-    assert "tab-1" not in reg._store.load_active()
-
-
-def test_orphan_tabs_reaped_after_cdp_ask_restart(isolated_registry: Path) -> None:
-    from claude_bundles.cdp_registry.execution_state import set_execution_state
-    from claude_bundles.cdp_registry.tab_rows import sweep_kept_tab_rows
-
-    active = {
-        "host-1": _host_row(),
-        "tab-1": {
-            **_tab_row("tab-1", "host-1", target_id="stale"),
-            "tab_kept_reason": "teardown",
-            "target_id": None,
-        },
-    }
-    reg._store.write_active(active)
-    set_execution_state(
-        "tab-1",
-        execution_id="done",
-        state="completed",
-        reason="test",
-    )
-    released = sweep_kept_tab_rows()
-    assert "tab-1" in released
-
-
-def test_eligible_host_skips_pin_and_9222(isolated_registry: Path) -> None:
-    active = {
-        "pin": {**_host_row("pin", port=9222), "purpose": "operator-proxy"},
-        "good": _host_row("good", port=9225),
-    }
-    reg._store.write_active(active)
-    host = eligible_host(active, [":2"], listen=lambda p: p == 9225)
-    assert host is not None
-    assert host["registration_id"] == "good"
+        await run_project_ask(
+            "hi", project_uuid="p", target_id="tgt-2", delete_after=False
+        )

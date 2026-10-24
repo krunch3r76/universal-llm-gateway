@@ -152,6 +152,7 @@ class Registration:
     host_registration_id: str | None = None
     target_id: str | None = None
     tab_kept_reason: str | None = None
+    account_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -275,4 +276,5 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         host_registration_id=_optional_str(row.get("host_registration_id")),
         target_id=_optional_str(row.get("target_id")),
         tab_kept_reason=_optional_str(row.get("tab_kept_reason")),
+        account_id=_optional_str(row.get("account_id")),
     )

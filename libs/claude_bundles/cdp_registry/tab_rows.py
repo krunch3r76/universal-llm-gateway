@@ -29,12 +29,13 @@ from .tab_rows_reopen import (  # noqa: F401 — re-export; reopen lives beside 
     host_accepts_borrow_bind,
     release_tab_row,
     reopen_tab_row,
+    select_page_by_target_id,
 )
 
 _TAB_MINT_LOCK = Path.home() / ".gateway" / "cdp-registry" / "tab_host_mint.lock"
 
 
-def _host_eligible_row(
+def _host_capacity_eligible_row(
     row: dict[str, Any],
     *,
     display: str,
@@ -53,24 +54,58 @@ def _host_eligible_row(
     return listen(port)
 
 
+def _host_eligible_row(
+    row: dict[str, Any],
+    *,
+    display: str,
+    listen: Callable[[int], bool],
+) -> bool:
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    from .models import seat_open
+
+    purpose = str(row.get("purpose") or "").strip().lower()
+    if purpose in OPERATOR_PURPOSES or seat_open(row):
+        return False
+    return _host_capacity_eligible_row(row, display=display, listen=listen)
+
+
 def eligible_host(
     active: Mapping[str, Any],
     candidates: list[str],
     *,
     listen: Callable[[int], bool] | None = None,
+    account_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return the first eligible host on candidate displays, walking candidates in order."""
+    """Pick an eligible tab_host row, optionally filtered by account."""
     is_up = listen or cdp_lane.is_listening
-    for display in candidates:
+    want_account = str(account_id or "").strip() or None
+    matches: list[tuple[int, dict[str, Any]]] = []
+    for display_index, display in enumerate(candidates):
         for row in active.values():
             if not isinstance(row, dict):
                 continue
             rid = str(row.get("registration_id") or "").strip()
             if not rid:
                 continue
-            if _host_eligible_row(row, display=display, listen=is_up):
-                return row
-    return None
+            if not _host_eligible_row(row, display=display, listen=is_up):
+                continue
+            row_account = str(row.get("account_id") or "").strip() or "default"
+            if want_account is not None and row_account != want_account:
+                continue
+            matches.append((display_index, row))
+    if not matches:
+        return None
+    if want_account is None and len(matches) > 1:
+        _display_index, row = min(
+            matches,
+            key=lambda item: (
+                len(live_tab_rows_for_host(active, str(item[1]["registration_id"]))),
+                item[0],
+            ),
+        )
+        return row
+    return matches[0][1]
 
 
 def tab_rows_for_host(
@@ -212,6 +247,7 @@ def open_tab_row_for_ask(
     parent_thread: str | None,
     host_row: dict[str, Any] | None = None,
     trigger: str = "ask",
+    account_id: str | None = None,
 ) -> Registration:
     """Mint or reuse a pool host, write a tab row, open the CDP target."""
     from .lifecycle import register_lane
@@ -220,7 +256,9 @@ def open_tab_row_for_ask(
     with tab_host_mint_lock():
         active = _store.load_active()
         candidates = cdp_lane.cdp_display_candidates()
-        host = host_row or eligible_host(active, candidates, listen=listen)
+        host = host_row or eligible_host(
+            active, candidates, listen=listen, account_id=account_id
+        )
         minted = False
         if host is None:
             host_reg = register_lane(
@@ -233,6 +271,17 @@ def open_tab_row_for_ask(
             _release_driver_lock(host_reg.registration_id)
             active = _store.load_active()
             host = active.get(host_reg.registration_id)
+            if isinstance(host, dict):
+                with _store.ports_lock():
+                    active = _store.load_active()
+                    current = active.get(host_reg.registration_id)
+                    if isinstance(current, dict):
+                        active[host_reg.registration_id] = {
+                            **current,
+                            "account_id": str(account_id or "").strip() or "default",
+                        }
+                        _store.write_active(active)
+                host = active.get(host_reg.registration_id)
             with contextlib.suppress(Exception):
                 _events.emit(
                     _events.cdp_tab_host_minted(
@@ -246,6 +295,9 @@ def open_tab_row_for_ask(
             raise RegistryError("no eligible host for tab ask")
         host_id = str(host["registration_id"])
         port = int(host["port"])
+        resolved_account = str(
+            host.get("account_id") or (account_id or "").strip() or "default"
+        )
         tab_id = uuid.uuid4().hex
         with _store.ports_lock():
             active = _store.load_active()
@@ -263,6 +315,7 @@ def open_tab_row_for_ask(
                 "holder_pid": os.getpid(),
                 "started_at": time.time(),
                 "target_id": None,
+                "account_id": resolved_account,
             }
             active[tab_id] = tab_row
             _store.write_active(active)

@@ -662,6 +662,10 @@ async def test_run_execution_bind_yields_the_event_loop(
         return 1
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows._pin_port_block",
+        lambda: set(),
+    )
     delta: dict[str, float] = {}
 
     async def watcher() -> None:
@@ -689,6 +693,10 @@ async def test_run_execution_bind_yields_the_event_loop(
                 new=AsyncMock(return_value=[result]),
             ),
             patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+            patch(
+                "claude_bundles.cdp_lane.open_cdp_tab_target",
+                return_value="tgt-bind",
+            ),
         ):
             watch = asyncio.create_task(watcher())
             payload = await run_execution(
@@ -722,7 +730,7 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from claude_bundles.cdp_registry.models import STATUS_TAB, OperatorSeatDeferred
+    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
 
     host = {
         "registration_id": "host-hop",
@@ -779,7 +787,9 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop(
         )
     with patch(
         "cdp_ask.runner._open_tab_lane",
-        return_value=MagicMock(registration_id="tab-hop", host_registration_id="host-hop"),
+        return_value=MagicMock(
+            registration_id="tab-hop", host_registration_id="host-hop"
+        ),
     ) as open_tab:
         req = SubmitProjectAskRequest(
             prompt_text="x",
@@ -787,7 +797,9 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop(
             purpose="operator-proxy",
             mission_kind="hop",
             parent_thread="9497",
-            predecessor_registration_id="pred-hop" if case != "hop_no_predecessor" else None,
+            predecessor_registration_id="pred-hop"
+            if case != "hop_no_predecessor"
+            else None,
         )
         out = bind_execution_lane(req, holder="hop")
         open_tab.assert_called_once()
@@ -799,12 +811,13 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop_no_eligible_host(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
     from claude_bundles.x_display_capacity import XDisplayCapacityError
 
     monkeypatch.setattr(
         "cdp_ask.runner.launch_or_defer",
-        lambda _branch, _call: (_ for _ in ()).throw(XDisplayCapacityError("exhausted")),
+        lambda _branch, _call: (_ for _ in ()).throw(
+            XDisplayCapacityError("exhausted")
+        ),
     )
     req = SubmitProjectAskRequest(
         prompt_text="x",

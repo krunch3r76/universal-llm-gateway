@@ -783,6 +783,11 @@ async def run_execution(
                     stargate_execution_id=stargate_execution_id,
                     satellite_execution_id=execution_id,
                     purpose=req.purpose or "ask",
+                    **(
+                        {"target_id": reg.target_id}
+                        if getattr(reg, "target_id", None)
+                        else {}
+                    ),
                 )
 
             results, retry_meta = await run_with_overlay_retry(
@@ -940,6 +945,11 @@ async def run_execution(
                 harvest_source=req.harvest_source,
                 download_output=req.download_output,
                 purpose=req.purpose or "ask",
+                **(
+                    {"target_id": reg.target_id}
+                    if getattr(reg, "target_id", None)
+                    else {}
+                ),
             )
 
         result, retry_meta = await run_with_overlay_retry(

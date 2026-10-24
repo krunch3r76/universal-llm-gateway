@@ -411,17 +411,24 @@ def commit_reattach_driving_seat(
         upsert_holder_remote,
     )
 
-    upsert_result = upsert_holder_remote(
-        chat_url=url,
-        registration_id=rid,
-        execution_id=execution_id,
-    )
-    if upsert_result is RemoteUpsert.LANE_CONFLICT:
-        logger.warning(
-            "commit_reattach_driving_seat holder upsert lane_conflict "
-            "registration_id=%s",
+    try:
+        upsert_result = upsert_holder_remote(
+            chat_url=url,
+            registration_id=rid,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "commit_reattach_driving_seat holder upsert failed registration_id=%s",
             rid,
         )
+    else:
+        if upsert_result is RemoteUpsert.LANE_CONFLICT:
+            logger.warning(
+                "commit_reattach_driving_seat holder upsert lane_conflict "
+                "registration_id=%s",
+                rid,
+            )
     return "committed"
 
 
