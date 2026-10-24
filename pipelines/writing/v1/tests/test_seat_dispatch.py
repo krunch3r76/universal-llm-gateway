@@ -12,8 +12,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import yaml
+from systems.pipeline.core.handlers.generate.prompt_context import render_user_prompt
+from systems.pipeline.core.pipeline_config import PromptConfig
+from systems.pipeline.core.prompts import PromptBuilder
 
 _PKG = "writing_v1_handlers"
+_V1 = Path(__file__).resolve().parents[1]
 if _PKG not in sys.modules:
     _HANDLERS = Path(__file__).resolve().parents[1] / "handlers"
     _spec = importlib.util.spec_from_file_location(
@@ -40,6 +45,7 @@ _SYSTEM = (
 class _Step:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.id = name
 
 
 class _Out:
@@ -189,6 +195,53 @@ def test_seat_dispatch_http_429_admit_failed() -> None:
     assert payload["http_status"] == 429
     assert payload["error_code"] == "http_429"
     assert "error" not in payload
+
+
+def _writer_prompt_config() -> PromptConfig:
+    row = (yaml.safe_load((_V1 / "prompts.yaml").read_text(encoding="utf-8")) or {}).get(
+        "prompts", {}
+    ).get("writer", {})
+    return PromptConfig(
+        name="writer",
+        description=str(row.get("description") or ""),
+        system_prompt=row.get("system_prompt"),
+        template=str(row.get("template") or ""),
+        optional_placeholders=list(row.get("optional_placeholders") or []),
+    )
+
+
+def test_writer_prompt_renders_with_empty_source_message() -> None:
+    """Generate path: optional source_message may be empty; seat_dispatch passes the key."""
+    cfg = _writer_prompt_config()
+    assert "source_message" in cfg.optional_placeholders
+    fields = {
+        "verbatim_notes": "NOTE",
+        "source_message": "",
+        "documents": "DOC",
+        "brief": "BRIEF",
+        "architect_brief": "ARCH",
+    }
+    rendered = render_user_prompt(
+        cfg,
+        _Step("drafter_local_hermes"),  # type: ignore[arg-type]
+        _Ctx({"assemble": _Out(_assemble())}),  # type: ignore[arg-type]
+        prompt_builder=PromptBuilder(),
+        build_context=lambda _step, _context: fields,
+    )
+    assert "<source_message>\n\n</source_message>" in rendered
+    assert "DOC" in rendered and "BRIEF" in rendered
+
+    client = _Client()
+    handler = seat_dispatch.WritingSeatDispatchHandler(client=client)
+    asyncio.run(
+        handler.execute(
+            _Step("draft_dispatch"),
+            _Ctx({"assemble": _Out(_assemble())}),
+        )
+    )
+    prompt = client.posts[0]["prompt"]
+    assert "<source_message>" in prompt
+    assert "DOCUNIQUE" in prompt
 
 
 def test_seat_dispatch_cdp_body_and_no_prompt_in_output() -> None:

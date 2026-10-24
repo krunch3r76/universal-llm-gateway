@@ -239,6 +239,7 @@ class WritingSeatDispatchHandler(BaseHandler):
             "brief": assemble.get("brief_block") or "",
             "architect_brief": "",
             "verbatim_notes": assemble.get("verbatim_notes_block") or "",
+            "source_message": assemble.get("source_message_block") or "",
         }
         if role == "reviewer":
             draft = getattr(outputs.get("draft"), "json", None)
