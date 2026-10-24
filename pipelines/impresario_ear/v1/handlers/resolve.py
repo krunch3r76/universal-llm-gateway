@@ -55,6 +55,8 @@ def resolve_impresario_ear(
         root_thread=root, force=force, fetch_turns=fetch_turns
     ):
         return {"skip": True, "reason": "ear_echo_guard"}
+    if mode == "deep":
+        return {"skip": True, "reason": "deep_mode_disabled"}
     if trigger == "hop":
         if hop_watermark_present(watermark):
             return {"skip": True, "reason": "hop_watermark_present", "watermark": watermark}
