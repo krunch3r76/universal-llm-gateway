@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from claude_bundles.cowork_output_download import HarvestBody
+from claude_bundles.project_ask import ProjectAskResult
 from claude_bundles.project_ask_conversation import (
     project_followup_on_page,
     run_project_conversation,
@@ -429,3 +430,76 @@ async def test_compose_harvest_incomplete_preserves_nonzero_body() -> None:
     assert results[0].body_len == len(partial)
     assert results[0].body_len > 0
     assert "timed out incomplete" in (results[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_compose_skill_receipt_unverified_harvests_body() -> None:
+    """Panel receipt failure on converse first turn → harvest, not mark_terminal."""
+    from cdp_ask.unverifiable import converse_stall_stage
+
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    partial = "Work reply prose after unverified skill receipt. " + ("x" * 80)
+    harvest_result = AsyncMock(
+        return_value=ProjectAskResult(
+            ok=False,
+            body=partial,
+            url=page.url,
+            project_uuid="",
+            project_url="https://claude.ai/new",
+            model={"ok": True},
+            body_len=len(partial),
+            delete_after=None,
+            error="skill_receipt_unverified: panel timeout",
+        )
+    )
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(
+                side_effect=SkillReceiptUnverifiedError("panel timeout", submitted=True)
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._harvest_after_skill_receipt_unverified",
+            new=harvest_result,
+        ) as harvest_after,
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(),
+        ) as wait_reply,
+    ):
+        results = await run_project_conversation(
+            ["<!--cdp-required-skills:reasoning-posture-->\nDo work"],
+            model="opus-5",
+            delete_after=False,
+        )
+
+    harvest_after.assert_awaited_once()
+    wait_reply.assert_not_awaited()
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].body == partial
+    assert results[0].body_len > 0
+    assert (
+        converse_stall_stage(results[0].error, conv_ok=False) == "observer_unverified"
+    )

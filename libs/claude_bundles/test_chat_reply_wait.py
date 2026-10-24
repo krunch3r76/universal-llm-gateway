@@ -914,6 +914,47 @@ async def test_anchor_miss_idle_classifies_observer_unverified(
 
 
 @pytest.mark.asyncio
+async def test_tail_hold_tool_row_rearms_when_streaming_drops(
+    advance_clock, structural_quiet_n
+) -> None:
+    """Tool-row tail with momentary streaming=false must not expire idle early."""
+    tool_tail = "Mid reply prose here.\nAgent Bus\nAgent Bus"
+    prose = tool_tail + "\n\nFinal answer after tools finished."
+    inflight = [
+        _state(
+            body_len=len(tool_tail),
+            n=1,
+            body=tool_tail,
+            streaming=True,
+            tool_pause=True,
+        )
+        for _ in range(3)
+    ]
+    gap = [
+        _state(
+            body_len=len(tool_tail),
+            n=1,
+            body=tool_tail,
+            streaming=False,
+            tool_pause=False,
+            stop=False,
+        )
+        for _ in range(8)
+    ]
+    done = [_state(body_len=len(prose), n=1, body=prose) for _ in range(3)]
+    state = await wait_assistant_reply(
+        _FakePage(inflight + gap + done),
+        before=_state(body_len=0, n=0),
+        tail_hold=True,
+        timeout_s=2,
+        poll_ms=500,
+        stable_polls=2,
+    )
+    assert "Final answer" in state["body"]
+    assert advance_clock["t"] >= 1_006.0
+
+
+@pytest.mark.asyncio
 async def test_tail_hold_changing_badge_key_runs_past_timeout(advance_clock) -> None:
     """Progress-key refresh extends idle budget past timeout_s for tail_hold."""
     tool_a = "Mid reply prose here.\nAgent Bus\nAgent Bus"
@@ -984,9 +1025,7 @@ async def test_tail_hold_idle_expiry_classifies_observer_unverified(
     assert exc.value.tail_hold is True
     assert "tail_hold unresolved at idle budget" in msg
     assert classify_stall_stage(msg) == "unknown"
-    assert (
-        converse_stall_stage(msg, conv_ok=False) == "observer_unverified"
-    )
+    assert converse_stall_stage(msg, conv_ok=False) == "observer_unverified"
     assert is_unverifiable_stall(
         "observer_unverified", msg, url="https://claude.ai/cowork/cse_x"
     )

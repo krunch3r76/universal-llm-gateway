@@ -136,6 +136,7 @@ async def wait_assistant_reply(
     structural_quiet = StructuralQuietTracker()
     prev_badge_key: str | None = None
     prev_progress_key: tuple[int, str] | None = None
+    tool_tail_latched = False
 
     async def _sample() -> dict:
         state = await harvest_assistant(page, min_msg_chars=msg_floor, anchor=anchor)
@@ -178,10 +179,7 @@ async def wait_assistant_reply(
         body_text = str(state.get("body") or "")
         if tail_hold:
             progress_key = (cur_n, badge_scrape_change_key(body_text))
-            if (
-                prev_progress_key is not None
-                and progress_key != prev_progress_key
-            ):
+            if prev_progress_key is not None and progress_key != prev_progress_key:
                 idle_deadline = time.monotonic() + max(timeout_s, 1)
             prev_progress_key = progress_key
         elif badge_only_body(state):
@@ -192,11 +190,27 @@ async def wait_assistant_reply(
         else:
             prev_badge_key = None
 
+        if tail_hold:
+            from chat_harvest.chrome import ends_with_tool_row
+
+            if ends_with_tool_row(body_text) and in_flight:
+                tool_tail_latched = True
+            elif not ends_with_tool_row(body_text):
+                tool_tail_latched = False
+
         if effective_in_flight:
             if not tier_b_unlatch:
                 idle_deadline = time.monotonic() + max(timeout_s, 1)
             stable = 0
             cowork_stable = 0
+        elif tail_hold and tool_tail_latched and not tier_a_escape:
+            from chat_harvest.chrome import ends_with_tool_row
+
+            if ends_with_tool_row(body_text):
+                if not tier_b_unlatch:
+                    idle_deadline = time.monotonic() + max(timeout_s, 1)
+                stable = 0
+                cowork_stable = 0
         else:
             ignore_in_flight = tier_a_escape
             kwargs = _completion_kwargs(ignore_in_flight=ignore_in_flight)
@@ -208,9 +222,7 @@ async def wait_assistant_reply(
                 last_len = cur_len
                 if stable >= stable_polls:
                     return state
-            elif cowork_complete_enough(
-                state, saw_working=saw_working, **kwargs
-            ):
+            elif cowork_complete_enough(state, saw_working=saw_working, **kwargs):
                 if cur_len == last_len:
                     cowork_stable += 1
                 else:
