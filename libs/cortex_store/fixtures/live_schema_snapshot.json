@@ -28,14 +28,6 @@
       "sql": "CREATE INDEX idx_assertions_seeded_by ON assertions(seeded_by)",
       "table": "assertions"
     },
-    "idx_chunks_observer": {
-      "sql": "CREATE INDEX idx_chunks_observer ON chunks(observer)",
-      "table": "chunks"
-    },
-    "idx_chunks_source": {
-      "sql": "CREATE INDEX idx_chunks_source ON chunks(source_uri)",
-      "table": "chunks"
-    },
     "idx_chunks_source_pinpoint": {
       "sql": "CREATE INDEX idx_chunks_source_pinpoint ON chunks(source_uri, pinpoint)",
       "table": "chunks"
@@ -88,10 +80,6 @@
       "sql": "CREATE INDEX idx_entities_content_hash ON entities(content_hash)",
       "table": "entities"
     },
-    "idx_entities_type": {
-      "sql": "CREATE INDEX idx_entities_type ON entities(type)",
-      "table": "entities"
-    },
     "idx_entities_workflow_state": {
       "sql": "CREATE INDEX idx_entities_workflow_state ON entities(type, workflow_state)",
       "table": "entities"
@@ -102,14 +90,6 @@
     },
     "idx_extraction_runs_source": {
       "sql": "CREATE INDEX idx_extraction_runs_source ON extraction_runs(source_uri, content_hash)",
-      "table": "extraction_runs"
-    },
-    "idx_extruns_source": {
-      "sql": "CREATE INDEX idx_extruns_source ON extraction_runs(source_uri)",
-      "table": "extraction_runs"
-    },
-    "idx_extruns_status": {
-      "sql": "CREATE INDEX idx_extruns_status ON extraction_runs(status)",
       "table": "extraction_runs"
     },
     "idx_imprint_proposals_committed_at": {
@@ -179,14 +159,6 @@
     "idx_session_journals_session_id_unique": {
       "sql": "CREATE UNIQUE INDEX idx_session_journals_session_id_unique\n    ON session_journals(session_id)\n    WHERE session_id IS NOT NULL",
       "table": "session_journals"
-    },
-    "idx_staging_source": {
-      "sql": "CREATE INDEX idx_staging_source\n    ON extraction_staging(source_uri)",
-      "table": "extraction_staging"
-    },
-    "idx_staging_status": {
-      "sql": "CREATE INDEX idx_staging_status\n    ON extraction_staging(status)",
-      "table": "extraction_staging"
     },
     "idx_tag_entity": {
       "sql": "CREATE INDEX idx_tag_entity ON tag_assignments(entity_id)",
@@ -385,13 +357,40 @@
         "type": "agent_under_poa_for"
       },
       {
-        "description": "Property tax assessed on property",
+        "description": "Inverse of amends",
+        "from_type": null,
+        "inverse": "amends",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "amended_by"
+      },
+      {
+        "description": "Document partially modifies or corrects another; unamended portions remain in force",
+        "from_type": "document",
+        "inverse": "amended_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "document",
+        "type": "amends"
+      },
+      {
+        "description": "Tax assessed on property",
         "from_type": null,
         "inverse": null,
         "is_symmetric": 0,
         "is_transitive": 0,
         "to_type": null,
         "type": "assessed_on"
+      },
+      {
+        "description": "General association",
+        "from_type": null,
+        "inverse": "associated_with",
+        "is_symmetric": 1,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "associated_with"
       },
       {
         "description": "Child entity belongs to parent container (e.g. exhibit\u2192case per spec \u00a71.3)",
@@ -448,6 +447,15 @@
         "type": "co_occurs"
       },
       {
+        "description": "Shared ownership interest",
+        "from_type": "person",
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "property",
+        "type": "co_owns"
+      },
+      {
         "description": "A and B are in tension",
         "from_type": null,
         "inverse": null,
@@ -475,6 +483,15 @@
         "type": "correspondence_with"
       },
       {
+        "description": "Deadline applies to matter",
+        "from_type": "deadline",
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "legal_matter",
+        "type": "deadline_for"
+      },
+      {
         "description": "Source entity depends on target entity before it can proceed",
         "from_type": null,
         "inverse": null,
@@ -482,6 +499,15 @@
         "is_transitive": 0,
         "to_type": null,
         "type": "depends_on"
+      },
+      {
+        "description": "Document visually shows an entity or thing",
+        "from_type": "document",
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "depicts"
       },
       {
         "description": "Derived-view provenance: document is a rendered projection of the target root entity (PROV wasDerivedFrom at document scale)",
@@ -500,6 +526,24 @@
         "is_transitive": 0,
         "to_type": null,
         "type": "elaborates"
+      },
+      {
+        "description": "Employment relationship",
+        "from_type": "person",
+        "inverse": "employs",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "organization",
+        "type": "employed_by"
+      },
+      {
+        "description": "Inverse of employed_by",
+        "from_type": null,
+        "inverse": "employed_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "employs"
       },
       {
         "description": "A is a precondition for B",
@@ -529,13 +573,31 @@
         "type": "filed_against"
       },
       {
-        "description": "Tax document filed by organization",
+        "description": "Document filed by entity",
         "from_type": null,
         "inverse": null,
         "is_symmetric": 0,
         "is_transitive": 0,
         "to_type": null,
         "type": "filed_by"
+      },
+      {
+        "description": "Document filed in matter",
+        "from_type": "document",
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "legal_matter",
+        "type": "filed_in"
+      },
+      {
+        "description": "Inverse of preceded_by",
+        "from_type": null,
+        "inverse": "preceded_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "followed_by"
       },
       {
         "description": "Case entity has a matter playbook document (case \u2192 document)",
@@ -554,6 +616,15 @@
         "is_transitive": 0,
         "to_type": "person",
         "type": "heir_of"
+      },
+      {
+        "description": "Generic involvement",
+        "from_type": null,
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "involves"
       },
       {
         "description": "Account issued by organization",
@@ -601,6 +672,33 @@
         "type": "object_of"
       },
       {
+        "description": "Organization is party to matter",
+        "from_type": "organization",
+        "inverse": null,
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "legal_matter",
+        "type": "org_party_to"
+      },
+      {
+        "description": "Inverse of owns",
+        "from_type": null,
+        "inverse": "owns",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "owned_by"
+      },
+      {
+        "description": "Ownership interest",
+        "from_type": "person",
+        "inverse": "owned_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "property",
+        "type": "owns"
+      },
+      {
         "description": "Familial parent relationship",
         "from_type": null,
         "inverse": "child_of",
@@ -619,12 +717,21 @@
         "type": "participant"
       },
       {
-        "description": "Escrow payment on mortgage account",
-        "from_type": null,
+        "description": "Person is party to legal matter",
+        "from_type": "person",
         "inverse": null,
         "is_symmetric": 0,
         "is_transitive": 0,
-        "to_type": null,
+        "to_type": "legal_matter",
+        "type": "party_to"
+      },
+      {
+        "description": "Payment satisfies obligation on account",
+        "from_type": "payment",
+        "inverse": "received_payment",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "account",
         "type": "payment_on"
       },
       {
@@ -637,13 +744,22 @@
         "type": "personal_representative_of"
       },
       {
-        "description": "Statement pertains to account",
+        "description": "Record pertains to person or entity",
         "from_type": null,
         "inverse": null,
         "is_symmetric": 0,
         "is_transitive": 0,
         "to_type": null,
         "type": "pertains_to"
+      },
+      {
+        "description": "Temporal sequence",
+        "from_type": "event",
+        "inverse": "followed_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "event",
+        "type": "preceded_by"
       },
       {
         "description": "A happened before B",
@@ -673,8 +789,8 @@
         "type": "recipient_of"
       },
       {
-        "description": "Generic cross-reference between entities",
-        "from_type": null,
+        "description": "Document references entity",
+        "from_type": "document",
         "inverse": null,
         "is_symmetric": 0,
         "is_transitive": 0,
@@ -689,6 +805,33 @@
         "is_transitive": 0,
         "to_type": null,
         "type": "refused_to_provide_to"
+      },
+      {
+        "description": "General structural relationship between entities",
+        "from_type": "person",
+        "inverse": "related_to",
+        "is_symmetric": 1,
+        "is_transitive": 0,
+        "to_type": "person",
+        "type": "related_to"
+      },
+      {
+        "description": "Inverse of represents",
+        "from_type": null,
+        "inverse": "represents",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": null,
+        "type": "represented_by"
+      },
+      {
+        "description": "Attorney represents client",
+        "from_type": "person",
+        "inverse": "represented_by",
+        "is_symmetric": 0,
+        "is_transitive": 0,
+        "to_type": "person",
+        "type": "represents"
       },
       {
         "description": "Entity requested records from another entity",
@@ -909,11 +1052,6 @@
         "description": "from_node builds on or develops to_node",
         "directional": 1,
         "type": "extends"
-      },
-      {
-        "description": "Suspected connection requiring further analysis",
-        "directional": 0,
-        "type": "investigates"
       },
       {
         "description": "Causal forward link for open threads",
@@ -1485,20 +1623,6 @@
           0
         ],
         [
-          "source_hash",
-          "TEXT",
-          0,
-          null,
-          0
-        ],
-        [
-          "model_version",
-          "TEXT",
-          0,
-          null,
-          0
-        ],
-        [
           "pinpoint",
           "TEXT",
           0,
@@ -1506,7 +1630,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE chunks (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    content TEXT NOT NULL,\n    source_uri TEXT NOT NULL,\n    source_date DATETIME,\n    observer TEXT NOT NULL DEFAULT 'web-claude',\n    chunk_index INTEGER DEFAULT 0,\n    extraction_run INTEGER,\n    token_count INTEGER,\n    created_at DATETIME DEFAULT CURRENT_TIMESTAMP\n, source_hash TEXT, model_version TEXT, pinpoint TEXT)"
+      "sql": "CREATE TABLE chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, source_uri TEXT NOT NULL, source_date DATETIME, observer TEXT NOT NULL DEFAULT 'web-claude', chunk_index INTEGER DEFAULT 0, extraction_run INTEGER, token_count INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, pinpoint TEXT)"
     },
     "close_drafts": {
       "columns": [
@@ -2049,7 +2173,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE entities (\n    id TEXT PRIMARY KEY,\n    type TEXT NOT NULL,\n    name TEXT NOT NULL,\n    description TEXT,\n    notes TEXT,\n    aliases TEXT,\n    attributes TEXT,\n    source_uri TEXT,\n    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP\n, content_hash TEXT, retention_policy TEXT NOT NULL DEFAULT 'permanent', retention_ttl_days INTEGER DEFAULT NULL, last_accessed_at TEXT DEFAULT NULL, workflow_state TEXT, lifecycle TEXT, confidence_band TEXT, confidence_score REAL, adoption TEXT)"
+      "sql": "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, description TEXT, notes TEXT, aliases TEXT, attributes TEXT, source_uri TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, content_hash TEXT, retention_policy TEXT NOT NULL DEFAULT 'permanent', retention_ttl_days INTEGER DEFAULT NULL, last_accessed_at TEXT DEFAULT NULL, workflow_state TEXT, lifecycle TEXT, confidence_band TEXT, confidence_score REAL, adoption TEXT)"
     },
     "entities_fts": {
       "columns": [
@@ -2632,7 +2756,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE extraction_runs (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_uri TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'running',\n    model TEXT NOT NULL,\n    chunk_count INTEGER DEFAULT 0,\n    entity_count INTEGER DEFAULT 0,\n    assertion_count INTEGER DEFAULT 0,\n    surface_form_count INTEGER DEFAULT 0,\n    error_log TEXT,\n    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n    completed_at DATETIME,\n    duration_ms INTEGER,\n    content_hash TEXT\n)"
+      "sql": "CREATE TABLE extraction_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, source_uri TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL, chunk_count INTEGER DEFAULT 0, entity_count INTEGER DEFAULT 0, assertion_count INTEGER DEFAULT 0, surface_form_count INTEGER DEFAULT 0, error_log TEXT, started_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME, duration_ms INTEGER, content_hash TEXT)"
     },
     "extraction_staging": {
       "columns": [
@@ -2653,15 +2777,15 @@
         [
           "proposal_type",
           "TEXT",
-          1,
+          0,
           null,
           0
         ],
         [
           "proposal_action",
           "TEXT",
-          1,
-          "'add'",
+          0,
+          null,
           0
         ],
         [
@@ -2674,7 +2798,7 @@
         [
           "proposal_json",
           "TEXT",
-          1,
+          0,
           null,
           0
         ],
@@ -2688,8 +2812,8 @@
         [
           "status",
           "TEXT",
-          1,
-          "'pending'",
+          0,
+          null,
           0
         ],
         [
@@ -2716,12 +2840,12 @@
         [
           "created_at",
           "TEXT",
-          1,
-          "datetime('now')",
+          0,
+          null,
           0
         ]
       ],
-      "sql": "CREATE TABLE extraction_staging (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_uri TEXT,\n    proposal_type TEXT NOT NULL CHECK(proposal_type IN ('entity', 'assertion')),\n    proposal_action TEXT NOT NULL DEFAULT 'add'\n        CHECK(proposal_action IN ('add', 'revise', 'remove')),\n    target_id TEXT,\n    proposal_json TEXT NOT NULL,\n    chunk_id INTEGER REFERENCES chunks(id),\n    status TEXT NOT NULL DEFAULT 'pending'\n        CHECK(status IN ('pending', 'approved', 'rejected', 'merged')),\n    resolved_to TEXT,\n    reviewer TEXT,\n    reviewed_at TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n)"
+      "sql": "CREATE TABLE extraction_staging (\n      id INTEGER PRIMARY KEY AUTOINCREMENT,\n      source_uri TEXT,\n      proposal_type TEXT,\n      proposal_action TEXT,\n      target_id TEXT,\n      proposal_json TEXT,\n      chunk_id INTEGER,\n      status TEXT,\n      resolved_to TEXT,\n      reviewer TEXT,\n      reviewed_at TEXT,\n      created_at TEXT\n    )"
     },
     "imprint_proposals": {
       "columns": [
@@ -3019,7 +3143,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE relationship_types (\n    type TEXT PRIMARY KEY,\n    description TEXT,\n    inverse TEXT REFERENCES relationship_types(type),\n    is_transitive BOOLEAN DEFAULT FALSE,\n    is_symmetric BOOLEAN DEFAULT FALSE,\n    from_type TEXT,\n    to_type TEXT,\n    created_at DATETIME DEFAULT CURRENT_TIMESTAMP\n)"
+      "sql": "CREATE TABLE relationship_types (type TEXT PRIMARY KEY, description TEXT, inverse TEXT REFERENCES relationship_types(type), is_transitive BOOLEAN DEFAULT FALSE, is_symmetric BOOLEAN DEFAULT FALSE, from_type TEXT, to_type TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
     },
     "relationships": {
       "columns": [
@@ -3532,7 +3656,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE session_journals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    timestamp TEXT NOT NULL,\n    agent TEXT NOT NULL,\n    summary TEXT NOT NULL,\n    domains TEXT,\n    decisions TEXT,\n    open_items TEXT,\n    file_path TEXT\n, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER, dominant_lane TEXT, verbatim_codec TEXT)"
+      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER, dominant_lane TEXT, verbatim_codec TEXT)"
     },
     "surface_forms": {
       "columns": [
