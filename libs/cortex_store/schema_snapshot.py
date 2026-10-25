@@ -55,6 +55,14 @@ def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
     for name, tbl, sql in indexes:
         schema["indexes"][name] = {"table": tbl, "sql": sql}
 
+    schema["views"] = {}
+    views = conn.execute(
+        "SELECT name, sql FROM sqlite_master "
+        "WHERE type='view' ORDER BY name"
+    ).fetchall()
+    for name, sql in views:
+        schema["views"][name] = {"sql": sql}
+
     try:
         schema["schema_versions"] = [
             r[0]
@@ -108,6 +116,11 @@ def apply_canonical_schema_snapshot(conn: sqlite3.Connection) -> None:
             _exec_idempotent(sql)
     for index in sorted(snapshot["indexes"]):
         sql = snapshot["indexes"][index].get("sql")
+        if sql:
+            _exec_idempotent(sql)
+
+    for view in sorted(snapshot.get("views", {})):
+        sql = snapshot["views"][view].get("sql")
         if sql:
             _exec_idempotent(sql)
 
@@ -231,6 +244,18 @@ def diff_schemas(
     for extra in sorted(replay_indexes - live_indexes):
         if extra not in allowed_indexes:
             issues.append(f"unexpected replay-only index: {extra}")
+
+    live_views = set(live.get("views", {}))
+    replay_views = set(replay.get("views", {}))
+    for missing in sorted(live_views - replay_views):
+        issues.append(f"view missing from replay: {missing}")
+    for extra in sorted(replay_views - live_views):
+        issues.append(f"unexpected replay-only view: {extra}")
+    for view in sorted(live_views & replay_views):
+        live_sql = (live["views"][view].get("sql") or "").strip()
+        replay_sql = (replay["views"][view].get("sql") or "").strip()
+        if live_sql != replay_sql:
+            issues.append(f"view definition mismatch: {view}")
 
     return issues
 

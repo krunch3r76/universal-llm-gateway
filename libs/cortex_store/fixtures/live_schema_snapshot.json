@@ -261,6 +261,14 @@
       "table": "surface_forms"
     }
   },
+  "views": {
+    "session_lids": {
+      "sql": "CREATE VIEW session_lids AS\n  SELECT * FROM session_journals\n  WHERE closed_by IS NULL OR closed_by != 'succession'"
+    },
+    "session_windows": {
+      "sql": "CREATE VIEW session_windows AS\n  SELECT * FROM session_journals\n  WHERE conversation_uuid IS NOT NULL OR verbatim_sha256 IS NOT NULL"
+    }
+  },
   "schema_versions": [
     1,
     2,
