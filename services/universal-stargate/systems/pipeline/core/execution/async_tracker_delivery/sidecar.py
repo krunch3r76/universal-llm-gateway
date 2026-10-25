@@ -70,10 +70,15 @@ async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
     from systems.frontier_consult.cursor_sdk_worker_dispatch import worker_base_url
 
     usage = record.result.usage if record.result is not None else None
+    model = _effective_resolved_model(record)
+    if usage is not None:
+        from dispatch_economics.api_closeout import normalize_api_role_usage
+
+        usage = normalize_api_role_usage(usage, model=model)
     payload: dict[str, Any] = {
         "execution_id": record.execution_id,
         "work_key": record.work_key,
-        "resolved_model": _effective_resolved_model(record),
+        "resolved_model": model,
         "contract": record.resolved_contract,
         "usage": usage,
     }

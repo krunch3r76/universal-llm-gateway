@@ -11,8 +11,23 @@ from dispatch_economics.api_closeout import append_api_closeout_economics, price
 
 
 @pytest.mark.offline
-def test_price_usage_outcome_usage_prompt_completion_keys() -> None:
+def test_price_usage_outcome_usage_prompt_completion_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """PipelineExecutionOutcome.usage uses prompt_tokens/completion_tokens."""
+    fixed_rate = ModelRateRow(
+        model_id="anthropic/claude-sonnet-4-6",
+        input_rate_per_m=3.0,
+        output_rate_per_m=15.0,
+        source="manual_seed_local",
+        updated_at="2026-01-01T00:00:00+00:00",
+        cache_read_rate_per_m=0.3,
+        cache_write_rate_per_m=3.75,
+    )
+    monkeypatch.setattr(
+        "event_store.dispatch_economics_pricing.resolve_rate",
+        lambda *_a, **_k: fixed_rate,
+    )
     priced = price_usage(
         {
             "prompt_tokens": 50,
@@ -28,12 +43,8 @@ def test_price_usage_outcome_usage_prompt_completion_keys() -> None:
     assert priced["output_tokens"] == 12
     assert priced["cache_read_tokens"] == 8
     assert priced["cache_write_tokens"] == 3
-    assert priced.get("cost_source") in (
-        "rate_x_tokens",
-        "yaml",
-        "wire",
-        "unavailable",
-    )
+    assert priced["cost_source"] == "rate_x_tokens"
+    assert priced["cost_usd"] > 0
 
 
 @pytest.mark.offline
