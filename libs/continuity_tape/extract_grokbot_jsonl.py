@@ -710,6 +710,7 @@ def extract_grokbot_transcript(
     observed_at: str | None = None,
     capture_ref: str | None = None,
     capture_sha256: str | None = None,
+    capture_kind: str = "dom_harvest",
 ) -> ContinuityMessagesEnvelope:
     """ReadTranscript pages (any order) or bare JSONL -> raw L1 messages pour.
 
@@ -719,6 +720,8 @@ def extract_grokbot_transcript(
     bodies. Message text that still looks upstream-truncated gets a trailing
     ``[truncated]`` paragraph and ``meta.truncated`` is set.
     """
+    if capture_kind not in ("grok_export", "dom_harvest"):
+        raise ValueError(f"capture_kind {capture_kind!r} is not a grok checkpoint kind")
     if capture_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
         raise ValueError("capture_sha256 must be exactly 64 lowercase hex characters")
     raw = text.encode("utf-8")
@@ -776,10 +779,10 @@ def extract_grokbot_transcript(
     }
     if capture_ref is not None:
         meta_kwargs["capture"] = {
-            "kind": "dom_harvest",
+            "kind": capture_kind,
             "ref": capture_ref,
             "sha256": cap_sha,
-            "pseudo_byte_exact": True,
+            "pseudo_byte_exact": capture_kind == "dom_harvest",
         }
     meta = EnvelopeMeta(**meta_kwargs)
     envelope = ContinuityMessagesEnvelope(messages=messages, index=[], meta=meta)

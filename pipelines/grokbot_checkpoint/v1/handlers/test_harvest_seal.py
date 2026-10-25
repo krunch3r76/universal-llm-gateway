@@ -65,11 +65,10 @@ async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
     pour = await run_harvest_pour(options, adapter, fs)
     assert pour.get("refused") is None
     assert pour["coverage"] == "full"
-    assert pour["provenance"] == "transcribed"
+    assert pour["provenance"] == "raw"
     assert pour["ref"].startswith("notes/system/checkpoints/grok/")
     assert "tape/" not in pour["ref"]
-    blocks = pour["envelope"]["messages"][0]["content"]
-    assert isinstance(blocks, list)
+    assert pour["envelope"]["meta"]["provenance"] == "raw"
 
 
 @pytest.mark.asyncio
@@ -200,15 +199,10 @@ async def test_specimen_messages_sha256(fs: MemFs) -> None:
     adapter = await run_harvest_adapter(options, norm, fs)
     assert adapter.get("refused") is None
     assert adapter["stats"]["coverage"] == "full"
-    contents = [
-        block.get("type")
-        for msg in adapter["envelope"]["messages"]
-        if isinstance(msg.get("content"), list)
-        for block in msg["content"]
-        if isinstance(block, dict)
-    ]
-    assert "tool_use" in contents
-    assert "thinking" in contents or "tool_result" in contents
+    assert adapter["envelope"]["meta"]["provenance"] == "raw"
+    assert adapter["envelope"]["meta"]["message_count"] > 0
+    msgs = adapter["envelope"]["messages"]
+    assert any(m.get("role") == "user" for m in msgs)
 
 
 def test_yaml_harvest_steps_registered() -> None:
@@ -766,7 +760,11 @@ async def test_pour_refuses_edited_prior_message(fs: MemFs) -> None:
     assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
     msg = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
     payload = json.loads(fs.files[msg].decode())
-    payload["messages"][0]["content"][0]["text"] = "Z"
+    content = payload["messages"][0]["content"]
+    if isinstance(content, str):
+        payload["messages"][0]["content"] = "Z" + content[1:]
+    else:
+        payload["messages"][0]["content"][0]["text"] = "Z"
     fs.files[msg] = json.dumps(payload).encode()
     nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
     options2 = {**options, "n": 2, "l0_ref": nxt}

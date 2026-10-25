@@ -10,7 +10,7 @@ from typing import Any
 import continuity_tape.extract_grokbot_jsonl as _adapter_mod
 from continuity_tape.extract_grokbot_jsonl import (
     TranscriptPageError,
-    extract_grokbot_structured,
+    extract_grokbot_transcript,
 )
 from continuity_tape.messages import envelope_wire_dict
 from continuity_tape.pour_contract import PourRefused, validate_pour
@@ -40,7 +40,7 @@ def run_adapter_twice(
     bus_identity: str | None,
     capture_kind: str = "grok_export",
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Run structured transcription twice; return (envelope_dict, error)."""
+    """Run raw transcript extraction twice; return (envelope_dict, error)."""
     if "tape/" in capture_ref.replace("\\", "/"):
         return None, refuse("harvest.tape_refused", f"tape path {capture_ref}")
     kwargs: dict[str, Any] = {
@@ -51,6 +51,8 @@ def run_adapter_twice(
     }
     if bus_identity:
         kwargs["bus_identity"] = bus_identity
+    # Checkpoint pours store normalized page bytes; dom_harvest matches validate_pour.
+    kwargs["capture_kind"] = "dom_harvest"
     try:
         actual_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     except (ValueError, UnicodeDecodeError) as exc:
@@ -61,8 +63,8 @@ def run_adapter_twice(
             f"capture_sha256 {capture_sha256} != normalized {actual_text_sha256}",
         )
     try:
-        first = extract_grokbot_structured(text, observed_at="harvest-run-1", **kwargs)
-        second = extract_grokbot_structured(text, observed_at="harvest-run-2", **kwargs)
+        first = extract_grokbot_transcript(text, observed_at="harvest-run-1", **kwargs)
+        second = extract_grokbot_transcript(text, observed_at="harvest-run-2", **kwargs)
     except TranscriptPageError as exc:
         return None, refuse("pour.schema", str(exc))
     except (ValueError, UnicodeDecodeError) as exc:
@@ -73,12 +75,10 @@ def run_adapter_twice(
         return None, refuse("source.sha_mismatch", f"adapter runs differ {m1} != {m2}")
     if first.meta.coverage != "full":
         return None, refuse("pour.coverage", f"coverage {first.meta.coverage!r}")
-    if first.meta.provenance != "transcribed":
+    if first.meta.provenance != "raw":
         return None, refuse(
             "source.slot_mismatch", f"provenance {first.meta.provenance!r}"
         )
-    if first.meta.tools == "marker":
-        return None, refuse("harvest.tape_refused", "tools=marker is not a checkpoint")
     window = (first.meta.sources or [{}])[0].get("window") or {}
     lo, hi, total = window.get("lo"), window.get("hi"), window.get("total")
     if lo != 1 or hi != total:
@@ -120,7 +120,7 @@ async def stage_grok_pour(
     raw_bytes: bytes | None = None,
     l0_ref: str = "",
 ) -> dict[str, Any]:
-    """Write the verbatim L0 bytes and the structured messages envelope."""
+    """Write the verbatim L0 bytes and the raw messages envelope."""
     from cortex_store.verbatim_succession import prefix_holds
 
     uri = grok_pour_uri(agent_id, n)
