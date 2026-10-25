@@ -322,6 +322,52 @@ def test_review_apply_body_fires_generate_under_live_holder(
     assert not state.get("live_dispatch_steers_sent")
 
 
+def test_gated_review_apply_fires_generate_under_live_holder(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    """spawn_on_wake.tick_spawn_on_wake (gear-3 gates) still spawns review-apply under sdk holder."""
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake as gated_tick_spawn_on_wake
+    from bus_watch.test_review_apply import _digest_with_review
+
+    _live_sdk_lock(monkeypatch, ident="disp-live-review-gated")
+    digest = _digest_with_review()
+    digest["budget"] = {
+        "stop_class": "CONTEXT_BUDGET",
+        "epoch": "disp-live-review-gated",
+        "as_of": "2099-01-01T00:00:00Z",
+    }
+    digest["lanes"] = [
+        {
+            "id": "12702",
+            "turns": 2,
+            "status": "active",
+            "lifecycle": "admitted",
+            "dispatch_id": "disp-live-review-gated",
+        }
+    ]
+    state: dict = {"last_spawn_at": 0.0}
+    submit = MagicMock(return_value=({"execution_id": "exec-review-gated", "thread_id": "t3"}, 202))
+
+    with patch("bus_watch.house_journal.append_house_action"):
+        out = gated_tick_spawn_on_wake(
+            digest,
+            state,
+            "11960",
+            dry_run=False,
+            submit=submit,
+            is_terminal=lambda _pending: True,
+        )
+
+    assert submit.call_count == 1
+    body = submit.call_args.args[0]
+    assert body.get("op") == "generate"
+    assert "review-apply" in (body.get("work_key") or "")
+    assert not state.get("live_dispatch_steers_sent")
+    assert (out.get("evaluation") or {}).get("spawn") is True
+    assert out["action"] == "hold"
+    assert out["reason"] == "no_open_request_or_event"
+
+
 def test_live_holder_without_matching_lane_holds_without_steer(
     monkeypatch,
 ) -> None:  # noqa: ANN001
