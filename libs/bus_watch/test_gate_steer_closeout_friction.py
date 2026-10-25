@@ -325,7 +325,7 @@ def test_review_apply_body_fires_generate_under_live_holder(
 def test_gated_review_apply_fires_generate_under_live_holder(
     monkeypatch,
 ) -> None:  # noqa: ANN001
-    """spawn_on_wake.tick_spawn_on_wake (gear-3 gates) still spawns review-apply under sdk holder."""
+    """Gated tick_spawn_on_wake posts review-apply generate once; outer action is event-gate hold."""
     from bus_watch.spawn_on_wake import tick_spawn_on_wake as gated_tick_spawn_on_wake
     from bus_watch.test_review_apply import _digest_with_review
 
@@ -363,6 +363,7 @@ def test_gated_review_apply_fires_generate_under_live_holder(
     assert body.get("op") == "generate"
     assert "review-apply" in (body.get("work_key") or "")
     assert not state.get("live_dispatch_steers_sent")
+    assert "11960#75" in (state.get("review_apply_fired") or {})
     assert (out.get("evaluation") or {}).get("spawn") is True
     assert out["action"] == "hold"
     assert out["reason"] == "no_open_request_or_event"

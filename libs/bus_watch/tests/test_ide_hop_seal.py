@@ -70,6 +70,12 @@ def test_liaison_ide_hop_passes_preamble_to_seal(capsys) -> None:
 
     args = [a for a in _HOP_ARGS if a != "--dry-run"]
     with (
+        patch.object(
+            hop_mod,
+            "try_acquire_hop_mutex",
+            return_value={"ok": True, "path": "/tmp/liaison-hop-test.lock", "pid": 1},
+        ),
+        patch.object(hop_mod, "release_hop_mutex"),
         patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
         patch.object(hop_mod, "load_state", return_value={}),
         patch.object(hop_mod, "effective_policy", return_value={}),
