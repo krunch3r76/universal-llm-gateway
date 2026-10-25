@@ -8,10 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from continuity_tape.extract_grokbot_jsonl import extract_grokbot_transcript
+from continuity_tape.messages import envelope_wire_dict
 from systems.pipeline.core.conditions import evaluate_condition, extract_condition_deps
 
 from ._clients import file_sha256
-from ._harvest import run_adapter_twice
+from ._harvest import checkpoint_raw_messages_uri, run_adapter_twice
 from .admit import run_admit
 from .conftest import MemFs
 from .harvest_adapter import run_harvest_adapter
@@ -65,10 +67,28 @@ async def test_harvest_chain_produces_full_coverage(fs: MemFs) -> None:
     pour = await run_harvest_pour(options, adapter, fs)
     assert pour.get("refused") is None
     assert pour["coverage"] == "full"
-    assert pour["provenance"] == "raw"
-    assert pour["ref"].startswith("notes/system/checkpoints/grok/")
+    assert pour["provenance"] == "transcribed"
+    assert pour["ref"].endswith("/1.messages.json")
     assert "tape/" not in pour["ref"]
-    assert pour["envelope"]["meta"]["provenance"] == "raw"
+    msg_key = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
+    raw_msg_key = checkpoint_raw_messages_uri(_AGENT, 1)
+    assert msg_key in fs.files
+    assert raw_msg_key in fs.files
+    written = json.loads(fs.files[msg_key].decode())
+    assert written["meta"]["provenance"] == "transcribed"
+    raw_written = json.loads(fs.files[raw_msg_key].decode())
+    assert raw_written["meta"]["provenance"] == "raw"
+    norm_text = fs.files[str(norm["normalized_ref"])].decode()
+    expected_raw = envelope_wire_dict(
+        extract_grokbot_transcript(
+            norm_text,
+            agent_id=_AGENT,
+            capture_ref=str(norm["normalized_ref"]),
+            capture_sha256=str(norm["normalized_sha256"]),
+            capture_kind="dom_harvest",
+        )
+    )
+    assert raw_written["messages"] == expected_raw["messages"]
 
 
 @pytest.mark.asyncio
@@ -199,10 +219,17 @@ async def test_specimen_messages_sha256(fs: MemFs) -> None:
     adapter = await run_harvest_adapter(options, norm, fs)
     assert adapter.get("refused") is None
     assert adapter["stats"]["coverage"] == "full"
-    assert adapter["envelope"]["meta"]["provenance"] == "raw"
-    assert adapter["envelope"]["meta"]["message_count"] > 0
-    msgs = adapter["envelope"]["messages"]
-    assert any(m.get("role") == "user" for m in msgs)
+    assert adapter["envelope"]["meta"]["provenance"] == "transcribed"
+    assert adapter["raw_envelope"]["meta"]["provenance"] == "raw"
+    contents = [
+        block.get("type")
+        for msg in adapter["envelope"]["messages"]
+        if isinstance(msg.get("content"), list)
+        for block in msg["content"]
+        if isinstance(block, dict)
+    ]
+    assert "tool_use" in contents
+    assert "thinking" in contents or "tool_result" in contents
 
 
 def test_yaml_harvest_steps_registered() -> None:
@@ -773,6 +800,99 @@ async def test_pour_refuses_edited_prior_message(fs: MemFs) -> None:
     adapter2 = await run_harvest_adapter(options2, norm2, fs)
     pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
     assert (pour2.get("refused") or {}).get("code") == "harvest.not_prefix"
+
+
+@pytest.mark.asyncio
+async def test_missing_raw_prior_starts_raw_chain_at_n2(fs: MemFs) -> None:
+    """Legacy checkpoints without .raw.messages.json still extend transcribed chain."""
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
+    raw_key = checkpoint_raw_messages_uri(_AGENT, 1)
+    del fs.files[raw_key]
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": nxt}
+    norm2 = await run_harvest_normalise(options2, fs)
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
+    assert pour2.get("refused") is None, pour2
+    assert checkpoint_raw_messages_uri(_AGENT, 2) in fs.files
+
+
+@pytest.mark.asyncio
+async def test_raw_chain_not_prefix_leaves_both_priors(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
+    msg1 = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
+    raw1 = checkpoint_raw_messages_uri(_AGENT, 1)
+    prior_msg = fs.files[msg1]
+    prior_raw = fs.files[raw1]
+    nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": nxt}
+    norm2 = await run_harvest_normalise(options2, fs)
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    broken = json.loads(json.dumps(adapter2))
+    broken["raw_envelope"]["messages"] = [{"role": "user", "content": "break"}]
+    pour2 = await run_harvest_pour(options2, broken, fs, norm2)
+    assert (pour2.get("refused") or {}).get("code") == "harvest.not_prefix"
+    assert fs.files[msg1] == prior_msg
+    assert fs.files[raw1] == prior_raw
+    assert checkpoint_raw_messages_uri(_AGENT, 2) not in fs.files
+
+
+@pytest.mark.asyncio
+async def test_harvest_record_capture_kind_mapping(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    for fallback, expect_pseudo in ((None, False), ("electron", True)):
+        fs2 = MemFs()
+        fs2.files.update(fs.files)
+        fs2.dirs.update(fs.dirs)
+        opts = {
+            "mode": "harvest_seal",
+            "house": "bl1",
+            "n": 1,
+            "agent_id": _AGENT,
+            "l0_ref": folder,
+        }
+        if fallback:
+            opts["fallback"] = fallback
+        norm = await run_harvest_normalise(opts, fs2)
+        adapter = await run_harvest_adapter(opts, norm, fs2)
+        pour = await run_harvest_pour(opts, adapter, fs2, norm)
+        assert pour.get("refused") is None, pour
+        result = assemble(
+            opts,
+            {
+                "admit": {"json": {"refused": None}},
+                "harvest_normalise": {"json": norm},
+                "harvest_adapter": {"json": adapter},
+                "harvest_pour": {"json": pour},
+            },
+        )
+        line = result["harvest_record"]
+        if expect_pseudo:
+            assert "~pseudo" in line
+            assert "capture:dom_harvest@" in line
+        else:
+            assert "~pseudo" not in line
+            assert "capture:grok_export@" in line
 
 
 def test_grok_export_record_has_no_pseudo() -> None:

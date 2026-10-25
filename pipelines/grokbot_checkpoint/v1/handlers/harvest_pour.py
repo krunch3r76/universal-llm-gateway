@@ -8,7 +8,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import fs_of, refuse, step_output_json
-from ._harvest import stage_grok_pour
+from ._harvest import checkpoint_raw_messages_uri, stage_grok_pour
 
 
 def _canonical_messages(messages: object) -> list[dict[str, Any]]:
@@ -24,6 +24,33 @@ def _canonical_messages(messages: object) -> list[dict[str, Any]]:
     return out
 
 
+async def _prefix_check(
+    fs: Any,
+    *,
+    prior_uri: str,
+    new_msgs: object,
+    code: str = "harvest.not_prefix",
+) -> dict[str, Any] | None:
+    import json
+
+    from cortex_store.verbatim_succession import prefix_holds
+
+    old_blob = await fs.read(prior_uri)
+    if not old_blob:
+        return None
+    try:
+        old_msgs = json.loads(old_blob.decode("utf-8")).get("messages")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return refuse("harvest.no_prior", str(exc))
+    if not prefix_holds(
+        "messages-v1",
+        _canonical_messages(old_msgs),
+        _canonical_messages(new_msgs),
+    ):
+        return refuse(code, "new messages do not prefix-extend")
+    return None
+
+
 async def run_harvest_pour(
     options: dict[str, Any],
     adapter: dict[str, Any],
@@ -37,8 +64,12 @@ async def run_harvest_pour(
         return refuse("admit.agent_id", "agent_id required")
     envelope = adapter.get("envelope")
     stats = adapter.get("stats")
+    raw_envelope = adapter.get("raw_envelope")
+    raw_stats = adapter.get("raw_stats")
     if not isinstance(envelope, dict) or not isinstance(stats, dict):
         return refuse("pour.schema", "adapter produced no envelope")
+    if not isinstance(raw_envelope, dict) or not isinstance(raw_stats, dict):
+        return refuse("pour.schema", "adapter produced no raw envelope")
     n = int(options.get("n") or 1)
     l0_ref = str(options.get("l0_ref") or "").strip()
     from .harvest_normalise import load_raw_for_pour
@@ -56,26 +87,26 @@ async def run_harvest_pour(
     if sealed and digest != sealed:
         return refuse("source.sha_mismatch", f"{digest} != {sealed}")
     if n > 1:
-        import json
-
-        from cortex_store.verbatim_succession import prefix_holds
-
         msg_uri = f"notes/system/checkpoints/grok/{agent_id}/{n - 1}.messages.json"
-        old_blob = await fs.read(msg_uri)
-        if not old_blob:
+        prior_blob = await fs.read(msg_uri)
+        if not prior_blob:
             return refuse("harvest.no_prior", f"missing {msg_uri}")
-        try:
-            old_msgs = json.loads(old_blob.decode("utf-8")).get("messages")
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            return refuse("harvest.no_prior", str(exc))
-        new_msgs = envelope.get("messages")
-        if not prefix_holds(
-            "messages-v1",
-            _canonical_messages(old_msgs),
-            _canonical_messages(new_msgs),
-        ):
-            return refuse("harvest.not_prefix", "new messages do not prefix-extend")
-    return await stage_grok_pour(
+        err = await _prefix_check(
+            fs,
+            prior_uri=msg_uri,
+            new_msgs=envelope.get("messages"),
+        )
+        if err:
+            return err
+        raw_prior = checkpoint_raw_messages_uri(agent_id, n - 1)
+        raw_err = await _prefix_check(
+            fs,
+            prior_uri=raw_prior,
+            new_msgs=raw_envelope.get("messages"),
+        )
+        if raw_err:
+            return raw_err
+    transcribed = await stage_grok_pour(
         fs,
         agent_id,
         envelope,
@@ -84,6 +115,26 @@ async def run_harvest_pour(
         raw_bytes=raw_bytes,
         l0_ref=l0_ref,
     )
+    if transcribed.get("refused"):
+        return transcribed
+    raw_uri = checkpoint_raw_messages_uri(agent_id, n)
+    raw_pour = await stage_grok_pour(
+        fs,
+        agent_id,
+        raw_envelope,
+        stats=raw_stats,
+        n=n,
+        raw_bytes=None,
+        l0_ref=l0_ref,
+        pour_uri=raw_uri,
+    )
+    if raw_pour.get("refused"):
+        return raw_pour
+    return {
+        **transcribed,
+        "raw_messages_ref": raw_uri,
+        "raw_messages_sha256": raw_stats.get("messages_sha256"),
+    }
 
 
 class GrokbotCheckpointHarvestPourHandler(BaseHandler):

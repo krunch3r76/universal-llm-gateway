@@ -58,7 +58,7 @@ opened_at: "2026-01-01T00:00:00Z"
 
 Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`, uuid-shaped, and equal to `agent_id` for grok. Mint a uuid5 when the platform native id is not a uuid. Mismatch refuses `admit.transcript_id_mismatch`.
 
-Canonical checkpoint transcription: `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`. `raw_ref` is the seal-mode slot for a pour whose `meta.provenance` is `raw`. It is not the verbatim export.
+Canonical checkpoint transcription: `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. Raw transcript sibling (harvest `extract_grokbot_transcript`, `meta.provenance` `raw`): `notes/system/checkpoints/grok/<agent>/<n>.raw.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`. `raw_ref` is the seal-mode slot for a pour whose `meta.provenance` is `raw`. It is not the verbatim export.
 
 ## Writing the handoff letter
 
