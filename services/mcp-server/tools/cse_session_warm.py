@@ -266,15 +266,32 @@ _MAESTRO_OBS_WAKE_PROMPT = (
 _MAESTRO_OPERATOR_PROXY_PARENT_THREAD = "12286"
 
 
-def _attended_binding_from_resolve(resolved: dict[str, Any]) -> dict[str, str | None] | None:
+def _attended_binding_from_resolve(
+    resolved: dict[str, Any],
+) -> dict[str, str | None] | None:
     """Live paste target from relay_attended / resolve_attended, or None to retry."""
     if resolved.get("code"):
         return None
     current = resolved.get("current")
     if not isinstance(current, dict):
         return None
+    seat_holder = resolved.get("seat_holder")
+    seat_holder_reg = (
+        str(seat_holder.get("registration_id") or "").strip()
+        if isinstance(seat_holder, dict)
+        else ""
+    )
+    reg_ids = current.get("registration_ids")
+    first_reg_id = (
+        str(reg_ids[0] or "").strip() if isinstance(reg_ids, list) and reg_ids else ""
+    )
     chat_url = str(current.get("chat_url") or "").strip() or None
-    registration_id = str(current.get("registration_id") or "").strip() or None
+    registration_id = (
+        str(current.get("registration_id") or "").strip()
+        or first_reg_id
+        or seat_holder_reg
+        or None
+    )
     execution_id = str(current.get("execution_id") or "").strip() or None
     if not any((chat_url, registration_id, execution_id)):
         return None

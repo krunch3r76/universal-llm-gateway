@@ -271,7 +271,16 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "BLOCKED",
         "READY",
         "EAR",
+        "RULING",
     }
+    assert qualifies(
+        {
+            "to_agent": "maestro",
+            "from_agent": "grok-coordinator-1",
+            "subject": "RULING|40218|wake path",
+        },
+        cse=True,
+    )
     assert GROK_WAKE_SUBJECT_HEADS == {
         "REQUEST",
         "REVIEW-REQUEST",
@@ -393,6 +402,59 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=True,
     )
+
+
+def test_grok_impresario_conductor_milestone_and_intermediate_wakes() -> None:
+    impresario_targets = (
+        "grok-bot-gc1",
+        "impresario-career",
+        "gc1-pilot-impresario-fleet-action-line",
+    )
+    milestone_subjects = (
+        "cursor-sdk CLOSEOUT abc contract=conductor caller=grok-bot-gc1",
+        "stop: PARKED_TRANSPORT — 20547",
+        "BLOCKED|40218|gate",
+        "FAILED|40218|dispatch",
+        "DONE|40218|complete",
+        "QUESTION|40218|fork",
+        "DONE 40218 complete",
+        "FAILED 40218 dispatch",
+        "QUESTION 40218 fork",
+    )
+    for to_agent in impresario_targets:
+        for from_agent in ("cursor-sdk", "conductor-hop"):
+            for subject in milestone_subjects:
+                assert qualifies(
+                    {
+                        "to_agent": to_agent,
+                        "from_agent": from_agent,
+                        "subject": subject,
+                    },
+                    cse=False,
+                ), f"expected wake: {from_agent} -> {to_agent} subject={subject!r}"
+    intermediate_subjects = (
+        "PICKUP|40218",
+        "ADMITTED|40218",
+        "CHECKPOINT 40218 leg",
+        "hop-1 context",
+        "park-harvest wake — 20547",
+        "cursor-sdk generate admitted",
+        (
+            "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "
+            "contract=conductor caller=conductor-hop"
+        ),
+    )
+    for to_agent in impresario_targets:
+        for from_agent in ("cursor-sdk", "conductor-hop"):
+            for subject in intermediate_subjects:
+                assert not qualifies(
+                    {
+                        "to_agent": to_agent,
+                        "from_agent": from_agent,
+                        "subject": subject,
+                    },
+                    cse=False,
+                ), f"expected no wake: {from_agent} -> {to_agent} subject={subject!r}"
 
 
 def test_git_integration_worker_notice_gap_grok_wake() -> None:
@@ -749,7 +811,12 @@ def test_quiet_with_work_in_flight_routes_to_cursor() -> None:
         "cursor",
     ):
         assert _effective_to_agent(to_agent, subject) == "cursor"
-    for to_agent in ("git-integration-worker", "frontier-admit", "conductor-hop", "cursor"):
+    for to_agent in (
+        "git-integration-worker",
+        "frontier-admit",
+        "conductor-hop",
+        "cursor",
+    ):
         assert qualifies(
             {
                 "to_agent": to_agent,
@@ -1443,7 +1510,10 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
                 payload["cse_registration_id"],  # type: ignore[arg-type]
             )
 
-    def _capture(row: dict, sub: dict, turn: int | str) -> tuple[str, str]:
+    def _capture(
+        row: dict, sub: dict, turn: int | str, *, text: str = ""
+    ) -> tuple[str, str]:
+        del text
         turn_args.append(turn)
         return ("delivered", "match")
 

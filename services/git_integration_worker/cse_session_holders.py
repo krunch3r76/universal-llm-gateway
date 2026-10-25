@@ -769,7 +769,9 @@ def release_holder_remote(
         return False
 
 
-def _lane_conflict_from_http_error(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
+def _lane_conflict_from_http_error(
+    exc: urllib.error.HTTPError,
+) -> dict[str, Any] | None:
     try:
         raw = exc.read()
         payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
@@ -856,6 +858,9 @@ def _ledger_conn():
     )
 
     return CursorDispatchLedger.instance()._connect()
+
+
+_MAESTRO_HOME_LANE = "12286"
 
 
 def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None:
@@ -956,8 +961,12 @@ def close_owed_wake_on_lane_activity(
 
     store = RestartIntentStore.instance()
     hid = (holder_id or "").strip()
-    if not hid and lane_thread_id:
-        hid = resolve_maestro_holder_id_for_lane(lane_thread_id) or ""
+    lane = (lane_thread_id or "").strip()
+    if not hid and lane:
+        hid = resolve_maestro_holder_id_for_lane(lane) or ""
+    seat_is_maestro = agent in {"maestro", "web-anthropic"}
+    if not hid and seat_is_maestro and lane != _MAESTRO_HOME_LANE:
+        hid = resolve_maestro_holder_id_for_lane(_MAESTRO_HOME_LANE) or ""
     if hid:
         store.close_owed_wake_for_holder(hid)
 
@@ -983,6 +992,11 @@ def on_house_milestone_to_maestro(
 
     lane = (lane_thread_id or thread_id or "").strip()
     holder_id = resolve_maestro_holder_id_for_lane(lane)
+    to_maestro = (to_agent or "").strip().lower() == "maestro"
+    if not holder_id and to_maestro and lane != _MAESTRO_HOME_LANE:
+        holder_id = resolve_maestro_holder_id_for_lane(_MAESTRO_HOME_LANE)
+        if holder_id:
+            lane = _MAESTRO_HOME_LANE
     if not holder_id:
         return {"recorded": False, "reason": "no_holder_for_lane"}
     store = RestartIntentStore.instance()

@@ -338,7 +338,9 @@ def _tracking_build_deps(monkeypatch: pytest.MonkeyPatch, endpoint_calls: list) 
     )
 
 
-def _open_owed_wake_count(store: RestartIntentStore, holder_id: str = "holder-maestro") -> int:
+def _open_owed_wake_count(
+    store: RestartIntentStore, holder_id: str = "holder-maestro"
+) -> int:
     with store._connect() as conn:
         return int(
             conn.execute(
@@ -841,3 +843,199 @@ def test_schedule_force_gate_notice_wrapper_no_recursion(
     )
     gate._schedule_force_gate_notice(thread_id="1", subject="s", body="b")
     assert len(called) == 1
+
+
+_MAESTRO_MILESTONE_HEADS = (
+    "QUESTION",
+    "RULING",
+    "DONE",
+    "BLOCKED",
+    "FAILED",
+    "LANDED",
+    "VERDICT",
+)
+
+
+@pytest.mark.parametrize("head", _MAESTRO_MILESTONE_HEADS)
+def test_grok_coordinator_milestone_on_child_thread_resolves_lane_12286_holder(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, head: str
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    with TestClient(_bus_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": f"owed-grok-child-lane-{head.lower()}",
+                "from": "grok-coordinator-1",
+                "to": "maestro",
+                "subject": "bootstrap",
+                "body": "seed",
+            },
+        )
+        assert create.status_code == 201, create.text
+        child_lane = create.json()["thread"]["id"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": child_lane,
+                "from": "grok-coordinator-1",
+                "to": "maestro",
+                "subject": f"{head}|friction:40219",
+                "body": "milestone to maestro on child thread",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+    open_rows = store.list_open_undispatched_owed_wakes()
+    assert len(open_rows) == 1
+    assert open_rows[0].holder_id == "holder-12286"
+    assert open_rows[0].lane_thread_id == "12286"
+
+
+def test_grok_coordinator_milestone_dispatches_after_lane_12286_resolve(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        dispatch_owed_wake_producer1_row,
+        on_house_milestone_to_maestro,
+    )
+
+    _bind_store(tmp_path, monkeypatch)
+    endpoint_calls: list[dict] = []
+    live_holder = {
+        "holder_id": "holder-12286",
+        "seat_state": "driving",
+        "chat_url": "https://claude.ai/c/x",
+        "registration_id": "reg-12286",
+        "lane_thread_id": "12286",
+    }
+
+    def factory():
+        deps = _deps(holder=live_holder)
+        deps.holder_lookup = lambda hid: live_holder if hid == "holder-12286" else None  # type: ignore[method-assign]
+        deps.endpoint_wake = lambda **kw: endpoint_calls.append(kw) or True  # type: ignore[method-assign]
+        return deps
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.build_owed_wake_deps",
+        factory,
+    )
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "1")
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    out = on_house_milestone_to_maestro(
+        subject="QUESTION|friction:40219-dispatch",
+        to_agent="maestro",
+        from_agent="grok-coordinator-1",
+        thread_id="15851",
+        turn_number=2,
+        lane_thread_id="15851",
+    )
+    assert out.get("recorded") is True
+    assert out.get("needs_deferred_dispatch") is True
+    dispatch_owed_wake_producer1_row(str(out["row_id"]))
+    assert len(endpoint_calls) == 1
+    assert endpoint_calls[0]["holder_id"] == "holder-12286"
+
+
+@pytest.mark.parametrize("subject", ["ACK|re #1", "ROUTE|handoff"])
+def test_ack_and_route_to_maestro_do_not_record_owed_wake(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, subject: str
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    out = after_turn_created(
+        thread_id="15851",
+        to_agent="maestro",
+        from_agent="grok-coordinator-1",
+        subject=subject,
+        turn_number=2,
+    )
+    assert out is not None
+    assert out.get("recorded") is False
+    assert store.list_open_undispatched_owed_wakes() == []
+
+
+def test_holder_mark_read_on_child_lane_closes_12286_owed_wake(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    with TestClient(_bus_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-close-fallback",
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        assert create.status_code == 201, create.text
+        child_lane = create.json()["thread"]["id"]
+        store.coalesce_owed_wake_milestone(
+            holder_id="holder-12286",
+            lane_thread_id="12286",
+            turn_ref={
+                "thread_id": child_lane,
+                "turn_number": 2,
+                "subject": "QUESTION|x",
+            },
+        )
+        resp = client.patch(
+            f"/threads/{child_lane}/turns/read-state",
+            json={"turn_numbers": [1], "agent": "maestro"},
+        )
+        assert resp.status_code == 200, resp.text
+    assert store.close_owed_wake_for_holder("holder-12286") == 0
+
+
+def test_attended_binding_from_resolve_registration_ids_list() -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        _import_cse_session_warm_module,
+    )
+
+    warm = _import_cse_session_warm_module()
+    reg = "f4ebcdea-1111-2222-3333-444444444444"
+    binding = warm._attended_binding_from_resolve(
+        {
+            "current": {
+                "registration_ids": [reg],
+                "execution_id": "exec-1",
+            },
+            "seat_holder": {"registration_id": reg},
+        }
+    )
+    assert binding is not None
+    assert binding["registration_id"] == reg
+    assert binding["execution_id"] == "exec-1"

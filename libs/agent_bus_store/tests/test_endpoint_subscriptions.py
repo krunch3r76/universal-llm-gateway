@@ -51,9 +51,14 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     )
     assert cursor.status_code == 422
     assert cursor.json()["detail"]["code"] == "endpoint_wildcard_refused"
+    for reserved in ("cursor", "maestro"):
+        resp = _sub(client, agent=reserved, thread_scope="*", surface="grok")
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "endpoint_wildcard_refused"
     coord = _sub(client, agent="grok-coordinator-1", thread_scope="*", surface="grok")
-    assert coord.status_code == 422
-    assert coord.json()["detail"]["code"] == "endpoint_wildcard_refused"
+    assert coord.status_code == 200
+    assert coord.json()["row"]["agent"] == "grok-coordinator-1"
+    assert coord.json()["row"]["thread_scope"] == "*"
     stage = _sub(client, agent="stage-manager", thread_scope="*", title="house")
     assert stage.status_code == 200
     assert stage.json()["row"]["agent"] == "stage-manager"
@@ -61,6 +66,19 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     cse = _sub(client, agent="web-anthropic", thread_scope="1")
     assert cse.status_code == 422
     assert cse.json()["detail"]["code"] == "endpoint_cse_delegated"
+
+
+def test_grok_impresario_wildcard_subscription(client: TestClient) -> None:
+    for agent in (
+        "gc1-pilot-impresario-fleet-action-line",
+        "impresario-career",
+    ):
+        resp = _sub(client, agent=agent, thread_scope="*", title=f"lane {agent}")
+        assert resp.status_code == 200, resp.text
+        row = resp.json()["row"]
+        assert row["agent"] == agent
+        assert row["thread_scope"] == "*"
+        assert row["surface"] == "grok"
 
 
 def test_maestro_cse_wildcard_subscription(client: TestClient) -> None:
