@@ -144,7 +144,9 @@ def test_computed_hop_rendering() -> None:
     assert out.rindex("## Hard refusals") > out.index("## Hop request (data)")
     refusals = out.split("## Hard refusals", 1)[1]
     assert refusals.count("\n- ") >= 11
-    assert "desired_model=cdp/opus-5.5-extra" in refusals
+    assert "desired_model=cdp/fable-5.1" in refusals
+    assert "desired_effort=medium" in refusals
+    assert "no cdp/fable hop target" not in refusals
 
     twice = ensure_operator_proxy_mission_prompt(out)
     assert twice.rstrip("\n") == out.rstrip("\n")

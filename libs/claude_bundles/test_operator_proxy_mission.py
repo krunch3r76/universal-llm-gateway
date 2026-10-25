@@ -435,8 +435,9 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
 def test_how_this_seat_works_names_reachable_models() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     refusals = out.split("## Hard refusals", 1)[1]
-    assert "cdp/fable" in refusals
-    assert "cdp/opus-5.5-extra" in refusals
+    assert "desired_model=cdp/fable-5.1" in refusals
+    assert "desired_effort=medium" in refusals
+    assert "no cdp/fable hop target" not in refusals
     assert "cursor/claude-opus-5" not in out
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
     assert _legacy_reasoner not in out

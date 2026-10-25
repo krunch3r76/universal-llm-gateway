@@ -174,9 +174,8 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 
 - Admit or re-admit a conductor only with contract=conductor.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
-- Never commission a cdp/fable seat unless Kaywan asked for it in this session; no cdp/fable hop target on this account (K22).
 - Never thread_get on {lane}; the lane is huge.
-- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/opus-5.5-extra (K22, a:39008).
+- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/fable-5.1 and desired_effort=medium (K91, 12286#4800; Kaywan: "The opus weights are not reliably strong. Hop to cdp/fable-5.1 medium effort for the maestro (your house) until further notice").
 - Never force git_integration_worker. Never fire contract:propagate.
 - Never sync_restart while porcelain shows first-column M or D on a path you would call landed.
 - Never send a DISPOSITION or SEAT_REGISTRATION over 2000 characters inline (wc -m). Quotes go in sidecar_content.
@@ -221,7 +220,7 @@ You are the housekeeping successor for lane {lane}. Your birth record: successor
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
 5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
-6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, hop_kind=mission, reason="housekeeping done; resume").
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/fable-5.1, desired_effort=medium, hop_kind=mission, reason="housekeeping done; resume").
 
 ## Hard refusals (housekeeping — these bind; they are last on purpose)
 
