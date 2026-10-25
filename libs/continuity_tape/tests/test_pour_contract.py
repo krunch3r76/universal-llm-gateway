@@ -94,9 +94,12 @@ def test_grok_export_capture_match_passes() -> None:
     pages = "b" * 64
     reassembled = "a" * 64
     assert (
-        validate_pour(_ok_grok_export(
-            pages_sha=pages, reassembled_sha=reassembled, capture_sha=pages
-        )).meta.capture is not None
+        validate_pour(
+            _ok_grok_export(
+                pages_sha=pages, reassembled_sha=reassembled, capture_sha=pages
+            )
+        ).meta.capture
+        is not None
     )
 
 

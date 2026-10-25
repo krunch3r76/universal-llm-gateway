@@ -135,8 +135,7 @@ def test_caller_doc_raw_pour_capture_consistency() -> None:
     assert (
         "for `capture.kind` `grok_export`, `capture.sha256` must equal "
         "`meta.sources[0].pages_sha256` and `meta.sources[0].reassembled_jsonl_sha256` "
-        "must equal `meta.source_sha256`"
-        in text
+        "must equal `meta.source_sha256`" in text
     )
     assert "refuses `pour.capture_inconsistent`" in text
     assert "validated before any checkpoint write" in text

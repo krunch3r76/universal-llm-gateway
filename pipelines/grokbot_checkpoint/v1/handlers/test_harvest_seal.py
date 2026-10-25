@@ -899,7 +899,10 @@ async def test_grok_export_pages_default_pour_success_readback(fs: MemFs) -> Non
     assert cap["sha256"] != adapter["raw_envelope"]["meta"]["source_sha256"]
     src0 = adapter["raw_envelope"]["meta"]["sources"][0]
     assert cap["sha256"] == src0["pages_sha256"]
-    assert src0["reassembled_jsonl_sha256"] == adapter["raw_envelope"]["meta"]["source_sha256"]
+    assert (
+        src0["reassembled_jsonl_sha256"]
+        == adapter["raw_envelope"]["meta"]["source_sha256"]
+    )
     pour = await run_harvest_pour(opts, adapter, fs, norm)
     assert pour.get("refused") is None, pour
     msg_key = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
@@ -914,7 +917,9 @@ async def test_grok_export_pages_default_pour_success_readback(fs: MemFs) -> Non
     validate_pour(written)
     assert written["meta"]["provenance"] == "transcribed"
     assert raw_written["meta"]["provenance"] == "raw"
-    assert written["meta"]["messages_sha256"] == seal_messages_sha256(written["messages"])
+    assert written["meta"]["messages_sha256"] == seal_messages_sha256(
+        written["messages"]
+    )
     assert raw_written["meta"]["messages_sha256"] == seal_messages_sha256(
         raw_written["messages"]
     )
