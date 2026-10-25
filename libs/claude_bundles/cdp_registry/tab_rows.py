@@ -258,9 +258,18 @@ def open_tab_row_for_ask(
     with tab_host_mint_lock():
         active = _store.load_active()
         candidates = cdp_lane.cdp_display_candidates()
-        host = host_row or eligible_host(
-            active, candidates, listen=listen, account_id=resolved_account
-        )
+        if host_row is not None:
+            host_account = normalize_account_id(host_row.get("account_id"))
+            if host_account != resolved_account:
+                raise RegistryError(
+                    f"host_row account {host_account!r} != request account "
+                    f"{resolved_account!r}"
+                )
+            host = host_row
+        else:
+            host = eligible_host(
+                active, candidates, listen=listen, account_id=resolved_account
+            )
         minted = False
         if host is None:
             host_reg = register_lane(
@@ -287,9 +296,6 @@ def open_tab_row_for_ask(
             raise RegistryError("no eligible host for tab ask")
         host_id = str(host["registration_id"])
         port = int(host["port"])
-        resolved_account = normalize_account_id(
-            host.get("account_id") or resolved_account
-        )
         tab_id = uuid.uuid4().hex
         with _store.ports_lock():
             active = _store.load_active()

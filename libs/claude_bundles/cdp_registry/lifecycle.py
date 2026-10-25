@@ -28,6 +28,7 @@ from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
     STATUS_TAB,
+    AccountNotSignedInError,
     JoinedReentryExhausted,
     Registration,
     RegistryError,
@@ -35,7 +36,9 @@ from .models import (
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
+    account_is_signed_in,
     account_profile_suffix,
+    assert_profile_suffix_available,
     normalize_account_id,
     seat_open,
 )
@@ -296,6 +299,10 @@ def reserve_allocating_row(
             norm_account = normalize_account_id(
                 account_id or (carry or {}).get("account_id")
             )
+            if norm_account != "default" and not account_is_signed_in(norm_account):
+                raise AccountNotSignedInError(
+                    f"account {norm_account!r} is not signed in; refusing registry mint"
+                )
             if profile_suffix is None and norm_account != "default":
                 profile_suffix = account_profile_suffix(norm_account)
                 if registration_id is None:
@@ -304,6 +311,11 @@ def reserve_allocating_row(
                     _supersede_stale_account_row(active, profile_suffix, listen)
             if registration_id is None or profile_suffix is None:
                 registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+            assert_profile_suffix_available(
+                active,
+                str(profile_suffix),
+                registration_id=registration_id,
+            )
             prior = active.get(registration_id) if registration_id else None
             row: dict[str, Any] = {
                 **(carry or {}),

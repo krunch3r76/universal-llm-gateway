@@ -55,6 +55,10 @@ class RegistryError(RuntimeError):
 DEFAULT_ACCOUNT_ID = "default"
 _ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 _SEAT_ACCOUNTS_ENV = "CDP_SEAT_ACCOUNTS_PATH"
+_ACCOUNT_SIGNIN_ENV = "CDP_ACCOUNT_SIGNIN_PATH"
+_LIVE_PROFILE_SUFFIX_STATUSES = frozenset(
+    {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}
+)
 
 
 def normalize_account_id(account_id: str | None) -> str:
@@ -88,19 +92,69 @@ def _seat_accounts_path() -> Path:
     return Path.home() / ".gateway" / "cdp-registry" / "seat_accounts.json"
 
 
-def resolve_account_id(
+def _account_signin_path() -> Path:
+    raw = os.environ.get(_ACCOUNT_SIGNIN_ENV, "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / ".gateway" / "cdp-registry" / "account_sign_in.json"
+
+
+def signed_in_accounts() -> set[str]:
+    """Account ids marked signed-in in the registry sign-in file."""
+    path = _account_signin_path()
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    accounts = payload.get("accounts")
+    if isinstance(accounts, dict):
+        out: set[str] = set()
+        for key, meta in accounts.items():
+            if not str(key or "").strip():
+                continue
+            if isinstance(meta, dict) and meta.get("signed_in") is True:
+                out.add(normalize_account_id(str(key)))
+            elif meta is True:
+                out.add(normalize_account_id(str(key)))
+        return out
+    if isinstance(accounts, list):
+        return {
+            normalize_account_id(str(item))
+            for item in accounts
+            if str(item or "").strip()
+        }
+    return set()
+
+
+def account_is_signed_in(account_id: str | None) -> bool:
+    """True when *account_id* is default or listed in the sign-in registry."""
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        return True
+    return norm in signed_in_accounts()
+
+
+class AccountNotSignedInError(RegistryError):
+    """Raised when routing to a non-default account that is not signed in."""
+
+
+def _resolve_account_id_raw(
     account_id: str | None = None,
     *,
     purpose: str | None = None,
     holder: str | None = None,
     parent_thread: str | None = None,
     model: str | None = None,
-) -> str:
-    """Resolve the effective account id for a CDP ask or registry mint."""
+) -> tuple[str, bool]:
+    """Return (account_id, explicit_request) before the signed-in gate."""
     _ = model  # reserved for future routing
     explicit = str(account_id or "").strip()
     if explicit:
-        return normalize_account_id(explicit)
+        return normalize_account_id(explicit), True
     path = _seat_accounts_path()
     if path.is_file():
         try:
@@ -113,17 +167,70 @@ def resolve_account_id(
             by_purpose = payload.get("by_purpose") or {}
             parent = str(parent_thread or "").strip()
             if parent and parent in by_parent:
-                return normalize_account_id(str(by_parent[parent]))
+                return normalize_account_id(str(by_parent[parent])), False
             hold = str(holder or "").strip()
             if hold and hold in by_holder:
-                return normalize_account_id(str(by_holder[hold]))
+                return normalize_account_id(str(by_holder[hold])), False
             purp = str(purpose or "").strip()
             if purp and purp in by_purpose:
-                return normalize_account_id(str(by_purpose[purp]))
+                return normalize_account_id(str(by_purpose[purp])), False
             default = payload.get("default")
             if default is not None and str(default).strip():
-                return normalize_account_id(str(default))
+                return normalize_account_id(str(default)), False
+    return DEFAULT_ACCOUNT_ID, False
+
+
+def resolve_account_id(
+    account_id: str | None = None,
+    *,
+    purpose: str | None = None,
+    holder: str | None = None,
+    parent_thread: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Resolve the effective account id for a CDP ask or registry mint.
+
+    Non-default accounts require a sign-in entry in ``account_sign_in.json``.
+    Explicit requests fail closed; config-driven mappings fall back to default.
+    """
+    resolved, explicit = _resolve_account_id_raw(
+        account_id,
+        purpose=purpose,
+        holder=holder,
+        parent_thread=parent_thread,
+        model=model,
+    )
+    if resolved == DEFAULT_ACCOUNT_ID or account_is_signed_in(resolved):
+        return resolved
+    if explicit:
+        raise AccountNotSignedInError(
+            f"account {resolved!r} is not signed in; refusing routed ask"
+        )
     return DEFAULT_ACCOUNT_ID
+
+
+def assert_profile_suffix_available(
+    active: dict[str, Any],
+    profile_suffix: str,
+    *,
+    registration_id: str | None = None,
+) -> None:
+    """Refuse a second live host row on the same persistent profile suffix."""
+    suffix = str(profile_suffix or "").strip()
+    if not suffix:
+        return
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        if registration_id and str(rid) == str(registration_id):
+            continue
+        if str(row.get("profile_suffix") or "") != suffix:
+            continue
+        if row.get("status") not in _LIVE_PROFILE_SUFFIX_STATUSES:
+            continue
+        raise RegistryError(
+            f"profile suffix {suffix!r} already reserved by live row {rid!r}"
+        )
 
 
 class JoinedReentryExhausted(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix

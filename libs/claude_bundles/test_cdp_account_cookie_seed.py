@@ -77,6 +77,7 @@ def test_seed_lane_session_non_default_skips_primary_cookies_and_keeps_chrome(
 ) -> None:
     cdp_calls: list[int] = []
     killed: list[int] = []
+    read_ports: list[int] = []
 
     def _cdp_call(port: int, method: str, params=None):
         cdp_calls.append(port)
@@ -84,14 +85,32 @@ def test_seed_lane_session_non_default_skips_primary_cookies_and_keeps_chrome(
             raise CookieSeedError("primary down")
         return {}
 
+    def _read(port: int, **kwargs):
+        read_ports.append(port)
+        if port == 9225:
+            return [{"name": "sessionKey", "value": "x", "domain": ".claude.ai"}]
+        raise CookieSeedError("signed out")
+
     monkeypatch.setattr("claude_bundles.cdp_cookie_seed._cdp_call", _cdp_call)
+    monkeypatch.setattr("claude_bundles.cdp_cookie_seed.read_session_cookies", _read)
     monkeypatch.setattr(cdp_lane, "_kill_lane_chrome", lambda pid: killed.append(pid))
 
     assert seed_lane_cookies(9225, account_id="account-2") == 0
     assert cdp_calls == []
     cdp_lane._seed_lane_session(9225, 999, account_id="account-2")
-    assert cdp_calls == []
+    assert 9222 not in cdp_calls
+    assert read_ports == [9225]
     assert killed == []
+
+    def _read_signed_out(port: int, **kwargs):
+        raise CookieSeedError("signed out")
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_cookie_seed.read_session_cookies", _read_signed_out
+    )
+    with pytest.raises(CookieSeedError):
+        cdp_lane._seed_lane_session(9225, 1002, account_id="account-2")
+    assert killed == [1002]
 
     monkeypatch.setattr(
         "claude_bundles.cdp_cookie_seed.read_session_cookies",
@@ -99,7 +118,7 @@ def test_seed_lane_session_non_default_skips_primary_cookies_and_keeps_chrome(
     )
     with pytest.raises(CookieSeedError):
         cdp_lane._seed_lane_session(9225, 1001, account_id="default")
-    assert killed == [1001]
+    assert killed == [1002, 1001]
 
 
 def test_register_lane_non_default_account_uses_persistent_suffix_and_retains_on_reclaim(
@@ -108,6 +127,12 @@ def test_register_lane_non_default_account_uses_persistent_suffix_and_retains_on
     profiles = tmp_path / "profiles"
     profile_path = profiles / "claude-ai-chrome-profile-account-2"
     profile_path.mkdir(parents=True)
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
 
     r = reg.register_lane(
         holder="cdp-tab-pool",
@@ -177,3 +202,75 @@ def test_what_is_running_surfaces_account_id() -> None:
     assert view["registry_account_host_counts"] == {"account-2": 1, "default": 1}
     text = wir.render_text(view)
     assert "account=account-2" in text
+
+
+def test_resolve_account_id_precedence_and_signin_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import (
+        AccountNotSignedInError,
+        resolve_account_id,
+    )
+
+    seat = tmp_path / "seat_accounts.json"
+    seat.write_text(
+        json.dumps(
+            {
+                "default": "default",
+                "by_holder": {"h1": "account-2"},
+                "by_purpose": {"ask": "account-3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    signin = tmp_path / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_SEAT_ACCOUNTS_PATH", str(seat))
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+
+    assert (
+        resolve_account_id("account-2", holder="h1", purpose="ask") == "account-2"
+    )
+    assert resolve_account_id(None, holder="h1") == "account-2"
+    assert resolve_account_id(None, purpose="ask") == "default"
+    assert resolve_account_id(None, holder="other") == "default"
+
+    bad_seat = tmp_path / "bad.json"
+    bad_seat.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("CDP_SEAT_ACCOUNTS_PATH", str(bad_seat))
+    assert resolve_account_id(None, holder="h1") == "default"
+
+    with pytest.raises(AccountNotSignedInError):
+        resolve_account_id("account-3")
+
+
+def test_register_lane_profile_suffix_live_collision(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+
+    reg.register_lane(
+        holder="cdp-tab-pool",
+        purpose="tab_host",
+        account_id="account-2",
+        launch=False,
+        is_listening=lambda _p: False,
+    )
+    with pytest.raises(RegistryError, match="already reserved"):
+        reg.register_lane(
+            holder="cdp-tab-pool",
+            purpose="operator-proxy",
+            account_id="account-2",
+            launch=False,
+            is_listening=lambda _p: False,
+        )

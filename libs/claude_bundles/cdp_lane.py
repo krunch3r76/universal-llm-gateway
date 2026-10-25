@@ -626,6 +626,13 @@ def _seed_lane_session(port: int, pid: int, *, account_id: str | None = None) ->
     eff = resolve_effective_account_id(account_id)
     if eff != "default":
         seed_lane_cookies(port, account_id=eff)
+        from claude_bundles.cdp_cookie_seed import read_session_cookies
+
+        try:
+            read_session_cookies(port)
+        except CookieSeedError:
+            _kill_lane_chrome(pid)
+            raise
         return
     try:
         seed_lane_cookies(port, account_id="default")

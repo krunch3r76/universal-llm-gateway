@@ -97,16 +97,22 @@ def _compose_witness_satellite_id(error: str | None, execution_id: str) -> str |
 def _open_tab_lane(
     req: SubmitProjectAskRequest, *, holder: str, host_row: dict | None = None
 ):
-    from claude_bundles.cdp_registry.models import resolve_account_id
+    from claude_bundles.cdp_registry.models import (
+        AccountNotSignedInError,
+        resolve_account_id,
+    )
     from claude_bundles.cdp_registry.tab_rows import open_tab_row_for_ask
 
-    account_id = resolve_account_id(
-        req.account_id,
-        purpose=req.purpose,
-        holder=holder,
-        parent_thread=req.parent_thread,
-        model=req.model,
-    )
+    try:
+        account_id = resolve_account_id(
+            req.account_id,
+            purpose=req.purpose,
+            holder=holder,
+            parent_thread=req.parent_thread,
+            model=req.model,
+        )
+    except AccountNotSignedInError as exc:
+        raise RuntimeError(f"cdp_ask account routing refused: {exc}") from exc
     return open_tab_row_for_ask(
         holder=holder,
         purpose=req.purpose,
@@ -153,17 +159,21 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
         except (RegistryError, SeatContended):
             pass
     from claude_bundles.cdp_registry.models import (
+        AccountNotSignedInError,
         OperatorSeatDeferred,
         resolve_account_id,
     )
 
-    account_id = resolve_account_id(
-        req.account_id,
-        purpose=req.purpose,
-        holder=holder,
-        parent_thread=req.parent_thread,
-        model=req.model,
-    )
+    try:
+        account_id = resolve_account_id(
+            req.account_id,
+            purpose=req.purpose,
+            holder=holder,
+            parent_thread=req.parent_thread,
+            model=req.model,
+        )
+    except AccountNotSignedInError as exc:
+        raise RuntimeError(f"cdp_ask account routing refused: {exc}") from exc
     joined: list = []
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
         try:
