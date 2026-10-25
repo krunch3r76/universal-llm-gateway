@@ -86,14 +86,16 @@ def advance_scan(
         for item in filtered:
             conn.execute(
                 "INSERT OR IGNORE INTO endpoint_wake_ledger "
-                "(agent, thread_id, turn_id, turn_number, state, created_at) "
-                "VALUES (?,?,?,?, 'pending', ?)",
+                "(agent, thread_id, turn_id, turn_number, state, created_at, "
+                "decided_by_rule) "
+                "VALUES (?,?,?,?, 'pending', ?, ?)",
                 (
                     item["agent"],
                     item["thread_id"],
                     item["turn_id"],
                     item["turn_number"],
                     stamp,
+                    item.get("decided_by_rule"),
                 ),
             )
         conn.execute(
@@ -594,6 +596,7 @@ def record_wake_result(
     subscription_id: int | None,
     cse_registration_id: str | None,
     *,
+    decided_by_rule: str | None = None,
     now: str | None = None,
 ) -> int:
     """Persist a result on claimed rows, or unknown rows folded from that claim."""
@@ -608,19 +611,25 @@ def record_wake_result(
         if not eligible:
             raise WakeConflictError("wake_not_claimed")
         ids = [int(r["id"]) for r in eligible]
+        set_rule = (
+            ", decided_by_rule=COALESCE(?, decided_by_rule)" if decided_by_rule else ""
+        )
+        params: list[Any] = [
+            outcome,
+            reason,
+            route,
+            subscription_id,
+            cse_registration_id,
+            finished,
+        ]
+        if decided_by_rule:
+            params.append(decided_by_rule)
+        params.extend(ids)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET state=?, reason=?, route=?, "
-            f"subscription_id=?, cse_registration_id=?, finished_at=? "
+            f"subscription_id=?, cse_registration_id=?, finished_at=?{set_rule} "
             f"WHERE id IN ({','.join('?' * len(ids))})",
-            (
-                outcome,
-                reason,
-                route,
-                subscription_id,
-                cse_registration_id,
-                finished,
-                *ids,
-            ),
+            tuple(params),
         )
     return len(ids)
 

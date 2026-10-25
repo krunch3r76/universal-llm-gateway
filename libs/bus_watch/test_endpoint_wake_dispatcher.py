@@ -20,11 +20,14 @@ from background_supervisor import supervise
 from bus_watch.endpoint_wake_dispatcher import (
     CSE_WAKE_SUBJECT_HEADS,
     GROK_WAKE_SUBJECT_HEADS,
+    _declared_wake_rule_ids,
     _effective_to_agent,
+    _legacy_qualifies,
     _reset_no_composer_state,
     classify_cse,
     classify_display,
     fire_due_wakes,
+    qualify,
     qualifies,
     scan_once,
     subject_allowed,
@@ -2822,6 +2825,98 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 
     assert unsub_calls == []
     assert resolve_endpoint("stage-manager", thread) is not None
+
+
+def test_declared_rule_map_loads_thirteen_rules(db: None) -> None:
+    assert len(_declared_wake_rule_ids()) == 13
+    assert _declared_wake_rule_ids()[0] == "drop_self_or_broadcast"
+    assert _declared_wake_rule_ids()[-1] == "default_suppress"
+
+
+def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
+    """YAML-backed qualify() must match imperative _legacy_qualifies on every case."""
+    agents = (
+        "maestro",
+        "web-anthropic",
+        "grok-bot-gc1",
+        "cursor",
+        "cursor-sdk",
+        "conductor-hop",
+        "dispatch",
+        "all",
+        "",
+    )
+    subjects = (
+        "QUESTION|x",
+        "VERDICT|x",
+        "FACT|telemetry",
+        "ACK|x",
+        "ROUTE|x",
+        "STATUS|ack-batch|x",
+        "TYPE: DIRECTIVE|x",
+        "NOTICE|gap|sha",
+        "pickup|house-cp",
+        "CLOSEOUT|cursor-sdk generate",
+        "contract=conductor caller=conductor-hop",
+        "DONE|x",
+        "RANDOM|noise",
+    )
+    mismatches: list[str] = []
+    for to_agent in agents:
+        for from_agent in agents:
+            for subject in subjects:
+                turn = {
+                    "to_agent": to_agent,
+                    "from_agent": from_agent,
+                    "subject": subject,
+                }
+                for cse in (True, False):
+                    legacy = _legacy_qualifies(turn, cse=cse)
+                    mapped = qualify(turn, cse=cse).wake
+                    if legacy != mapped:
+                        mismatches.append(
+                            f"cse={cse} to={to_agent!r} from={from_agent!r} "
+                            f"subject={subject!r} legacy={legacy} mapped={mapped}"
+                        )
+    assert mismatches == []
+
+
+def test_advance_scan_persists_decided_by_rule(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-decided-by-rule")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|decided-by-rule",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+                "decided_by_rule": "wake_peer_sender",
+            }
+        ],
+        now="2020-01-01 19:00:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["decided_by_rule"] == "wake_peer_sender"
 
 
 def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:

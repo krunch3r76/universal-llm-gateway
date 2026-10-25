@@ -9,9 +9,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from agent_bus_store.routes.threads.send_prep import MAESTRO_MILESTONE_PREFIXES
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
@@ -314,8 +317,139 @@ def subject_allowed(
     return False
 
 
-def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
-    """Fork-1 rule 1, plus wake envelope allowlists on every routed turn."""
+@dataclass(frozen=True)
+class RuleVerdict:
+    """First-match-wins wake qualification outcome."""
+
+    wake: bool
+    rule_id: str
+
+
+_RULES_YAML = Path(__file__).resolve().parent / "endpoint_wake_rules.yaml"
+
+
+@lru_cache(maxsize=1)
+def _declared_wake_rule_ids() -> tuple[str, ...]:
+    """Rule ids from YAML in evaluation order (startup validation only)."""
+    raw = yaml.safe_load(_RULES_YAML.read_text(encoding="utf-8"))
+    rules = raw.get("rules") if isinstance(raw, dict) else None
+    if not isinstance(rules, list):
+        return ()
+    ids: list[str] = []
+    for row in rules:
+        if isinstance(row, dict) and row.get("id"):
+            ids.append(str(row["id"]))
+    return tuple(ids)
+
+
+def _is_routine_conductor_hop_closeout(subject: str) -> bool:
+    lowered = (subject or "").lower()
+    return (
+        "contract=conductor" in lowered
+        and "caller=conductor-hop" in lowered
+        and "degraded" not in lowered
+    )
+
+
+def _subject_allowed_rule_id(
+    subject: str | None, *, cse: bool, to_agent: str | None
+) -> str | None:
+    """Return allowlist rule id when subject_allowed would pass, else None."""
+    text = subject or ""
+    if _is_routine_conductor_hop_closeout(text):
+        return None
+    agent = _effective_to_agent(to_agent, text)
+    if _INTERMEDIATE_SUBJECT_RE.search(text):
+        if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
+            return "wake_gate_or_directive"
+        return None
+    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
+        return "wake_gate_or_directive"
+    if text.startswith("TYPE: DIRECTIVE"):
+        return "wake_gate_or_directive"
+    if not cse and text.startswith(_ROUTE_CONTROL_TYPE):
+        return "wake_gate_or_directive"
+    allowed = CSE_WAKE_SUBJECT_HEADS if cse else GROK_WAKE_SUBJECT_HEADS
+    head = text.split("|", 1)[0].strip().upper()
+    if not cse and head == "NOTICE":
+        parts = [p.strip().lower() for p in text.split("|")]
+        if len(parts) >= 2 and parts[1] == "gap":
+            return "wake_gate_or_directive"
+    if head in allowed:
+        return "wake_cse_allowlist" if cse else "wake_grok_allowlist"
+    if "|" in text and head:
+        first_token = head.split()[0]
+        if first_token in allowed:
+            return "wake_cse_allowlist" if cse else "wake_grok_allowlist"
+    if (
+        not cse
+        and head
+        and head.split()[0]
+        in {
+            "DONE",
+            "FAILED",
+            "BLOCKED",
+            "QUESTION",
+        }
+    ):
+        return "wake_grok_allowlist"
+    return None
+
+
+def qualify(turn: dict[str, Any], *, cse: bool) -> RuleVerdict:
+    """First-match-wins wake qualification (see endpoint_wake_rules.yaml)."""
+    _ = _declared_wake_rule_ids()
+    to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
+    from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
+    subject = str(turn.get("subject") or "")
+    effective_to = _effective_to_agent(turn.get("to_agent"), subject)
+    head = subject.split("|", 1)[0].strip().upper()
+
+    if to_agent in {"all", "team"} or not to_agent or to_agent == from_agent:
+        return RuleVerdict(False, "drop_self_or_broadcast")
+    if to_agent in STAGE_MANAGER_ADDRESSES and from_agent in STAGE_MANAGER_ADDRESSES:
+        return RuleVerdict(False, "drop_stage_mgr_echo")
+    if (
+        to_agent in STAGE_MANAGER_ADDRESSES
+        or to_agent in {"grok-bot", "web-anthropic", "maestro"}
+    ) and head in {"ACK", "ROUTE"}:
+        return RuleVerdict(False, "drop_ack_route_coord")
+    if (
+        from_agent == "grok-bot-gc1"
+        and effective_to == "web-anthropic"
+        and subject.strip().startswith("STATUS|ack-batch|")
+    ):
+        return RuleVerdict(True, "wake_maestro_ack_batch")
+    if _maestro_cse_nonwake_head(
+        to_agent=to_agent,
+        from_agent=from_agent,
+        subject=subject,
+        head=head,
+    ):
+        return RuleVerdict(False, "drop_maestro_telemetry")
+    if (
+        effective_to == "cursor"
+        and from_agent in _ROUTINE_DISPATCH_FROM
+        and _INTERMEDIATE_SUBJECT_RE.search(subject)
+        and _CURSOR_GATE_WAKE_RE.search(subject)
+    ):
+        return RuleVerdict(True, "wake_cursor_gate_on_interm")
+    if from_agent in _ROUTINE_DISPATCH_FROM and _INTERMEDIATE_SUBJECT_RE.search(
+        subject
+    ):
+        return RuleVerdict(False, "drop_dispatch_intermediate")
+    if peer_operator_wake_from(from_agent):
+        return RuleVerdict(True, "wake_peer_sender")
+    if _is_routine_conductor_hop_closeout(subject):
+        return RuleVerdict(False, "drop_routine_hop_closeout")
+    allow_rule = _subject_allowed_rule_id(subject, cse=cse, to_agent=to_agent)
+    if allow_rule is not None:
+        return RuleVerdict(True, allow_rule)
+    return RuleVerdict(False, "default_suppress")
+
+
+def _legacy_qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
+    """Imperative qualification preserved for parity tests."""
     to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
     from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
     if to_agent in {"all", "team"} or not to_agent or to_agent == from_agent:
@@ -338,6 +472,45 @@ def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
     ):
         return False
     return True
+
+
+def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
+    """True when ``qualify`` selects a wake rule."""
+    return qualify(turn, cse=cse).wake
+
+
+def resolve_target(
+    store: StoreClient,
+    agent: str,
+    thread: str,
+    *,
+    raw_to: str | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Thin handler: subscription row or synthetic grok window binding."""
+    return _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
+
+
+def record(
+    store: StoreClient,
+    *,
+    wake_id: str,
+    outcome: str,
+    reason: str | None,
+    route: str | None,
+    subscription_id: int | None,
+    cse_registration_id: str | None,
+    decided_by_rule: str | None = None,
+) -> Any:
+    """Thin handler: persist delivery outcome on claimed ledger rows."""
+    return store.result(
+        wake_id=wake_id,
+        outcome=outcome,
+        reason=reason,
+        route=route,
+        subscription_id=subscription_id,
+        cse_registration_id=cse_registration_id,
+        decided_by_rule=decided_by_rule,
+    )
 
 
 def _grok_binding_row(agent: str) -> dict[str, Any] | None:
@@ -381,13 +554,14 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
     )
 
 
-def _pending_item(turn: dict[str, Any]) -> dict[str, Any]:
+def _pending_item(turn: dict[str, Any], *, decided_by_rule: str) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     return {
         "agent": _effective_to_agent(turn.get("to_agent"), subject),
         "thread_id": str(turn["thread"]),
         "turn_id": int(turn["id"]),
         "turn_number": int(turn["turn_number"]),
+        "decided_by_rule": decided_by_rule,
     }
 
 
@@ -453,7 +627,8 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             )
-        if not qualifies(turn, cse=cse):
+        verdict = qualify(turn, cse=cse)
+        if not verdict.wake:
             continue
         if turn.get("read_at"):
             continue
@@ -466,7 +641,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 continue
         elif resolved is None:
             continue
-        pending.append(_pending_item(turn))
+        pending.append(_pending_item(turn, decided_by_rule=verdict.rule_id))
     new_hw = int(turns[-1]["id"])
     if not pending:
         mark = idle_mark if idle_mark is not None else {}
@@ -771,6 +946,16 @@ def post_wake_registration_refused_alerts(
                 thread,
                 to_agent,
             )
+
+
+def deliver(
+    rows: list[dict[str, Any]],
+    holder: dict[str, Any],
+    *,
+    target_lane: str | None = None,
+) -> tuple[str, str, str | None]:
+    """Thin handler: CSE followup wake delivery."""
+    return _deliver_cse(rows, holder, target_lane=target_lane)
 
 
 def _deliver_cse(
