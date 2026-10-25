@@ -1395,3 +1395,207 @@ def test_seat_superseded_skip_reason_uses_live_wildcard_not_tombstone_exact(
             _seat_superseded_skip_reason(conn, agent="maestro", thread_id=thread)
             is None
         )
+
+
+def test_seat_superseded_skip_reason_tombstone_only_subscription(
+    db: TestClient,
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import (
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import _seat_superseded_skip_reason
+
+    detail = create_thread(thread_id=None, slug="b3-tombstone-only")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="maestro",
+        thread_scope=thread,
+        surface="cse",
+        display="8",
+        title="exact scope",
+        agent_id=thread,
+    )
+    unsubscribe_endpoint(agent="maestro", thread_scope=thread)
+    with connect() as conn:
+        assert (
+            _seat_superseded_skip_reason(conn, agent="maestro", thread_id=thread)
+            == "seat_superseded"
+        )
+
+
+def test_seat_superseded_skip_reason_when_cse_holder_superseded(
+    db: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import _seat_superseded_skip_reason
+
+    @contextmanager
+    def _fake_ledger_conn():
+        yield object()
+
+    detail = create_thread(thread_id=None, slug="b3-holder-superseded")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="maestro",
+        thread_scope=thread,
+        surface="cse",
+        display="8",
+        title="exact scope",
+        agent_id=thread,
+    )
+    holder = {
+        "holder_id": "holder-maestro",
+        "seat_state": "superseded",
+        "registration_id": "reg-old",
+        "chat_url": "https://claude.ai/c/x",
+    }
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders._ledger_conn",
+        _fake_ledger_conn,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.get_driving_holder_for_lane",
+        lambda _conn, _lane: holder,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.ensure_schema",
+        lambda _conn: None,
+    )
+    with connect() as conn:
+        assert (
+            _seat_superseded_skip_reason(conn, agent="maestro", thread_id=thread)
+            == "seat_superseded"
+        )
+
+
+def test_skip_reason_returns_seat_superseded_for_tombstone_subscription(
+    db: TestClient,
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import (
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import _skip_reason
+
+    detail = create_thread(thread_id=None, slug="b3-skip-tombstone")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|b3",
+        body="b",
+    )
+    subscribe_endpoint(
+        agent="maestro",
+        thread_scope=thread,
+        surface="cse",
+        display="8",
+        title="exact scope",
+        agent_id=thread,
+    )
+    unsubscribe_endpoint(agent="maestro", thread_scope=thread)
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:20:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM endpoint_wake_ledger WHERE thread_id=? AND turn_id=?",
+            (thread, t_id),
+        ).fetchone()
+        assert row is not None
+        assert _skip_reason(conn, row) == "seat_superseded"
+
+
+def test_skip_reason_returns_seat_superseded_for_superseded_cse_holder(
+    db: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import _skip_reason
+
+    @contextmanager
+    def _fake_ledger_conn():
+        yield object()
+
+    detail = create_thread(thread_id=None, slug="b3-skip-holder")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|b3h",
+        body="b",
+    )
+    subscribe_endpoint(
+        agent="maestro",
+        thread_scope=thread,
+        surface="cse",
+        display="8",
+        title="exact scope",
+        agent_id=thread,
+    )
+    holder = {
+        "holder_id": "holder-maestro",
+        "seat_state": "superseded",
+        "registration_id": "reg-old",
+        "chat_url": "https://claude.ai/c/x",
+    }
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders._ledger_conn",
+        _fake_ledger_conn,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.get_driving_holder_for_lane",
+        lambda _conn, _lane: holder,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.ensure_schema",
+        lambda _conn: None,
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:21:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM endpoint_wake_ledger WHERE thread_id=? AND turn_id=?",
+            (thread, t_id),
+        ).fetchone()
+        assert row is not None
+        assert _skip_reason(conn, row) == "seat_superseded"

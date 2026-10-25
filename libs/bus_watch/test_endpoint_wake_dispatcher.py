@@ -3017,9 +3017,7 @@ def test_claim_skips_maestro_already_read_after_pending_insert(db: None) -> None
     assert skipped["rows"][0]["reason"] == "already_read"
 
 
-def test_claim_skips_when_owed_wake_dispatched_same_turn(
-    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_claim_skips_when_owed_wake_dispatched_same_turn(db: None, tmp_path) -> None:
     import scripts.model_manager.ui.controller.restart_intent_store as ris_mod
 
     intent_db = tmp_path / "restart-intents.db"
@@ -3067,19 +3065,15 @@ def test_claim_skips_when_owed_wake_dispatched_same_turn(
                 f'[{{"thread_id":"{thread}","turn_number":{t_n}}}]',
                 "[]",
                 "2020-01-01 18:10:05",
+                "dispatched",
                 "2020-01-01 18:10:01",
                 "2020-01-01 18:10:05",
-                "dispatched",
             ),
         )
         conn.commit()
         assert (
             conn.execute("SELECT COUNT(*) AS c FROM owed_wake").fetchone()["c"] == 1
         )
-    monkeypatch.setattr(
-        "agent_bus_store.db.endpoint_wake_ledger._owed_wake_covers_turn",
-        lambda **_kw: True,
-    )
     skipped = claim_due_wakes(now="2020-01-01 18:10:10")
     assert skipped["wake_id"] is None
     assert skipped["rows"][0]["reason"] == "deduped_owed_wake"
@@ -3126,3 +3120,43 @@ def test_fire_due_wakes_skips_when_cse_holder_superseded(
     assert recorded[0]["outcome"] == "skipped"
     assert recorded[0]["reason"] == "seat_superseded"
     assert recorded[0]["decided_by_rule"] == "wake_cse_allowlist"
+
+
+def test_fire_due_wakes_skips_web_anthropic_when_cse_holder_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-web-1",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "web-anthropic",
+                        "thread_id": "40226",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_web_anthropic",
+                    }
+                ],
+            }
+
+        def holder(self, _lane: str) -> dict:
+            return {"seat_state": "superseded", "registration_id": "reg-web-old"}
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._display_seated",
+        lambda _store, _thread: False,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "skipped"
+    assert recorded[0]["reason"] == "seat_superseded"
+    assert recorded[0]["route"] == "cse"
