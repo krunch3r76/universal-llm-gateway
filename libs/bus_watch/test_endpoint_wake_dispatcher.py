@@ -27,8 +27,8 @@ from bus_watch.endpoint_wake_dispatcher import (
     classify_cse,
     classify_display,
     fire_due_wakes,
-    qualify,
     qualifies,
+    qualify,
     scan_once,
     subject_allowed,
 )
