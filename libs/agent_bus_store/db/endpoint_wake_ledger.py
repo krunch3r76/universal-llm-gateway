@@ -168,21 +168,32 @@ def endpoint_wake_covers_turn(
     agent: str,
     thread_id: str,
     turn_number: int,
+    claim_ttl_s: int = 300,
 ) -> bool:
-    """True when the ledger already owns or finished a wake for this turn."""
+    """True when endpoint wake already delivered or holds a live claim for this turn."""
+    canonical = canonical_wake_recipient(agent)
+    agents = _ledger_agents_for_canonical(canonical)
+    if not agents:
+        return False
+    placeholders = ",".join("?" * len(agents))
+    stamp = _now(None)
+    ttl_before = _shift(stamp, -claim_ttl_s)
     rows = conn.execute(
-        "SELECT agent, state FROM endpoint_wake_ledger "
-        "WHERE thread_id=? AND turn_number=? "
-        "AND state IN ('pending', 'claimed', 'delivered', 'unknown')",
-        (thread_id, int(turn_number)),
+        f"SELECT agent, state, claimed_at FROM endpoint_wake_ledger "
+        f"WHERE thread_id=? AND turn_number=? "
+        f"AND lower(trim(agent)) IN ({placeholders})",
+        (thread_id, int(turn_number), *[a.lower() for a in agents]),
     ).fetchall()
     for row in rows:
         if not _agent_matches_canonical(str(row["agent"]), agent):
             continue
-        if str(row["state"]) == "delivered":
+        state = str(row["state"])
+        if state == "delivered":
             return True
-        if str(row["state"]) in {"pending", "claimed", "unknown"}:
-            return True
+        if state == "claimed":
+            claimed_at = str(row["claimed_at"] or "")
+            if claimed_at and claimed_at > ttl_before:
+                return True
     return False
 
 
@@ -223,7 +234,9 @@ def suppress_endpoint_wake_for_turn(
 
 
 def _owed_wake_covers_turn(*, agent: str, thread_id: str, turn_number: int) -> bool:
-    """True when owed_wake already dispatched or still holds an open row for the turn."""
+    """True when owed_wake successfully delivered for this turn (maestro/web alias pair)."""
+    if normalize_bus_address(agent) not in MAESTRO_WEB_ALIAS_PAIR:
+        return False
     try:
         from scripts.model_manager.ui.controller.owed_wake_ledger import (
             decode_turn_refs,
@@ -233,29 +246,29 @@ def _owed_wake_covers_turn(*, agent: str, thread_id: str, turn_number: int) -> b
         )
     except ImportError:
         return False
-    store = RestartIntentStore()
+    store = RestartIntentStore.instance()
+    lane = str(thread_id)
+    want_n = int(turn_number)
     try:
         with store._connect() as conn:
             rows = conn.execute(
-                "SELECT turn_refs, dispatched_at, closed_at FROM owed_wake"
+                """
+                SELECT turn_refs FROM owed_wake
+                WHERE dispatched_at IS NOT NULL
+                  AND COALESCE(dispatch_outcome, 'dispatched') = 'dispatched'
+                """
             ).fetchall()
     except Exception:
         return False
     for row in rows:
-        if row["closed_at"] and not row["dispatched_at"]:
-            continue
         for ref in decode_turn_refs(row["turn_refs"]):
-            if str(ref.get("thread_id") or "") != str(thread_id):
+            if str(ref.get("thread_id") or "") != lane:
                 continue
             try:
                 ref_n = int(ref.get("turn_number"))
             except (TypeError, ValueError):
                 continue
-            if ref_n != int(turn_number):
-                continue
-            if row["dispatched_at"]:
-                return True
-            if row["closed_at"] is None:
+            if ref_n == want_n:
                 return True
     return False
 
@@ -263,31 +276,35 @@ def _owed_wake_covers_turn(*, agent: str, thread_id: str, turn_number: int) -> b
 def _seat_superseded_skip_reason(
     conn: sqlite3.Connection, *, agent: str, thread_id: str
 ) -> str | None:
-    """Skip when the subscribed route is tombstoned or the CSE lane holder is superseded."""
-    row = conn.execute(
-        """
-        SELECT state, surface, agent_id FROM agent_endpoint_subscriptions
-        WHERE agent = ?
-          AND id IN (
-            SELECT MAX(id) FROM agent_endpoint_subscriptions
-            WHERE agent = ?
-            GROUP BY thread_scope
-          )
-          AND (
-            thread_scope = '*'
-            OR thread_scope = ?
-          )
-        ORDER BY CASE WHEN thread_scope = ? THEN 0 WHEN thread_scope = '*' THEN 2 ELSE 1 END,
-                 id DESC
-        LIMIT 1
-        """,
-        (agent, agent, thread_id, thread_id),
-    ).fetchone()
-    if row is not None and str(row["state"] or "") != "subscribed":
-        return "seat_superseded"
-    if row is None or str(row["surface"] or "") != "cse":
+    """Skip when the resolved subscription route's CSE seat is superseded."""
+    _ = conn
+    resolved = resolve_subscription_for_thread(agent, thread_id)
+    if resolved is None:
+        with connect() as sub_conn:
+            row = sub_conn.execute(
+                """
+                SELECT state FROM agent_endpoint_subscriptions
+                WHERE agent = ?
+                  AND id IN (
+                    SELECT MAX(id) FROM agent_endpoint_subscriptions
+                    WHERE agent = ?
+                    GROUP BY thread_scope
+                  )
+                  AND (thread_scope = '*' OR thread_scope = ?)
+                ORDER BY CASE WHEN thread_scope = ? THEN 0
+                              WHEN thread_scope = '*' THEN 2 ELSE 1 END,
+                         id DESC
+                LIMIT 1
+                """,
+                (agent, agent, thread_id, thread_id),
+            ).fetchone()
+        if row is not None and str(row["state"] or "") != "subscribed":
+            return "seat_superseded"
         return None
-    lane = str(row["agent_id"] or thread_id).strip()
+    _route, sub = resolved
+    if str(sub.get("surface") or "") != "cse":
+        return None
+    lane = str(sub.get("agent_id") or thread_id).strip()
     if not lane:
         return None
     try:

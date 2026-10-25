@@ -327,19 +327,47 @@ class RuleVerdict:
 
 _RULES_YAML = Path(__file__).resolve().parent / "endpoint_wake_rules.yaml"
 
+_FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
+    "drop_self_or_broadcast",
+    "drop_stage_mgr_echo",
+    "drop_ack_route_coord",
+    "wake_maestro_ack_batch",
+    "drop_maestro_telemetry",
+    "wake_cursor_gate_on_interm",
+    "drop_dispatch_intermediate",
+    "wake_peer_sender",
+    "drop_routine_hop_closeout",
+    "wake_gate_or_directive",
+    "wake_cse_allowlist",
+    "wake_grok_allowlist",
+    "default_suppress",
+)
+
 
 @lru_cache(maxsize=1)
-def _declared_wake_rule_ids() -> tuple[str, ...]:
-    """Rule ids from YAML in evaluation order (startup validation only)."""
-    raw = yaml.safe_load(_RULES_YAML.read_text(encoding="utf-8"))
+def _load_declared_wake_rules() -> tuple[str, ...]:
+    """Rule ids from YAML in evaluation order; fallback when YAML is missing or corrupt."""
+    try:
+        raw = yaml.safe_load(_RULES_YAML.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("endpoint_wake_rules.yaml load failed: %s", exc)
+        return _FALLBACK_WAKE_RULE_IDS
     rules = raw.get("rules") if isinstance(raw, dict) else None
     if not isinstance(rules, list):
-        return ()
+        logger.warning("endpoint_wake_rules.yaml missing rules list")
+        return _FALLBACK_WAKE_RULE_IDS
     ids: list[str] = []
     for row in rules:
         if isinstance(row, dict) and row.get("id"):
             ids.append(str(row["id"]))
+    if not ids:
+        return _FALLBACK_WAKE_RULE_IDS
     return tuple(ids)
+
+
+def _declared_wake_rule_ids() -> tuple[str, ...]:
+    """Rule ids from YAML in evaluation order (startup validation only)."""
+    return _load_declared_wake_rules()
 
 
 def _is_routine_conductor_hop_closeout(subject: str) -> bool:
@@ -1071,123 +1099,124 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         return claimed
     agent = rows[0]["agent"]
     thread = rows[0]["thread_id"]
+    decided_by_rule = str(rows[0].get("decided_by_rule") or "").strip() or None
+
+    def _finish(
+        *,
+        outcome: str,
+        reason: str | None,
+        route: str | None,
+        subscription_id: int | None,
+        cse_registration_id: str | None,
+    ) -> dict[str, Any]:
+        record(
+            store,
+            wake_id=str(wake_id),
+            outcome=outcome,
+            reason=reason,
+            route=route,
+            subscription_id=subscription_id,
+            cse_registration_id=cse_registration_id,
+            decided_by_rule=decided_by_rule,
+        )
+        return claimed
+
     if agent == "web-anthropic":
         if _display_seated(store, thread):
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="display_seated",
                 route=None,
                 subscription_id=None,
                 cse_registration_id=None,
             )
-            return claimed
         try:
             holder = store.holder(thread)
         except Exception as exc:
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="unknown",
                 reason=type(exc).__name__,
                 route="cse",
                 subscription_id=None,
                 cse_registration_id=None,
             )
-            return claimed
         if not holder:
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="no_route",
                 route=None,
                 subscription_id=None,
                 cse_registration_id=None,
             )
-            return claimed
         if str(holder.get("seat_state") or "") == "superseded":
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="seat_superseded",
                 route="cse",
                 subscription_id=None,
                 cse_registration_id=None,
             )
-            return claimed
-        state, reason, reg = _deliver_cse(rows, holder, target_lane=thread)
-        store.result(
-            wake_id=wake_id,
+        state, reason, reg = deliver(rows, holder, target_lane=thread)
+        return _finish(
             outcome=state,
             reason=reason,
             route="cse",
             subscription_id=None,
             cse_registration_id=reg,
         )
-        return claimed
-    resolved = _resolve_delivery_route(store, agent, thread)
+    resolved = resolve_target(store, agent, thread)
     if resolved is None:
-        store.result(
-            wake_id=wake_id,
+        return _finish(
             outcome="skipped",
             reason="no_route",
             route=None,
             subscription_id=None,
             cse_registration_id=None,
         )
-        return claimed
     route, sub = resolved
     if str(sub.get("surface") or "") == "cse":
         lane = str(sub.get("agent_id") or "").strip()
         if not lane:
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="no_route",
                 route=None,
                 subscription_id=None,
                 cse_registration_id=None,
             )
-            return claimed
         try:
             holder = store.holder(lane)
         except Exception as exc:
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="unknown",
                 reason=type(exc).__name__,
                 route="cse",
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-            return claimed
         if not holder:
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="no_route",
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-            return claimed
         if str(holder.get("seat_state") or "") == "superseded":
-            store.result(
-                wake_id=wake_id,
+            return _finish(
                 outcome="skipped",
                 reason="seat_superseded",
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-            return claimed
         maestro_stamp: SeatRegistrationSnapshot | None = None
         if agent == "maestro":
             maestro_stamp = load_latest_seat_registration_stamp(store)
             if not holder_matches_seat_registration(holder, maestro_stamp):
                 stamp_reg = maestro_stamp.registration_id if maestro_stamp else ""
                 stamp_url = maestro_stamp.chat_url if maestro_stamp else ""
-                store.result(
-                    wake_id=wake_id,
+                _finish(
                     outcome="skipped",
                     reason="seat_registration_mismatch",
                     route="cse",
@@ -1202,7 +1231,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                     stamp_chat_url=stamp_url,
                 )
                 return claimed
-        state, reason, reg = _deliver_cse(rows, holder, target_lane=lane)
+        state, reason, reg = deliver(rows, holder, target_lane=lane)
         stamp_reg = maestro_stamp.registration_id if maestro_stamp else ""
         stamp_url = maestro_stamp.chat_url if maestro_stamp else ""
         post_paste_mismatch = (
@@ -1218,8 +1247,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         need_refused_alert = agent == "maestro" and (
             reason.startswith("cse_authority_split") or post_paste_mismatch
         )
-        store.result(
-            wake_id=wake_id,
+        _finish(
             outcome=state,
             reason=reason,
             route="cse",
@@ -1265,15 +1293,13 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 "ide_hop_land: expire overdue hop failed root=%s",
                 hop_root,
             )
-    store.result(
-        wake_id=wake_id,
+    return _finish(
         outcome=state,
         reason=reason,
         route=route,
         subscription_id=sub.get("id"),
         cse_registration_id=None,
     )
-    return claimed
 
 
 async def run_dispatcher() -> None:

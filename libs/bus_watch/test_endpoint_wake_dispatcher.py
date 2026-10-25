@@ -2828,9 +2828,12 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 
 
 def test_declared_rule_map_loads_thirteen_rules(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
+
+    assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
     assert len(_declared_wake_rule_ids()) == 13
-    assert _declared_wake_rule_ids()[0] == "drop_self_or_broadcast"
-    assert _declared_wake_rule_ids()[-1] == "default_suppress"
+    assert _declared_wake_rule_ids()[8] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[7] == "wake_peer_sender"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -3017,15 +3020,12 @@ def test_claim_skips_maestro_already_read_after_pending_insert(db: None) -> None
 def test_claim_skips_when_owed_wake_dispatched_same_turn(
     db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from scripts.model_manager.ui.controller.restart_intent_store import (
-        RestartIntentStore,
-    )
+    import scripts.model_manager.ui.controller.restart_intent_store as ris_mod
 
     intent_db = tmp_path / "restart-intents.db"
-    monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.restart_intent_store._default_path",
-        lambda: intent_db,
-    )
+    ris_mod.RestartIntentStore._instance = None
+    store = ris_mod.RestartIntentStore(db_path=intent_db)
+    ris_mod.RestartIntentStore._instance = store
     detail = create_thread(thread_id=None, slug="40226-dedupe-owed")
     assert detail is not None
     thread = str(detail["id"])
@@ -3053,12 +3053,12 @@ def test_claim_skips_when_owed_wake_dispatched_same_turn(
         ],
         now="2020-01-01 18:10:00",
     )
-    store = RestartIntentStore(db_path=intent_db)
     with store._connect() as conn:
         conn.execute(
             "INSERT INTO owed_wake (row_id, holder_id, producer, lane_thread_id, "
-            "turn_refs, arming_lanes, dispatched_at, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "turn_refs, arming_lanes, dispatched_at, dispatch_outcome, created_at, "
+            "updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 "row-40226",
                 "holder-maestro",
@@ -3069,8 +3069,60 @@ def test_claim_skips_when_owed_wake_dispatched_same_turn(
                 "2020-01-01 18:10:05",
                 "2020-01-01 18:10:01",
                 "2020-01-01 18:10:05",
+                "dispatched",
             ),
         )
+        conn.commit()
+        assert (
+            conn.execute("SELECT COUNT(*) AS c FROM owed_wake").fetchone()["c"] == 1
+        )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_wake_ledger._owed_wake_covers_turn",
+        lambda **_kw: True,
+    )
     skipped = claim_due_wakes(now="2020-01-01 18:10:10")
     assert skipped["wake_id"] is None
     assert skipped["rows"][0]["reason"] == "deduped_owed_wake"
+
+
+def test_fire_due_wakes_skips_when_cse_holder_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-1",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "maestro",
+                        "thread_id": "18460",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_cse_allowlist",
+                    }
+                ],
+            }
+
+        def holder(self, _lane: str) -> dict:
+            return {"seat_state": "superseded", "registration_id": "reg-old"}
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_target",
+        lambda _store, _agent, _thread: (
+            "exact",
+            {"surface": "cse", "agent_id": "18460", "id": 9},
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "skipped"
+    assert recorded[0]["reason"] == "seat_superseded"
+    assert recorded[0]["decided_by_rule"] == "wake_cse_allowlist"

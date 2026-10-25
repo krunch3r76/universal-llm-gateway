@@ -30,6 +30,20 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_agent_bus_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty bus DB so read_at / endpoint dedupe probes do not hit fleet data."""
+    import scripts.model_manager.ui.controller.restart_intent_store as ris_mod
+
+    ris_mod.RestartIntentStore._instance = None
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "agent-bus.db"))
+    from agent_bus_store.db import init_db
+
+    init_db()
+    yield
+    ris_mod.RestartIntentStore._instance = None
+
+
 def _deps(
     *,
     post_ok: bool = True,
@@ -975,3 +989,208 @@ def test_attempt_dispatch_skips_when_endpoint_wake_already_covers_turn(
     deps.endpoint_wake = lambda **kw: endpoints.append(kw) or True  # type: ignore[method-assign]
     assert attempt_dispatch(store, row, deps=deps) is True
     assert endpoints == []
+
+
+def test_cross_path_order_a_owed_dispatch_then_endpoint_claim_skips(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pending ledger row must not block owed dispatch; claim dedupes after owed delivered."""
+    from agent_bus_store.db import create_thread, init_db, insert_turn
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    store = RestartIntentStore(db_path=tmp_path / "restart.db")
+    detail = create_thread(thread_id=None, slug="40226-order-a")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="MILESTONE|40226|order-a",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 20:00:00",
+    )
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id=thread,
+        turn_ref={"thread_id": thread, "turn_number": t_n, "subject": "MILESTONE|a"},
+    )
+    endpoints: list[dict] = []
+    deps = _deps()
+    deps.endpoint_wake = lambda **kw: endpoints.append(kw) or True  # type: ignore[method-assign]
+    assert attempt_dispatch(store, row, deps=deps) is True
+    assert len(endpoints) == 1
+    skipped = claim_due_wakes(now="2020-01-01 20:00:01")
+    assert skipped["wake_id"] is None
+    assert len(endpoints) == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row["state"] == "skipped"
+    assert row["reason"] == "deduped_owed_wake"
+
+
+def test_cross_path_order_b_endpoint_delivered_then_owed_skips(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delivered endpoint row must skip owed dispatch without a second wake."""
+    from agent_bus_store.db import create_thread, init_db, insert_turn
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+        record_wake_result,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    store = RestartIntentStore(db_path=tmp_path / "restart.db")
+    detail = create_thread(thread_id=None, slug="40226-order-b")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="MILESTONE|40226|order-b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 20:10:00",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 20:10:01")
+    assert claimed["wake_id"] is not None
+    record_wake_result(
+        str(claimed["wake_id"]),
+        "delivered",
+        "ok",
+        "cse",
+        None,
+        None,
+        now="2020-01-01 20:10:02",
+    )
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id=thread,
+        turn_ref={"thread_id": thread, "turn_number": t_n, "subject": "MILESTONE|b"},
+    )
+    endpoints: list[dict] = []
+    deps = _deps()
+    deps.endpoint_wake = lambda **kw: endpoints.append(kw) or True  # type: ignore[method-assign]
+    assert attempt_dispatch(store, row, deps=deps) is True
+    assert endpoints == []
+    updated = store.get_owed_wake(row.row_id)
+    assert updated is not None
+    assert updated.dispatch_outcome == "skipped"
+
+
+def test_cross_path_order_c_held_no_live_seat_endpoint_still_claims(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-dispatched owed outcomes must not block endpoint delivery."""
+    from agent_bus_store.db import create_thread, init_db, insert_turn
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+        record_wake_result,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    store = RestartIntentStore(db_path=tmp_path / "restart.db")
+    detail = create_thread(thread_id=None, slug="40226-order-c")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="MILESTONE|40226|order-c",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 20:20:00",
+    )
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id=thread,
+        turn_ref={"thread_id": thread, "turn_number": t_n, "subject": "MILESTONE|c"},
+    )
+    deps = _deps(holder=None)
+    deps.holder_lookup = lambda _hid: None  # type: ignore[method-assign]
+    assert attempt_dispatch(store, row, deps=deps) is True
+    updated = store.get_owed_wake(row.row_id)
+    assert updated is not None
+    assert updated.dispatch_outcome == "held_no_live_seat"
+    claimed = claim_due_wakes(now="2020-01-01 20:20:01")
+    assert claimed["wake_id"] is not None
+    record_wake_result(
+        str(claimed["wake_id"]),
+        "delivered",
+        "ok",
+        "cse",
+        None,
+        None,
+        now="2020-01-01 20:20:02",
+    )
+    with connect() as conn:
+        state = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
+        ).fetchone()["state"]
+    assert state == "delivered"

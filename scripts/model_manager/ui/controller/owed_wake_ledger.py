@@ -160,6 +160,7 @@ class OwedWakeRow:
     restart_intent_id: str | None
     dispatched_at: str | None
     closed_at: str | None
+    dispatch_outcome: str | None = None
     attempt_count: int = 0
     next_attempt_at: str | None = None
 
@@ -584,6 +585,11 @@ def _turn_refs_all_read(refs: list[dict[str, Any]]) -> bool:
     return True
 
 
+def _producer1_wake_recipient(_row: OwedWakeRow) -> str:
+    """Endpoint ledger agent for producer-1 owed_wake dedupe (maestro holder path)."""
+    return "maestro"
+
+
 def _endpoint_wake_already_delivered(refs: list[dict[str, Any]], *, agent: str) -> bool:
     from agent_bus_store.db.connection import connect
     from agent_bus_store.db.endpoint_wake_ledger import endpoint_wake_covers_turn
@@ -614,7 +620,7 @@ def attempt_dispatch(store: Any, row: OwedWakeRow, *, deps: OwedWakeDeps) -> boo
         store.mark_owed_wake_dispatched(row.row_id, outcome="skipped")
         return True
 
-    wake_agent = "maestro"
+    wake_agent = _producer1_wake_recipient(row)
     if _endpoint_wake_already_delivered(row.turn_refs, agent=wake_agent):
         store.mark_owed_wake_dispatched(row.row_id, outcome="skipped")
         return True
