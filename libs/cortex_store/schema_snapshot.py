@@ -34,8 +34,8 @@ _SEED_TABLES: dict[str, tuple[str, ...]] = {
 
 
 def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Capture tables, columns, indexes, version stamp, and registry seed rows."""
-    schema: dict[str, Any] = {"tables": {}, "indexes": {}}
+    """Capture tables, columns, indexes, views, triggers, version stamp, and seed rows."""
+    schema: dict[str, Any] = {"tables": {}, "indexes": {}, "views": {}, "triggers": {}}
 
     tables = conn.execute(
         "SELECT name, sql FROM sqlite_master "
@@ -55,13 +55,18 @@ def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
     for name, tbl, sql in indexes:
         schema["indexes"][name] = {"table": tbl, "sql": sql}
 
-    schema["views"] = {}
     views = conn.execute(
-        "SELECT name, sql FROM sqlite_master "
-        "WHERE type='view' ORDER BY name"
+        "SELECT name, sql FROM sqlite_master WHERE type='view' ORDER BY name"
     ).fetchall()
     for name, sql in views:
         schema["views"][name] = {"sql": sql}
+
+    triggers = conn.execute(
+        "SELECT name, tbl_name, sql FROM sqlite_master "
+        "WHERE type='trigger' ORDER BY name"
+    ).fetchall()
+    for name, tbl, sql in triggers:
+        schema["triggers"][name] = {"table": tbl, "sql": sql}
 
     try:
         schema["schema_versions"] = [
@@ -116,6 +121,11 @@ def apply_canonical_schema_snapshot(conn: sqlite3.Connection) -> None:
             _exec_idempotent(sql)
     for index in sorted(snapshot["indexes"]):
         sql = snapshot["indexes"][index].get("sql")
+        if sql:
+            _exec_idempotent(sql)
+
+    for trigger in sorted(snapshot.get("triggers", {})):
+        sql = snapshot["triggers"][trigger].get("sql")
         if sql:
             _exec_idempotent(sql)
 
@@ -213,6 +223,8 @@ def diff_schemas(
         for col in cols
     }
     allowed_indexes = set(allowlist.get("replay_only_indexes", []))
+    allowed_views = set(allowlist.get("replay_only_views", []))
+    allowed_triggers = set(allowlist.get("replay_only_triggers", []))
 
     live_tables = set(live["tables"])
     replay_tables = set(replay["tables"])
@@ -234,7 +246,10 @@ def diff_schemas(
             if (table, col) not in allowed_columns:
                 issues.append(f"unexpected replay-only column: {table}.{col}")
         for col in sorted(live_cols.keys() & replay_cols.keys()):
-            if live_cols[col] != replay_cols[col] and (table, col) not in allowed_columns:
+            if (
+                live_cols[col] != replay_cols[col]
+                and (table, col) not in allowed_columns
+            ):
                 issues.append(f"column definition mismatch: {table}.{col}")
 
     live_indexes = set(live["indexes"])
@@ -250,12 +265,26 @@ def diff_schemas(
     for missing in sorted(live_views - replay_views):
         issues.append(f"view missing from replay: {missing}")
     for extra in sorted(replay_views - live_views):
-        issues.append(f"unexpected replay-only view: {extra}")
+        if extra not in allowed_views:
+            issues.append(f"unexpected replay-only view: {extra}")
     for view in sorted(live_views & replay_views):
         live_sql = (live["views"][view].get("sql") or "").strip()
         replay_sql = (replay["views"][view].get("sql") or "").strip()
-        if live_sql != replay_sql:
+        if live_sql != replay_sql and view not in allowed_views:
             issues.append(f"view definition mismatch: {view}")
+
+    live_triggers = set(live.get("triggers", {}))
+    replay_triggers = set(replay.get("triggers", {}))
+    for missing in sorted(live_triggers - replay_triggers):
+        issues.append(f"trigger missing from replay: {missing}")
+    for extra in sorted(replay_triggers - live_triggers):
+        if extra not in allowed_triggers:
+            issues.append(f"unexpected replay-only trigger: {extra}")
+    for trigger in sorted(live_triggers & replay_triggers):
+        live_sql = (live["triggers"][trigger].get("sql") or "").strip()
+        replay_sql = (replay["triggers"][trigger].get("sql") or "").strip()
+        if live_sql != replay_sql and trigger not in allowed_triggers:
+            issues.append(f"trigger definition mismatch: {trigger}")
 
     return issues
 

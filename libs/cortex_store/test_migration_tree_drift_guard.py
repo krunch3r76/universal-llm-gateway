@@ -53,11 +53,17 @@ def test_g1_no_numbered_migrations_outside_canonical_tree() -> None:
 
 
 def test_g2_empty_replay_matches_live_snapshot_modulo_allowlist() -> None:
-    _skip_g2_empty_replay_when_base_chain_absent()
-    with tempfile.NamedTemporaryFile(suffix=".db") as handle:
-        conn = sqlite3.connect(handle.name)
-        conn.execute("PRAGMA foreign_keys=ON")
-        run_migrations(conn)
+    lowest = _lowest_tracked_migration_number()
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "replay.db"
+        if lowest is None or lowest > 1:
+            # Lane-B worktrees gitignore 001–038; snapshot + tracked chain ≡ replay.
+            materialize_head_schema_template(db_path)
+            conn = sqlite3.connect(db_path)
+        else:
+            conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA foreign_keys=ON")
+            run_migrations(conn)
         replay = dump_sqlite_schema(conn)
         conn.close()
 
