@@ -1,0 +1,1794 @@
+.........................................s.............................. [ 61%]
+.....FFFFF..FFFF..F.FF.FF..FFF...............                            [100%]
+=================================== FAILURES ===================================
+______________________________ test_1_fresh_seal _______________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121c9850>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_1_fresh_seal0')
+
+    @pytest.mark.asyncio
+    async def test_1_fresh_seal(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        env = _envelope(_messages(1))
+>       out = await run_seal(
+            _options(), _step(env, _URI),
+            execution_id="e", dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:208: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd122cbd30>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:22.560+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim
+____________________________ test_2_rerun_same_row _____________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121adeb0>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_2_rerun_same_row0')
+
+    @pytest.mark.asyncio
+    async def test_2_rerun_same_row(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        env = _envelope(_messages(1))
+        step = _step(env, _URI)
+>       first = await run_seal(_options(), step, execution_id="e", dispatch=spy.dispatch)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:227: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd122cae30>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:23.192+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim
+_____________________________ test_3_prefix_extend _____________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121becc0>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_3_prefix_extend0')
+
+    @pytest.mark.asyncio
+    async def test_3_prefix_extend(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        uri = _URI
+        first_env = _envelope(_messages(1))
+>       first = await run_seal(
+            _options(), _step(first_env, uri), execution_id="e", dispatch=spy.dispatch
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:243: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa0b80>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:23.757+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim
+___________________________ test_4_diverged_refuses ____________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121c93a0>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_4_diverged_refuses0')
+
+    @pytest.mark.asyncio
+    async def test_4_diverged_refuses(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        uri = _URI
+>       await run_seal(
+            _options(), _step(_envelope(_messages(1)), uri), execution_id="e", dispatch=spy.dispatch
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa13f0>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:24.231+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim
+_______________________ test_5_short_turns_clear_minimum _______________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121cd640>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_5_short_turns_clear_minim0')
+
+    @pytest.mark.asyncio
+    async def test_5_short_turns_clear_minimum(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        short = [
+            {"role": "user", "content": "hi", "turn_index": 1, "timestamp": _START},
+            {"role": "assistant", "content": "yo", "turn_index": 1},
+        ]
+>       out = await run_seal(
+            _options(),
+            _step(_envelope(short), _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:285: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa1d50>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:24.728+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:71c72e6a7b52f638332cf84b7d6b3b6f589fd67a3e2485fc9765d12c91f6a6fc depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:71c72e6a7b52f638332cf84b7d6b3b6f589fd67a3e2485fc9765d12c91f6a6fc depth=verbatim
+__________________________ test_8_agent_and_id_prefix __________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd11f5bd70>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_8_agent_and_id_prefix0')
+
+    @pytest.mark.asyncio
+    async def test_8_agent_and_id_prefix(monkeypatch, tmp_path: Path) -> None:
+        from agent_seat.session_id import SESSION_ID_RE
+    
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+>       out = await run_seal(
+            _options(),
+            _step(_envelope(_messages(1)), _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:345: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa0c70>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-f72',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:25.565+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-f72 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-f72 journal_row=1 hash=sha256:15fe56468603599675f733134aa41b1e8f41ceb3d5af6328b9c1ff01fe96649d depth=verbatim
+_________________________ test_9_lookup_raise_same_id __________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121c3890>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_9_lookup_raise_same_id0')
+
+    @pytest.mark.asyncio
+    async def test_9_lookup_raise_same_id(monkeypatch, tmp_path: Path) -> None:
+        """Identity is the pure derivation. A lookup result must not supply the id."""
+        import cortex_store.db as cortex_db
+        from agent_seat.session_id import derive_session_id_from_timestamp
+    
+        _boot(monkeypatch, tmp_path)
+        expected = derive_session_id_from_timestamp(
+            "grok-bot",
+            _START,
+            deterministic=True,
+            conversation_uuid="agent-lookup",
+        )
+        conn = cortex_db.cortex_conn()
+        try:
+            conn.execute(
+                "INSERT INTO session_journals "
+                "(timestamp, agent, summary, session_id, conversation_uuid) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    "2020-01-01T00:00:00Z",
+                    "grok-bot-hm1",
+                    "conflicting lookup row",
+                    "grok-bot-from-lookup",
+                    "agent-lookup",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        boom = _Spy()
+        _patch_event(monkeypatch, boom)
+>       out = await run_seal(
+            _options("agent-lookup"),
+            _step(_envelope(_messages(1)), _URI),
+            execution_id="e",
+            dispatch=boom.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:388: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa1990>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-22d',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:25.948+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-22d agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-22d journal_row=2 hash=sha256:74e5cd6dda6b5e89cfaf9508aab10c38be0a623af498b0f788856a7e0b7701e0 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-22d agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-22d journal_row=2 hash=sha256:74e5cd6dda6b5e89cfaf9508aab10c38be0a623af498b0f788856a7e0b7701e0 depth=verbatim
+_______________ test_suppression_unchanged_extend_and_read_error _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121ce600>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_suppression_unchanged_ext0')
+
+    @pytest.mark.asyncio
+    async def test_suppression_unchanged_extend_and_read_error(
+        monkeypatch, tmp_path: Path
+    ) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        step = _step(_envelope(_messages(1)), _URI)
+>       await run_seal(_options("agent-suppress"), step, execution_id="e", dispatch=spy.dispatch)
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:406: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa25c0>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-491',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:26.322+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-491 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-491 journal_row=1 hash=sha256:aa7a58d53d00ab66d8640eb4f9fb4bd0d4016efd283c7e7b64f7bb7d92a4184e depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-491 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-491 journal_row=1 hash=sha256:aa7a58d53d00ab66d8640eb4f9fb4bd0d4016efd283c7e7b64f7bb7d92a4184e depth=verbatim
+_____________________ test_suppression_ignores_files_root ______________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121c9340>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_suppression_ignores_files0')
+
+    @pytest.mark.asyncio
+    async def test_suppression_ignores_files_root(monkeypatch, tmp_path: Path) -> None:
+        """Prior hash comes from the entity, so a decoy files root cannot re-fire."""
+        import cortex_store.dispatch_ops.ops_session_close as ops
+        import cortex_store.routes.session_close_persist as persist
+    
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        step = _step(_envelope(_messages(1)), _URI)
+>       first = await run_seal(
+            _options("agent-root"), step, execution_id="e", dispatch=spy.dispatch
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:436: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa2c50>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-678',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:26.716+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-678 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-678 journal_row=1 hash=sha256:81b41ee5d06173c3c802e882649666d013a8d174aefdfedfc622b63fcaac3c9a depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-678 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-678 journal_row=1 hash=sha256:81b41ee5d06173c3c802e882649666d013a8d174aefdfedfc622b63fcaac3c9a depth=verbatim
+_________________ test_conversation_uuid_on_insert_and_reclose _________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd12018410>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_conversation_uuid_on_inse0')
+
+    def test_conversation_uuid_on_insert_and_reclose(monkeypatch, tmp_path: Path) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        step = _step(_envelope(_messages(1)), _URI)
+    
+        async def _go():
+            await run_seal(_options("agent-uuid"), step, execution_id="e", dispatch=spy.dispatch)
+            rows = _journal_rows("agent-uuid")
+            assert rows and rows[0]["conversation_uuid"] == "agent-uuid"
+            await run_seal(_options("agent-uuid"), step, execution_id="e", dispatch=spy.dispatch)
+            again = _journal_rows("agent-uuid")
+            assert len(again) == 1
+            assert again[0]["conversation_uuid"] == "agent-uuid"
+            assert again[0]["id"] == rows[0]["id"]
+    
+        import asyncio
+    
+>       asyncio.run(_go())
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:496: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:485: in _go
+    await run_seal(_options("agent-uuid"), step, execution_id="e", dispatch=spy.dispatch)
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa32e0>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-924',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:27.142+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-924 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-924 journal_row=1 hash=sha256:b004ee2bf433c94632b17fb853562c495368d0fa4c985e085ad5ef8473502801 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-924 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-924 journal_row=1 hash=sha256:b004ee2bf433c94632b17fb853562c495368d0fa4c985e085ad5ef8473502801 depth=verbatim
+_______________ test_later_message_timestamp_does_not_change_id ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd120181d0>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_later_message_timestamp_d0')
+
+    @pytest.mark.asyncio
+    async def test_later_message_timestamp_does_not_change_id(
+        monkeypatch, tmp_path: Path
+    ) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        start = "2026-04-05T06:07:08Z"
+        first_msgs = [
+            {"role": "user", "content": "turn one", "turn_index": 1},
+            {"role": "assistant", "content": "ack one", "turn_index": 1},
+        ]
+        first_env = _envelope(first_msgs)
+        first_env["meta"]["opened_at"] = start
+>       first = await run_seal(
+            {**_options("agent-anchor"), "opened_at": start},
+            _step(first_env, _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:533: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11fa23e0>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-57d',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:28.015+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-57d agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-57d journal_row=1 hash=sha256:b3bf3b6572275d54c63c4f27256239358c7cb9772f74099b536612043d68a9a3 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-57d agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-57d journal_row=1 hash=sha256:b3bf3b6572275d54c63c4f27256239358c7cb9772f74099b536612043d68a9a3 depth=verbatim
+____________________ test_offset_and_zulu_share_session_id _____________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd12167680>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_offset_and_zulu_share_ses0')
+
+    @pytest.mark.asyncio
+    async def test_offset_and_zulu_share_session_id(monkeypatch, tmp_path: Path) -> None:
+        ids: list[str] = []
+        for label, opened in (
+            ("off", "2026-04-05T06:07:08-07:00"),
+            ("z", "2026-04-05T13:07:08Z"),
+        ):
+            root = tmp_path / label
+            root.mkdir()
+            _boot(monkeypatch, root)
+            spy = _Spy()
+            _patch_event(monkeypatch, spy)
+            env = _envelope(_messages(1))
+            env["meta"]["opened_at"] = opened
+            env["messages"][0]["timestamp"] = opened
+>           out = await run_seal(
+                _options("agent-tz"),
+                _step(env, _URI),
+                execution_id="e",
+                dispatch=spy.dispatch,
+            )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:577: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd122ca020>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-130708-8f2',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:28.537+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-130708-8f2 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-130708-8f2 journal_row=1 hash=sha256:8537258760ae8f433f391483b76429fbdfbd8171e466919713ae7ab58b6256a1 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-130708-8f2 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-130708-8f2 journal_row=1 hash=sha256:8537258760ae8f433f391483b76429fbdfbd8171e466919713ae7ab58b6256a1 depth=verbatim
+__________ test_entity_without_id_or_attributes_is_prior_read_failed ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd121ae5a0>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_entity_without_id_or_attr0')
+
+    @pytest.mark.asyncio
+    async def test_entity_without_id_or_attributes_is_prior_read_failed(
+        monkeypatch, tmp_path: Path
+    ) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy(prior_body={"detail": "not an entity"})
+        _patch_event(monkeypatch, spy)
+>       out = await run_seal(
+            _options("agent-prior"),
+            _step(_envelope(_messages(1)), _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:610: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd573467a0>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-70f',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:29.354+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-70f agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-70f journal_row=1 hash=sha256:33fe037375d188f65efac50fb2cb1bc8e77c14f09c1040eefe26a404cadb63ee depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-70f agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-70f journal_row=1 hash=sha256:33fe037375d188f65efac50fb2cb1bc8e77c14f09c1040eefe26a404cadb63ee depth=verbatim
+_______________ test_status_404_without_error_key_is_first_seal ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd12165f10>
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_status_404_without_error_0')
+
+    @pytest.mark.asyncio
+    async def test_status_404_without_error_key_is_first_seal(
+        monkeypatch, tmp_path: Path
+    ) -> None:
+        _boot(monkeypatch, tmp_path)
+        spy = _Spy(prior_body={"status_code": 404, "detail": "Entity not found"})
+        _patch_event(monkeypatch, spy)
+>       out = await run_seal(
+            _options("agent-404"),
+            _step(_envelope(_messages(1)), _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:629: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/seal.py:189: in run_seal
+    result = await seal_messages_envelope(
+libs/continuity_tape/seal_messages.py:106: in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pipelines/grokbot_checkpoint/v1/handlers/test_contract.py:131: in dispatch
+    result = _op_session_close(**args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd122cb880>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-04-05-060708-77a',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:29.809+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-04-05-060708-77a agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-77a journal_row=1 hash=sha256:c45a980c68722290f716c7ce96fc72de8f86e625376a4f5960786a83b0b5499b depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+------------------------------ Captured log call -------------------------------
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-04-05-060708-77a agent=grok-bot-hm1 entity=transcript:grok-bot-2026-04-05-060708-77a journal_row=1 hash=sha256:c45a980c68722290f716c7ce96fc72de8f86e625376a4f5960786a83b0b5499b depth=verbatim
+_________________________ test_dag_happy_and_refusals __________________________
+
+tool = 'session_close'
+args = {'agent': 'grok-bot', 'closed_by': 'succession', 'conversation_uuid': '00000000-0000-0000-0000-000016045011', 'entity_ids': ['agent-bus:10'], ...}
+
+    async def dispatch(tool: str, args: dict) -> dict:
+        assert tool in _OP_SPECS
+        dispatch_sig.bind(tool, args)
+        calls.append(tool)
+        if tool not in {"session_close", "entity_get"}:
+            return {}
+        if tool == "session_close":
+            close_args.append(dict(args))
+>       result = execute_op(tool, args)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:140: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+libs/cortex_store/dispatch_ops/__init__.py:284: in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11b64f40>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-03-01-000001-7ad',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd12183140>
+transport = {'calls': ['entity_get', 'session_close'], 'close_args': [{'agent': 'grok-bot', 'closed_by': 'succession', 'conversati...ids': ['agent-bus:10'], ...}], 'dispatch': <function transport.<locals>.dispatch at 0x77bd11faac00>, 'events': [], ...}
+
+    @pytest.mark.asyncio
+    async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) -> None:
+        boot_cortex(monkeypatch, tmp_path)
+        registry = _load_registry(tmp_path / "reg")
+        card = _CARD.encode()
+        (tmp_path / "notes").mkdir()
+        (tmp_path / "notes" / "card.md").write_bytes(card)
+        raw = _raw_bytes(_AGENT_HAPPY)
+        transcribed = restamp_transcript_id(
+            (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+            _AGENT_HAPPY,
+        )
+        (tmp_path / "notes" / "raw.json").write_bytes(raw)
+        (tmp_path / "notes" / "tr.json").write_bytes(transcribed)
+        base = {
+            "house": "h",
+            "n": 1,
+            "agent_id": _AGENT_HAPPY,
+            "bus_identity": "grok-bot",
+            "root_thread": "10",
+            "verify_lane": "11",
+            "verifier": "verifier",
+            "trigger": "hop",
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": file_sha256(card),
+            "snapshot_uri": "notes/system/transcripts/grok/h-agent123.transcribed.messages.json",
+            "channel": "cp",
+            "residue": "r",
+            "wait_verify_seconds": 0,
+        }
+>       happy = await _run(
+            registry,
+            {
+                **base,
+                "mode": "seal",
+                "transcribed_ref": "notes/tr.json",
+                "transcribed_sha256": file_sha256(transcribed),
+                "raw_ref": "notes/raw.json",
+                "raw_sha256": file_sha256(raw),
+            },
+            tmp_path,
+        )
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:260: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:205: in _run
+    await DAGExecutor(nodes, ctx).execute()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:111: in execute
+    await execute_dag(self)
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/lifecycle.py:126: in execute_dag
+    await executor._await_and_handle_completions()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:140: in _await_and_handle_completions
+    await await_and_handle_completions(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+executor = <systems.pipeline.core.execution.dag_executor.executor.dag_executor.DAGExecutor object at 0x77bd12165b80>
+
+    async def await_and_handle_completions(executor: DAGExecutor) -> None:
+        """Await the first finished step task, release its model gate, and fail fast on
+        error.
+    
+        Uses ``asyncio.wait(FIRST_COMPLETED)`` over ``executor._pending_tasks``
+        (no-op when empty). Each done task is popped, its target model resolved via
+        the coordinator, and ``on_step_finished`` called with outcome
+        ``success``/``failure``. On failure the node is marked ``FAILED``, a
+        gate-released-on-failure event is emitted when a model was held, all other
+        pending tasks are cancelled, and the error is re-raised.
+    
+        Raises:
+            PipelineExecutionError: A step task raised, or a finished task's name
+                does not map to a known step id.
+        """
+        if not executor._pending_tasks:
+            return
+    
+        done, _ = await asyncio.wait(
+            executor._pending_tasks.values(),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    
+        for task in done:
+            step_id = task.get_name().removeprefix("step-")
+            node = executor.nodes.get(step_id)
+            if node is None:
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+                raise PipelineExecutionError(
+                    f"Completed task has unknown step id: {step_id}"
+                )
+    
+            _ = executor._pending_tasks.pop(step_id, None)
+            target_model = await executor._model_coordination.resolve_target_model(node)
+    
+            try:
+                task.result()
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="success",
+                )
+            except Exception as e:
+                logger.error(f"Step '{step_id}' failed: {e}", exc_info=True)
+                node.state = StepState.FAILED
+                node.error = e
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="failure",
+                )
+                if target_model:
+                    executor._observability.emit_pipeline_model_gate_released_on_failure(
+                        step_id=step_id,
+                        model_id=target_model,
+                        error_type=type(e).__name__,
+                    )
+    
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+>               raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
+E               systems.pipeline.core.dag.PipelineExecutionError: Step 'seal' failed: no such table: session_lids
+
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py:87: PipelineExecutionError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.255+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.256+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.259+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search","caller":{"file":"core.py","func":"_load_from_sources_body","line":249},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.259+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search","caller":{"file":"loader.py","func":"_load_from_search_path","line":122},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.259+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"  📁 Loading domain: grokbot_checkpoint","caller":{"file":"loader.py","func":"_load_domain","line":149},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.268+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"    ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml","caller":{"file":"loader.py","func":"_load_pipeline","line":446},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.270+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)","caller":{"file":"core.py","func":"_load_from_sources_body","line":290},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.272+00:00","level":"INFO","logger":"systems.pipeline.core.dag","message":"DAG built: 13 nodes, 1 ready","caller":{"file":"dag.py","func":"build","line":129},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.276+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.context","message":"Event bus unavailable - events will not be published","caller":{"file":"context.py","func":"publish_event","line":64},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.277+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'admit' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.279+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.280+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'source' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.280+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.280+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.281+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'envelope' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.603+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-03-01-000001-7ad agent=grok-bot entity=transcript:grok-bot-2026-03-01-000001-7ad journal_row=1 hash=sha256:30926126ea92799d904e48edc50bbf55ce2905f4a0cb9fd429dc043971618541 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.604+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'","caller":{"file":"outcomes.py","func":"record_failure","line":255},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:30.605+00:00","level":"ERROR","logger":"systems.pipeline.core.execution.dag_executor.executor.completions","message":"Step 'seal' failed: no such table: session_lids","caller":{"file":"completions.py","func":"await_and_handle_completions","line":70},"process":3537567,"thread":"MainThread","error":{"type":"OperationalError","message":"no such table: session_lids","traceback":"Traceback (most recent call last):\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py\", line 63, in await_and_handle_completions\n    task.result()\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 180, in _execute_step\n    await execute_step(self, node)\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 93, in execute_step\n    output = await executor._run_step(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 196, in _run_step\n    return await run_step(\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 125, in run_step\n    return await executor._run_step_inner(step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 207, in _run_step_inner\n    return await run_step_inner(self, step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 166, in run_step_inner\n    return await execute_step_with_wrappers(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 81, in execute_step_with_wrappers\n    result = await with_retry()\n             ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 71, in with_retry\n    return await with_handler_timeout()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 61, in with_handler_timeout\n    return await handler_fn()\n           ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 164, in handler_fn\n    return await HandlerRegistry.execute(step, executor.context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py\", line 133, in execute\n    return await handler.execute(step, context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 248, in execute\n    payload = await run_seal(\n              ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 189, in run_seal\n    result = await seal_messages_envelope(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py\", line 106, in seal_messages_envelope\n    close = await cortex_dispatch_fn(\"session_close\", close_args)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py\", line 140, in dispatch\n    result = execute_op(tool, args)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py\", line 284, in execute_op\n    result = handler(**parsed)\n             ^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 718, in _op_session_close\n    _append_session_close_warnings(\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 109, in _append_session_close_warnings\n    findings = run_detectors(\n               ^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py\", line 297, in run_detectors\n    findings.extend(detector(conn, subject))\n                    ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py\", line 60, in detect_prior_session_id_omitted\n    rows = query(conn, sql, params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py\", line 83, in query\n    rows = conn.execute(sql, params).fetchall()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.OperationalError: no such table: session_lids"}}
+------------------------------ Captured log call -------------------------------
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler
+INFO     systems.pipeline.registry.core:core.py:249 🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:122 📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_dag_happy_and_refusals0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:149   📁 Loading domain: grokbot_checkpoint
+INFO     systems.pipeline.registry.loader:loader.py:446     ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml
+INFO     systems.pipeline.registry.core:core.py:290 ✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)
+INFO     systems.pipeline.core.dag:dag.py:129 DAG built: 13 nodes, 1 ready
+WARNING  systems.pipeline.core.execution.dag_executor.observability.context:context.py:64 Event bus unavailable - events will not be published
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'admit' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'source' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'envelope' completed (latency: 0ms)
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-03-01-000001-7ad agent=grok-bot entity=transcript:grok-bot-2026-03-01-000001-7ad journal_row=1 hash=sha256:30926126ea92799d904e48edc50bbf55ce2905f4a0cb9fd429dc043971618541 depth=verbatim
+WARNING  systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:255 Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'
+ERROR    systems.pipeline.core.execution.dag_executor.executor.completions:completions.py:70 Step 'seal' failed: no such table: session_lids
+Traceback (most recent call last):
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py", line 63, in await_and_handle_completions
+    task.result()
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 180, in _execute_step
+    await execute_step(self, node)
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 93, in execute_step
+    output = await executor._run_step(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 196, in _run_step
+    return await run_step(
+           ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 125, in run_step
+    return await executor._run_step_inner(step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 207, in _run_step_inner
+    return await run_step_inner(self, step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 166, in run_step_inner
+    return await execute_step_with_wrappers(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 81, in execute_step_with_wrappers
+    result = await with_retry()
+             ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 71, in with_retry
+    return await with_handler_timeout()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 61, in with_handler_timeout
+    return await handler_fn()
+           ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 164, in handler_fn
+    return await HandlerRegistry.execute(step, executor.context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py", line 133, in execute
+    return await handler.execute(step, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 248, in execute
+    payload = await run_seal(
+              ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 189, in run_seal
+    result = await seal_messages_envelope(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py", line 106, in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py", line 140, in dispatch
+    result = execute_op(tool, args)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py", line 284, in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 718, in _op_session_close
+    _append_session_close_warnings(
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 109, in _append_session_close_warnings
+    findings = run_detectors(
+               ^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py", line 297, in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py", line 60, in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py", line 83, in query
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such table: session_lids
+________________ test_rerun_is_idempotent_until_snapshot_grows _________________
+
+tool = 'session_close'
+args = {'agent': 'grok-bot-hm1', 'closed_by': 'succession', 'conversation_uuid': '00000000-0000-0000-0000-000016045015', 'entity_ids': ['agent-bus:10'], ...}
+
+    async def dispatch(tool: str, args: dict) -> dict:
+        assert tool in _OP_SPECS
+        dispatch_sig.bind(tool, args)
+        calls.append(tool)
+        if tool not in {"session_close", "entity_get"}:
+            return {}
+        if tool == "session_close":
+            close_args.append(dict(args))
+>       result = execute_op(tool, args)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:140: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+libs/cortex_store/dispatch_ops/__init__.py:284: in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11b65990>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-03-01-000001-6e7',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd5730c890>
+transport = {'calls': ['entity_get', 'session_close'], 'close_args': [{'agent': 'grok-bot-hm1', 'closed_by': 'succession', 'conver...ids': ['agent-bus:10'], ...}], 'dispatch': <function transport.<locals>.dispatch at 0x77bd1271d940>, 'events': [], ...}
+
+    @pytest.mark.asyncio
+    async def test_rerun_is_idempotent_until_snapshot_grows(
+        tmp_path: Path, monkeypatch, transport
+    ) -> None:
+        boot_cortex(monkeypatch, tmp_path)
+        registry = _load_registry(tmp_path / "reg")
+        raw = _raw_bytes()
+        agent_id = _AGENT_IDEM
+        options = _seal_options(tmp_path, house="idem", agent_id=agent_id, n=1, raw=raw)
+>       first = await _run(registry, options, tmp_path)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:532: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:205: in _run
+    await DAGExecutor(nodes, ctx).execute()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:111: in execute
+    await execute_dag(self)
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/lifecycle.py:126: in execute_dag
+    await executor._await_and_handle_completions()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:140: in _await_and_handle_completions
+    await await_and_handle_completions(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+executor = <systems.pipeline.core.execution.dag_executor.executor.dag_executor.DAGExecutor object at 0x77bd119b2cf0>
+
+    async def await_and_handle_completions(executor: DAGExecutor) -> None:
+        """Await the first finished step task, release its model gate, and fail fast on
+        error.
+    
+        Uses ``asyncio.wait(FIRST_COMPLETED)`` over ``executor._pending_tasks``
+        (no-op when empty). Each done task is popped, its target model resolved via
+        the coordinator, and ``on_step_finished`` called with outcome
+        ``success``/``failure``. On failure the node is marked ``FAILED``, a
+        gate-released-on-failure event is emitted when a model was held, all other
+        pending tasks are cancelled, and the error is re-raised.
+    
+        Raises:
+            PipelineExecutionError: A step task raised, or a finished task's name
+                does not map to a known step id.
+        """
+        if not executor._pending_tasks:
+            return
+    
+        done, _ = await asyncio.wait(
+            executor._pending_tasks.values(),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    
+        for task in done:
+            step_id = task.get_name().removeprefix("step-")
+            node = executor.nodes.get(step_id)
+            if node is None:
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+                raise PipelineExecutionError(
+                    f"Completed task has unknown step id: {step_id}"
+                )
+    
+            _ = executor._pending_tasks.pop(step_id, None)
+            target_model = await executor._model_coordination.resolve_target_model(node)
+    
+            try:
+                task.result()
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="success",
+                )
+            except Exception as e:
+                logger.error(f"Step '{step_id}' failed: {e}", exc_info=True)
+                node.state = StepState.FAILED
+                node.error = e
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="failure",
+                )
+                if target_model:
+                    executor._observability.emit_pipeline_model_gate_released_on_failure(
+                        step_id=step_id,
+                        model_id=target_model,
+                        error_type=type(e).__name__,
+                    )
+    
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+>               raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
+E               systems.pipeline.core.dag.PipelineExecutionError: Step 'seal' failed: no such table: session_lids
+
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py:87: PipelineExecutionError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.224+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.225+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.225+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.225+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.225+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.228+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search","caller":{"file":"core.py","func":"_load_from_sources_body","line":249},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.228+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search","caller":{"file":"loader.py","func":"_load_from_search_path","line":122},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.228+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"  📁 Loading domain: grokbot_checkpoint","caller":{"file":"loader.py","func":"_load_domain","line":149},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.236+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"    ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml","caller":{"file":"loader.py","func":"_load_pipeline","line":446},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.237+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)","caller":{"file":"core.py","func":"_load_from_sources_body","line":290},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.240+00:00","level":"INFO","logger":"systems.pipeline.core.dag","message":"DAG built: 13 nodes, 1 ready","caller":{"file":"dag.py","func":"build","line":129},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.240+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.context","message":"Event bus unavailable - events will not be published","caller":{"file":"context.py","func":"publish_event","line":64},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.240+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'admit' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.241+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.241+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'source' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.241+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.241+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.242+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'envelope' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.260+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-03-01-000001-6e7 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-03-01-000001-6e7 journal_row=1 hash=sha256:fa0cf52632fe56f3b80dc0c803f8f25a5d068b596684bf288d9960cf4c75a440 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.261+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'","caller":{"file":"outcomes.py","func":"record_failure","line":255},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.262+00:00","level":"ERROR","logger":"systems.pipeline.core.execution.dag_executor.executor.completions","message":"Step 'seal' failed: no such table: session_lids","caller":{"file":"completions.py","func":"await_and_handle_completions","line":70},"process":3537567,"thread":"MainThread","error":{"type":"OperationalError","message":"no such table: session_lids","traceback":"Traceback (most recent call last):\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py\", line 63, in await_and_handle_completions\n    task.result()\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 180, in _execute_step\n    await execute_step(self, node)\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 93, in execute_step\n    output = await executor._run_step(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 196, in _run_step\n    return await run_step(\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 125, in run_step\n    return await executor._run_step_inner(step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 207, in _run_step_inner\n    return await run_step_inner(self, step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 166, in run_step_inner\n    return await execute_step_with_wrappers(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 81, in execute_step_with_wrappers\n    result = await with_retry()\n             ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 71, in with_retry\n    return await with_handler_timeout()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 61, in with_handler_timeout\n    return await handler_fn()\n           ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 164, in handler_fn\n    return await HandlerRegistry.execute(step, executor.context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py\", line 133, in execute\n    return await handler.execute(step, context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 248, in execute\n    payload = await run_seal(\n              ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 189, in run_seal\n    result = await seal_messages_envelope(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py\", line 106, in seal_messages_envelope\n    close = await cortex_dispatch_fn(\"session_close\", close_args)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py\", line 140, in dispatch\n    result = execute_op(tool, args)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py\", line 284, in execute_op\n    result = handler(**parsed)\n             ^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 718, in _op_session_close\n    _append_session_close_warnings(\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 109, in _append_session_close_warnings\n    findings = run_detectors(\n               ^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py\", line 297, in run_detectors\n    findings.extend(detector(conn, subject))\n                    ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py\", line 60, in detect_prior_session_id_omitted\n    rows = query(conn, sql, params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py\", line 83, in query\n    rows = conn.execute(sql, params).fetchall()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.OperationalError: no such table: session_lids"}}
+------------------------------ Captured log call -------------------------------
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler
+INFO     systems.pipeline.registry.core:core.py:249 🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:122 📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_rerun_is_idempotent_until0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:149   📁 Loading domain: grokbot_checkpoint
+INFO     systems.pipeline.registry.loader:loader.py:446     ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml
+INFO     systems.pipeline.registry.core:core.py:290 ✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)
+INFO     systems.pipeline.core.dag:dag.py:129 DAG built: 13 nodes, 1 ready
+WARNING  systems.pipeline.core.execution.dag_executor.observability.context:context.py:64 Event bus unavailable - events will not be published
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'admit' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'source' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'envelope' completed (latency: 0ms)
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-03-01-000001-6e7 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-03-01-000001-6e7 journal_row=1 hash=sha256:fa0cf52632fe56f3b80dc0c803f8f25a5d068b596684bf288d9960cf4c75a440 depth=verbatim
+WARNING  systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:255 Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'
+ERROR    systems.pipeline.core.execution.dag_executor.executor.completions:completions.py:70 Step 'seal' failed: no such table: session_lids
+Traceback (most recent call last):
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py", line 63, in await_and_handle_completions
+    task.result()
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 180, in _execute_step
+    await execute_step(self, node)
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 93, in execute_step
+    output = await executor._run_step(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 196, in _run_step
+    return await run_step(
+           ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 125, in run_step
+    return await executor._run_step_inner(step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 207, in _run_step_inner
+    return await run_step_inner(self, step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 166, in run_step_inner
+    return await execute_step_with_wrappers(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 81, in execute_step_with_wrappers
+    result = await with_retry()
+             ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 71, in with_retry
+    return await with_handler_timeout()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 61, in with_handler_timeout
+    return await handler_fn()
+           ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 164, in handler_fn
+    return await HandlerRegistry.execute(step, executor.context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py", line 133, in execute
+    return await handler.execute(step, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 248, in execute
+    payload = await run_seal(
+              ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 189, in run_seal
+    result = await seal_messages_envelope(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py", line 106, in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py", line 140, in dispatch
+    result = execute_op(tool, args)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py", line 284, in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 718, in _op_session_close
+    _append_session_close_warnings(
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 109, in _append_session_close_warnings
+    findings = run_detectors(
+               ^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py", line 297, in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py", line 60, in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py", line 83, in query
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such table: session_lids
+___________________ test_crash_before_session_close_reseals ____________________
+
+tool = 'session_close'
+args = {'agent': 'grok-bot-hm1', 'closed_by': 'succession', 'conversation_uuid': '00000000-0000-0000-0000-000016045016', 'entity_ids': ['agent-bus:10'], ...}
+
+    async def dispatch(tool: str, args: dict) -> dict:
+        assert tool in _OP_SPECS
+        dispatch_sig.bind(tool, args)
+        calls.append(tool)
+        if tool not in {"session_close", "entity_get"}:
+            return {}
+        if tool == "session_close":
+            close_args.append(dict(args))
+>       result = execute_op(tool, args)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:140: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+libs/cortex_store/dispatch_ops/__init__.py:284: in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/ops_session_close.py:718: in _op_session_close
+    _append_session_close_warnings(
+libs/cortex_store/dispatch_ops/ops_session_close.py:109: in _append_session_close_warnings
+    findings = run_detectors(
+libs/cortex_store/dispatch_ops/ops_audit_detectors.py:297: in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+libs/cortex_store/dispatch_ops/_detectors/session.py:60: in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x77bd11b66a70>
+sql = '\n        SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path\n        FROM session_lids sj\n        WHER...       WHERE earlier.agent = sj.agent\n                AND earlier.id < sj.id\n          )\n     AND sj.session_id = ?'
+params = ('grok-bot-2026-03-01-000001-1c1',)
+
+    def query(
+        conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+>       rows = conn.execute(sql, params).fetchall()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: no such table: session_lids
+
+libs/cortex_store/db.py:83: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77bd119b3860>
+transport = {'calls': ['entity_get', 'session_close'], 'close_args': [{'agent': 'grok-bot-hm1', 'closed_by': 'succession', 'conver...ids': ['agent-bus:10'], ...}], 'dispatch': <function transport.<locals>.dispatch at 0x77bd1196ad40>, 'events': [], ...}
+
+    @pytest.mark.asyncio
+    async def test_crash_before_session_close_reseals(
+        tmp_path: Path, monkeypatch, transport
+    ) -> None:
+        from . import seal as seal_mod
+    
+        boot_cortex(monkeypatch, tmp_path)
+        registry = _load_registry(tmp_path / "reg")
+        raw = _raw_bytes()
+        agent_id = _AGENT_CRASH
+        options = _seal_options(tmp_path, house="crash", agent_id=agent_id, n=1, raw=raw)
+    
+        async def die(tool: str, args: dict) -> dict:
+            raise RuntimeError("died before session_close")
+    
+        monkeypatch.setattr(seal_mod, "cortex_dispatch", die)
+        from systems.pipeline.core.dag import PipelineExecutionError
+    
+        with pytest.raises(PipelineExecutionError, match="died before session_close"):
+            await _run(registry, options, tmp_path)
+        assert journal_count(agent_id) == 0
+        snap = tmp_path / options["snapshot_uri"]
+        assert snap.is_file()
+        monkeypatch.setattr(seal_mod, "cortex_dispatch", transport["dispatch"])
+        closes_before = transport["calls"].count("session_close")
+>       second = await _run(registry, options, tmp_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:603: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py:205: in _run
+    await DAGExecutor(nodes, ctx).execute()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:111: in execute
+    await execute_dag(self)
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/lifecycle.py:126: in execute_dag
+    await executor._await_and_handle_completions()
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py:140: in _await_and_handle_completions
+    await await_and_handle_completions(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+executor = <systems.pipeline.core.execution.dag_executor.executor.dag_executor.DAGExecutor object at 0x77bd113b8c50>
+
+    async def await_and_handle_completions(executor: DAGExecutor) -> None:
+        """Await the first finished step task, release its model gate, and fail fast on
+        error.
+    
+        Uses ``asyncio.wait(FIRST_COMPLETED)`` over ``executor._pending_tasks``
+        (no-op when empty). Each done task is popped, its target model resolved via
+        the coordinator, and ``on_step_finished`` called with outcome
+        ``success``/``failure``. On failure the node is marked ``FAILED``, a
+        gate-released-on-failure event is emitted when a model was held, all other
+        pending tasks are cancelled, and the error is re-raised.
+    
+        Raises:
+            PipelineExecutionError: A step task raised, or a finished task's name
+                does not map to a known step id.
+        """
+        if not executor._pending_tasks:
+            return
+    
+        done, _ = await asyncio.wait(
+            executor._pending_tasks.values(),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    
+        for task in done:
+            step_id = task.get_name().removeprefix("step-")
+            node = executor.nodes.get(step_id)
+            if node is None:
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+                raise PipelineExecutionError(
+                    f"Completed task has unknown step id: {step_id}"
+                )
+    
+            _ = executor._pending_tasks.pop(step_id, None)
+            target_model = await executor._model_coordination.resolve_target_model(node)
+    
+            try:
+                task.result()
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="success",
+                )
+            except Exception as e:
+                logger.error(f"Step '{step_id}' failed: {e}", exc_info=True)
+                node.state = StepState.FAILED
+                node.error = e
+                executor._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="failure",
+                )
+                if target_model:
+                    executor._observability.emit_pipeline_model_gate_released_on_failure(
+                        step_id=step_id,
+                        model_id=target_model,
+                        error_type=type(e).__name__,
+                    )
+    
+                for remaining_task in executor._pending_tasks.values():
+                    _ = remaining_task.cancel()
+>               raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
+E               systems.pipeline.core.dag.PipelineExecutionError: Step 'seal' failed: no such table: session_lids
+
+services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py:87: PipelineExecutionError
+----------------------------- Captured stderr call -----------------------------
+{"@timestamp":"2026-10-25T21:04:31.869+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.869+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.869+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.870+00:00","level":"INFO","logger":"systems.pipeline.core.domain_router","message":"Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler","caller":{"file":"domain_router.py","func":"register_domain_handler_class","line":85},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.873+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search","caller":{"file":"core.py","func":"_load_from_sources_body","line":249},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.873+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search","caller":{"file":"loader.py","func":"_load_from_search_path","line":122},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.873+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"  📁 Loading domain: grokbot_checkpoint","caller":{"file":"loader.py","func":"_load_domain","line":149},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.881+00:00","level":"INFO","logger":"systems.pipeline.registry.loader","message":"    ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml","caller":{"file":"loader.py","func":"_load_pipeline","line":446},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.882+00:00","level":"INFO","logger":"systems.pipeline.registry.core","message":"✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)","caller":{"file":"core.py","func":"_load_from_sources_body","line":290},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.883+00:00","level":"INFO","logger":"systems.pipeline.core.dag","message":"DAG built: 13 nodes, 1 ready","caller":{"file":"dag.py","func":"build","line":129},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.884+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.context","message":"Event bus unavailable - events will not be published","caller":{"file":"context.py","func":"publish_event","line":64},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.884+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'admit' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.884+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.885+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'source' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.885+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.885+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.886+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'envelope' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.886+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'","caller":{"file":"outcomes.py","func":"record_failure","line":255},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.887+00:00","level":"ERROR","logger":"systems.pipeline.core.execution.dag_executor.executor.completions","message":"Step 'seal' failed: died before session_close","caller":{"file":"completions.py","func":"await_and_handle_completions","line":70},"process":3537567,"thread":"MainThread","error":{"type":"RuntimeError","message":"died before session_close","traceback":"Traceback (most recent call last):\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py\", line 63, in await_and_handle_completions\n    task.result()\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 180, in _execute_step\n    await execute_step(self, node)\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 93, in execute_step\n    output = await executor._run_step(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 196, in _run_step\n    return await run_step(\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 125, in run_step\n    return await executor._run_step_inner(step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 207, in _run_step_inner\n    return await run_step_inner(self, step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 166, in run_step_inner\n    return await execute_step_with_wrappers(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 81, in execute_step_with_wrappers\n    result = await with_retry()\n             ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 71, in with_retry\n    return await with_handler_timeout()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 61, in with_handler_timeout\n    return await handler_fn()\n           ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 164, in handler_fn\n    return await HandlerRegistry.execute(step, executor.context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py\", line 133, in execute\n    return await handler.execute(step, context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 248, in execute\n    payload = await run_seal(\n              ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 189, in run_seal\n    result = await seal_messages_envelope(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py\", line 106, in seal_messages_envelope\n    close = await cortex_dispatch_fn(\"session_close\", close_args)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py\", line 591, in die\n    raise RuntimeError(\"died before session_close\")\nRuntimeError: died before session_close"}}
+{"@timestamp":"2026-10-25T21:04:31.890+00:00","level":"INFO","logger":"systems.pipeline.core.dag","message":"DAG built: 13 nodes, 1 ready","caller":{"file":"dag.py","func":"build","line":129},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.891+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.context","message":"Event bus unavailable - events will not be published","caller":{"file":"context.py","func":"publish_event","line":64},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.891+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'admit' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.891+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.892+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'source' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.892+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.892+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.executor.scheduling","message":"Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))","caller":{"file":"scheduling.py","func":"filter_ready_steps","line":142},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.892+00:00","level":"INFO","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Step 'envelope' completed (latency: 0ms)","caller":{"file":"outcomes.py","func":"record_success","line":98},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.909+00:00","level":"INFO","logger":"cortex-api.session_close","message":"session_close: grok-bot-2026-03-01-000001-1c1 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-03-01-000001-1c1 journal_row=1 hash=sha256:fbe41aecafa005101e681cb077bf8f5868aa97f8a5e3345a9820cd9cc685a4a0 depth=verbatim","caller":{"file":"session_close_persist.py","func":"persist_session_close","line":895},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.910+00:00","level":"WARNING","logger":"systems.pipeline.core.execution.dag_executor.observability.outcomes","message":"Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'","caller":{"file":"outcomes.py","func":"record_failure","line":255},"process":3537567,"thread":"MainThread"}
+{"@timestamp":"2026-10-25T21:04:31.911+00:00","level":"ERROR","logger":"systems.pipeline.core.execution.dag_executor.executor.completions","message":"Step 'seal' failed: no such table: session_lids","caller":{"file":"completions.py","func":"await_and_handle_completions","line":70},"process":3537567,"thread":"MainThread","error":{"type":"OperationalError","message":"no such table: session_lids","traceback":"Traceback (most recent call last):\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py\", line 63, in await_and_handle_completions\n    task.result()\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 180, in _execute_step\n    await execute_step(self, node)\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 93, in execute_step\n    output = await executor._run_step(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 196, in _run_step\n    return await run_step(\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 125, in run_step\n    return await executor._run_step_inner(step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py\", line 207, in _run_step_inner\n    return await run_step_inner(self, step)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 166, in run_step_inner\n    return await execute_step_with_wrappers(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 81, in execute_step_with_wrappers\n    result = await with_retry()\n             ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 71, in with_retry\n    return await with_handler_timeout()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py\", line 61, in with_handler_timeout\n    return await handler_fn()\n           ^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py\", line 164, in handler_fn\n    return await HandlerRegistry.execute(step, executor.context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py\", line 133, in execute\n    return await handler.execute(step, context)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 248, in execute\n    payload = await run_seal(\n              ^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py\", line 189, in run_seal\n    result = await seal_messages_envelope(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py\", line 106, in seal_messages_envelope\n    close = await cortex_dispatch_fn(\"session_close\", close_args)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py\", line 140, in dispatch\n    result = execute_op(tool, args)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py\", line 284, in execute_op\n    result = handler(**parsed)\n             ^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 718, in _op_session_close\n    _append_session_close_warnings(\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py\", line 109, in _append_session_close_warnings\n    findings = run_detectors(\n               ^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py\", line 297, in run_detectors\n    findings.extend(detector(conn, subject))\n                    ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py\", line 60, in detect_prior_session_id_omitted\n    rows = query(conn, sql, params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py\", line 83, in query\n    rows = conn.execute(sql, params).fetchall()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.OperationalError: no such table: session_lids"}}
+------------------------------ Captured log call -------------------------------
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_admit_v1 GrokbotCheckpointAdmitHandler → GrokbotCheckpointAdmitHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_normalise_v1 GrokbotCheckpointHarvestNormaliseHandler → GrokbotCheckpointHarvestNormaliseHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_adapter_v1 GrokbotCheckpointHarvestAdapterHandler → GrokbotCheckpointHarvestAdapterHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_harvest_pour_v1 GrokbotCheckpointHarvestPourHandler → GrokbotCheckpointHarvestPourHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_source_v1 GrokbotCheckpointSourceHandler → GrokbotCheckpointSourceHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_envelope_v1 GrokbotCheckpointEnvelopeHandler → GrokbotCheckpointEnvelopeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_seal_v1 GrokbotCheckpointSealHandler → GrokbotCheckpointSealHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_card_v1 GrokbotCheckpointCardHandler → GrokbotCheckpointCardHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_post_v1 GrokbotCheckpointPostHandler → GrokbotCheckpointPostHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_fact_v1 GrokbotCheckpointFactHandler → GrokbotCheckpointFactHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_await_verify_v1 GrokbotCheckpointAwaitVerifyHandler → GrokbotCheckpointAwaitVerifyHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_verify_resume_v1 GrokbotCheckpointVerifyResumeHandler → GrokbotCheckpointVerifyResumeHandler
+INFO     systems.pipeline.core.domain_router:domain_router.py:85 Handler override: grokbot_checkpoint/grokbot_checkpoint_result_v1 GrokbotCheckpointResultHandler → GrokbotCheckpointResultHandler
+INFO     systems.pipeline.registry.core:core.py:249 🔍 Searching pipeline path: '/tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search' → /tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:122 📂 Loading from: /tmp/pytest-of-io/pytest-6872/test_crash_before_session_clos0/reg/search
+INFO     systems.pipeline.registry.loader:loader.py:149   📁 Loading domain: grokbot_checkpoint
+INFO     systems.pipeline.registry.loader:loader.py:446     ✅ Loaded pipeline 'grokbot-checkpoint-v1' from search/grokbot-checkpoint-v1.yaml
+INFO     systems.pipeline.registry.core:core.py:290 ✅ Pipeline registry initialized: 1 valid pipeline(s), 0 model ref(s), 0 prompt namespace(s)
+INFO     systems.pipeline.core.dag:dag.py:129 DAG built: 13 nodes, 1 ready
+WARNING  systems.pipeline.core.execution.dag_executor.observability.context:context.py:64 Event bus unavailable - events will not be published
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'admit' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'source' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'envelope' completed (latency: 0ms)
+WARNING  systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:255 Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'
+ERROR    systems.pipeline.core.execution.dag_executor.executor.completions:completions.py:70 Step 'seal' failed: died before session_close
+Traceback (most recent call last):
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py", line 63, in await_and_handle_completions
+    task.result()
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 180, in _execute_step
+    await execute_step(self, node)
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 93, in execute_step
+    output = await executor._run_step(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 196, in _run_step
+    return await run_step(
+           ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 125, in run_step
+    return await executor._run_step_inner(step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 207, in _run_step_inner
+    return await run_step_inner(self, step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 166, in run_step_inner
+    return await execute_step_with_wrappers(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 81, in execute_step_with_wrappers
+    result = await with_retry()
+             ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 71, in with_retry
+    return await with_handler_timeout()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 61, in with_handler_timeout
+    return await handler_fn()
+           ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 164, in handler_fn
+    return await HandlerRegistry.execute(step, executor.context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py", line 133, in execute
+    return await handler.execute(step, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 248, in execute
+    payload = await run_seal(
+              ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 189, in run_seal
+    result = await seal_messages_envelope(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py", line 106, in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py", line 591, in die
+    raise RuntimeError("died before session_close")
+RuntimeError: died before session_close
+INFO     systems.pipeline.core.dag:dag.py:129 DAG built: 13 nodes, 1 ready
+WARNING  systems.pipeline.core.execution.dag_executor.observability.context:context.py:64 Event bus unavailable - events will not be published
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'admit' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_normalise' skipped (condition not met: options.get('mode') == 'harvest_seal' and admit.json.get('refused') is None and not admit.json.get('replayed') and not admit.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'source' completed (latency: 0ms)
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_adapter' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_normalise.json.get('refused') is None and not harvest_normalise.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.executor.scheduling:scheduling.py:142 Step 'harvest_pour' skipped (condition not met: options.get('mode') == 'harvest_seal' and harvest_adapter.json.get('refused') is None and not harvest_adapter.json.get('_skipped'))
+INFO     systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:98 Step 'envelope' completed (latency: 0ms)
+INFO     cortex-api.session_close:session_close_persist.py:895 session_close: grok-bot-2026-03-01-000001-1c1 agent=grok-bot-hm1 entity=transcript:grok-bot-2026-03-01-000001-1c1 journal_row=1 hash=sha256:fbe41aecafa005101e681cb077bf8f5868aa97f8a5e3345a9820cd9cc685a4a0 depth=verbatim
+WARNING  systems.pipeline.core.execution.dag_executor.observability.outcomes:outcomes.py:255 Could not write failure debug file: No module named 'systems.pipeline.core.pipeline_failure_debug'
+ERROR    systems.pipeline.core.execution.dag_executor.executor.completions:completions.py:70 Step 'seal' failed: no such table: session_lids
+Traceback (most recent call last):
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/completions.py", line 63, in await_and_handle_completions
+    task.result()
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 180, in _execute_step
+    await execute_step(self, node)
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 93, in execute_step
+    output = await executor._run_step(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 196, in _run_step
+    return await run_step(
+           ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 125, in run_step
+    return await executor._run_step_inner(step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/dag_executor.py", line 207, in _run_step_inner
+    return await run_step_inner(self, step)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 166, in run_step_inner
+    return await execute_step_with_wrappers(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 81, in execute_step_with_wrappers
+    result = await with_retry()
+             ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 71, in with_retry
+    return await with_handler_timeout()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/step_wrapper.py", line 61, in with_handler_timeout
+    return await handler_fn()
+           ^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/execution/dag_executor/executor/step_runner.py", line 164, in handler_fn
+    return await HandlerRegistry.execute(step, executor.context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/services/universal-stargate/systems/pipeline/core/handlers/registry.py", line 133, in execute
+    return await handler.execute(step, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 248, in execute
+    payload = await run_seal(
+              ^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/seal.py", line 189, in run_seal
+    result = await seal_messages_envelope(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/continuity_tape/seal_messages.py", line 106, in seal_messages_envelope
+    close = await cortex_dispatch_fn("session_close", close_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py", line 140, in dispatch
+    result = execute_op(tool, args)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/__init__.py", line 284, in execute_op
+    result = handler(**parsed)
+             ^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 718, in _op_session_close
+    _append_session_close_warnings(
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_session_close.py", line 109, in _append_session_close_warnings
+    findings = run_detectors(
+               ^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/ops_audit_detectors.py", line 297, in run_detectors
+    findings.extend(detector(conn, subject))
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/dispatch_ops/_detectors/session.py", line 60, in detect_prior_session_id_omitted
+    rows = query(conn, sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/lane-20659-baseline-evidence2/libs/cortex_store/db.py", line 83, in query
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such table: session_lids
+=============================== warnings summary ===============================
+libs/cortex_store/models/reflective.py:64
+  /tmp/lane-20659-baseline-evidence2/libs/cortex_store/models/reflective.py:64: UserWarning: Field name "register" in "ReflectiveEntryCreate" shadows an attribute in parent "BaseModel"
+    class ReflectiveEntryCreate(BaseModel):
+
+libs/cortex_store/models/reflective.py:75
+  /tmp/lane-20659-baseline-evidence2/libs/cortex_store/models/reflective.py:75: UserWarning: Field name "register" in "ReflectiveEntryItem" shadows an attribute in parent "BaseModel"
+    class ReflectiveEntryItem(BaseModel):
+
+libs/cortex_store/models/substrate_s6_batch3.py:8
+  /tmp/lane-20659-baseline-evidence2/libs/cortex_store/models/substrate_s6_batch3.py:8: UserWarning: Field name "register" in "RjConsolidateRequest" shadows an attribute in parent "BaseModel"
+    class RjConsolidateRequest(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_1_fresh_seal
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_2_rerun_same_row
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_3_prefix_extend
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_4_diverged_refuses
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_5_short_turns_clear_minimum
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_8_agent_and_id_prefix
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_9_lookup_raise_same_id
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_suppression_unchanged_extend_and_read_error
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_suppression_ignores_files_root
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_conversation_uuid_on_insert_and_reclose
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_later_message_timestamp_does_not_change_id
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_offset_and_zulu_share_session_id
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_entity_without_id_or_attributes_is_prior_read_failed
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_contract.py::test_status_404_without_error_key_is_first_seal
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py::test_dag_happy_and_refusals
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py::test_rerun_is_idempotent_until_snapshot_grows
+FAILED pipelines/grokbot_checkpoint/v1/handlers/test_integration_stargate.py::test_crash_before_session_close_reseals
+SKIPPED [1] pipelines/grokbot_checkpoint/v1/handlers/test_harvest_seal.py:183: gc1 specimen not on disk
+17 failed, 99 passed, 1 skipped, 3 warnings in 13.45s
