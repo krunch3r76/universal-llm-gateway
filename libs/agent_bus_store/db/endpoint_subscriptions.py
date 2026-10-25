@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from typing import Any
 
@@ -11,7 +10,6 @@ from cursor_bridge.wake_delivery import normalize_target
 
 from .connection import connect, write_connect
 
-_GROK_BOT = re.compile(r"^grok-bot-")
 _IDENTITY = ("state", "surface", "display", "title", "agent_id")
 
 
@@ -93,13 +91,7 @@ def subscribe_endpoint(
     scope = thread_scope.strip()
     surface_raw = str(surface).strip().lower()
     wildcard_ok = (
-        surface_raw == "grok"
-        and canon not in {"all", "team"}
-        and (
-            _GROK_BOT.match(canon) is not None
-            or canon == "stage-manager"
-            or canon == "insyncerator"
-        )
+        surface_raw == "grok" and bool(canon) and canon not in {"all", "team"}
     ) or (surface_raw == "cse" and canon == "maestro")
     if scope == "*" and not wildcard_ok:
         raise SubscribeError("endpoint_wildcard_refused")

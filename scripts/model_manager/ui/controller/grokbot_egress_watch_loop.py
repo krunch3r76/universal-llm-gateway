@@ -51,7 +51,10 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     rebuild_hop_state,
     record_hop_notified,
 )
-from scripts.model_manager.ui.controller.grokbot_seat_repoint import run_gc1_repoint
+from scripts.model_manager.ui.controller.grokbot_seat_repoint import (
+    run_gc1_repoint,
+    run_impresario_repoint,
+)
 from scripts.model_manager.ui.controller.mcp_edge_probe_io import (
     fetch_health,
     resolve_a_records,
@@ -334,6 +337,10 @@ class GrokbotEgressWatchLoop:
             run_gc1_repoint(rows)
         except Exception:
             logger.exception("grokbot gc1 seat repoint failed")
+        try:
+            run_impresario_repoint(rows)
+        except Exception:
+            logger.exception("grokbot impresario seat repoint failed")
         notice = decide_context_hop(
             rows=rows,
             now=now,

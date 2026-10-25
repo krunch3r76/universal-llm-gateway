@@ -116,6 +116,7 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "BLOCKED",
         "READY",
         "EAR",
+        "RULING",
     }
 )
 GROK_WAKE_SUBJECT_HEADS = frozenset(
@@ -269,12 +270,19 @@ def subject_allowed(
 ) -> bool:
     """Wake envelope: CSE or Grok allowlist, plus TYPE relays."""
     text = subject or ""
+    lowered = text.lower()
+    if (
+        "contract=conductor" in lowered
+        and "caller=conductor-hop" in lowered
+        and "degraded" not in lowered
+    ):
+        return False
     agent = _effective_to_agent(to_agent, text)
     if _INTERMEDIATE_SUBJECT_RE.search(text):
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
         return False
-    if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
+    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
         return True
     if text.startswith("TYPE: DIRECTIVE"):
         return True
@@ -291,6 +299,18 @@ def subject_allowed(
         first_token = head.split()[0]
         if first_token in allowed:
             return True
+    if (
+        not cse
+        and head
+        and head.split()[0]
+        in {
+            "DONE",
+            "FAILED",
+            "BLOCKED",
+            "QUESTION",
+        }
+    ):
+        return True
     return False
 
 
@@ -1017,7 +1037,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         else ",".join(str(n) for n in turn_numbers)
     )
     paste_text = ""
-    if str(rows[0]["thread_id"]) == "19627" and str(sub.get("surface") or "") == "cursor":
+    if (
+        str(rows[0]["thread_id"]) == "19627"
+        and str(sub.get("surface") or "") == "cursor"
+    ):
         paste_text = exchange_lines(rows)
     state, reason = _display_post(rows[0], sub, turn_arg, text=paste_text)
     display_reachable_age = _note_display_post_reason(reason)
@@ -1057,7 +1080,10 @@ async def run_dispatcher() -> None:
         try:
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
-            await asyncio.to_thread(fire_due_wakes, store)
+            for _ in range(5):
+                claimed = await asyncio.to_thread(fire_due_wakes, store)
+                if not isinstance(claimed, dict) or not claimed.get("wake_id"):
+                    break
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 

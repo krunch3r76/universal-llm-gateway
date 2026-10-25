@@ -11,6 +11,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
 )
 from scripts.model_manager.ui.controller.grokbot_seat_repoint import (
     run_gc1_repoint,
+    run_impresario_repoint,
 )
 
 
@@ -18,7 +19,9 @@ def _row(*, agent_id: str = "gc1-id", name: str = GC1_ROSTER_NAME) -> dict[str, 
     return {"agent_id": agent_id, "name": name}
 
 
-def test_not_unique_zero_rows_does_not_touch_db(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_not_unique_zero_rows_does_not_touch_db(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     subscribe_calls: list[dict[str, Any]] = []
     current_calls: list[tuple[str, str]] = []
 
@@ -202,3 +205,131 @@ def test_subscribe_exception_returns_subscribe_failed(
         "reason": "subscribe_failed",
         "error": "BoomError",
     }
+
+
+def test_impresario_repoint_subscribes_wildcard_and_thread_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        del agent, thread_scope
+        return None
+
+    def fake_binding(agent: str) -> dict[str, Any] | None:
+        del agent
+        return {"display": ":9"}
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        fake_binding,
+    )
+
+    rows = [
+        {
+            "name": "gc1-pilot-impresario-fleet-action-line",
+            "agent_id": "imp-fleet",
+        },
+        {
+            "name": "Impresario Career",
+            "agent_id": "imp-career",
+            "description": "mailbox impresario-career",
+        },
+        {
+            "name": "Impresario AAB (16934)",
+            "agent_id": "imp-aab",
+        },
+    ]
+    result = run_impresario_repoint(rows)
+
+    assert result["wrote"] is True
+    agents = {(c["agent"], c["thread_scope"]) for c in subscribe_calls}
+    assert ("gc1-pilot-impresario-fleet-action-line", "*") in agents
+    assert ("impresario-career", "*") in agents
+    assert ("impresario-aab", "*") in agents
+    assert ("impresario-aab", "16934") in agents
+    assert all(c["surface"] == "grok" for c in subscribe_calls)
+    assert all(c["bound_by"] == "grok-seat-repoint" for c in subscribe_calls)
+
+
+def test_impresario_repoint_skips_retired_and_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        del agent, thread_scope
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        lambda _a: {"display": ":9"},
+    )
+
+    rows = [
+        {"name": "Impresario Dup", "agent_id": "a"},
+        {"name": "Impresario Dup", "agent_id": "b"},
+        {"name": "Impresario (retired)", "agent_id": "old"},
+    ]
+    result = run_impresario_repoint(rows)
+
+    assert result == {"wrote": False, "subscribed": []}
+    assert subscribe_calls == []
+
+
+def test_impresario_repoint_unchanged_agent_id_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        if agent == "impresario-career" and thread_scope == "*":
+            return {"agent_id": "same-id", "state": "subscribed", "display": ":9"}
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        lambda _a: {"display": ":9"},
+    )
+
+    rows = [{"name": "Impresario Career", "agent_id": "same-id"}]
+    result = run_impresario_repoint(rows)
+
+    assert result == {"wrote": False, "subscribed": []}
+    assert subscribe_calls == []
