@@ -105,6 +105,7 @@ async def test_prewritten_raw_json_keeps_l0_bytes(fs: MemFs) -> None:
         "agent_id": _AGENT,
         "l0_ref": l0,
         "l0_sha256": l0_sha,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None
@@ -369,6 +370,7 @@ async def test_pages_folder_and_prefix(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None, norm
@@ -417,6 +419,7 @@ async def test_pages_gap(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert (norm.get("refused") or {}).get("code") == "harvest.page_gap"
@@ -432,6 +435,7 @@ async def test_pages_total_and_overlap(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     mixed = await run_harvest_normalise(options, fs)
     assert (mixed.get("refused") or {}).get("code") == "harvest.page_total"
@@ -493,6 +497,7 @@ async def test_incremental_missing_prior(fs: MemFs) -> None:
         "n": 2,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert (norm.get("refused") or {}).get("code") == "harvest.no_prior"
@@ -510,6 +515,7 @@ async def test_wrapped_pages_extend(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None, norm
@@ -540,6 +546,7 @@ async def test_houseless_admitted_n_reaches_normalise(fs: MemFs) -> None:
         "agent_id": _AGENT,
         "l0_ref": folder1,
         "n": 1,
+        "fallback": "electron",
     }
     norm1 = await run_harvest_normalise(options1, fs)
     adapter1 = await run_harvest_adapter(options1, norm1, fs)
@@ -580,6 +587,7 @@ async def test_houseless_skips_bus(fs: MemFs) -> None:
         "houseless": True,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     admitted = await run_admit(options, {}, fs=fs, get=get)
     assert admitted.get("refused") is None, admitted
@@ -622,6 +630,7 @@ async def test_variable_n_and_reviewer_window(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None, norm
@@ -641,6 +650,7 @@ async def test_bl1_drift_target_is_highest_hi(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None, norm
@@ -659,6 +669,7 @@ async def test_evil_prior_raw_does_not_enter_messages(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -679,6 +690,7 @@ async def test_headerless_prior_raw_refuses(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -687,7 +699,9 @@ async def test_headerless_prior_raw_refuses(fs: MemFs) -> None:
     bare = "\n".join(
         line for line in normalized.splitlines() if line.startswith('{"role"')
     )
-    fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"] = (bare + "\n").encode()
+    fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"] = (
+        bare + "\n"
+    ).encode()
     nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
     refused = await run_harvest_normalise({**options, "n": 2, "l0_ref": nxt}, fs)
     assert (refused.get("refused") or {}).get("code") == "harvest.no_prior"
@@ -702,13 +716,16 @@ async def test_rewritten_header_target_refuses(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
     assert (await run_harvest_pour(options, adapter, fs, norm)).get("refused") is None
     raw_key = f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"
-    rewritten = fs.files[raw_key].decode().replace(
-        "Transcript of this conversation", "Transcript of something else", 1
+    rewritten = (
+        fs.files[raw_key]
+        .decode()
+        .replace("Transcript of this conversation", "Transcript of something else", 1)
     )
     fs.files[raw_key] = rewritten.encode()
     nxt = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
@@ -725,6 +742,7 @@ async def test_no_new_pages_at_n2_and_n3(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -754,6 +772,7 @@ async def test_not_prefix_and_window_mismatch(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -781,6 +800,7 @@ async def test_pour_refuses_edited_prior_message(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -812,6 +832,7 @@ async def test_missing_raw_prior_starts_raw_chain_at_n2(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -836,6 +857,7 @@ async def test_raw_chain_not_prefix_leaves_both_priors(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     adapter = await run_harvest_adapter(options, norm, fs)
@@ -858,41 +880,55 @@ async def test_raw_chain_not_prefix_leaves_both_priors(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
+async def test_grok_export_pages_raw_capture_sha_and_pour_refuses(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    opts = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(opts, fs)
+    adapter = await run_harvest_adapter(opts, norm, fs)
+    assert adapter.get("refused") is None, adapter
+    cap = adapter["raw_envelope"]["meta"]["capture"]
+    assert cap["kind"] == "grok_export"
+    assert cap["sha256"] == norm["normalized_sha256"]
+    assert cap["sha256"] != adapter["raw_envelope"]["meta"]["source_sha256"]
+    pour = await run_harvest_pour(opts, adapter, fs, norm)
+    assert (pour.get("refused") or {}).get("code") == "pour.capture_inconsistent"
+    assert f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json" not in fs.files
+    assert checkpoint_raw_messages_uri(_AGENT, 1) not in fs.files
+
+
+@pytest.mark.asyncio
 async def test_harvest_record_capture_kind_mapping(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
-    for fallback, expect_pseudo in ((None, False), ("electron", True)):
-        fs2 = MemFs()
-        fs2.files.update(fs.files)
-        fs2.dirs.update(fs.dirs)
-        opts = {
-            "mode": "harvest_seal",
-            "house": "bl1",
-            "n": 1,
-            "agent_id": _AGENT,
-            "l0_ref": folder,
-        }
-        if fallback:
-            opts["fallback"] = fallback
-        norm = await run_harvest_normalise(opts, fs2)
-        adapter = await run_harvest_adapter(opts, norm, fs2)
-        pour = await run_harvest_pour(opts, adapter, fs2, norm)
-        assert pour.get("refused") is None, pour
-        result = assemble(
-            opts,
-            {
-                "admit": {"json": {"refused": None}},
-                "harvest_normalise": {"json": norm},
-                "harvest_adapter": {"json": adapter},
-                "harvest_pour": {"json": pour},
-            },
-        )
-        line = result["harvest_record"]
-        if expect_pseudo:
-            assert "~pseudo" in line
-            assert "capture:dom_harvest@" in line
-        else:
-            assert "~pseudo" not in line
-            assert "capture:grok_export@" in line
+    opts = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+        "fallback": "electron",
+    }
+    norm = await run_harvest_normalise(opts, fs)
+    adapter = await run_harvest_adapter(opts, norm, fs)
+    pour = await run_harvest_pour(opts, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    result = assemble(
+        opts,
+        {
+            "admit": {"json": {"refused": None}},
+            "harvest_normalise": {"json": norm},
+            "harvest_adapter": {"json": adapter},
+            "harvest_pour": {"json": pour},
+        },
+    )
+    line = result["harvest_record"]
+    assert "~pseudo" in line
+    assert "capture:dom_harvest@" in line
 
 
 def test_grok_export_record_has_no_pseudo() -> None:
@@ -926,6 +962,7 @@ async def test_overlap_raw_differs_from_normalized(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     norm = await run_harvest_normalise(options, fs)
     assert norm.get("refused") is None, norm
@@ -946,6 +983,7 @@ async def test_unrendered_position_refuses(fs: MemFs) -> None:
         "n": 1,
         "agent_id": _AGENT,
         "l0_ref": folder,
+        "fallback": "electron",
     }
     refused = await run_harvest_normalise(options, fs)
     body = refused.get("refused") or {}

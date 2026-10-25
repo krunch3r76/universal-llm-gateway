@@ -63,6 +63,7 @@ def _finalize_chain(
     provenance: str,
     actual_text_sha256: str,
     reject_marker_tools: bool,
+    validate_pour_envelope: bool = True,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     if env.meta.coverage != "full":
         return None, refuse("pour.coverage", f"coverage {env.meta.coverage!r}")
@@ -84,10 +85,11 @@ def _finalize_chain(
             f"capture.sha256 {cap_sha} != normalized {actual_text_sha256}",
         )
     payload = envelope_wire_dict(env)
-    try:
-        validate_pour(payload)
-    except PourRefused as exc:
-        return None, refuse(exc.code, exc.message)
+    if validate_pour_envelope:
+        try:
+            validate_pour(payload)
+        except PourRefused as exc:
+            return None, refuse(exc.code, exc.message)
     stats = {
         "messages_sha256": env.meta.messages_sha256,
         "source_sha256": env.meta.source_sha256,
@@ -153,6 +155,7 @@ def run_adapter_twice(
         provenance="raw",
         actual_text_sha256=actual_text_sha256,
         reject_marker_tools=False,
+        validate_pour_envelope=capture_kind != "grok_export",
     )
     if err:
         return None, err
@@ -169,7 +172,7 @@ def grok_pour_uri(agent_id: str, n: int = 1) -> str:
     return checkpoint_messages_uri(agent_id, n)
 
 
-async def _write_verbatim_l0(
+async def write_verbatim_l0(
     fs: Any, agent_id: str, n: int, raw_bytes: bytes
 ) -> dict[str, Any] | None:
     raw_uri = checkpoint_raw_uri(agent_id, n)
@@ -201,7 +204,7 @@ async def stage_grok_pour(
     if "tape/" in uri:
         return refuse("harvest.tape_refused", uri)
     if raw_bytes is not None:
-        err = await _write_verbatim_l0(fs, agent_id, n, raw_bytes)
+        err = await write_verbatim_l0(fs, agent_id, n, raw_bytes)
         if err:
             return err
     raw = dumps(envelope)
@@ -229,7 +232,9 @@ async def stage_grok_pour(
     new_msha = stats.get("messages_sha256")
     if old_msha == new_msha:
         if old_msgs != new_msgs:
-            return refuse("envelope.not_prefix", "messages_sha256 match but messages differ")
+            return refuse(
+                "envelope.not_prefix", "messages_sha256 match but messages differ"
+            )
         read_back = await fs.read(uri)
         if read_back is None or file_sha256(read_back) != live_sha:
             return refuse("source.sha_mismatch", "pour read-back sha mismatch")
@@ -265,7 +270,9 @@ def _pour_source(
         "sha256": sha256,
         "ref": uri,
         "capture_meta": capture,
-        "capture": {**capture, "verified": True} if isinstance(capture, dict) else "none",
+        "capture": {**capture, "verified": True}
+        if isinstance(capture, dict)
+        else "none",
         "capture_verified": True if isinstance(capture, dict) else None,
         "alternate": None,
         "fallback": None,
@@ -323,4 +330,5 @@ __all__ = [
     "grok_pour_uri",
     "run_adapter_twice",
     "stage_grok_pour",
+    "write_verbatim_l0",
 ]

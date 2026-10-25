@@ -120,6 +120,7 @@ def test_caller_doc_paths() -> None:
     assert "notes/system/seals/<sid>.messages.json" in text
     assert "notes/system/checkpoints/grok/<agent>/<n>.messages.json" in text
     assert "notes/system/checkpoints/grok/<agent>/<n>.raw.messages.json" in text
+    assert "meta.provenance` `raw" in text
     assert "tape/pours/<surface>/<transcript_id>.messages.json" not in text
     assert "houseless: true" in text
     assert "notes/system/transcripts/" not in text

@@ -778,11 +778,10 @@ def extract_grokbot_transcript(
         ],
     }
     if capture_ref is not None:
-        capture_sha = reassembled if capture_kind == "grok_export" else cap_sha
         meta_kwargs["capture"] = {
             "kind": capture_kind,
             "ref": capture_ref,
-            "sha256": capture_sha,
+            "sha256": cap_sha,
             "pseudo_byte_exact": capture_kind == "dom_harvest",
         }
     meta = EnvelopeMeta(**meta_kwargs)

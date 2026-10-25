@@ -8,7 +8,11 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import fs_of, refuse, step_output_json
-from ._harvest import checkpoint_raw_messages_uri, stage_grok_pour
+from ._harvest import (
+    checkpoint_raw_messages_uri,
+    stage_grok_pour,
+    write_verbatim_l0,
+)
 
 
 def _canonical_messages(messages: object) -> list[dict[str, Any]]:
@@ -106,17 +110,15 @@ async def run_harvest_pour(
         )
         if raw_err:
             return raw_err
-    transcribed = await stage_grok_pour(
-        fs,
-        agent_id,
-        envelope,
-        stats=stats,
-        n=n,
-        raw_bytes=raw_bytes,
-        l0_ref=l0_ref,
-    )
-    if transcribed.get("refused"):
-        return transcribed
+    from continuity_tape.pour_contract import PourRefused, validate_pour
+
+    l0_err = await write_verbatim_l0(fs, agent_id, n, raw_bytes)
+    if l0_err:
+        return l0_err
+    try:
+        validate_pour(raw_envelope)
+    except PourRefused as exc:
+        return refuse(exc.code, exc.message)
     raw_uri = checkpoint_raw_messages_uri(agent_id, n)
     raw_pour = await stage_grok_pour(
         fs,
@@ -130,6 +132,17 @@ async def run_harvest_pour(
     )
     if raw_pour.get("refused"):
         return raw_pour
+    transcribed = await stage_grok_pour(
+        fs,
+        agent_id,
+        envelope,
+        stats=stats,
+        n=n,
+        raw_bytes=None,
+        l0_ref=l0_ref,
+    )
+    if transcribed.get("refused"):
+        return transcribed
     return {
         **transcribed,
         "raw_messages_ref": raw_uri,
