@@ -34,9 +34,6 @@ from scripts.model_manager.ui.dispatch_monitor.core.dtos import (  # noqa: E402
 from scripts.model_manager.ui.dispatch_monitor.ulg.controller import (  # noqa: E402
     MonitorController,
 )
-from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (  # noqa: E402
-    charter_hold_status,
-)
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
     DEFAULT_SELECTION_PATH,
     advance_section,
@@ -55,26 +52,8 @@ class _SharedState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.frame: SupervisorProjection | None = None
-        self.hold: bool | None = None
         self.status = "starting…"
         self.stop = threading.Event()
-
-
-def _poll_hold(state: _SharedState, *, interval_s: float) -> None:
-    while not state.stop.is_set():
-        try:
-            result = charter_hold_status(timeout=5.0)
-            held = result.get("held")
-            if isinstance(held, bool):
-                with state.lock:
-                    state.hold = held
-            elif "error" in result:
-                with state.lock:
-                    state.hold = None
-        except Exception:  # noqa: BLE001 — keep board alive
-            with state.lock:
-                state.hold = None
-        state.stop.wait(interval_s)
 
 
 def _run_controller(state: _SharedState, *, seed_minutes: int) -> None:
@@ -141,14 +120,12 @@ def _paint_board(
     board: CursesBoard,
     frame: SupervisorProjection | None,
     *,
-    hold: bool | None,
     status: str,
     tail_status: str,
     selected_key: str | None,
     focused_section: str,
     section_zoom: bool,
 ) -> None:
-    board.set_hold(hold)
     board.set_status(f"{status}  {tail_status}")
     board.paint(
         frame,
@@ -179,7 +156,6 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
     while not state.stop.is_set():
         with state.lock:
             frame = state.frame
-            hold = state.hold
             status = state.status
         targets = tail_targets(frame.sdk, frame.cdp) if frame is not None else []
         global_index, _ = move_selection(global_index, len(targets), "")
@@ -189,7 +165,6 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
         _paint_board(
             board,
             frame,
-            hold=hold,
             status=status,
             tail_status=tail_status,
             selected_key=selected,
@@ -262,28 +237,15 @@ def main(argv: list[str] | None = None) -> int:
         default=60,
         help="cold-start history window (default 60)",
     )
-    parser.add_argument(
-        "--hold-poll-s",
-        type=float,
-        default=5.0,
-        help="charter hold status poll interval (default 5)",
-    )
     args = parser.parse_args(argv)
 
     state = _SharedState()
-    hold_thread = threading.Thread(
-        target=_poll_hold,
-        args=(state,),
-        kwargs={"interval_s": args.hold_poll_s},
-        daemon=True,
-    )
     ctrl_thread = threading.Thread(
         target=_run_controller,
         args=(state,),
         kwargs={"seed_minutes": args.seed_minutes},
         daemon=True,
     )
-    hold_thread.start()
     ctrl_thread.start()
 
     try:
@@ -296,7 +258,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         state.stop.set()
         ctrl_thread.join(timeout=2.0)
-        hold_thread.join(timeout=1.0)
     return 0
 
 
