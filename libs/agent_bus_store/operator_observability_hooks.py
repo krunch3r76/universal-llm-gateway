@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+_active_producer1_dispatch_threads: set[threading.Thread] = set()
+_producer1_dispatch_lock = threading.Lock()
 
 
 def after_turn_created(
@@ -74,15 +78,52 @@ def after_lane_mark_read(*, thread_id: str, seat_agent: str | None = None) -> No
         )
 
 
+def _run_deferred_producer1_dispatch(row_id: str) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        dispatch_owed_wake_producer1_row,
+    )
+
+    dispatch_owed_wake_producer1_row(row_id)
+
+
+def _unregister_producer1_dispatch_thread(thread: threading.Thread) -> None:
+    with _producer1_dispatch_lock:
+        _active_producer1_dispatch_threads.discard(thread)
+
+
+def flush_scheduled_producer1_dispatches(timeout: float = 5.0) -> None:
+    """Join in-flight producer-1 dispatch threads spawned by ``schedule_producer1_dispatch_from_result``.
+
+    Tests call this before asserting on dispatch side effects. Production callers normally
+    rely on fire-and-forget; joining waits for CSE / HTTP I/O started on background threads.
+    """
+    with _producer1_dispatch_lock:
+        threads = list(_active_producer1_dispatch_threads)
+    for thread in threads:
+        thread.join(timeout=timeout)
+
+
 def schedule_producer1_dispatch_from_result(result: dict[str, Any] | None) -> None:
-    """Fire-and-forget producer-1 CSE follow-up when a row was just created."""
+    """Enqueue producer-1 CSE follow-up on a daemon thread when a row was just created.
+
+    When ``needs_deferred_dispatch`` is set, starts ``dispatch_owed_wake_producer1_row`` on a
+    background thread and returns immediately without blocking on CSE or HTTP I/O. No-op when
+    the result is missing, lacks the flag, or has an invalid ``row_id``. Use
+    ``flush_scheduled_producer1_dispatches`` to wait for enqueued work (mainly in tests).
+    """
     if not result or not result.get("needs_deferred_dispatch"):
         return
     row_id = result.get("row_id")
     if not isinstance(row_id, str) or not row_id.strip():
         return
-    from services.git_integration_worker.cse_session_holders import (
-        dispatch_owed_wake_producer1_row,
-    )
 
-    dispatch_owed_wake_producer1_row(row_id.strip())
+    def _target() -> None:
+        try:
+            _run_deferred_producer1_dispatch(row_id.strip())
+        finally:
+            _unregister_producer1_dispatch_thread(threading.current_thread())
+
+    thread = threading.Thread(target=_target, daemon=True)
+    with _producer1_dispatch_lock:
+        _active_producer1_dispatch_threads.add(thread)
+    thread.start()

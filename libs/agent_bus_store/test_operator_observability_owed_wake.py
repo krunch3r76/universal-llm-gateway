@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -12,7 +13,11 @@ from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.db.connection import write_connect
 from agent_bus_store.db.turns import insert_turn
-from agent_bus_store.operator_observability_hooks import after_turn_created
+from agent_bus_store.operator_observability_hooks import (
+    after_turn_created,
+    flush_scheduled_producer1_dispatches,
+    schedule_producer1_dispatch_from_result,
+)
 from scripts.model_manager.ui.controller.owed_wake_ledger import (
     flush_pending_owed_wakes,
     is_chrome_bus_subject,
@@ -392,6 +397,7 @@ def test_fact_cdp_reply_to_web_anthropic_records_row_and_dispatches_once(
             headers=headers,
         )
         assert resp.status_code == 201, resp.text
+    flush_scheduled_producer1_dispatches()
     assert _open_owed_wake_count(store) == 1
     assert len(endpoint_calls) == 1
 
@@ -493,6 +499,7 @@ def test_milestone_mark_read_then_second_milestone_redispatches(
             headers=headers,
         )
         assert first.status_code == 201, first.text
+        flush_scheduled_producer1_dispatches()
         assert _open_owed_wake_count(store) == 1
         assert len(endpoint_calls) == 1
         read = client.patch(
@@ -514,6 +521,7 @@ def test_milestone_mark_read_then_second_milestone_redispatches(
             headers=headers,
         )
         assert second.status_code == 201, second.text
+    flush_scheduled_producer1_dispatches()
     assert _open_owed_wake_count(store) == 1
     assert len(endpoint_calls) == 2
 
@@ -557,6 +565,7 @@ def test_milestone_holder_post_then_second_milestone_redispatches(
             headers=headers,
         )
         assert first.status_code == 201, first.text
+        flush_scheduled_producer1_dispatches()
         assert len(endpoint_calls) == 1
         holder_post = client.post(
             "/threads/send",
@@ -583,6 +592,7 @@ def test_milestone_holder_post_then_second_milestone_redispatches(
             headers=headers,
         )
         assert second.status_code == 201, second.text
+    flush_scheduled_producer1_dispatches()
     assert _open_owed_wake_count(store) == 1
     assert len(endpoint_calls) == 2
 
@@ -680,6 +690,7 @@ def test_flush_projects_stale_milestone_via_authenticated_turns_route(
             lambda: [thread_id],
         )
         assert flush_pending_owed_wakes(store, deps=deps) == 1
+    flush_scheduled_producer1_dispatches()
     assert len(endpoint_calls) == 1
     assert store.list_open_undispatched_owed_wakes() == []
 
@@ -1145,6 +1156,31 @@ def test_cdp_reply_on_unrelated_thread_leaves_12286_drain_complete_owed_wake_ope
         )
         assert resp.status_code == 201, resp.text
     assert _open_owed_wake_count(store, holder_id="holder-12286") == 1
+
+
+def test_schedule_producer1_dispatch_from_result_returns_without_blocking_on_dispatch_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = threading.Event()
+    calls: list[str] = []
+
+    def _slow_dispatch(row_id: str) -> None:
+        if not gate.wait(timeout=2.0):
+            return
+        calls.append(row_id)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.dispatch_owed_wake_producer1_row",
+        _slow_dispatch,
+    )
+    schedule_producer1_dispatch_from_result(
+        {"needs_deferred_dispatch": True, "row_id": "row-40226"}
+    )
+    assert not gate.is_set()
+    assert calls == []
+    gate.set()
+    flush_scheduled_producer1_dispatches()
+    assert calls == ["row-40226"]
 
 
 def test_attended_binding_from_resolve_registration_ids_list() -> None:

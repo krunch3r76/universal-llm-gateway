@@ -1194,3 +1194,101 @@ def test_cross_path_order_c_held_no_live_seat_endpoint_still_claims(
             "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
         ).fetchone()["state"]
     assert state == "delivered"
+
+
+def test_scan_once_pending_then_held_no_live_seat_still_claims(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scan_once pending ledger row must still be claimable after held_no_live_seat owed dispatch."""
+    from agent_bus_store.db import create_thread, init_db, insert_turn
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+    )
+    from bus_watch.endpoint_wake_dispatcher import scan_once
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    store = RestartIntentStore(db_path=tmp_path / "restart.db")
+    detail = create_thread(thread_id=None, slug="40226-scan-pending-held")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="MILESTONE|40226|scan-pending-held",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, pending: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                pending,
+                now="2020-01-01 20:30:00",
+            )
+
+        def holder(self, lane: str) -> dict | None:
+            if lane == thread:
+                return {"registration_id": "reg-live", "seat_state": "driving"}
+            return None
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "maestro" and thread_id == thread:
+                return (
+                    "cse",
+                    {
+                        "surface": "cse",
+                        "agent_id": thread,
+                        "id": 1,
+                        "state": "subscribed",
+                    },
+                )
+            return None
+
+    scan_once(Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        ledger = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
+        ).fetchone()
+    assert ledger is not None
+    assert ledger["state"] == "pending"
+
+    row, _ = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id=thread,
+        turn_ref={
+            "thread_id": thread,
+            "turn_number": t_n,
+            "subject": "MILESTONE|scan-pending-held",
+        },
+    )
+    deps = _deps(holder=None)
+    deps.holder_lookup = lambda _hid: None  # type: ignore[method-assign]
+    assert attempt_dispatch(store, row, deps=deps) is True
+    updated = store.get_owed_wake(row.row_id)
+    assert updated is not None
+    assert updated.dispatch_outcome == "held_no_live_seat"
+
+    claimed = claim_due_wakes(now="2020-01-01 20:30:01")
+    assert claimed["wake_id"] is not None
