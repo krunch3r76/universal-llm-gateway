@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from dispatch_economics.api_closeout import normalize_api_role_usage
 from event_store.model_rate_table import ModelRateRow
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -73,12 +72,12 @@ def test_post_api_role_dispatch_normalizes_outcome_usage(
     )
     fixed_rate = ModelRateRow(
         model_id="anthropic/claude-haiku-5-5",
-        input_rate_per_m=1.0,
-        output_rate_per_m=5.0,
+        input_rate_per_m=0.10,
+        output_rate_per_m=0.50,
         source="manual_seed_local",
         updated_at="2026-01-01T00:00:00+00:00",
-        cache_read_rate_per_m=0.1,
-        cache_write_rate_per_m=1.25,
+        cache_read_rate_per_m=0.01,
+        cache_write_rate_per_m=0.125,
     )
     monkeypatch.setattr(
         "event_store.dispatch_economics_pricing.resolve_rate",
@@ -91,7 +90,6 @@ def test_post_api_role_dispatch_normalizes_outcome_usage(
         "cache_write_tokens": 50,
         "total_tokens": 600,
     }
-    usage = normalize_api_role_usage(raw_usage, model="anthropic/claude-haiku-5-5")
     app = FastAPI()
     app.include_router(claim_router)
     client = TestClient(app)
@@ -102,7 +100,7 @@ def test_post_api_role_dispatch_normalizes_outcome_usage(
             "work_key": _KEY,
             "resolved_model": "anthropic/claude-haiku-5-5",
             "contract": "freeform",
-            "usage": usage,
+            "usage": raw_usage,
         },
     )
     assert resp.status_code == 200
@@ -116,4 +114,6 @@ def test_post_api_role_dispatch_normalizes_outcome_usage(
     assert usage_cost.get("output_tokens") == 100
     assert usage_cost.get("cache_read_tokens") == 200
     assert usage_cost.get("cache_write_tokens") == 50
-    assert usage_cost.get("cost_usd", 0) > 0
+    assert usage_cost.get("total_tokens") == 850
+    assert usage_cost.get("total_tokens_basis") == "exclusive_sum"
+    assert usage_cost.get("cost_usd") == pytest.approx(0.00010825)
