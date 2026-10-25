@@ -632,16 +632,28 @@ def test_select_channel_layer_c_for_no_fs_generate() -> None:
 @pytest.mark.offline
 def test_select_channel_layer_a_for_cursor_sdk() -> None:
     ctx = build_dispatch_skill_context(
-        model="anthropic/claude-sonnet-4-6",
+        model="openai/gpt-5.4",
         mcp_enabled=True,
-        role="cursor-sdk",
-        platform="cursor",
+        role="reviewer",
+        platform="api",
         inject_profile="dispatch",
         code_touching=True,
     )
     assert (
         select_skill_delivery_channel("architecture-invariants", ctx)
         == SkillDeliveryChannel.LAYER_A_FS
+    )
+    remote_ctx = build_dispatch_skill_context(
+        model="anthropic/claude-sonnet-4-6",
+        mcp_enabled=True,
+        role="reviewer",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+    )
+    assert (
+        select_skill_delivery_channel("architecture-invariants", remote_ctx)
+        == SkillDeliveryChannel.LAYER_C_BODY
     )
     line = emit_layer_a_fs_line("rule:architecture-invariants")
     assert "Use the `architecture-invariants` skill" in line

@@ -105,6 +105,7 @@ class NativeLoopResult:
 
 
 def _mcp_result_text(block: dict[str, Any]) -> str:
+    """Extract plain text from an Anthropic mcp_tool_result content block for traces."""
     content = block.get("content")
     if isinstance(content, str):
         return content
@@ -345,6 +346,35 @@ async def _run_native_tool_loop_body(
         )
         tool_calls = result.get("tool_calls")
 
+        if req.remote_mcp and isinstance(raw, dict) and provider == "anthropic":
+            remote_captured = _capture_remote_mcp_tool_calls(raw, turn=turns_used)
+            captured.extend(remote_captured)
+            if on_tool_event is not None:
+                for tc in remote_captured:
+                    try:
+                        signal = (
+                            "pipeline.frontier.dispatch.tool.called"
+                            if tc.ok
+                            else "pipeline.frontier.dispatch.tool.failed"
+                        )
+                        on_tool_event(
+                            signal,
+                            {
+                                "tool_name": tc.name,
+                                "turn": turns_used,
+                                "ok": tc.ok,
+                                "elapsed_ms": round(tc.elapsed_ms, 1),
+                                "provider": provider,
+                                "arguments": tc.arguments,
+                                "full_error": (
+                                    {"message": tc.result} if not tc.ok else None
+                                ),
+                                "retry_count": 0,
+                            },
+                        )
+                    except Exception as cb_exc:
+                        logger.warning("on_tool_event callback failed: %s", cb_exc)
+
         if (
             provider == "google"
             and result.get("finish_reason") == "MALFORMED_FUNCTION_CALL"
@@ -383,10 +413,6 @@ async def _run_native_tool_loop_body(
                 usage_acc, result.get("usage") if isinstance(result, dict) else None
             )
             tool_calls = result.get("tool_calls")
-            if req.remote_mcp and isinstance(raw, dict) and provider == "anthropic":
-                captured.extend(
-                    _capture_remote_mcp_tool_calls(raw, turn=turns_used)
-                )
 
         if not tool_calls or not req.mcp_tool_loop:
             break

@@ -305,3 +305,99 @@ def test_responses_append_tool_round_skips_bare_reasoning() -> None:
     assert body["input"][3]["type"] == "function_call_output"
     # Confirm bare reasoning was not injected
     assert all(item.get("type") != "reasoning" for item in body["input"])
+
+
+# ---------------------------------------------------------------------------
+# Anthropic streaming — MCP blocks + cache token accumulation
+# ---------------------------------------------------------------------------
+
+
+def test_anthropic_reducer_mcp_tool_use_and_result() -> None:
+    from llm_adapters.streaming.anthropic import AnthropicReducer
+    from sse.protocols import SSEMessage
+
+    reducer = AnthropicReducer()
+    state = reducer.initial_state()
+
+    events = [
+        SSEMessage(
+            event="message_start",
+            data={
+                "type": "message_start",
+                "message": {
+                    "id": "msg_mcp",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 5,
+                        "cache_creation_input_tokens": 3,
+                        "cache_read_input_tokens": 2,
+                    },
+                },
+            },
+        ),
+        SSEMessage(
+            event="content_block_start",
+            data={
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "mcp_tool_use",
+                    "id": "mcpu_1",
+                    "name": "agent_bus_read",
+                    "server_name": "vortex-code",
+                    "input": {"tool": "fetch"},
+                },
+            },
+        ),
+        SSEMessage(
+            event="content_block_stop",
+            data={"type": "content_block_stop", "index": 0},
+        ),
+        SSEMessage(
+            event="content_block_start",
+            data={
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "mcp_tool_result",
+                    "tool_use_id": "mcpu_1",
+                    "is_error": False,
+                    "content": "thread tip",
+                },
+            },
+        ),
+        SSEMessage(
+            event="content_block_stop",
+            data={"type": "content_block_stop", "index": 1},
+        ),
+        SSEMessage(
+            event="message_delta",
+            data={
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {
+                    "output_tokens": 4,
+                    "cache_read_input_tokens": 1,
+                    "cache_creation_input_tokens": 2,
+                },
+            },
+        ),
+        SSEMessage(event="message_stop", data={"type": "message_stop"}),
+    ]
+    for ev in events:
+        if reducer.reduce(state, ev):
+            break
+    terminal = AnthropicReducer.to_terminal_dict(state)
+    assert len(terminal["content"]) == 2
+    assert terminal["content"][0]["type"] == "mcp_tool_use"
+    assert terminal["content"][0]["server_name"] == "vortex-code"
+    assert terminal["content"][1]["type"] == "mcp_tool_result"
+    assert terminal["content"][1]["tool_use_id"] == "mcpu_1"
+    assert terminal["content"][1]["content"] == "thread tip"
+    assert terminal["usage"]["cache_read_input_tokens"] == 3
+    assert terminal["usage"]["cache_creation_input_tokens"] == 5
+
+    adapter = _anthropic_adapter()
+    parsed = adapter.parse_frontier_response(terminal)
+    assert parsed["usage"]["cached_tokens"] == 3
+    assert parsed["usage"]["cache_write_tokens"] == 5

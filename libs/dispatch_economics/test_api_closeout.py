@@ -18,7 +18,34 @@ def test_price_usage_maps_tokens() -> None:
     assert priced is not None
     assert priced["input_tokens"] == 10
     assert priced["output_tokens"] == 5
-    assert priced.get("cost_source") in ("yaml", "wire", "unavailable")
+    assert priced.get("cost_source") in (
+        "rate_x_tokens",
+        "yaml",
+        "wire",
+        "unavailable",
+    )
+
+
+@pytest.mark.offline
+def test_price_usage_anthropic_exclusive_sum_and_cache_write() -> None:
+    priced = price_usage(
+        {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cached_tokens": 40,
+            "cache_creation_input_tokens": 10,
+        },
+        model="anthropic/claude-sonnet-4-6",
+    )
+    assert priced is not None
+    assert priced.get("cache_read_tokens") == 40
+    assert priced.get("cache_write_tokens") == 10
+    assert priced.get("cost_source") in (
+        "rate_x_tokens",
+        "yaml",
+        "wire",
+        "unavailable",
+    )
 
 
 @pytest.mark.offline

@@ -1,4 +1,4 @@
-"""Economics blocks for API-role team_dispatch closeout sidecars."""
+"""Economics blocks for API-role team_dispatch closeout sidecars and ledger pricing."""
 
 from __future__ import annotations
 
@@ -14,14 +14,23 @@ def price_usage(
     model: str,
     knobs: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
+    """Map frontier usage dict to priced economics fields for sidecar and ledger rows."""
     if not usage:
         return None
+    cache_write = usage.get("cache_write_tokens")
+    if cache_write is None:
+        cache_write = usage.get("cache_creation_input_tokens")
+    total_basis: Any = usage.get("total_tokens_basis")
+    if total_basis is None and str(model).startswith("anthropic/"):
+        total_basis = "exclusive_sum"
+    elif total_basis is None:
+        total_basis = usage.get("total_tokens")
     row = {
         "prompt_tokens": usage.get("input_tokens"),
         "completion_tokens": usage.get("output_tokens"),
         "cache_read_tokens": usage.get("cached_tokens") or usage.get("cache_read_tokens"),
-        "cache_write_tokens": usage.get("cache_write_tokens"),
-        "total_tokens_basis": usage.get("total_tokens"),
+        "cache_write_tokens": cache_write,
+        "total_tokens_basis": total_basis,
         "model_id": model,
         "model_knobs_requested": knobs,
     }

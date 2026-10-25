@@ -24,7 +24,7 @@ REVIEW_GIT_INSPECTION_GUIDANCE = (
 
 
 def review_dispatch_system_appendix(resolved_contract: str | None) -> str | None:
-    """Return system text to append for review contracts, or None."""
+    """Return verdict and git-inspection system appendix for code-review class contracts."""
     if (resolved_contract or "") not in REVIEW_CONTRACTS:
         return None
     return f"{REVIEW_VERDICT_CONTRACT}\n\n{REVIEW_GIT_INSPECTION_GUIDANCE}"

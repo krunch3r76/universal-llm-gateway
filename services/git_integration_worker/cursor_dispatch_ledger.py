@@ -3323,3 +3323,55 @@ class CursorDispatchLedger:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+    def upsert_api_role_completed_dispatch(
+        self,
+        *,
+        execution_id: str,
+        work_key: str,
+        resolved_model: str,
+        contract: str | None,
+        record_json: str,
+        stamp: str,
+    ) -> str:
+        """Insert or update a synthetic completed ledger row for API-role team_dispatch."""
+        dispatch_id = f"api-{execution_id}"
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO cursor_sdk_dispatches "
+                    "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+                    "message_present, status, record_json, contract, work_key, queued_at, "
+                    "started_at, terminal_at, terminal_status) "
+                    "VALUES (?, ?, '', ?, ?, 0, 'completed', ?, ?, ?, ?, ?, ?, 'completed')",
+                    (
+                        dispatch_id,
+                        dispatch_id,
+                        execution_id,
+                        resolved_model,
+                        record_json,
+                        contract or "freeform",
+                        work_key,
+                        stamp,
+                        stamp,
+                        stamp,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET record_json=?, terminal_at=?, "
+                    "resolved_model=?, contract=? WHERE dispatch_id=?",
+                    (
+                        record_json,
+                        stamp,
+                        resolved_model,
+                        contract or "freeform",
+                        dispatch_id,
+                    ),
+                )
+            conn.commit()
+        return dispatch_id

@@ -241,7 +241,7 @@ def build_in_process_sender(
             except json.JSONDecodeError:
                 return
             block = payload.get("content_block") or {}
-            if block.get("type") != "tool_use":
+            if block.get("type") not in ("tool_use", "mcp_tool_use"):
                 return
             tool_name = str(block.get("name") or "")
             raw_id = block.get("id")

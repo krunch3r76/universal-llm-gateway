@@ -20,6 +20,7 @@ class _AnthropicState:
             "output_tokens": 0,
             "thinking_tokens": 0,
             "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
         }
     )
     model: str = ""
@@ -32,6 +33,9 @@ class _AnthropicState:
     _thinking_signature: str | None = None
     _tool_id: str | None = None
     _tool_name: str | None = None
+    _mcp_server_name: str | None = None
+    _mcp_result_tool_use_id: str | None = None
+    _mcp_result_is_error: bool = False
     _redacted_data: str | None = None
 
 
@@ -104,6 +108,12 @@ class AnthropicReducer:
         usage = message.get("usage")
         if isinstance(usage, dict):
             state.usage["input_tokens"] = int(usage.get("input_tokens") or 0)
+            state.usage["cache_creation_input_tokens"] += int(
+                usage.get("cache_creation_input_tokens") or 0
+            )
+            state.usage["cache_read_input_tokens"] += int(
+                usage.get("cache_read_input_tokens") or 0
+            )
 
     @staticmethod
     def _on_content_block_start(
@@ -120,11 +130,26 @@ class AnthropicReducer:
         state._thinking_signature = None
         state._tool_id = None
         state._tool_name = None
+        state._mcp_server_name = None
+        state._mcp_result_tool_use_id = None
+        state._mcp_result_is_error = False
         state._redacted_data = None
 
         if block_type in {"tool_use", "mcp_tool_use"}:
             state._tool_id = str(block.get("id") or "")
             state._tool_name = str(block.get("name") or "")
+            if block_type == "mcp_tool_use":
+                server = block.get("server_name")
+                state._mcp_server_name = str(server) if server else None
+                inp = block.get("input")
+                if isinstance(inp, dict) and inp:
+                    state._partial_json = json.dumps(inp)
+        elif block_type == "mcp_tool_result":
+            state._mcp_result_tool_use_id = str(block.get("tool_use_id") or "")
+            state._mcp_result_is_error = bool(block.get("is_error"))
+            content = block.get("content")
+            if isinstance(content, str):
+                state._text_buf = content
         elif block_type == "thinking":
             signature = block.get("signature")
             state._thinking_signature = (
@@ -167,6 +192,9 @@ class AnthropicReducer:
         state._thinking_signature = None
         state._tool_id = None
         state._tool_name = None
+        state._mcp_server_name = None
+        state._mcp_result_tool_use_id = None
+        state._mcp_result_is_error = False
         state._redacted_data = None
 
     @staticmethod
@@ -192,9 +220,16 @@ class AnthropicReducer:
                 "name": state._tool_name,
                 "input": assembled_input,
             }
-            if block_type == "mcp_tool_use":
-                block["server_name"] = "vortex"
+            if block_type == "mcp_tool_use" and state._mcp_server_name:
+                block["server_name"] = state._mcp_server_name
             return block
+        if state._block_type == "mcp_tool_result":
+            return {
+                "type": "mcp_tool_result",
+                "tool_use_id": state._mcp_result_tool_use_id,
+                "is_error": state._mcp_result_is_error,
+                "content": state._text_buf,
+            }
         if state._block_type == "thinking":
             return {
                 "type": "thinking",
@@ -216,6 +251,9 @@ class AnthropicReducer:
             return
         state.usage["output_tokens"] = int(usage.get("output_tokens") or 0)
         state.usage["thinking_tokens"] = int(usage.get("thinking_tokens") or 0)
-        state.usage["cache_read_input_tokens"] = int(
+        state.usage["cache_read_input_tokens"] += int(
             usage.get("cache_read_input_tokens") or 0
+        )
+        state.usage["cache_creation_input_tokens"] += int(
+            usage.get("cache_creation_input_tokens") or 0
         )

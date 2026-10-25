@@ -108,9 +108,9 @@ def test_partition_anthropic_routes_caller_to_layer_a(
         inject_profile=None,
         code_touching=False,
     )
-    assert partition.layer_a == ("engagement-stance",)
-    assert partition.layer_b == ()
-    assert partition.rows[0].channel == "layer_a"
+    assert partition.layer_a == ()
+    assert partition.layer_c == ("engagement-stance",)
+    assert partition.rows[0].channel == "layer_c"
 
 
 def test_partition_inline_only_routes_to_layer_c(

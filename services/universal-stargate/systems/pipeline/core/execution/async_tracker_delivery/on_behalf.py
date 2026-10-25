@@ -235,7 +235,6 @@ async def _post_content_on_behalf(
 
     if 200 <= status_code < 300:
         record.thread_reply_observed_at = _utc_now_iso()
-        await persist_api_role_ledger(record)
         _emit(
             event_bus,
             _build_sent_event(
@@ -252,6 +251,7 @@ async def _post_content_on_behalf(
                 sidecar_status=sidecar_status,
             ),
         )
+        await persist_api_role_ledger(record)
         if record.bus_lifecycle == "ephemeral":
             prior_summary, thread_tags = await _fetch_thread_close_context(
                 thread, url=url, auth_token=auth_token

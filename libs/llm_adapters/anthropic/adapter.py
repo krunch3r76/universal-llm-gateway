@@ -298,6 +298,8 @@ class AnthropicAdapter:
             "output_tokens": int(u.get("output_tokens") or 0),
             "reasoning_tokens": None,
             "cached_tokens": int(u.get("cache_read_input_tokens") or 0) or None,
+            "cache_write_tokens": int(u.get("cache_creation_input_tokens") or 0)
+            or None,
         }
 
         thinking: dict[str, Any] | None = None

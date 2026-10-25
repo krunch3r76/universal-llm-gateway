@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 
 
 def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
+    """True when a frontier API-role to_thread dispatch should record economics on delivery."""
     if not record.work_key or not record.endpoint_request_id:
         return False
     if record.op != "to_thread" or record.result is None:
