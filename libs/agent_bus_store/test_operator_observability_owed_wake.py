@@ -1020,6 +1020,133 @@ def test_holder_mark_read_on_child_lane_closes_12286_owed_wake(
     assert store.close_owed_wake_for_holder("holder-12286") == 0
 
 
+def test_cdp_reply_on_unrelated_thread_leaves_12286_milestone_owed_wake_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    with TestClient(_bus_app(tmp_path)) as client:
+        child = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-child-milestone-lane",
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        assert child.status_code == 201, child.text
+        child_lane = child.json()["thread"]["id"]
+        store.coalesce_owed_wake_milestone(
+            holder_id="holder-12286",
+            lane_thread_id="12286",
+            turn_ref={
+                "thread_id": child_lane,
+                "turn_number": 2,
+                "subject": "QUESTION|x",
+            },
+        )
+        other = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-unrelated-cdp-reply-lane",
+                "from": "cursor",
+                "to": "cursor",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        assert other.status_code == 201, other.text
+        other_lane = other.json()["thread"]["id"]
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": other_lane,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "cdp reply — x",
+                "body": "relay",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+    assert _open_owed_wake_count(store, holder_id="holder-12286") == 1
+
+
+def test_cdp_reply_on_unrelated_thread_leaves_12286_drain_complete_owed_wake_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _bind_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPERATOR_OBSERVABILITY_PRODUCER1_CSE_DISPATCH", "off")
+
+    def _resolve(lane: str) -> str | None:
+        return "holder-12286" if lane == "12286" else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.resolve_maestro_holder_id_for_lane",
+        _resolve,
+    )
+    with TestClient(_bus_app(tmp_path)) as client:
+        armed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-drain-arming-lane",
+                "from": "cursor",
+                "to": "maestro",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        assert armed.status_code == 201, armed.text
+        armed_lane = armed.json()["thread"]["id"]
+        intent = store.create_intent(
+            service="git_integration_worker",
+            action="restart",
+            deadline_at="d",
+            reason="owed-wake-drain-test",
+            caller_thread_id=armed_lane,
+        )
+        store.create_owed_wake_drain_complete(
+            holder_id="holder-12286",
+            restart_intent_id=intent.intent_id,
+            arming_lanes=[armed_lane],
+            lane_thread_id=armed_lane,
+            turn_ref={"restart_intent_id": intent.intent_id},
+        )
+        other = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "owed-unrelated-drain-cdp-reply",
+                "from": "cursor",
+                "to": "cursor",
+                "subject": "seed",
+                "body": "body",
+            },
+        )
+        assert other.status_code == 201, other.text
+        other_lane = other.json()["thread"]["id"]
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": other_lane,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "cdp reply — x",
+                "body": "relay",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+    assert _open_owed_wake_count(store, holder_id="holder-12286") == 1
+
+
 def test_attended_binding_from_resolve_registration_ids_list() -> None:
     from services.git_integration_worker.cse_session_holders import (
         _import_cse_session_warm_module,

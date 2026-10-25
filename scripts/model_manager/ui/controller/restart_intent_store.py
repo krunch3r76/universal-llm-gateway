@@ -893,6 +893,35 @@ class RestartIntentStore:
             conn.commit()
             return int(cur.rowcount)
 
+    def close_owed_wake_for_holder_on_lane(
+        self, holder_id: str, lane_thread_id: str
+    ) -> int:
+        """Close open owed_wake rows for holder that belong to the active lane thread."""
+        from .owed_wake_ledger import owed_wake_row_matches_lane
+
+        hid = (holder_id or "").strip()
+        lane = (lane_thread_id or "").strip()
+        if not hid or not lane:
+            return 0
+        now = _now()
+        closed = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM owed_wake WHERE holder_id=? AND closed_at IS NULL",
+                (hid,),
+            ).fetchall()
+            for raw in rows:
+                row = self._row_to_owed_wake(raw)
+                if not owed_wake_row_matches_lane(row, lane):
+                    continue
+                conn.execute(
+                    "UPDATE owed_wake SET closed_at=?, updated_at=? WHERE row_id=?",
+                    (now, now, row.row_id),
+                )
+                closed += 1
+            conn.commit()
+        return closed
+
     def mark_owed_wake_dispatched(self, row_id: str, *, outcome: str) -> None:
         terminal = outcome in {
             "dispatched",

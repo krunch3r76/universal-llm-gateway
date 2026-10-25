@@ -164,6 +164,22 @@ class OwedWakeRow:
     next_attempt_at: str | None = None
 
 
+def owed_wake_row_matches_lane(row: OwedWakeRow, lane_thread_id: str) -> bool:
+    """True when lane activity on ``lane_thread_id`` may close this owed_wake row."""
+    lane = (lane_thread_id or "").strip()
+    if not lane:
+        return False
+    if (row.lane_thread_id or "").strip() == lane:
+        return True
+    for ref in row.turn_refs:
+        if str(ref.get("thread_id") or "").strip() == lane:
+            return True
+    for arm in row.arming_lanes or []:
+        if str(arm).strip() == lane:
+            return True
+    return False
+
+
 class BusPoster(Protocol):
     def __call__(self, *, thread_id: str, subject: str, body: str) -> bool: ...
 

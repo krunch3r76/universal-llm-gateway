@@ -967,8 +967,8 @@ def close_owed_wake_on_lane_activity(
     seat_is_maestro = agent in {"maestro", "web-anthropic"}
     if not hid and seat_is_maestro and lane != _MAESTRO_HOME_LANE:
         hid = resolve_maestro_holder_id_for_lane(_MAESTRO_HOME_LANE) or ""
-    if hid:
-        store.close_owed_wake_for_holder(hid)
+    if hid and lane:
+        store.close_owed_wake_for_holder_on_lane(hid, lane)
 
 
 def on_house_milestone_to_maestro(
