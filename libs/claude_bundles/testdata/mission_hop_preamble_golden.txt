@@ -77,7 +77,7 @@ trigger: golden-fixture
 - Admit or re-admit a conductor only with contract=conductor.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
 - Never thread_get on 12286; the lane is huge.
-- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/fable-5.1 and desired_effort=medium (K91, 12286#4800; Kaywan: "The opus weights are not reliably strong. Hop to cdp/fable-5.1 medium effort for the maestro (your house) until further notice").
+- Never pass escalation= to agent_bus hop. Pass maestro house: desired_model=cdp/fable-5.1 desired_effort=medium (K91, FACT 12286#4800); elsewhere cdp/opus-5.5-extra (K22).
 - Never force git_integration_worker. Never fire contract:propagate.
 - Never sync_restart while porcelain shows first-column M or D on a path you would call landed.
 - Never send a DISPOSITION or SEAT_REGISTRATION over 2000 characters inline (wc -m). Quotes go in sidecar_content.

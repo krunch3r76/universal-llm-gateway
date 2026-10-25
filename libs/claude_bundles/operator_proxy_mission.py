@@ -14,7 +14,8 @@ from collections.abc import Callable
 from typing import Any
 
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
-from claude_bundles.operator_proxy_hop_status import hop_successor_fields
+from claude_bundles.maestro_self_hop import apply_maestro_self_hop_fields
+from claude_bundles.operator_proxy_hop_status import hop_successor_fields, house_rules_section
 from claude_bundles.operator_proxy_standing_render import (
     compute_preamble_over_inflight_flag,
     first_act_call1_line,
@@ -175,7 +176,7 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 - Admit or re-admit a conductor only with contract=conductor.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
 - Never thread_get on {lane}; the lane is huge.
-- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/fable-5.1 and desired_effort=medium (K91, 12286#4800; Kaywan: "The opus weights are not reliably strong. Hop to cdp/fable-5.1 medium effort for the maestro (your house) until further notice").
+- Never pass escalation= to agent_bus hop. Pass {maestro_self_hop_refusal_tail}.
 - Never force git_integration_worker. Never fire contract:propagate.
 - Never sync_restart while porcelain shows first-column M or D on a path you would call landed.
 - Never send a DISPOSITION or SEAT_REGISTRATION over 2000 characters inline (wc -m). Quotes go in sidecar_content.
@@ -220,7 +221,7 @@ You are the housekeeping successor for lane {lane}. Your birth record: successor
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
 5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
-6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/fable-5.1, desired_effort=medium, hop_kind=mission, reason="housekeeping done; resume").
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model={maestro_self_hop_model}, desired_effort={maestro_self_hop_effort}, hop_kind=mission, reason="housekeeping done; resume").
 
 ## Hard refusals (housekeeping — these bind; they are last on purpose)
 
@@ -254,6 +255,11 @@ _FIELD_ORDER = (
     "running_now_line",
     "mission_arrival_skills",
 )
+_MAESTRO_SELF_HOP_FIELD_ORDER = (
+    "maestro_self_hop_model",
+    "maestro_self_hop_effort",
+    "maestro_self_hop_refusal_tail",
+)
 _LATE_FIELD_ORDER = (
     "house_rules_verbatim",
     "checkpoint_block",
@@ -283,6 +289,8 @@ def _substitute_hop_template_part(
             value = fields[key]
         part = part.replace("{" + key + "}", value)
     for key in late_field_order:
+        part = part.replace("{" + key + "}", fields.get(key, ""))
+    for key in _MAESTRO_SELF_HOP_FIELD_ORDER:
         part = part.replace("{" + key + "}", fields.get(key, ""))
     return part
 
@@ -492,6 +500,14 @@ def ensure_operator_proxy_mission_prompt(
     )
     if "fetch_last" not in fields:
         fields["fetch_last"] = "3"
+    rules_source = house_rules_text
+    if rules_source is None and standing_handoff_text:
+        rules_source = house_rules_section(standing_handoff_text)
+    apply_maestro_self_hop_fields(
+        fields,
+        house_rules_text=rules_source,
+        lane_id=fields.get("lane", "12286"),
+    )
     for key in ("checkpoint_block", "inflight_block", "budgets_table"):
         fields.setdefault(key, "")
     hop_kind = fields.get("hop_kind") or "mission"

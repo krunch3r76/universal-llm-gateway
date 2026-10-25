@@ -1,0 +1,5 @@
+# Maestro operator lane (12286) — render-time knobs for hop-successor body.
+# House-rules K91 row overrides these values when present at render.
+maestro_self_hop:
+  desired_model: cdp/fable-5.1
+  desired_effort: medium
