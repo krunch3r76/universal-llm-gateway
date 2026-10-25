@@ -185,9 +185,10 @@ def test_release_on_spent_lane(
     _write_state(state_path, state)
     update_calls: list[int] = []
 
-    def _count_update(path, mutate):  # noqa: ANN001
+    def _count_update(path, mutate, journal_actor=None, **_extra):  # noqa: ANN001
+        assert journal_actor == "ticker"
         update_calls.append(1)
-        return update_state(path, mutate)
+        return update_state(path, mutate, journal_actor=journal_actor)
 
     with patch("bus_watch.now_row_bind.emit_now_row_released") as released, patch(
         "bus_watch.now_row_bind.update_state", side_effect=_count_update
@@ -228,11 +229,12 @@ def test_release_then_rebind_same_tick(state_path: Path) -> None:
     _write_state(state_path, state)
     update_calls: list[int] = []
 
-    def _count_update(path, mutate):  # noqa: ANN001
+    def _count_update(path, mutate, journal_actor=None, **_extra):  # noqa: ANN001
         from bus_watch.tick_state import update_state as real_update
 
+        assert journal_actor == "ticker"
         update_calls.append(1)
-        return real_update(path, mutate)
+        return real_update(path, mutate, journal_actor=journal_actor)
 
     with patch("bus_watch.now_row_bind.update_state", side_effect=_count_update):
         result = maybe_bind_now_row(digest, state, state_path, as_of=AS_OF)

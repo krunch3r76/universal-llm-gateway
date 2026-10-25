@@ -19,6 +19,7 @@ from . import (  # noqa: E402,F401
     cse,
     detail,
     dispatch,
+    house_actions,
     lineage,
     open_children,
     resume_fence,

@@ -437,3 +437,55 @@ def test_bus_watch_repo_root_prefers_valid_project_root_over_stray_nested(
     from bus_watch.fable_lock import bus_watch_repo_root
 
     assert bus_watch_repo_root() == tmp_path
+
+
+def test_fire_ide_hop_fired_and_landed_writes_one_ide_hop_row_no_spawn_hop() -> None:
+    seal = {"ok": True, "bus_turn": 1}
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.find_transcript_with_hop_header", return_value=("tid-1", {})),
+        patch("bus_watch.house_journal.append_house_action") as append,
+    ):
+        out = fire_ide_hop(
+            "resume 10479\n",
+            root_id="10479",
+            seal=seal,
+            gui_host=":8",
+            dry_run=False,
+            hop_mutex_preheld=True,
+        )
+    assert out.get("ok") is True
+    assert out.get("phase") == "landed"
+    append.assert_called_once()
+    assert append.call_args.args[1] == "ide_hop"
+    kinds = [c.args[1] for c in append.call_args_list]
+    assert "spawn_hop" not in kinds
+
+
+def test_fire_ide_hop_dry_run_writes_no_row() -> None:
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.house_journal.append_house_action") as append,
+    ):
+        out = fire_ide_hop(
+            "resume 10479",
+            root_id="10479",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host=":8",
+            dry_run=True,
+        )
+    assert out.get("ok") is True
+    append.assert_not_called()
+
+
+def test_fire_ide_hop_seal_missing_writes_no_row() -> None:
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        out = fire_ide_hop(
+            "resume 10479",
+            root_id="10479",
+            seal={"ok": False},
+            gui_host=":8",
+            dry_run=True,
+        )
+    assert out.get("ok") is False
+    append.assert_not_called()

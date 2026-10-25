@@ -147,6 +147,12 @@ def test_liaison_ide_hop_defaults_row_when_omitted(
     monkeypatch.setattr(hop_mod, "live_watcher_labels", lambda *a, **k: [])
     monkeypatch.setattr(hop_mod, "tick_register", lambda *a, **k: "attended")
     monkeypatch.setattr(hop_mod, "policy_gui_host", lambda *a, **k: ":8")
+    monkeypatch.setattr(
+        hop_mod,
+        "try_acquire_hop_mutex",
+        lambda *_a, **_k: {"ok": True, "path": "/tmp/liaison-hop-test.lock", "pid": 1},
+    )
+    monkeypatch.setattr(hop_mod, "release_hop_mutex", lambda *_a, **_k: None)
 
     monkeypatch.setattr(
         sys,
