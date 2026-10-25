@@ -67,6 +67,86 @@ def test_refusal_codes(mutate, code: str) -> None:
     assert exc.value.code == code
 
 
+def _ok_grok_export(*, pages_sha: str, reassembled_sha: str, capture_sha: str) -> dict:
+    payload = _ok()
+    payload["meta"]["source_sha256"] = reassembled_sha
+    payload["meta"]["sources"][0] = {
+        "kind": "grok_bot_jsonl",
+        "producer": {
+            "id": "grokbot-jsonl-extractor",
+            "kind": "extractor",
+            "version": None,
+        },
+        "window": {"lo": 1, "hi": 1, "total": 1},
+        "pages_sha256": pages_sha,
+        "reassembled_jsonl_sha256": reassembled_sha,
+    }
+    payload["meta"]["capture"] = {
+        "kind": "grok_export",
+        "ref": "cortex://notes/x",
+        "sha256": capture_sha,
+        "pseudo_byte_exact": False,
+    }
+    return payload
+
+
+def test_grok_export_capture_match_passes() -> None:
+    pages = "b" * 64
+    reassembled = "a" * 64
+    assert (
+        validate_pour(
+            _ok_grok_export(
+                pages_sha=pages, reassembled_sha=reassembled, capture_sha=pages
+            )
+        ).meta.capture
+        is not None
+    )
+
+
+def test_grok_export_capture_sha_not_pages_refuses() -> None:
+    pages = "b" * 64
+    reassembled = "a" * 64
+    with pytest.raises(PourRefused) as exc:
+        validate_pour(
+            _ok_grok_export(
+                pages_sha=pages,
+                reassembled_sha=reassembled,
+                capture_sha="c" * 64,
+            )
+        )
+    assert exc.value.code == "pour.capture_inconsistent"
+    assert "pages_sha256" in exc.value.message
+
+
+def test_grok_export_reassembled_not_source_refuses() -> None:
+    pages = "b" * 64
+    payload = _ok_grok_export(
+        pages_sha=pages, reassembled_sha="a" * 64, capture_sha=pages
+    )
+    payload["meta"]["source_sha256"] = "d" * 64
+    with pytest.raises(PourRefused) as exc:
+        validate_pour(payload)
+    assert exc.value.code == "pour.capture_inconsistent"
+    assert "reassembled_jsonl_sha256" in exc.value.message
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["pages_sha256", "reassembled_jsonl_sha256"],
+)
+def test_grok_export_missing_source_hashes_refuse(field: str) -> None:
+    pages = "b" * 64
+    reassembled = "a" * 64
+    payload = _ok_grok_export(
+        pages_sha=pages, reassembled_sha=reassembled, capture_sha=pages
+    )
+    payload["meta"]["sources"][0].pop(field)
+    with pytest.raises(PourRefused) as exc:
+        validate_pour(payload)
+    assert exc.value.code == "pour.capture_inconsistent"
+    assert field in exc.value.message
+
+
 def test_capture_rules() -> None:
     payload = _ok()
     payload["meta"]["capture"] = {

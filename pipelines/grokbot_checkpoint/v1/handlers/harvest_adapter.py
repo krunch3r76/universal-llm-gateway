@@ -49,6 +49,8 @@ async def run_harvest_adapter(
         "refused": None,
         "envelope": body["envelope"],
         "stats": body["stats"],
+        "raw_envelope": body["raw_envelope"],
+        "raw_stats": body["raw_stats"],
         "normalized_ref": norm_ref,
         "normalized_sha256": norm_sha,
     }
