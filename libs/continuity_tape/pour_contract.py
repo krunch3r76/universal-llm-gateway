@@ -133,15 +133,36 @@ def validate_pour(
             parsed_capture = CaptureRef.model_validate(capture)
         except ValidationError as exc:
             _refuse("pour.capture_invalid", str(exc))
-        if (
-            provenance == "raw"
-            and parsed_capture.kind in ("jsonl", "grok_export")
-            and parsed_capture.sha256 != meta.get("source_sha256")
-        ):
-            _refuse(
-                "pour.capture_inconsistent",
-                "capture.sha256 != meta.source_sha256",
-            )
+        if provenance == "raw" and parsed_capture.kind == "jsonl":
+            if parsed_capture.sha256 != meta.get("source_sha256"):
+                _refuse(
+                    "pour.capture_inconsistent",
+                    "capture.sha256 != meta.source_sha256",
+                )
+        elif provenance == "raw" and parsed_capture.kind == "grok_export":
+            pages_sha = source0.get("pages_sha256")
+            reassembled_sha = source0.get("reassembled_jsonl_sha256")
+            source_sha = meta.get("source_sha256")
+            if not isinstance(pages_sha, str) or not pages_sha:
+                _refuse(
+                    "pour.capture_inconsistent",
+                    "sources[0].pages_sha256 missing",
+                )
+            if not isinstance(reassembled_sha, str) or not reassembled_sha:
+                _refuse(
+                    "pour.capture_inconsistent",
+                    "sources[0].reassembled_jsonl_sha256 missing",
+                )
+            if parsed_capture.sha256 != pages_sha:
+                _refuse(
+                    "pour.capture_inconsistent",
+                    "capture.sha256 != sources[0].pages_sha256",
+                )
+            if reassembled_sha != source_sha:
+                _refuse(
+                    "pour.capture_inconsistent",
+                    "sources[0].reassembled_jsonl_sha256 != meta.source_sha256",
+                )
     window = source0.get("window")
     if window is not None:
         if not isinstance(window, dict):

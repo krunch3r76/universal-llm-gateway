@@ -155,7 +155,7 @@ def run_adapter_twice(
         provenance="raw",
         actual_text_sha256=actual_text_sha256,
         reject_marker_tools=False,
-        validate_pour_envelope=capture_kind != "grok_export",
+        validate_pour_envelope=True,
     )
     if err:
         return None, err

@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from continuity_tape.extract_grokbot_jsonl import extract_grokbot_transcript
-from continuity_tape.messages import envelope_wire_dict
+from continuity_tape.messages import envelope_wire_dict, seal_messages_sha256
+from continuity_tape.pour_contract import validate_pour
 from systems.pipeline.core.conditions import evaluate_condition, extract_condition_deps
 
 from ._clients import file_sha256
@@ -880,7 +881,7 @@ async def test_raw_chain_not_prefix_leaves_both_priors(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grok_export_pages_raw_capture_sha_and_pour_refuses(fs: MemFs) -> None:
+async def test_grok_export_pages_default_pour_success_readback(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
     opts = {
         "mode": "harvest_seal",
@@ -896,14 +897,84 @@ async def test_grok_export_pages_raw_capture_sha_and_pour_refuses(fs: MemFs) -> 
     assert cap["kind"] == "grok_export"
     assert cap["sha256"] == norm["normalized_sha256"]
     assert cap["sha256"] != adapter["raw_envelope"]["meta"]["source_sha256"]
+    src0 = adapter["raw_envelope"]["meta"]["sources"][0]
+    assert cap["sha256"] == src0["pages_sha256"]
+    assert src0["reassembled_jsonl_sha256"] == adapter["raw_envelope"]["meta"]["source_sha256"]
     pour = await run_harvest_pour(opts, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    msg_key = f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json"
+    raw_msg_key = checkpoint_raw_messages_uri(_AGENT, 1)
+    raw_json_key = f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"
+    assert msg_key in fs.files
+    assert raw_msg_key in fs.files
+    assert raw_json_key in fs.files
+    written = json.loads(fs.files[msg_key].decode())
+    raw_written = json.loads(fs.files[raw_msg_key].decode())
+    validate_pour(raw_written)
+    validate_pour(written)
+    assert written["meta"]["provenance"] == "transcribed"
+    assert raw_written["meta"]["provenance"] == "raw"
+    assert written["meta"]["messages_sha256"] == seal_messages_sha256(written["messages"])
+    assert raw_written["meta"]["messages_sha256"] == seal_messages_sha256(
+        raw_written["messages"]
+    )
+    assert raw_written["meta"]["capture"]["sha256"] == src0["pages_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_grok_export_capture_mismatch_writes_no_checkpoint_artifacts(
+    fs: MemFs,
+) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    opts = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(opts, fs)
+    adapter = await run_harvest_adapter(opts, norm, fs)
+    assert adapter.get("refused") is None, adapter
+    broken = json.loads(json.dumps(adapter))
+    broken["raw_envelope"]["meta"]["capture"]["sha256"] = "f" * 64
+    pour = await run_harvest_pour(opts, broken, fs, norm)
     assert (pour.get("refused") or {}).get("code") == "pour.capture_inconsistent"
+    assert f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json" not in fs.files
     assert f"notes/system/checkpoints/grok/{_AGENT}/1.messages.json" not in fs.files
     assert checkpoint_raw_messages_uri(_AGENT, 1) not in fs.files
 
 
 @pytest.mark.asyncio
-async def test_harvest_record_capture_kind_mapping(fs: MemFs) -> None:
+async def test_harvest_record_capture_kind_mapping_grok_export(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
+    opts = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+    }
+    norm = await run_harvest_normalise(opts, fs)
+    adapter = await run_harvest_adapter(opts, norm, fs)
+    pour = await run_harvest_pour(opts, adapter, fs, norm)
+    assert pour.get("refused") is None, pour
+    result = assemble(
+        opts,
+        {
+            "admit": {"json": {"refused": None}},
+            "harvest_normalise": {"json": norm},
+            "harvest_adapter": {"json": adapter},
+            "harvest_pour": {"json": pour},
+        },
+    )
+    line = result["harvest_record"]
+    assert "capture:grok_export@" in line
+    assert "~pseudo" not in line
+
+
+@pytest.mark.asyncio
+async def test_harvest_record_capture_kind_mapping_dom_harvest(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 0, _page(0, 0, 1, ["a"], start=True))
     opts = {
         "mode": "harvest_seal",

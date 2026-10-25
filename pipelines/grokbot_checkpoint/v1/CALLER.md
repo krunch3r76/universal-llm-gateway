@@ -60,6 +60,8 @@ Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`
 
 Canonical checkpoint transcription: `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. Raw transcript sibling (harvest `extract_grokbot_transcript`, `meta.provenance` `raw`): `notes/system/checkpoints/grok/<agent>/<n>.raw.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`. `raw_ref` is the seal-mode slot for a pour whose `meta.provenance` is `raw`. It is not the verbatim export.
 
+Raw pour capture consistency (validated before any checkpoint write): for `capture.kind` `jsonl`, `capture.sha256` must equal `meta.source_sha256`; for `capture.kind` `grok_export`, `capture.sha256` must equal `meta.sources[0].pages_sha256` and `meta.sources[0].reassembled_jsonl_sha256` must equal `meta.source_sha256`. Any mismatch or missing `pages_sha256` / `reassembled_jsonl_sha256` refuses `pour.capture_inconsistent`.
+
 ## Writing the handoff letter
 
 `handoff` is optional and only admitted in `mode: seal` (`admit.handoff_mode` otherwise). It is a successor packet. Omit it and the cycle is unchanged (`checks.handoff` `missing`, Harvest `handoff:none`).

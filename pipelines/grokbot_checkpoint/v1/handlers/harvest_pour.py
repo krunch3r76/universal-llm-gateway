@@ -112,13 +112,14 @@ async def run_harvest_pour(
             return raw_err
     from continuity_tape.pour_contract import PourRefused, validate_pour
 
+    try:
+        validate_pour(raw_envelope)
+        validate_pour(envelope)
+    except PourRefused as exc:
+        return refuse(exc.code, exc.message)
     l0_err = await write_verbatim_l0(fs, agent_id, n, raw_bytes)
     if l0_err:
         return l0_err
-    try:
-        validate_pour(raw_envelope)
-    except PourRefused as exc:
-        return refuse(exc.code, exc.message)
     raw_uri = checkpoint_raw_messages_uri(agent_id, n)
     raw_pour = await stage_grok_pour(
         fs,

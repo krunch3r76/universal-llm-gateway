@@ -124,3 +124,19 @@ def test_caller_doc_paths() -> None:
     assert "tape/pours/<surface>/<transcript_id>.messages.json" not in text
     assert "houseless: true" in text
     assert "notes/system/transcripts/" not in text
+
+
+def test_caller_doc_raw_pour_capture_consistency() -> None:
+    text = _doc()
+    assert (
+        "for `capture.kind` `jsonl`, `capture.sha256` must equal `meta.source_sha256`"
+        in text
+    )
+    assert (
+        "for `capture.kind` `grok_export`, `capture.sha256` must equal "
+        "`meta.sources[0].pages_sha256` and `meta.sources[0].reassembled_jsonl_sha256` "
+        "must equal `meta.source_sha256`"
+        in text
+    )
+    assert "refuses `pour.capture_inconsistent`" in text
+    assert "validated before any checkpoint write" in text
