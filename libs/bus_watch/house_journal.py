@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_logging import get_logger
 
@@ -23,9 +21,9 @@ def append_house_action(
     why = str(action_why or "").strip()
     if not root or not why:
         return False
-    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-    if not token:
-        logger.warning("house journal append skipped: AGENT_BUS_TOKEN missing")
+    headers = agent_bus_bearer_headers()
+    if not headers:
+        logger.warning("house journal append skipped: no agent-bus bearer token")
         return False
     payload = {
         "root_thread_id": root,
@@ -35,11 +33,7 @@ def append_house_action(
     }
     try:
         with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            resp = client.post(
-                "/house-actions",
-                json=payload,
-                headers=agent_bus_bearer_headers(),
-            )
+            resp = client.post("/house-actions", json=payload, headers=headers)
         if resp.status_code >= 400:
             logger.warning(
                 "house journal append refused root=%s status=%s body=%s",

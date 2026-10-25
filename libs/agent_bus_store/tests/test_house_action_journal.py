@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from unittest.mock import patch
+import re
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_bus_store.auth import require_token
@@ -109,6 +111,78 @@ def test_get_houses_returns_joined_rows_shape_root_id_slug_mission_action_why(
     assert row["slug"] == "house-a"
     assert row["mission"] == "todo:alpha"
     assert row["action_why"] == "todo:alpha"
+
+
+def test_append_writes_created_at_in_bus_wire_format(client: TestClient) -> None:
+    root = _liaison_root(
+        client,
+        slug="wire-ts",
+        turn1_body="HOUSE-BIRTH wire-ts work_key=todo:w — role:root continuity house on Glass.",
+    )
+    client.post(
+        "/house-actions",
+        json={
+            "root_thread_id": root,
+            "kind": "now_row_set",
+            "actor": "operator",
+            "action_why": "todo:w",
+        },
+    )
+    with connect() as conn:
+        created_at = conn.execute(
+            "SELECT created_at FROM house_action_journal WHERE root_thread_id=?",
+            (root,),
+        ).fetchone()[0]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created_at)
+
+
+def test_journal_row_round_trips_through_control_tower_aggregate(
+    client: TestClient,
+) -> None:
+    from cortex_store.routes.boot.control_tower import _aggregate
+
+    root = _liaison_root(
+        client,
+        slug="agg-hop",
+        turn1_body="HOUSE-BIRTH agg-hop work_key=todo:agg — role:root continuity house on Glass.",
+    )
+    client.post(
+        "/house-actions",
+        json={
+            "root_thread_id": root,
+            "kind": "ide_hop",
+            "actor": "seat",
+            "action_why": "ide hop landed",
+        },
+    )
+    joined = list_joined_houses()
+    row = next(item for item in joined if item["root_id"] == root)
+    assert row["as_of"].endswith("Z")
+
+    def _fake_query(_conn, sql, *args, **kwargs):  # noqa: ANN001, ARG001
+        if "COUNT(*)" in sql:
+            return [{"n": 0}]
+        return []
+
+    with patch("cortex_store.routes.boot.control_tower.db_query", side_effect=_fake_query):
+        with patch(
+            "cortex_store.routes.boot.control_tower._list_deadlines_impl",
+            return_value={"items": []},
+        ):
+            with patch(
+                "cortex_store.routes.boot.control_tower.query_agent_bus_threads",
+                return_value=[],
+            ):
+                with patch(
+                    "cortex_store.routes.boot.control_tower.query_agent_bus_houses",
+                    return_value=[row],
+                ):
+                    state = _aggregate(MagicMock())
+    house = state["houses"][0]
+    assert house["root_id"] == root
+    assert house["age"] >= 0
+    as_of_dt = datetime.fromisoformat(house["as_of"].replace("Z", "+00:00"))
+    assert as_of_dt.tzinfo is not None
 
 
 def test_get_houses_lists_house_without_journal_row_with_empty_action_why(

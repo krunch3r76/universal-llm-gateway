@@ -187,8 +187,10 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         created = str(row.get("as_of") or now)
         try:
             as_of_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if as_of_dt.tzinfo is None:
+                as_of_dt = as_of_dt.replace(tzinfo=UTC)
             age_s = max(0, int((datetime.now(UTC) - as_of_dt).total_seconds()))
-        except ValueError:
+        except (ValueError, TypeError):
             age_s = 0
         houses.append(
             {

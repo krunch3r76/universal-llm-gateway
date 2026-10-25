@@ -60,3 +60,38 @@ def test_aggregate_includes_houses_key() -> None:
                     state = _aggregate(conn)
     assert "houses" in state
     assert state["houses"][0]["root_id"] == "20468"
+
+
+def test_aggregate_legacy_sqlite_naive_as_of_does_not_raise() -> None:
+    conn = MagicMock()
+
+    def _fake_query(_conn, sql, *args, **kwargs):  # noqa: ANN001, ARG001
+        if "COUNT(*)" in sql:
+            return [{"n": 0}]
+        return []
+
+    legacy = "2026-10-25 08:00:00"
+    with patch("cortex_store.routes.boot.control_tower.db_query", side_effect=_fake_query):
+        with patch(
+            "cortex_store.routes.boot.control_tower._list_deadlines_impl",
+            return_value={"items": []},
+        ):
+            with patch(
+                "cortex_store.routes.boot.control_tower.query_agent_bus_threads",
+                return_value=[],
+            ):
+                with patch(
+                    "cortex_store.routes.boot.control_tower.query_agent_bus_houses",
+                    return_value=[
+                        {
+                            "root_id": "20468",
+                            "slug": "legacy-ts",
+                            "mission": "",
+                            "action_why": "hop",
+                            "as_of": legacy,
+                        }
+                    ],
+                ):
+                    state = _aggregate(conn)
+    assert state["houses"][0]["as_of"] == legacy
+    assert state["houses"][0]["age"] >= 0

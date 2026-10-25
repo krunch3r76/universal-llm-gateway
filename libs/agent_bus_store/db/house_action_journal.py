@@ -6,7 +6,7 @@ import re
 import sqlite3
 from typing import Any
 
-from .connection import connect, write_connect
+from .connection import connect, now as bus_now, write_connect
 
 _HOUSE_BIRTH_WORK_KEY = re.compile(
     r"^HOUSE-BIRTH\s+\S+\s+work_key=(\S+)"
@@ -55,10 +55,12 @@ def append_house_action(
         ).fetchone()
         if exists is None:
             raise AppendHouseActionError("house_action_thread_missing")
+        created_at = bus_now()
         cur = conn.execute(
             "INSERT INTO house_action_journal "
-            "(root_thread_id, kind, actor, action_why) VALUES (?,?,?,?)",
-            (root, str(kind), str(actor), why),
+            "(root_thread_id, kind, actor, action_why, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (root, str(kind), str(actor), why, created_at),
         )
         row_id = int(cur.lastrowid)
         row = conn.execute(
