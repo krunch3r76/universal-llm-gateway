@@ -297,13 +297,15 @@ def test_impresario_repoint_skips_retired_and_duplicate(
     ]
     result = run_impresario_repoint(rows)
 
-    assert result == {"wrote": False, "subscribed": []}
+    assert result["wrote"] is False
+    assert result["subscribed"] == []
     assert subscribe_calls == []
 
 
 def test_impresario_repoint_unchanged_agent_id_noop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """No-op when journal agent_id and display match binding_for / live window (:9)."""
     subscribe_calls: list[dict[str, Any]] = []
 
     def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
@@ -331,5 +333,159 @@ def test_impresario_repoint_unchanged_agent_id_noop(
     rows = [{"name": "Impresario Career", "agent_id": "same-id"}]
     result = run_impresario_repoint(rows)
 
-    assert result == {"wrote": False, "subscribed": []}
+    assert result["wrote"] is False
+    assert result["subscribed"] == []
     assert subscribe_calls == []
+
+
+def test_impresario_repoint_skips_slug_claimed_by_two_active_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        del agent, thread_scope
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        lambda _a: {"display": ":9"},
+    )
+
+    rows = [
+        {"name": "Impresario Career", "agent_id": "a"},
+        {"name": "Impresario-Career", "agent_id": "b"},
+    ]
+    result = run_impresario_repoint(rows)
+
+    assert result["wrote"] is False
+    assert subscribe_calls == []
+
+
+def test_impresario_repoint_follows_live_window_after_promote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        if agent == "impresario-career" and thread_scope == "*":
+            return {
+                "agent_id": "imp-career",
+                "state": "subscribed",
+                "display": ":9",
+            }
+        return None
+
+    def fake_binding(agent: str) -> dict[str, Any] | None:
+        if agent == "impresario":
+            return {"display": ":10"}
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        fake_binding,
+    )
+
+    rows = [{"name": "Impresario Career", "agent_id": "imp-career"}]
+    result = run_impresario_repoint(rows)
+
+    assert result["wrote"] is True
+    assert len(subscribe_calls) == 1
+    assert subscribe_calls[0]["display"] == ":10"
+
+
+def test_impresario_repoint_unsubscribes_retired_row_matching_agent_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unsubscribe_calls: list[dict[str, Any]] = []
+    subscribe_calls: list[dict[str, Any]] = []
+
+    def fake_unsubscribe(**kwargs: Any) -> dict[str, Any]:
+        unsubscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_subscribe(**kwargs: Any) -> dict[str, Any]:
+        subscribe_calls.append(kwargs)
+        return {"appended": True}
+
+    def fake_current(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        if agent == "impresario-career" and thread_scope == "*":
+            return {"agent_id": "old", "state": "subscribed", "display": ":9"}
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.unsubscribe_endpoint",
+        fake_unsubscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.subscribe_endpoint",
+        fake_subscribe,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.binding_for",
+        lambda _a: {"display": ":9"},
+    )
+
+    rows = [{"name": "Impresario Career (retired)", "agent_id": "old"}]
+    result = run_impresario_repoint(rows)
+
+    assert result["wrote"] is True
+    assert len(unsubscribe_calls) == 1
+    assert unsubscribe_calls[0]["agent"] == "impresario-career"
+    assert unsubscribe_calls[0]["expected_agent_id"] == "old"
+    assert subscribe_calls == []
+
+    unsubscribe_calls.clear()
+
+    def fake_current_none(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        del agent, thread_scope
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current_none,
+    )
+    result2 = run_impresario_repoint(rows)
+    assert result2["wrote"] is False
+    assert unsubscribe_calls == []
+
+    def fake_current_other(agent: str, thread_scope: str) -> dict[str, Any] | None:
+        if agent == "impresario-career" and thread_scope == "*":
+            return {"agent_id": "other", "state": "subscribed", "display": ":9"}
+        return None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_subscriptions.current_subscription",
+        fake_current_other,
+    )
+    result3 = run_impresario_repoint(rows)
+    assert result3["wrote"] is False
+    assert unsubscribe_calls == []

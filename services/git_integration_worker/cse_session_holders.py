@@ -860,6 +860,9 @@ def _ledger_conn():
     return CursorDispatchLedger.instance()._connect()
 
 
+_MAESTRO_HOME_LANE = "12286"
+
+
 def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None:
     """Return driving/dormant holder id for a continuity lane, if any."""
     lane = (lane_thread_id or "").strip()
@@ -958,10 +961,12 @@ def close_owed_wake_on_lane_activity(
 
     store = RestartIntentStore.instance()
     hid = (holder_id or "").strip()
-    if not hid and lane_thread_id:
-        hid = resolve_maestro_holder_id_for_lane(lane_thread_id) or ""
-    if not hid and agent in {"maestro", "web-anthropic"}:
-        hid = resolve_maestro_holder_id_for_lane("12286") or ""
+    lane = (lane_thread_id or "").strip()
+    if not hid and lane:
+        hid = resolve_maestro_holder_id_for_lane(lane) or ""
+    seat_is_maestro = agent in {"maestro", "web-anthropic"}
+    if not hid and seat_is_maestro and lane != _MAESTRO_HOME_LANE:
+        hid = resolve_maestro_holder_id_for_lane(_MAESTRO_HOME_LANE) or ""
     if hid:
         store.close_owed_wake_for_holder(hid)
 
@@ -987,10 +992,11 @@ def on_house_milestone_to_maestro(
 
     lane = (lane_thread_id or thread_id or "").strip()
     holder_id = resolve_maestro_holder_id_for_lane(lane)
-    if not holder_id and (to_agent or "").strip().lower() == "maestro":
-        holder_id = resolve_maestro_holder_id_for_lane("12286")
+    to_maestro = (to_agent or "").strip().lower() == "maestro"
+    if not holder_id and to_maestro and lane != _MAESTRO_HOME_LANE:
+        holder_id = resolve_maestro_holder_id_for_lane(_MAESTRO_HOME_LANE)
         if holder_id:
-            lane = "12286"
+            lane = _MAESTRO_HOME_LANE
     if not holder_id:
         return {"recorded": False, "reason": "no_holder_for_lane"}
     store = RestartIntentStore.instance()

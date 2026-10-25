@@ -51,6 +51,10 @@ def test_wildcard_refused_and_cse_delegated(client: TestClient) -> None:
     )
     assert cursor.status_code == 422
     assert cursor.json()["detail"]["code"] == "endpoint_wildcard_refused"
+    for reserved in ("cursor", "maestro"):
+        resp = _sub(client, agent=reserved, thread_scope="*", surface="grok")
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "endpoint_wildcard_refused"
     coord = _sub(client, agent="grok-coordinator-1", thread_scope="*", surface="grok")
     assert coord.status_code == 200
     assert coord.json()["row"]["agent"] == "grok-coordinator-1"

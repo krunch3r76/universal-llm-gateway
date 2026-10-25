@@ -338,7 +338,7 @@ class GrokbotEgressWatchLoop:
         except Exception:
             logger.exception("grokbot gc1 seat repoint failed")
         try:
-            run_impresario_repoint(rows)
+            await asyncio.to_thread(run_impresario_repoint, rows)
         except Exception:
             logger.exception("grokbot impresario seat repoint failed")
         notice = decide_context_hop(

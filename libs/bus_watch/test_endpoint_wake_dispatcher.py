@@ -417,6 +417,9 @@ def test_grok_impresario_conductor_milestone_and_intermediate_wakes() -> None:
         "FAILED|40218|dispatch",
         "DONE|40218|complete",
         "QUESTION|40218|fork",
+        "DONE 40218 complete",
+        "FAILED 40218 dispatch",
+        "QUESTION 40218 fork",
     )
     for to_agent in impresario_targets:
         for from_agent in ("cursor-sdk", "conductor-hop"):

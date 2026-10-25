@@ -16,6 +16,7 @@ from .lane_associations import get_current_lane
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
+_CLAIM_SKIP_GROUP_CAP = 32
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
 _MAESTRO_WEB_SQL = ", ".join(f"'{a}'" for a in sorted(MAESTRO_WEB_ALIAS_PAIR))
 
@@ -290,7 +291,7 @@ def claim_due_wakes(
             (ttl_before,),
         )
         all_skipped: list[dict[str, Any]] = []
-        while True:
+        for _ in range(_CLAIM_SKIP_GROUP_CAP):
             group = conn.execute(
                 f"""
                 SELECT agent, thread_id FROM endpoint_wake_ledger p
@@ -405,6 +406,7 @@ def claim_due_wakes(
                 ).fetchall()
             ]
             return {"wake_id": wake_id, "rows": claimed}
+        return {"wake_id": None, "rows": all_skipped}
 
 
 def record_wake_result(
