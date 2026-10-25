@@ -1,0 +1,29 @@
+# First-match-wins endpoint wake qualification (top → bottom).
+# Evaluated by qualify() in endpoint_wake_dispatcher.py; order is load-bearing.
+rules:
+  - id: drop_self_or_broadcast
+    action: suppress
+  - id: drop_stage_mgr_echo
+    action: suppress
+  - id: drop_ack_route_coord
+    action: suppress
+  - id: wake_maestro_ack_batch
+    action: wake
+  - id: drop_maestro_telemetry
+    action: suppress
+  - id: wake_cursor_gate_on_interm
+    action: wake
+  - id: drop_dispatch_intermediate
+    action: suppress
+  - id: wake_peer_sender
+    action: wake
+  - id: drop_routine_hop_closeout
+    action: suppress
+  - id: wake_gate_or_directive
+    action: wake
+  - id: wake_cse_allowlist
+    action: wake
+  - id: wake_grok_allowlist
+    action: wake
+  - id: default_suppress
+    action: suppress

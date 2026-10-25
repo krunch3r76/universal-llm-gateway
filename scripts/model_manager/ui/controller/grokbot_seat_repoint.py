@@ -193,6 +193,7 @@ def run_impresario_repoint(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     plans: list[tuple[str, str, list[str], list[str]]] = []
     claims: dict[tuple[str, str], set[str]] = {}
+    unnumbered_claims: dict[tuple[str, str], set[str]] = {}
     for row in rows:
         name = str(row.get("name") or "").strip()
         agent_id = str(row.get("agent_id") or "").strip()
@@ -212,6 +213,24 @@ def run_impresario_repoint(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for scope in scopes:
                 key = (slug, scope)
                 claims.setdefault(key, set()).add(agent_id)
+                if len(scopes) == 1:
+                    unnumbered_claims.setdefault(key, set()).add(agent_id)
+
+    owners: dict[tuple[str, str], str | None] = {}
+    for key, ids in claims.items():
+        base_ids = unnumbered_claims.get(key, set())
+        if len(ids) == 1:
+            owners[key] = next(iter(ids))
+        elif key[1] == "*" and len(base_ids) == 1:
+            owners[key] = next(iter(base_ids))
+        else:
+            owners[key] = None
+            logger.warning(
+                "impresario repoint contested agent=%s scope=%s ids=%s",
+                key[0],
+                key[1],
+                sorted(ids),
+            )
 
     for name, agent_id, slugs, scopes in plans:
         for slug in slugs:
@@ -222,13 +241,7 @@ def run_impresario_repoint(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     wild_display = wild.get("display")
                     if isinstance(wild_display, str) and wild_display.strip():
                         display = wild_display.strip()
-                if len(claims[(slug, scope)]) != 1:
-                    logger.warning(
-                        "impresario repoint contested agent=%s scope=%s ids=%s",
-                        slug,
-                        scope,
-                        sorted(claims[(slug, scope)]),
-                    )
+                if owners.get((slug, scope)) != agent_id:
                     continue
                 if display is None:
                     continue

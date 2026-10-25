@@ -160,6 +160,7 @@ class OwedWakeRow:
     restart_intent_id: str | None
     dispatched_at: str | None
     closed_at: str | None
+    dispatch_outcome: str | None = None
     attempt_count: int = 0
     next_attempt_at: str | None = None
 
@@ -544,10 +545,85 @@ def flush_pending_owed_wakes(store: Any, *, deps: OwedWakeDeps) -> int:
     return count
 
 
+def _turn_ref_already_read(thread_id: str, turn_number: int) -> bool:
+    """True when the bus turn already has read_at before owed_wake delivery."""
+    lane = (thread_id or "").strip()
+    if not lane:
+        return False
+    try:
+        from agent_bus_store.db.connection import connect
+
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT read_at FROM turns WHERE thread = ? AND turn_number = ? LIMIT 1",
+                (lane, int(turn_number)),
+            ).fetchone()
+    except Exception:
+        logger.debug(
+            "turn read_at probe failed thread=%s turn=%s",
+            thread_id,
+            turn_number,
+            exc_info=True,
+        )
+        return False
+    if row is None:
+        return False
+    return row["read_at"] is not None
+
+
+def _turn_refs_all_read(refs: list[dict[str, Any]]) -> bool:
+    if not refs:
+        return False
+    for ref in refs:
+        thread_id = str(ref.get("thread_id") or "").strip()
+        try:
+            turn_number = int(ref.get("turn_number"))
+        except (TypeError, ValueError):
+            return False
+        if not _turn_ref_already_read(thread_id, turn_number):
+            return False
+    return True
+
+
+def _producer1_wake_recipient(_row: OwedWakeRow) -> str:
+    """Endpoint ledger agent for producer-1 owed_wake dedupe (maestro holder path)."""
+    return "maestro"
+
+
+def _endpoint_wake_already_delivered(refs: list[dict[str, Any]], *, agent: str) -> bool:
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import endpoint_wake_covers_turn
+
+    try:
+        with connect() as conn:
+            for ref in refs:
+                thread_id = str(ref.get("thread_id") or "").strip()
+                try:
+                    turn_number = int(ref.get("turn_number"))
+                except (TypeError, ValueError):
+                    continue
+                if endpoint_wake_covers_turn(
+                    conn, agent=agent, thread_id=thread_id, turn_number=turn_number
+                ):
+                    return True
+    except Exception:
+        logger.debug("endpoint_wake dedupe probe failed", exc_info=True)
+    return False
+
+
 def attempt_dispatch(store: Any, row: OwedWakeRow, *, deps: OwedWakeDeps) -> bool:
     """Post bus turns and run endpoint wake; leave dispatched_at null on failure."""
     if row.closed_at is not None or row.dispatched_at is not None:
         return row.dispatched_at is not None
+
+    if _turn_refs_all_read(row.turn_refs):
+        store.mark_owed_wake_dispatched(row.row_id, outcome="skipped")
+        return True
+
+    wake_agent = _producer1_wake_recipient(row)
+    if _endpoint_wake_already_delivered(row.turn_refs, agent=wake_agent):
+        store.mark_owed_wake_dispatched(row.row_id, outcome="skipped")
+        return True
 
     holder = deps.holder_lookup(row.holder_id)
     wake_plan = _plan_endpoint_wake(
@@ -590,6 +666,25 @@ def attempt_dispatch(store: Any, row: OwedWakeRow, *, deps: OwedWakeDeps) -> boo
     )
     if bus_ok and endpoint_ok:
         store.mark_owed_wake_dispatched(row.row_id, outcome="dispatched")
+        try:
+            from agent_bus_store.db.endpoint_wake_ledger import (
+                suppress_endpoint_wake_for_turn,
+            )
+
+            for ref in row.turn_refs:
+                thread_id = str(ref.get("thread_id") or "").strip()
+                try:
+                    turn_number = int(ref.get("turn_number"))
+                except (TypeError, ValueError):
+                    continue
+                if thread_id:
+                    suppress_endpoint_wake_for_turn(
+                        agent=wake_agent,
+                        thread_id=thread_id,
+                        turn_number=turn_number,
+                    )
+        except Exception:
+            logger.debug("suppress endpoint wake after owed dispatch failed", exc_info=True)
         return True
     return False
 

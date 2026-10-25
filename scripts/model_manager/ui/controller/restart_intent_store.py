@@ -932,8 +932,9 @@ class RestartIntentStore:
         stamp = _now() if terminal else None
         with self._connect() as conn:
             conn.execute(
-                "UPDATE owed_wake SET dispatched_at=?, updated_at=? WHERE row_id=?",
-                (stamp, _now(), row_id),
+                "UPDATE owed_wake SET dispatched_at=?, dispatch_outcome=?, updated_at=? "
+                "WHERE row_id=?",
+                (stamp, outcome if terminal else None, _now(), row_id),
             )
 
     def record_owed_wake_failure(self, row_id: str) -> int:
@@ -970,6 +971,9 @@ class RestartIntentStore:
         keys = row.keys()
         attempt_count = int(row["attempt_count"]) if "attempt_count" in keys else 0
         next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in keys else None
+        dispatch_outcome = (
+            row["dispatch_outcome"] if "dispatch_outcome" in keys else None
+        )
         return OwedWakeRow(
             row_id=row["row_id"],
             holder_id=row["holder_id"],
@@ -980,6 +984,7 @@ class RestartIntentStore:
             restart_intent_id=row["restart_intent_id"],
             dispatched_at=row["dispatched_at"],
             closed_at=row["closed_at"],
+            dispatch_outcome=dispatch_outcome,
             attempt_count=attempt_count,
             next_attempt_at=next_attempt_at,
         )

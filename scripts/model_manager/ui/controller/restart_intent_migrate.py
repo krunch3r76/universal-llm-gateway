@@ -236,6 +236,8 @@ def _ensure_owed_wake_attempt_columns(conn: sqlite3.Connection) -> None:
         )
     if "next_attempt_at" not in cols:
         conn.execute("ALTER TABLE owed_wake ADD COLUMN next_attempt_at TEXT")
+    if "dispatch_outcome" not in cols:
+        conn.execute("ALTER TABLE owed_wake ADD COLUMN dispatch_outcome TEXT")
 
 
 def _ensure_wait_for_boundary_column(conn: sqlite3.Connection) -> None:

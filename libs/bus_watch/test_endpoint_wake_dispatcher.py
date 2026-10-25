@@ -20,12 +20,15 @@ from background_supervisor import supervise
 from bus_watch.endpoint_wake_dispatcher import (
     CSE_WAKE_SUBJECT_HEADS,
     GROK_WAKE_SUBJECT_HEADS,
+    _declared_wake_rule_ids,
     _effective_to_agent,
+    _legacy_qualifies,
     _reset_no_composer_state,
     classify_cse,
     classify_display,
     fire_due_wakes,
     qualifies,
+    qualify,
     scan_once,
     subject_allowed,
 )
@@ -2822,3 +2825,338 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 
     assert unsub_calls == []
     assert resolve_endpoint("stage-manager", thread) is not None
+
+
+def test_declared_rule_map_loads_thirteen_rules(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
+
+    assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
+    assert len(_declared_wake_rule_ids()) == 13
+    assert _declared_wake_rule_ids()[8] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[7] == "wake_peer_sender"
+
+
+def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
+    """YAML-backed qualify() must match imperative _legacy_qualifies on every case."""
+    agents = (
+        "maestro",
+        "web-anthropic",
+        "grok-bot-gc1",
+        "cursor",
+        "cursor-sdk",
+        "conductor-hop",
+        "dispatch",
+        "all",
+        "",
+    )
+    subjects = (
+        "QUESTION|x",
+        "VERDICT|x",
+        "FACT|telemetry",
+        "ACK|x",
+        "ROUTE|x",
+        "STATUS|ack-batch|x",
+        "TYPE: DIRECTIVE|x",
+        "NOTICE|gap|sha",
+        "pickup|house-cp",
+        "CLOSEOUT|cursor-sdk generate",
+        "contract=conductor caller=conductor-hop",
+        "DONE|x",
+        "RANDOM|noise",
+    )
+    mismatches: list[str] = []
+    for to_agent in agents:
+        for from_agent in agents:
+            for subject in subjects:
+                turn = {
+                    "to_agent": to_agent,
+                    "from_agent": from_agent,
+                    "subject": subject,
+                }
+                for cse in (True, False):
+                    legacy = _legacy_qualifies(turn, cse=cse)
+                    mapped = qualify(turn, cse=cse).wake
+                    if legacy != mapped:
+                        mismatches.append(
+                            f"cse={cse} to={to_agent!r} from={from_agent!r} "
+                            f"subject={subject!r} legacy={legacy} mapped={mapped}"
+                        )
+    assert mismatches == []
+
+
+def test_advance_scan_persists_decided_by_rule(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-decided-by-rule")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|decided-by-rule",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+                "decided_by_rule": "wake_peer_sender",
+            }
+        ],
+        now="2020-01-01 19:00:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["decided_by_rule"] == "wake_peer_sender"
+
+
+def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-scan-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 18:00:00", t_id),
+        )
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, pending: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                pending,
+                now="2020-01-01 18:00:01",
+            )
+
+        def holder(self, lane: str) -> dict:
+            return {"registration_id": "reg-live", "seat_state": "driving"}
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "cse",
+                {"surface": "cse", "agent_id": thread_id, "id": 1, "state": "subscribed"},
+            )
+
+    scan_once(Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
+        ).fetchone()
+    assert row is None
+
+
+def test_claim_skips_maestro_already_read_after_pending_insert(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-maestro-read-claim")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:05:00",
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 18:05:30", t_id),
+        )
+    skipped = claim_due_wakes(now="2020-01-01 18:06:00")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["reason"] == "already_read"
+
+
+def test_claim_skips_when_owed_wake_dispatched_same_turn(db: None, tmp_path) -> None:
+    import scripts.model_manager.ui.controller.restart_intent_store as ris_mod
+
+    intent_db = tmp_path / "restart-intents.db"
+    ris_mod.RestartIntentStore._instance = None
+    store = ris_mod.RestartIntentStore(db_path=intent_db)
+    ris_mod.RestartIntentStore._instance = store
+    detail = create_thread(thread_id=None, slug="40226-dedupe-owed")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:10:00",
+    )
+    with store._connect() as conn:
+        conn.execute(
+            "INSERT INTO owed_wake (row_id, holder_id, producer, lane_thread_id, "
+            "turn_refs, arming_lanes, dispatched_at, dispatch_outcome, created_at, "
+            "updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                "row-40226",
+                "holder-maestro",
+                "milestone",
+                thread,
+                f'[{{"thread_id":"{thread}","turn_number":{t_n}}}]',
+                "[]",
+                "2020-01-01 18:10:05",
+                "dispatched",
+                "2020-01-01 18:10:01",
+                "2020-01-01 18:10:05",
+            ),
+        )
+        conn.commit()
+        assert (
+            conn.execute("SELECT COUNT(*) AS c FROM owed_wake").fetchone()["c"] == 1
+        )
+    skipped = claim_due_wakes(now="2020-01-01 18:10:10")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["reason"] == "deduped_owed_wake"
+
+
+def test_fire_due_wakes_skips_when_cse_holder_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-1",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "maestro",
+                        "thread_id": "18460",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_cse_allowlist",
+                    }
+                ],
+            }
+
+        def holder(self, _lane: str) -> dict:
+            return {"seat_state": "superseded", "registration_id": "reg-old"}
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_target",
+        lambda _store, _agent, _thread: (
+            "exact",
+            {"surface": "cse", "agent_id": "18460", "id": 9},
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "skipped"
+    assert recorded[0]["reason"] == "seat_superseded"
+    assert recorded[0]["decided_by_rule"] == "wake_cse_allowlist"
+
+
+def test_fire_due_wakes_skips_web_anthropic_when_cse_holder_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-web-1",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "web-anthropic",
+                        "thread_id": "40226",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_web_anthropic",
+                    }
+                ],
+            }
+
+        def holder(self, _lane: str) -> dict:
+            return {"seat_state": "superseded", "registration_id": "reg-web-old"}
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._display_seated",
+        lambda _store, _thread: False,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "skipped"
+    assert recorded[0]["reason"] == "seat_superseded"
+    assert recorded[0]["route"] == "cse"
