@@ -114,7 +114,6 @@ async def run_harvest_pour(
 
     try:
         validate_pour(raw_envelope)
-        validate_pour(envelope)
     except PourRefused as exc:
         return refuse(exc.code, exc.message)
     l0_err = await write_verbatim_l0(fs, agent_id, n, raw_bytes)
