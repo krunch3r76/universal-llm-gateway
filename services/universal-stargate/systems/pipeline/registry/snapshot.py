@@ -207,6 +207,9 @@ def discover_definition_yaml_paths(registry: PipelineRegistry) -> list[Path]:
                 if not yaml_file.is_file() or yaml_file.name in _EXCLUDED_PIPELINE_YAML:
                     continue
                 add(yaml_file)
+                prompt_dir = yaml_file.parent.name == "prompts"
+                if prompt_dir and yaml_file.parent != domain_dir:
+                    continue
                 for sub_path in _sub_pipeline_paths(yaml_file):
                     add(sub_path)
     return list(found)

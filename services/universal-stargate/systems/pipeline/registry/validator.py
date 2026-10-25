@@ -79,7 +79,8 @@ class PipelineValidator:
     Validates loaded pipeline configurations.
 
     Checks handler existence, depends_on/inputs references, DAG cycles,
-    model_ref/prompt_ref resolution, and cross-version prompt isolation.
+    model_ref/prompt_ref resolution, that a model_ref carries a prompt_ref,
+    and cross-version prompt isolation.
     """
 
     def __init__(self, registry_instance: PipelineRegistry) -> None:
@@ -94,6 +95,7 @@ class PipelineValidator:
         - depends_on references valid step IDs
         - No cycles in dependencies
         - model_ref exists in models
+        - model_ref has a prompt_ref (a model_ref is an inference model)
         - prompt_ref exists in prompts
         """
         for pipeline_id, pipeline in self._registry.pipelines.items():
@@ -221,6 +223,14 @@ class PipelineValidator:
                     )
 
         for step in pipeline.steps:
+            # model_ref names the inference model. A call with no prompt_ref
+            # has nothing to send, so the pipeline YAML is invalid.
+            if step.model_ref and not step.prompt_ref:
+                errors.append(
+                    f"Step '{step.id}': model_ref '{step.model_ref}' "
+                    "requires prompt_ref"
+                )
+
             if step.model_extra and "decision_table" in step.model_extra:
                 errors.append(
                     f"Step '{step.id}': decision_table is not supported; "

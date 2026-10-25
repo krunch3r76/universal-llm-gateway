@@ -12,10 +12,8 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-import yaml
 from implement_admission.closeout_helpers import cortex_files_root
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -120,9 +118,9 @@ def _role(step: Any) -> str:
 
 
 def _prompts() -> dict[str, Any]:
-    path = Path(__file__).resolve().parents[1] / "prompts.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return data.get("prompts") or {}
+    from .prompt_store import load_prompts
+
+    return load_prompts()
 
 
 def _thread_id(options: dict[str, Any]) -> str:

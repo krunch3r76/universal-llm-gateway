@@ -30,6 +30,42 @@ logger = get_logger(__name__)
 
 _UNCATEGORIZED = "uncategorized"
 _VERSION_SEGMENT = re.compile(r"^v\d+$")
+_PIPELINE_KEYS = ("schema_version", "version", "steps", "pipeline")
+
+
+def _read_yaml_mapping(path: Path) -> dict | None:
+    """Return a YAML mapping, or None after logging a read or parse failure."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+        logger.warning(f"Failed to read {path}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        logger.warning(f"YAML {path} is not a mapping")
+        return None
+    return data
+
+
+def _is_pipeline_document(data: dict) -> bool:
+    """True when the mapping is a pipeline spec rather than a prompt body."""
+    return any(key in data for key in _PIPELINE_KEYS)
+
+
+def _is_prompt_document(data: dict) -> bool:
+    """True for a one-file prompt: a template and no pipeline keys."""
+    return "template" in data and not _is_pipeline_document(data)
+
+
+def _is_split_prompt_file(path: Path, domain_dir: Path) -> bool:
+    """True when ``path`` is a prompt body under ``prompts/``, not the domain root.
+
+    A domain whose own name is ``prompts`` keeps its root specs as pipelines.
+    A pipeline spec sitting inside ``prompts/`` is also left for ``_load_pipeline``.
+    """
+    if path.parent.name != "prompts" or path.parent == domain_dir:
+        return False
+    data = _read_yaml_mapping(path)
+    return data is not None and _is_prompt_document(data)
 
 
 def _derive_category(path: Path, domain_dir: Path | None, pipeline_data: dict) -> str:
@@ -101,10 +137,12 @@ class PipelineLoader:
             {domain}/
                 *.yaml              - Pipeline specs (root level)
                 prompts.yaml        - Domain prompts (root level, namespaced by domain)
+                prompts/<key>.yaml  - One file per prompt; stem is the prompt key
                 models.yaml         - Domain model refs (scoped to this search path)
                 handlers/           - Domain handlers (loaded separately)
                 {subdir}/
                     prompts.yaml    - Subdomain prompts (namespaced as domain.subdir)
+                    prompts/<key>.yaml
                     *.yaml          - Pipeline specs in subdirectory
         """
         domain_name = domain_dir.name
@@ -134,10 +172,68 @@ class PipelineLoader:
 
             self._load_domain_prompts(prompts_file, namespace)
 
+        self._load_split_prompts(domain_dir, search_path)
+
         for yaml_file in sorted(domain_dir.rglob("*.yaml")):
             excluded = ("prompts.yaml", "models.yaml", "categories.yaml")
-            if yaml_file.name not in excluded:
-                self._load_pipeline(yaml_file, path_name, domain_dir=domain_dir)
+            if yaml_file.name in excluded or _is_split_prompt_file(
+                yaml_file, domain_dir
+            ):
+                continue
+            self._load_pipeline(yaml_file, path_name, domain_dir=domain_dir)
+
+    def _load_split_prompts(self, domain_dir: Path, search_path: Path) -> None:
+        """Load ``prompts/<key>.yaml`` into the parent directory's namespace.
+
+        The filename stem is the prompt key. A step with no prompt_ref has
+        no file. Bundled ``prompts.yaml`` still merges into the same map.
+        """
+        for prompt_dir in sorted(
+            path for path in domain_dir.rglob("prompts") if path.is_dir()
+        ):
+            relative = prompt_dir.relative_to(search_path)
+            namespace = ".".join(relative.parent.parts)
+            if not namespace or prompt_dir == domain_dir:
+                continue
+            grouped: dict = {}
+            for path in sorted(prompt_dir.glob("*.yaml")):
+                data = _read_yaml_mapping(path)
+                if data is None:
+                    continue
+                if _is_prompt_document(data):
+                    grouped[path.stem] = data
+                    continue
+                if _is_pipeline_document(data):
+                    logger.warning(
+                        "Pipeline spec %s is inside prompts/; loading it as a pipeline",
+                        path,
+                    )
+                    continue
+                logger.warning(
+                    f"Prompt file {path} has no template and is not a pipeline spec"
+                )
+            if not grouped:
+                continue
+            self._merge_prompts(namespace, grouped)
+            logger.info(
+                f"    📄 Loaded {len(grouped)} prompt(s) "
+                f"from {namespace}/prompts/*.yaml"
+            )
+
+    def _merge_prompts(self, namespace: str, prompts_data: dict) -> None:
+        """Merge prompt keys into ``namespace`` without dropping child namespaces."""
+        namespace_parts = namespace.split(".")
+        current = self._registry.prompts
+        for part in namespace_parts[:-1]:
+            if part not in current or not isinstance(current[part], dict):
+                current[part] = {}
+            current = current[part]
+        key = namespace_parts[-1]
+        if key in current and isinstance(current[key], dict):
+            # Child directories sort before the parent prompts.yaml.
+            current[key].update(prompts_data)
+        else:
+            current[key] = prompts_data
 
     def _load_domain_prompts(self, prompts_file: Path, namespace: str) -> None:
         """Load prompts from domain prompts.yaml with namespace."""
@@ -148,23 +244,7 @@ class PipelineLoader:
             prompts_data = data.get("prompts", {})
 
             if prompts_data:
-                namespace_parts = namespace.split(".")
-                current = self._registry.prompts
-                for part in namespace_parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    elif not isinstance(current[part], dict):
-                        current[part] = {}
-                    current = current[part]
-
-                key = namespace_parts[-1]
-                if key in current and isinstance(current[key], dict):
-                    # Merge prompts into existing entry to preserve sub-namespaces
-                    # that may have been registered by child directories loaded first
-                    # (sorted order: child paths sort before parent prompts.yaml).
-                    current[key].update(prompts_data)
-                else:
-                    current[key] = prompts_data
+                self._merge_prompts(namespace, prompts_data)
                 logger.info(
                     f"    📄 Loaded {len(prompts_data)} prompt group(s) "
                     f"from {namespace}/prompts.yaml"

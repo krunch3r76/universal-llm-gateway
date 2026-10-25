@@ -70,7 +70,7 @@ docs/vision/
 .pytype/
 .pyre/
 
-prompts/
+/prompts/
 
 # Tests are tracked (operator bind 2026-07-31, a:27411). Untracked tests had made
 # every cross-seat "tests pass" claim unverifiable from the repo; repo-wide ignores

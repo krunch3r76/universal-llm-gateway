@@ -458,15 +458,14 @@ def test_errored_reviser_is_not_selected() -> None:
 
 
 def test_prose_rhythm_prompt_does_not_strip_trailing_qualifiers() -> None:
-    text = (Path(__file__).resolve().parents[1] / "prompts.yaml").read_text(
-        encoding="utf-8"
-    )
-    rhythm = text.split("prose_rhythm:", 1)[1].split("\n  reviser:", 1)[0]
-    assert "strip trailing qualifiers" not in rhythm
-    assert "Orwell" not in rhythm
-    assert "Keep every content word" in rhythm
-    assert "I stated" in rhythm
-    assert "I said" in rhythm
+    text = (
+        Path(__file__).resolve().parents[1] / "prompts" / "prose_rhythm.yaml"
+    ).read_text(encoding="utf-8")
+    assert "strip trailing qualifiers" not in text
+    assert "Orwell" not in text
+    assert "Keep every content word" in text
+    assert "I stated" in text
+    assert "I said" in text
 
 
 def test_filing_stitch_keeps_source_frame_and_fails_unnumbered_body() -> None:

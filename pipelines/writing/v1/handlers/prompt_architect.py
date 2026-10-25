@@ -11,7 +11,6 @@ import json
 import re
 from typing import Any
 
-import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
@@ -28,13 +27,10 @@ def _step(payload: dict[str, Any]) -> StepOutput:
 
 
 def _architect_template() -> str:
-    from pathlib import Path
+    from .prompt_store import load_prompts
 
-    prompts_path = Path(__file__).resolve().parents[1] / "prompts.yaml"
-    data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
-    return str(
-        (data.get("prompts") or {}).get("prompt_architect", {}).get("template") or ""
-    )
+    row = load_prompts().get("prompt_architect") or {}
+    return str(row.get("template") or "")
 
 
 def _allowed_tokens(

@@ -11,10 +11,8 @@ import hashlib
 import json
 import re
 from collections.abc import Collection
-from pathlib import Path
 from typing import Any
 
-import yaml
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
@@ -137,9 +135,9 @@ def _parse_ref(ref: str) -> tuple[str, Any] | None:
 
 
 def _writer_template() -> str:
-    path = Path(__file__).resolve().parents[1] / "prompts.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return str((data.get("prompts") or {}).get("writer", {}).get("template") or "")
+    from .prompt_store import load_prompts
+
+    return str((load_prompts().get("writer") or {}).get("template") or "")
 
 
 def _source_message_block(source_message: str | None) -> str:

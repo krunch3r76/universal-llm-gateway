@@ -198,9 +198,7 @@ def test_seat_dispatch_http_429_admit_failed() -> None:
 
 
 def _writer_prompt_config() -> PromptConfig:
-    row = (yaml.safe_load((_V1 / "prompts.yaml").read_text(encoding="utf-8")) or {}).get(
-        "prompts", {}
-    ).get("writer", {})
+    row = yaml.safe_load((_V1 / "prompts" / "writer.yaml").read_text(encoding="utf-8")) or {}
     return PromptConfig(
         name="writer",
         description=str(row.get("description") or ""),
