@@ -289,118 +289,122 @@ def claim_due_wakes(
             "WHERE state='claimed' AND claimed_at<=?",
             (ttl_before,),
         )
-        group = conn.execute(
-            f"""
-            SELECT agent, thread_id FROM endpoint_wake_ledger p
-            WHERE p.state='pending'
-              AND (p.finished_at IS NULL OR p.finished_at<=?)
-              AND NOT EXISTS (
-                SELECT 1 FROM endpoint_wake_ledger d
-                WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
-                  AND d.state='delivered' AND d.finished_at>?
+        all_skipped: list[dict[str, Any]] = []
+        while True:
+            group = conn.execute(
+                f"""
+                SELECT agent, thread_id FROM endpoint_wake_ledger p
+                WHERE p.state='pending'
+                  AND (p.finished_at IS NULL OR p.finished_at<=?)
                   AND NOT EXISTS (
-                    SELECT 1 FROM turns t
-                    WHERE datetime(t.created_at) > datetime(d.finished_at)
-                      AND (
-                        lower(trim(t.from_agent))=lower(trim(p.agent))
-                        OR (
-                          lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
-                          AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
+                    SELECT 1 FROM endpoint_wake_ledger d
+                    WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
+                      AND d.state='delivered' AND d.finished_at>?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns t
+                        WHERE datetime(t.created_at) > datetime(d.finished_at)
+                          AND (
+                            lower(trim(t.from_agent))=lower(trim(p.agent))
+                            OR (
+                              lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
+                              AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
+                            )
+                            OR (
+                              d.route='cse'
+                              AND lower(trim(t.from_agent))='web-anthropic'
+                            )
+                          )
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns tr
+                        WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                      )
+                      AND NOT (
+                        EXISTS (
+                          SELECT 1 FROM turns tp
+                          WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
                         )
-                        OR (
-                          d.route='cse'
-                          AND lower(trim(t.from_agent))='web-anthropic'
+                        OR EXISTS (
+                          SELECT 1
+                          FROM agent_endpoint_subscriptions s_curr
+                          LEFT JOIN agent_endpoint_subscriptions s_prev
+                            ON s_prev.id = d.subscription_id
+                          WHERE s_curr.agent = p.agent
+                            AND s_curr.state = 'subscribed'
+                            AND (
+                              s_curr.thread_scope = p.thread_id
+                              OR s_curr.thread_scope = '*'
+                            )
+                            AND s_curr.agent_id != ''
+                            AND (
+                              s_prev.agent_id IS NULL
+                              OR s_curr.agent_id != s_prev.agent_id
+                            )
+                          LIMIT 1
                         )
                       )
                   )
                   AND NOT EXISTS (
-                    SELECT 1 FROM turns tr
-                    WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                    SELECT 1 FROM endpoint_wake_ledger u
+                    WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
+                      AND u.state='unknown' AND u.claimed_at>?
                   )
-                  AND NOT (
-                    EXISTS (
-                      SELECT 1 FROM turns tp
-                      WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
-                    )
-                    OR EXISTS (
-                      SELECT 1
-                      FROM agent_endpoint_subscriptions s_curr
-                      LEFT JOIN agent_endpoint_subscriptions s_prev
-                        ON s_prev.id = d.subscription_id
-                      WHERE s_curr.agent = p.agent
-                        AND s_curr.state = 'subscribed'
-                        AND (
-                          s_curr.thread_scope = p.thread_id
-                          OR s_curr.thread_scope = '*'
-                        )
-                        AND s_curr.agent_id != ''
-                        AND (
-                          s_prev.agent_id IS NULL
-                          OR s_curr.agent_id != s_prev.agent_id
-                        )
-                      LIMIT 1
-                    )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger c
+                    WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
+                      AND c.state='claimed' AND c.claimed_at>?
                   )
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM endpoint_wake_ledger u
-                WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
-                  AND u.state='unknown' AND u.claimed_at>?
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM endpoint_wake_ledger c
-                WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
-                  AND c.state='claimed' AND c.claimed_at>?
-              )
-            GROUP BY agent, thread_id
-            LIMIT ?
-            """,
-            (retry_before, debounce_before, debounce_before, ttl_before, limit),
-        ).fetchone()
-        if group is None:
-            return {"wake_id": None, "rows": []}
-        rows = _group_pending_rows(conn, group, retry_before)
-        skipped: list[dict[str, Any]] = []
-        claimable: list[sqlite3.Row] = []
-        for row in rows:
-            reason = _skip_reason(conn, row)
-            if reason:
-                conn.execute(
-                    "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
-                    "finished_at=? WHERE id=?",
-                    (reason, stamp, row["id"]),
-                )
-                item = dict(row)
-                item["state"] = "skipped"
-                item["reason"] = reason
-                skipped.append(item)
-            else:
-                claimable.append(row)
-        if not claimable:
-            return {"wake_id": None, "rows": skipped}
-        wake_id = uuid.uuid4().hex
-        ids = [int(r["id"]) for r in claimable]
-        conn.execute(
-            f"UPDATE endpoint_wake_ledger SET state='claimed', wake_id=?, "
-            f"claimed_at=? WHERE id IN ({','.join('?' * len(ids))})",
-            (wake_id, stamp, *ids),
-        )
-        claimed = [
-            dict(r)
-            for r in conn.execute(
-                """
-                SELECT endpoint_wake_ledger.*,
-                       turns.body AS body,
-                       turns.from_agent AS from_agent
-                FROM endpoint_wake_ledger
-                LEFT JOIN turns ON turns.id = endpoint_wake_ledger.turn_id
-                WHERE endpoint_wake_ledger.wake_id=?
-                ORDER BY endpoint_wake_ledger.turn_id
+                GROUP BY agent, thread_id
+                ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
+                LIMIT ?
                 """,
-                (wake_id,),
-            ).fetchall()
-        ]
-    return {"wake_id": wake_id, "rows": claimed}
+                (retry_before, debounce_before, debounce_before, ttl_before, limit),
+            ).fetchone()
+            if group is None:
+                return {"wake_id": None, "rows": all_skipped}
+            rows = _group_pending_rows(conn, group, retry_before)
+            skipped: list[dict[str, Any]] = []
+            claimable: list[sqlite3.Row] = []
+            for row in rows:
+                reason = _skip_reason(conn, row)
+                if reason:
+                    conn.execute(
+                        "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
+                        "finished_at=? WHERE id=?",
+                        (reason, stamp, row["id"]),
+                    )
+                    item = dict(row)
+                    item["state"] = "skipped"
+                    item["reason"] = reason
+                    skipped.append(item)
+                else:
+                    claimable.append(row)
+            if not claimable:
+                all_skipped.extend(skipped)
+                continue
+            wake_id = uuid.uuid4().hex
+            ids = [int(r["id"]) for r in claimable]
+            conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='claimed', wake_id=?, "
+                f"claimed_at=? WHERE id IN ({','.join('?' * len(ids))})",
+                (wake_id, stamp, *ids),
+            )
+            claimed = [
+                dict(r)
+                for r in conn.execute(
+                    """
+                    SELECT endpoint_wake_ledger.*,
+                           turns.body AS body,
+                           turns.from_agent AS from_agent
+                    FROM endpoint_wake_ledger
+                    LEFT JOIN turns ON turns.id = endpoint_wake_ledger.turn_id
+                    WHERE endpoint_wake_ledger.wake_id=?
+                    ORDER BY endpoint_wake_ledger.turn_id
+                    """,
+                    (wake_id,),
+                ).fetchall()
+            ]
+            return {"wake_id": wake_id, "rows": claimed}
 
 
 def record_wake_result(

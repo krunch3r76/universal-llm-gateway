@@ -769,7 +769,9 @@ def release_holder_remote(
         return False
 
 
-def _lane_conflict_from_http_error(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
+def _lane_conflict_from_http_error(
+    exc: urllib.error.HTTPError,
+) -> dict[str, Any] | None:
     try:
         raw = exc.read()
         payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
@@ -958,6 +960,8 @@ def close_owed_wake_on_lane_activity(
     hid = (holder_id or "").strip()
     if not hid and lane_thread_id:
         hid = resolve_maestro_holder_id_for_lane(lane_thread_id) or ""
+    if not hid and agent in {"maestro", "web-anthropic"}:
+        hid = resolve_maestro_holder_id_for_lane("12286") or ""
     if hid:
         store.close_owed_wake_for_holder(hid)
 
@@ -983,6 +987,10 @@ def on_house_milestone_to_maestro(
 
     lane = (lane_thread_id or thread_id or "").strip()
     holder_id = resolve_maestro_holder_id_for_lane(lane)
+    if not holder_id and (to_agent or "").strip().lower() == "maestro":
+        holder_id = resolve_maestro_holder_id_for_lane("12286")
+        if holder_id:
+            lane = "12286"
     if not holder_id:
         return {"recorded": False, "reason": "no_holder_for_lane"}
     store = RestartIntentStore.instance()

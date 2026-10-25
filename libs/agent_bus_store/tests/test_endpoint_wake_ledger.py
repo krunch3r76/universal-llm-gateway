@@ -838,9 +838,7 @@ def test_get_unread_thread_toc_mark_read_skips_peer_pending_wake_ledger(
 ) -> None:
     from agent_bus_store.db.turns import get_unread_thread_toc
 
-    thread, t_id, _t_n = _seed_maestro_pair_pending_wake(
-        slug="l20-toc-mark-read-skip"
-    )
+    thread, t_id, _t_n = _seed_maestro_pair_pending_wake(slug="l20-toc-mark-read-skip")
     _rows, marked, _tt, _tu, _trunc = get_unread_thread_toc(
         to="maestro", mark_read=True
     )
@@ -859,9 +857,7 @@ def test_get_unread_thread_toc_mark_read_skips_peer_pending_wake_ledger(
 
 def test_get_mark_read_http_skips_peer_pending_wake_ledger(db: TestClient) -> None:
     """agent_bus get(mark_read) probes then PATCHes read with mark_read_seat."""
-    thread, t_id, t_n = _seed_maestro_pair_pending_wake(
-        slug="l20-get-mark-read-skip"
-    )
+    thread, t_id, t_n = _seed_maestro_pair_pending_wake(slug="l20-get-mark-read-skip")
     probe = db.get(
         "/turns/by-number",
         params={"thread": thread, "turn_number": t_n},
@@ -950,9 +946,7 @@ def test_pair_mark_read_skips_peer_pending_wake_ledger(db: TestClient) -> None:
         ],
         now="2020-01-01 17:30:00",
     )
-    marked = bulk_mark_read_state(
-        thread=thread, through_turn=t_n, agent="maestro"
-    )
+    marked = bulk_mark_read_state(thread=thread, through_turn=t_n, agent="maestro")
     assert marked == 1
     with connect() as conn:
         row = conn.execute(
@@ -1104,3 +1098,119 @@ def test_parent_scope_unsubscribe_tombstone_honored(db: TestClient) -> None:
     assert resolve_subscription_for_thread("impresario", child_id) is not None
     unsubscribe_endpoint(agent="impresario", thread_scope=parent_id)
     assert resolve_subscription_for_thread("impresario", child_id) is None
+
+
+def test_claim_due_wakes_prefers_untried_group_over_retried(db: TestClient) -> None:
+    """Fresh pending groups (finished_at NULL) claim before retry-eligible groups."""
+    retried = create_thread(thread_id=None, slug="claim-order-retried")
+    fresh = create_thread(thread_id=None, slug="claim-order-fresh")
+    assert retried is not None and fresh is not None
+    retried_id, fresh_id = str(retried["id"]), str(fresh["id"])
+    t_old, _ts, n_old, _c = insert_turn(
+        thread=retried_id,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="QUESTION|retried",
+        body="b",
+    )
+    t_new, _ts2, n_new, _c2 = insert_turn(
+        thread=fresh_id,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="QUESTION|fresh",
+        body="b2",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_new,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": retried_id,
+                "turn_id": t_old,
+                "turn_number": n_old,
+            },
+            {
+                "agent": "maestro",
+                "thread_id": fresh_id,
+                "turn_id": t_new,
+                "turn_number": n_new,
+            },
+        ],
+        now="2020-01-01 18:00:00",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET finished_at=? WHERE thread_id=?",
+            ("2020-01-01 17:59:00", retried_id),
+        )
+    claimed = claim_due_wakes(now="2020-01-01 18:00:01")
+    assert claimed["wake_id"] is not None
+    claimed_threads = {r["thread_id"] for r in claimed["rows"]}
+    assert claimed_threads == {fresh_id}
+
+
+def test_claim_due_wakes_skips_all_read_group_then_claims_next(
+    db: TestClient,
+) -> None:
+    """When the first eligible group is all already_read, claim the next group same pass."""
+    skip_thread = create_thread(thread_id=None, slug="claim-skip-first")
+    claim_thread = create_thread(thread_id=None, slug="claim-skip-second")
+    assert skip_thread is not None and claim_thread is not None
+    skip_id, claim_id = str(skip_thread["id"]), str(claim_thread["id"])
+    t_skip, _ts, n_skip, _c = insert_turn(
+        thread=skip_id,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="VERDICT|skip",
+        body="b",
+    )
+    t_claim, _ts2, n_claim, _c2 = insert_turn(
+        thread=claim_id,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject="VERDICT|claim",
+        body="b2",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_claim,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": skip_id,
+                "turn_id": t_skip,
+                "turn_number": n_skip,
+            },
+            {
+                "agent": "maestro",
+                "thread_id": claim_id,
+                "turn_id": t_claim,
+                "turn_number": n_claim,
+            },
+        ],
+        now="2020-01-01 19:00:00",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 19:00:00", t_skip),
+        )
+    claimed = claim_due_wakes(now="2020-01-01 19:00:01")
+    assert claimed["wake_id"] is not None
+    assert claimed["rows"][0]["thread_id"] == claim_id
+    with connect() as conn:
+        skip_row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_skip,),
+        ).fetchone()
+    assert skip_row["state"] == "skipped"
+    assert skip_row["reason"] == "already_read"
