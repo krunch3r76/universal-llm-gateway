@@ -397,6 +397,8 @@ async def admit_dispatch(
         if resolved_contract is None:
             raw_contract = opts.get("resolved_contract")
             resolved_contract = raw_contract if isinstance(raw_contract, str) else None
+        raw_model = opts.get("model")
+        resolved_model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
         tracker.register_execution(
             execution_id=execution_id,
             pipeline=dispatch.model,
@@ -412,6 +414,7 @@ async def admit_dispatch(
             endpoint_request_id=endpoint_request_id,
             work_key=work_key,
             resolved_contract=resolved_contract,
+            resolved_model=resolved_model,
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)

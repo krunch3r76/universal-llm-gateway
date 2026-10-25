@@ -152,6 +152,7 @@ def _project_usage_cost(
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
         "total_tokens": usage.get("total_tokens"),
+        "total_tokens_basis": usage.get("total_tokens_basis"),
         "cache_read_tokens": usage.get("cache_read_tokens"),
         "cache_write_tokens": usage.get("cache_write_tokens"),
         "cost_usd": priced.get("cost_usd"),

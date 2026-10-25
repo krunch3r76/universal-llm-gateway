@@ -63,6 +63,7 @@ def build_dispatch_output(
     ]
 
     cached_tokens = result.usage.get("cached_tokens")
+    cache_write_tokens = result.usage.get("cache_write_tokens")
     output = StepOutput(
         raw=result.content,
         reasoning=result.reasoning,
@@ -74,6 +75,9 @@ def build_dispatch_output(
         system_prompt=system,
         user_prompt=admission.user_prompt,
         cached_tokens=cached_tokens if cached_tokens is not None else None,
+        cache_write_tokens=(
+            cache_write_tokens if cache_write_tokens is not None else None
+        ),
     )
     output.json = {
         "content": result.content,
@@ -94,4 +98,6 @@ def build_dispatch_output(
     }
     if cached_tokens is not None:
         output.json["cached_tokens"] = cached_tokens
+    if cache_write_tokens is not None:
+        output.json["cache_write_tokens"] = cache_write_tokens
     return output
