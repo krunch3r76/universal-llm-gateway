@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn, update_thread
-from agent_bus_store.db.connection import connect
+from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.house_action_journal import (
     _MINT_ROOT_LITERAL,
     append_house_action,
@@ -136,28 +136,8 @@ def test_append_writes_created_at_in_bus_wire_format(client: TestClient) -> None
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created_at)
 
 
-def test_journal_row_round_trips_through_control_tower_aggregate(
-    client: TestClient,
-) -> None:
+def _aggregate_houses_for_test(house_rows: list[dict[str, str]]) -> list[dict]:
     from cortex_store.routes.boot.control_tower import _aggregate
-
-    root = _liaison_root(
-        client,
-        slug="agg-hop",
-        turn1_body="HOUSE-BIRTH agg-hop work_key=todo:agg — role:root continuity house on Glass.",
-    )
-    client.post(
-        "/house-actions",
-        json={
-            "root_thread_id": root,
-            "kind": "ide_hop",
-            "actor": "seat",
-            "action_why": "ide hop landed",
-        },
-    )
-    joined = list_joined_houses()
-    row = next(item for item in joined if item["root_id"] == root)
-    assert row["as_of"].endswith("Z")
 
     def _fake_query(_conn, sql, *args, **kwargs):  # noqa: ANN001, ARG001
         if "COUNT(*)" in sql:
@@ -175,14 +155,55 @@ def test_journal_row_round_trips_through_control_tower_aggregate(
             ):
                 with patch(
                     "cortex_store.routes.boot.control_tower.query_agent_bus_houses",
-                    return_value=[row],
+                    return_value=house_rows,
                 ):
-                    state = _aggregate(MagicMock())
-    house = state["houses"][0]
-    assert house["root_id"] == root
-    assert house["age"] >= 0
-    as_of_dt = datetime.fromisoformat(house["as_of"].replace("Z", "+00:00"))
-    assert as_of_dt.tzinfo is not None
+                    return _aggregate(MagicMock())["houses"]
+
+
+def test_journal_legacy_default_and_wire_rows_aggregate_without_error(
+    client: TestClient,
+) -> None:
+    root_legacy = _liaison_root(
+        client,
+        slug="agg-legacy",
+        turn1_body="HOUSE-BIRTH agg-legacy work_key=todo:leg — role:root continuity house on Glass.",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO house_action_journal (root_thread_id, kind, actor, action_why) "
+            "VALUES (?,?,?,?)",
+            (root_legacy, "now_row_set", "operator", "legacy default ts"),
+        )
+        legacy_ts = conn.execute(
+            "SELECT created_at FROM house_action_journal WHERE root_thread_id=?",
+            (root_legacy,),
+        ).fetchone()[0]
+    assert " " in legacy_ts and "T" not in legacy_ts
+
+    root_wire = _liaison_root(
+        client,
+        slug="agg-wire",
+        turn1_body="HOUSE-BIRTH agg-wire work_key=todo:wire — role:root continuity house on Glass.",
+    )
+    append_house_action(
+        root_thread_id=root_wire,
+        kind="ide_hop",
+        actor="seat",
+        action_why="wire ts append",
+    )
+
+    joined = {row["root_id"]: row for row in list_joined_houses()}
+    assert joined[root_legacy]["as_of"] == legacy_ts
+    assert joined[root_wire]["as_of"].endswith("Z")
+
+    houses = _aggregate_houses_for_test([joined[root_legacy], joined[root_wire]])
+    by_root = {h["root_id"]: h for h in houses}
+    assert by_root[root_legacy]["age"] >= 0
+    assert by_root[root_wire]["age"] >= 0
+    wire_dt = datetime.fromisoformat(
+        by_root[root_wire]["as_of"].replace("Z", "+00:00")
+    )
+    assert wire_dt.tzinfo is not None
 
 
 def test_get_houses_lists_house_without_journal_row_with_empty_action_why(
