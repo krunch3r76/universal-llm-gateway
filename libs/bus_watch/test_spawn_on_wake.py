@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -1927,3 +1928,66 @@ def test_attended_loop_may_wake_requires_real_event() -> None:
     assert attended_loop_may_wake(quiet, {}) is False
     live = _digest(attention=[{"id": "1", "unread": 1}])
     assert attended_loop_may_wake(live, {}) is True
+
+
+def test_fire_spawn_2xx_successor_non_play_writes_one_spawn_hop_row_no_ide_hop() -> None:
+    from bus_watch.spawn_wake.fire import fire_spawn
+    from bus_watch.spawn_wake.play_classify import LEFTOVER_SIT
+
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    policy = dict(digest["policy"])
+    state: dict = {}
+    leftover = {
+        "leftover": LEFTOVER_SIT,
+        "todo": "todo:spawn-test",
+        "owner": {"lane": {"dispatch_id": "disp-1"}},
+    }
+    submit = lambda body: ({"execution_id": "exec-1", "thread_id": "10500"}, 202)  # noqa: E731
+
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        result = fire_spawn(
+            "10479",
+            policy,
+            state,
+            dry_run=False,
+            submit=submit,
+            digest=digest,
+            leftover=leftover,
+        )
+    assert result["status_code"] == 202
+    append.assert_called_once()
+    assert append.call_args.args[1] == "spawn_hop"
+    kinds = [c.args[1] for c in append.call_args_list]
+    assert "ide_hop" not in kinds
+
+
+def test_fire_spawn_dry_run_refused_or_4xx_writes_no_row() -> None:
+    from bus_watch.spawn_wake.fire import fire_spawn
+    from bus_watch.spawn_wake.play_classify import LEFTOVER_SIT
+
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    policy = dict(digest["policy"])
+    state: dict = {}
+    leftover = {"leftover": LEFTOVER_SIT, "todo": "todo:x"}
+
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        dry = fire_spawn(
+            "10479",
+            policy,
+            state,
+            dry_run=True,
+            digest=digest,
+            leftover=leftover,
+        )
+        assert dry.get("dry_run") is True
+        refused = fire_spawn(
+            "10479",
+            policy,
+            state,
+            dry_run=False,
+            submit=lambda body: ({"error": {"code": "x"}}, 422),
+            digest=digest,
+            leftover=leftover,
+        )
+        assert refused["status_code"] == 422
+    append.assert_not_called()

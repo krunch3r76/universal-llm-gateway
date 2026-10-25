@@ -478,7 +478,7 @@ def main() -> int:
         or set_items
         or args.policy
     ):
-        state = update_state(state_path, _operator_edits)
+        state = update_state(state_path, _operator_edits, journal_actor="operator")
         if args.mark_relayed or args.save_reflection:
             digest = build_digest(root, state, register=register)
             state["fingerprint"] = digest.get("fingerprint")

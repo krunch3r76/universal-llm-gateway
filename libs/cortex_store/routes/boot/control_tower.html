@@ -281,6 +281,16 @@ function render(s){
       ${t.high?'<span class="chip high">high</span>':''}</div><div class="desc">${esc(t.d)}</div></div>`).join("")
     + `<div class="row"><span class="meta">+ ${s.todosTotal-s.todos.length} more — query by intent in cortex</span></div>`));
 
+  // liaison houses (read-only ear)
+  const houseRows=s.houses||[];
+  panels.push(panel("span12","LIAISON HOUSES · ACTION LINE","cyan",houseRows.length,
+    houseRows.length? houseRows.map(h=>`<div class="row" style="grid-template-columns:1fr 2fr 2fr auto">
+      <div><div class="id">${esc(h.root_id||"")}</div><div class="meta">${esc(h.slug||"")}</div></div>
+      <div><span class="k">mission</span><div class="desc">${esc(h.mission||"")}</div></div>
+      <div><span class="k">why</span><div class="desc">${esc(h.action_why||"")}</div></div>
+      <div class="meta">${esc(h.as_of||"")} · ${typeof h.age==="number"?h.age+"s":""}</div></div>`).join("")
+    : `<div class="empty">no active liaison houses</div>`));
+
   // bus
   panels.push(panel("span6","AGENT BUS · UNREAD","amber",s.bus.length,`
     <div class="row"><div style="width:100%"><span class="meta">${s.bus.length} unread threads</span>
@@ -338,6 +348,7 @@ function normalizeFromApi(j){
     planPhases:j.plan_phases||[],
     deadlines:j.deadlines||[],
     bus:(j.bus||[]).map(b=>typeof b==="string"?{id:"",slug:b,unread:0}:b),
+    houses:j.houses||[],
     mentions:(j.mentions||[]).map(m=>({id:m.id,t:m.t,n:m.n,ago:m.ago||formatAgo(m.last)})),
     audit:j.audit,
     alerts:j.alerts,

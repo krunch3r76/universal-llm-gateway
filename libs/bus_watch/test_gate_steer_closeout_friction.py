@@ -100,6 +100,48 @@ def test_friction_now_row_matching_live_conductor_submits_one_steer(
     assert state["gate_steers_sent"]["a:40001"]
 
 
+def test_first_steer_latch_2xx_writes_one_gate_swap_row(monkeypatch) -> None:  # noqa: ANN001
+    digest = _friction_hold_digest()
+    state: dict = {}
+    submit = MagicMock(return_value=({"execution_id": "exec-1"}, 202))
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        meta = maybe_steer_friction_gate(digest, state, classify_leftover(digest, {}), submit=submit)
+    assert meta is not None and meta.get("steered") is True
+    append.assert_called_once()
+    assert append.call_args.args[1] == "gate_swap"
+
+
+def test_latched_resteer_writes_no_row(monkeypatch) -> None:  # noqa: ANN001
+    digest = _friction_hold_digest()
+    state: dict = {}
+    submit = MagicMock(return_value=({"execution_id": "exec-1"}, 202))
+    leftover = classify_leftover(digest, {})
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        maybe_steer_friction_gate(digest, state, leftover, submit=submit)
+        maybe_steer_friction_gate(digest, state, leftover, submit=submit)
+    assert append.call_count == 1
+
+
+def test_friction_now_row_write_adds_no_gate_swap_row(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    from bus_watch.tick_state import update_state
+
+    path = tmp_path / "liaison-10479.tick.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"policy":{"now_row":"todo:gate-todo"}}', encoding="utf-8")
+
+    def mutate(state: dict) -> None:
+        policy = dict(state.get("policy") or {})
+        policy["now_row"] = (
+            "Friction a:40001 [bug] service:bus_watch «gate blocks row»"
+        )
+        state["policy"] = policy
+
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        update_state(path, mutate, journal_actor="operator")
+    kinds = [call.args[1] for call in append.call_args_list]
+    assert "gate_swap" not in kinds
+
+
 def test_friction_not_now_row_does_not_submit_steer(monkeypatch) -> None:  # noqa: ANN001
     """A friction that is not NOW does not steer the live conductor."""
     _free_lock(monkeypatch)

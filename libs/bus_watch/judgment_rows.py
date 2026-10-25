@@ -157,6 +157,14 @@ def harvest_judgment_turns(
     turn_numbers = [int(t["turn_number"]) for t in harvested if t.get("turn_number")]
     if turn_numbers:
         mark_read(root_id, turn_numbers)
+    from bus_watch.house_journal import append_house_action
+
+    append_house_action(
+        root_id,
+        "harvest",
+        "seat",
+        f"harvested judgment turns {turn_numbers}",
+    )
     return {"ok": True, "harvested": turn_numbers, "marked_read": turn_numbers}
 
 

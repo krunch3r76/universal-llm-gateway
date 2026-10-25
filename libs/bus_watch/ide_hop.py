@@ -853,6 +853,9 @@ def fire_ide_hop(
     if pre_id is not None and pre_id != departing:
         if hop_mutex_preheld:
             release_hop_mutex(root_id)
+        from bus_watch.house_journal import append_house_action
+
+        append_house_action(root_id, "ide_hop", "seat", "ide hop landed")
         return {
             "ok": True,
             "phase": "landed",
@@ -1039,6 +1042,9 @@ def fire_ide_hop(
                 landed_transcript_id=landed_id,
                 proof=proof_lit,  # type: ignore[arg-type]
             )
+        from bus_watch.house_journal import append_house_action
+
+        append_house_action(root_id, "ide_hop", "seat", "ide hop landed")
         return {
             **result,
             "ok": True,

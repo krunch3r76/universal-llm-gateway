@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse
 
 from ...db import cortex_conn, json_decode
 from ...db import query as db_query
-from ...observability_bridge import query_agent_bus_threads
+from ...observability_bridge import query_agent_bus_houses, query_agent_bus_threads
 from ...open_items.reconcile import reconcile_open_items
 from ...open_items.resolution_index import fetch_resolution_index_records
 from ..deadlines import _list_deadlines_impl
@@ -181,6 +181,26 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         if (t.get("unread_count") or 0) > 0
     ]
 
+    now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    houses = []
+    for row in query_agent_bus_houses():
+        created = str(row.get("as_of") or now)
+        try:
+            as_of_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            age_s = max(0, int((datetime.now(UTC) - as_of_dt).total_seconds()))
+        except ValueError:
+            age_s = 0
+        houses.append(
+            {
+                "root_id": row.get("root_id"),
+                "slug": row.get("slug"),
+                "mission": row.get("mission") or "",
+                "action_why": row.get("action_why") or "",
+                "as_of": created,
+                "age": age_s,
+            }
+        )
+
     return {
         "session": latest[0]["session_id"] if latest else None,
         "continuity": continuity,
@@ -195,6 +215,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         "mentions": mentions,
         "audit": audit,
         "bus": bus,
+        "houses": houses,
     }
 
 
