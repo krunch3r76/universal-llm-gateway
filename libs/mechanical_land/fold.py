@@ -48,25 +48,36 @@ def fold(events: list[JournalEntry]) -> RunState:
     expected_prev = 0
 
     for entry in events:
+        if state.run_id is None:
+            state.run_id = entry.run_id
+        elif entry.run_id != state.run_id:
+            raise JournalForkRefused(
+                f"run_id {entry.run_id!r} != bound {state.run_id!r} at seq {entry.seq}"
+            )
         if entry.prev_seq != expected_prev:
             raise JournalForkRefused(
                 f"prev_seq {entry.prev_seq} != expected {expected_prev} at seq {entry.seq}"
             )
+        if entry.seq != entry.prev_seq + 1:
+            raise JournalForkRefused(
+                f"seq {entry.seq} != prev_seq+1 ({entry.prev_seq + 1}) at seq {entry.seq}"
+            )
         if entry.event not in _FOLD_HANDLERS:
             raise UnknownJournalEvent(entry.event)
-
-        state.step = entry.step_id
-        state.attempt = entry.attempt
-        state.flow = entry.flow
-        state.tip_seq = entry.seq
 
         if entry.event == "leg_closed":
             payload = parse_payload(entry.event, entry.payload)
             assert isinstance(payload, LegClosedPayload)
             if payload.dispatch_id in closed_dispatch_ids:
                 expected_prev = entry.seq
+                state.tip_seq = entry.seq
                 continue
             closed_dispatch_ids.add(payload.dispatch_id)
+
+        state.step = entry.step_id
+        state.attempt = entry.attempt
+        state.flow = entry.flow
+        state.tip_seq = entry.seq
 
         _FOLD_HANDLERS[entry.event](state, entry)
         expected_prev = entry.seq

@@ -29,6 +29,7 @@ REVIEW_DISPATCH = "d-rev-20607"
 def _entry(
     seq: int,
     *,
+    run_id: str = RUN_ID,
     prev_seq: int,
     step_id: str,
     attempt: int,
@@ -38,6 +39,7 @@ def _entry(
     source: str = "reactor",
 ) -> JournalEntry:
     return JournalEntry(
+        run_id=run_id,
         seq=seq,
         prev_seq=prev_seq,
         step_id=step_id,
@@ -64,6 +66,133 @@ def test_every_event_has_dataclass_and_parse() -> None:
     assert JOURNAL_EVENT_NAMES == frozenset(PAYLOAD_TYPES)
     for name in sorted(JOURNAL_EVENT_NAMES):
         assert name in PAYLOAD_TYPES
+
+
+def test_seq_not_prev_plus_one_raises_journal_fork_refused() -> None:
+    events = [
+        _entry(
+            1,
+            prev_seq=0,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="run_birthed",
+            payload={
+                "kind": "implement",
+                "source_ref": "todo:x",
+                "policy_sha256": "abc",
+                "caller": "grok-bot-gc1",
+            },
+        ),
+        _entry(
+            3,
+            prev_seq=1,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="policy_stamped",
+            payload={"policy": {}},
+        ),
+    ]
+    with pytest.raises(JournalForkRefused):
+        fold(events)
+
+
+def test_repeated_seq_raises_journal_fork_refused() -> None:
+    birth = {
+        "kind": "implement",
+        "source_ref": "todo:x",
+        "policy_sha256": "abc",
+        "caller": "grok-bot-gc1",
+    }
+    events = [
+        _entry(
+            1,
+            prev_seq=0,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="run_birthed",
+            payload=birth,
+        ),
+        _entry(
+            2,
+            prev_seq=1,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="policy_stamped",
+            payload={"policy": {}},
+        ),
+        _entry(
+            2,
+            prev_seq=2,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="resumed",
+            payload={"by_ruling_seq": 1},
+        ),
+    ]
+    with pytest.raises(JournalForkRefused):
+        fold(events)
+
+
+def test_run_id_mismatch_raises_journal_fork_refused() -> None:
+    birth = {
+        "kind": "implement",
+        "source_ref": "todo:x",
+        "policy_sha256": "abc",
+        "caller": "grok-bot-gc1",
+    }
+    events = [
+        _entry(
+            1,
+            prev_seq=0,
+            run_id="ml-aaa",
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="run_birthed",
+            payload=birth,
+        ),
+        _entry(
+            2,
+            prev_seq=1,
+            run_id="ml-bbb",
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="policy_stamped",
+            payload={"policy": {}},
+        ),
+    ]
+    with pytest.raises(JournalForkRefused):
+        fold(events)
+
+
+def test_review_payload_nullable_fields_stay_none() -> None:
+    admitted = parse_payload(
+        "review_admitted",
+        {
+            "dispatch_id": None,
+            "model": None,
+            "range": "aaa..bbb",
+            "head": "bbb",
+        },
+    )
+    assert admitted.dispatch_id is None
+    assert admitted.model is None
+    verdict = parse_payload(
+        "review_verdict",
+        {
+            "tip_sha": HEAD_SHA,
+            "verdict": "unbound",
+            "review_dispatch_id": None,
+            "bind_status": "",
+        },
+    )
+    assert verdict.review_dispatch_id is None
 
 
 def test_prev_seq_mismatch_raises_journal_fork_refused() -> None:
@@ -110,6 +239,79 @@ def test_unknown_event_raises() -> None:
     ]
     with pytest.raises(UnknownJournalEvent):
         fold(events)
+
+
+def test_duplicate_leg_closed_after_transition_leaves_step_unchanged() -> None:
+    close_payload = {
+        "dispatch_id": IMPLEMENT_DISPATCH,
+        "closeout_status": "complete",
+        "work_outcome": "checks_failed",
+        "head_sha": HEAD_SHA,
+        "branch": "cursor-sdk/lane-20607",
+        "branch_point": MASTER_BEFORE,
+    }
+    events = [
+        _entry(
+            1,
+            prev_seq=0,
+            step_id="implement",
+            attempt=1,
+            flow="main",
+            event="leg_admitted",
+            payload={
+                "step_id": "implement",
+                "attempt": 1,
+                "dispatch_id": IMPLEMENT_DISPATCH,
+                "execution_id": "e1",
+                "model": "cursor/composer-2.5",
+                "contract": "implement",
+                "lane": "B",
+                "sdk_mode": None,
+                "packet_sha256": "p1",
+            },
+        ),
+        _entry(
+            2,
+            prev_seq=1,
+            step_id="implement",
+            attempt=1,
+            flow="main",
+            event="leg_closed",
+            payload=close_payload,
+        ),
+        _entry(
+            3,
+            prev_seq=2,
+            step_id="gate",
+            attempt=1,
+            flow="main",
+            event="transition_decided",
+            payload={
+                "from_step": "implement",
+                "to_step": "gate",
+                "attempt": 1,
+                "reason": "implement closed",
+            },
+        ),
+        _entry(
+            4,
+            prev_seq=3,
+            step_id="implement",
+            attempt=1,
+            flow="main",
+            event="leg_closed",
+            payload=dict(close_payload, closeout_status="partial"),
+        ),
+    ]
+    without_dup = fold(events[:3])
+    with_dup = fold(events)
+    assert with_dup.step == without_dup.step == "gate"
+    assert with_dup.attempt == without_dup.attempt == 1
+    assert with_dup.flow == without_dup.flow == "main"
+    assert without_dup.tip_seq == 3
+    assert with_dup.tip_seq == 4
+    assert with_dup.last_closeout == without_dup.last_closeout
+    assert with_dup.legs == without_dup.legs
 
 
 def test_duplicate_leg_closed_by_dispatch_id_is_noop() -> None:
@@ -302,13 +504,25 @@ def test_all_payload_dataclasses_roundtrip_minimal() -> None:
 
 
 def _synthetic_20607_journal() -> list[JournalEntry]:
-    """30-event happy-path journal mirroring friction:40243 / §9 result shape."""
-    rows: list[tuple[str, str, int, str, dict]] = [
+    """30 in-sequence events: §11 replay incl. late implement closeout + ruling_ignored."""
+    implement_close = {
+        "dispatch_id": IMPLEMENT_DISPATCH,
+        "closeout_status": "complete",
+        "work_outcome": "checks_failed",
+        "head_sha": HEAD_SHA,
+        "branch": "cursor-sdk/lane-20607",
+        "branch_point": MASTER_BEFORE,
+        "files_modified": [
+            "pipelines/writing/v1/handlers/foo.py",
+            "pipelines/writing/v1/handlers/bar.py",
+            "pipelines/writing/v1/handlers/baz.py",
+        ],
+    }
+    rows: list[tuple[str, int, str, dict]] = [
         (
             "run",
-            "run_birthed",
             1,
-            "run",
+            "run_birthed",
             {
                 "kind": "implement",
                 "source_ref": "todo:mechanical-land-pipeline",
@@ -316,12 +530,22 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
                 "caller": "grok-bot-gc1",
             },
         ),
-        ("run", "policy_stamped", 1, "run", {"policy": {"gate": {"ruff": True}}}),
+        ("run", 1, "policy_stamped", {"policy": {"gate": {"ruff": True}}}),
         (
             "run",
-            "transition_decided",
             1,
+            "transition_decided",
+            {
+                "from_step": "run",
+                "to_step": "run",
+                "attempt": 1,
+                "reason": "pipeline noop",
+            },
+        ),
+        (
             "run",
+            1,
+            "transition_decided",
             {
                 "from_step": "run",
                 "to_step": "implement",
@@ -331,9 +555,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "implement",
-            "leg_admitted",
             1,
-            "implement",
+            "leg_admitted",
             {
                 "step_id": "implement",
                 "attempt": 1,
@@ -346,30 +569,11 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
                 "packet_sha256": "pkt-imp",
             },
         ),
-        (
-            "implement",
-            "leg_closed",
-            1,
-            "implement",
-            {
-                "dispatch_id": IMPLEMENT_DISPATCH,
-                "closeout_status": "complete",
-                "work_outcome": "checks_failed",
-                "head_sha": HEAD_SHA,
-                "branch": "cursor-sdk/lane-20607",
-                "branch_point": MASTER_BEFORE,
-                "files_modified": [
-                    "pipelines/writing/v1/handlers/foo.py",
-                    "pipelines/writing/v1/handlers/bar.py",
-                    "pipelines/writing/v1/handlers/baz.py",
-                ],
-            },
-        ),
+        ("implement", 1, "leg_closed", implement_close),
         (
             "gate",
+            1,
             "transition_decided",
-            1,
-            "gate",
             {
                 "from_step": "implement",
                 "to_step": "gate",
@@ -379,9 +583,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "gate",
-            "gate_ran",
             1,
-            "gate",
+            "gate_ran",
             {
                 "attempt": 1,
                 "head_sha": HEAD_SHA,
@@ -392,10 +595,15 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
             },
         ),
         (
-            "fix",
-            "transition_decided",
+            "implement",
             1,
+            "leg_closed",
+            dict(implement_close, closeout_status="partial"),
+        ),
+        (
             "fix",
+            1,
+            "transition_decided",
             {
                 "from_step": "gate",
                 "to_step": "fix",
@@ -405,9 +613,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "fix",
-            "leg_admitted",
             1,
-            "fix",
+            "leg_admitted",
             {
                 "step_id": "fix",
                 "attempt": 1,
@@ -422,9 +629,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "fix",
-            "leg_closed",
             1,
-            "fix",
+            "leg_closed",
             {
                 "dispatch_id": FIX_DISPATCH,
                 "closeout_status": "complete",
@@ -436,10 +642,20 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
             },
         ),
         (
-            "gate",
+            "fix",
+            1,
             "transition_decided",
-            2,
+            {
+                "from_step": "fix",
+                "to_step": "fix",
+                "attempt": 1,
+                "reason": "pipeline noop",
+            },
+        ),
+        (
             "gate",
+            2,
+            "transition_decided",
             {
                 "from_step": "fix",
                 "to_step": "gate",
@@ -449,9 +665,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "gate",
-            "gate_ran",
             2,
-            "gate",
+            "gate_ran",
             {
                 "attempt": 2,
                 "head_sha": HEAD_SHA,
@@ -465,10 +680,19 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
             },
         ),
         (
+            "gate",
+            2,
+            "ruling_ignored",
+            {
+                "bus_thread": "20607",
+                "turn": 42,
+                "why": "prose only",
+            },
+        ),
+        (
             "review",
-            "transition_decided",
             1,
-            "review",
+            "transition_decided",
             {
                 "from_step": "gate",
                 "to_step": "review",
@@ -478,9 +702,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "review",
-            "review_admitted",
             1,
-            "review",
+            "review_admitted",
             {
                 "dispatch_id": REVIEW_DISPATCH,
                 "model": "cdp/opus-5.5",
@@ -490,9 +713,19 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "review",
-            "review_verdict",
             1,
+            "transition_decided",
+            {
+                "from_step": "review",
+                "to_step": "review",
+                "attempt": 1,
+                "reason": "pipeline noop",
+            },
+        ),
+        (
             "review",
+            1,
+            "review_verdict",
             {
                 "tip_sha": HEAD_SHA,
                 "verdict": "APPROVE",
@@ -502,9 +735,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "land",
-            "transition_decided",
             1,
-            "land",
+            "transition_decided",
             {
                 "from_step": "review",
                 "to_step": "land",
@@ -514,9 +746,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "land",
-            "land_attempted",
             1,
-            "land",
+            "land_attempted",
             {
                 "tip_sha": HEAD_SHA,
                 "before_sha": MASTER_BEFORE,
@@ -526,9 +757,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "restart",
-            "transition_decided",
             1,
-            "restart",
+            "transition_decided",
             {
                 "from_step": "land",
                 "to_step": "restart",
@@ -538,9 +768,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "restart",
-            "restart_planned",
             1,
-            "restart",
+            "restart_planned",
             {
                 "land_sha": MASTER_AFTER,
                 "restart_set": ["universal-stargate"],
@@ -550,9 +779,19 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "restart",
-            "restart_issued",
             1,
+            "transition_decided",
+            {
+                "from_step": "restart",
+                "to_step": "restart",
+                "attempt": 1,
+                "reason": "pipeline noop",
+            },
+        ),
+        (
             "restart",
+            1,
+            "restart_issued",
             {
                 "service": "universal-stargate",
                 "intent_id": "intent-stargate-1",
@@ -561,9 +800,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "probe",
-            "transition_decided",
             1,
-            "probe",
+            "transition_decided",
             {
                 "from_step": "restart",
                 "to_step": "probe",
@@ -573,9 +811,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "probe",
-            "probe_ran",
             1,
-            "probe",
+            "probe_ran",
             {
                 "service": "universal-stargate",
                 "observed_code_version": MASTER_AFTER,
@@ -584,9 +821,8 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "close",
-            "transition_decided",
             1,
-            "close",
+            "transition_decided",
             {
                 "from_step": "probe",
                 "to_step": "close",
@@ -596,100 +832,23 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
         ),
         (
             "close",
-            "closed",
             1,
-            "close",
+            "closed",
             {
                 "todo_close_result": "ok",
                 "friction_close_result": ["friction:40243"],
             },
         ),
     ]
-    # Pad to 30 journal rows with no-op ruling_ignored + transition bookkeeping.
-    rows.extend(
-        [
-            (
-                "run",
-                "ruling_ignored",
-                1,
-                "run",
-                {
-                    "bus_thread": "20607",
-                    "turn": 99,
-                    "why": "prose only",
-                },
-            ),
-            (
-                "gate",
-                "transition_decided",
-                1,
-                "gate",
-                {
-                    "from_step": "gate",
-                    "to_step": "gate",
-                    "attempt": 1,
-                    "reason": "pipeline noop",
-                },
-            ),
-            (
-                "fix",
-                "transition_decided",
-                1,
-                "fix",
-                {
-                    "from_step": "fix",
-                    "to_step": "fix",
-                    "attempt": 1,
-                    "reason": "pipeline noop",
-                },
-            ),
-            (
-                "review",
-                "transition_decided",
-                1,
-                "review",
-                {
-                    "from_step": "review",
-                    "to_step": "review",
-                    "attempt": 1,
-                    "reason": "pipeline noop",
-                },
-            ),
-            (
-                "land",
-                "transition_decided",
-                1,
-                "land",
-                {
-                    "from_step": "land",
-                    "to_step": "land",
-                    "attempt": 1,
-                    "reason": "pipeline noop",
-                },
-            ),
-            (
-                "close",
-                "transition_decided",
-                1,
-                "close",
-                {
-                    "from_step": "close",
-                    "to_step": "close",
-                    "attempt": 1,
-                    "reason": "pipeline noop",
-                },
-            ),
-        ]
-    )
     assert len(rows) == 30
     out: list[JournalEntry] = []
     prev = 0
-    for idx, (step_id, event, attempt, step_col, payload) in enumerate(rows, start=1):
+    for idx, (step_id, attempt, event, payload) in enumerate(rows, start=1):
         out.append(
             _entry(
                 idx,
                 prev_seq=prev,
-                step_id=step_col,
+                step_id=step_id,
                 attempt=attempt,
                 flow="main",
                 event=event,
@@ -703,7 +862,6 @@ def _synthetic_20607_journal() -> list[JournalEntry]:
 def test_fold_synthetic_20607_sequence_matches_section9_shape() -> None:
     events = _synthetic_20607_journal()
     state = fold(events)
-    state.run_id = RUN_ID
     result = state.result_json()
     expected = {
         "run_id": RUN_ID,

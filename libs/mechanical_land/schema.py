@@ -269,16 +269,16 @@ class GateRanPayload:
 
 @dataclass(frozen=True)
 class ReviewAdmittedPayload:
-    dispatch_id: str
-    model: str
+    dispatch_id: str | None
+    model: str | None
     range: str
     head: str
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReviewAdmittedPayload:
         return cls(
-            dispatch_id=str(data["dispatch_id"]),
-            model=str(data["model"]),
+            dispatch_id=_optional_str(data.get("dispatch_id")),
+            model=_optional_str(data.get("model")),
             range=str(data["range"]),
             head=str(data["head"]),
         )
@@ -288,7 +288,7 @@ class ReviewAdmittedPayload:
 class ReviewVerdictPayload:
     tip_sha: str
     verdict: ReviewVerdict
-    review_dispatch_id: str
+    review_dispatch_id: str | None
     bind_status: str
 
     @classmethod
@@ -296,7 +296,7 @@ class ReviewVerdictPayload:
         return cls(
             tip_sha=str(data["tip_sha"]),
             verdict=ReviewVerdict(str(data["verdict"])),
-            review_dispatch_id=str(data["review_dispatch_id"]),
+            review_dispatch_id=_optional_str(data.get("review_dispatch_id")),
             bind_status=str(data.get("bind_status", "")),
         )
 
@@ -605,6 +605,7 @@ class EvidenceState:
 
 @dataclass
 class JournalEntry:
+    run_id: str
     seq: int
     prev_seq: int
     step_id: str
@@ -723,6 +724,12 @@ class RunState:
             "journal": journal_uri,
             "tip_seq": self.tip_seq,
         }
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _tuple_str(value: Any) -> tuple[str, ...]:
