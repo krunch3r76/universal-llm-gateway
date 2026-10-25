@@ -121,6 +121,7 @@ def seed_lane_cookies(
     *,
     source_port: int = PRIMARY_CDP_PORT,
     domain_suffix: str = COOKIE_DOMAIN_SUFFIX,
+    account_id: str | None = None,
 ) -> int:
     """Copy ``domain_suffix`` cookies from ``source_port`` into the lane on ``port``.
 
@@ -128,6 +129,9 @@ def seed_lane_cookies(
     source is unreachable or signed out — the caller must tear the lane down
     rather than hand back a browser that will fail at ``ensure_cowork_auto``.
     """
+    aid = str(account_id or "").strip()
+    if aid and aid != "default":
+        return 0
     if port == source_port:
         raise CookieSeedError(f"refusing to seed :{port} from itself")
     cookies = read_session_cookies(source_port, domain_suffix=domain_suffix)
@@ -168,14 +172,18 @@ def rehydrate_fleet_from_backup(
     try:
         payload = json.loads(backup_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise CookieSeedError(f"cookie backup unreadable at {backup_path}: {exc}") from exc
+        raise CookieSeedError(
+            f"cookie backup unreadable at {backup_path}: {exc}"
+        ) from exc
     cookies = [
         c
         for c in payload.get("cookies") or []
         if str(c.get("domain") or "").lstrip(".").endswith(domain_suffix)
     ]
     if not cookies:
-        raise CookieSeedError(f"cookie backup at {backup_path} has no {domain_suffix} cookies")
+        raise CookieSeedError(
+            f"cookie backup at {backup_path} has no {domain_suffix} cookies"
+        )
     _cdp_call(port, "Storage.setCookies", {"cookies": cookies})
     return len(cookies)
 

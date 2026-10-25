@@ -152,12 +152,25 @@ def compose_view(
         holder_s = holder if isinstance(holder, str) else None
         rid_s = str(rid) if rid else None
         lane = (
-            (str(row.get("parent_thread")).strip() if row.get("parent_thread") else None)
-            or (str(reg.get("parent_thread")).strip() if reg.get("parent_thread") else None)
+            (
+                str(row.get("parent_thread")).strip()
+                if row.get("parent_thread")
+                else None
+            )
+            or (
+                str(reg.get("parent_thread")).strip()
+                if reg.get("parent_thread")
+                else None
+            )
             or lane_for_registration(sessions, rid_s)
         )
         row_observed = ts_to_iso_z(now)
         row_expires = ts_to_iso_z(now + DEFAULT_LIVENESS_TTL_S)
+        account_id = (
+            str(row.get("account_id") or "").strip()
+            or str(reg.get("account_id") or "").strip()
+            or "default"
+        )
         rows_out.append(
             {
                 "execution_id": row.get("execution_id"),
@@ -170,6 +183,7 @@ def compose_view(
                 "port": reg.get("port"),
                 "holder": holder,
                 "commissioned_by": holder,
+                "account_id": account_id,
                 "age_s": age_s(reg.get("started_at"), now),
                 "stream_status": row.get("status"),
                 "observed_at_utc": row_observed,
@@ -189,12 +203,19 @@ def compose_view(
     # Capacity counts `active` only, so it hid retained hosts whose Chrome was
     # still running — the leak that exhausted the X server.
     live_host_count = sum(
-        count for status, count in status_counts.items() if status in _LIVE_HOST_STATUSES
+        count
+        for status, count in status_counts.items()
+        if status in _LIVE_HOST_STATUSES
+    )
+    account_host_counts = dict(
+        Counter(
+            str(r.get("account_id") or "default").strip() or "default"
+            for r in registry.values()
+            if isinstance(r, dict) and r.get("status") in _LIVE_HOST_STATUSES
+        )
     )
     dormant_seat_count = status_counts.get(STATUS_DORMANT, 0)
-    op_streams = [
-        r for r in rows_out if (r.get("purpose") or "") in OPERATOR_PURPOSES
-    ]
+    op_streams = [r for r in rows_out if (r.get("purpose") or "") in OPERATOR_PURPOSES]
     lanes_with_ops: dict[str, list[str]] = {}
     for r in op_streams:
         lane = r.get("lane") or "lane_unknown"
@@ -355,13 +376,12 @@ def compose_view(
             "free_slots": active_work.get("free_slots"),
         },
         "registry_status_counts": dict(status_counts),
+        "registry_account_host_counts": account_host_counts,
         "intended": intended,
         "running": rows_out,
         "findings": findings,
         "life_reachability": {
-            "live_probe_verbs_on_life": (
-                "forbidden (manage/observability = code)"
-            ),
+            "live_probe_verbs_on_life": ("forbidden (manage/observability = code)"),
             "life_path": (
                 f"fs(op=read, path={SNAPSHOT_URI!r}) after script --publish "
                 "(memoized; not a live probe)"
@@ -385,6 +405,7 @@ def serve_view(view: dict[str, Any], now: float | None = None) -> dict[str, Any]
         out["running"] = []
         out["scalars_actual"] = _honest_empty_scalars(view.get("scalars_actual") or {})
         out["registry_status_counts"] = {}
+        out["registry_account_host_counts"] = {}
         return out
 
     running: list[dict[str, Any]] = []
@@ -447,6 +468,7 @@ def render_text(view: dict[str, Any], *, now: float | None = None) -> str:
             f"purpose={r.get('purpose')} lane={r.get('lane')} "
             f"session={r.get('session_url')} reg={r.get('registration_id')} "
             f"reg_status={r.get('registration_status')} age={age_s} "
+            f"account={r.get('account_id') or 'default'} "
             f"commissioned_by={r.get('commissioned_by')}"
         )
     lines += ["", "## Intended vs actual"]

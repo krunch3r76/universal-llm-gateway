@@ -32,7 +32,7 @@ _HOP_KIND = "hop"
 _ROOT_KIND = "root"
 
 
-def launch_or_defer(branch: str, call):
+def launch_or_defer(branch: str, call, *, account_id: str | None = None):
     """Run a Chrome launch; defer to tab path when X headroom is short."""
     from claude_bundles import cdp_lane
     from claude_bundles import cdp_registry_store as store
@@ -44,7 +44,9 @@ def launch_or_defer(branch: str, call):
         return call()
     except XDisplayCapacityError as exc:
         active = store.load_active()
-        host = eligible_host(active, cdp_lane.cdp_display_candidates())
+        host = eligible_host(
+            active, cdp_lane.cdp_display_candidates(), account_id=account_id
+        )
         if host is None:
             raise
         display = str(host.get("display") or cdp_lane.cdp_display())
@@ -139,6 +141,7 @@ def ensure_driving_operator_seat(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
     joined: list | None = None,
+    account_id: str | None = None,
 ) -> Registration:
     """Return the open driving-operator seat for *parent_thread*.
 
@@ -218,6 +221,7 @@ def ensure_driving_operator_seat(
                         launch_chrome=launch_chrome,
                         is_listening=is_listening,
                     ),
+                    account_id=account_id,
                 )
                 return reg, "open_seat_relaunch"
             if url:
@@ -238,6 +242,7 @@ def ensure_driving_operator_seat(
                     launch_chrome=launch_chrome,
                     is_listening=is_listening,
                 ),
+                account_id=account_id,
             )
             return reg, "dormant_unbound_relaunch"
 
@@ -261,7 +266,9 @@ def ensure_driving_operator_seat(
                 launch_chrome=launch_chrome,
                 is_listening=is_listening,
                 joined=joined,
+                account_id=account_id,
             ),
+            account_id=account_id,
         )
         fresh = store.load_active().get(reg.registration_id) or {}
         if joined or fresh.get("status") == "allocating":
