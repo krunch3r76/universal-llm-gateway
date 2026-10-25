@@ -6,7 +6,8 @@ import re
 import sqlite3
 from typing import Any
 
-from .connection import connect, now as bus_now, write_connect
+from .connection import connect, write_connect
+from .connection import now as bus_now
 
 _HOUSE_BIRTH_WORK_KEY = re.compile(
     r"^HOUSE-BIRTH\s+\S+\s+work_key=(\S+)"
