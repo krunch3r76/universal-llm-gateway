@@ -20,16 +20,36 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_PIPELINE_MODEL_SLUGS = frozenset({"team-dispatch", "chat-dispatch"})
+
+
+def _model_from_entity_id(model_entity_id: str | None) -> str:
+    if not model_entity_id:
+        return ""
+    slug = model_entity_id
+    if slug.startswith("model:"):
+        slug = slug[len("model:") :]
+    if "claude-" in slug and not slug.startswith("anthropic/"):
+        return f"anthropic/{slug}"
+    return slug
+
 
 def _effective_resolved_model(record: PipelineExecutionRecord) -> str:
-    """Frontier model for economics; falls back to result.model when admission omitted it."""
+    """Frontier model for economics; fallback when admission omitted resolved_model."""
     if record.resolved_model:
         return record.resolved_model
-    return record.result.model if record.result else ""
+    result_model = record.result.model if record.result else ""
+    if result_model and result_model not in _PIPELINE_MODEL_SLUGS:
+        return result_model
+    if record.result and record.result.model_entity_id:
+        from_entity = _model_from_entity_id(record.result.model_entity_id)
+        if from_entity:
+            return from_entity
+    return result_model
 
 
 def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
-    """True when a frontier API-role to_thread dispatch should record economics on delivery."""
+    """True when API-role to_thread delivery should record economics."""
     if not record.work_key or not record.endpoint_request_id:
         return False
     if record.op != "to_thread" or record.result is None:

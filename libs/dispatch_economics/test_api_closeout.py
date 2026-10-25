@@ -215,6 +215,86 @@ def test_normalize_api_role_usage_preserves_wire_fields() -> None:
 
 
 @pytest.mark.offline
+def test_normalize_fallback_model_team_dispatch_basis_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipeline slug models leave basis unset so pricing heuristics apply."""
+    usage = normalize_api_role_usage(
+        {"prompt_tokens": 100, "completion_tokens": 50},
+        model="team-dispatch",
+    )
+    assert usage["total_tokens_basis"] is None
+
+
+@pytest.mark.offline
+def test_normalize_fallback_model_empty_basis_none() -> None:
+    usage = normalize_api_role_usage(
+        {"input_tokens": 1, "output_tokens": 1},
+        model="",
+    )
+    assert usage["total_tokens_basis"] is None
+
+
+@pytest.mark.offline
+def test_normalize_openrouter_anthropic_exclusive_sum() -> None:
+    usage = normalize_api_role_usage(
+        {"input_tokens": 10, "output_tokens": 5},
+        model="openrouter/anthropic/claude-sonnet-4-6",
+    )
+    assert usage["total_tokens_basis"] == "exclusive_sum"
+    assert usage["total_tokens"] == 15
+
+
+@pytest.mark.offline
+def test_price_usage_team_dispatch_cache_read_exceeds_prompt_bills_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown model + cache_read > prompt must not zero billable input (N8)."""
+    fixed_rate = ModelRateRow(
+        model_id="anthropic/claude-haiku-5-5",
+        input_rate_per_m=1.0,
+        output_rate_per_m=1.0,
+        source="manual_seed_local",
+        updated_at="2026-01-01T00:00:00+00:00",
+        cache_read_rate_per_m=0.1,
+        cache_write_rate_per_m=0.1,
+    )
+    monkeypatch.setattr(
+        "event_store.dispatch_economics_pricing.resolve_rate",
+        lambda *_a, **_k: fixed_rate,
+    )
+    priced = price_usage(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "cached_tokens": 500,
+        },
+        model="team-dispatch",
+    )
+    assert priced is not None
+    assert priced["total_tokens_basis"] is None
+    input_component = (100 / 1_000_000) * 1.0
+    cache_component = (500 / 1_000_000) * 0.1
+    output_component = (50 / 1_000_000) * 1.0
+    expected = round(input_component + cache_component + output_component, 8)
+    assert priced["cost_usd"] == pytest.approx(expected)
+    assert priced["cost_usd"] > input_component
+
+
+@pytest.mark.offline
+def test_exclusive_sum_total_accepts_float_buckets() -> None:
+    usage = normalize_api_role_usage(
+        {
+            "input_tokens": 1.0,
+            "output_tokens": 2.0,
+            "cache_read_tokens": 3.0,
+        },
+        model="anthropic/claude-sonnet-4-6",
+    )
+    assert usage["total_tokens"] == 6
+
+
+@pytest.mark.offline
 def test_append_api_closeout_includes_work_key_and_json() -> None:
     body = append_api_closeout_economics(
         "closeout text",

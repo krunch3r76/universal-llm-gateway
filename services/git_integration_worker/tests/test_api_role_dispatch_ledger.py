@@ -117,3 +117,33 @@ def test_post_api_role_dispatch_normalizes_outcome_usage(
     assert usage_cost.get("total_tokens") == 850
     assert usage_cost.get("total_tokens_basis") == "exclusive_sum"
     assert usage_cost.get("cost_usd") == pytest.approx(0.00010825)
+
+
+@pytest.mark.offline
+def test_post_api_role_dispatch_accepts_null_usage(
+    ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.api_role_dispatch_ledger.CursorDispatchLedger.instance",
+        lambda: ledger,
+    )
+    app = FastAPI()
+    app.include_router(claim_router)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/cursor/api-role-dispatch",
+        json={
+            "execution_id": "no-usage-1",
+            "work_key": _KEY,
+            "resolved_model": "anthropic/claude-sonnet-4-6",
+            "contract": "freeform",
+            "usage": None,
+        },
+    )
+    assert resp.status_code == 200
+    payload = work_key_ledger_projection(_KEY, ledger=ledger, limit=5)
+    row = next(
+        r for r in payload["dispatches"] if r["dispatch_id"] == "api-no-usage-1"
+    )
+    assert row.get("usage_cost") is None

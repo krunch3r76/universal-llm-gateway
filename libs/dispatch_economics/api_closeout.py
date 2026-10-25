@@ -17,6 +17,25 @@ def _is_anthropic_api_model(model: str) -> bool:
     return "claude-" in model_str
 
 
+_KNOWN_NON_ANTHROPIC_INCLUSIVE_PREFIXES = (
+    "openai/",
+    "xai/",
+    "google/",
+    "openrouter/openai/",
+    "openrouter/x-ai/",
+    "openrouter/google/",
+    "cursor/",
+)
+
+
+def _is_known_non_anthropic_inclusive_model(model: str) -> bool:
+    """Models whose provider reports cache-inclusive prompt totals (not Anthropic)."""
+    model_str = str(model)
+    if "claude-" in model_str:
+        return False
+    return model_str.startswith(_KNOWN_NON_ANTHROPIC_INCLUSIVE_PREFIXES)
+
+
 def _exclusive_sum_total(
     *,
     input_tokens: Any,
@@ -25,9 +44,9 @@ def _exclusive_sum_total(
     cache_write: Any,
 ) -> int | None:
     buckets = (input_tokens, output_tokens, cache_read, cache_write)
-    if not any(isinstance(x, int) for x in buckets):
+    if not any(isinstance(x, (int, float)) for x in buckets):
         return None
-    return sum(int(x) for x in buckets if isinstance(x, int))
+    return sum(int(x) for x in buckets if isinstance(x, (int, float)))
 
 
 def normalize_api_role_usage(
@@ -51,7 +70,12 @@ def normalize_api_role_usage(
 
     total_basis: Any = usage.get("total_tokens_basis")
     if total_basis is None:
-        total_basis = "exclusive_sum" if _is_anthropic_api_model(model) else "inclusive"
+        if _is_anthropic_api_model(model):
+            total_basis = "exclusive_sum"
+        elif _is_known_non_anthropic_inclusive_model(model):
+            total_basis = "inclusive"
+        else:
+            total_basis = None
 
     total_tokens = usage.get("total_tokens")
     if total_basis == "exclusive_sum":
