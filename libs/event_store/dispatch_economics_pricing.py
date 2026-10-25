@@ -273,6 +273,14 @@ def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
     return round(total, 8) if has_component else None
 
 
+def price_row(
+    row: dict[str, Any],
+    wire_members: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Price a normalized economics row using the rate table or wire members."""
+    return _price_row(row, wire_members)
+
+
 def _price_row(
     row: dict[str, Any],
     wire_members: list[dict[str, Any]] | None,

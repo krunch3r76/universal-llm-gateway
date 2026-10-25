@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from event_store.dispatch_economics_pricing import _price_row
+from event_store.dispatch_economics_pricing import price_row
 
 
 def price_usage(
@@ -34,7 +34,7 @@ def price_usage(
         "model_id": model,
         "model_knobs_requested": knobs,
     }
-    priced = _price_row(row, None)
+    priced = price_row(row, None)
     return {
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),

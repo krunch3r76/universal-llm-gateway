@@ -630,7 +630,7 @@ def test_select_channel_layer_c_for_no_fs_generate() -> None:
 
 
 @pytest.mark.offline
-def test_select_channel_layer_a_for_cursor_sdk() -> None:
+def test_select_channel_openai_layer_a_anthropic_layer_c_with_mcp() -> None:
     ctx = build_dispatch_skill_context(
         model="openai/gpt-5.4",
         mcp_enabled=True,

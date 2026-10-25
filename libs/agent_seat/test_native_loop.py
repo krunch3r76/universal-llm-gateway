@@ -772,6 +772,17 @@ def test_accumulate_usage_none_semantics_preserved() -> None:
     assert acc["reasoning_tokens"] == 150
 
 
+def test_accumulate_usage_sums_cache_write_tokens() -> None:
+    """accumulate_usage sums cache_write_tokens across turns."""
+    from agent_seat.native_loop_tools import accumulate_usage
+
+    acc: dict[str, Any] = {}
+    accumulate_usage(acc, {"input_tokens": 1, "output_tokens": 1, "cache_write_tokens": 10})
+    accumulate_usage(acc, {"input_tokens": 2, "output_tokens": 3, "cache_write_tokens": 5})
+    assert acc["cache_write_tokens"] == 15
+    assert acc["input_tokens"] == 3
+
+
 def test_accumulate_usage_none_input_is_noop() -> None:
     """None / empty turn_usage is a no-op."""
     from agent_seat.native_loop_tools import accumulate_usage

@@ -394,10 +394,98 @@ def test_anthropic_reducer_mcp_tool_use_and_result() -> None:
     assert terminal["content"][1]["type"] == "mcp_tool_result"
     assert terminal["content"][1]["tool_use_id"] == "mcpu_1"
     assert terminal["content"][1]["content"] == "thread tip"
-    assert terminal["usage"]["cache_read_input_tokens"] == 3
-    assert terminal["usage"]["cache_creation_input_tokens"] == 5
+    assert terminal["usage"]["cache_read_input_tokens"] == 1
+    assert terminal["usage"]["cache_creation_input_tokens"] == 2
 
     adapter = _anthropic_adapter()
     parsed = adapter.parse_frontier_response(terminal)
-    assert parsed["usage"]["cached_tokens"] == 3
-    assert parsed["usage"]["cache_write_tokens"] == 5
+    assert parsed["usage"]["cached_tokens"] == 1
+    assert parsed["usage"]["cache_write_tokens"] == 2
+
+
+def test_anthropic_reducer_usage_delta_overwrites_start() -> None:
+    from llm_adapters.streaming.anthropic import AnthropicReducer
+    from sse.protocols import SSEMessage
+
+    reducer = AnthropicReducer()
+    state = reducer.initial_state()
+    events = [
+        SSEMessage(
+            event="message_start",
+            data={
+                "type": "message_start",
+                "message": {
+                    "id": "msg_u",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 1000,
+                        "cache_read_input_tokens": 50,
+                        "cache_creation_input_tokens": 100,
+                    },
+                },
+            },
+        ),
+        SSEMessage(
+            event="message_delta",
+            data={
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {
+                    "output_tokens": 9,
+                    "input_tokens": 1100,
+                    "cache_read_input_tokens": 2000,
+                    "cache_creation_input_tokens": 248,
+                },
+            },
+        ),
+        SSEMessage(event="message_stop", data={"type": "message_stop"}),
+    ]
+    for ev in events:
+        if reducer.reduce(state, ev):
+            break
+    terminal = AnthropicReducer.to_terminal_dict(state)
+    assert terminal["usage"]["input_tokens"] == 1100
+    assert terminal["usage"]["cache_read_input_tokens"] == 2000
+    assert terminal["usage"]["cache_creation_input_tokens"] == 248
+    assert terminal["usage"]["output_tokens"] == 9
+
+
+def test_anthropic_reducer_mcp_tool_result_list_content() -> None:
+    from llm_adapters.streaming.anthropic import AnthropicReducer
+    from sse.protocols import SSEMessage
+
+    reducer = AnthropicReducer()
+    state = reducer.initial_state()
+    list_content = [{"type": "text", "text": "structured result"}]
+    events = [
+        SSEMessage(
+            event="message_start",
+            data={
+                "type": "message_start",
+                "message": {"id": "msg_list", "model": "claude-sonnet-4-6", "usage": {}},
+            },
+        ),
+        SSEMessage(
+            event="content_block_start",
+            data={
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "mcp_tool_result",
+                    "tool_use_id": "mcpu_2",
+                    "is_error": False,
+                    "content": list_content,
+                },
+            },
+        ),
+        SSEMessage(
+            event="content_block_stop",
+            data={"type": "content_block_stop", "index": 0},
+        ),
+        SSEMessage(event="message_stop", data={"type": "message_stop"}),
+    ]
+    for ev in events:
+        if reducer.reduce(state, ev):
+            break
+    terminal = AnthropicReducer.to_terminal_dict(state)
+    assert terminal["content"][0]["content"] == list_content

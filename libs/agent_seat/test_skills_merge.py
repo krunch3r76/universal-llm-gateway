@@ -85,7 +85,7 @@ def test_partition_openai_mounts_entire_effective_list(
     assert partition.rows[0].channel == "layer_b"
 
 
-def test_partition_anthropic_routes_caller_to_layer_a(
+def test_partition_anthropic_routes_caller_to_layer_c(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
