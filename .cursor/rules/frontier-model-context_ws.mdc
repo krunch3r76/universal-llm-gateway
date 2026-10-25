@@ -12,27 +12,28 @@ alwaysApply: false
 ## Invariant
 
 **Invariant**: ∀ frontier/cloud/OpenRouter model invocations: ¬impose arbitrary
-`max_tokens` limits. Let the model choose its output length unless the task has
-a structural constraint (e.g. JSON schema with bounded fields).
+`max_tokens` limits. Setting `max_tokens` truncates the response unless output
+length is strongly correlated with that limit. Pipelines SHOULD NOT set
+`max_tokens` without that reason.
 
 ## Rules
 
-- Cloud models (Anthropic, OpenAI, OpenRouter) have large context windows.
-  Pipeline steps SHOULD NOT set restrictive `max_tokens` unless the expected
-  output has a known bounded size.
-- When `max_tokens` is needed (e.g. for cost control), use generous defaults:
-  - Classification/structured output: 4096–8192
-  - Free-form generation: 16384+
-  - Summarization/analysis: 8192+
-- Local models may need tighter limits for VRAM/throughput reasons — this
-  policy applies to frontier/cloud models only.
-- ∀ pipeline YAML `generation_parameters.max_tokens`: document why the limit
-  exists if it's below 8192 for a cloud model step.
+- **Pipeline default**: omit `generation_parameters.max_tokens`. Do not set a
+  generous numeric cap “just in case.” When a step omits `max_tokens`, frontier
+  dispatch fills the model catalog `max_output` default — that path is owned by
+  `libs/` and the catalog; do not re-add a pipeline cap here to override it.
+- **When a bound is truly needed**: a length-binding prompt is not required up
+  front. It is only a prior step if a bound is later needed — before
+  `max_tokens` is considered.
+- Local models may still need tighter limits for VRAM/throughput — apply the
+  same rule: set `max_tokens` only when output length is strongly correlated
+  with that limit, not as a default cushion.
 
 ## Anti-Patterns
 
 | Bad | Good |
 |---|---|
-| `max_tokens: 512` for classification with 27 scopes | `max_tokens: 8192` or omit |
-| Same `max_tokens` for local and frontier modes | Mode-aware defaults |
-| Hardcoded limits without considering output structure | Limits derived from expected output size |
+| `max_tokens: 512` for open-ended generation | Omit `max_tokens`; let catalog default apply |
+| `max_tokens: 16384` “to be safe” on a drafter step | Omit unless length is structurally bounded |
+| Adding prompt length language before trying omission | Omit first; bind in prompt only if a cap is later required |
+| Pipeline YAML cap to override catalog `max_output` | Omit; catalog default via frontier dispatch |

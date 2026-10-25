@@ -85,15 +85,18 @@ def test_pipeline_shape() -> None:
     by_name = {step.name: step for step in spec.steps}
     assert by_name["draft"].type == "writing_draft_selector_v1"
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
-    for name in _CLOUD_DRAFTERS:
+    _NO_MAX_TOKENS = (
+        *_CLOUD_DRAFTERS,
+        "drafter_local_hermes",
+        "drafter_local_ernie",
+        "prose_rhythm_pass",
+    )
+    for name in _NO_MAX_TOKENS:
         step = by_name[name]
         assert step.type == "generate"
         params = getattr(step, "generation_parameters", None) or {}
-        assert params.get("max_tokens") == 16384
+        assert "max_tokens" not in params
         assert "response_format" not in params
-    for name in ("drafter_local_hermes", "drafter_local_ernie"):
-        params = getattr(by_name[name], "generation_parameters", None) or {}
-        assert params.get("max_tokens") == 3072
     assert by_name["drafter_anthropic"].model_ref == "drafter_anthropic"
     banned = ("cdp", "web-anthropic", "cursor_pool")
     blob = yaml.safe_dump(raw).lower()
