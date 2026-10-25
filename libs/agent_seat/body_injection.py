@@ -78,11 +78,12 @@ def select_skill_delivery_channel(
 ) -> SkillDeliveryChannel:
     """Capability-determined exactly-one channel with precedence B > C > A (D3)."""
     from implement_admission.skill_catalog_resolver import canonical_catalog_slug
+    from model_capabilities import mcp_remote_connector
 
     canonical = canonical_catalog_slug(slug_or_entity_id)
     if canonical in ctx.provider_mount_slugs:
         return SkillDeliveryChannel.LAYER_B_PROVIDER
-    if not ctx.mcp_enabled:
+    if not ctx.mcp_enabled or mcp_remote_connector(ctx.model):
         return SkillDeliveryChannel.LAYER_C_BODY
     return SkillDeliveryChannel.LAYER_A_FS
 

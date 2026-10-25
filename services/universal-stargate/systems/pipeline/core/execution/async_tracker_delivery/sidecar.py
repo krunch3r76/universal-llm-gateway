@@ -11,7 +11,7 @@ raised.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
@@ -19,6 +19,73 @@ if TYPE_CHECKING:
     from ..async_tracker import PipelineExecutionRecord
 
 logger = get_logger(__name__)
+
+
+def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
+    if not record.work_key or not record.endpoint_request_id:
+        return False
+    if record.op != "to_thread" or record.result is None:
+        return False
+    from ...handlers.frontier_dispatch.cursor_sdk_dispatch import (
+        is_cursor_sdk_dispatch_model,
+    )
+
+    return not is_cursor_sdk_dispatch_model(record.result.model or "")
+
+
+def enrich_on_behalf_sidecar_content(
+    record: PipelineExecutionRecord, content: str
+) -> str:
+    """Append token/cost footer before durable cortex sidecar write (API-role)."""
+    if not _is_api_role_team_dispatch(record):
+        return content
+    from dispatch_economics.api_closeout import append_api_closeout_economics
+
+    usage = record.result.usage if record.result is not None else None
+    model = record.result.model if record.result is not None else ""
+    return append_api_closeout_economics(
+        content,
+        work_key=record.work_key,
+        execution_id=record.execution_id,
+        model=model,
+        usage=usage,
+        contract=record.resolved_contract,
+    )
+
+
+async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
+    """POST economics to git_integration_worker after successful on-behalf delivery."""
+    if not _is_api_role_team_dispatch(record):
+        return
+    import httpx
+
+    from systems.frontier_consult.cursor_sdk_worker_dispatch import worker_base_url
+
+    usage = record.result.usage if record.result is not None else None
+    payload: dict[str, Any] = {
+        "execution_id": record.execution_id,
+        "work_key": record.work_key,
+        "resolved_model": record.result.model if record.result else "",
+        "contract": record.resolved_contract,
+        "usage": usage,
+    }
+    url = f"{worker_base_url().rstrip('/')}/api/v1/cursor/api-role-dispatch"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload)
+        if resp.status_code >= 300:
+            logger.warning(
+                "api-role ledger relay failed: execution_id=%s status=%s body=%s",
+                record.execution_id,
+                resp.status_code,
+                resp.text[:200],
+            )
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "api-role ledger relay unreachable: execution_id=%s err=%s",
+            record.execution_id,
+            exc,
+        )
 
 
 @dataclass

@@ -352,6 +352,7 @@ def _project_dispatch_row(
         "model": row.get("resolved_model"),
         "knobs": _knobs_from_row(row, rec),
         "contract": row.get("contract"),
+        "work_key": row.get("work_key"),
         "admit_at": row.get("queued_at") or row.get("started_at"),
         "terminal_at": row.get("terminal_at"),
         "status": row.get("status"),

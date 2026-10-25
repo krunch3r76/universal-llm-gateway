@@ -275,6 +275,7 @@ async def dispatch_api_role_generate(
         op="to_thread",
         reply_subject=reply_subject,
         resolved_contract=contract,
+        work_key=getattr(body, "work_key", None),
         bus_lifecycle=(
             "persistent"
             if reuse_id is not None

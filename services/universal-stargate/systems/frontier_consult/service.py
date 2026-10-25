@@ -116,6 +116,7 @@ class FrontierGenerateRequest:
     # Override post-delivery thread close for ``op="to_thread"``. None ⇒ ephemeral.
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
     resolved_contract: str | None = None
+    work_key: str | None = None
     density_triage: str | None = None
     review_opt_out_reason_code: str | None = None
     auto_review_child: bool | None = None
@@ -943,6 +944,12 @@ async def build_dispatch_body(
         event_publisher=event_publisher,
     )
 
+    from agent_seat.dispatch_review_contract import review_dispatch_system_appendix
+
+    review_appendix = review_dispatch_system_appendix(req.resolved_contract)
+    if review_appendix:
+        system_assembled = f"{system_assembled}\n\n{review_appendix}"
+
     model_entity_id = canonical_model_entity_id(effective_model)
     enforce_model(
         request_id=request_id,
@@ -1015,6 +1022,8 @@ async def build_dispatch_body(
         pipeline_options["skills_mount"] = skills_mount
     if req.server_tools is not None:
         pipeline_options["server_tools"] = req.server_tools
+    if req.work_key:
+        pipeline_options["work_key"] = req.work_key
 
     if req.output_contract == "thread" and req.target_thread:
         _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "").strip()

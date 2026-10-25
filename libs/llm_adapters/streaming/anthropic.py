@@ -122,7 +122,7 @@ class AnthropicReducer:
         state._tool_name = None
         state._redacted_data = None
 
-        if block_type == "tool_use":
+        if block_type in {"tool_use", "mcp_tool_use"}:
             state._tool_id = str(block.get("id") or "")
             state._tool_name = str(block.get("name") or "")
         elif block_type == "thinking":
@@ -173,7 +173,7 @@ class AnthropicReducer:
     def _finalize_block(state: _AnthropicState) -> dict[str, Any] | None:
         if state._block_type == "text":
             return {"type": "text", "text": state._text_buf}
-        if state._block_type == "tool_use":
+        if state._block_type in {"tool_use", "mcp_tool_use"}:
             assembled_input: dict[str, Any]
             partial = state._partial_json.strip()
             if not partial:
@@ -185,12 +185,16 @@ class AnthropicReducer:
                     assembled_input = {}
                 else:
                     assembled_input = loaded if isinstance(loaded, dict) else {}
-            return {
-                "type": "tool_use",
+            block_type = state._block_type or "tool_use"
+            block: dict[str, Any] = {
+                "type": block_type,
                 "id": state._tool_id,
                 "name": state._tool_name,
                 "input": assembled_input,
             }
+            if block_type == "mcp_tool_use":
+                block["server_name"] = "vortex"
+            return block
         if state._block_type == "thinking":
             return {
                 "type": "thinking",

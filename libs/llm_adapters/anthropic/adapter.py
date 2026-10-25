@@ -256,6 +256,19 @@ class AnthropicAdapter:
                         "input": block.get("input"),
                     }
                 )
+            elif btype == "mcp_tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("input"),
+                        "server_name": block.get("server_name"),
+                        "kind": "mcp_tool_use",
+                    }
+                )
+                server_tool_calls.append(block)
+            elif btype == "mcp_tool_result":
+                server_tool_calls.append(block)
             elif btype in {
                 "server_tool_use",
                 "web_search_tool_result",

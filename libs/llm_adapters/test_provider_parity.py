@@ -128,6 +128,32 @@ def test_anthropic_parse_finish_reason_end_turn() -> None:
     assert result["finish_reason"] == "end_turn"
 
 
+def test_anthropic_parse_mcp_tool_blocks() -> None:
+    """Remote MCP tool_use and tool_result blocks surface in tool_calls / server_tools."""
+    adapter = _anthropic_adapter()
+    raw: dict[str, Any] = {
+        "id": "msg_mcp",
+        "model": "claude-sonnet-4-6",
+        "content": [
+            {
+                "type": "mcp_tool_use",
+                "id": "mcpu_1",
+                "name": "agent_bus_read",
+                "input": {"tool": "fetch", "arguments": "{}"},
+                "server_name": "vortex-code",
+            },
+            {"type": "mcp_tool_result", "tool_use_id": "mcpu_1", "content": "ok"},
+        ],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "stop_reason": "end_turn",
+    }
+    result = adapter.parse_frontier_response(raw)
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["name"] == "agent_bus_read"
+    assert result["tool_calls"][0].get("kind") == "mcp_tool_use"
+    assert len(result["server_tool_calls"]) == 2
+
+
 def test_responses_parse_finish_reason_completed() -> None:
     """ResponsesAPIAdapter surfaces status as finish_reason for completed responses."""
     adapter = _responses_adapter()

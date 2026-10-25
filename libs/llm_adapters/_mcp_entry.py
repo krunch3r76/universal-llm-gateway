@@ -244,6 +244,7 @@ ANTHROPIC_API_DEFAULT_MCP_TOOLS: frozenset[str] = frozenset(
 ANTHROPIC_AGENTIC_MCP_TOOLS: frozenset[str] = ANTHROPIC_API_DEFAULT_MCP_TOOLS | {
     "team_dispatch",
     "agent_bus",
+    "agent_bus_read",
 }
 
 # False restores the pre-39434 toolset on every caller of anthropic_mcp_toolset:

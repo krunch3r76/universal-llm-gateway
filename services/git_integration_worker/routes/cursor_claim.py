@@ -40,6 +40,16 @@ class ClaimBody(BaseModel):
     request_turn: int | None = None
 
 
+class ApiRoleDispatchBody(BaseModel):
+    """Persist API-role team_dispatch economics onto the work-key ledger."""
+
+    execution_id: str
+    work_key: str
+    resolved_model: str
+    contract: str | None = None
+    usage: dict[str, Any] | None = None
+
+
 class ReleaseBody(BaseModel):
     """Body for ``POST /claim/{id}/release``.
 
@@ -112,6 +122,27 @@ def get_occupancy(
     if not validate_work_key_scheme(work_key):
         return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")
     return occupancy_projection(work_key)
+
+
+@router.post("/api-role-dispatch", response_model=None)
+def post_api_role_dispatch(body: ApiRoleDispatchBody) -> Any:
+    """Record one API-role dispatch row for ``team_dispatch(op=ledger)``."""
+    if not validate_work_key_scheme(body.work_key):
+        return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")
+    if not body.execution_id.strip():
+        return _invalid("INVALID_EXECUTION", "execution_id is required")
+    from services.git_integration_worker.api_role_dispatch_ledger import (
+        record_api_role_dispatch,
+    )
+
+    record_api_role_dispatch(
+        execution_id=body.execution_id.strip(),
+        work_key=body.work_key.strip(),
+        resolved_model=body.resolved_model.strip(),
+        contract=body.contract,
+        usage=body.usage,
+    )
+    return {"ok": True, "dispatch_id": f"api-{body.execution_id.strip()}"}
 
 
 @router.get("/work-key-ledger", response_model=None)

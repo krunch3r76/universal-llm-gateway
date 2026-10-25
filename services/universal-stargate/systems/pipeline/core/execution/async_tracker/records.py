@@ -162,6 +162,8 @@ class PipelineExecutionRecord:
     # Caller-facing delivery outcome (friction 16985). None until op="to_thread"
     # delivery runs; legacy result_delivery path leaves this None.
     delivery: DeliveryState | None = None
+    work_key: str | None = None
+    resolved_contract: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/executions/{id}``."""  # noqa: E501

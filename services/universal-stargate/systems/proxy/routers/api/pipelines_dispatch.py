@@ -386,9 +386,17 @@ async def admit_dispatch(
         return _error_response(400, "invalid_request_error", str(exc))
 
     try:
-        endpoint_request_id = (dispatch.pipeline_options or {}).get(
-            "_endpoint_request_id"
-        )
+        opts = dispatch.pipeline_options or {}
+        endpoint_request_id = opts.get("_endpoint_request_id")
+        work_key = opts.get("work_key")
+        if isinstance(work_key, str):
+            work_key = work_key.strip() or None
+        else:
+            work_key = None
+        resolved_contract = getattr(dispatch, "resolved_contract", None)
+        if resolved_contract is None:
+            raw_contract = opts.get("resolved_contract")
+            resolved_contract = raw_contract if isinstance(raw_contract, str) else None
         tracker.register_execution(
             execution_id=execution_id,
             pipeline=dispatch.model,
@@ -402,6 +410,8 @@ async def admit_dispatch(
             reply_subject=dispatch.reply_subject,
             bus_lifecycle=_resolve_bus_lifecycle(dispatch),
             endpoint_request_id=endpoint_request_id,
+            work_key=work_key,
+            resolved_contract=resolved_contract,
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)

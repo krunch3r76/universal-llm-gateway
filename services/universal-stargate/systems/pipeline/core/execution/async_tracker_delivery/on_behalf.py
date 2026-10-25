@@ -69,7 +69,11 @@ from .envelope import (
 from .outcome import DeliveryOutcome
 from .protocol import _EventBusProtocol
 from .resolution import _resolve_to_agent, _utc_now_iso
-from .sidecar import write_on_behalf_sidecar
+from .sidecar import (
+    enrich_on_behalf_sidecar_content,
+    persist_api_role_ledger,
+    write_on_behalf_sidecar,
+)
 
 if TYPE_CHECKING:
     from ..async_tracker import PipelineExecutionRecord
@@ -105,7 +109,8 @@ async def _post_content_on_behalf(
         )
         return DeliveryOutcome(status="skipped", failure_reason="no_target_thread")
 
-    content = record.result.content if record.result is not None else ""
+    raw_content = record.result.content if record.result is not None else ""
+    content = enrich_on_behalf_sidecar_content(record, raw_content)
     if not content or not content.strip():
         _emit(
             event_bus,
@@ -230,6 +235,7 @@ async def _post_content_on_behalf(
 
     if 200 <= status_code < 300:
         record.thread_reply_observed_at = _utc_now_iso()
+        await persist_api_role_ledger(record)
         _emit(
             event_bus,
             _build_sent_event(

@@ -396,7 +396,10 @@ class AnthropicAdapter:
         try:
             body = self._openai_to_anthropic(request_body)
             has_mcp = bool(body.get("mcp_servers"))
-            req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+            needs_v2 = _body_uses_mcp_v2(body)
+            req_headers = dict(
+                self._headers(include_mcp_beta=has_mcp, force_mcp_v2=needs_v2)
+            )
             req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
             if self._event_bus:
                 await self._event_bus.publish(
@@ -496,7 +499,10 @@ class AnthropicAdapter:
             try:
                 body = self._openai_to_anthropic({**request_body, "stream": True})
                 has_mcp = bool(body.get("mcp_servers"))
-                req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+                needs_v2 = _body_uses_mcp_v2(body)
+                req_headers = dict(
+                    self._headers(include_mcp_beta=has_mcp, force_mcp_v2=needs_v2)
+                )
                 req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
                 translator = StreamTranslator(requested_model)
                 if self._event_bus:

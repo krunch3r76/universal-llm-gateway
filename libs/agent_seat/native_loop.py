@@ -104,10 +104,51 @@ class NativeLoopResult:
         return len(self.tool_calls)
 
 
-from agent_seat.native_loop_tools import (
-    accumulate_usage as _accumulate_usage,
-    execute_tool_calls as _execute_tool_calls,
-)
+def _mcp_result_text(block: dict[str, Any]) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return "".join(parts)
+    return json.dumps(block) if block else ""
+
+
+def _capture_remote_mcp_tool_calls(
+    raw: dict[str, Any], *, turn: int
+) -> list[NativeToolCall]:
+    """Record Anthropic server-executed MCP tool_use/result pairs for dispatch traces."""
+    blocks = raw.get("content") or []
+    if not isinstance(blocks, list):
+        return []
+    results: dict[str, tuple[str, bool]] = {}
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "mcp_tool_result":
+            continue
+        tid = str(block.get("tool_use_id") or "")
+        results[tid] = (_mcp_result_text(block), not bool(block.get("is_error")))
+    captured: list[NativeToolCall] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "mcp_tool_use":
+            continue
+        tid = str(block.get("id") or "")
+        inp = block.get("input")
+        args = inp if isinstance(inp, dict) else {}
+        result_text, ok = results.get(tid, ("", True))
+        captured.append(
+            NativeToolCall(
+                turn=turn,
+                name=str(block.get("name") or ""),
+                arguments=args,
+                result=result_text,
+                ok=ok,
+                elapsed_ms=0.0,
+            )
+        )
+    return captured
 
 
 async def run_native_tool_loop(
@@ -240,6 +281,13 @@ async def _run_native_tool_loop_body(
     friction: ToolFrictionTracker,
     pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None,
 ) -> NativeLoopResult:
+    from agent_seat.native_loop_tools import (
+        accumulate_usage as _accumulate_usage,
+    )
+    from agent_seat.native_loop_tools import (
+        execute_tool_calls as _execute_tool_calls,
+    )
+
     google_malformed_retried = False
     usage_acc: dict[str, Any] = {}
     for turn_idx in range(max_turns):
@@ -335,6 +383,10 @@ async def _run_native_tool_loop_body(
                 usage_acc, result.get("usage") if isinstance(result, dict) else None
             )
             tool_calls = result.get("tool_calls")
+            if req.remote_mcp and isinstance(raw, dict) and provider == "anthropic":
+                captured.extend(
+                    _capture_remote_mcp_tool_calls(raw, turn=turns_used)
+                )
 
         if not tool_calls or not req.mcp_tool_loop:
             break
