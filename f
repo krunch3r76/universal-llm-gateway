@@ -37,4 +37,4 @@ SKIPPED [1] libs/cortex_store/conftest.py:29: migration file absent from this wo
 SKIPPED [1] libs/cortex_store/conftest.py:29: migration file absent from this worktree: 045_todo_required_skills_schema.py
 SKIPPED [1] libs/cortex_store/conftest.py:29: migration file absent from this worktree: 064_matter_genus_mode.py
 !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
-19 skipped, 3 warnings, 1 error in 8.33s
+19 skipped, 3 warnings, 1 error in 4.07s
