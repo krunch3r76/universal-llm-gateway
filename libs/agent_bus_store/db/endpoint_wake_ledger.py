@@ -75,7 +75,15 @@ def advance_scan(
         current = int(row["high_water_turn_id"]) if row else None
         if current != expected_high_water:
             raise WakeConflictError("stale_high_water")
+        filtered: list[dict[str, Any]] = []
         for item in pending:
+            turn_row = conn.execute(
+                "SELECT read_at FROM turns WHERE id=?", (int(item["turn_id"]),)
+            ).fetchone()
+            if turn_row is not None and turn_row["read_at"]:
+                continue
+            filtered.append(item)
+        for item in filtered:
             conn.execute(
                 "INSERT OR IGNORE INTO endpoint_wake_ledger "
                 "(agent, thread_id, turn_id, turn_number, state, created_at) "
@@ -93,7 +101,7 @@ def advance_scan(
             "WHERE consumer=?",
             (new_high_water, stamp, consumer),
         )
-    return {"high_water_turn_id": new_high_water, "inserted": len(pending)}
+        return {"high_water_turn_id": new_high_water, "inserted": len(filtered)}
 
 
 def _same_wake_agent(left: str, right: str) -> bool:
@@ -127,11 +135,176 @@ def _references_wake_turn(
 
 
 def _wake_ledger_read_cursor_agent(agent: str) -> bool:
-    """Alias pair uses ledger pending→delivered, not shared turns.read_at (L20)."""
+    """True for maestro/web-anthropic alias pair (mark-read skip path only)."""
     raw = agent.strip().lower()
     if raw in MAESTRO_WEB_ALIAS_PAIR:
         return True
     return normalize_bus_address(agent) in MAESTRO_WEB_ALIAS_PAIR
+
+
+def canonical_wake_recipient(agent: str) -> str:
+    """Single dedupe bucket for maestro ↔ web-anthropic continuity mailboxes."""
+    normalized = normalize_bus_address(str(agent or "").strip())
+    if normalized in MAESTRO_WEB_ALIAS_PAIR:
+        return "maestro"
+    return normalized
+
+
+def _agent_matches_canonical(agent: str, canonical: str) -> bool:
+    return canonical_wake_recipient(agent) == canonical_wake_recipient(canonical)
+
+
+def _ledger_agents_for_canonical(canonical: str) -> tuple[str, ...]:
+    if canonical_wake_recipient(canonical) == "maestro":
+        return tuple(sorted(MAESTRO_WEB_ALIAS_PAIR))
+    return (canonical_wake_recipient(canonical),)
+
+
+def endpoint_wake_covers_turn(
+    conn: sqlite3.Connection,
+    *,
+    agent: str,
+    thread_id: str,
+    turn_number: int,
+) -> bool:
+    """True when the ledger already owns or finished a wake for this turn."""
+    rows = conn.execute(
+        "SELECT agent, state FROM endpoint_wake_ledger "
+        "WHERE thread_id=? AND turn_number=? "
+        "AND state IN ('pending', 'claimed', 'delivered', 'unknown')",
+        (thread_id, int(turn_number)),
+    ).fetchall()
+    for row in rows:
+        if not _agent_matches_canonical(str(row["agent"]), agent):
+            continue
+        if str(row["state"]) == "delivered":
+            return True
+        if str(row["state"]) in {"pending", "claimed", "unknown"}:
+            return True
+    return False
+
+
+def suppress_endpoint_wake_for_turn(
+    *,
+    agent: str,
+    thread_id: str,
+    turn_number: int,
+    reason: str = "deduped_owed_wake",
+    now: str | None = None,
+) -> int:
+    """Skip pending rows and stamp a skipped tombstone for cross-path dedupe."""
+    stamp = _now(now)
+    canonical = canonical_wake_recipient(agent)
+    agents = _ledger_agents_for_canonical(canonical)
+    placeholders = ",".join("?" * len(agents))
+    with write_connect() as conn:
+        cur = conn.execute(
+            f"UPDATE endpoint_wake_ledger SET state='skipped', reason=?, finished_at=? "
+            f"WHERE thread_id=? AND turn_number=? AND state='pending' "
+            f"AND lower(trim(agent)) IN ({placeholders})",
+            (reason, stamp, thread_id, int(turn_number), *agents),
+        )
+        updated = int(cur.rowcount)
+        turn = conn.execute(
+            "SELECT id FROM turns WHERE thread=? AND turn_number=? LIMIT 1",
+            (thread_id, int(turn_number)),
+        ).fetchone()
+        turn_id = int(turn["id"]) if turn else 0
+        if turn_id:
+            conn.execute(
+                "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                "(agent, thread_id, turn_id, turn_number, state, reason, created_at, finished_at) "
+                "VALUES (?,?,?,?, 'skipped', ?, ?, ?)",
+                (canonical, thread_id, turn_id, int(turn_number), reason, stamp, stamp),
+            )
+        return updated
+
+
+def _owed_wake_covers_turn(*, agent: str, thread_id: str, turn_number: int) -> bool:
+    """True when owed_wake already dispatched or still holds an open row for the turn."""
+    try:
+        from scripts.model_manager.ui.controller.owed_wake_ledger import (
+            decode_turn_refs,
+        )
+        from scripts.model_manager.ui.controller.restart_intent_store import (
+            RestartIntentStore,
+        )
+    except ImportError:
+        return False
+    store = RestartIntentStore()
+    try:
+        with store._connect() as conn:
+            rows = conn.execute(
+                "SELECT turn_refs, dispatched_at, closed_at FROM owed_wake"
+            ).fetchall()
+    except Exception:
+        return False
+    for row in rows:
+        if row["closed_at"] and not row["dispatched_at"]:
+            continue
+        for ref in decode_turn_refs(row["turn_refs"]):
+            if str(ref.get("thread_id") or "") != str(thread_id):
+                continue
+            try:
+                ref_n = int(ref.get("turn_number"))
+            except (TypeError, ValueError):
+                continue
+            if ref_n != int(turn_number):
+                continue
+            if row["dispatched_at"]:
+                return True
+            if row["closed_at"] is None:
+                return True
+    return False
+
+
+def _seat_superseded_skip_reason(
+    conn: sqlite3.Connection, *, agent: str, thread_id: str
+) -> str | None:
+    """Skip when the subscribed route is tombstoned or the CSE lane holder is superseded."""
+    row = conn.execute(
+        """
+        SELECT state, surface, agent_id FROM agent_endpoint_subscriptions
+        WHERE agent = ?
+          AND id IN (
+            SELECT MAX(id) FROM agent_endpoint_subscriptions
+            WHERE agent = ?
+            GROUP BY thread_scope
+          )
+          AND (
+            thread_scope = '*'
+            OR thread_scope = ?
+          )
+        ORDER BY CASE WHEN thread_scope = ? THEN 0 WHEN thread_scope = '*' THEN 2 ELSE 1 END,
+                 id DESC
+        LIMIT 1
+        """,
+        (agent, agent, thread_id, thread_id),
+    ).fetchone()
+    if row is not None and str(row["state"] or "") != "subscribed":
+        return "seat_superseded"
+    if row is None or str(row["surface"] or "") != "cse":
+        return None
+    lane = str(row["agent_id"] or thread_id).strip()
+    if not lane:
+        return None
+    try:
+        from services.git_integration_worker.cse_session_holders import (
+            _ledger_conn,
+            ensure_schema,
+            get_driving_holder_for_lane,
+        )
+
+        with _ledger_conn() as hconn:
+            ensure_schema(hconn)
+            holder = get_driving_holder_for_lane(hconn, lane)
+    except Exception:
+        return None
+    if holder is None:
+        return None
+    if str(holder.get("seat_state") or "") == "superseded":
+        return "seat_superseded"
+    return None
 
 
 def skip_pending_wakes_on_pair_mark_read(
@@ -169,20 +342,24 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         "SELECT read_at, thread FROM turns WHERE id=?", (row["turn_id"],)
     ).fetchone()
     agent = str(row["agent"])
-    if (
-        turn is not None
-        and turn["read_at"]
-        and not _wake_ledger_read_cursor_agent(agent)
-    ):
+    thread_id = str(row["thread_id"])
+    turn_number = int(row["turn_number"])
+    if turn is not None and turn["read_at"]:
         return "already_read"
+    if _owed_wake_covers_turn(
+        agent=agent, thread_id=thread_id, turn_number=turn_number
+    ):
+        return "deduped_owed_wake"
+    superseded = _seat_superseded_skip_reason(conn, agent=agent, thread_id=thread_id)
+    if superseded:
+        return superseded
     later = conn.execute(
         "SELECT from_agent, subject, body, supersedes_turn FROM turns "
         "WHERE thread=? AND id>?",
         (row["thread_id"], row["turn_id"]),
     ).fetchall()
     wake_turn_id = int(row["turn_id"])
-    wake_turn_number = int(row["turn_number"])
-    thread_id = str(row["thread_id"])
+    wake_turn_number = turn_number
     for nxt in later:
         if _same_wake_agent(
             str(nxt["from_agent"] or ""), agent

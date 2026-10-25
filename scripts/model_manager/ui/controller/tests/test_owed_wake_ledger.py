@@ -935,3 +935,43 @@ def test_two_allowlisted_milestones_one_burst_one_followup(
     assert first["created"] is True and first["dispatched"] is True
     assert second["created"] is False and second["dispatched"] is False
     assert len(endpoint_calls) == 1
+
+
+def test_attempt_dispatch_skips_when_turn_refs_already_read(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    row_id = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        turn_ref={"thread_id": "15851", "turn_number": 2753, "subject": "QUESTION|x"},
+    )[0].row_id
+    row = store.get_owed_wake(row_id)
+    assert row is not None
+    monkeypatch.setattr(owed_wake_mod, "_turn_refs_all_read", lambda _refs: True)
+    assert attempt_dispatch(store, row, deps=_deps()) is True
+    updated = store.get_owed_wake(row_id)
+    assert updated is not None
+    assert updated.dispatched_at is not None
+
+
+def test_attempt_dispatch_skips_when_endpoint_wake_already_covers_turn(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = RestartIntentStore(db_path=tmp_path / "db.sqlite")
+    row_id = store.coalesce_owed_wake_milestone(
+        holder_id="holder-maestro",
+        lane_thread_id="18460",
+        turn_ref={"thread_id": "12286", "turn_number": 4683, "subject": "DONE|x"},
+    )[0].row_id
+    row = store.get_owed_wake(row_id)
+    assert row is not None
+    monkeypatch.setattr(owed_wake_mod, "_turn_refs_all_read", lambda _refs: False)
+    monkeypatch.setattr(
+        owed_wake_mod, "_endpoint_wake_already_delivered", lambda _refs, agent: True
+    )
+    endpoints: list[dict] = []
+    deps = _deps()
+    deps.endpoint_wake = lambda **kw: endpoints.append(kw) or True  # type: ignore[method-assign]
+    assert attempt_dispatch(store, row, deps=deps) is True
+    assert endpoints == []

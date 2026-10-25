@@ -455,6 +455,8 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             )
         if not qualifies(turn, cse=cse):
             continue
+        if turn.get("read_at"):
+            continue
         if agent == "web-anthropic":
             if _display_seated(store, thread) or not store.holder(thread):
                 continue
@@ -917,6 +919,16 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
             return claimed
+        if str(holder.get("seat_state") or "") == "superseded":
+            store.result(
+                wake_id=wake_id,
+                outcome="skipped",
+                reason="seat_superseded",
+                route="cse",
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+            return claimed
         state, reason, reg = _deliver_cse(rows, holder, target_lane=thread)
         store.result(
             wake_id=wake_id,
@@ -968,6 +980,16 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 wake_id=wake_id,
                 outcome="skipped",
                 reason="no_route",
+                route=route,
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+            return claimed
+        if str(holder.get("seat_state") or "") == "superseded":
+            store.result(
+                wake_id=wake_id,
+                outcome="skipped",
+                reason="seat_superseded",
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,

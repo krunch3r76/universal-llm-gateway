@@ -719,7 +719,7 @@ def test_grok_bot_wake_skipped_already_read_when_turn_stamped(
     assert skipped["rows"][0]["reason"] == "already_read"
 
 
-def test_maestro_wake_not_skipped_already_read_when_turn_stamped(
+def test_maestro_wake_skipped_already_read_when_turn_stamped(
     db: TestClient,
 ) -> None:
     detail = create_thread(thread_id=None, slug="l20-maestro-read")
@@ -754,14 +754,13 @@ def test_maestro_wake_not_skipped_already_read_when_turn_stamped(
             "UPDATE turns SET read_at=? WHERE id=?",
             ("2020-01-01 17:00:00", t_id),
         )
-    claimed = claim_due_wakes(now="2020-01-01 17:00:01")
-    assert claimed["wake_id"] is not None
-    assert [r["turn_id"] for r in claimed["rows"] if r.get("state") == "claimed"] == [
-        t_id,
-    ]
+    skipped = claim_due_wakes(now="2020-01-01 17:00:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_read"
 
 
-def test_web_anthropic_wake_not_skipped_already_read_when_turn_stamped(
+def test_web_anthropic_wake_skipped_already_read_when_turn_stamped(
     db: TestClient,
 ) -> None:
     detail = create_thread(thread_id=None, slug="l20-web-read")
@@ -796,8 +795,10 @@ def test_web_anthropic_wake_not_skipped_already_read_when_turn_stamped(
             "UPDATE turns SET read_at=? WHERE id=?",
             ("2020-01-01 17:10:00", t_id),
         )
-    claimed = claim_due_wakes(now="2020-01-01 17:10:01")
-    assert claimed["wake_id"] is not None
+    skipped = claim_due_wakes(now="2020-01-01 17:10:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["state"] == "skipped"
+    assert skipped["rows"][0]["reason"] == "already_read"
 
 
 def _seed_maestro_pair_pending_wake(

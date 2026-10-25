@@ -2822,3 +2822,160 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 
     assert unsub_calls == []
     assert resolve_endpoint("stage-manager", thread) is not None
+
+
+def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-scan-read")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 18:00:00", t_id),
+        )
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, pending: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                pending,
+                now="2020-01-01 18:00:01",
+            )
+
+        def holder(self, lane: str) -> dict:
+            return {"registration_id": "reg-live", "seat_state": "driving"}
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "cse",
+                {"surface": "cse", "agent_id": thread_id, "id": 1, "state": "subscribed"},
+            )
+
+    scan_once(Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
+        ).fetchone()
+    assert row is None
+
+
+def test_claim_skips_maestro_already_read_after_pending_insert(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40226-maestro-read-claim")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:05:00",
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET read_at=? WHERE id=?",
+            ("2020-01-01 18:05:30", t_id),
+        )
+    skipped = claim_due_wakes(now="2020-01-01 18:06:00")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["reason"] == "already_read"
+
+
+def test_claim_skips_when_owed_wake_dispatched_same_turn(
+    db: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    intent_db = tmp_path / "restart-intents.db"
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_intent_store._default_path",
+        lambda: intent_db,
+    )
+    detail = create_thread(thread_id=None, slug="40226-dedupe-owed")
+    assert detail is not None
+    thread = str(detail["id"])
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|40226",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "maestro",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:10:00",
+    )
+    store = RestartIntentStore(db_path=intent_db)
+    with store._connect() as conn:
+        conn.execute(
+            "INSERT INTO owed_wake (row_id, holder_id, producer, lane_thread_id, "
+            "turn_refs, arming_lanes, dispatched_at, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "row-40226",
+                "holder-maestro",
+                "milestone",
+                thread,
+                f'[{{"thread_id":"{thread}","turn_number":{t_n}}}]',
+                "[]",
+                "2020-01-01 18:10:05",
+                "2020-01-01 18:10:01",
+                "2020-01-01 18:10:05",
+            ),
+        )
+    skipped = claim_due_wakes(now="2020-01-01 18:10:10")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["reason"] == "deduped_owed_wake"
