@@ -5,9 +5,35 @@ from __future__ import annotations
 import json
 
 import pytest
+from event_store.model_rate_table import ModelRateRow
 
 from dispatch_economics.api_closeout import append_api_closeout_economics, price_usage
-from event_store.model_rate_table import ModelRateRow
+
+
+@pytest.mark.offline
+def test_price_usage_outcome_usage_prompt_completion_keys() -> None:
+    """PipelineExecutionOutcome.usage uses prompt_tokens/completion_tokens."""
+    priced = price_usage(
+        {
+            "prompt_tokens": 50,
+            "completion_tokens": 12,
+            "cached_tokens": 8,
+            "cache_write_tokens": 3,
+            "total_tokens": 62,
+        },
+        model="anthropic/claude-sonnet-4-6",
+    )
+    assert priced is not None
+    assert priced["input_tokens"] == 50
+    assert priced["output_tokens"] == 12
+    assert priced["cache_read_tokens"] == 8
+    assert priced["cache_write_tokens"] == 3
+    assert priced.get("cost_source") in (
+        "rate_x_tokens",
+        "yaml",
+        "wire",
+        "unavailable",
+    )
 
 
 @pytest.mark.offline

@@ -164,6 +164,9 @@ class PipelineExecutionRecord:
     delivery: DeliveryState | None = None
     work_key: str | None = None
     resolved_contract: str | None = None
+    # Frontier model id from pipeline_options at admission (e.g. anthropic/claude-haiku-5-5).
+    # Distinct from result.model, which is the pipeline id (team-dispatch) for team_dispatch runs.
+    resolved_model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/executions/{id}``."""  # noqa: E501

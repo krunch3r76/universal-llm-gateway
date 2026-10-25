@@ -17,6 +17,12 @@ def price_usage(
     """Map frontier usage dict to priced economics fields for sidecar and ledger rows."""
     if not usage:
         return None
+    input_tokens = usage.get("input_tokens")
+    if input_tokens is None:
+        input_tokens = usage.get("prompt_tokens")
+    output_tokens = usage.get("output_tokens")
+    if output_tokens is None:
+        output_tokens = usage.get("completion_tokens")
     cache_write = usage.get("cache_write_tokens")
     if cache_write is None:
         cache_write = usage.get("cache_creation_input_tokens")
@@ -26,8 +32,8 @@ def price_usage(
     elif total_basis is None:
         total_basis = usage.get("total_tokens")
     row = {
-        "prompt_tokens": usage.get("input_tokens"),
-        "completion_tokens": usage.get("output_tokens"),
+        "prompt_tokens": input_tokens,
+        "completion_tokens": output_tokens,
         "cache_read_tokens": usage.get("cached_tokens") or usage.get("cache_read_tokens"),
         "cache_write_tokens": cache_write,
         "total_tokens_basis": total_basis,
@@ -36,8 +42,8 @@ def price_usage(
     }
     priced = price_row(row, None)
     return {
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
         "cache_read_tokens": priced.get("cache_read_tokens"),
         "cache_write_tokens": priced.get("cache_write_tokens"),
         "total_tokens": usage.get("total_tokens"),

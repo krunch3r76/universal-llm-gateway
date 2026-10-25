@@ -145,6 +145,8 @@ class StepOutput:
     # Provider-reported cache hits (``usage.cached_tokens``). ``None`` when the
     # provider did not report the field — never coerced to zero.
     cached_tokens: int | None = None
+    # Provider-reported cache creation tokens (``usage.cache_write_tokens``).
+    cache_write_tokens: int | None = None
 
     # Embedded provenance (auto-populated from model_id + step_id)
     provenance: dict[str, Any] | None = None
@@ -205,6 +207,8 @@ class StepOutput:
         }
         if self.cached_tokens is not None:
             metadata["cached_tokens"] = self.cached_tokens
+        if self.cache_write_tokens is not None:
+            metadata["cache_write_tokens"] = self.cache_write_tokens
         # Remove None values for cleaner storage
         metadata = {k: v for k, v in metadata.items() if v is not None}
 

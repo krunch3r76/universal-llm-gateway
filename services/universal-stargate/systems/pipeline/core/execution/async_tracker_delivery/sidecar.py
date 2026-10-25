@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _effective_resolved_model(record: PipelineExecutionRecord) -> str:
+    """Frontier model for economics; falls back to result.model when admission omitted it."""
+    if record.resolved_model:
+        return record.resolved_model
+    return record.result.model if record.result else ""
+
+
 def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
     """True when a frontier API-role to_thread dispatch should record economics on delivery."""
     if not record.work_key or not record.endpoint_request_id:
@@ -31,7 +38,7 @@ def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
         is_cursor_sdk_dispatch_model,
     )
 
-    return not is_cursor_sdk_dispatch_model(record.result.model or "")
+    return not is_cursor_sdk_dispatch_model(_effective_resolved_model(record))
 
 
 def enrich_on_behalf_sidecar_content(
@@ -43,7 +50,7 @@ def enrich_on_behalf_sidecar_content(
     from dispatch_economics.api_closeout import append_api_closeout_economics
 
     usage = record.result.usage if record.result is not None else None
-    model = record.result.model if record.result is not None else ""
+    model = _effective_resolved_model(record)
     return append_api_closeout_economics(
         content,
         work_key=record.work_key,
@@ -66,7 +73,7 @@ async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
     payload: dict[str, Any] = {
         "execution_id": record.execution_id,
         "work_key": record.work_key,
-        "resolved_model": record.result.model if record.result else "",
+        "resolved_model": _effective_resolved_model(record),
         "contract": record.resolved_contract,
         "usage": usage,
     }

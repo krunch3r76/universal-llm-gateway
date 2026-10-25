@@ -93,6 +93,7 @@ class PipelineExecutionTracker:
         endpoint_request_id: str | None = None,
         work_key: str | None = None,
         resolved_contract: str | None = None,
+        resolved_model: str | None = None,
     ) -> PipelineExecutionRecord:
         """Admit a new execution and emit ``pipeline.dispatch.async``.
 
@@ -115,6 +116,7 @@ class PipelineExecutionTracker:
             endpoint_request_id=endpoint_request_id,
             work_key=work_key,
             resolved_contract=resolved_contract,
+            resolved_model=resolved_model,
         )
 
     def get(self, execution_id: str) -> PipelineExecutionRecord | None:
