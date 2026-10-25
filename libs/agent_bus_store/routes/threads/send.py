@@ -85,9 +85,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                     schedule_producer1_dispatch_from_result,
                 )
 
-                loop = asyncio.get_running_loop()
-                loop.run_in_executor(
-                    None,
+                await asyncio.to_thread(
                     schedule_producer1_dispatch_from_result,
                     producer1_result,
                 )
@@ -392,9 +390,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
         if producer1_result and producer1_result.get("needs_deferred_dispatch"):
             try:
-                loop = asyncio.get_running_loop()
-                loop.run_in_executor(
-                    None,
+                await asyncio.to_thread(
                     schedule_producer1_dispatch_from_result,
                     producer1_result,
                 )

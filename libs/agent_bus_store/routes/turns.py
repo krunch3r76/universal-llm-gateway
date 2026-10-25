@@ -267,9 +267,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         )
         if producer1_result and producer1_result.get("needs_deferred_dispatch"):
             try:
-                loop = asyncio.get_running_loop()
-                loop.run_in_executor(
-                    None,
+                await asyncio.to_thread(
                     schedule_producer1_dispatch_from_result,
                     producer1_result,
                 )

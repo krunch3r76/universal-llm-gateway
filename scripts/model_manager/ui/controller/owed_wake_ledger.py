@@ -550,22 +550,13 @@ def _turn_ref_already_read(thread_id: str, turn_number: int) -> bool:
     if not lane:
         return False
     try:
-        from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+        from agent_bus_store.db.connection import connect
 
-        from services.git_integration_worker.cse_session_holders import (
-            agent_bus_request_headers,
-        )
-
-        headers = agent_bus_request_headers()
-        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
-            resp = client.get(
-                "/turns/by-number",
-                params={"thread": lane, "turn_number": int(turn_number)},
-                headers=headers or None,
-            )
-            if resp.status_code >= 400:
-                return False
-            payload = resp.json()
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT read_at FROM turns WHERE thread = ? AND turn_number = ? LIMIT 1",
+                (lane, int(turn_number)),
+            ).fetchone()
     except Exception:
         logger.debug(
             "turn read_at probe failed thread=%s turn=%s",
@@ -574,7 +565,9 @@ def _turn_ref_already_read(thread_id: str, turn_number: int) -> bool:
             exc_info=True,
         )
         return False
-    return payload.get("read_at") is not None
+    if row is None:
+        return False
+    return row["read_at"] is not None
 
 
 def _turn_refs_all_read(refs: list[dict[str, Any]]) -> bool:
