@@ -158,12 +158,21 @@ def test_friction_not_now_row_does_not_submit_steer(monkeypatch) -> None:  # noq
     submit.assert_not_called()
 
 
-def test_consult_pending_closeout_files_friction_once() -> None:
+def _closeout_client_mock(*, post_turn: int) -> MagicMock:
     client = MagicMock()
-    resp = MagicMock()
-    resp.status_code = 201
-    resp.json.return_value = {"turn": {"turn_number": 9}}
-    client.post.return_value = resp
+    post_resp = MagicMock()
+    post_resp.status_code = 201
+    post_resp.json.return_value = {"turn": {"turn_number": post_turn}}
+    client.post.return_value = post_resp
+    get_resp = MagicMock()
+    get_resp.status_code = 200
+    get_resp.json.return_value = {"turns": []}
+    client.get.return_value = get_resp
+    return client
+
+
+def test_consult_pending_closeout_files_friction_once() -> None:
+    client = _closeout_client_mock(post_turn=9)
     lane = {
         "id": "12600",
         "lifecycle": "completed",
@@ -201,11 +210,7 @@ def test_consult_pending_closeout_files_friction_once() -> None:
 
 
 def test_closeout_with_assertion_id_skips_file_friction() -> None:
-    client = MagicMock()
-    resp = MagicMock()
-    resp.status_code = 201
-    resp.json.return_value = {"turn": {"turn_number": 3}}
-    client.post.return_value = resp
+    client = _closeout_client_mock(post_turn=3)
     lane = {"id": "12601", "lifecycle": "completed", "status": "closed"}
     turns = [
         {
@@ -279,6 +284,7 @@ def test_review_apply_body_fires_generate_under_live_holder(
     monkeypatch,
 ) -> None:  # noqa: ANN001
     """Owing review-apply still spawns generate under a live sdk holder."""
+    from bus_watch.spawn_wake.fire import tick_spawn_on_wake
     from bus_watch.test_review_apply import _digest_with_review
 
     _live_sdk_lock(monkeypatch, ident="disp-live-review")
@@ -300,14 +306,15 @@ def test_review_apply_body_fires_generate_under_live_holder(
     state: dict = {"last_spawn_at": 0.0}
     submit = MagicMock(return_value=({"execution_id": "exec-review", "thread_id": "t2"}, 202))
 
-    out = tick_spawn_on_wake(
-        digest,
-        state,
-        "11960",
-        dry_run=False,
-        submit=submit,
-        is_terminal=lambda _pending: True,
-    )
+    with patch("bus_watch.house_journal.append_house_action"):
+        out = tick_spawn_on_wake(
+            digest,
+            state,
+            "11960",
+            dry_run=False,
+            submit=submit,
+            is_terminal=lambda _pending: True,
+        )
 
     assert out["action"] == "spawned"
     assert submit.call_count == 1

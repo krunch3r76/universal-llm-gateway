@@ -284,7 +284,7 @@ def test_dispatch_body_message_not_packet() -> None:
         "LOAD the ide-continuity skill",
         "hop only if hop_qualifies",
         "STAY",
-        "runbook:bus-consult-watcher",
+        "BRIDGE_WAKE",
         "§ Peer-house",
     ):
         assert token in message
@@ -1097,7 +1097,8 @@ def test_successor_wake_shell_seat_names_seat_and_emits_watcher() -> None:
     )
     assert "seat cursor-sdk" in text
     assert "seat: cursor-sdk" in text
-    assert "runbook:bus-consult-watcher" in text
+    assert "BRIDGE_WAKE" in text
+    assert "runbook:bus-consult-watcher" not in text
 
 
 def test_successor_wake_cdp_seat_names_seat_and_omits_watcher() -> None:
