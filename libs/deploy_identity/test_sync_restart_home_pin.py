@@ -73,16 +73,13 @@ def _stub_bins(tmp_path: Path, getent_stdout: str) -> tuple[Path, Path]:
     payload = tmp_path / "getent-out"
     payload.write_text(getent_stdout, encoding="utf-8")
     getent.write_text(
-        "#!/bin/bash\n"
-        f"cat {payload}\n",
+        f"#!/bin/bash\ncat {payload}\n",
         encoding="utf-8",
     )
     getent.chmod(getent.stat().st_mode | stat.S_IXUSR)
     docker = bin_dir / "docker"
     docker.write_text(
-        "#!/bin/bash\n"
-        f"touch {docker_marker}\n"
-        "exit 0\n",
+        f"#!/bin/bash\ntouch {docker_marker}\nexit 0\n",
         encoding="utf-8",
     )
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
@@ -114,7 +111,7 @@ def test_overlay_home_is_replaced_by_passwd_field() -> None:
             "bash",
             "-c",
             _head_through_pin()
-            + 'python3 -c "from pathlib import Path; print(Path(\'~/.cortex\').expanduser())"\n',
+            + "python3 -c \"from pathlib import Path; print(Path('~/.cortex').expanduser())\"\n",
         ],
         cwd=str(_REPO_ROOT),
         env={**os.environ, "HOME": overlay},
