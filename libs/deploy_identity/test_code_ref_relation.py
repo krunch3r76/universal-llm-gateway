@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 from universal_workspace import get_workspace_root
+from universal_workspace import get_workspace_root as _get_workspace_root
 
 from deploy_identity.code_ref_relation import (
     _resolve_commit_sha,
     code_ref_relation,
     code_ref_satisfied,
 )
+from deploy_identity.hub_git_repo import git_resolution_roots
+
+
+@pytest.fixture(autouse=True)
+def _clear_workspace_caches() -> None:
+    _get_workspace_root.cache_clear()
+    git_resolution_roots.cache_clear()
+    yield
+    _get_workspace_root.cache_clear()
+    git_resolution_roots.cache_clear()
 
 
 def _head() -> str:
@@ -106,7 +118,45 @@ def test_code_ref_relation_master_symbol_descendant_of_observed() -> None:
 
 def test_code_ref_relation_unresolvable_ref() -> None:
     head = _head()
-    assert code_ref_relation("not-a-real-ref-xyz", head) == "unrelated"
+    assert code_ref_relation("not-a-real-ref-xyz", head) == "ref_unresolvable"
+
+
+def test_code_ref_relation_symbolic_ref_without_git_is_ref_unresolvable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Container-style WORKSPACE_ROOT (no .git) must not classify as unrelated."""
+    head = _head()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "libs").mkdir()
+    (tmp_path / "config" / "models").mkdir(parents=True)
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
+    _get_workspace_root.cache_clear()
+    git_resolution_roots.cache_clear()
+    monkeypatch.setattr(
+        "deploy_identity.code_ref_relation.git_resolution_roots",
+        lambda: (),
+    )
+    assert code_ref_relation("master", head) == "ref_unresolvable"
+
+
+def test_code_ref_relation_master_via_hub_git_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    hub = _get_workspace_root()
+    tip = _master_tip()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "libs").mkdir()
+    (tmp_path / "config" / "models").mkdir(parents=True)
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
+    _get_workspace_root.cache_clear()
+    git_resolution_roots.cache_clear()
+    monkeypatch.setattr(
+        "deploy_identity.code_ref_relation.git_resolution_roots",
+        lambda: (hub.resolve(),),
+    )
+    assert code_ref_relation("master", tip) == "equal"
 
 
 def test_code_ref_relation_ambiguous_prefix_not_equal(
