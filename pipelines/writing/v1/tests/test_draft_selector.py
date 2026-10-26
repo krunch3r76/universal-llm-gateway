@@ -429,6 +429,67 @@ def test_correspondence_register_penalty_sms_formal_signoff() -> None:
     assert penalty >= 3
 
 
+@pytest.mark.parametrize(
+    "closing",
+    [
+        "Thank you\nKaywan",
+        "Thanks Kaywan.",
+        "Thank you, Kaywan Joseph Mansubi",
+    ],
+)
+def test_correspondence_register_penalty_sms_signoff_variants(
+    closing: str,
+) -> None:
+    body = f"Hi Maria, I can't cover those dates. {closing}"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="sms",
+        signer="Kaywan Joseph Mansubi",
+        objective="Decline dates.",
+    )
+    assert penalty >= 3
+
+
+def test_list_format_not_allowed_on_shift_list_objective() -> None:
+    body = "1. Monday unavailable\n2. Tuesday unavailable"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Reply to the shift list Maria sent with declines only.",
+    )
+    assert penalty >= 3
+
+
+def test_list_format_negated_objective_still_penalizes_numbered_body() -> None:
+    body = "1. Monday unavailable\n2. Tuesday unavailable"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Decline dates; do not send a numbered list.",
+    )
+    assert penalty >= 3
+
+
+def test_signer_verbatim_required_ignores_non_verbatim_note_mentioning_signer() -> None:
+    pins = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "verbatim_required": False,
+            "excerpt": "Close with Thank you, Kaywan",
+        },
+        {
+            "pin_id": "P2",
+            "attested": True,
+            "verbatim_required": True,
+            "excerpt": "Fill was 251 when I opened Saturday",
+        },
+    ]
+    assert draft_selector._signer_verbatim_required(pins, signer="Kaywan") is False
+    pins[0]["verbatim_required"] = True
+    assert draft_selector._signer_verbatim_required(pins, signer="Kaywan") is True
+
+
 def test_selector_honors_requested_signer_kaywan() -> None:
     """A conflicting declarant loses to a Kaywan draft even with fewer pins."""
     ada = (

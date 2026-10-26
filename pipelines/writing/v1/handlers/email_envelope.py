@@ -266,8 +266,14 @@ def _attested_allows_future_offers(objective: str, verbatim_notes: str) -> bool:
     return False
 
 
-_LIST_FORMAT_ALLOWED = re.compile(
-    r"\b(?:numbered|bullet(?:ed|s)?|list|outline)\b",
+_AFFIRMATIVE_LIST_FORMAT = re.compile(
+    r"\b(?:numbered\s+list|bullet(?:ed)?\s+list|bullet\s+points|"
+    r"in\s+outline\s+format|as\s+a\s+(?:numbered\s+)?list|"
+    r"use\s+bullet(?:s|\s+points))\b",
+    re.I,
+)
+_LIST_FORMAT_NEGATION = re.compile(
+    r"\b(?:don't|do\s+not|not|no|never|without|avoid)\b",
     re.I,
 )
 _NUMBERED_OR_BULLET_LINE = re.compile(r"(?m)^\s*(?:\d+\.\s+|[-*•]\s+)")
@@ -276,6 +282,39 @@ _THROAT_CLEARING = re.compile(
     r"\bplease\s+note\s+the\s+following\b|\bi\s+am\s+responding\s+to\s+your\s+request\b",
     re.I,
 )
+def _list_format_allowed(objective: str, verbatim_notes: str) -> bool:
+    """True when objective/notes affirmatively request a list or outline format."""
+    blob = _normalize_curly_apostrophes(f"{objective}\n{verbatim_notes}")
+    for match in _AFFIRMATIVE_LIST_FORMAT.finditer(blob):
+        prefix_start = max(0, match.start() - 30)
+        window = blob[prefix_start : match.start()]
+        if _LIST_FORMAT_NEGATION.search(window):
+            continue
+        return True
+    return False
+
+
+def _sms_formal_signoff(text: str, signer: str) -> bool:
+    """True when SMS body ends with a formal thank-you line plus the signer name."""
+    signer = signer.strip()
+    if not signer:
+        return False
+    tokens = signer.split()
+    first = tokens[0] if tokens else signer
+    if first != signer:
+        name_part = f"(?:{re.escape(signer)}|{re.escape(first)})"
+    else:
+        name_part = re.escape(signer)
+    return bool(
+        re.search(
+            rf"(?:thank\s+you|thanks|sincerely|regards|best)[,!]?\s+"
+            rf"{name_part}\s*\.?\s*$",
+            text.strip(),
+            re.I,
+        )
+    )
+
+
 def _correspondence_has_list_body(text: str) -> bool:
     for line in text.splitlines():
         if _EXHIBIT_LINE.match(line):
@@ -309,22 +348,15 @@ def correspondence_register_penalty(
         objective, verbatim_notes
     ):
         penalty += 3
-    attestation_blob = f"{objective}\n{verbatim_notes}"
     if channel in {"email", "sms"}:
         if (
             channel == "sms"
             and signer.strip()
             and not signer_verbatim_required
+            and _sms_formal_signoff(text, signer)
         ):
-            signoff = re.search(
-                rf"(?:thank\s+you|thanks|sincerely|regards|best)\s*,\s*\n*\s*"
-                rf"{re.escape(signer.strip())}\s*$",
-                text.strip(),
-                re.I,
-            )
-            if signoff:
-                penalty += 3
-        if not _LIST_FORMAT_ALLOWED.search(attestation_blob):
+            penalty += 3
+        if not _list_format_allowed(objective, verbatim_notes):
             if _correspondence_has_list_body(text):
                 penalty += 3
         if _THROAT_CLEARING.search(register_text):

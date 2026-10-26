@@ -213,3 +213,17 @@ def test_go_conditions_on_step_outputs() -> None:
         )
         is True
     )
+
+
+def test_prompt_architect_correspondence_no_list_instruction() -> None:
+    text = (_V1 / "prompts" / "prompt_architect.yaml").read_text(encoding="utf-8")
+    assert "no_numbered_or_bulleted_body" in text
+    assert "no_throat_clearing_opener" in text
+    assert "Please note the following" in text
+
+
+def test_prose_rhythm_includes_brief_placeholder() -> None:
+    text = (_V1 / "prompts" / "prose_rhythm.yaml").read_text(encoding="utf-8")
+    assert "optional_placeholders:" in text
+    assert "- brief" in text
+    assert "<brief>" in text and "{brief}" in text

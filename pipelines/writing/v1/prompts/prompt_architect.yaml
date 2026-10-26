@@ -29,3 +29,4 @@ template: |
   downstream parsing always matches (example: `O1: omit_with_reason (per-offer reply only)`).
   Do not introduce proper nouns or numbers absent from the blocks above.
   Recipient role and internal workflow/counterparty divisions in <brief> are silent routing context only — structure beats for what this recipient asked; never plan beats that restate org-chart, other schedulers' channels, or internal process to the recipient unless a verbatim_required or restate pin requires it.
+  On correspondence (email or sms): never plan numbered or bulleted list bodies (1. 2. 3. or -/*), and never plan throat-clearing openers ("Please note the following", "I am responding to your request"), unless <brief> Objective explicitly requests a list or outline; include "no_numbered_or_bulleted_body" and "no_throat_clearing_opener" in negative_constraints.

@@ -137,9 +137,8 @@ def _signer_verbatim_required(
     attested_pins: list[dict[str, Any]],
     *,
     signer: str,
-    verbatim_notes_blob: str,
 ) -> bool:
-    """True when a verbatim_required pin or note explicitly requires the signer name."""
+    """True when a pin marked verbatim_required requires the signer name in its excerpt."""
     if not signer.strip():
         return False
     signer_re = re.compile(rf"\b{re.escape(signer.strip())}\b", re.I)
@@ -149,8 +148,6 @@ def _signer_verbatim_required(
         excerpt = str(pin.get("excerpt") or "")
         if signer_re.search(excerpt):
             return True
-    if signer_re.search(verbatim_notes_blob):
-        return True
     return False
 
 
@@ -270,11 +267,7 @@ class WritingDraftSelectorHandler(BaseHandler):
                 verbatim_notes_blob = "\n".join(str(n) for n in notes)
             else:
                 verbatim_notes_blob = str(notes or "")
-        signer_verbatim_required = _signer_verbatim_required(
-            attested,
-            signer=signer,
-            verbatim_notes_blob=verbatim_notes_blob,
-        )
+        signer_verbatim_required = _signer_verbatim_required(attested, signer=signer)
         aliases = load_writing_models()
         src = outputs.get("source_obligations")
         src_json = (

@@ -463,7 +463,7 @@ def test_prose_rhythm_prompt_does_not_strip_trailing_qualifiers() -> None:
     ).read_text(encoding="utf-8")
     assert "strip trailing qualifiers" not in text
     assert "Orwell" not in text
-    assert "Keep every content word" in text
+    assert "pin-backed content word" in text
     assert "I stated" in text
     assert "I said" in text
 
