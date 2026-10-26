@@ -201,7 +201,8 @@ def _refused_exit(
     _write_result_file(ctx.result_path, refused)
     post_maestro_reply(
         ctx,
-        verdict="FAIL",
+        report_status="refused",
+        reason=reason,
         manage_before=manage_before,
         manage_after=None,
         child_pids_before=child_before,
@@ -210,6 +211,16 @@ def _refused_exit(
         reply_fn=reply_fn,
     )
     return 2, refused
+
+
+def _step1_stargate_busy_reentry(gate: Any) -> bool:
+    """True when step1 failed because stargate is busy outside exception C.
+
+    The detached child often reaches step1 only after the parent's stargate
+    restart_intent has completed and new active work has started. Re-enter the
+    bounded wait and re-check on the next idle window instead of refusing.
+    """
+    return getattr(gate, "reason", None) == "step1_stargate_not_exception_c"
 
 
 def _step1_giw_undetermined_reentry(gate: Any) -> bool:
@@ -331,7 +342,7 @@ def run_deferred_recycle(
         )
         if gate is None:
             break
-        if _step1_giw_undetermined_reentry(gate):
+        if _step1_giw_undetermined_reentry(gate) or _step1_stargate_busy_reentry(gate):
             deadline_reason = gate.reason
             deadline_checks = _gate_finding_checks(gate)
             remaining = deadline - now()
@@ -387,9 +398,16 @@ def run_deferred_recycle(
         exit_code = 3
     elif result.status == "start-failed":
         exit_code = 4
+    if verdict == "PASS" and result.status == "proof-satisfied":
+        report_status = "executed"
+        report_reason: str | None = None
+    else:
+        report_status = "refused"
+        report_reason = result.reason or verdict
     post_maestro_reply(
         ctx,
-        verdict=verdict,
+        report_status=report_status,
+        reason=report_reason,
         manage_before=manage_before,
         manage_after=manage_after,
         child_pids_before=child_before,
@@ -397,6 +415,7 @@ def run_deferred_recycle(
         exit_code=exit_code,
         reply_fn=reply_fn,
         body_extra=body_extra,
+        r3_verdict=verdict if report_status == "executed" else None,
     )
     return exit_code, result
 

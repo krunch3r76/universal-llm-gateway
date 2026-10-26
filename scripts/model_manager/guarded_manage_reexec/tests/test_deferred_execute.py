@@ -757,7 +757,9 @@ def test_deferred_success_single_reply_and_p3_probes(
     assert code == 0
     assert result.status == "proof-satisfied"
     assert len(replies) == 1
-    assert "VERDICT: PASS" in replies[0]["body"]
+    assert "status: executed" in replies[0]["body"]
+    assert "manage_pid: 9 -> 9" in replies[0]["body"]
+    assert "VERDICT:" not in replies[0]["body"]
     assert "authoritative_for_liveness" in replies[0]["body"]
     assert "39455: evidence = step 5" in replies[0]["body"]
 
@@ -1051,3 +1053,144 @@ def test_cli_deferred_requires_report_fields() -> None:
         ]
     )
     assert code == 2
+
+
+def test_step1_stargate_busy_reentry_then_idle_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = _proof_rows()
+    st_calls = {"n": 0}
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        if method == "busy_status" and (params or {}).get("service") == "stargate":
+            st_calls["n"] += 1
+            if st_calls["n"] == 1:
+                return {
+                    "busy": True,
+                    "holder": None,
+                    "probe_error": None,
+                    "active_work_summary": "active_count=2",
+                    "service": "stargate",
+                }
+        return _manage_from_rows(rows)(method, params, **kwargs)
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: GuardedReexecResult(
+            status="proof-satisfied",
+            reason="proof_satisfied",
+            dry_run=False,
+            target_ref="abc",
+            executed=True,
+        ),
+    )
+    t, clock, sleep = _advancing_clock()
+    code, result = run_deferred_recycle(
+        _recycle_ctx(tmp_path, name="st-busy.json", timeout_s=10.0, poll_s=2.0),
+        manage_call=manage_call,
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **_k: None,
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert code == 0
+    assert result.executed is True
+    assert st_calls["n"] >= 2
+    assert t["now"] == 2.0
+
+
+def test_step1_stargate_busy_reentry_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = _proof_rows()
+    rows["stargate"] = {
+        "busy": True,
+        "holder": None,
+        "probe_error": None,
+        "active_work_summary": "active_count=2",
+    }
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
+    replies: list[dict[str, Any]] = []
+    t, clock, sleep = _advancing_clock()
+    code, result = run_deferred_recycle(
+        _recycle_ctx(tmp_path, name="st-timeout.json", timeout_s=4.0, poll_s=2.0),
+        manage_call=_manage_from_rows(rows),
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **kw: replies.append(kw),
+        clock=clock,
+        sleep_fn=sleep,
+    )
+    assert code == 2
+    assert result.reason == "step1_stargate_not_exception_c"
+    assert len(replies) == 1
+    assert "status: refused" in replies[0]["body"]
+    assert "reason: step1_stargate_not_exception_c" in replies[0]["body"]
+    assert "VERDICT:" not in replies[0]["body"]
+    assert t["now"] == 4.0
+
+
+def test_refused_reply_never_uses_verdict_fail(tmp_path: Path) -> None:
+    replies: list[dict[str, Any]] = []
+    ctx = DeferredRecycleContext(
+        parent_dispatch_id="d-ref",
+        report_thread="15851",
+        report_after_turn=1,
+        target_ref="abc",
+        tmux_target="0:0",
+        result_path=tmp_path / "ref.json",
+        wait_timeout_s=1.0,
+        poll_s=1.0,
+        repo_root=tmp_path,
+    )
+    t = {"now": 0.0}
+    run_deferred_recycle(
+        ctx,
+        manage_call=_manage_from_rows(
+            {n: _idle_row(n) for n in RECYCLE_FLEET_SERVICES}
+        ),
+        dispatch_status_fn=lambda _d: {"status": "running"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **kw: replies.append(kw),
+        clock=lambda: t.__setitem__("now", t["now"]) or t["now"],
+        sleep_fn=lambda s: t.__setitem__("now", t["now"] + s),
+    )
+    assert len(replies) == 1
+    assert "status: refused" in replies[0]["body"]
+    assert "VERDICT:" not in replies[0]["body"]
+
+
+def test_deferred_recycle_never_calls_sync_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No-force invariant: deferred path must not arm fleet sync_restart."""
+    calls: list[tuple[str, Any]] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        calls.append((method, params))
+        return _manage_from_rows(_proof_rows())(method, params, **kwargs)
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        lambda **_k: GuardedReexecResult(
+            status="proof-satisfied",
+            reason="ok",
+            dry_run=False,
+            target_ref="abc",
+            executed=True,
+        ),
+    )
+    run_deferred_recycle(
+        _recycle_ctx(tmp_path, name="no-force.json", timeout_s=5.0, poll_s=1.0),
+        manage_call=manage_call,
+        dispatch_status_fn=lambda _d: {"status": "completed"},
+        giw_idle_probe_fn=lambda: (True, None),
+        reply_fn=lambda **_k: None,
+        sleep_fn=lambda _s: None,
+    )
+    assert not any(m == "sync_restart" for m, _ in calls)
