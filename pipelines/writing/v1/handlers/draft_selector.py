@@ -240,9 +240,15 @@ class WritingDraftSelectorHandler(BaseHandler):
                 rejected = "unresolved_need"
             elif premise_violations:
                 rejected = premise_violations[0]
-            obl_score = obligation_coverage_score(text, actionable) if actionable else 0
+            obl_score = (
+                obligation_coverage_score(text, actionable, pin_ledger=ledger)
+                if actionable
+                else 0
+            )
             cov_map = (
-                coverage_map_for_draft(text, actionable) if actionable else []
+                coverage_map_for_draft(text, actionable, pin_ledger=ledger)
+                if actionable
+                else []
             )
             candidates.append(
                 {

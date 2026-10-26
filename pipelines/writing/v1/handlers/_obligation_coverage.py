@@ -10,24 +10,43 @@ _LINK_TARGET = r"(?:the\s+)?(?:link|portal|form|site|url|page|https?://\S+)"
 _FP_PREP = r"(?:for|to|on|in|at|via|through)"
 _FP_TARGET = (
     r"(?:(?:(?:the|this|that|your|my|an?)\s+)?"
-    r"(?:link|portal|form|url|site|page|slot|time|call|interview|calendar)\b|"
-    r"(?:the|this|that|your|my)\s+(?:role|position|application|opening|posting)\b|"
+    r"(?:link|portal|form|url|site|page|call|interview|calendar)\b|"
+    r"(?:a|this|that|your|my)\s+(?:time|slot)\b|"
+    r"(?:the|this|that|your|my)\s+(?:role|position)(?!\s+(?:of|at)\b)\b|"
+    r"(?:the|this|that|your|my)\s+(?:application|opening|posting)\b|"
     r"https?://\S+)"
 )
 _FP_APP_MIDDLE = r"(?:(?:my|the|this|that|your)\s+application\s+)?"
-_FP_ACTION = (
+_PAST_FP_ACTION = (
     r"\b(?:i(?:'ve|\s+have)?\s+(?:applied|submitted|completed|registered|booked|"
-    r"scheduled|uploaded|signed\s+up)|i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)"
-    r"\s+(?:apply|submit|complete|register|book|schedule|upload|sign\s+up))"
+    r"scheduled|uploaded|signed\s+up))"
     rf"(?:\s+online\b|\s+{_FP_APP_MIDDLE}(?:{_FP_PREP}\s+{_FP_TARGET}))"
 )
-_ACTION_CONFIRM = re.compile(
+_PAST_LINK_CONFIRM = (
+    rf"\b(?:applied|submitted|completed|registered|signed\s+up|booked|scheduled)"
+    rf"\s+(?:through|via|at|on)\s+{_LINK_TARGET}\b"
+)
+_PAST_ACTION_CONFIRM = re.compile(
+    rf"(?:{_PAST_FP_ACTION}|{_PAST_LINK_CONFIRM})",
+    re.I,
+)
+_INTENT_FP_ACTION = (
+    r"\b(?:i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:apply|submit|"
+    r"complete|register|book|schedule|upload|sign\s+up))"
+    rf"(?:\s+online\b|\s+{_FP_APP_MIDDLE}(?:{_FP_PREP}\s+{_FP_TARGET}))"
+)
+_INTENT_OR_ASK_BACK_CONFIRM = re.compile(
     rf"(?:"
-    rf"{_FP_ACTION}|"
+    rf"{_INTENT_FP_ACTION}|"
     rf"\bsubmitting\s+my\s+application\b|"
-    rf"\b(?:applied|apply|submitted|submit|registered|register|signed\s+up|sign\s+up|"
-    rf"booked|book|scheduled|schedule)\s+(?:through|via|at|on)\s+{_LINK_TARGET}\b"
+    rf"\b(?:apply|submit)(?:ing)?\s+(?:through|via|at|on)\s+{_LINK_TARGET}\b"
     rf")",
+    re.I,
+)
+_ACTION_CONFIRM = re.compile(
+    rf"(?:{_PAST_FP_ACTION}|{_INTENT_FP_ACTION}|{_PAST_LINK_CONFIRM}|"
+    rf"\bsubmitting\s+my\s+application\b|"
+    rf"\b(?:apply|submit)(?:ing)?\s+(?:through|via|at|on)\s+{_LINK_TARGET}\b)",
     re.I,
 )
 _CTA_DECLINE_STEM = re.compile(
@@ -113,6 +132,101 @@ def _normalize_apostrophes(text: str) -> str:
     return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
+_PAST_ACTION_NEGATION = re.compile(
+    r"\b(?:not|never|no\s+need\s+to|haven't|hasn't|hadn't|didn't|did\s+not|"
+    r"have\s+not|has\s+not|had\s+not|yet\s+to|without)\b",
+    re.I,
+)
+_INTENT_ACTION_NEGATION = re.compile(
+    r"\b(?:not|never|no\s+need\s+to|won't|will\s+not|don't|do\s+not|"
+    r"cannot|can't|unable\s+to|without)\b",
+    re.I,
+)
+_PAST_ACTION_TRAILING_NEGATION = re.compile(
+    r"\b(?:but\s+i\s+(?:haven't|have\s+not|didn't|did\s+not|never))\b",
+    re.I,
+)
+
+
+def _match_is_negated(
+    norm: str, match: re.Match[str], negation: re.Pattern[str]
+) -> bool:
+    start = match.start()
+    prefix = norm[max(0, start - 30) : start]
+    if negation.search(prefix):
+        return True
+    return negation.search(match.group(0)) is not None
+
+
+def _has_affirmative_past_action(text: str) -> bool:
+    """Past-action on operator pin excerpts; negation windows fail safe."""
+    norm = _normalize_apostrophes(text)
+    for match in _PAST_ACTION_CONFIRM.finditer(norm):
+        if _match_is_negated(norm, match, _PAST_ACTION_NEGATION):
+            continue
+        trailing = norm[match.end() : match.end() + 25]
+        if _PAST_ACTION_TRAILING_NEGATION.search(trailing):
+            continue
+        return True
+    return False
+
+
+def _draft_sentence_has_past_action_claim(sentence: str) -> bool:
+    """Raw past-action regex on draft text; no negation window (fail closed)."""
+    return (
+        _PAST_ACTION_CONFIRM.search(_normalize_apostrophes(sentence)) is not None
+    )
+
+
+def _has_affirmative_intent_action(text: str) -> bool:
+    norm = _normalize_apostrophes(text)
+    for match in _INTENT_OR_ASK_BACK_CONFIRM.finditer(norm):
+        if not _match_is_negated(norm, match, _INTENT_ACTION_NEGATION):
+            return True
+    return False
+
+
+def has_attested_external_act(pin_ledger: list[dict[str, Any]] | None) -> bool:
+    """True when an attested pin excerpt records a completed external action."""
+    if not pin_ledger:
+        return False
+    for pin in pin_ledger:
+        if not isinstance(pin, dict):
+            continue
+        if pin.get("attested") is not True:
+            continue
+        provenance = pin.get("provenance")
+        if provenance not in {"operator_account", "document", None}:
+            continue
+        excerpt = str(pin.get("excerpt") or "")
+        if _has_affirmative_past_action(excerpt):
+            return True
+    return False
+
+
+def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
+    """Legacy calls omit pin_ledger; pipeline callers pass assemble ledger."""
+    if pin_ledger is None:
+        return True
+    return has_attested_external_act(pin_ledger)
+
+
+def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
+    if not act_attested and _draft_sentence_has_past_action_claim(sentence):
+        return False
+    if act_attested and _draft_sentence_has_past_action_claim(sentence):
+        return True
+    if _has_affirmative_intent_action(sentence):
+        return True
+    return False
+
+
+def _body_has_unattested_past_claim(body: str, *, act_attested: bool) -> bool:
+    if act_attested:
+        return False
+    return any(_draft_sentence_has_past_action_claim(s) for s in _sentences(body))
+
+
 def _tokens(text: str) -> set[str]:
     return {
         token
@@ -150,8 +264,11 @@ def apply_audit_overlay(
     base: dict[str, Any],
     audit: dict[str, Any] | None,
     body: str,
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Merge an audit/model row onto deterministic coverage with body validation."""
+    act_attested = _effective_act_attested(pin_ledger)
     if not audit:
         return dict(base)
     obligation = str(base.get("obligation") or audit.get("obligation") or "")
@@ -161,7 +278,7 @@ def apply_audit_overlay(
 
     if status == "missing":
         row = {**base, **audit, "status": "missing", "covering_sentence": covering}
-        row["reply_mode"] = _reply_mode(base, "missing")
+        row["reply_mode"] = _reply_mode(base, "missing", act_attested=act_attested)
         return row
 
     if status not in {"addressed", "declined_with_reason"}:
@@ -186,12 +303,16 @@ def apply_audit_overlay(
         ):
             return dict(base)
 
-    if obligation == "act_outside_message" and status == "addressed":
-        if not _ACTION_CONFIRM.search(_normalize_apostrophes(covering)):
+    if obligation == "act_outside_message":
+        if _body_has_unattested_past_claim(body, act_attested=act_attested):
+            return dict(base)
+        if status == "addressed" and not _act_outside_sentence_covers(
+            covering, act_attested=act_attested
+        ):
             return dict(base)
 
     row = {**base, **audit, "status": status, "covering_sentence": covering}
-    row["reply_mode"] = _reply_mode(base, status)
+    row["reply_mode"] = _reply_mode(base, status, act_attested=act_attested)
     if status == "declined_with_reason":
         row["reply_mode"] = str(audit.get("reply_mode") or "omit_with_reason")
     return row
@@ -228,30 +349,40 @@ def _sentence_declines(sentence: str) -> bool:
     return _DECLINE.search(norm) is not None
 
 
-def _reply_mode(row: dict[str, Any], status: str) -> str:
+def _reply_mode(row: dict[str, Any], status: str, *, act_attested: bool = False) -> str:
     obligation = str(row.get("obligation") or "none")
     if status == "declined_with_reason":
         return "omit_with_reason"
     if obligation == "act_outside_message":
-        return "act_then_confirm"
+        return "act_then_confirm" if act_attested else "ask_back"
     if str(row.get("kind") or "") in _REQUIRED_KINDS:
         return "answer_in_message"
     return "answer_in_message"
 
 
-def verify_obligation(draft: str, row: dict[str, Any]) -> tuple[str, str]:
+def verify_obligation(
+    draft: str,
+    row: dict[str, Any],
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
     """Return ``(status, covering_sentence)`` for one ledger row against ``draft``."""
     quoted = str(row.get("quoted_span") or "")
     obligation = str(row.get("obligation") or "none")
     kind = str(row.get("kind") or "statement")
+    act_attested = _effective_act_attested(pin_ledger)
     if obligation == "none":
         return "addressed", ""
     span_tokens = _tokens(quoted)
     body_sentences = _sentences(draft)
 
     if obligation == "act_outside_message":
+        if not act_attested:
+            for sentence in body_sentences:
+                if _draft_sentence_has_past_action_claim(sentence):
+                    return "missing", ""
         for sentence in body_sentences:
-            if _ACTION_CONFIRM.search(_normalize_apostrophes(sentence)):
+            if _act_outside_sentence_covers(sentence, act_attested=act_attested):
                 return "addressed", sentence
         return "missing", ""
 
@@ -279,19 +410,23 @@ def verify_obligation(draft: str, row: dict[str, Any]) -> tuple[str, str]:
 
 
 def coverage_map_for_draft(
-    draft: str, obligations: list[dict[str, Any]]
+    draft: str,
+    obligations: list[dict[str, Any]],
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build per-obligation coverage rows for ``draft``."""
+    act_attested = _effective_act_attested(pin_ledger)
     rows: list[dict[str, Any]] = []
     for row in obligations:
-        status, covering = verify_obligation(draft, row)
+        status, covering = verify_obligation(draft, row, pin_ledger=pin_ledger)
         rows.append(
             {
                 "id": row.get("id"),
                 "kind": row.get("kind"),
                 "obligation": row.get("obligation"),
                 "quoted_span": str(row.get("quoted_span") or ""),
-                "reply_mode": _reply_mode(row, status),
+                "reply_mode": _reply_mode(row, status, act_attested=act_attested),
                 "status": status,
                 "covering_sentence": covering,
             }
@@ -305,26 +440,37 @@ def merge_audit_coverage_map(
     audit_map: list[dict[str, Any]] | None,
     *,
     selected: str,
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Blend obligation_coverage audit rows with a fresh deterministic pass."""
     del selected
     actionable = actionable_obligations(obligations)
-    fresh = coverage_map_for_draft(selected_body, actionable)
+    fresh = coverage_map_for_draft(selected_body, actionable, pin_ledger=pin_ledger)
     if not audit_map:
         return fresh
     audit_by_id = {str(row.get("id")): row for row in audit_map if row.get("id")}
     return [
-        apply_audit_overlay(row, audit_by_id.get(str(row.get("id") or "")), selected_body)
+        apply_audit_overlay(
+            row,
+            audit_by_id.get(str(row.get("id") or "")),
+            selected_body,
+            pin_ledger=pin_ledger,
+        )
         for row in fresh
     ]
 
 
-def obligation_coverage_score(draft: str, obligations: list[dict[str, Any]]) -> int:
+def obligation_coverage_score(
+    draft: str,
+    obligations: list[dict[str, Any]],
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
+) -> int:
     """Count actionable obligations marked addressed or declined_with_reason."""
     actionable = actionable_obligations(obligations)
     if not actionable:
         return 0
-    cov = coverage_map_for_draft(draft, actionable)
+    cov = coverage_map_for_draft(draft, actionable, pin_ledger=pin_ledger)
     return sum(
         1
         for row in cov

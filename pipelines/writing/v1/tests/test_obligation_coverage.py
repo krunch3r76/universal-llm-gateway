@@ -153,7 +153,16 @@ def test_meridial_before_after_drafter_calls_and_tokens_saved() -> None:
                 "ok": True,
                 "refused": None,
                 "channel": "email",
-                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "pin_ledger": [
+                    {
+                        "pin_id": "P1",
+                        "attested": True,
+                        "excerpt": (
+                            "I submitted my application through "
+                            "https://meridial.ai/apply today."
+                        ),
+                    }
+                ],
                 "writer_seat": "local",
                 "reviewer_seat": "local",
                 "output": "envelope",
@@ -594,6 +603,9 @@ def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
         "I submitted to NeurIPS this year.",
         "I registered for a conference in May.",
         "I completed in record time.",
+        "I submitted on time for every deadline.",
+        "I completed at the time.",
+        "I applied for the role of senior engineer at Acme in 2022.",
     ]
     for sentence in negatives:
         assert _obligation._ACTION_CONFIRM.search(sentence) is None
@@ -629,7 +641,16 @@ def test_curly_apostrophe_action_and_decline_matching() -> None:
         "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
         f"{applied}\n\nBest,\nPat"
     )
-    cov_applied = _obligation.coverage_map_for_draft(draft_applied, obligations)
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I\u2019ve applied for the role.",
+        }
+    ]
+    cov_applied = _obligation.coverage_map_for_draft(
+        draft_applied, obligations, pin_ledger=pin_ledger
+    )
     assert cov_applied[0]["status"] == "addressed"
     decline_row = {
         "id": "O-decline",
@@ -645,6 +666,7 @@ def test_curly_apostrophe_action_and_decline_matching() -> None:
     assert status == "declined_with_reason"
     assert covering == decline_sentence
     assert not _obligation._sentence_declines("I can\u2019t wait to talk.")
+    assert _obligation._sentence_declines("I can\u2019t start Monday.")
     assert _obligation._CTA_DECLINE_STEM.search(
         "I cannot share details about my current role."
     ) is None
@@ -815,6 +837,302 @@ def test_s3_shared_stopwords_do_not_count_as_answer() -> None:
     assert cov[0]["status"] == "missing"
     payload = _finalize_outputs(draft, obligations)
     assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_act_outside_message_unattested_past_claim_refuses_and_degrades_reply_mode_to_ask_back() -> None:
+    src = _run_source(_MERIDIAL)
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    pin_ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "I live in the South Bay."}
+    ]
+    past_draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "I submitted my application through https://meridial.ai/apply today.\n\n"
+        "Best,\nPat"
+    )
+    cov_past = _obligation.coverage_map_for_draft(
+        past_draft, obligations, pin_ledger=pin_ledger
+    )
+    act_row = next(r for r in cov_past if r.get("obligation") == "act_outside_message")
+    assert act_row["status"] == "missing"
+    assert act_row["reply_mode"] == "ask_back"
+    outputs_past = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": pin_ledger,
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "draft": _Out({"ok": True, "draft": past_draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=past_draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    finalized = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs_past))
+    ).json
+    assert finalized is not None
+    assert finalized.get("refused") == "obligation_coverage_failed"
+
+    intent_draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thank you for the AI Trust and Safety outreach. "
+        "I plan to apply through https://meridial.ai/apply and would love to "
+        "know the next steps.\n\n"
+        "Best,\nPat"
+    )
+    cov_intent = _obligation.coverage_map_for_draft(
+        intent_draft, obligations, pin_ledger=pin_ledger
+    )
+    act_intent = next(
+        r for r in cov_intent if r.get("obligation") == "act_outside_message"
+    )
+    assert act_intent["status"] == "addressed"
+    assert act_intent["reply_mode"] == "ask_back"
+    outputs_intent = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": pin_ledger,
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "draft": _Out({"ok": True, "draft": intent_draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=intent_draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload_intent = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs_intent))
+    ).json
+    assert payload_intent is not None
+    assert payload_intent.get("refused") is None
+
+
+def test_act_outside_message_attested_past_claim_allows_act_then_confirm() -> None:
+    src = _run_source(_MERIDIAL)
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": (
+                "I submitted my application through https://meridial.ai/apply today."
+            ),
+        }
+    ]
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thank you for the AI Trust and Safety outreach. "
+        "I submitted my application through https://meridial.ai/apply today.\n\n"
+        "Best,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=pin_ledger
+    )
+    act_row = next(r for r in cov if r.get("obligation") == "act_outside_message")
+    assert act_row["status"] == "addressed"
+    assert act_row["reply_mode"] == "act_then_confirm"
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": pin_ledger,
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") is None
+
+
+def test_act_outside_b1_mixed_sentence_unattested_past_fails() -> None:
+    obligations = _meridial_act_obligation()
+    pin_ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "I live in the South Bay."}
+    ]
+    mixed_sentences = [
+        (
+            "I submitted my application through the portal, so no need to apply "
+            "through the link."
+        ),
+        (
+            "I applied through the portal yesterday and will apply through the "
+            "link for the second role."
+        ),
+    ]
+    for sentence in mixed_sentences:
+        draft = (
+            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+            f"{sentence}\n\nBest,\nPat"
+        )
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing", sentence
+
+
+def test_act_outside_b2_body_wide_unattested_past_fails_finalize() -> None:
+    src = _run_source(_MERIDIAL)
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    pin_ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "I live in the South Bay."}
+    ]
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thank you for the AI Trust and Safety outreach. "
+        "I applied through the link. "
+        "I'll apply through the link for the second role.\n\n"
+        "Best,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=pin_ledger
+    )
+    act_row = next(r for r in cov if r.get("obligation") == "act_outside_message")
+    assert act_row["status"] == "missing"
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": pin_ledger,
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_act_outside_b3_negated_pin_excerpt_not_attested_act() -> None:
+    negated_ledgers = [
+        [{"pin_id": "P1", "attested": True, "excerpt": "I haven't applied through the link."}],
+        [
+            {
+                "pin_id": "P1",
+                "attested": True,
+                "excerpt": "I have not applied through the portal yet.",
+            }
+        ],
+        [{"pin_id": "P1", "attested": True, "excerpt": "I never applied through the portal."}],
+    ]
+    obligations = _meridial_act_obligation()
+    draft = (
+        "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+        "I applied through the link.\n\nBest,\nPat"
+    )
+    for pin_ledger in negated_ledgers:
+        assert _obligation.has_attested_external_act(pin_ledger) is False
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing"
+    trailing_neg = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I was going to say I applied through the link, but I haven't.",
+        }
+    ]
+    assert _obligation.has_attested_external_act(trailing_neg) is False
+
+
+def test_act_outside_b4_clause_openers_with_unattested_past_claim_fail() -> None:
+    obligations = _meridial_act_obligation()
+    pin_ledger: list[dict[str, Any]] = []
+    suffix = " I'll apply through the link for the second role."
+    bodies = [
+        "Not to worry, I applied through the portal." + suffix,
+        (
+            "No need to resend anything; I submitted my application through "
+            "the portal." + suffix
+        ),
+        "I didn't hesitate - I applied through the portal." + suffix,
+        "Not a problem: I submitted my application through the portal." + suffix,
+        (
+            "Without delay I applied through the portal, and I will apply "
+            "through the link too."
+        ),
+    ]
+    for body in bodies:
+        draft = (
+            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+            f"{body}\n\nBest,\nPat"
+        )
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing", body
 
 
 def test_obligation_coverage_handler_emits_missing_block() -> None:
