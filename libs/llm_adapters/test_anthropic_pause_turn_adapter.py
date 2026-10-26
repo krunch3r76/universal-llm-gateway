@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from llm_adapters import FrontierRequest
 from llm_adapters.anthropic.adapter import AnthropicAdapter
 

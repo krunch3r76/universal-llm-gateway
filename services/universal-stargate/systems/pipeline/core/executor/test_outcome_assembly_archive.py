@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from systems.pipeline.core.executor.outcome_assembly import (
     _extract_archive_uri_and_tool_errors,
 )
