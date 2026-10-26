@@ -10,6 +10,7 @@ from typing import Any, override
 
 from bus_watch.impresario_ear_common import (
     ear_echo_should_skip,
+    ear_paused,
     hop_watermark_key,
     hop_watermark_present,
     normalize_grok_to_agent,
@@ -29,7 +30,10 @@ def resolve_impresario_ear(
 
     Omitted ``mode`` defaults to ``deep`` and is rejected before hop watermark claim.
     ``mode=patrol`` proceeds through echo guard and hop watermark as before.
+    ``ear_paused`` returns skip before any of that, so a queued run does not gather.
     """
+    if ear_paused():
+        return {"skip": True, "reason": "ear_paused"}
     root = str(
         options.get("root_thread") or options.get("root") or dispatch_thread_id or ""
     ).strip()
@@ -67,9 +71,17 @@ def resolve_impresario_ear(
         return {"skip": True, "reason": "deep_mode_disabled"}
     if trigger == "hop":
         if hop_watermark_present(watermark):
-            return {"skip": True, "reason": "hop_watermark_present", "watermark": watermark}
+            return {
+                "skip": True,
+                "reason": "hop_watermark_present",
+                "watermark": watermark,
+            }
         if not try_claim_hop_watermark(watermark):
-            return {"skip": True, "reason": "hop_watermark_claim_failed", "watermark": watermark}
+            return {
+                "skip": True,
+                "reason": "hop_watermark_claim_failed",
+                "watermark": watermark,
+            }
     return {
         "skip": False,
         "root_thread": root,

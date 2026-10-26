@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, override
 
-from bus_watch.impresario_ear_common import normalize_grok_to_agent
+from bus_watch.impresario_ear_common import ear_paused, normalize_grok_to_agent
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -61,6 +61,13 @@ async def deliver_impresario_ear(
     evaluate: dict[str, Any],
     bus_send: Any | None = None,
 ) -> dict[str, Any]:
+    """Post the EAR turn to the house, unless the ear is paused.
+
+    Returns ``skip`` with reason ``ear_paused`` before any bus send, so a run
+    that already reached deliver does not wake the subscribed tab.
+    """
+    if ear_paused():
+        return {"skip": True, "reason": "ear_paused"}
     if evaluate.get("skip"):
         return {"skip": True, "reason": "evaluate_skipped"}
     root = str(resolve.get("root_thread") or "")
@@ -107,7 +114,11 @@ async def deliver_impresario_ear(
     if status >= 400:
         return {
             "skip": True,
-            "error": {"code": "ear.deliver_failed", "status": status, "payload": payload},
+            "error": {
+                "code": "ear.deliver_failed",
+                "status": status,
+                "payload": payload,
+            },
         }
     turn_raw = payload.get("turn_number") if isinstance(payload, dict) else None
     return {
