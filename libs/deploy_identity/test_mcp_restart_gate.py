@@ -723,3 +723,92 @@ def test_emit_log_cli_emits_restart_log(
 
     assert _cli() == 0
     assert events == [("mcp.restart.log", {"detail": "ERROR: MCP import probe failed"})]
+
+
+def test_emit_direct_sync_success_emits_ok_when_seals_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = "abcd1234" * 5
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_gate.read_container_stamp_sha",
+        lambda **_kw: sha,
+    )
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_gate.fetch_mcp_health_code_version",
+        lambda timeout_s=5.0: sha,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp_restart_gate",
+            "--workspace-root",
+            str(tmp_path),
+            "emit-direct-sync-success",
+            "--image-id",
+            "sha256:deadbeef",
+        ],
+    )
+    from deploy_identity.mcp_restart_gate import _cli
+
+    assert _cli() == 0
+    assert events == [
+        (
+            "mcp.restart.ok",
+            {
+                "stamp_sha": sha,
+                "health_code_version": sha,
+                "no_cache": False,
+                "image_id": "sha256:deadbeef",
+            },
+        )
+    ]
+
+
+def test_emit_direct_sync_success_emits_mismatch_when_seals_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stamp = "aaaa1111" * 5
+    health = "bbbb2222" * 5
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_gate.read_container_stamp_sha",
+        lambda **_kw: stamp,
+    )
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_gate.fetch_mcp_health_code_version",
+        lambda timeout_s=5.0: health,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp_restart_gate",
+            "--workspace-root",
+            str(tmp_path),
+            "emit-direct-sync-success",
+            "--no-cache",
+        ],
+    )
+    from deploy_identity.mcp_restart_gate import _cli
+
+    assert _cli() == 0
+    assert len(events) == 2
+    assert events[0][0] == "mcp.restart.ok"
+    assert events[1] == (
+        "mcp.restart.seal_mismatch",
+        {
+            "stamp_sha": stamp,
+            "health_code_version": health,
+            "no_cache": True,
+        },
+    )
