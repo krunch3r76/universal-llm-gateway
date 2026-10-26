@@ -45,6 +45,7 @@ def _minimal_build_args(*, usage: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def test_build_dispatch_output_populates_cached_tokens() -> None:
+    """StepOutput.cached_tokens mirrors result.usage cached_tokens key."""
     args = _minimal_build_args(
         usage={"input_tokens": 100, "output_tokens": 20, "cached_tokens": 40}
     )
@@ -55,8 +56,24 @@ def test_build_dispatch_output_populates_cached_tokens() -> None:
 
 
 def test_build_dispatch_output_omits_cached_tokens_when_absent() -> None:
+    """StepOutput and json omit cached_tokens when usage lacks the field."""
     args = _minimal_build_args(usage={"input_tokens": 100, "output_tokens": 20})
     output = build_dispatch_output(*args)
     assert output.cached_tokens is None
     assert output.json is not None
     assert "cached_tokens" not in output.json
+
+
+def test_build_dispatch_output_populates_cache_write_tokens() -> None:
+    """StepOutput.cache_write_tokens mirrors result.usage cache_write_tokens key."""
+    args = _minimal_build_args(
+        usage={
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_write_tokens": 55,
+        }
+    )
+    output = build_dispatch_output(*args)
+    assert output.cache_write_tokens == 55
+    assert output.json is not None
+    assert output.json["cache_write_tokens"] == 55

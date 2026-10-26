@@ -1,4 +1,5 @@
 fastmcp==4.1.0
+psutil>=5.9
 python-docx>=1.1
 odfpy>=1.4
 fpdf2>=2.7
@@ -9,10 +10,11 @@ requests-oauthlib>=2.0
 trafilatura>=1.12
 pyyaml>=6.0
 jsonschema>=4.18
-playwright>=1.42.0
+playwright
 python-multipart>=0.0.9
 pdfplumber>=0.11
-pymupdf4llm>=0.0.17
+pymupdf==1.28.2
+pymupdf4llm==1.28.2
 html2text>=2024.2
 Pillow>=10.0
 filetype>=1.2

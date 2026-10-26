@@ -166,7 +166,9 @@ Cursor repairs in-seat when both endpoints are known. Life that will not write e
 
 `both_ends_known ∧ missing(link) ⇒ write(relationship ∨ edge) now`. That is the live duty — new associations so the next `recall` / `activate` / ingest walk can find the intersecting matter (PG&E bill ↔ back-billing case; WCI invoice ↔ October deadline).
 
-Strength on *existing* edges is **retrospective**, not live auto-count (`decision:cortex-edge-myelination-model`): hippocampal consolidation, not myelination during the act. The frequent retrospective surface is **CHECKPOINT** (we checkpoint often; session-close is not automatic). At each CP: write still-missing associations; `edge_update` load-bearing edges you just used. Session-close may do the same when it happens — it is not the wait. A later dream / power-nap pipeline may outsource strength-delta — **not shipped**. `¬` wait for automatic thickening or lid-close to create a missing link.
+**Grade strength at create time (structural links).** On every `relationship_create` (and when wiring `insight:` / `decision:` / `todo:` neighbors after `entity_create`), set `strength` explicitly — default **1.0** if omitted, which overstates weak adjacency. Convention (0–1): **≥0.85** primary evidence or implement locus; **0.5–0.7** motivated specimen or consumer path; **≤0.35** “related topic only — do not merge claims.” Always pair sub-1.0 links with **`evidence`** (one line: why weak) and **`source_uri`** when a bus turn or assertion backs it. Tune later with `relationship_update` — no delete/recreate unless direction or `type_id` was wrong. **`relates_to`** is an **edge** type (`edge_create`); structural analogue is **`related_to`**. Reasoning support from assertions → `edge_create` with `edge_type=evidence_for` and its own `strength`. Specimen: `insight:hermes-delivery-role-writer-specialist` (20607 / 9732). Doctrine: `decision:cortex-relationship-strength-at-link`.
+
+Strength on *existing* edges is also **retrospective**, not live auto-count (`decision:cortex-edge-myelination-model`): hippocampal consolidation, not myelination during the act. The frequent retrospective surface is **CHECKPOINT** (we checkpoint often; session-close is not automatic). At each CP: write still-missing associations; `edge_update` load-bearing edges you just used. Session-close may do the same when it happens — it is not the wait. A later dream / power-nap pipeline may outsource strength-delta — **not shipped**. `¬` wait for automatic thickening or lid-close to create a missing link.
 
 ## Related / depth
 
@@ -179,5 +181,6 @@ Strength on *existing* edges is **retrospective**, not live auto-count (`decisio
 - `entity-creation-discipline` — entity birth verification.
 - `boot-execution-discipline` — boot write/verify/report mechanics.
 - `decision:cortex-edge-myelination-model` — retrospective strength; CHECKPOINT is the frequent surface.
+- `decision:cortex-relationship-strength-at-link` — grade `relationship_create` strength + evidence at link time.
 
 Load `agent_skill:cortex` by entity name when you need depth; do not hardcode paths or reintroduce parallel deep copies.

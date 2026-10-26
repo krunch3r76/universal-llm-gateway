@@ -407,6 +407,43 @@ def test_cse_allowlist_not_display(db: None) -> None:
     )
 
 
+def test_maestro_direct_address_pointer_on_12286_qualifies() -> None:
+    """Specimen 12286#4854: closeout substring must not suppress direct to=maestro on 12286."""
+    turn = {
+        "to_agent": "maestro",
+        "from_agent": "cursor",
+        "subject": "pointer: :4/:5 probe closeout",
+        "thread": "12286",
+        "id": 4854,
+        "turn_number": 4854,
+    }
+    verdict = qualify(turn, cse=True)
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_maestro_direct_address"
+
+
+def test_maestro_direct_address_closeout_on_held_lane() -> None:
+    """Specimen 20729#1: held lane wakes on CLOSEOUT vocabulary without milestone head."""
+
+    class _HolderStore:
+        def holder(self, lane: str) -> dict[str, str] | None:
+            if lane == "20729":
+                return {"registration_id": "reg-held"}
+            return None
+
+    turn = {
+        "to_agent": "maestro",
+        "from_agent": "cursor",
+        "subject": "CLOSEOUT xvfb :4/:5 read-only probe",
+        "thread": "20729",
+        "id": 1,
+        "turn_number": 1,
+    }
+    verdict = qualify(turn, cse=True, store=_HolderStore())  # type: ignore[arg-type]
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_maestro_direct_address"
+
+
 def test_grok_impresario_conductor_milestone_and_intermediate_wakes() -> None:
     impresario_targets = (
         "grok-bot-gc1",
@@ -2827,13 +2864,16 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
     assert resolve_endpoint("stage-manager", thread) is not None
 
 
-def test_declared_rule_map_loads_thirteen_rules(db: None) -> None:
+def test_declared_rule_map_loads_address_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
     assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 13
-    assert _declared_wake_rule_ids()[8] == "drop_routine_hop_closeout"
-    assert _declared_wake_rule_ids()[7] == "wake_peer_sender"
+    assert len(_declared_wake_rule_ids()) == 17
+    assert _declared_wake_rule_ids()[5] == "wake_by_address"
+    assert _declared_wake_rule_ids()[6] == "wake_by_name"
+    assert _declared_wake_rule_ids()[7] == "refuse_address_mismatch"
+    assert _declared_wake_rule_ids()[12] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[11] == "wake_peer_sender"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -2968,7 +3008,12 @@ def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
         def subscription(self, agent: str, thread_id: str):
             return (
                 "cse",
-                {"surface": "cse", "agent_id": thread_id, "id": 1, "state": "subscribed"},
+                {
+                    "surface": "cse",
+                    "agent_id": thread_id,
+                    "id": 1,
+                    "state": "subscribed",
+                },
             )
 
     scan_once(Store())  # type: ignore[arg-type]
@@ -3071,9 +3116,7 @@ def test_claim_skips_when_owed_wake_dispatched_same_turn(db: None, tmp_path) -> 
             ),
         )
         conn.commit()
-        assert (
-            conn.execute("SELECT COUNT(*) AS c FROM owed_wake").fetchone()["c"] == 1
-        )
+        assert conn.execute("SELECT COUNT(*) AS c FROM owed_wake").fetchone()["c"] == 1
     skipped = claim_due_wakes(now="2020-01-01 18:10:10")
     assert skipped["wake_id"] is None
     assert skipped["rows"][0]["reason"] == "deduped_owed_wake"
@@ -3160,3 +3203,279 @@ def test_fire_due_wakes_skips_web_anthropic_when_cse_holder_superseded(
     assert recorded[0]["outcome"] == "skipped"
     assert recorded[0]["reason"] == "seat_superseded"
     assert recorded[0]["route"] == "cse"
+
+
+_SPECIMEN_CLOSEOUT = (
+    "cursor-sdk CLOSEOUT d5b2dad0952d-a5b4f1cf contract=implement caller=web-anthropic"
+)
+
+
+class _LaneChainStore:
+    """Holder rows live on the driving lane; worker threads only have a parent."""
+
+    def __init__(
+        self,
+        holders: dict[str, dict[str, str] | None],
+        parents: dict[str, str | None],
+    ) -> None:
+        self.holders = holders
+        self.parents = parents
+
+    def holder(self, lane: str) -> dict[str, str] | None:
+        return self.holders.get(lane)
+
+    def lane_parent(self, thread: str) -> str | None:
+        return self.parents.get(thread)
+
+
+def _specimen_turn(*, to_agent: str, thread: str = "20714") -> dict[str, object]:
+    return {
+        "to_agent": to_agent,
+        "from_agent": "cursor-sdk",
+        "subject": _SPECIMEN_CLOSEOUT,
+        "thread": thread,
+        "id": 6,
+        "turn_number": 6,
+    }
+
+
+def test_worker_closeout_to_web_anthropic_wakes_lane_holder() -> None:
+    """20714#6 shape: to=web-anthropic, old subject, parent lane held by R."""
+    from bus_watch.endpoint_wake_dispatcher import resolve_turn_address
+
+    store = _LaneChainStore(
+        holders={
+            "12286": {
+                "registration_id": "R",
+                "chat_url": "https://claude.ai/chat/R",
+                "seat_state": "driving",
+            }
+        },
+        parents={"20714": "12286"},
+    )
+    verdict = qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=store,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_by_address"
+    address = resolve_turn_address("20714", store)  # type: ignore[arg-type]
+    assert address is not None
+    assert address.registration_id == "R"
+    assert address.lane_thread == "12286"
+
+
+def test_worker_closeout_does_not_wake_a_different_registration() -> None:
+    store = _LaneChainStore(
+        holders={"12286": {"registration_id": "S", "seat_state": "driving"}},
+        parents={"20714": "12286"},
+    )
+    verdict = qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=store,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "refuse_address_mismatch"
+    other = qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=store,  # type: ignore[arg-type]
+        seat_registration="S",
+    )
+    assert other.wake is True
+    assert other.rule_id == "wake_by_address"
+
+
+def test_closeout_without_lane_holder_falls_back_to_alias_names() -> None:
+    store = _LaneChainStore(holders={}, parents={"20714": None})
+    for to_agent in ("web-anthropic", "maestro", "claude-web"):
+        verdict = qualify(
+            _specimen_turn(to_agent=to_agent),
+            cse=True,
+            store=store,  # type: ignore[arg-type]
+        )
+        assert verdict.wake is True, to_agent
+        assert verdict.rule_id == "wake_by_name", to_agent
+    outsider = qualify(
+        _specimen_turn(to_agent="random-seat"),
+        cse=True,
+        store=store,  # type: ignore[arg-type]
+    )
+    assert outsider.wake is False
+    assert outsider.rule_id == "default_suppress"
+    cursor = qualify(
+        _specimen_turn(to_agent="cursor"),
+        cse=False,
+        store=store,  # type: ignore[arg-type]
+    )
+    assert cursor.wake is True
+    assert cursor.rule_id == "wake_gate_or_directive"
+
+
+def test_prefixed_closeout_subject_wakes_same_holder() -> None:
+    store = _LaneChainStore(
+        holders={"12286": {"registration_id": "R", "seat_state": "driving"}},
+        parents={"20714": "12286"},
+    )
+    turn = _specimen_turn(to_agent="web-anthropic")
+    turn["subject"] = "CLOSEOUT|" + _SPECIMEN_CLOSEOUT
+    verdict = qualify(
+        turn,
+        cse=True,
+        store=store,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_by_address"
+
+
+def test_address_route_emits_match_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "bus_watch.events.emit_endpoint_wake_address_route",
+        lambda **kwargs: seen.append(kwargs),
+    )
+    held = _LaneChainStore(
+        holders={"12286": {"registration_id": "R", "seat_state": "driving"}},
+        parents={"20714": "12286"},
+    )
+    qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=held,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    assert seen[-1]["match"] == "address"
+    qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=held,  # type: ignore[arg-type]
+        seat_registration="other",
+    )
+    assert seen[-1]["match"] == "refused"
+    bare = _LaneChainStore(holders={}, parents={})
+    qualify(
+        _specimen_turn(to_agent="claude-web"),
+        cse=True,
+        store=bare,  # type: ignore[arg-type]
+    )
+    assert seen[-1]["match"] == "name"
+
+
+def test_scan_once_enqueues_worker_closeout_for_parent_holder(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="40330-worker")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor-sdk",
+        to_agent="web-anthropic",
+        subject=_SPECIMEN_CLOSEOUT,
+        body="closeout",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    pending: list[dict] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            pending.extend(rows)
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 20:00:00",
+            )
+
+        def holder(self, lane: str) -> dict | None:
+            if lane == "12286":
+                return {"registration_id": "R", "seat_state": "driving"}
+            return None
+
+        def lane_parent(self, lane: str) -> str | None:
+            if lane == thread:
+                return "12286"
+            return None
+
+        def subscription(self, agent: str, thread_id: str):
+            return None
+
+    scan_once(Store())  # type: ignore[arg-type]
+    assert len(pending) == 1
+    assert pending[0]["agent"] == "web-anthropic"
+    assert pending[0]["thread_id"] == thread
+    assert pending[0]["turn_id"] == turn_id
+    assert pending[0]["turn_number"] == number
+    assert pending[0]["decided_by_rule"] == "wake_by_address"
+
+
+def test_fire_due_wakes_delivers_worker_closeout_to_parent_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivered: list[tuple[str, str]] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-40330",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "web-anthropic",
+                        "thread_id": "20714",
+                        "turn_id": 6,
+                        "turn_number": 6,
+                        "decided_by_rule": "wake_by_address",
+                    }
+                ],
+            }
+
+        def holder(self, lane: str) -> dict | None:
+            if lane == "12286":
+                return {
+                    "registration_id": "R",
+                    "seat_state": "driving",
+                    "chat_url": "https://claude.ai/chat/R",
+                }
+            return None
+
+        def lane_parent(self, thread: str) -> str | None:
+            if thread == "20714":
+                return "12286"
+            return None
+
+        def subscription(self, agent: str, thread_id: str):
+            return None
+
+        def result(self, **payload: object) -> dict:
+            return payload
+
+    def _deliver(rows, holder, target_lane=None):
+        delivered.append((str(target_lane), str(holder.get("registration_id"))))
+        return "delivered", "send_verified=True", "R"
+
+    monkeypatch.setattr("bus_watch.endpoint_wake_dispatcher.deliver", _deliver)
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: None,
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert delivered == [("12286", "R")]

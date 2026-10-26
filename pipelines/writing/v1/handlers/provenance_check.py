@@ -14,6 +14,8 @@ from writing_intake.fact_inventory import run_drift_check
 from .email_envelope import (
     email_restate_pin_satisfied,
     has_email_subject,
+    normalize_contractions,
+    normalize_text_for_token_match,
     polish_email_draft,
 )
 
@@ -52,10 +54,30 @@ _NAME_STOP = frozenset(
         "So",
         "It",
         "When",
+        "Do",
+        "Does",
+        "Did",
+        "Can",
+        "Will",
+        "Is",
+        "Are",
+        "Was",
+        "Were",
+        "Have",
+        "Has",
+        "Had",
+        "Would",
+        "Could",
+        "Should",
+        "Not",
+        "Hi",
+        "Hello",
     }
 )
 _FUNCTION_WORDS = frozenset(
     {
+        "also",
+        "am",
         "and",
         "when",
         "the",
@@ -71,6 +93,9 @@ _FUNCTION_WORDS = frozenset(
         "in",
         "on",
         "so",
+        "to",
+        "hi",
+        "hello",
     }
 )
 _CLAUSE_DETAIL_MAX = 160
@@ -447,13 +472,15 @@ def _sentences(text: str) -> list[str]:
 
 
 def _tokens(text: str) -> set[str]:
-    return set(_TOKEN.findall(_normalize_numeric_ranges(text).lower()))
+    normalized = _normalize_numeric_ranges(normalize_text_for_token_match(text))
+    return set(_TOKEN.findall(normalized.lower()))
 
 
 def _content_token_seq(text: str, join_words: set[str]) -> tuple[str, ...]:
+    normalized = _normalize_numeric_ranges(normalize_text_for_token_match(text))
     return tuple(
         tok
-        for tok in _TOKEN.findall(_normalize_numeric_ranges(text).lower())
+        for tok in _TOKEN.findall(normalized.lower())
         if tok not in join_words
     )
 
@@ -720,6 +747,8 @@ def revision_delta(
         return []
     v1_text = prior["draft"]
     v2_text = current["draft"]
+    v1_name_text = normalize_contractions(v1_text)
+    v2_name_text_lower = normalize_contractions(v2_text).lower()
     v1_clause_rows = v1_clauses if v1_clauses is not None else _extract_clauses(prior)
     v2_clause_rows = v2_clauses if v2_clauses is not None else _extract_clauses(current)
 
@@ -768,8 +797,8 @@ def revision_delta(
         and len(_sentences(v2_text)) <= len(_sentences(v1_text))
         and all(number in v2_text for number in _NUMBER.findall(v1_text))
         and all(
-            name.lower() in v2_text.lower()
-            for name in _NAME.findall(v1_text)
+            name.lower() in v2_name_text_lower
+            for name in _NAME.findall(v1_name_text)
             if name not in _NAME_STOP
         )
     ):
@@ -786,10 +815,10 @@ def revision_delta(
     if hedge and not _HEDGE.search(v1_text):
         violations.append(_violation("fact_hedged", None, hedge.group(0)))
 
-    for name in _NAME.findall(v1_text):
+    for name in _NAME.findall(v1_name_text):
         if name in _NAME_STOP:
             continue
-        if name.lower() not in v2_text.lower():
+        if name.lower() not in v2_name_text_lower:
             violations.append(_violation("v2_dropped_name", None, name))
             violations.append(_violation("fact_dropped", None, name))
 

@@ -15,6 +15,10 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from ._obligation_coverage import (
+    actionable_obligations,
+    merge_audit_coverage_map,
+)
 from .email_envelope import has_email_subject, polish_email_draft
 from .independence import (
     _allow_partial,
@@ -22,13 +26,18 @@ from .independence import (
     load_writing_models,
 )
 
+_REQUIRED_ASK_KINDS = frozenset({"question", "request", "call_to_action"})
+
 _GENERATE_STEPS = (
+    ("source_obligations", "prompt_architect"),
+    ("prompt_architect", "prompt_architect"),
     ("drafter_openai", "drafter_openai"),
     ("drafter_google", "drafter_google"),
     ("drafter_xai", "drafter_xai"),
     ("drafter_local_hermes", "drafter_local_hermes"),
     ("drafter_local_ernie", "drafter_local_ernie"),
     ("drafter_anthropic", "drafter_anthropic"),
+    ("obligation_coverage", "reviewer"),
     ("fact_ceiling_audit", "verifier"),
     ("prose_rhythm_pass", "reviser"),
 )
@@ -229,6 +238,112 @@ def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
             break
         bag.remove(key)
     return contained and len(final_keys) > len(initial_keys)
+
+
+_OMIT_WITH_REASON = re.compile(
+    r"\b(O\d+)\s*(?:\([^)]*\))?\s*:\s*omit_with_reason\b",
+    re.I,
+)
+_OMIT_WITH_REASON_PROXIMITY = re.compile(
+    r"\b(O\d+)\b(?:(?!\bO\d+\b)[^\n]){0,80}\bomit_with_reason\b",
+    re.I,
+)
+
+
+def _omit_with_reason_ids(architect_brief: str) -> set[str]:
+    ids = {match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)}
+    ids |= {
+        match.group(1).upper()
+        for match in _OMIT_WITH_REASON_PROXIMITY.finditer(architect_brief)
+    }
+    return ids
+
+
+def _apply_architect_omit_with_reason(
+    coverage_map: list[dict[str, Any]],
+    architect_brief: str,
+    *,
+    channel: str,
+) -> list[dict[str, Any]]:
+    """Mark architect-declared omissions as covered (declined_with_reason)."""
+    omit_ids = _omit_with_reason_ids(architect_brief)
+    if not omit_ids:
+        return coverage_map
+    updated: list[dict[str, Any]] = []
+    for row in coverage_map:
+        oid = str(row.get("id") or "").upper()
+        if oid in omit_ids:
+            updated.append(
+                {
+                    **row,
+                    "status": "declined_with_reason",
+                    "reply_mode": "omit_with_reason",
+                    "covering_sentence": row.get("covering_sentence")
+                    or "omit_with_reason per architect brief",
+                }
+            )
+        else:
+            updated.append(dict(row))
+    return updated
+
+
+def _obligation_coverage_gate(
+    selected_body: str,
+    obligations: list[dict[str, Any]],
+    *,
+    selected: str,
+    audit_map: list[dict[str, Any]] | None,
+    revision_ran: bool,
+    architect_brief: str = "",
+    channel: str = "",
+    pin_ledger: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Re-score obligations on the shipped body; return coverage_map and optional refusal."""
+    actionable = actionable_obligations(obligations)
+    if not actionable or not selected_body.strip():
+        return [], None
+    coverage_map = merge_audit_coverage_map(
+        selected_body,
+        obligations,
+        audit_map,
+        selected=selected,
+        pin_ledger=pin_ledger,
+    )
+    coverage_map = _apply_architect_omit_with_reason(
+        coverage_map, architect_brief, channel=channel
+    )
+    missing = [
+        row
+        for row in coverage_map
+        if row.get("status") == "missing"
+        and row.get("reply_mode") != "omit_with_reason"
+    ]
+    if not missing:
+        return coverage_map, None
+    required_missing = [
+        row for row in missing if row.get("kind") in _REQUIRED_ASK_KINDS
+    ]
+    fail = bool(required_missing) or (revision_ran and len(missing) >= 2)
+    if not fail:
+        return coverage_map, None
+    unresolved: list[dict[str, Any]] = []
+    for row in missing:
+        oid = row.get("id")
+        unresolved.append(
+            {
+                "type": "obligation_coverage_failed",
+                "claim_id": oid,
+                "detail": (
+                    f"{oid} ({row.get('kind')}) remains missing: "
+                    f"{row.get('obligation')}"
+                ),
+            }
+        )
+    return coverage_map, {
+        "refused": "obligation_coverage_failed",
+        "status": "refused",
+        "unresolved": unresolved,
+    }
 
 
 def _cost(
@@ -527,6 +642,30 @@ class WritingFinalizeHandler(BaseHandler):
                     }
                 )
         selected_body = _selected_body(selected, draft, revision)
+        src_json = _json_of(outputs, "source_obligations") or {}
+        obligations = list(src_json.get("obligations") or [])
+        architect_json = _json_of(outputs, "prompt_architect") or {}
+        architect_brief = str(architect_json.get("architect_brief") or "")
+        channel = str(assemble.get("channel") or "")
+        if not channel:
+            intake = assemble.get("intake")
+            if isinstance(intake, dict):
+                channel = str(intake.get("channel") or "")
+        obl_audit = _json_of(outputs, "obligation_coverage") or {}
+        audit_map = list(obl_audit.get("coverage_map") or [])
+        coverage_map, obl_refusal = _obligation_coverage_gate(
+            selected_body,
+            obligations,
+            selected=selected,
+            audit_map=audit_map or None,
+            revision_ran=revision_ran,
+            architect_brief=architect_brief,
+            channel=channel,
+            pin_ledger=list(assemble.get("pin_ledger") or []),
+        )
+        if obl_refusal is not None:
+            passed = False
+            unresolved.extend(obl_refusal["unresolved"])
         if str(assemble.get("channel") or "") == "email" and not has_email_subject(
             selected_body
         ):
@@ -546,6 +685,7 @@ class WritingFinalizeHandler(BaseHandler):
         }
         est_cost, cost_note = _cost(outputs, usage, models)
         payload: dict[str, Any] = {
+            "coverage_map": coverage_map,
             "draft_v1": draft,
             "provenance": {
                 "pin_ledger": assemble.get("pin_ledger"),
@@ -603,4 +743,7 @@ class WritingFinalizeHandler(BaseHandler):
         if filing_text is not None:
             payload["filing_text"] = filing_text
         payload["selected_draft"] = selected_body
+        if obl_refusal is not None:
+            payload["refused"] = obl_refusal["refused"]
+            payload["ship_gate"]["pass"] = False
         return _step(_attach_status(payload))

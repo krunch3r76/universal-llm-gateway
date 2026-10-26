@@ -19,7 +19,7 @@ from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
-from .models import STATUS_TAB, Registration, RegistryError
+from .models import STATUS_TAB, Registration, RegistryError, normalize_account_id
 
 
 def host_row_eligible(
@@ -39,9 +39,14 @@ def host_row_eligible(
     display = str(row.get("display") or "").strip()
     if not display:
         return False
-    candidates = {
-        cdp_lane._display_key(item) for item in cdp_lane.cdp_display_candidates()
-    }
+    row_account = normalize_account_id(row.get("account_id"))
+    try:
+        candidates = {
+            cdp_lane._display_key(item)
+            for item in cdp_lane.cdp_display_candidates(row_account)
+        }
+    except RegistryError:
+        return False
     if cdp_lane._display_key(display) not in candidates:
         return False
     return _host_capacity_eligible_row(row, display=display, listen=is_up)

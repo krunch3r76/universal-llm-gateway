@@ -97,14 +97,29 @@ def _compose_witness_satellite_id(error: str | None, execution_id: str) -> str |
 def _open_tab_lane(
     req: SubmitProjectAskRequest, *, holder: str, host_row: dict | None = None
 ):
+    from claude_bundles.cdp_registry.models import (
+        AccountNotSignedInError,
+        resolve_account_id,
+    )
     from claude_bundles.cdp_registry.tab_rows import open_tab_row_for_ask
 
+    try:
+        account_id = resolve_account_id(
+            req.account_id,
+            purpose=req.purpose,
+            holder=holder,
+            parent_thread=req.parent_thread,
+            model=req.model,
+        )
+    except AccountNotSignedInError as exc:
+        raise RuntimeError(f"cdp_ask account routing refused: {exc}") from exc
     return open_tab_row_for_ask(
         holder=holder,
         purpose=req.purpose,
         mission_kind=req.mission_kind,
         parent_thread=req.parent_thread,
         host_row=host_row,
+        account_id=account_id,
     )
 
 
@@ -126,12 +141,21 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     pred = (req.predecessor_registration_id or "").strip()
     if kind == "hop" and pred:
         from claude_bundles import cdp_registry_store as store
-        from claude_bundles.cdp_registry.models import RegistryError, SeatContended
+        from claude_bundles.cdp_registry.models import (
+            RegistryError,
+            SeatContended,
+            normalize_account_id,
+        )
 
+        pred_account: str | None = None
+        pred_peek = store.load_active().get(pred)
+        if isinstance(pred_peek, dict):
+            pred_account = normalize_account_id(pred_peek.get("account_id"))
         try:
             launch_or_defer(
                 "hop_predecessor_relaunch",
                 lambda: cdp_registry.relaunch_dormant(pred, holder=holder),
+                account_id=pred_account,
             )
             active = store.load_active()
             row = active.get(pred)
@@ -143,8 +167,22 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
                 store.write_active(active)
         except (RegistryError, SeatContended):
             pass
-    from claude_bundles.cdp_registry.models import OperatorSeatDeferred
+    from claude_bundles.cdp_registry.models import (
+        AccountNotSignedInError,
+        OperatorSeatDeferred,
+        resolve_account_id,
+    )
 
+    try:
+        account_id = resolve_account_id(
+            req.account_id,
+            purpose=req.purpose,
+            holder=holder,
+            parent_thread=req.parent_thread,
+            model=req.model,
+        )
+    except AccountNotSignedInError as exc:
+        raise RuntimeError(f"cdp_ask account routing refused: {exc}") from exc
     joined: list = []
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
         try:
@@ -154,6 +192,7 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
                 purpose=purpose,
                 mission_kind=kind or "root",
                 joined=joined,
+                account_id=account_id,
             )
         except OperatorSeatDeferred:
             seat = _open_tab_lane(req, holder=holder)
@@ -167,7 +206,9 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
                         purpose=req.purpose,
                         mission_kind=req.mission_kind,
                         parent_thread=req.parent_thread,
+                        account_id=account_id,
                     ),
+                    account_id=account_id,
                 )
             except OperatorSeatDeferred:
                 seat = _open_tab_lane(req, holder=holder)

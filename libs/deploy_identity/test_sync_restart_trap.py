@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -399,11 +400,16 @@ def _docker_log(tmp_path: Path) -> str:
 
 
 def _log_indices(log: str) -> dict[str, int]:
+    stamp_write = log.find("STAMP_WRITE")
+    search_from = stamp_write if stamp_write >= 0 else 0
+    tail = log[search_from:]
+    stop_match = re.search(r"^stop ", tail, re.MULTILINE)
+    start_match = re.search(r"^start ", tail, re.MULTILINE)
     return {
-        "stamp_write": log.find("STAMP_WRITE"),
+        "stamp_write": stamp_write,
         "stamp_restore": log.find("STAMP_RESTORE"),
-        "stop": log.find("stop "),
-        "start": log.find("start "),
+        "stop": search_from + stop_match.start() if stop_match else -1,
+        "start": search_from + start_match.start() if start_match else -1,
     }
 
 
@@ -485,12 +491,15 @@ def test_env_key_name_diff_recreates_before_sync(
     assert "fixture-token-not-secret" not in combined
     assert "envkey-sentinel" not in combined
     rm_at = log.find("rm -f mcp-server")
-    sync_cp = log.find("mcp-server:/app/libs/", rm_at)
-    stop_at = log.find("stop ")
+    first_cp_after_rm = log.find("mcp-server:/app/libs/", rm_at)
+    up_no_start = log.find("up -d --no-start mcp-server", rm_at)
+    stop_tail = log[first_cp_after_rm:] if first_cp_after_rm >= 0 else log
+    stop_match = re.search(r"^stop ", stop_tail, re.MULTILINE)
     assert rm_at >= 0, log
-    assert "up -d mcp-server" in log
-    assert sync_cp > rm_at, log
-    assert stop_at > sync_cp, log
+    assert first_cp_after_rm > rm_at, log
+    assert up_no_start >= 0 and up_no_start < first_cp_after_rm, log
+    assert stop_match is not None, log
+    assert first_cp_after_rm + stop_match.start() > first_cp_after_rm, log
 
 
 def test_env_inspect_splits_names_inside_docker() -> None:
@@ -848,12 +857,40 @@ def _install_failing_tool(stub: Path, name: str) -> None:
     tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
 
 
+def _install_git_fail_on_second_head_revparse(stub: Path, tmp_path: Path) -> None:
+    """Fail the second bash ``git -C … rev-parse HEAD`` (stamp write, not pre-sync snapshot)."""
+    real_git = shutil.which("git") or "/usr/bin/git"
+    counter = tmp_path / "git-rev-parse-head.count"
+    tool = stub / "git"
+    tool.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            if [[ "$1" == "-C" && "$3" == "rev-parse" && "$4" == "HEAD" ]]; then
+              ppid_cmd=$(tr '\\0' ' ' < /proc/$PPID/cmdline 2>/dev/null || true)
+              if [[ "$ppid_cmd" != *python* ]]; then
+                n=$(cat {shlex.quote(str(counter))} 2>/dev/null || echo 0)
+                n=$((n + 1))
+                echo "$n" > {shlex.quote(str(counter))}
+                if [[ "$n" -ge 2 ]]; then
+                  exit 1
+                fi
+              fi
+            fi
+            exec {shlex.quote(real_git)} "$@"
+            """
+        ),
+        encoding="utf-8",
+    )
+    tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+
+
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_stamp_write_git_failure_restores(tmp_path: Path) -> None:
     """git failure inside the stamp write restores the snapshot and removes mktemp."""
     _seed_last_healthy_copy_set(tmp_path)
     stub = _stub_docker_dir(tmp_path)
-    _install_failing_tool(stub, "git")
+    _install_git_fail_on_second_head_revparse(stub, tmp_path)
     proc = _run_sync_script(tmp_path, stub)
     log = _docker_log(tmp_path)
     assert proc.returncode != 0, proc.stdout

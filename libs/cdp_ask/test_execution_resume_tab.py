@@ -32,6 +32,50 @@ def test_resumable_includes_tab_status() -> None:
     assert STATUS_TAB in _RESUMABLE_ROW_STATUSES
 
 
+def test_resolve_resume_host_account_two_reuses_host_on_mapped_display(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Account-2 resume must match an account-2 pool host (real display candidates)."""
+    from claude_bundles.cdp_lane import cdp_display_for_account
+
+    from cdp_ask.execution_resume_tab import resolve_resume_host
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setattr(reg._store, "REGISTRY_DIR", root)
+    monkeypatch.setattr(reg._store, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(reg._store, "PORTS_LOCK", root / "ports.lock")
+    live = {9227}
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda port: port in live)
+    extra = '\ncdp_account_displays:\n  account-2: ":4"\n'
+    cfg = tmp_path / "accounts.yaml"
+    cfg.write_text(
+        (Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml")
+        .read_text(encoding="utf-8")
+        + extra,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(cfg))
+    host_a2 = _host("H4", 9227, "tab_host")
+    host_a2["display"] = ":4"
+    host_a2["account_id"] = "account-2"
+    tab_row = _tab("T-a2", "H-dead", 9225, "https://claude.ai/cowork/cse_a2resume")
+    tab_row["account_id"] = "account-2"
+    tab_row["host_registration_id"] = "H-dead"
+    reg._store.write_active(
+        {
+            "H-dead": _host("H-dead", 9225, "tab_host", status="released"),
+            "H4": host_a2,
+            "T-a2": tab_row,
+        }
+    )
+    picked = resolve_resume_host(tab_row, trigger="host_lost")
+    assert picked["registration_id"] == "H4"
+    assert picked["display"] == cdp_display_for_account("account-2")
+
+
 def test_dispose_host_tab_row_normal_branch() -> None:
     row = {
         "registration_id": "tab-r",
@@ -112,7 +156,7 @@ def tab_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, A
     )
     monkeypatch.setattr(
         "claude_bundles.cdp_lane.cdp_display_candidates",
-        lambda: [":2"],
+        lambda account_id=None: [":2"],
     )
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.tab_rows._TAB_MINT_LOCK",

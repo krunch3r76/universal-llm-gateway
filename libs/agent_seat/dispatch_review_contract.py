@@ -16,10 +16,10 @@ REVIEW_VERDICT_CONTRACT = (
 )
 
 REVIEW_GIT_INSPECTION_GUIDANCE = (
-    "CODE REVIEW INSPECTION: Use git to inspect the nominated range — "
-    "`git log --oneline <base>..<tip>`, `git diff <base>..<tip>`, and "
-    "`git show <tip>` — or follow explicit range guidance in the prompt. "
-    "Do not approve from packet prose alone when a commit range is named."
+    "CODE REVIEW INSPECTION: Use git when available (`git log`, `git diff`, "
+    "`git show`), or inspect the diff/files via `fs` or the inline diff/range "
+    "provided in the prompt/packet. Do not approve from packet prose alone when "
+    "a commit range is named."
 )
 
 

@@ -37,6 +37,8 @@ class PipelineExecutionResult:
     # Designed stop. Absent means the run completed without one.
     # Status stays ``completed``; this is not a terminal status.
     stop: StepStop | None = None
+    archive_uri: str | None = None
+    tool_errors: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -164,6 +166,9 @@ class PipelineExecutionRecord:
     delivery: DeliveryState | None = None
     work_key: str | None = None
     resolved_contract: str | None = None
+    # Frontier model id from pipeline_options at admission
+    # (e.g. anthropic/claude-haiku-5-5). Distinct from result.model (team-dispatch).
+    resolved_model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/executions/{id}``."""  # noqa: E501
@@ -180,6 +185,8 @@ class PipelineExecutionRecord:
                 "stop": (
                     self.result.stop.to_dict() if self.result.stop is not None else None
                 ),
+                "archive_uri": self.result.archive_uri,
+                "tool_errors": self.result.tool_errors or [],
             }
         error_payload: dict[str, Any] | None = None
         if self.error is not None:

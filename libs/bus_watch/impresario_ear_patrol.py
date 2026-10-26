@@ -16,6 +16,7 @@ from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS
 from bus_watch.impresario_ear_common import (
     build_pipeline_options,
+    ear_paused,
     enqueue_impresario_ear,
     is_ear_turn,
     normalize_grok_to_agent,
@@ -302,9 +303,7 @@ def _lane_commit_review_suppressed(
     if not recent_turns:
         return False
     for turn in _turns_for_signal_scan(recent_turns):
-        body = str(
-            turn.get("body") or turn.get("content") or turn.get("subject") or ""
-        )
+        body = str(turn.get("body") or turn.get("content") or turn.get("subject") or "")
         lowered = body.lower()
         if "explicit reject" in lowered and "no second review" in lowered:
             return True
@@ -350,9 +349,7 @@ def _resolve_lane_commit_review_suppressed(
         return True
     if _lane_commit_review_latch_active(root_id):
         return True
-    wider = _turns_listing(
-        store, root_id, last=_LANE_COMMIT_REVIEW_SUPPRESS_LOOKBACK
-    )
+    wider = _turns_listing(store, root_id, last=_LANE_COMMIT_REVIEW_SUPPRESS_LOOKBACK)
     if _lane_commit_review_suppressed(wider):
         _stamp_lane_commit_review_latch(root_id)
         return True
@@ -585,7 +582,15 @@ def run_patrol_pass(
     now: float | None = None,
     admit_pipeline: Any | None = None,
 ) -> dict[str, Any]:
-    """Scan cursor + grok subscriptions and enqueue patrol/deep runs (non-blocking)."""
+    """Scan subscribed houses and enqueue ear runs, unless the ear is paused.
+
+    Returns immediately with ``skipped=paused`` when ``ear_paused`` is true,
+    so the wake-dispatcher loop can keep delivering BRIDGE_WAKE while the
+    patrol admits nothing. Otherwise scans cursor, grok-bot, and insyncerator
+    subscriptions and enqueues non-blocking.
+    """
+    if ear_paused():
+        return {"scanned": 0, "enqueued": 0, "skipped_interval": 0, "skipped": "paused"}
     clock = now if now is not None else time.time()
     admit = admit_pipeline or enqueue_impresario_ear
     stats = {"scanned": 0, "enqueued": 0, "skipped_interval": 0}

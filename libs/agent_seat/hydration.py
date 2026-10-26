@@ -26,6 +26,7 @@ from transport_utils import (
 from universal_logging import get_logger
 
 from agent_seat.body_injection import RequiredBodyUnresolved
+from agent_seat.inject_budget import INJECTED_BODY_BUDGET_BYTES
 from agent_seat.inject_registry import resolve_injected_bodies
 
 from ._hydration_render import (
@@ -301,6 +302,7 @@ async def hydrate_agent(
     caller_skill_ids: tuple[str, ...] = (),
     provider_mount_slugs: frozenset[str] = frozenset(),
     exclude_mcp_predicated: bool = False,
+    budget_bytes: int | None = INJECTED_BODY_BUDGET_BYTES,
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
@@ -468,6 +470,7 @@ async def hydrate_agent(
             inline_only_dispatch=inline_only and inject_profile == "dispatch",
             provider_mount_slugs=provider_mount_slugs,
             exclude_mcp_predicated=exclude_mcp_predicated,
+            budget_bytes=budget_bytes,
         )
         if resolution.block_md:
             injected_bodies_md = resolution.block_md

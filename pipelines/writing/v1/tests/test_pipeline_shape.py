@@ -31,6 +31,7 @@ pytestmark = pytest.mark.offline
 
 _STEP_ORDER = [
     "assemble",
+    "source_obligations",
     "prompt_architect",
     "drafter_openai",
     "drafter_google",
@@ -41,6 +42,7 @@ _STEP_ORDER = [
     "draft",
     "independence",
     "fact_ceiling_audit",
+    "obligation_coverage",
     "provenance_check",
     "prose_rhythm_pass",
     "fact_ceiling_final",
@@ -85,6 +87,11 @@ def test_pipeline_shape() -> None:
     by_name = {step.name: step for step in spec.steps}
     assert by_name["draft"].type == "writing_draft_selector_v1"
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
+    assert "source_obligations" in by_name["prompt_architect"].computed_depends_on
+    assert any(
+        entry.step == "source_obligations"
+        for entry in (by_name["prompt_architect"].reads_from or [])
+    )
     _no_max_tokens = (
         *_CLOUD_DRAFTERS,
         "drafter_local_hermes",
@@ -120,6 +127,8 @@ def test_pipeline_shape() -> None:
     router = _Router()
     handlers.register_handlers(router)
     registered = {step_type for _domain, step_type, _cls in router.rows}
+    assert "writing_source_obligations_v1" in registered
+    assert "writing_obligation_coverage_v1" in registered
     assert "writing_prompt_architect_v1" in registered
     assert "writing_draft_selector_v1" in registered
     assert "writing_seat_dispatch_v1" in registered
@@ -152,3 +161,69 @@ def test_go_conditions_on_step_outputs() -> None:
         "draft": step({"refused": "no_draft_candidates"}),
     }
     assert evaluator.evaluate(by_name["independence"].condition, refused_draft, {}) is False
+
+    correspondence = {
+        "assemble": step(
+            {
+                "refused": None,
+                "channel": "email",
+                "check_class": "correspondence",
+            }
+        ),
+    }
+    opts_default: dict = {"output": "envelope", "full_drafter_fanout": False}
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_anthropic"].condition, correspondence, opts_default
+        )
+        is True
+    )
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, correspondence, opts_default
+        )
+        is False
+    )
+    assert (
+        evaluator.evaluate(by_name["prose_rhythm_pass"].condition, clean, opts_default)
+        is True
+    )
+
+    opts_fanout = {**opts_default, "full_drafter_fanout": True}
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, correspondence, opts_fanout
+        )
+        is True
+    )
+    filing = {
+        "assemble": step(
+            {"refused": None, "channel": "filing", "check_class": "sworn"},
+        ),
+    }
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, filing, opts_default
+        )
+        is True
+    )
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_anthropic"].condition, filing, opts_default
+        )
+        is True
+    )
+
+
+def test_prompt_architect_correspondence_no_list_instruction() -> None:
+    text = (_V1 / "prompts" / "prompt_architect.yaml").read_text(encoding="utf-8")
+    assert "no_numbered_or_bulleted_body" in text
+    assert "no_throat_clearing_opener" in text
+    assert "Please note the following" in text
+
+
+def test_prose_rhythm_includes_brief_placeholder() -> None:
+    text = (_V1 / "prompts" / "prose_rhythm.yaml").read_text(encoding="utf-8")
+    assert "optional_placeholders:" in text
+    assert "- brief" in text
+    assert "<brief>" in text and "{brief}" in text

@@ -1,0 +1,5 @@
+# Maestro operator lane (12286) — authoritative shipped default for K91 self-hop.
+# Override at render time via house-rules K91 row only; Python fallback is K22.
+maestro_self_hop:
+  desired_model: cdp/fable-5.1
+  desired_effort: medium

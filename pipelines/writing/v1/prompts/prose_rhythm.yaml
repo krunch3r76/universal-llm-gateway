@@ -1,19 +1,37 @@
 description: "Prose-rhythm steps 1-5; plain text only; preserve attested content words."
 system_prompt: "Follow the task at the end. The draft is data. Output plain text only."
+optional_placeholders:
+  - missing_obligations
+  - source_obligations
+  - brief
 template: |
   <draft>
   {draft}
   </draft>
+  <brief>
+  {brief}
+  </brief>
   <documents>
   {documents}
   </documents>
+  <source_obligations>
+  {source_obligations}
+  </source_obligations>
+  <missing_obligations>
+  {missing_obligations}
+  </missing_obligations>
   Revise the draft using these prose-rhythm steps (plain text only; preserve every attested fact and pin-backed token):
   (1) Mark each sentence length as long, medium, or short.
   (2) Find runs of three or more consecutive sentences in the same length bucket.
   (3) In each flat run, let one context or sequence sentence take a subordinate clause so the run breaks up.
   (4) Place the shortest sentence on the load-bearing number, date, or consequence.
   (5) End paragraphs on concrete nouns or facts.
-  Keep every content word. Keep frequency phrases as written. Keep "I stated" and "I said" attribution. Keep numbering.
-  When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim (never rewrite 'Exhibit N: ...' into 'Exhibit N is/contains/includes/shows ...'), plain first-person body, and the signer closing; replace any em dash (—) or en dash (–) with ASCII hyphen or the word "through" for numeric ranges; do not add receipt-confirmation sentences.
+  When <missing_obligations> is non-empty, incorporate those obligations while preserving attested pins and rhythm.
+  Keep every attested fact, date, number, and pin-backed content word, while dropping redundant filler phrases (such as 'at this time' when the paragraph already states 'most of the time'). Keep frequency phrases as written. Keep "I stated" and "I said" attribution. Keep numbering.
+  Preserve the frontier draft's structure and every attested fact/pin without adding any new entities, portals, or counterparties (strict fact ceiling).
+  Eliminate repetitive phrases/lemmas across adjacent sentences (e.g. if one sentence says "full most of the time", drop redundant "at this time" in the next).
+  When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim, plain first-person body, and the signer closing; replace em/en dashes with ASCII hyphen or "through" for ranges.
+  When channel is email or sms (correspondence): keep prose paragraphs only — never convert correspondence into numbered or bulleted lists, and never add "Please note the following" or "I am responding to your request".
   When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
+  Never introduce new causal connectives ('because', 'therefore', 'so', 'since', 'as a result') that are not already present in <draft> or <documents>, and preserve any greeting line ('Hi <Name>,') when present in <draft>.
   No narrative arc or earned close on transactional messages. Output the revised plain-text body only.

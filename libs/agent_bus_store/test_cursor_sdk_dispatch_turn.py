@@ -42,7 +42,7 @@ def test_producer_closeout_subject_is_terminal() -> None:
         caller_agent="conductor-hop",
     )
     subject = build_sdk_closeout_subject(req, contract="conductor")
-    assert subject.startswith("cursor-sdk CLOSEOUT 893994c82a61-75be8122")
+    assert subject.startswith("CLOSEOUT|cursor-sdk CLOSEOUT 893994c82a61-75be8122")
     assert is_cursor_sdk_dispatch_terminal_subject(subject)
 
 

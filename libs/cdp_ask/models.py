@@ -78,6 +78,13 @@ class SubmitProjectAskRequest(BaseModel):
             "Not SDK nest_under."
         ),
     )
+    account_id: str | None = Field(
+        default=None,
+        description=(
+            "Logical claude.ai account id (default 'default'). Selects the "
+            "account-keyed tab_host pool and persistent profile suffix."
+        ),
+    )
     predecessor_registration_id: str | None = None
     model: str = "opus-5"
     converse: bool = False

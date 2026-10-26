@@ -44,6 +44,31 @@ def _drive(events: list[SSEMessage]) -> _AnthropicState:
 # Synthetic event sequences
 # ---------------------------------------------------------------------------
 
+CONTAINER_EVENTS: list[SSEMessage] = [
+    _msg(
+        "message_start",
+        {
+            "message": {
+                "id": "msg_ctr",
+                "model": "claude-sonnet-5-5",
+                "container": {"id": "ctr_stream"},
+                "usage": {"input_tokens": 3},
+            },
+        },
+    ),
+    _msg("content_block_start", {"index": 0, "content_block": {"type": "text"}}),
+    _msg(
+        "content_block_delta",
+        {"index": 0, "delta": {"type": "text_delta", "text": "hi"}},
+    ),
+    _msg("content_block_stop", {"index": 0}),
+    _msg(
+        "message_delta",
+        {"delta": {"stop_reason": "pause_turn"}, "usage": {"output_tokens": 2}},
+    ),
+    _msg("message_stop", {}),
+]
+
 TEXT_EVENTS: list[SSEMessage] = [
     _msg(
         "message_start",
@@ -254,6 +279,13 @@ def test_empty_tool_input_json() -> None:
     ]
     state = _drive(events)
     assert state.content[0]["input"] == {}
+
+
+def test_reducer_preserves_container_on_terminal_dict() -> None:
+    state = _drive(CONTAINER_EVENTS)
+    terminal = AnthropicReducer.to_terminal_dict(state)
+    assert terminal["container"]["id"] == "ctr_stream"
+    assert terminal["stop_reason"] == "pause_turn"
 
 
 def test_invalid_json_input_degrades_gracefully() -> None:

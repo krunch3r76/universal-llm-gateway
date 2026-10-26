@@ -34,6 +34,7 @@ _EXCERPT_MAX = 1200
 _EXCERPT_SUFFIX = " [truncated]"
 _FENCE_TAG = re.compile(
     r"</?(?:violations|findings|documents|draft|brief|pin|verbatim_notes|source_message|"
+    r"source_obligations|obligation_coverage|missing_obligations|"
     r"recipient|objective|channel|max_chars|not_attested|architect_brief)\b",
     re.IGNORECASE,
 )
@@ -176,6 +177,12 @@ def _brief_lines(brief: dict[str, Any]) -> str:
         f"Objective priority: {priority}",
         f"Deliverable: {', '.join(parts)}",
     ]
+    recipient_role = brief.get("recipient_role")
+    if isinstance(recipient_role, str) and recipient_role.strip():
+        lines.append(
+            "Recipient role (silent routing context — do not restate to recipient): "
+            + _fence(recipient_role.strip())
+        )
     return "\n".join(lines)
 
 
@@ -256,6 +263,7 @@ class WritingAssembleHandler(BaseHandler):
                 "brief": brief_block,
                 "verbatim_notes": "",
                 "source_message": "",
+                "source_obligations": "",
                 "architect_brief": "",
             },
         )
@@ -347,6 +355,7 @@ class WritingAssembleHandler(BaseHandler):
                 "architect_brief": "",
                 "verbatim_notes": blocks["verbatim_notes_block"],
                 "source_message": blocks["source_message_block"],
+                "source_obligations": "",
             },
         )
         return _step(
@@ -442,6 +451,7 @@ class WritingAssembleHandler(BaseHandler):
                 "architect_brief": "",
                 "verbatim_notes": blocks["verbatim_notes_block"],
                 "source_message": blocks["source_message_block"],
+                "source_obligations": "",
             },
         )
         return _step(
@@ -1015,6 +1025,12 @@ def _intake_blocks(
         f"Not attested: {not_attested or 'none'}",
         f"Check class: {check_class}",
     ]
+    recipient_role = intake.get("recipient_role")
+    if isinstance(recipient_role, str) and recipient_role.strip():
+        brief_lines.append(
+            "Recipient role (silent routing context — do not restate to recipient): "
+            + _fence(recipient_role.strip())
+        )
     purpose_points = intake.get("purpose_points") or []
     purpose_text = str(
         intake.get("purpose") or intake.get("objective") or ""
@@ -1028,14 +1044,28 @@ def _intake_blocks(
             )
         )
     if check_class == "correspondence":
+        appeal_blob = " ".join(
+            [
+                purpose_text,
+                str(intake.get("objective") or ""),
+                " ".join(str(n) for n in intake.get("verbatim_notes") or []),
+            ]
+        )
+        needs_appeal_subject = bool(
+            re.search(r"\b(?:appeals?|apn|hearings?)\b", appeal_blob, re.I)
+        )
+        envelope_rule = (
+            "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."
+            if needs_appeal_subject
+            else "Email envelope: To: line, Subject: line, signer closing."
+        )
         brief_lines.append(
             "Register rule: verbatim_notes are facts to restate in this channel's register, "
             "not text to copy. Copy a note word for word only when it is marked verbatim_required. "
             'Prohibited: sworn openings ("I, <name>, am submitting", "I, <name>, declare", jurats) '
             'and impersonal "This correspondence serves to submit...". '
             "Required when standing_limits call for first person: plain "
-            '"I am submitting..." / "Attached are my...". '
-            "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."
+            f'"I am submitting..." / "Attached are my...". {envelope_rule}'
         )
         brief_lines.append(
             "Review rubric (correspondence): flag declaration phrasing or jurat language as type "
@@ -1054,11 +1084,23 @@ def _intake_blocks(
             'tag as type "omission"; flag a sentence that serves no purpose point as type '
             '"not_purpose_relevant".'
         )
+    has_source = bool(str(intake.get("source_message") or "").strip())
     if purpose_points or purpose_text:
-        brief_lines.append(
-            "Purpose rule: every body sentence must serve a listed purpose point. "
-            "Do not add requests or courtesies no purpose point asks for, such as a receipt-confirmation request."
+        purpose_rule = (
+            "Purpose rule: every body sentence must serve a listed purpose point."
         )
+        if has_source:
+            purpose_rule += (
+                " When <source_obligations> lists actionable obligations, address each "
+                "in the reply; for act_outside_message items, state the action taken or "
+                "to be taken outside this message."
+            )
+        else:
+            purpose_rule += (
+                " Do not add requests or courtesies no purpose point asks for, such as a "
+                "receipt-confirmation request."
+            )
+        brief_lines.append(purpose_rule)
     brief_lines.append(f"Signer: {_intake_brief_field(intake.get('signer'))}")
     brief_lines.append(f"Voice anchor: {_intake_brief_field(intake.get('voice_anchor'))}")
     brief_lines.append(

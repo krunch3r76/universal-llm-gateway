@@ -118,6 +118,27 @@ def test_missing_skills_held_422(bus_db: TestClient) -> None:
     assert "lane-act-gates" not in detail["fix_hint"]
 
 
+def test_maestro_standing_bind_fable_medium_201(bus_db: TestClient) -> None:
+    parent = create_thread(thread_id=None, slug="sr-fable-medium")
+    thread_id = parent["id"]
+    _tag_lane_auto(thread_id)
+    model = "cdp/fable-5.1"
+    effort = "medium"
+    _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
+    _post_admit_report(bus_db, thread_id, model=model, effort=effort)
+    resp = bus_db.post(
+        "/threads/send",
+        json={
+            "thread": thread_id,
+            "from": "web-anthropic",
+            "to": "cursor-auto",
+            "subject": "registration",
+            "body": _registration_body(model=model, effort=effort),
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
 def test_full_valid_registration_201(bus_db: TestClient) -> None:
     parent = create_thread(thread_id=None, slug="sr-valid")
     thread_id = parent["id"]
@@ -171,7 +192,9 @@ def test_open_children_none_with_active_child_422(bus_db: TestClient) -> None:
             "from": "web-anthropic",
             "to": "cursor-auto",
             "subject": "registration",
-            "body": _registration_body(model=model, effort=effort, open_children="none"),
+            "body": _registration_body(
+                model=model, effort=effort, open_children="none"
+            ),
         },
     )
     assert resp.status_code == 422
@@ -204,7 +227,8 @@ def test_seat_registration_refuses_unparsed_fetch_decision(bus_db: TestClient) -
     _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
     _post_admit_report(bus_db, thread_id, model=model, effort=effort)
     body = _registration_body(model=model, effort=effort).replace(
-        "- fetch-decision: runbook:maestro-loop in_context\n", "fetch-decision: runbook:maestro-loop\n"
+        "- fetch-decision: runbook:maestro-loop in_context\n",
+        "fetch-decision: runbook:maestro-loop\n",
     )
     resp = bus_db.post(
         "/threads/send",

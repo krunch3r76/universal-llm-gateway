@@ -155,7 +155,7 @@ def maybe_bind_now_row(
             fresh["policy"] = policy
 
         try:
-            fresh = update_state(state_path, mutate)
+            fresh = update_state(state_path, mutate, journal_actor="ticker")
         except _OperatorRaced:
             return {"action": "operator_raced"}
 

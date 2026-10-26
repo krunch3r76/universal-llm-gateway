@@ -17,7 +17,7 @@ from .db.turns import get_turns
 from .turns_models import TurnCreated
 
 _SDK_CLOSEOUT_SUBJECT_RE = re.compile(
-    r"^cursor-sdk CLOSEOUT (?P<dispatch_id>\S+)",
+    r"^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT (?P<dispatch_id>\S+)",
     re.IGNORECASE,
 )
 _LANE_CLOSEOUT_SUBJECT_RE = re.compile(
@@ -97,6 +97,7 @@ def find_duplicate_notice_closeout(
 
 
 def turn_created_from_row(row: dict[str, Any]) -> TurnCreated:
+    """Build the replay TurnCreated stamp from a stored closeout row."""
     created_raw = str(row.get("created_at") or "")
     created_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
     return TurnCreated(
@@ -108,6 +109,7 @@ def turn_created_from_row(row: dict[str, Any]) -> TurnCreated:
 
 
 def json_turn_replay(row: dict[str, Any]) -> JSONResponse:
+    """Return the idempotent 200 body for a duplicate closeout notice."""
     content = turn_created_from_row(row).model_dump(mode="json")
     content["idempotent_replay"] = True
     return JSONResponse(status_code=200, content=content)

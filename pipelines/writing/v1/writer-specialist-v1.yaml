@@ -30,26 +30,40 @@ options:
     type: array
     description: refs resolved into the pin ledger
     default: []
+  full_drafter_fanout:
+    type: boolean
+    description: when true, run all six drafters including local Hermes as a primary drafter; default correspondence runs drafter_anthropic for structure then prose_rhythm_pass (local Hermes reviser) for delivery polish
+    default: false
 
 steps:
   - name: assemble
     type: writing_assemble_v1
 
+  - name: source_obligations
+    type: writing_source_obligations_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+
   - name: prompt_architect
     type: writing_prompt_architect_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: source_obligations
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
   - name: drafter_openai
     type: generate
     model_ref: drafter_openai
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -57,13 +71,14 @@ steps:
     type: generate
     model_ref: drafter_google
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -71,13 +86,14 @@ steps:
     type: generate
     model_ref: drafter_xai
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -85,13 +101,14 @@ steps:
     type: generate
     model_ref: drafter_local_hermes
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -99,13 +116,14 @@ steps:
     type: generate
     model_ref: drafter_local_ernie
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -120,6 +138,7 @@ steps:
       architect_brief: prompt_architect.json.architect_brief_block
       verbatim_notes: assemble.json.verbatim_notes_block
       source_message: assemble.json.source_message_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.4
 
@@ -162,6 +181,19 @@ steps:
         fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None"
 
+  - name: obligation_coverage
+    type: writing_obligation_coverage_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: source_obligations
+        fields: [json]
+      - step: draft
+        fields: [json]
+      - step: independence
+        fields: [json]
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None"
+
   - name: provenance_check
     type: writing_provenance_check_v1
     reads_from:
@@ -181,11 +213,17 @@ steps:
     reads_from:
       - step: provenance_check
         fields: [json]
+      - step: obligation_coverage
+        fields: [json]
+      - step: source_obligations
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:
       draft: draft.json.draft
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
+      missing_obligations: obligation_coverage.json.missing_obligations_block
+      source_obligations: source_obligations.json.source_obligations_block
     generation_parameters:
       temperature: 0.3
 
@@ -212,7 +250,7 @@ steps:
       - step: assemble
         fields: [json]
       - step: prompt_architect
-        fields: [json]
+        fields: [json, model_id, prompt_tokens, completion_tokens]
       - step: drafter_openai
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: drafter_google
@@ -237,5 +275,9 @@ steps:
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: fact_ceiling_final
         fields: [json]
+      - step: source_obligations
+        fields: [json, model_id, prompt_tokens, completion_tokens]
+      - step: obligation_coverage
+        fields: [json, model_id, prompt_tokens, completion_tokens]
     handler_outputs:
       unsent: finalize.json.unsent

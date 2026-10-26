@@ -107,7 +107,8 @@ def cdp_display(display: str | None = None) -> str:
             return val
     cdp_val = os.environ.get("CDP_DISPLAY", "").strip()
     if cdp_val:
-        return cdp_val
+        key = _display_key(cdp_val)
+        return _INHERITED_DISPLAY_REMAP.get(key, key)
     inherited = os.environ.get("DISPLAY", "").strip()
     if inherited:
         key = _display_key(inherited)
@@ -115,48 +116,26 @@ def cdp_display(display: str | None = None) -> str:
     return _DEFAULT_DISPLAY
 
 
-# Jupiter runs a pair of Xvfb seats. Unset CDP_DISPLAYS falls over to the other.
-_JUPITER_DISPLAY_PAIR = (":2", ":3")
+def cdp_display_for_account(account_id: str | None) -> str:
+    """X display for CDP Chrome for *account_id* (default uses ``cdp_display()``)."""
+    from claude_bundles.cdp_registry.models import (
+        DEFAULT_ACCOUNT_ID,
+        account_display,
+        normalize_account_id,
+        validate_default_display_resolved,
+    )
+
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        resolved = cdp_display()
+        validate_default_display_resolved(resolved)
+        return resolved
+    return account_display(norm)
 
 
-def _jupiter_partner(primary: str) -> str | None:
-    if primary == _JUPITER_DISPLAY_PAIR[0]:
-        return _JUPITER_DISPLAY_PAIR[1]
-    if primary == _JUPITER_DISPLAY_PAIR[1]:
-        return _JUPITER_DISPLAY_PAIR[0]
-    return None
-
-
-def cdp_display_candidates() -> list[str]:
-    """Ordered mint candidates. First is today's ``cdp_display()``.
-
-    Explicit ``CDP_DISPLAYS`` (comma list) is authoritative: it is appended
-    after the primary, de-duplicated, and the Jupiter partner is not added.
-
-    When ``CDP_DISPLAYS`` is unset, a primary on the Jupiter pair yields both
-    seats — ``:2`` becomes ``[":2", ":3"]`` and ``:3`` becomes ``[":3", ":2"]``.
-    Any other primary stays ``[primary]``. Not sourced from ``standing_pins``.
-    """
-    primary = _display_key(cdp_display())
-    raw = os.environ.get("CDP_DISPLAYS", "").strip()
-    if not raw:
-        partner = _jupiter_partner(primary)
-        if partner is None:
-            return [primary]
-        return [primary, partner]
-    ordered = [primary]
-    seen = {primary}
-    for part in raw.split(","):
-        item = part.strip()
-        if not item:
-            continue
-        if not item.startswith(":"):
-            item = f":{item}"
-        key = _display_key(item)
-        if key not in seen:
-            seen.add(key)
-            ordered.append(key)
-    return ordered
+def cdp_display_candidates(account_id: str | None = None) -> list[str]:
+    """Single mint display for *account_id* (no cross-display fallover)."""
+    return [cdp_display_for_account(account_id)]
 
 
 # Admitted display for a 2-arg ``_launch_chrome`` call. Optional argument wins.
@@ -173,6 +152,42 @@ def launch_display(display: str | None) -> Iterator[None]:
         yield
     finally:
         _LAUNCH_DISPLAY.reset(token)
+
+
+_LAUNCH_ACCOUNT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cdp_launch_account", default=None
+)
+
+
+@contextlib.contextmanager
+def launch_account(account_id: str | None) -> Iterator[None]:
+    """Bind the account ``_launch_chrome`` uses when its argument is omitted."""
+    token = _LAUNCH_ACCOUNT.set(account_id)
+    try:
+        yield
+    finally:
+        _LAUNCH_ACCOUNT.reset(token)
+
+
+def resolve_effective_account_id(
+    account_id: str | None = None, profile: Path | None = None
+) -> str:
+    """Effective account for profile seed and cookie transfer."""
+    from claude_bundles.cdp_registry.models import normalize_account_id
+
+    explicit = str(account_id or "").strip()
+    if explicit:
+        return normalize_account_id(explicit)
+    ctx = _LAUNCH_ACCOUNT.get()
+    if ctx is not None and str(ctx).strip():
+        return normalize_account_id(str(ctx))
+    if profile is not None:
+        prefix = f"{PRIMARY_PROFILE.name}-account-"
+        if profile.name.startswith(prefix):
+            return normalize_account_id(
+                profile.name.removeprefix(f"{PRIMARY_PROFILE.name}-")
+            )
+    return "default"
 
 
 def chrome_display_env(display: str | None = None) -> dict[str, str]:
@@ -451,20 +466,13 @@ def _allocate_port_for_profile(
         return existing, True
     if not launch:
         raise LaneError(f"no live Chrome for profile '{suffix}' and launch=False")
-    from claude_bundles.cdp_registry.dormant import reserved_chromes_by_display
-    from claude_bundles.cdp_registry_store import load_active
-    from claude_bundles.x_display_capacity import admit_display
+    from claude_bundles.cdp_registry.models import account_id_from_profile_suffix
 
-    active: dict[str, object] = {}
-    with contextlib.suppress(Exception):
-        loaded = load_active()
-        if isinstance(loaded, dict):
-            active = loaded
-    # Fallover is before port selection. The 2-arg call keeps launch doubles
-    # working; ``launch_display`` threads the admitted display into Chrome.
-    display = admit_display(
-        cdp_display_candidates(), reserved_chromes_by_display(active)
-    )
+    acct = _LAUNCH_ACCOUNT.get()
+    if acct is None or not str(acct).strip():
+        derived = account_id_from_profile_suffix(suffix)
+        acct = derived if derived is not None else "default"
+    display = cdp_display_for_account(acct)
     # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
     # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
     exclude = set(held_ports())
@@ -500,7 +508,11 @@ def held_suffixes() -> set[str]:
 # --------------------------------------------------------------------------- #
 # Chrome lifecycle
 # --------------------------------------------------------------------------- #
-def _seed_profile(profile: Path) -> None:
+def _seed_profile(profile: Path, *, account_id: str | None = None) -> None:
+    eff = resolve_effective_account_id(account_id, profile)
+    if eff != "default":
+        profile.mkdir(parents=True, exist_ok=True)
+        return
     if (profile / "Default").exists():
         return
     profile.mkdir(parents=True, exist_ok=True)
@@ -516,7 +528,13 @@ def _kill_lane_chrome(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
 
 
-def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
+def _launch_chrome(
+    port: int,
+    profile: Path,
+    display: str | None = None,
+    *,
+    account_id: str | None = None,
+) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens.
 
     *display* is the admitted candidate. Omitted, the ``launch_display``
@@ -533,11 +551,26 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
         require_cdp_display_reachable,
     )
 
+    eff_acct = resolve_effective_account_id(account_id, profile)
     chosen = display if display is not None else _LAUNCH_DISPLAY.get()
-    display_val = cdp_display(chosen)
+    display_val = (
+        cdp_display(chosen)
+        if chosen is not None
+        else cdp_display_for_account(eff_acct)
+    )
+    from claude_bundles.cdp_registry.models import (
+        RegistryError,
+        _load_accounts_config,
+        _normalize_display_binding,
+    )
+
+    never_key = _normalize_display_binding(display_val)
+    if never_key in _load_accounts_config().never:
+        raise RegistryError(f"display {never_key} is forbidden for default CDP fleet")
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
-    _seed_profile(profile)
+    eff = resolve_effective_account_id(account_id, profile)
+    _seed_profile(profile, account_id=eff)
     log = chrome_cdp_log_path(port)
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
     with open(log, "ab") as logf:
@@ -554,7 +587,7 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
     deadline = time.monotonic() + _LAUNCH_WAIT_S
     while time.monotonic() < deadline:
         if is_listening(port):
-            _seed_lane_session(port, proc.pid)
+            _seed_lane_session(port, proc.pid, account_id=eff)
             return proc.pid
         time.sleep(_POLL_MS / 1000)
     _kill_lane_chrome(proc.pid)
@@ -567,7 +600,7 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
     raise LaneError(f"Chrome on :{port} did not reach CDP in {_LAUNCH_WAIT_S}s")
 
 
-def _seed_lane_session(port: int, pid: int) -> None:
+def _seed_lane_session(port: int, pid: int, *, account_id: str | None = None) -> None:
     """Install the primary's live claude.ai cookies; tear the lane down on failure.
 
     The rsync in ``_seed_profile`` cannot carry the session — a running Chrome
@@ -576,8 +609,19 @@ def _seed_lane_session(port: int, pid: int) -> None:
     later inside ``ensure_cowork_auto`` having already leaked a Chrome and a
     profile directory.
     """
+    eff = resolve_effective_account_id(account_id)
+    if eff != "default":
+        seed_lane_cookies(port, account_id=eff)
+        from claude_bundles.cdp_cookie_seed import read_session_cookies
+
+        try:
+            read_session_cookies(port)
+        except CookieSeedError:
+            _kill_lane_chrome(pid)
+            raise
+        return
     try:
-        seed_lane_cookies(port)
+        seed_lane_cookies(port, account_id="default")
     except CookieSeedError:
         _kill_lane_chrome(pid)
         raise

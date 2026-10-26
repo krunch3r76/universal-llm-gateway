@@ -52,10 +52,126 @@ def _noop_launch(port: int, profile: Path) -> int:
     return 1
 
 
+def _write_accounts_yaml(tmp_path: Path, extra: dict[str, Any] | None = None) -> Path:
+    import yaml
+
+    from claude_bundles.cdp_registry.models import ACCOUNTS_CONFIG_PATH
+
+    raw = yaml.safe_load(ACCOUNTS_CONFIG_PATH.read_text(encoding="utf-8"))
+    if extra:
+        raw.update(extra)
+    path = tmp_path / "accounts.yaml"
+    path.write_text(yaml.dump(raw, default_flow_style=False), encoding="utf-8")
+    return path
+
+
+def test_validate_default_display_missing_accounts_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import (
+        AccountDisplayError,
+        validate_default_display_resolved,
+    )
+
+    missing = tmp_path / "no-such-accounts.yaml"
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(missing))
+    with pytest.raises(AccountDisplayError, match="missing accounts config"):
+        validate_default_display_resolved(":2")
+
+
+def test_validate_default_display_malformed_accounts_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import (
+        AccountDisplayError,
+        validate_default_display_resolved,
+    )
+
+    bad = tmp_path / "bad-accounts.yaml"
+    bad.write_text("never:\n  - :1\n displays: not-a-map\n", encoding="utf-8")
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(bad))
+    with pytest.raises(AccountDisplayError, match="malformed accounts config"):
+        validate_default_display_resolved(":2")
+
+
+@pytest.mark.parametrize("forbidden_display", [":1", ":3", ":8"])
+def test_cdp_account_displays_rejects_forbidden_display_map(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    forbidden_display: str,
+) -> None:
+    from claude_bundles.cdp_registry.models import AccountDisplayError, account_display
+
+    path = _write_accounts_yaml(
+        tmp_path,
+        {
+            "cdp_account_displays": {
+                "account-2": forbidden_display,
+            }
+        },
+    )
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(path))
+    with pytest.raises(AccountDisplayError, match="may not map"):
+        account_display("account-2")
+
+
+def test_cdp_account_displays_rejects_duplicate_display_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import AccountDisplayError, account_display
+
+    path = _write_accounts_yaml(
+        tmp_path,
+        {
+            "cdp_account_displays": {
+                "account-2": ":4",
+                "account-3": ":4",
+            }
+        },
+    )
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(path))
+    with pytest.raises(AccountDisplayError, match="duplicate display claim"):
+        account_display("account-2")
+
+
+def test_accounts_yaml_structure_committed_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import ACCOUNTS_CONFIG_PATH, display_rows
+
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(ACCOUNTS_CONFIG_PATH))
+    rows = display_rows()
+    for disp, meta in rows.items():
+        assert meta.get("owner")
+        assert meta.get("kind") in {
+            "cdp_default",
+            "messages",
+            "cdp_account",
+            "cursor",
+        }
+    assert rows[":2"]["kind"] == "cdp_default"
+    assert rows[":3"]["kind"] == "messages"
+    assert rows[":4"]["kind"] == "cdp_account"
+    assert rows[":8"]["kind"] == "cursor"
+
+    import yaml
+
+    raw = yaml.safe_load(ACCOUNTS_CONFIG_PATH.read_text(encoding="utf-8"))
+    assert raw.get("never") == [":1"]
+    extra = tmp_path / "bad-map.yaml"
+    bad = dict(raw)
+    bad["cdp_account_displays"] = {"account-2": ":2"}
+    extra.write_text(yaml.dump(bad), encoding="utf-8")
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(extra))
+    from claude_bundles.cdp_registry.models import AccountDisplayError, account_display
+
+    with pytest.raises(AccountDisplayError):
+        account_display("account-2")
+
+
 def test_register_lane_records_display(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("CDP_DISPLAYS", raising=False)
     monkeypatch.setenv("CDP_DISPLAY", ":7")
     r = reg.register_lane(
         holder="display-test",
@@ -477,7 +593,7 @@ def test_launch_failure_rolls_back_allocating(isolated_registry: Path) -> None:
     assert again.port == 9223
 
 
-def test_register_refuses_x_exhaustion_before_selecting_port(
+def test_register_lane_mints_at_sixty_three_of_sixty_four_x_clients(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -486,21 +602,18 @@ def test_register_refuses_x_exhaustion_before_selecting_port(
     )
     launched: list[int] = []
 
-    def boom(port: int, profile: Path) -> int:
+    def capture_launch(port: int, profile: Path) -> int:
         launched.append(port)
-        raise AssertionError("must not launch")
+        profile.mkdir(parents=True, exist_ok=True)
+        return 1
 
-    from claude_bundles.x_display_capacity import XDisplayCapacityError
-
-    with pytest.raises(XDisplayCapacityError, match="X display"):
-        reg.register_lane(
-            holder="a",
-            launch_chrome=boom,
-            is_listening=lambda _p: False,
-        )
-    assert launched == []
-    assert reg._load_active() == {}
-    assert reg.list_active() == []
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=capture_launch,
+        is_listening=lambda _p: False,
+    )
+    assert launched
+    assert r.display == ":2"
 
 
 def test_reattach_emits_reattached(
@@ -933,6 +1046,67 @@ def test_backfill_orphaned_retry_chat_urls_verdict(
     assert wet["counts"]["scrape_bound"] == 1
     assert wet["counts"]["irreversible_no_url"] == 1
     assert reg.chat_url_for_registration("or-scrape") == scrape_url
+
+
+def test_reserve_allocating_row_cross_account_does_not_join(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles.cdp_registry.lifecycle import (
+        _join_target,
+        reserve_allocating_row,
+    )
+
+    parent = "20695-xacct"
+    seeded_id = "alloc-account-2"
+    reg._store.write_active(
+        {
+            seeded_id: {
+                "registration_id": seeded_id,
+                "port": 9223,
+                "profile_suffix": "account-2",
+                "profile": str(isolated_registry / "profile-a2"),
+                "holder": "operator-seat",
+                "purpose": "operator-proxy",
+                "mission_kind": "root",
+                "parent_thread": parent,
+                "status": "allocating",
+                "account_id": "account-2",
+                "chrome_pid": None,
+                "holder_pid": None,
+                "started_at": 1.0,
+            }
+        }
+    )
+    reg._claim_driver_lock(seeded_id)
+
+    active = reg._load_active()
+    assert _join_target(active, parent, account_id="default") is None
+    assert _join_target(active, parent, account_id="account-2") is not None
+
+    row, minted = reserve_allocating_row(
+        holder="operator-seat",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread=parent,
+        listen=lambda _port: False,
+        launch=False,
+        account_id="default",
+    )
+    assert minted is True
+    assert row["registration_id"] != seeded_id
+    assert row.get("account_id") == "default"
+
+    joined_row, joined = reserve_allocating_row(
+        holder="operator-seat",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread=parent,
+        listen=lambda _port: False,
+        launch=False,
+        account_id="account-2",
+    )
+    assert joined is False
+    assert joined_row["registration_id"] == seeded_id
 
 
 def test_allocating_row_strips_seat_fields_and_rollback_drops_it(

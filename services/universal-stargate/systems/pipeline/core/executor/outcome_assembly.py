@@ -16,6 +16,7 @@ from typing import Any
 
 from ..execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
 from ..handlers import StepOutput
+from ..schemas import StepConfig
 from .output_resolution import (
     content_when_output_skipped,
     extract_backtranslation_data,
@@ -23,6 +24,51 @@ from .output_resolution import (
     get_final_result,
 )
 from .prepared import PreparedPipelineExecution, execution_logger
+
+
+def _extract_archive_uri_and_tool_errors(
+    pipeline_context: Any,
+    steps: list[StepConfig],
+    execution_order: list[str],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Read ``artifact_uri`` and failed dispatch tool calls from DAG step outputs."""
+    step_type_by_id = {step.name: step.type for step in steps}
+    archive_uri: str | None = None
+    tool_errors: list[dict[str, Any]] = []
+
+    for step_id in execution_order:
+        out = pipeline_context.outputs.get(step_id)
+        if not isinstance(out, StepOutput) or not isinstance(out.json, dict):
+            continue
+        step_type = step_type_by_id.get(step_id, "")
+        if step_type == "archive_assistant_turn_v1" or step_id == "archive_assistant":
+            uri = out.json.get("artifact_uri")
+            if isinstance(uri, str) and uri.strip():
+                archive_uri = uri.strip()
+        if step_type == "frontier_dispatch_v1" or step_id == "respond":
+            for tc in out.json.get("tool_calls") or []:
+                if isinstance(tc, dict) and not tc.get("ok", True):
+                    tool_errors.append(tc)
+    return archive_uri, tool_errors
+
+
+def _aggregate_optional_step_int(
+    pipeline_context: Any,
+    field: str,
+) -> int | None:
+    """Sum ``field`` across StepOutputs; None when every step omitted the field."""
+    from ..execution.map_reduce.collection import MapOutputCollection
+
+    values: list[int | None] = []
+    for out in pipeline_context.outputs.values():
+        if isinstance(out, MapOutputCollection):
+            for inner in out.all_outputs():
+                values.append(getattr(inner, field, None))
+        elif isinstance(out, StepOutput):
+            values.append(getattr(out, field, None))
+    if not values or all(v is None for v in values):
+        return None
+    return sum(v or 0 for v in values)
 
 
 def assemble_outcome(
@@ -83,6 +129,11 @@ def assemble_outcome(
             completion_tokens += out.completion_tokens
             reasoning_tokens += getattr(out, "reasoning_tokens", 0)
 
+    cached_tokens = _aggregate_optional_step_int(pipeline_context, "cached_tokens")
+    cache_write_tokens = _aggregate_optional_step_int(
+        pipeline_context, "cache_write_tokens"
+    )
+
     # Reasoning is a final-step concern, not aggregatable. Walk execution
     # order in reverse and take the first StepOutput with a non-None
     # reasoning value — mirrors how ``final_result`` selects terminal text.
@@ -105,6 +156,12 @@ def assemble_outcome(
         list(dag_executor.execution_order),
     )
 
+    archive_uri, tool_errors = _extract_archive_uri_and_tool_errors(
+        pipeline_context,
+        prepared.steps,
+        list(dag_executor.execution_order),
+    )
+
     return PipelineExecutionOutcome(
         execution_id=pipeline_context.execution_id,
         content=final_result,
@@ -116,6 +173,8 @@ def assemble_outcome(
             # Subset of completion_tokens; surfaced separately so consumers
             # can distinguish reasoning spend from visible output.
             "reasoning_tokens": reasoning_tokens,
+            "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
         },
         duration_s=duration,
         step_outputs=step_outputs,
@@ -125,4 +184,6 @@ def assemble_outcome(
         model_entity_id=model_entity_id,
         hints=hints,
         stop=dag_executor.stop,
+        archive_uri=archive_uri,
+        tool_errors=tool_errors or None,
     )

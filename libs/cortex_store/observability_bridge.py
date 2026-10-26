@@ -75,6 +75,24 @@ def query_event_service(operation: str, params: dict[str, Any]) -> dict[str, Any
     return {}
 
 
+def query_agent_bus_houses() -> list[dict[str, Any]]:
+    token = _agent_bus_token()
+    if not token:
+        logger.warning("Agent-bus house query skipped: AGENT_BUS_TOKEN not configured")
+        return []
+    try:
+        with make_sync_client(_AGENT_BUS_URL, timeout=5.0) as client:
+            resp = client.get(
+                "/house-actions",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 200:
+                return resp.json().get("houses", [])
+    except Exception:
+        logger.warning("Agent-bus unreachable for house query", exc_info=True)
+    return []
+
+
 def query_agent_bus_threads() -> list[dict[str, Any]]:
     token = _agent_bus_token()
     if not token:

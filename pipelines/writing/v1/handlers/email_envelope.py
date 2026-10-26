@@ -22,6 +22,7 @@ _EXHIBIT_NOTE_RE = re.compile(r"^\s*(Exhibit\s+\d+)\s*:\s*(.+)$", re.I)
 _RESTATE_STOPWORDS = frozenset(
     {
         "a",
+        "am",
         "an",
         "and",
         "are",
@@ -46,6 +47,53 @@ _RESTATE_STOPWORDS = frozenset(
         "with",
     }
 )
+_CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
+    (r"\bwon't\b", "will not"),
+    (r"\bcan't\b", "cannot"),
+    (r"\bdon't\b", "do not"),
+    (r"\bdoesn't\b", "does not"),
+    (r"\bdidn't\b", "did not"),
+    (r"\bisn't\b", "is not"),
+    (r"\baren't\b", "are not"),
+    (r"\bwasn't\b", "was not"),
+    (r"\bweren't\b", "were not"),
+    (r"\bhaven't\b", "have not"),
+    (r"\bhasn't\b", "has not"),
+    (r"\bhadn't\b", "had not"),
+    (r"\bwouldn't\b", "would not"),
+    (r"\bcouldn't\b", "could not"),
+    (r"\bshouldn't\b", "should not"),
+    (r"\bi'm\b", "i am"),
+    (r"\bi'll\b", "i will"),
+    (r"\bi've\b", "i have"),
+    (r"\bi'd\b", "i would"),
+)
+_DECLINE_ABILITY_NOT_ABLE = re.compile(
+    r"\b(?:am|is|are)\s+not\s+able\s+to\b",
+    re.I,
+)
+_UNABLE_TO = re.compile(r"\bunable\s+to\b", re.I)
+
+
+def normalize_contractions(text: str) -> str:
+    """Expand apostrophe contractions so token overlap ignores style variants."""
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    for pattern, replacement in _CONTRACTION_EXPANSIONS:
+        text = re.sub(pattern, replacement, text, flags=re.I)
+    return re.sub(r"\bcannot\b", "can not", text, flags=re.I)
+
+
+def normalize_decline_ability_phrases(text: str) -> str:
+    """Map inability phrasing to the same tokens as ``cannot`` / ``can't``."""
+    text = _DECLINE_ABILITY_NOT_ABLE.sub("can not", text)
+    return _UNABLE_TO.sub("can not", text)
+
+
+def normalize_text_for_token_match(text: str) -> str:
+    """Normalize dashes, contractions, and decline phrasing before token extraction."""
+    text = normalize_email_dashes(text)
+    text = normalize_contractions(text)
+    return normalize_decline_ability_phrases(text)
 
 
 def normalize_email_dashes(text: str) -> str:
@@ -209,7 +257,7 @@ def polish_email_draft(
 
 def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
     """True when draft contains pin text or an email opening rewrite of it."""
-    norm_draft = normalize_email_dashes(draft_text)
+    norm_draft = normalize_text_for_token_match(draft_text)
     draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
     norm_pin = normalize_email_dashes(pin_excerpt)
     for variant in (
@@ -217,12 +265,154 @@ def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
         rewrite_email_opening(norm_pin),
         normalize_email_dashes(rewrite_email_opening(norm_pin)),
     ):
-        anchors = set(_TOKEN.findall(variant.lower())) - _RESTATE_STOPWORDS
+        anchors = (
+            set(_TOKEN.findall(normalize_text_for_token_match(variant).lower()))
+            - _RESTATE_STOPWORDS
+        )
         if anchors and anchors <= draft_tokens:
             return True
         if variant.strip().lower() in norm_draft.lower():
             return True
     return False
+
+
+_CORRESPONDENCE_CHANNELS = frozenset({"email", "sms", "portal", "letter"})
+_COLD_HR_DECLINE = re.compile(
+    r"\bdeclin(?:e|ing)\b|\bnot\s+available\b|\bunfortunately\b",
+    re.I,
+)
+_OVER_ANSWER_FUTURE = re.compile(
+    r"\bother\s+shifts\s+we\s+can\s+schedule\b"
+    r"|\bstill\s+happy\s+to\s+stay\s+on\b"
+    r"|\bkeep\s+me\s+in\s+mind\s+for\s+future\b"
+    r"|\bfuture\s+shifts\b",
+    re.I,
+)
+_AFFIRMATIVE_FUTURE_INVITE = re.compile(
+    r"\b(?:offer|mention|include|state|say|ask\s+about|invite|open\s+to|"
+    r"available\s+for|happy\s+to\s+stay\s+on|keep\s+me\s+in\s+mind\s+for)\b"
+    r"[^.!?\n]{0,60}\b(?:other\s+shifts|future\s+(?:shifts|availability|dates)|"
+    r"stay(?:ing)?\s+on|keep\s+me\s+in\s+mind)\b",
+    re.I,
+)
+_FUTURE_INVITE_NEGATION = re.compile(
+    r"\b(?:don't|do\s+not|not|no|never|without|avoid|forbid|skip|omit)\b",
+    re.I,
+)
+
+
+def _normalize_curly_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'")
+
+
+def _attested_allows_future_offers(objective: str, verbatim_notes: str) -> bool:
+    """True when objective/notes affirmatively invite future-availability language."""
+    blob = _normalize_curly_apostrophes(f"{objective}\n{verbatim_notes}")
+    for match in _AFFIRMATIVE_FUTURE_INVITE.finditer(blob):
+        prefix_start = max(0, match.start() - 30)
+        window = blob[prefix_start : match.end()]
+        if _FUTURE_INVITE_NEGATION.search(window):
+            continue
+        return True
+    return False
+
+
+_AFFIRMATIVE_LIST_FORMAT = re.compile(
+    r"\b(?:numbered\s+list|bullet(?:ed)?\s+list|bullet\s+points|"
+    r"in\s+outline\s+format|as\s+a\s+(?:numbered\s+)?list|"
+    r"use\s+bullet(?:s|\s+points))\b",
+    re.I,
+)
+_LIST_FORMAT_NEGATION = re.compile(
+    r"\b(?:don't|do\s+not|not|no|never|without|avoid)\b",
+    re.I,
+)
+_NUMBERED_OR_BULLET_LINE = re.compile(r"(?m)^\s*(?:\d+\.\s+|[-*•]\s+)")
+_EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\s*:", re.I)
+_THROAT_CLEARING = re.compile(
+    r"\bplease\s+note\s+the\s+following\b|\bi\s+am\s+responding\s+to\s+your\s+request\b",
+    re.I,
+)
+def _list_format_allowed(objective: str, verbatim_notes: str) -> bool:
+    """True when objective/notes affirmatively request a list or outline format."""
+    blob = _normalize_curly_apostrophes(f"{objective}\n{verbatim_notes}")
+    for match in _AFFIRMATIVE_LIST_FORMAT.finditer(blob):
+        prefix_start = max(0, match.start() - 30)
+        window = blob[prefix_start : match.start()]
+        if _LIST_FORMAT_NEGATION.search(window):
+            continue
+        return True
+    return False
+
+
+def _sms_formal_signoff(text: str, signer: str) -> bool:
+    """True when SMS body ends with a formal thank-you line plus the signer name."""
+    signer = signer.strip()
+    if not signer:
+        return False
+    tokens = signer.split()
+    first = tokens[0] if tokens else signer
+    if first != signer:
+        name_part = f"(?:{re.escape(signer)}|{re.escape(first)})"
+    else:
+        name_part = re.escape(signer)
+    return bool(
+        re.search(
+            rf"(?:thank\s+you|thanks|sincerely|regards|best)[,!]?\s+"
+            rf"{name_part}\s*\.?\s*$",
+            text.strip(),
+            re.I,
+        )
+    )
+
+
+def _correspondence_has_list_body(text: str) -> bool:
+    for line in text.splitlines():
+        if _EXHIBIT_LINE.match(line):
+            continue
+        if _NUMBERED_OR_BULLET_LINE.match(line):
+            return True
+    return False
+
+
+def correspondence_register_penalty(
+    text: str,
+    *,
+    channel: str,
+    objective: str = "",
+    standing_limits: str = "",
+    verbatim_notes: str = "",
+    signer: str = "",
+    signer_verbatim_required: bool = False,
+) -> int:
+    """Penalize cold decline register and unprompted over-answers on correspondence."""
+    del standing_limits  # reserved for envelope-specific rules on email
+    if channel not in _CORRESPONDENCE_CHANNELS:
+        return 0
+    penalty = 0
+    register_text = _normalize_curly_apostrophes(text)
+    if _COLD_HR_DECLINE.search(register_text):
+        penalty += 3
+    if channel != "email" and ("\u2014" in text or "\u2013" in text):
+        penalty += 3
+    if _OVER_ANSWER_FUTURE.search(text) and not _attested_allows_future_offers(
+        objective, verbatim_notes
+    ):
+        penalty += 3
+    if channel in {"email", "sms"}:
+        if (
+            channel == "sms"
+            and signer.strip()
+            and not signer_verbatim_required
+            and _sms_formal_signoff(text, signer)
+        ):
+            penalty += 3
+        if not _list_format_allowed(objective, verbatim_notes):
+            if _correspondence_has_list_body(text):
+                penalty += 3
+        if _THROAT_CLEARING.search(register_text):
+            penalty += 3
+    return penalty
 
 
 def email_draft_penalty(
@@ -233,6 +423,7 @@ def email_draft_penalty(
     standing_limits: str,
     recipient: str = "",
     objective: str = "",
+    verbatim_notes: str = "",
 ) -> int:
     """Score penalty for email envelope/register defects (3 points each)."""
     if channel != "email":
@@ -259,4 +450,12 @@ def email_draft_penalty(
             r"\b(?:i am submitting|attached are my|i am attaching)\b", text, re.I
         ):
             penalty += 3
+    penalty += correspondence_register_penalty(
+        text,
+        channel=channel,
+        objective=objective,
+        standing_limits=standing_limits,
+        verbatim_notes=verbatim_notes,
+        signer=signer,
+    )
     return penalty

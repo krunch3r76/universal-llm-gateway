@@ -150,6 +150,17 @@ def maybe_steer_friction_gate(
     sent = dict(sent)
     sent[friction_id] = _utcnow()
     state["gate_steers_sent"] = sent
+    if 200 <= int(status) < 400:
+        root_id = str((digest.get("root") or {}).get("id") or "")
+        if root_id:
+            from bus_watch.house_journal import append_house_action
+
+            append_house_action(
+                root_id,
+                "gate_swap",
+                "ticker",
+                f"friction gate steer {friction_id}",
+            )
     return {
         "steered": True,
         "friction_id": friction_id,
@@ -507,6 +518,15 @@ def fire_spawn(
         )
         paged_nights.add(night_id)
         state["spawn_paged_nights"] = sorted(paged_nights)
+    if verdict.get("leftover") != LEFTOVER_PLAY:
+        from bus_watch.house_journal import append_house_action
+
+        append_house_action(
+            root_id,
+            "spawn_hop",
+            "ticker",
+            str((body or {}).get("work_key") or execution_id or "spawn"),
+        )
     return result
 
 

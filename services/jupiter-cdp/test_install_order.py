@@ -254,4 +254,4 @@ def test_xvfb_unit_maxclients_parses_above_code_default(tmp_path: Path) -> None:
     )
     parsed = _maxclients_in_cmdlines([argv], ":3")
     assert isinstance(parsed, int)
-    assert parsed > X_MAX_CLIENTS_DEFAULT
+    assert parsed == 512

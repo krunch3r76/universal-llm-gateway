@@ -43,7 +43,12 @@ def resolve_closeout_wire_contract(
 
 
 def build_sdk_closeout_subject(req: CursorDispatchRequest, *, contract: str) -> str:
-    """Neutral CLOSEOUT label plus request-derived leg provenance only."""
+    """CLOSEOUT-prefixed bus subject plus request-derived leg provenance only.
+
+    The ``CLOSEOUT|`` head is the wake grammar token. The remainder keeps the
+    historical ``cursor-sdk CLOSEOUT <dispatch_id>`` label so older matchers
+    that scan for that phrase still see it.
+    """
     wire_contract = resolve_closeout_wire_contract(req, contract_fallback=contract)
     handoff = (req.handoff_contract or "").strip().lower()
     parts = [
@@ -67,7 +72,7 @@ def build_sdk_closeout_subject(req: CursorDispatchRequest, *, contract: str) -> 
         parts.append(f"caller={req.caller_agent}")
     if req.nest_under:
         parts.append(f"nest={req.nest_under}")
-    return " ".join(parts)
+    return "CLOSEOUT|" + " ".join(parts)
 
 
 __all__ = ["build_sdk_closeout_subject", "resolve_closeout_wire_contract"]

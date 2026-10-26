@@ -634,15 +634,18 @@ async def test_multi_account_tab_routing_and_target_isolation(
             "purpose": "operator-proxy",
             "seat_lane": "12286",
         },
-        "host-a": {**_host_row("host-a", port=9226, account_id="acct-a")},
-        "host-b": {**_host_row("host-b", port=9227, account_id="acct-b")},
+        "host-a": _host_row("host-a", port=9226),
+        "host-b": {
+            **_host_row("host-b", port=9227, account_id="account-2"),
+            "display": ":4",
+        },
         "tab-a1": _tab_row("tab-a1", "host-a", port=9226),
         "tab-a2": _tab_row("tab-a2", "host-a", port=9226, target_id="tgt-a2"),
     }
     reg._store.write_active(active)
-    host = eligible_host(active, [":2"], listen=lambda _p: True)
+    host = eligible_host(active, [":2"], listen=lambda _p: True, account_id="default")
     assert host is not None
-    assert host["registration_id"] == "host-b"
+    assert host["registration_id"] == "host-a"
 
     with patch("claude_bundles.cdp_lane.open_cdp_tab_target", return_value="tgt-new"):
         picked = open_tab_row_for_ask(
@@ -650,7 +653,6 @@ async def test_multi_account_tab_routing_and_target_isolation(
             purpose="ask",
             mission_kind="root",
             parent_thread="1",
-            account_id="acct-a",
         )
     assert picked.host_registration_id == "host-a"
 
@@ -666,6 +668,19 @@ async def test_multi_account_tab_routing_and_target_isolation(
     page = await select_page_by_target_id(ctx, "tgt-2")
     assert page is page2
     page2.bring_to_front.assert_not_called()
+
+    session = MagicMock(
+        send=AsyncMock(return_value={"targetInfo": {"targetId": "tgt-cdp"}}),
+        detach=AsyncMock(),
+    )
+    page_unknown = MagicMock(spec=[])
+    ctx_cdp = MagicMock()
+    ctx_cdp.pages = [page_unknown]
+    ctx_cdp.new_cdp_session = AsyncMock(return_value=session)
+
+    with patch("claude_bundles.cdp_registry.tab_rows_reopen.asyncio.sleep", new=AsyncMock()):
+        page_cdp = await select_page_by_target_id(ctx_cdp, "tgt-cdp")
+    assert page_cdp is page_unknown
 
     pw = MagicMock()
     pw.stop = AsyncMock()

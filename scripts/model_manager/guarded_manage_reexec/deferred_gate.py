@@ -141,8 +141,10 @@ def run_recycle_step1_per_service_gate(
             continue
         if name == "git_integration_worker":
             det = row.get("determination")
-            if row.get("probe_error") is not None or det == "undetermined" or (
-                det is not None and det != "idle"
+            if (
+                row.get("probe_error") is not None
+                or det == "undetermined"
+                or (det is not None and det != "idle")
             ):
                 return RefuseFinding(
                     reason="step1_giw_busy_status_undetermined",
@@ -259,7 +261,9 @@ def evaluate_r3_pass_verdict(
             ve = row.get("version_evidence")
             if isinstance(ve, dict):
                 mcp_auth = ve.get("authoritative_for_liveness")
-    probe_line = f"services[mcp].version_evidence.authoritative_for_liveness={mcp_auth!r}"
+    probe_line = (
+        f"services[mcp].version_evidence.authoritative_for_liveness={mcp_auth!r}"
+    )
     extra = {
         "probe_39439": probe_line,
         "line_39455": (
@@ -313,7 +317,8 @@ def evaluate_r3_pass_verdict(
 def post_maestro_reply(
     ctx: DeferredRecycleContext,
     *,
-    verdict: str,
+    report_status: str,
+    reason: str | None = None,
     manage_before: dict[str, Any],
     manage_after: dict[str, Any] | None,
     child_pids_before: dict[str, Any],
@@ -321,18 +326,30 @@ def post_maestro_reply(
     exit_code: int,
     reply_fn: AgentBusReplyFn | None = None,
     body_extra: dict[str, Any] | None = None,
+    r3_verdict: str | None = None,
 ) -> None:
-    body_lines = [
-        f"VERDICT: {verdict}",
-        f"manage_pid: {manage_before.get('pid')} -> {(manage_after or {}).get('pid')}",
-        f"code_version: {manage_before.get('code_version')} -> "
-        f"{(manage_after or {}).get('code_version')}",
-        f"child_pids_before: {child_pids_before}",
-        f"child_pids_after: {child_pids_after}",
-        f"exit_code: {exit_code}",
-        f"log_path: {LOG_PATH}",
-        f"result_path: {ctx.result_path}",
-    ]
+    body_lines = [f"status: {report_status}"]
+    if report_status == "executed":
+        body_lines.append(
+            f"manage_pid: {manage_before.get('pid')} -> {(manage_after or {}).get('pid')}"
+        )
+        body_lines.append(
+            f"code_version: {manage_before.get('code_version')} -> "
+            f"{(manage_after or {}).get('code_version')}"
+        )
+    elif reason:
+        body_lines.append(f"reason: {reason}")
+    if r3_verdict is not None and report_status == "executed":
+        body_lines.append(f"r3_verdict: {r3_verdict}")
+    body_lines.extend(
+        [
+            f"child_pids_before: {child_pids_before}",
+            f"child_pids_after: {child_pids_after}",
+            f"exit_code: {exit_code}",
+            f"log_path: {LOG_PATH}",
+            f"result_path: {ctx.result_path}",
+        ]
+    )
     if body_extra:
         if body_extra.get("probe_39439"):
             body_lines.append(body_extra["probe_39439"])
@@ -346,7 +363,7 @@ def post_maestro_reply(
         for line in body_extra.get("marker_compare") or []:
             body_lines.append(str(line))
     body = "\n".join(body_lines)
-    subject = f"DONE|decision:manage-recycle-39439-39455-r3b VERDICT: {verdict}"
+    subject = f"DONE|decision:manage-recycle-39439-39455-r3b status={report_status}"
     if reply_fn is not None:
         reply_fn(
             thread=ctx.report_thread,
@@ -402,7 +419,8 @@ def report_deferred_crash(
     _write_result_file(ctx.result_path, crashed)
     post_maestro_reply(
         ctx,
-        verdict="FAIL",
+        report_status="refused",
+        reason=str(exc),
         manage_before={},
         manage_after=None,
         child_pids_before={},

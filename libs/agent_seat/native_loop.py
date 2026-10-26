@@ -291,6 +291,7 @@ async def _run_native_tool_loop_body(
 
     google_malformed_retried = False
     usage_acc: dict[str, Any] = {}
+    pause_turn_text_segments: list[str] = []
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
 
@@ -414,6 +415,18 @@ async def _run_native_tool_loop_body(
             )
             tool_calls = result.get("tool_calls")
 
+        if (
+            provider == "anthropic"
+            and result.get("finish_reason") == "pause_turn"
+            and isinstance(raw, dict)
+            and hasattr(adapter, "append_pause_turn_continuation")
+        ):
+            adapter.append_pause_turn_continuation(json_body, raw)
+            segment = str(result.get("content") or "").strip()
+            if segment:
+                pause_turn_text_segments.append(segment)
+            continue
+
         if not tool_calls or not req.mcp_tool_loop:
             break
 
@@ -519,8 +532,17 @@ async def _run_native_tool_loop_body(
                 exc,
             )
 
+    final_content = result.get("content", "") if isinstance(result, dict) else ""
+    if pause_turn_text_segments and isinstance(result, dict):
+        trailing = str(final_content or "").strip()
+        parts = [*pause_turn_text_segments]
+        if trailing:
+            parts.append(trailing)
+        final_content = "\n\n".join(parts)
+        result = {**result, "content": final_content}
+
     return NativeLoopResult(
-        content=result.get("content", "") if isinstance(result, dict) else "",
+        content=final_content,
         # Prefer "reasoning" (populated by ResponsesAPIAdapter for xAI grok-4
         # built-in reasoning) over "thinking". This ensures the field is populated
         # when the adapter fallback triggers.

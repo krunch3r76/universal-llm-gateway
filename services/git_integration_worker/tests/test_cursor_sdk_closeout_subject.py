@@ -23,7 +23,7 @@ def test_build_sdk_closeout_subject_investigate_handoff_leg() -> None:
     )
     subject = build_sdk_closeout_subject(req, contract="none")
     assert subject == (
-        "cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=none "
+        "CLOSEOUT|cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=none "
         "admitted_via=stargate caller=stargate"
     )
 
@@ -41,9 +41,10 @@ def test_build_sdk_closeout_subject_implement_leg() -> None:
     )
     subject = build_sdk_closeout_subject(req, contract="implement")
     assert subject == (
-        "cursor-sdk CLOSEOUT auto-440 contract=implement "
+        "CLOSEOUT|cursor-sdk CLOSEOUT auto-440 contract=implement "
         "admitted_via=stargate caller=stargate"
     )
+    assert subject.startswith("CLOSEOUT|")
     assert "read_only" not in subject
     assert subject != _BEFORE_SUBJECT.format(dispatch_id="auto-440")
 
@@ -71,7 +72,8 @@ def test_build_sdk_closeout_subject_read_only_leg() -> None:
     read_only_subject = build_sdk_closeout_subject(req, contract="consult")
     implement_subject = build_sdk_closeout_subject(implement_req, contract="implement")
     assert read_only_subject == (
-        "cursor-sdk CLOSEOUT auto-448 contract=consult read_only admitted_via=stargate"
+        "CLOSEOUT|cursor-sdk CLOSEOUT auto-448 contract=consult read_only "
+        "admitted_via=stargate"
     )
     assert read_only_subject != implement_subject
     assert "read_only" in read_only_subject

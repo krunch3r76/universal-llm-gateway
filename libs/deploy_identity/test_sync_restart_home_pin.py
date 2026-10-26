@@ -73,16 +73,13 @@ def _stub_bins(tmp_path: Path, getent_stdout: str) -> tuple[Path, Path]:
     payload = tmp_path / "getent-out"
     payload.write_text(getent_stdout, encoding="utf-8")
     getent.write_text(
-        "#!/bin/bash\n"
-        f"cat {payload}\n",
+        f"#!/bin/bash\ncat {payload}\n",
         encoding="utf-8",
     )
     getent.chmod(getent.stat().st_mode | stat.S_IXUSR)
     docker = bin_dir / "docker"
     docker.write_text(
-        "#!/bin/bash\n"
-        f"touch {docker_marker}\n"
-        "exit 0\n",
+        f"#!/bin/bash\ntouch {docker_marker}\nexit 0\n",
         encoding="utf-8",
     )
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
@@ -114,7 +111,7 @@ def test_overlay_home_is_replaced_by_passwd_field() -> None:
             "bash",
             "-c",
             _head_through_pin()
-            + 'python3 -c "from pathlib import Path; print(Path(\'~/.cortex\').expanduser())"\n',
+            + "python3 -c \"from pathlib import Path; print(Path('~/.cortex').expanduser())\"\n",
         ],
         cwd=str(_REPO_ROOT),
         env={**os.environ, "HOME": overlay},
@@ -127,7 +124,7 @@ def test_overlay_home_is_replaced_by_passwd_field() -> None:
 
 
 def test_missing_passwd_home_refuses_before_docker(tmp_path: Path) -> None:
-    """Empty getent field 6 exits non-zero and does not invoke docker."""
+    """Empty getent field 6 exits 1 with ERROR on stderr (not 127); no docker."""
     bin_dir, docker_marker = _stub_bins(tmp_path, "io:x:1:1:::\n")
     proc = _run_head(
         _head_through_pin(),
@@ -135,6 +132,8 @@ def test_missing_passwd_home_refuses_before_docker(tmp_path: Path) -> None:
         home=str(tmp_path / "overlay"),
         path_prefix=bin_dir,
     )
-    assert proc.returncode != 0
-    assert "passwd home" in proc.stderr
+    assert proc.returncode == 1, proc.stderr
+    assert proc.returncode != 127
+    assert "ERROR: passwd home" in proc.stderr
+    assert "refusing mcp compose" in proc.stderr
     assert not docker_marker.exists()

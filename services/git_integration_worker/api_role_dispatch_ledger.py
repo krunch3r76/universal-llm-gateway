@@ -6,6 +6,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from dispatch_economics.api_closeout import normalize_api_role_usage
+
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_usage_extract import (
     DispatchUsageRecord,
@@ -25,6 +27,8 @@ def record_api_role_dispatch(
     """Insert or update a synthetic ledger row keyed by execution_id."""
     if not work_key:
         return
+    if usage is not None:
+        usage = normalize_api_role_usage(usage, model=resolved_model)
     ledger = CursorDispatchLedger.instance()
     stamp = datetime.now(UTC).isoformat()
     record_json = json.dumps(

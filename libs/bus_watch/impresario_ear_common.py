@@ -2,6 +2,8 @@
 
 ``bus_watch.ide_hop``, patrol, and ``impresario-ear-v1`` import this module.
 Deep hop enqueue is decommissioned (K77); patrol uses ``run_patrol_pass`` separately.
+``ear_paused`` stops new patrol scans, enqueues, and pipeline steps while the
+pause file or ``IMPRESARIO_EAR_PAUSED`` is set. Wake delivery stays up.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ _GROK_MAILBOXES = frozenset({"grok-bot", "insyncerator"})
 
 _watermark_lock = threading.Lock()
 _watermark_path_override: Path | None = None
+_pause_path_override: Path | None = None
+_PAUSE_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 def watermark_path() -> Path:
@@ -38,6 +42,41 @@ def watermark_path() -> Path:
     root = Path(os.environ.get("IMPRESARIO_EAR_WATERMARK_DIR", WATCH_DIR))
     root.mkdir(parents=True, exist_ok=True)
     return root / "impresario-ear-watermark.json"
+
+
+def ear_pause_path() -> Path:
+    """Return the sentinel file whose presence pauses the ear completely.
+
+    Default is ``tmp/watchers/impresario-ear-paused``. Override the directory
+    with ``IMPRESARIO_EAR_PAUSE_DIR``. Callers check this on every patrol pass
+    and before any enqueue, so creating or removing the file takes effect
+    without another process restart once this code is loaded.
+    """
+    if _pause_path_override is not None:
+        return _pause_path_override
+    root = Path(os.environ.get("IMPRESARIO_EAR_PAUSE_DIR", WATCH_DIR))
+    return root / "impresario-ear-paused"
+
+
+def ear_paused() -> bool:
+    """Return whether the operator has paused impresario-ear completely.
+
+    The wake dispatcher, ``enqueue_impresario_ear``, and impresario-ear-v1
+    steps call this before scanning subscriptions, posting the capability, or
+    running a model. A truthy ``IMPRESARIO_EAR_PAUSED`` env or the pause file
+    from ``ear_pause_path`` stops that work. Endpoint wake delivery is separate
+    and keeps running. Clear the env and remove the file to resume.
+    """
+    raw = os.environ.get("IMPRESARIO_EAR_PAUSED", "").strip().lower()
+    if raw in _PAUSE_TRUTHY:
+        return True
+    return ear_pause_path().is_file()
+
+
+def set_pause_path_for_tests(path: Path | None) -> None:
+    """Redirect ``ear_pause_path`` to a temp file; ``None`` restores the default."""
+    global _pause_path_override
+    _pause_path_override = path
 
 
 def set_watermark_path_for_tests(path: Path | None) -> None:
@@ -133,9 +172,11 @@ def normalize_grok_to_agent(raw: str | None) -> str | None:
 def is_ear_turn(turn: dict[str, Any]) -> bool:
     """True when the bus turn is from impresario-ear or carries an ``EAR |`` subject."""
     subject = str(turn.get("subject") or "")
-    sender = str(
-        turn.get("from") or turn.get("from_agent") or turn.get("role") or ""
-    ).strip().lower()
+    sender = (
+        str(turn.get("from") or turn.get("from_agent") or turn.get("role") or "")
+        .strip()
+        .lower()
+    )
     return sender == _IMPRESARIO_FROM or subject.startswith(_EAR_PREFIX)
 
 
@@ -208,11 +249,16 @@ def enqueue_impresario_ear(
     caller_agent: str = CALLER_AGENT,
     blocking: bool = False,
 ) -> str | None:
-    """POST capability pipeline; non-blocking by default (daemon thread when async)."""
+    """POST capability pipeline; non-blocking by default (daemon thread when async).
+
+    Returns ``None`` without a POST when ``ear_paused`` is true, so a live
+    subscription cannot start an ear run during an operator pause.
+    """
+    if ear_paused():
+        log.info("impresario ear enqueue skipped: paused")
+        return None
     root = str(
-        pipeline_options.get("root_thread")
-        or pipeline_options.get("root")
-        or ""
+        pipeline_options.get("root_thread") or pipeline_options.get("root") or ""
     ).strip()
     if not root:
         log.warning("impresario ear enqueue refused: missing root")
@@ -298,7 +344,10 @@ __all__ = [
     "build_pipeline_options",
     "clear_hop_watermarks_for_tests",
     "ear_echo_should_skip",
+    "ear_pause_path",
+    "ear_paused",
     "enqueue_impresario_ear",
+    "set_pause_path_for_tests",
     "hop_watermark_key",
     "hop_watermark_present",
     "is_ear_turn",

@@ -22,6 +22,7 @@ from .models import (
     Registration,
     RegistryError,
     _row_to_registration,
+    normalize_account_id,
 )
 from .ports import PORT_RANGE, _pin_port_block
 from .tab_rows_reopen import (  # noqa: F401 — re-export; reopen lives beside this module
@@ -79,7 +80,7 @@ def eligible_host(
 ) -> dict[str, Any] | None:
     """Pick an eligible tab_host row, optionally filtered by account."""
     is_up = listen or cdp_lane.is_listening
-    want_account = str(account_id or "").strip() or None
+    want_account = normalize_account_id(account_id)
     matches: list[tuple[int, dict[str, Any]]] = []
     for display_index, display in enumerate(candidates):
         for row in active.values():
@@ -90,13 +91,13 @@ def eligible_host(
                 continue
             if not _host_eligible_row(row, display=display, listen=is_up):
                 continue
-            row_account = str(row.get("account_id") or "").strip() or "default"
-            if want_account is not None and row_account != want_account:
+            row_account = normalize_account_id(row.get("account_id"))
+            if row_account != want_account:
                 continue
             matches.append((display_index, row))
     if not matches:
         return None
-    if want_account is None and len(matches) > 1:
+    if len(matches) > 1:
         _display_index, row = min(
             matches,
             key=lambda item: (
@@ -253,12 +254,22 @@ def open_tab_row_for_ask(
     from .lifecycle import register_lane
 
     listen = cdp_lane.is_listening
+    resolved_account = normalize_account_id(account_id)
     with tab_host_mint_lock():
         active = _store.load_active()
-        candidates = cdp_lane.cdp_display_candidates()
-        host = host_row or eligible_host(
-            active, candidates, listen=listen, account_id=account_id
-        )
+        candidates = cdp_lane.cdp_display_candidates(resolved_account)
+        if host_row is not None:
+            host_account = normalize_account_id(host_row.get("account_id"))
+            if host_account != resolved_account:
+                raise RegistryError(
+                    f"host_row account {host_account!r} != request account "
+                    f"{resolved_account!r}"
+                )
+            host = host_row
+        else:
+            host = eligible_host(
+                active, candidates, listen=listen, account_id=resolved_account
+            )
         minted = False
         if host is None:
             host_reg = register_lane(
@@ -266,22 +277,12 @@ def open_tab_row_for_ask(
                 purpose="tab_host",
                 mission_kind=None,
                 parent_thread=None,
+                account_id=resolved_account,
             )
             minted = True
             _release_driver_lock(host_reg.registration_id)
             active = _store.load_active()
             host = active.get(host_reg.registration_id)
-            if isinstance(host, dict):
-                with _store.ports_lock():
-                    active = _store.load_active()
-                    current = active.get(host_reg.registration_id)
-                    if isinstance(current, dict):
-                        active[host_reg.registration_id] = {
-                            **current,
-                            "account_id": str(account_id or "").strip() or "default",
-                        }
-                        _store.write_active(active)
-                host = active.get(host_reg.registration_id)
             with contextlib.suppress(Exception):
                 _events.emit(
                     _events.cdp_tab_host_minted(
@@ -295,9 +296,6 @@ def open_tab_row_for_ask(
             raise RegistryError("no eligible host for tab ask")
         host_id = str(host["registration_id"])
         port = int(host["port"])
-        resolved_account = str(
-            host.get("account_id") or (account_id or "").strip() or "default"
-        )
         tab_id = uuid.uuid4().hex
         with _store.ports_lock():
             active = _store.load_active()

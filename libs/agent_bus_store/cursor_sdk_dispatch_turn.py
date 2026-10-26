@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 _PARKED_OR_RESUMED = re.compile(r"\b(PARKED|RESUMED)\b", re.IGNORECASE)
-_CLOSEOUT_SUBJECT = re.compile(r"^cursor-sdk CLOSEOUT\b")
+_CLOSEOUT_SUBJECT = re.compile(r"^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 
 
 def is_cursor_sdk_advisory_subject(subject: str) -> bool:
@@ -19,6 +19,7 @@ def is_cursor_sdk_advisory_subject(subject: str) -> bool:
 
 
 def is_cursor_sdk_dispatch_subject(subject: str) -> bool:
+    """True when the subject is a cursor-sdk dispatch progress line, not a closeout."""
     return bool(subject) and subject.startswith("cursor-sdk dispatch")
 
 

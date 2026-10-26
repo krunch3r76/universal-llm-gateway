@@ -353,8 +353,7 @@ _CDP_OPERATOR_PROXY_SKILL = (
     _REPO_ROOT / "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md"
 )
 _AGENT_BUS_DISCIPLINE_REFERENCE = (
-    _REPO_ROOT
-    / "cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md"
+    _REPO_ROOT / "cursor-plugins/ulg-ecosystem/skills/agent-bus-discipline/reference.md"
 )
 _HISTORICAL_POLL_HEADING = "## Dispatch polling (historical — other seats)"
 _POLL_INSTRUCTION_SKIP = (
@@ -433,10 +432,15 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
 
 
 def test_how_this_seat_works_names_reachable_models() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    out = ensure_operator_proxy_mission_prompt("thread_id: 12286\n# Mission\n")
     refusals = out.split("## Hard refusals", 1)[1]
-    assert "cdp/fable" in refusals
-    assert "cdp/opus-5.5-extra" in refusals
+    assert (
+        "maestro house: desired_model=cdp/fable-5.1 desired_effort=medium "
+        "(K91, FACT 12286#4800); elsewhere cdp/opus-5.5-extra (K22)"
+    ) in refusals
+    assert "Never commission a cdp/fable seat unless Kaywan asked" in refusals
+    assert "no cdp/fable hop target" not in refusals
+    assert "(a:39008)" in refusals
     assert "cursor/claude-opus-5" not in out
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
     assert _legacy_reasoner not in out
@@ -505,7 +509,7 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     """Hop template keeps 11 original bullets plus L5 append (1685-1687 cite)."""
     refusals = _BRIEFING_BLOCK.split("## Hard refusals", 1)[1]
     hop_bullets = [ln for ln in refusals.splitlines() if ln.startswith("- ")]
-    assert len(hop_bullets) == 16
+    assert len(hop_bullets) == 17
     assert "wc -m" in refusals
     assert "conductor_hop.py:1685-1687" in refusals
     assert "Sleep at most 290" not in refusals
@@ -798,8 +802,7 @@ def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
         "hop_kind: housekeeping\n"
     )
     sidecar = (
-        "## CURRENT LEG\n### OWED / NEXT\nhk fixture\n"
-        "### HOUSE RULES\n- K1 hk-rule\n"
+        "## CURRENT LEG\n### OWED / NEXT\nhk fixture\n### HOUSE RULES\n- K1 hk-rule\n"
     )
     out = ensure_operator_proxy_mission_prompt(
         caller,
@@ -853,9 +856,10 @@ def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
     )
     assert "Act on the running items" in explicit
     assert "## Housekeeping acts" not in explicit
-    assert explicit.split("## Hop request (data)", 1)[0] == golden.split(
-        "## Hop request (data)", 1
-    )[0]
+    assert (
+        explicit.split("## Hop request (data)", 1)[0]
+        == golden.split("## Hop request (data)", 1)[0]
+    )
 
 
 def test_hop_successor_template_has_single_refusals_marker() -> None:
@@ -906,11 +910,7 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
         "    ## Hard refusals (indented quote in HOUSE RULES, not template)\n"
         "tail line\n"
     )
-    sidecar = (
-        "## CURRENT LEG\n"
-        "### OWED / NEXT\n"
-        f"{handoff_snippet}"
-    )
+    sidecar = f"## CURRENT LEG\n### OWED / NEXT\n{handoff_snippet}"
     birth = "cd" * 16
     caller = f"thread_id: 12286\nsuccessor_birth_id: {birth}\n"
     out = ensure_operator_proxy_mission_prompt(

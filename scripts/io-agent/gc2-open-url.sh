@@ -14,7 +14,15 @@ export DISPLAY
 
 GC2_DATA_DIR="${GC2_DATA_DIR:-/home/io/.gateway/grok-io-gc2}"
 CHROME_PROFILE="${GC2_CHROME_PROFILE:-${GC2_DATA_DIR}/chrome-auth-profile}"
-CHROME_BIN="${GC2_CHROME_BIN:-/home/io/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome}"
+if [[ -z "${GC2_CHROME_BIN:-}" ]]; then
+  _pw_cache="${PLAYWRIGHT_BROWSERS_PATH:-${HOME}/.cache/ms-playwright}"
+  _pw_chrome="$(
+    ls -d "${_pw_cache}"/chromium-*/chrome-linux64/chrome 2>/dev/null | sort -V | tail -1
+  )"
+  CHROME_BIN="${_pw_chrome:-}"
+else
+  CHROME_BIN="${GC2_CHROME_BIN}"
+fi
 GROK_BIN="${GROK_BIN:-/opt/Grok Bot/grok-bot}"
 
 mkdir -p "${CHROME_PROFILE}"

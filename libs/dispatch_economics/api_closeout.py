@@ -7,6 +7,102 @@ from typing import Any
 
 from event_store.dispatch_economics_pricing import price_row
 
+_SPEND_PASS_THROUGH_KEYS = ("cost_usd", "credits", "spend", "cost")
+
+
+def _is_anthropic_api_model(model: str) -> bool:
+    model_str = str(model)
+    if model_str.startswith(("anthropic/", "openrouter/anthropic/")):
+        return True
+    return "claude-" in model_str
+
+
+_KNOWN_NON_ANTHROPIC_INCLUSIVE_PREFIXES = (
+    "openai/",
+    "xai/",
+    "google/",
+    "openrouter/openai/",
+    "openrouter/x-ai/",
+    "openrouter/google/",
+    "cursor/",
+)
+
+
+def _is_known_non_anthropic_inclusive_model(model: str) -> bool:
+    """Models whose provider reports cache-inclusive prompt totals (not Anthropic)."""
+    model_str = str(model)
+    if "claude-" in model_str:
+        return False
+    return model_str.startswith(_KNOWN_NON_ANTHROPIC_INCLUSIVE_PREFIXES)
+
+
+def _exclusive_sum_total(
+    *,
+    input_tokens: Any,
+    output_tokens: Any,
+    cache_read: Any,
+    cache_write: Any,
+) -> int | None:
+    buckets = (input_tokens, output_tokens, cache_read, cache_write)
+    if not any(isinstance(x, (int, float)) for x in buckets):
+        return None
+    return sum(int(x) for x in buckets if isinstance(x, (int, float)))
+
+
+def normalize_api_role_usage(
+    usage: dict[str, Any],
+    *,
+    model: str,
+) -> dict[str, Any]:
+    """Map outcome-shaped usage to ledger-compatible token keys."""
+    input_tokens = usage.get("input_tokens")
+    if input_tokens is None:
+        input_tokens = usage.get("prompt_tokens")
+    output_tokens = usage.get("output_tokens")
+    if output_tokens is None:
+        output_tokens = usage.get("completion_tokens")
+    cache_read = usage.get("cache_read_tokens")
+    if cache_read is None:
+        cache_read = usage.get("cached_tokens")
+    cache_write = usage.get("cache_write_tokens")
+    if cache_write is None:
+        cache_write = usage.get("cache_creation_input_tokens")
+
+    total_basis: Any = usage.get("total_tokens_basis")
+    if total_basis is None:
+        if _is_anthropic_api_model(model):
+            total_basis = "exclusive_sum"
+        elif _is_known_non_anthropic_inclusive_model(model):
+            total_basis = "inclusive"
+        else:
+            total_basis = None
+
+    total_tokens = usage.get("total_tokens")
+    if total_basis == "exclusive_sum":
+        derived = _exclusive_sum_total(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read=cache_read,
+            cache_write=cache_write,
+        )
+        if derived is not None:
+            total_tokens = derived
+
+    normalized: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read,
+        "cache_write_tokens": cache_write,
+        "total_tokens": total_tokens,
+        "total_tokens_basis": total_basis,
+    }
+    if usage.get("reasoning_tokens") is not None:
+        normalized["reasoning_tokens"] = usage.get("reasoning_tokens")
+    for key in _SPEND_PASS_THROUGH_KEYS:
+        if key in usage:
+            normalized[key] = usage[key]
+    return normalized
+
 
 def price_usage(
     usage: dict[str, Any] | None,
@@ -17,33 +113,47 @@ def price_usage(
     """Map frontier usage dict to priced economics fields for sidecar and ledger rows."""
     if not usage:
         return None
-    cache_write = usage.get("cache_write_tokens")
-    if cache_write is None:
-        cache_write = usage.get("cache_creation_input_tokens")
-    total_basis: Any = usage.get("total_tokens_basis")
-    if total_basis is None and str(model).startswith("anthropic/"):
-        total_basis = "exclusive_sum"
-    elif total_basis is None:
-        total_basis = usage.get("total_tokens")
+    normalized = normalize_api_role_usage(usage, model=model)
     row = {
-        "prompt_tokens": usage.get("input_tokens"),
-        "completion_tokens": usage.get("output_tokens"),
-        "cache_read_tokens": usage.get("cached_tokens") or usage.get("cache_read_tokens"),
-        "cache_write_tokens": cache_write,
-        "total_tokens_basis": total_basis,
+        "prompt_tokens": normalized.get("input_tokens"),
+        "completion_tokens": normalized.get("output_tokens"),
+        "cache_read_tokens": normalized.get("cache_read_tokens"),
+        "cache_write_tokens": normalized.get("cache_write_tokens"),
+        "total_tokens_basis": normalized.get("total_tokens_basis"),
         "model_id": model,
         "model_knobs_requested": knobs,
     }
     priced = price_row(row, None)
-    return {
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
+    out: dict[str, Any] = {
+        "input_tokens": normalized.get("input_tokens"),
+        "output_tokens": normalized.get("output_tokens"),
         "cache_read_tokens": priced.get("cache_read_tokens"),
         "cache_write_tokens": priced.get("cache_write_tokens"),
-        "total_tokens": usage.get("total_tokens"),
+        "total_tokens": normalized.get("total_tokens"),
+        "total_tokens_basis": normalized.get("total_tokens_basis"),
         "cost_usd": priced.get("cost_usd"),
         "cost_source": priced.get("cost_source"),
     }
+    if normalized.get("reasoning_tokens") is not None:
+        out["reasoning_tokens"] = normalized.get("reasoning_tokens")
+    for key in _SPEND_PASS_THROUGH_KEYS:
+        if key in normalized:
+            out[key] = normalized[key]
+    return out
+
+
+def _format_tool_errors_summary(tool_errors: list[dict[str, Any]] | None) -> str:
+    if not tool_errors:
+        return ""
+    lines = ["", "## tool errors", ""]
+    for tc in tool_errors:
+        name = tc.get("name") or "unknown"
+        turn = tc.get("turn")
+        prefix = f"- turn {turn}: " if turn is not None else "- "
+        result = tc.get("result") or tc.get("error") or "failed"
+        lines.append(f"{prefix}`{name}` — {result}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def append_api_closeout_economics(
@@ -54,12 +164,25 @@ def append_api_closeout_economics(
     model: str,
     usage: dict[str, Any] | None,
     contract: str | None = None,
+    archive_uri: str | None = None,
+    tool_errors: list[dict[str, Any]] | None = None,
 ) -> str:
     """Append markdown + structured JSON economics footer for durable sidecars."""
     priced = price_usage(usage, model=model)
-    if not work_key and priced is None:
+    if (
+        not work_key
+        and priced is None
+        and not archive_uri
+        and not tool_errors
+    ):
         return content
-    lines = [content.rstrip(), "", "## dispatch economics", ""]
+    lines = [content.rstrip()]
+    if archive_uri:
+        lines.extend(["", f"archive_uri: {archive_uri}"])
+    tool_block = _format_tool_errors_summary(tool_errors)
+    if tool_block:
+        lines.append(tool_block.rstrip())
+    lines.extend(["", "## dispatch economics", ""])
     if work_key:
         lines.append(f"work_key: {work_key}")
     lines.append(f"execution_id: {execution_id}")
@@ -76,11 +199,15 @@ def append_api_closeout_economics(
         ):
             if key in priced and priced[key] is not None:
                 lines.append(f"{key}: {priced[key]}")
-    structured = {
+    structured: dict[str, Any] = {
         "work_key": work_key,
         "execution_id": execution_id,
         "contract": contract,
         "usage": priced,
     }
+    if archive_uri:
+        structured["archive_uri"] = archive_uri
+    if tool_errors:
+        structured["tool_errors"] = tool_errors
     lines.extend(["", "```json", json.dumps(structured, indent=2), "```", ""])
     return "\n".join(lines)

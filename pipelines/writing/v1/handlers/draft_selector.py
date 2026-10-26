@@ -17,7 +17,17 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.source_premise import unsupported_source_claims
 
-from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
+from ._obligation_coverage import (
+    actionable_obligations,
+    coverage_map_for_draft,
+    obligation_coverage_score,
+)
+from .email_envelope import (
+    correspondence_register_penalty,
+    email_draft_penalty,
+    email_restate_pin_satisfied,
+)
+from .finalize import _omit_with_reason_ids
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
 
@@ -34,6 +44,16 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 _NEED_TOKEN = re.compile(r"\[NEED:[^\]]*\]")
 _FIRST_PERSON = re.compile(r"\b(?:i|i'm|i've|i'd|i'll|my|me|mine|myself)\b", re.I)
 _DECLARANT = re.compile(r"\bI,\s+([^,\n]{2,80}),\s+state\b")
+_DECLINE_PIN_HINT = re.compile(
+    r"\b(?:declin(?:e|ing|ed)|not\s+available|unavailab)",
+    re.I,
+)
+_NATURAL_DECLINE = re.compile(
+    r"\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+(?:take|cover)\b"
+    r"|\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+be\s+able\s+to\s+(?:take|cover)\b"
+    r"|\bunable\s+to\s+(?:take|cover)\b",
+    re.I,
+)
 
 
 def _step(payload: dict[str, Any], *, model_id: str | None = None) -> StepOutput:
@@ -47,6 +67,14 @@ def _normalize_tokens(text: str) -> set[str]:
 def _pin_tokens(pin: dict[str, Any]) -> set[str]:
     excerpt = str(pin.get("excerpt") or "")
     return _normalize_tokens(excerpt)
+
+
+def _draft_satisfies_decline_pin(draft_text: str, excerpt: str) -> bool:
+    """Match decline/unavailability pins via natural phrasing or literal anchors."""
+    if _NATURAL_DECLINE.search(draft_text):
+        return True
+    anchors = _pin_tokens({"excerpt": excerpt})
+    return bool(anchors and anchors <= _normalize_tokens(draft_text))
 
 
 def _score_draft(
@@ -66,6 +94,10 @@ def _score_draft(
         excerpt = str(pin.get("excerpt") or "")
         if channel == "email" and pin.get("restate") is True and excerpt:
             if email_restate_pin_satisfied(draft_text, excerpt):
+                score += 1
+            continue
+        if _DECLINE_PIN_HINT.search(excerpt):
+            if _draft_satisfies_decline_pin(draft_text, excerpt):
                 score += 1
             continue
         anchors = _pin_tokens(pin)
@@ -101,14 +133,44 @@ def _requested_signer(assemble_json: dict[str, Any]) -> str:
     return token
 
 
-def _signer_band(draft_text: str, signer: str) -> int:
+def _signer_verbatim_required(
+    attested_pins: list[dict[str, Any]],
+    *,
+    signer: str,
+) -> bool:
+    """True when a pin marked verbatim_required requires the signer name in its excerpt."""
+    if not signer.strip():
+        return False
+    signer_re = re.compile(rf"\b{re.escape(signer.strip())}\b", re.I)
+    for pin in attested_pins:
+        if pin.get("verbatim_required") is not True:
+            continue
+        excerpt = str(pin.get("excerpt") or "")
+        if signer_re.search(excerpt):
+            return True
+    return False
+
+
+def _signer_band(
+    draft_text: str,
+    signer: str,
+    *,
+    channel: str = "",
+    signer_verbatim_required: bool = False,
+) -> int:
     """Score whether the draft speaks as the requested signer.
 
-    ``1`` when the signer token appears. ``-1`` when an ``I, Name, state``
-    line names someone else. ``0`` when no signer was requested, or the
+    ``1`` when the signer token appears (email and sworn; not SMS unless
+    verbatim_required). ``-1`` when an ``I, Name, state`` line names someone
+    else. ``0`` when no signer was requested, SMS omits name reward, or the
     draft neither names the signer nor a conflicting declarant. No I/O.
     """
     if not signer:
+        return 0
+    if channel == "sms" and not signer_verbatim_required:
+        declarant = _DECLARANT.search(draft_text)
+        if declarant and signer.casefold() not in declarant.group(1).casefold():
+            return -1
         return 0
     if re.search(rf"\b{re.escape(signer)}\b", draft_text, re.I):
         return 1
@@ -118,11 +180,12 @@ def _signer_band(draft_text: str, signer: str) -> int:
     return 0
 
 
-def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int]:
-    """Sort eligible drafts: signer, voice, pin coverage minus email penalty, order."""
+def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int, int]:
+    """Sort eligible drafts: obligation coverage, signer, voice, pins, order."""
     index, row = pair
     pin_tier = int(row["score"]) - int(row["email_penalty"])
     return (
+        -int(row.get("obligation_coverage_score") or 0),
         -int(row["signer_band"]),
         -int(row["voice_bonus"]),
         -pin_tier,
@@ -190,10 +253,42 @@ class WritingDraftSelectorHandler(BaseHandler):
         )
         standing_limits = ""
         source_message = ""
+        verbatim_notes_blob = ""
+        objective = str(
+            assemble_json.get("objective")
+            or (intake.get("objective") if isinstance(intake, dict) else "")
+            or ""
+        )
         if isinstance(intake, dict):
             standing_limits = str(intake.get("standing_limits") or "")
             source_message = str(intake.get("source_message") or "")
+            notes = intake.get("verbatim_notes") or []
+            if isinstance(notes, list):
+                verbatim_notes_blob = "\n".join(str(n) for n in notes)
+            else:
+                verbatim_notes_blob = str(notes or "")
+        signer_verbatim_required = _signer_verbatim_required(attested, signer=signer)
         aliases = load_writing_models()
+        src = outputs.get("source_obligations")
+        src_json = (
+            src.get("json")
+            if isinstance(src, dict)
+            else getattr(src, "json", None)
+        )
+        obligations = list((src_json or {}).get("obligations") or [])
+        arch = outputs.get("prompt_architect")
+        arch_json = (
+            arch.get("json")
+            if isinstance(arch, dict)
+            else getattr(arch, "json", None)
+        )
+        architect_brief = str((arch_json or {}).get("architect_brief") or "")
+        omit_ids = _omit_with_reason_ids(architect_brief)
+        actionable = [
+            row
+            for row in actionable_obligations(obligations)
+            if str(row.get("id") or "").upper() not in omit_ids
+        ]
         candidates: list[dict[str, Any]] = []
         for step_name, role in _DRAFTER_STEPS:
             out = outputs.get(step_name)
@@ -226,6 +321,16 @@ class WritingDraftSelectorHandler(BaseHandler):
                 rejected = "unresolved_need"
             elif premise_violations:
                 rejected = premise_violations[0]
+            obl_score = (
+                obligation_coverage_score(text, actionable, pin_ledger=ledger)
+                if actionable
+                else 0
+            )
+            cov_map = (
+                coverage_map_for_draft(text, actionable, pin_ledger=ledger)
+                if actionable
+                else []
+            )
             candidates.append(
                 {
                     "role": role,
@@ -234,6 +339,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                     "model_id": model_id,
                     "family": model_family(str(model_id)),
                     "score": _score_draft(text, attested, channel=channel),
+                    "obligation_coverage_score": obl_score,
+                    "coverage_map": cov_map,
                     "voice_bonus": 1 if _FIRST_PERSON.search(text) else 0,
                     "email_penalty": email_draft_penalty(
                         text,
@@ -249,17 +356,28 @@ class WritingDraftSelectorHandler(BaseHandler):
                             )
                             or ""
                         ),
-                        objective=str(
-                            assemble_json.get("objective")
-                            or (
-                                intake.get("objective")
-                                if isinstance(intake, dict)
-                                else ""
-                            )
-                            or ""
-                        ),
+                        objective=objective,
+                        verbatim_notes=verbatim_notes_blob,
+                    )
+                    + (
+                        correspondence_register_penalty(
+                            text,
+                            channel=channel,
+                            objective=objective,
+                            standing_limits=standing_limits,
+                            verbatim_notes=verbatim_notes_blob,
+                            signer=signer,
+                            signer_verbatim_required=signer_verbatim_required,
+                        )
+                        if channel != "email"
+                        else 0
                     ),
-                    "signer_band": _signer_band(text, signer),
+                    "signer_band": _signer_band(
+                        text,
+                        signer,
+                        channel=channel,
+                        signer_verbatim_required=signer_verbatim_required,
+                    ),
                     "rejected": rejected,
                 }
             )
@@ -304,6 +422,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                 "selected_step": winner["step"],
                 "candidates": candidates,
                 "coverage_score": winner["score"],
+                "obligation_coverage_score": winner.get("obligation_coverage_score", 0),
+                "coverage_map": winner.get("coverage_map") or [],
             },
             model_id=str(winner["model_id"]),
         )

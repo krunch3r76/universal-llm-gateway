@@ -88,8 +88,18 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _root_id_from_tick_path(path: Path) -> str:
+    name = path.name
+    if name.startswith("liaison-") and name.endswith(".tick.json"):
+        return name[len("liaison-") : -len(".tick.json")]
+    return ""
+
+
 def update_state(
-    path: Path, mutate: Callable[[dict[str, Any]], None]
+    path: Path,
+    mutate: Callable[[dict[str, Any]], None],
+    *,
+    journal_actor: str | None = None,
 ) -> dict[str, Any]:
     """Read-modify-write against the file as it is *now*; returns the new state.
 
@@ -100,8 +110,21 @@ def update_state(
     and the ticker absorbed it as an operator steer.
     """
     current = load_state(path)
+    old_now = str((current.get("policy") or {}).get("now_row") or "")
     mutate(current)
+    new_now = str((current.get("policy") or {}).get("now_row") or "")
     save_state(path, current)
+    if journal_actor and new_now != old_now:
+        root_id = _root_id_from_tick_path(path)
+        if root_id:
+            from bus_watch.house_journal import append_house_action
+
+            append_house_action(
+                root_id,
+                "now_row_set",
+                journal_actor,
+                new_now or old_now,
+            )
     return current
 
 

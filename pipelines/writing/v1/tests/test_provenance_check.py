@@ -320,6 +320,54 @@ def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
     assert dropped[0]["detail"] == "Jennifer"
 
 
+def test_revision_delta_contraction_expansion_no_false_drops() -> None:
+    draft_v1 = (
+        "Hi Maria, I can't cover the PHC Petaluma shifts on 11/3. Thanks."
+    )
+    draft_v2 = (
+        "Hi Maria, I cannot cover the PHC Petaluma shifts on 11/3. Thanks."
+    )
+    v1 = {"draft": draft_v1}
+    v2 = {"draft": draft_v2}
+    assert provenance.revision_delta(v1, v2) == []
+
+
+def test_revision_delta_polarity_flip_can_cover_drops_not() -> None:
+    v1 = {"draft": "Hi Maria, I can't cover the PHC Petaluma shifts on 11/3."}
+    v2 = {"draft": "Hi Maria, I can cover the PHC Petaluma shifts on 11/3."}
+    dropped = [
+        row
+        for row in provenance.revision_delta(v1, v2)
+        if row["type"] == "fact_dropped" and row.get("detail") == "not"
+    ]
+    assert dropped
+
+
+def test_revision_delta_polarity_flip_do_not_have_drops_not() -> None:
+    v1 = {"draft": "I do not have standing availability."}
+    v2 = {"draft": "I have standing availability."}
+    dropped = [
+        row
+        for row in provenance.revision_delta(v1, v2)
+        if row["type"] == "fact_dropped" and row.get("detail") == "not"
+    ]
+    assert dropped
+
+
+def test_revision_delta_sentence_initial_contraction_no_false_name_drop() -> None:
+    draft_v1 = (
+        "Don't send the availability calendar. Won't make the 11/3 shift."
+    )
+    draft_v2 = (
+        "Do not send the availability calendar. Will not make the 11/3 shift."
+    )
+    violations = provenance.revision_delta(
+        {"draft": draft_v1},
+        {"draft": draft_v2},
+    )
+    assert violations == []
+
+
 def test_causal_connective_clause_joining_so() -> None:
     pattern = provenance._CAUSAL_CONNECTIVES_RE
     merge = (

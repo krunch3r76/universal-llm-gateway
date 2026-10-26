@@ -67,7 +67,7 @@ Each entry: **purpose** · behavioral contract · non-obvious params. Successful
 | Op | Purpose · contract · params |
 |---|---|
 | `relationships` | List active relationships with names, strength. Filters: `entity_id`, `type_id`, `limit`. |
-| `relationship_create` | Create structural link. `type_id` from relationship_types registry (see §3). Optional provenance: `session_id`, `agent`. `resolve_aliases` (default true) reports `resolved_aliases`. **`relates_to` is an EDGE type** — use `edge_create`; relationship analogue is `related_to`. |
+| `relationship_create` | Create structural link. `type_id` from relationship_types registry (see §3). Set **`strength`** (0–1; default 1.0 if omitted) and **`evidence`** when the link is adjacency not proof — see `agent_skill:cortex-orientation` § Myelinate and `decision:cortex-relationship-strength-at-link`. Optional provenance: `session_id`, `agent`, `source_uri`. `resolve_aliases` (default true) reports `resolved_aliases`. **`relates_to` is an EDGE type** — use `edge_create`; relationship analogue is `related_to`. |
 | `relationships_bulk_upsert` | Atomic multi-relationship create/update/skip. Same `if_exists` semantics as entities bulk. |
 | `relationship_update` | Patch mutable fields (`role`, `strength`, `evidence`, `valid_from`, `valid_until`, `source_uri`). Direction/type fixes: delete + recreate. |
 | `relationship_delete` | Soft-delete (row preserved; excluded from list). |

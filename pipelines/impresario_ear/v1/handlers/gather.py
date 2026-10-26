@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any, override
 
+from bus_watch.impresario_ear_common import ear_paused
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -19,6 +20,13 @@ async def gather_impresario_ear_context(
     cdp_probe: Any | None = None,
     tape_fetch: Any | None = None,
 ) -> dict[str, Any]:
+    """Collect tape, JSONL, and continuity for one house, unless the ear is paused.
+
+    Returns ``skip`` with reason ``ear_paused`` before any tape or CDP read when
+    ``ear_paused`` is true, so a queued run does not touch the house.
+    """
+    if ear_paused():
+        return {"skip": True, "reason": "ear_paused", "root_thread": root_thread}
     bundle: dict[str, Any] = {
         "root_thread": root_thread,
         "surface": surface,

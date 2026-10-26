@@ -15,6 +15,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 
+from ._obligation_coverage import has_attested_external_act
 from .assemble import _fence
 from .independence import load_writing_models
 
@@ -34,7 +35,9 @@ def _architect_template() -> str:
 
 
 def _allowed_tokens(
-    intake: dict[str, Any], pin_ledger: list[dict[str, Any]]
+    intake: dict[str, Any],
+    pin_ledger: list[dict[str, Any]],
+    obligations: list[dict[str, Any]] | None = None,
 ) -> set[str]:
     allowed: set[str] = set()
     for pin in pin_ledger:
@@ -48,6 +51,20 @@ def _allowed_tokens(
     for note in intake.get("verbatim_notes") or []:
         allowed |= set(_NAME.findall(str(note)))
         allowed |= set(_NUMBER.findall(str(note)))
+    source_message = str(intake.get("source_message") or "")
+    if source_message:
+        allowed |= set(_NAME.findall(source_message))
+        allowed |= set(_NUMBER.findall(source_message))
+        allowed |= {token.lower() for token in _NAME.findall(source_message)}
+        allowed |= set(_NUMBER.findall(source_message))
+    for row in obligations or []:
+        oid = str(row.get("id") or "")
+        if oid:
+            allowed.add(oid.lower())
+        for key in ("quoted_span", "semantic_reading"):
+            text = str(row.get(key) or "")
+            allowed |= set(_NAME.findall(text))
+            allowed |= set(_NUMBER.findall(text))
     return {token.lower() for token in allowed}
 
 
@@ -55,6 +72,7 @@ def _validate_architect_brief(
     raw_text: str,
     pin_ledger: list[dict[str, Any]],
     intake: dict[str, Any],
+    obligations: list[dict[str, Any]] | None = None,
 ) -> tuple[str, bool]:
     text = raw_text.strip()
     if not text:
@@ -69,7 +87,7 @@ def _validate_architect_brief(
     lowered = text.lower()
     if not all(key in lowered for key in required):
         return text, False
-    allowed = _allowed_tokens(intake, pin_ledger)
+    allowed = _allowed_tokens(intake, pin_ledger, obligations)
     for token in _NAME.findall(text):
         if token.lower() not in allowed:
             return text, False
@@ -90,24 +108,61 @@ def _filing_exhibit_rule(intake: dict[str, Any]) -> str:
     )
 
 
-def _fallback_brief(blocks: dict[str, str], intake: dict[str, Any]) -> str:
+def _obligation_map_line(
+    obligations: list[dict[str, Any]],
+    *,
+    act_attested: bool = False,
+) -> str:
+    parts: list[str] = []
+    for row in obligations:
+        if str(row.get("obligation") or "none") == "none":
+            continue
+        oid = str(row.get("id") or "")
+        if not oid:
+            continue
+        if str(row.get("obligation")) == "act_outside_message":
+            mode = "act_then_confirm" if act_attested else "ask_back"
+        else:
+            mode = "answer_in_message"
+        parts.append(f"{oid}: {mode}")
+    if not parts:
+        return ""
+    return "obligation_map: " + "; ".join(parts)
+
+
+def _fallback_brief(
+    blocks: dict[str, str],
+    intake: dict[str, Any],
+    obligations: list[dict[str, Any]] | None = None,
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
+) -> str:
     max_chars = intake.get("max_chars")
     budget = str(max_chars) if max_chars else "none"
     filing_rule = _filing_exhibit_rule(intake)
     constraints = (
         filing_rule or "negative_constraints: no new facts; attested pins only"
     )
-    return "\n".join(
+    lines = [
+        "lead_pin_id: P1",
+        "beat_order: verbatim order",
+        f"audience_posture: {_fence(str(intake.get('channel') or 'email'))}",
+        constraints,
+        f"char_budget: {budget}",
+    ]
+    act_attested = has_attested_external_act(pin_ledger or [])
+    map_line = _obligation_map_line(
+        list(obligations or []), act_attested=act_attested
+    )
+    if map_line:
+        lines.append(map_line)
+    lines.extend(
         [
-            "lead_pin_id: P1",
-            "beat_order: verbatim order",
-            f"audience_posture: {_fence(str(intake.get('channel') or 'email'))}",
-            constraints,
-            f"char_budget: {budget}",
             blocks.get("verbatim_notes_block") or "",
             blocks.get("brief_block") or "",
         ]
     )
+    return "\n".join(lines)
 
 
 class WritingPromptArchitectHandler(BaseHandler):
@@ -137,6 +192,15 @@ class WritingPromptArchitectHandler(BaseHandler):
             return _step({"ok": False, "skipped": True, "_skipped": True})
         intake = dict(assemble_json.get("intake") or {})
         pin_ledger = list(assemble_json.get("pin_ledger") or [])
+        src = outputs.get("source_obligations")
+        src_json = (
+            src.get("json")
+            if isinstance(src, dict)
+            else getattr(src, "json", None)
+        )
+        obligations = list((src_json or {}).get("obligations") or [])
+        source_block = str(assemble_json.get("source_message_block") or "")
+        obligations_block = str((src_json or {}).get("source_obligations_block") or "")
         blocks = {
             "verbatim_notes_block": assemble_json.get("verbatim_notes_block") or "",
             "brief_block": assemble_json.get("brief_block") or "",
@@ -148,6 +212,8 @@ class WritingPromptArchitectHandler(BaseHandler):
             {
                 "verbatim_notes": blocks["verbatim_notes_block"],
                 "brief": blocks["brief_block"],
+                "source_message": source_block,
+                "source_obligations": obligations_block,
             },
         )
         models = load_writing_models()
@@ -162,11 +228,12 @@ class WritingPromptArchitectHandler(BaseHandler):
                     step,
                     context,
                     temperature=0.2,
-                    max_tokens=2048,
                 )
                 content = result.content
         except Exception as exc:  # noqa: BLE001
-            brief = _fallback_brief(blocks, intake)
+            brief = _fallback_brief(
+                blocks, intake, obligations, pin_ledger=pin_ledger
+            )
             return _step(
                 {
                     "ok": True,
@@ -177,9 +244,11 @@ class WritingPromptArchitectHandler(BaseHandler):
                 }
             )
         raw = content if isinstance(content, str) else str(content or "")
-        brief, valid = _validate_architect_brief(raw, pin_ledger, intake)
+        brief, valid = _validate_architect_brief(raw, pin_ledger, intake, obligations)
         if not valid:
-            brief = _fallback_brief(blocks, intake)
+            brief = _fallback_brief(
+                blocks, intake, obligations, pin_ledger=pin_ledger
+            )
             return _step(
                 {
                     "ok": True,

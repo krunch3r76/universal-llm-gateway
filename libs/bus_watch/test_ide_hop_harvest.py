@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -68,3 +68,50 @@ def test_harvest_failed_write_skips_mark_read() -> None:
     )
     assert out["ok"] is False
     marked.assert_not_called()
+
+
+def test_nonempty_harvest_ok_writes_one_harvest_row() -> None:
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        out = harvest_judgment_turns(
+            "11738",
+            get_turns=lambda *_a, **_k: {
+                "turns": [
+                    {
+                        "turn_number": 36,
+                        "from": "web-anthropic",
+                        "subject": "SCORE_RESURFACE",
+                        "read_at": None,
+                        "status": "open",
+                        "thread": "11738",
+                    }
+                ]
+            },
+            post_checkpoint=lambda *_a, **_k: True,
+            mark_read=lambda *_a, **_k: None,
+        )
+    assert out["ok"] is True
+    append.assert_called_once()
+    assert append.call_args.args[1] == "harvest"
+
+
+def test_checkpoint_write_failed_writes_no_row() -> None:
+    with patch("bus_watch.house_journal.append_house_action") as append:
+        out = harvest_judgment_turns(
+            "11738",
+            get_turns=lambda *_a, **_k: {
+                "turns": [
+                    {
+                        "turn_number": 36,
+                        "from": "web-anthropic",
+                        "subject": "SCORE_RESURFACE",
+                        "read_at": None,
+                        "status": "open",
+                        "thread": "11738",
+                    }
+                ]
+            },
+            post_checkpoint=lambda *_a, **_k: False,
+            mark_read=lambda *_a, **_k: None,
+        )
+    assert out["ok"] is False
+    append.assert_not_called()

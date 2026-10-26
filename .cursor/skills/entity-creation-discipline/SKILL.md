@@ -35,7 +35,7 @@ Decision table:
 |---|---|
 | same concept, different slug | `entity_update` existing or `entity_merge`; do not fork |
 | same concept, thin/stale | extend existing with `assert` / `entity_update` |
-| related but distinct | create sibling + `relationship_create` (`related_to` / `child_of`) |
+| related but distinct | create sibling + `relationship_create` (`related_to` / `child_of`); set **`strength` + `evidence`** per `decision:cortex-relationship-strength-at-link` (weak adjacency ≈ ≤0.35) |
 | no relevant hit | proceed; source gate may still fire |
 
 Do not rely on exact-slug 409; it cannot catch same-concept/different-slug. API `collision_warning` (≥0.85 near duplicate) is WARN-only/fail-open; agent judgment remains required.

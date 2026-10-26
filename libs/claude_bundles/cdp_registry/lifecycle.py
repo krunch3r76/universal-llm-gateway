@@ -28,6 +28,7 @@ from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
     STATUS_TAB,
+    AccountNotSignedInError,
     JoinedReentryExhausted,
     Registration,
     RegistryError,
@@ -35,6 +36,11 @@ from .models import (
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
+    account_is_signed_in,
+    account_profile_suffix,
+    assert_profile_suffix_available,
+    normalize_account_id,
+    resolve_reserve_account_id,
     seat_open,
 )
 
@@ -108,14 +114,21 @@ def _operator_join_candidate(row: dict[str, Any]) -> bool:
     return process_holds_driver_lock(rid) or is_driver_lock_held(rid)
 
 
-def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
+def _join_target(
+    active: dict[str, Any],
+    parent: str,
+    *,
+    account_id: str | None = None,
+) -> dict[str, Any] | None:
     """Smallest-started allocating row for *parent* that a driver still holds."""
     from .driving_seat import driving_lane_census
 
+    want_account = normalize_account_id(account_id)
     eligible = [
         row
         for row in driving_lane_census(active, parent)["allocating"]
         if _operator_join_candidate(row)
+        and normalize_account_id(row.get("account_id")) == want_account
     ]
     if not eligible:
         return None
@@ -128,32 +141,28 @@ def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
     )
 
 
-def _mint_headroom_gate(
-    *,
-    display: str,
-    reserved_chromes: int,
-    listen: _ListenFn,
+def _supersede_stale_account_row(
+    active: dict[str, Any], profile_suffix: str, listen: _ListenFn
 ) -> None:
-    """Refuse or drain once when X headroom is short before minting Chrome."""
-    from claude_bundles.x_display_capacity import (
-        XDisplayCapacityError,
-        require_chrome_headroom,
-    )
-
-    from .dormant_drain import drain_live_hosts_to_dormant
-
-    def _check_headroom(*, after_drain: bool = False) -> None:
-        require_chrome_headroom(
-            display=display,
-            reserved_chromes=reserved_chromes,
-            after_drain=after_drain,
-        )
-
-    try:
-        _check_headroom(after_drain=False)
-    except XDisplayCapacityError:
-        drain_live_hosts_to_dormant(display=display, is_listening=listen)
-        _check_headroom(after_drain=True)
+    """Drop a non-live row holding *profile_suffix* when Chrome is not live."""
+    stale_statuses = {"released", "orphaned_retry", STATUS_DORMANT}
+    to_drop: list[str] = []
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("profile_suffix") or "") != profile_suffix:
+            continue
+        if row.get("status") not in stale_statuses:
+            continue
+        profile = Path(str(row.get("profile") or cdp_lane.profile_for(profile_suffix)))
+        if cdp_lane.chrome_port_for_profile(profile) is not None:
+            continue
+        port = row.get("port")
+        if isinstance(port, int) and listen(port):
+            continue
+        to_drop.append(str(rid))
+    for rid in to_drop:
+        active.pop(rid, None)
 
 
 def reserve_allocating_row(
@@ -169,6 +178,7 @@ def reserve_allocating_row(
     expect_status: str | None = None,
     launch: bool = True,
     join: bool = True,
+    account_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Reserve a port under ``ports.lock``, or join an in-flight allocating row.
 
@@ -223,95 +233,96 @@ def reserve_allocating_row(
                 },
             )
 
-    from .dormant import reserved_chromes_by_display
-
-    while True:
-        with _store.ports_lock():
-            active = _store.load_active()
-            if join_eligible:
-                target = _join_target(active, parent)
-                if target is not None:
-                    return target, False
-            _expect_status_ok(active)
-            reserved_chromes = _count_allocating(active) if launch else 0
-            reserved_map = reserved_chromes_by_display(active) if launch else {}
-
-        candidates = cdp_lane.cdp_display_candidates()
-        if launch and len(candidates) > 1:
-            # Ordered fallover before port selection. A single candidate keeps
-            # today's drain-then-recheck gate below instead of refusing first.
-            from claude_bundles.x_display_capacity import admit_display
-
-            resolved_display = admit_display(candidates, reserved_map)
-        else:
-            resolved_display = candidates[0]
-
-        if launch:
-            _mint_headroom_gate(
-                display=resolved_display,
-                reserved_chromes=int(reserved_map.get(resolved_display, 0)),
-                listen=listen,
+    with _store.ports_lock():
+        active = _store.load_active()
+        prior_row = (
+            active.get(registration_id)
+            if registration_id and registration_id in active
+            else None
+        )
+        prior_for_resolve = prior_row if isinstance(prior_row, dict) else None
+        if join_eligible:
+            join_account = resolve_reserve_account_id(
+                account_id=account_id,
+                carry=carry,
+                prior_row=None,
+                profile_suffix=profile_suffix,
             )
-
-        with _store.ports_lock():
-            active = _store.load_active()
-            if join_eligible:
-                target = _join_target(active, parent)
-                if target is not None:
-                    return target, False
-            _expect_status_ok(active)
-            post_drain_allocating = _count_allocating(active) if launch else 0
-            if launch and post_drain_allocating != reserved_chromes:
-                reserved_chromes = post_drain_allocating
-                continue
-            exclude = _used_ports(active) | _peer_lane_ports()
-            port = select_free_registry_port(listen, exclude=exclude)
-            if registration_id is None or profile_suffix is None:
-                registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
-            prior = active.get(registration_id) if registration_id else None
-            row: dict[str, Any] = {
-                **(carry or {}),
-                "registration_id": registration_id,
-                "port": port,
-                "profile_suffix": profile_suffix,
-                "profile": str(cdp_lane.profile_for(profile_suffix)),
-                "holder": holder,
-                "purpose": purpose,
-                "display": resolved_display,
-                "mission_kind": mission_kind,
-                "parent_thread": parent_thread,
-                "status": "allocating",
-                "chrome_pid": None,
-                "holder_pid": os.getpid(),
-                "started_at": time.time(),
-            }
-            # Carry must not mint a seat. Keys already on the stored row stay,
-            # so a close that landed before this write is not dropped.
-            for seat_key in (
-                "seat_lane",
-                "seat_bound_at",
-                "seat_closed_at",
-                "seat_close_reason",
-                "superseded_by",
-            ):
-                row.pop(seat_key, None)
-                if isinstance(prior, dict) and seat_key in prior:
-                    row[seat_key] = prior[seat_key]
-            _claim_driver_lock(registration_id)
-            active[registration_id] = row
-            _store.write_active(active)
-            _store.append_log("allocating", row)
-            _events.emit(
-                _events.cdp_port_allocating(
-                    registration_id=registration_id,
-                    port=port,
-                    parent_thread=parent_thread
-                    if isinstance(parent_thread, str)
-                    else None,
-                    holder=holder,
-                )
+            target = _join_target(active, parent, account_id=join_account)
+            if target is not None:
+                return target, False
+        _expect_status_ok(active)
+        exclude = _used_ports(active) | _peer_lane_ports()
+        port = select_free_registry_port(listen, exclude=exclude)
+        norm_account = resolve_reserve_account_id(
+            account_id=account_id,
+            carry=carry,
+            prior_row=prior_for_resolve,
+            profile_suffix=profile_suffix,
+        )
+        resolved_display = cdp_lane.cdp_display_for_account(norm_account)
+        if norm_account != "default" and not account_is_signed_in(norm_account):
+            raise AccountNotSignedInError(
+                f"account {norm_account!r} is not signed in; refusing registry mint"
             )
-        return row, True
+        if profile_suffix is None and norm_account != "default":
+            profile_suffix = account_profile_suffix(norm_account)
+            if registration_id is None:
+                registration_id = uuid.uuid4().hex
+            if profile_suffix:
+                _supersede_stale_account_row(active, profile_suffix, listen)
+        if registration_id is None or profile_suffix is None:
+            registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+        assert_profile_suffix_available(
+            active,
+            str(profile_suffix),
+            registration_id=registration_id,
+        )
+        prior = active.get(registration_id) if registration_id else None
+        row: dict[str, Any] = {
+            **(carry or {}),
+            "registration_id": registration_id,
+            "port": port,
+            "profile_suffix": profile_suffix,
+            "profile": str(cdp_lane.profile_for(profile_suffix)),
+            "holder": holder,
+            "purpose": purpose,
+            "display": resolved_display,
+            "mission_kind": mission_kind,
+            "parent_thread": parent_thread,
+            "status": "allocating",
+            "chrome_pid": None,
+            "holder_pid": os.getpid(),
+            "started_at": time.time(),
+            "account_id": norm_account,
+        }
+        # Carry must not mint a seat. Keys already on the stored row stay,
+        # so a close that landed before this write is not dropped.
+        for seat_key in (
+            "seat_lane",
+            "seat_bound_at",
+            "seat_closed_at",
+            "seat_close_reason",
+            "superseded_by",
+        ):
+            row.pop(seat_key, None)
+            if isinstance(prior, dict) and seat_key in prior:
+                row[seat_key] = prior[seat_key]
+        _claim_driver_lock(registration_id)
+        active[registration_id] = row
+        _store.write_active(active)
+        _store.append_log("allocating", row)
+        _events.emit(
+            _events.cdp_port_allocating(
+                registration_id=registration_id,
+                port=port,
+                parent_thread=parent_thread
+                if isinstance(parent_thread, str)
+                else None,
+                holder=holder,
+            )
+        )
+    return row, True
 
 
 def activate_allocating_row(
@@ -344,7 +355,8 @@ def _finish_reserved_launch(
     display = str(row.get("display") or "").strip() or None
     try:
         if launch:
-            with cdp_lane.launch_display(display):
+            acct = str(row.get("account_id") or "default")
+            with cdp_lane.launch_display(display), cdp_lane.launch_account(acct):
                 chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
         row = activate_allocating_row(registration_id, chrome_pid)
     except Exception:
@@ -364,6 +376,7 @@ def _mint_after_join(
     listen: _ListenFn,
     launch_fn: _LaunchFn,
     join: bool,
+    account_id: str | None = None,
 ) -> Registration:
     """One reserve re-entry. ``join=False`` is the stranded-row mint only."""
     row, minted = reserve_allocating_row(
@@ -374,6 +387,7 @@ def _mint_after_join(
         listen=listen,
         launch=True,
         join=join,
+        account_id=account_id,
     )
     if not minted:
         return _wait_for_joined_row(
@@ -385,6 +399,7 @@ def _mint_after_join(
             listen=listen,
             launch_fn=launch_fn,
             joined=None,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=True, launch_fn=launch_fn)
 
@@ -404,6 +419,7 @@ def _wait_for_joined_row(
     launch_fn: _LaunchFn,
     joined: list | None,
     reentry: bool = False,
+    account_id: str | None = None,
 ) -> Registration:
     """Poll until the joined row leaves ``allocating``. No deadline.
 
@@ -427,6 +443,9 @@ def _wait_for_joined_row(
             time.sleep(cdp_lane._POLL_MS / 1000)
             continue
         if status == "active" and isinstance(current, dict):
+            from .driving_seat import _assert_driving_seat_account
+
+            _assert_driving_seat_account(current, account_id)
             if joined is not None:
                 joined.append(registration_id)
             return _row_to_registration(current)
@@ -444,6 +463,7 @@ def _wait_for_joined_row(
                 listen=listen,
                 launch_fn=launch_fn,
                 join=False,
+                account_id=account_id,
             )
         re_row, minted = reserve_allocating_row(
             holder=holder,
@@ -453,6 +473,7 @@ def _wait_for_joined_row(
             listen=listen,
             launch=True,
             join=True,
+            account_id=account_id,
         )
         if minted:
             return _finish_reserved_launch(re_row, launch=True, launch_fn=launch_fn)
@@ -466,6 +487,7 @@ def _wait_for_joined_row(
             launch_fn=launch_fn,
             joined=joined,
             reentry=True,
+            account_id=account_id,
         )
 
 
@@ -479,6 +501,7 @@ def register_lane(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
     joined: list | None = None,
+    account_id: str | None = None,
 ) -> Registration:
     """Reserve port under lock, launch Chrome outside lock, then flip active (F1).
 
@@ -507,6 +530,7 @@ def register_lane(
         listen=listen,
         launch=launch,
         join=True,
+        account_id=account_id,
     )
     if not minted:
         return _wait_for_joined_row(
@@ -518,6 +542,7 @@ def register_lane(
             listen=listen,
             launch_fn=launch_fn,
             joined=joined,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=launch, launch_fn=launch_fn)
 

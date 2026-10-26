@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -15,9 +17,6 @@ def _x_display_unobserved_by_default(
     unit tests would refuse every ``register_lane`` when Xvfb is at cap.
     """
     monkeypatch.setenv("CDP_DISPLAY", ":2")
-    # Explicit single display keeps register/relaunch tests on the sole-candidate
-    # path (auth deferred to launch). Pair fallover is opt-in via delenv.
-    monkeypatch.setenv("CDP_DISPLAYS", ":2")
     if request.node.get_closest_marker("live_x_display"):
         return
     monkeypatch.setattr(
@@ -36,6 +35,32 @@ def _pin_lanes_empty_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "claude_bundles.x_display_capacity._load_pin_lanes",
         lambda: {},
     )
+
+
+@pytest.fixture(autouse=True)
+def _cdp_accounts_config_test_map(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Map account-2 to ``:4`` for every ``offline`` test via a rewritten accounts YAML.
+
+    ``CDP_ACCOUNTS_CONFIG_PATH`` wins over monkeypatching ``models.ACCOUNTS_CONFIG_PATH``
+    (see ``models._accounts_config_path``). A test that needs the committed empty
+    ``cdp_account_displays`` map must set ``CDP_ACCOUNTS_CONFIG_PATH`` to its own file.
+    """
+    if request.node.get_closest_marker("offline") is None:
+        return
+    repo_root = Path(__file__).resolve().parent.parent
+    src = repo_root / "config" / "cdp" / "accounts.yaml"
+    text = src.read_text(encoding="utf-8")
+    if "cdp_account_displays: {}" in text:
+        text = text.replace(
+            "cdp_account_displays: {}",
+            'cdp_account_displays:\n  account-2: ":4"',
+            1,
+        )
+    dest = tmp_path / "cdp-accounts.yaml"
+    dest.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(dest))
 
 
 @pytest.fixture(autouse=True)

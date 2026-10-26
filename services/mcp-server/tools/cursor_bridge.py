@@ -90,18 +90,32 @@ def _open_tab(
 
 
 def _send_msg(
-    *, thread: str | None, body: str | None, after_turn: int | None
+    *,
+    thread: str | None,
+    body: str | None,
+    after_turn: int | None,
+    gui_host: str = ":8",
+    agent_id: str | None = None,
 ) -> dict[str, Any]:
+    """Post MSG on the lane and optionally paste into a Glass agent by editor id.
+
+    spawn_tab agents never post lane TAB_READY, so the io watcher refuses MSG
+    preflight (watch-cursor-bridge-inbox.py). When ``agent_id`` is set, paste
+    the body through Glass CDP like wake_tab so spawn_tab follow-ups land.
+    Use ``agent_id`` only for spawn_tab agents — open_tab lanes already wake
+    via the io watcher and would double-deliver if both paths run.
+    """
     if not thread:
         return _param_error("send_msg", "thread_required", "send_msg requires thread")
-    if not body:
+    body_s = str(body or "").strip()
+    if not body_s:
         return _param_error("send_msg", "body_required", "send_msg requires body")
     result = _send_impl(
         new_slug=None,
         thread=thread,
         to=_TO,
         subject="MSG",
-        body=body,
+        body=body_s,
         from_agent=_FROM,
         summary=None,
         tags=None,
@@ -115,8 +129,23 @@ def _send_msg(
     )
     if "error" in result:
         return result
-    record("mcp.cursor_bridge.send_msg", thread=thread)
-    return {**result, "op": "send_msg"}
+    out: dict[str, Any] = {**result, "op": "send_msg"}
+    aid = str(agent_id or "").strip()
+    if aid:
+        paste = relay_wake_tab(gui_host=gui_host, agent_id=aid, body=body_s)
+        out["glass_paste"] = paste
+        out["editor_agent_id"] = aid
+        out["gui_host"] = gui_host
+        if not paste.get("ok"):
+            out["ok"] = False
+            out["error"] = str(paste.get("error") or paste.get("reason") or "glass_paste_failed")
+    record(
+        "mcp.cursor_bridge.send_msg",
+        thread=thread,
+        glass_agent=aid or None,
+        glass_ok=out.get("glass_paste", {}).get("ok") if aid else None,
+    )
+    return out
 
 
 def _spawn_tab(
@@ -332,7 +361,8 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
           open_tab (slug, thread XOR new_slug, cowork_url?) — returns the send
             payload + {op, title: "<thread_id> <slug>"}; new_slug also tags the
             lane ``lane:cursor-bridge``.
-          send_msg (thread, body, after_turn?) — returns the send payload + {op}.
+          send_msg (thread, body, after_turn?, gui_host?, agent_id?) — bus MSG plus,
+            when agent_id is set, Glass paste into that composer (spawn_tab path).
           status   (thread, last=10) — {op, thread, turns[...], tab_ready,
             tab_ready_turn, tab_ready_reason, tab_ready_age_s, bridge_open_turn,
             last_reply_turn}. tab_ready is true only when a lane-scoped TAB_READY
@@ -348,7 +378,13 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
                     thread=thread, new_slug=new_slug, slug=slug, cowork_url=cowork_url
                 )
             if op == "send_msg":
-                return _send_msg(thread=thread, body=body, after_turn=after_turn)
+                return _send_msg(
+                    thread=thread,
+                    body=body,
+                    after_turn=after_turn,
+                    gui_host=gui_host,
+                    agent_id=agent_id,
+                )
             if op == "status":
                 return _status(thread=thread, last=last)
             if op == "spawn_tab":

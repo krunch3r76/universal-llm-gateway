@@ -142,7 +142,6 @@ class WritingReviewLocalHandler(BaseHandler):
                             context,
                             system_prompt=system,
                             temperature=0.1,
-                            max_tokens=2048,
                             json_schema=REVIEW_RESULT_SCHEMA,
                         )
                         content = result.content

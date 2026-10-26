@@ -202,6 +202,23 @@ gate() {
   "$PYTHON" -m deploy_identity.mcp_restart_gate --workspace-root "$WORKSPACE_ROOT" --mcp-data-dir "$MCP_DATA_DIR" "$@"
 }
 
+gate_emit_log() {
+  local msg="$1"
+  local data_args=()
+  if [[ -n "${MCP_DATA_DIR:-}" ]]; then
+    data_args=(--mcp-data-dir "$MCP_DATA_DIR")
+  fi
+  "$PYTHON" -m deploy_identity.mcp_restart_gate \
+    --workspace-root "$WORKSPACE_ROOT" \
+    "${data_args[@]}" \
+    emit-log -- "$msg" || true
+}
+
+mcp_sync_error() {
+  echo "$1" >&2
+  gate_emit_log "$1"
+}
+
 _restore_window_exit() {
   trap '' PIPE INT TERM HUP
   trap - EXIT
@@ -298,7 +315,7 @@ _cleanup_stamp_snapshot() {
 snapshot_source_sync_stamp() {
   local c=mcp-server
   if ! docker exec "$c" true; then
-    echo "ERROR: docker exec failed while snapshotting /app/.source_sync_stamp; not treating the stamp as absent." >&2
+    mcp_sync_error "ERROR: docker exec failed while snapshotting /app/.source_sync_stamp; not treating the stamp as absent." >&2
     return 1
   fi
   if docker exec "$c" test -f /app/.source_sync_stamp; then
@@ -594,11 +611,37 @@ verify_sync_nonce_survived() {
   local observed
   observed="$(docker exec "$c" cat /app/.source_sync_nonce 2>/dev/null || true)"
   if [[ "${observed}" != "${_SYNC_NONCE}" ]]; then
-    echo "ERROR: sync nonce missing after restart (observed='${observed}' expected='${_SYNC_NONCE}')." >&2
-    echo "ERROR: container was likely recreated — docker cp layer was wiped. Fix restart path; do not treat this sync as live." >&2
+    mcp_sync_error "ERROR: sync nonce missing after restart (observed='${observed}' expected='${_SYNC_NONCE}')." >&2
+    mcp_sync_error "ERROR: container was likely recreated — docker cp layer was wiped. Fix restart path; do not treat this sync as live." >&2
     return 1
   fi
   echo "Verified sync nonce survived restart (writable layer intact)."
+}
+
+_mcp_container_running() {
+  docker inspect -f '{{.State.Running}}' mcp-server 2>/dev/null | grep -qx true
+}
+
+_chown_mcp_app_tree() {
+  local c=mcp-server img
+  img="$(docker inspect -f '{{.Config.Image}}' "$c" 2>/dev/null || true)"
+  if [[ -z "$img" ]]; then
+    mcp_sync_error "ERROR: cannot resolve image for ${c} chown." >&2
+    return 1
+  fi
+  if _mcp_container_running; then
+    docker exec -u 0 "$c" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
+      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
+    docker exec -u 0 "$c" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  else
+    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
+      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
+    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  fi
 }
 
 sync_source_into_container() {
@@ -624,21 +667,26 @@ sync_source_into_container() {
     docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
       "${c}:/app/services/mcp-server/tools/local/"
   fi
-  docker exec -u 0 "$c" chown -R mcp:mcp \
-    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
-    /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
-  docker exec -u 0 "$c" chown -R mcp:mcp \
-    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
-  write_sync_nonce
+  _chown_mcp_app_tree
+  if _mcp_container_running; then
+    write_sync_nonce
+  fi
+}
+
+# Create container stopped, sync working tree, then start — never boot stale image COPY alone.
+bootstrap_mcp_container_from_tree() {
+  echo "Creating mcp-server (stopped) → sync tree → start..."
+  arm_restore_window
+  docker compose "${COMPOSE_ARGS[@]}" up -d --no-start mcp-server
+  sync_source_into_container
+  docker start mcp-server
 }
 
 ensure_mcp_container() {
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
     return 0
   fi
-  echo "MCP container not found — creating from existing image (no rebuild)..."
-  arm_restore_window
-  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  bootstrap_mcp_container_from_tree
   wait_for_mcp_healthy || return 1
 }
 
@@ -660,7 +708,7 @@ container_passthrough_env_keys_differ() {
     0) return 1 ;;
     10) return 0 ;;
     *)
-      echo "ERROR: MCP env key-name compare failed (exit ${rc})." >&2
+      mcp_sync_error "ERROR: MCP env key-name compare failed (exit ${rc})." >&2
       exit 1
       ;;
   esac
@@ -669,7 +717,7 @@ container_passthrough_env_keys_differ() {
 restart_mcp_gracefully() {
   local c=mcp-server
   if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
-    echo "ERROR: ${c} missing after sync — refusing compose recreate (would wipe docker cp)." >&2
+    mcp_sync_error "ERROR: ${c} missing after sync — refusing compose recreate (would wipe docker cp)." >&2
     return 1
   fi
   echo "Restarting ${c} (docker stop/start — preserving synced /app layer)..."
@@ -709,11 +757,11 @@ run_import_probe_or_refuse() {
   rc=$?
   set -e
   if [[ "$rc" == 2 ]]; then
-    echo "ERROR: MCP import probe timed out (120s wall cap)." >&2
+    mcp_sync_error "ERROR: MCP import probe timed out (120s wall cap)." >&2
     exit 1
   fi
   if [[ "$rc" != 0 ]]; then
-    echo "ERROR: MCP import probe failed — refusing restart (no cp/stop/rm)." >&2
+    mcp_sync_error "ERROR: MCP import probe failed — refusing restart (no cp/stop/rm)." >&2
     exit 1
   fi
 }
@@ -721,7 +769,7 @@ run_import_probe_or_refuse() {
 mkdir -p "$MCP_DATA_DIR"
 exec 9>"${MCP_DATA_DIR}/sync-and-restart-mcp.lock"
 if ! flock -n 9; then
-  echo "ERROR: another sync-and-restart-mcp.sh is already running." >&2
+  mcp_sync_error "ERROR: another sync-and-restart-mcp.sh is already running." >&2
   exit 1
 fi
 
@@ -739,7 +787,7 @@ if [[ "$NO_CACHE" == "true" ]]; then
       mcp-server 2>/dev/null || true
   )"
   if [[ "$nocache_status" != "healthy" ]]; then
-    echo "ERROR: --no-cache refused — mcp-server status is '${nocache_status:-missing}', not healthy. Not starting the build." >&2
+    mcp_sync_error "ERROR: --no-cache refused — mcp-server status is '${nocache_status:-missing}', not healthy. Not starting the build." >&2
     exit 1
   fi
   record_checked_image_if_healthy
@@ -747,21 +795,22 @@ if [[ "$NO_CACHE" == "true" ]]; then
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
   set +e
+  gate image-boot-probe
+  boot_probe_rc=$?
   gate import-probe
   probe_rc=$?
   set -e
-  if [[ "$probe_rc" != 0 ]]; then
+  if [[ "$boot_probe_rc" != 0 || "$probe_rc" != 0 ]]; then
     gate retag-local-from-last-healthy || true
-    echo "ERROR: post-build MCP import probe failed — reverted :local to :last-healthy." >&2
+    mcp_sync_error "ERROR: post-build MCP probe failed (image-boot=${boot_probe_rc}, import=${probe_rc}) — reverted :local to :last-healthy." >&2
     exit 1
   fi
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"
   arm_restore_window
   remove_mcp_container_for_image_recreate
-  echo "Starting MCP server..."
-  arm_restore_window
-  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  echo "Starting MCP server (bootstrap sync before first boot)..."
+  bootstrap_mcp_container_from_tree
   write_source_sync_stamp_before_serving_restart
   restart_mcp_gracefully
 else
@@ -773,11 +822,11 @@ else
     arm_restore_window
     remove_mcp_container_for_image_recreate
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
-      echo "ERROR: mcp-server still present after rm; refusing compose up." >&2
+      mcp_sync_error "ERROR: mcp-server still present after rm; refusing compose up." >&2
       exit 1
     fi
     arm_restore_window
-    docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+    bootstrap_mcp_container_from_tree
   fi
   _STAMP_HEAD_BEFORE="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
   _STAMP_CLASS_BEFORE="$(read_stamp_classification "$WORKSPACE_ROOT" 2>/dev/null || true)"
@@ -793,6 +842,14 @@ trap _cleanup_stamp_snapshot EXIT
 if wait_for_mcp_healthy; then
   verify_sync_nonce_survived
   gate promote-booted
+  _emit_sync_args=(emit-direct-sync-success)
+  if [[ "$NO_CACHE" == "true" ]]; then
+    _emit_sync_args+=(--no-cache)
+  fi
+  if [[ -n "${CHECKED_IMAGE_ID:-}" ]]; then
+    _emit_sync_args+=(--image-id "$CHECKED_IMAGE_ID")
+  fi
+  gate "${_emit_sync_args[@]}" || true
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
     REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
     if [[ -f "$REFRESH_SCRIPT" ]]; then

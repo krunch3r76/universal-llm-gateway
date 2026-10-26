@@ -15,9 +15,11 @@ from claude_bundles import cdp_registry_store as _store
 
 from .models import (
     _RECLAIMABLE_STATUSES,
+    DEFAULT_ACCOUNT_ID,
     STALE_ACTIVE_TTL_S,
     HygieneReclaimResult,
     _ListenFn,
+    normalize_account_id,
     seat_open,
 )
 from .registry_module import registry_package
@@ -230,6 +232,10 @@ def _reclaim_row_profile(
     profile = _profile_path_from_row(row)
     if profile is None:
         return "missing", None
+    suffix = str(row.get("profile_suffix") or "")
+    account = normalize_account_id(row.get("account_id"))
+    if suffix.startswith("account-") or account != DEFAULT_ACCOUNT_ID:
+        return "retained_account_profile", profile
     outcome = _reclaim_profile_to_trash(
         profile, rid, chrome_port_for_profile=chrome_port_for_profile
     )

@@ -11,6 +11,7 @@ _uds_publisher: Callable[[str, dict[str, Any]], None] | None = None
 
 
 def register_uds_publisher(publisher: Callable[[str, dict[str, Any]], None]) -> None:
+    """Install the process-local publisher used when mcp_events cannot be imported."""
     global _uds_publisher
     _uds_publisher = publisher
 
@@ -70,10 +71,12 @@ def LiaisonLeaseForfeited(  # noqa: N802
 
 
 def emit_night_id_reset(**kwargs: Any) -> None:
+    """Publish a liaison night-id reset after the hop counter rolls."""
     _emit(LiaisonNightIdReset(**kwargs))
 
 
 def emit_lease_forfeited(**kwargs: Any) -> None:
+    """Publish a liaison lease forfeiture for the named root holder."""
     _emit(LiaisonLeaseForfeited(**kwargs))
 
 
@@ -100,6 +103,7 @@ def LiaisonPendingSpawnReleased(  # noqa: N802
 
 
 def emit_pending_spawn_released(**kwargs: Any) -> None:
+    """Publish release of a pending liaison spawn that will not be admitted."""
     _emit(LiaisonPendingSpawnReleased(**kwargs))
 
 
@@ -124,6 +128,7 @@ def LiaisonCheckpointObserved(  # noqa: N802
 
 
 def emit_checkpoint_observed(**kwargs: Any) -> None:
+    """Publish that a liaison checkpoint turn was observed on a root."""
     _emit(LiaisonCheckpointObserved(**kwargs))
 
 
@@ -150,6 +155,7 @@ def LiaisonLaneCloseoutObserved(  # noqa: N802
 
 
 def emit_lane_closeout_observed(**kwargs: Any) -> None:
+    """Publish that a lane closeout turn was observed for liaison tracking."""
     _emit(LiaisonLaneCloseoutObserved(**kwargs))
 
 
@@ -200,10 +206,12 @@ def LiaisonNowRowReleased(  # noqa: N802
 
 
 def emit_now_row_bound(**kwargs: Any) -> None:
+    """Publish that a liaison now-row was bound to a lane."""
     _emit(LiaisonNowRowBound(**kwargs))
 
 
 def emit_now_row_released(**kwargs: Any) -> None:
+    """Publish that a liaison now-row binding was released from its lane."""
     _emit(LiaisonNowRowReleased(**kwargs))
 
 
@@ -266,14 +274,17 @@ def LiaisonRosterHireRefused(  # noqa: N802
 
 
 def emit_roster_hire_latched(**kwargs: Any) -> None:
+    """Publish that a liaison roster hire latched onto a work key."""
     _emit(LiaisonRosterHireLatched(**kwargs))
 
 
 def emit_roster_hire_released(**kwargs: Any) -> None:
+    """Publish that a latched liaison roster hire was released from the roster."""
     _emit(LiaisonRosterHireReleased(**kwargs))
 
 
 def emit_roster_hire_refused(**kwargs: Any) -> None:
+    """Publish that a liaison roster hire was refused before latch."""
     _emit(LiaisonRosterHireRefused(**kwargs))
 
 
@@ -296,4 +307,38 @@ def BusWatchMultiplexRefused(  # noqa: N802
 
 
 def emit_multiplex_refused(**kwargs: Any) -> None:
+    """Publish that a bus-watch multiplex request was refused for a busy root."""
     _emit(BusWatchMultiplexRefused(**kwargs))
+
+
+@event_factory
+def EndpointWakeAddressRoute(  # noqa: N802
+    *,
+    thread: str,
+    turn_id: int | None,
+    match: str,
+    reason: str,
+    rule_id: str | None = None,
+    subject_preview: str = "",
+    registration_id: str = "",
+) -> Event:
+    """Observation: a closeout wake matched the lane holder, the alias name, or neither."""
+    return Event(
+        signal="endpoint_wake.address_route",
+        role="observation",
+        payload={
+            "thread": thread,
+            "turn_id": turn_id,
+            "match": match,
+            "reason": reason,
+            "rule_id": rule_id,
+            "subject_preview": subject_preview,
+            "registration_id": registration_id,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_address_route(**kwargs: Any) -> None:
+    """Publish the address-route observation for a closeout or milestone wake decision."""
+    _emit(EndpointWakeAddressRoute(**kwargs))

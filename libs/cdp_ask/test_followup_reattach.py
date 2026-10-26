@@ -130,7 +130,7 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: False)
     monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
     monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.require_chrome_headroom",
+        "claude_bundles.x_display_capacity.probe_x_display",
         lambda **_kwargs: {"x_exhausted": False},
     )
     return root
