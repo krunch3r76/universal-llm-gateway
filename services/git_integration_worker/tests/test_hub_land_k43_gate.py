@@ -106,7 +106,7 @@ def _approve(repo: Path, tip: str) -> None:
     assert result.verdict == "APPROVE"
 
 
-def test_land_refuses_when_tip_has_no_k43_row(tmp_path: Path) -> None:
+def test_land_allows_when_tip_has_no_k43_row(tmp_path: Path) -> None:
     """Absent row: master moves; K43 is not a refuse_reason."""
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-no-k43"
@@ -126,7 +126,7 @@ def test_land_refuses_when_tip_has_no_k43_row(tmp_path: Path) -> None:
     release_land_lease(lease_key=key, holder_op_id="next-land")
 
 
-def test_land_refuses_when_gap_row_has_no_verdict(tmp_path: Path) -> None:
+def test_land_allows_when_gap_row_has_no_verdict(tmp_path: Path) -> None:
     """A gap notice is not a bind. The land still proceeds."""
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-gap-only"
@@ -148,7 +148,7 @@ def test_land_refuses_when_gap_row_has_no_verdict(tmp_path: Path) -> None:
     assert _master(repo) == tip
 
 
-def test_land_refuses_when_verdict_is_request_changes(tmp_path: Path) -> None:
+def test_land_allows_when_verdict_is_request_changes(tmp_path: Path) -> None:
     """REQUEST_CHANGES does not block hub land."""
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-request-changes"
@@ -171,7 +171,7 @@ def test_land_refuses_when_verdict_is_request_changes(tmp_path: Path) -> None:
     assert _master(repo) == tip
 
 
-def test_land_refuses_when_approve_is_for_a_different_tip(tmp_path: Path) -> None:
+def test_land_allows_when_approve_is_for_a_different_tip(tmp_path: Path) -> None:
     """An APPROVE row for another sha does not block this tip's land."""
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-other-tip"
@@ -248,7 +248,7 @@ def test_blank_exemption_ref_does_not_admit(tmp_path: Path) -> None:
     assert _master(repo) == tip
 
 
-def test_land_refuses_when_k43_ledger_unreadable(
+def test_land_allows_when_k43_ledger_unreadable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ledger connect failure warns, records override, and land proceeds."""
@@ -269,7 +269,7 @@ def test_land_refuses_when_k43_ledger_unreadable(
     assert land_lease_holder(master_land_lease_key(repo)) is None
 
 
-def test_legacy_ledger_without_exemption_column_still_refuses(
+def test_legacy_ledger_without_exemption_column_still_allows_land(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Legacy ledger schema migrates and does not block land."""
@@ -338,7 +338,7 @@ def _hold(repo: Path, holder: str) -> None:
     assert try_acquire_land_lease(lease_key=key, holder_op_id=holder)
 
 
-def test_ff_only_refuses_without_k43_and_merges_the_resolved_sha(
+def test_ff_only_allows_without_k43_and_merges_the_resolved_sha(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No row: master moves. APPROVE status is advisory only."""
@@ -369,7 +369,7 @@ def test_ff_only_refuses_without_k43_and_merges_the_resolved_sha(
     release_land_lease(lease_key=master_land_lease_key(repo), holder_op_id="ff-sha")
 
 
-def test_clean_merge_refuses_without_k43_and_merges_the_resolved_sha(
+def test_clean_merge_allows_without_k43_and_merges_the_resolved_sha(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Behind master with no row still merges. APPROVE is not required."""
