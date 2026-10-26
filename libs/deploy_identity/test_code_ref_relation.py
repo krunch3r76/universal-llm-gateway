@@ -5,13 +5,13 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from universal_workspace import get_workspace_root
 
 from deploy_identity.code_ref_relation import (
     _resolve_commit_sha,
     code_ref_relation,
     code_ref_satisfied,
 )
-from universal_workspace import get_workspace_root
 
 
 def _head() -> str:
@@ -29,6 +29,17 @@ def _ancestor_of_head() -> str:
     root = get_workspace_root()
     proc = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD~1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip()
+
+
+def _master_tip() -> str:
+    root = get_workspace_root()
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "master^{commit}"],
         check=True,
         capture_output=True,
         text=True,
@@ -70,6 +81,32 @@ def test_code_ref_relation_short_ref_equal_to_full_observed() -> None:
     assert _resolve_commit_sha(short) == head
     assert code_ref_relation(short, head) == "equal"
     assert code_ref_satisfied(short, head)
+
+
+def test_code_ref_relation_master_symbol_equal_to_tip() -> None:
+    tip = _master_tip()
+    assert code_ref_relation("master", tip) == "equal"
+    assert code_ref_satisfied("master", tip)
+
+
+def test_code_ref_relation_master_symbol_descendant_of_observed() -> None:
+    root = get_workspace_root()
+    _master_tip()
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "master~1"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip("master has no parent in this checkout")
+    ancestor = proc.stdout.strip()
+    assert code_ref_relation("master", ancestor) == "descendant-of-observed"
+    assert not code_ref_satisfied("master", ancestor)
+
+
+def test_code_ref_relation_unresolvable_ref() -> None:
+    head = _head()
+    assert code_ref_relation("not-a-real-ref-xyz", head) == "unrelated"
 
 
 def test_code_ref_relation_ambiguous_prefix_not_equal(
