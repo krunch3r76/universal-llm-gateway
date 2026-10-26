@@ -192,7 +192,9 @@ def test_open_children_none_with_active_child_422(bus_db: TestClient) -> None:
             "from": "web-anthropic",
             "to": "cursor-auto",
             "subject": "registration",
-            "body": _registration_body(model=model, effort=effort, open_children="none"),
+            "body": _registration_body(
+                model=model, effort=effort, open_children="none"
+            ),
         },
     )
     assert resp.status_code == 422
@@ -225,7 +227,8 @@ def test_seat_registration_refuses_unparsed_fetch_decision(bus_db: TestClient) -
     _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
     _post_admit_report(bus_db, thread_id, model=model, effort=effort)
     body = _registration_body(model=model, effort=effort).replace(
-        "- fetch-decision: runbook:maestro-loop in_context\n", "fetch-decision: runbook:maestro-loop\n"
+        "- fetch-decision: runbook:maestro-loop in_context\n",
+        "fetch-decision: runbook:maestro-loop\n",
     )
     resp = bus_db.post(
         "/threads/send",

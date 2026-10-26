@@ -10,18 +10,117 @@ delivered via staging Use-lines, not a leading ``/<slug>`` prefix here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import yaml
+
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
-from claude_bundles.maestro_self_hop import apply_maestro_self_hop_fields
-from claude_bundles.operator_proxy_hop_status import hop_successor_fields, house_rules_section
+from claude_bundles.operator_proxy_hop_status import (
+    hop_successor_fields,
+    house_rules_section,
+)
 from claude_bundles.operator_proxy_standing_render import (
     compute_preamble_over_inflight_flag,
     first_act_call1_line,
     maestro_runbook_act2_line,
 )
 from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
+
+DEFAULT_MAESTRO_SELF_HOP_MODEL = "cdp/fable-5.1"
+DEFAULT_MAESTRO_SELF_HOP_EFFORT = "medium"
+ELSEWHERE_HOP_MODEL = "cdp/opus-5.5-extra"
+
+_K91_KNOB_RE = re.compile(
+    r"^\s*-\s*K91\b[^\n]*?"
+    r"desired_model=(?P<model>\S+)\s+desired_effort=(?P<effort>\S+)",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class MaestroSelfHopKnob:
+    desired_model: str
+    desired_effort: str
+
+
+def _maestro_self_hop_repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _maestro_self_hop_lane_config_path(lane_id: str) -> Path:
+    return _maestro_self_hop_repo_root() / "config" / "lanes" / f"{lane_id}.yaml"
+
+
+def load_lane_config_knob(lane_id: str) -> MaestroSelfHopKnob | None:
+    path = _maestro_self_hop_lane_config_path(lane_id)
+    if not path.is_file():
+        return None
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    block = raw.get("maestro_self_hop") or {}
+    model = (block.get("desired_model") or "").strip()
+    effort = (block.get("desired_effort") or "").strip()
+    if not model or not effort:
+        return None
+    return MaestroSelfHopKnob(desired_model=model, desired_effort=effort)
+
+
+def parse_k91_from_house_rules(text: str | None) -> MaestroSelfHopKnob | None:
+    if not text:
+        return None
+    match = _K91_KNOB_RE.search(text)
+    if not match:
+        return None
+    return MaestroSelfHopKnob(
+        desired_model=match.group("model"),
+        desired_effort=match.group("effort"),
+    )
+
+
+def resolve_maestro_self_hop(
+    *,
+    house_rules_text: str | None = None,
+    lane_id: str = "12286",
+) -> MaestroSelfHopKnob:
+    """One knob read: K91 house-rules row, then lane config, then K91 defaults."""
+    parsed = parse_k91_from_house_rules(house_rules_text)
+    if parsed is not None:
+        return parsed
+    from_config = load_lane_config_knob(lane_id)
+    if from_config is not None:
+        return from_config
+    return MaestroSelfHopKnob(
+        desired_model=DEFAULT_MAESTRO_SELF_HOP_MODEL,
+        desired_effort=DEFAULT_MAESTRO_SELF_HOP_EFFORT,
+    )
+
+
+def maestro_self_hop_refusal_tail(knob: MaestroSelfHopKnob) -> str:
+    return (
+        f"maestro house: desired_model={knob.desired_model} "
+        f"desired_effort={knob.desired_effort} (K91, FACT 12286#4800); "
+        f"elsewhere {ELSEWHERE_HOP_MODEL} (K22)"
+    )
+
+
+def apply_maestro_self_hop_fields(
+    fields: dict[str, str],
+    *,
+    house_rules_text: str | None,
+    lane_id: str,
+) -> MaestroSelfHopKnob:
+    knob = resolve_maestro_self_hop(
+        house_rules_text=house_rules_text,
+        lane_id=lane_id,
+    )
+    fields["maestro_self_hop_model"] = knob.desired_model
+    fields["maestro_self_hop_effort"] = knob.desired_effort
+    fields["maestro_self_hop_refusal_tail"] = maestro_self_hop_refusal_tail(knob)
+    return knob
+
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -58,6 +157,7 @@ def _skill_slug_list_phrase(slugs: tuple[str, ...]) -> str:
     if len(slugs) == 1:
         return slugs[0]
     return ", ".join(slugs[:-1]) + " and " + slugs[-1]
+
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
 # (A9). Not generated — update this frozenset when the YAML primary set moves.
@@ -284,7 +384,9 @@ def _substitute_hop_template_part(
     """Replace named field tokens in one unfilled template segment."""
     for key in _FIELD_ORDER:
         if key == "mission_arrival_skills":
-            value = fields.get(key) or _skill_slug_list_phrase(MISSION_ARRIVAL_SKILL_SLUGS)
+            value = fields.get(key) or _skill_slug_list_phrase(
+                MISSION_ARRIVAL_SKILL_SLUGS
+            )
         else:
             value = fields[key]
         part = part.replace("{" + key + "}", value)
@@ -353,8 +455,8 @@ def _enforce_hop_render_max(
             if initial_size is None:
                 initial_size = size
             last_target = target
-            fields["checkpoint_block"] = (
-                _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
+            fields["checkpoint_block"] = _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(
+                body, target
             )
             fields["first_act_call1_line"] = first_act_call1_line(
                 lane=fields["lane"],
@@ -449,7 +551,8 @@ def ensure_operator_proxy_mission_prompt(
     journal_text: str | None = None,
     register_text: str | None = None,
     read_cortex_uri: Callable[[str], str | None] | None = None,
-    read_journal_head: Callable[[str, int], tuple[str | None, int | None]] | None = None,
+    read_journal_head: Callable[[str, int], tuple[str | None, int | None]]
+    | None = None,
     inflight_projection_lookup: Callable[[], str | None] | None = None,
     role: str = "maestro",
     house_rules_text: str | None = None,
@@ -560,7 +663,16 @@ def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> b
 
 
 __all__ = [
+    "DEFAULT_MAESTRO_SELF_HOP_EFFORT",
+    "DEFAULT_MAESTRO_SELF_HOP_MODEL",
+    "ELSEWHERE_HOP_MODEL",
+    "MaestroSelfHopKnob",
+    "apply_maestro_self_hop_fields",
     "LIFE_SURFACE_FORBIDDEN_TOOLS",
+    "load_lane_config_knob",
+    "maestro_self_hop_refusal_tail",
+    "parse_k91_from_house_rules",
+    "resolve_maestro_self_hop",
     "LIFE_SURFACE_LEGAL_TOOLS",
     "MISSION_ARRIVAL_SKILL_SLUGS",
     "MISSION_SKILL_SLUGS",
