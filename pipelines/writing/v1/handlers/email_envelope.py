@@ -225,6 +225,53 @@ def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
     return False
 
 
+_CORRESPONDENCE_CHANNELS = frozenset({"email", "sms", "portal", "letter"})
+_COLD_HR_DECLINE = re.compile(
+    r"\bi\s+am\s+declining\b|\bnot\s+available\s+for\s+me\b|\bunfortunately\b",
+    re.I,
+)
+_OVER_ANSWER_FUTURE = re.compile(
+    r"\bother\s+shifts\s+we\s+can\s+schedule\b"
+    r"|\bstill\s+happy\s+to\s+stay\s+on\b"
+    r"|\bkeep\s+me\s+in\s+mind\s+for\s+future\b"
+    r"|\bfuture\s+shifts\b",
+    re.I,
+)
+
+
+def _attested_allows_future_offers(objective: str, verbatim_notes: str) -> bool:
+    """True when pins/objective explicitly invite future-availability language."""
+    blob = f"{objective}\n{verbatim_notes}".lower()
+    return any(
+        token in blob
+        for token in ("other shifts", "future", "stay on", "keep me in mind")
+    )
+
+
+def correspondence_register_penalty(
+    text: str,
+    *,
+    channel: str,
+    objective: str = "",
+    standing_limits: str = "",
+    verbatim_notes: str = "",
+) -> int:
+    """Penalize cold decline register and unprompted over-answers on correspondence."""
+    del standing_limits  # reserved for envelope-specific rules on email
+    if channel not in _CORRESPONDENCE_CHANNELS:
+        return 0
+    penalty = 0
+    if _COLD_HR_DECLINE.search(text):
+        penalty += 3
+    if channel != "email" and ("\u2014" in text or "\u2013" in text):
+        penalty += 3
+    if _OVER_ANSWER_FUTURE.search(text) and not _attested_allows_future_offers(
+        objective, verbatim_notes
+    ):
+        penalty += 3
+    return penalty
+
+
 def email_draft_penalty(
     text: str,
     *,
@@ -233,6 +280,7 @@ def email_draft_penalty(
     standing_limits: str,
     recipient: str = "",
     objective: str = "",
+    verbatim_notes: str = "",
 ) -> int:
     """Score penalty for email envelope/register defects (3 points each)."""
     if channel != "email":
@@ -259,4 +307,11 @@ def email_draft_penalty(
             r"\b(?:i am submitting|attached are my|i am attaching)\b", text, re.I
         ):
             penalty += 3
+    penalty += correspondence_register_penalty(
+        text,
+        channel=channel,
+        objective=objective,
+        standing_limits=standing_limits,
+        verbatim_notes=verbatim_notes,
+    )
     return penalty

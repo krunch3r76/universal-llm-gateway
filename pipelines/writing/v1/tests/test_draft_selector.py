@@ -208,6 +208,64 @@ def test_selector_rejects_link_claim_when_source_message_has_no_url() -> None:
     assert selected["selected_role"] == "drafter_google"
 
 
+_MARIA_RX_PINS = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "declining the PHC Petaluma shift dates listed",
+    },
+    {
+        "pin_id": "P2",
+        "attested": True,
+        "excerpt": "not available for those Petaluma dates",
+    },
+]
+
+
+def test_maria_rxrelief_natural_sms_decline_beats_cold_and_over_answer() -> None:
+    """Gold SMS decline outranks Hermes cold HR and Anthropic reassurance bolt-ons."""
+    gold = (
+        "Maria, I can't take those Petaluma shifts. Thanks for sending them. Kaywan"
+    )
+    hermes = (
+        "Maria, I am declining the PHC Petaluma shift dates you listed as they are "
+        "not available for me. Please let me know if there are other shifts we can "
+        "schedule. Thank you, Kaywan"
+    )
+    anthropic = (
+        "Maria, I can't cover those Petaluma dates. I'm still happy to stay on "
+        "with RxRelief. Thanks, Kaywan"
+    )
+    assemble = {
+        "pin_ledger": _MARIA_RX_PINS,
+        "channel": "sms",
+        "signer": "Kaywan",
+        "objective": "Decline the listed Petaluma shift dates only.",
+        "intake": {
+            "channel": "sms",
+            "objective": "Decline the listed Petaluma shift dates only.",
+            "verbatim_notes": [],
+        },
+    }
+    selected = _select(
+        {
+            "assemble": _Out(payload=assemble),
+            "drafter_local_hermes": _Out(hermes),
+            "drafter_anthropic": _Out(anthropic),
+            "drafter_openai": _Out(gold),
+        }
+    )
+    assert selected["ok"] is True
+    assert selected["draft"] == gold
+    assert selected["selected_role"] == "drafter_openai"
+    by_role = {c["role"]: c for c in selected["candidates"]}
+    assert by_role["drafter_openai"]["score"] >= by_role["drafter_local_hermes"]["score"]
+    assert (
+        by_role["drafter_openai"]["email_penalty"]
+        < by_role["drafter_local_hermes"]["email_penalty"]
+    )
+
+
 def test_selector_honors_requested_signer_kaywan() -> None:
     """A conflicting declarant loses to a Kaywan draft even with fewer pins."""
     ada = (

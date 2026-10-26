@@ -241,7 +241,7 @@ def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
 
 
 _OMIT_WITH_REASON = re.compile(
-    r"\b(O\d+)\s*:\s*omit_with_reason\b",
+    r"\b(O\d+)\s*(?:\([^)]*\))?\s*:\s*omit_with_reason\b",
     re.I,
 )
 
@@ -258,12 +258,12 @@ def _apply_architect_omit_with_reason(
 ) -> list[dict[str, Any]]:
     """Mark architect-declared omissions as covered (declined_with_reason)."""
     omit_ids = _omit_with_reason_ids(architect_brief)
-    if not omit_ids and channel != "filing":
-        return coverage_map
-    if channel == "filing" and "omit_with_reason" in architect_brief.lower():
+    if "omit_with_reason" in architect_brief.lower():
         for match in re.finditer(r"\b(O\d+)\b", architect_brief):
             if "omit_with_reason" in architect_brief[match.start() : match.start() + 80].lower():
                 omit_ids.add(match.group(1).upper())
+    if not omit_ids:
+        return coverage_map
     updated: list[dict[str, Any]] = []
     for row in coverage_map:
         oid = str(row.get("id") or "").upper()

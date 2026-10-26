@@ -22,7 +22,11 @@ from ._obligation_coverage import (
     coverage_map_for_draft,
     obligation_coverage_score,
 )
-from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
+from .email_envelope import (
+    correspondence_register_penalty,
+    email_draft_penalty,
+    email_restate_pin_satisfied,
+)
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
 
@@ -39,6 +43,18 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 _NEED_TOKEN = re.compile(r"\[NEED:[^\]]*\]")
 _FIRST_PERSON = re.compile(r"\b(?:i|i'm|i've|i'd|i'll|my|me|mine|myself)\b", re.I)
 _DECLARANT = re.compile(r"\bI,\s+([^,\n]{2,80}),\s+state\b")
+_DECLINE_PIN_HINT = re.compile(
+    r"\b(?:declin(?:e|ing|ed)|not\s+available|unavailab)",
+    re.I,
+)
+_NATURAL_DECLINE = re.compile(
+    r"\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+"
+    r"(?:take|cover|be\s+able\s+to\s+(?:take|cover))\b"
+    r"|\bunable\s+to\s+(?:take|cover)\b"
+    r"|\bi\s+am\s+declining\b"
+    r"|\bnot\s+available\s+for\s+me\b",
+    re.I,
+)
 
 
 def _step(payload: dict[str, Any], *, model_id: str | None = None) -> StepOutput:
@@ -52,6 +68,14 @@ def _normalize_tokens(text: str) -> set[str]:
 def _pin_tokens(pin: dict[str, Any]) -> set[str]:
     excerpt = str(pin.get("excerpt") or "")
     return _normalize_tokens(excerpt)
+
+
+def _draft_satisfies_decline_pin(draft_text: str, excerpt: str) -> bool:
+    """Match decline/unavailability pins via natural phrasing or literal anchors."""
+    if _NATURAL_DECLINE.search(draft_text):
+        return True
+    anchors = _pin_tokens({"excerpt": excerpt})
+    return bool(anchors and anchors <= _normalize_tokens(draft_text))
 
 
 def _score_draft(
@@ -71,6 +95,10 @@ def _score_draft(
         excerpt = str(pin.get("excerpt") or "")
         if channel == "email" and pin.get("restate") is True and excerpt:
             if email_restate_pin_satisfied(draft_text, excerpt):
+                score += 1
+            continue
+        if _DECLINE_PIN_HINT.search(excerpt):
+            if _draft_satisfies_decline_pin(draft_text, excerpt):
                 score += 1
             continue
         anchors = _pin_tokens(pin)
@@ -196,9 +224,20 @@ class WritingDraftSelectorHandler(BaseHandler):
         )
         standing_limits = ""
         source_message = ""
+        verbatim_notes_blob = ""
+        objective = str(
+            assemble_json.get("objective")
+            or (intake.get("objective") if isinstance(intake, dict) else "")
+            or ""
+        )
         if isinstance(intake, dict):
             standing_limits = str(intake.get("standing_limits") or "")
             source_message = str(intake.get("source_message") or "")
+            notes = intake.get("verbatim_notes") or []
+            if isinstance(notes, list):
+                verbatim_notes_blob = "\n".join(str(n) for n in notes)
+            else:
+                verbatim_notes_blob = str(notes or "")
         aliases = load_writing_models()
         src = outputs.get("source_obligations")
         src_json = (
@@ -275,15 +314,19 @@ class WritingDraftSelectorHandler(BaseHandler):
                             )
                             or ""
                         ),
-                        objective=str(
-                            assemble_json.get("objective")
-                            or (
-                                intake.get("objective")
-                                if isinstance(intake, dict)
-                                else ""
-                            )
-                            or ""
-                        ),
+                        objective=objective,
+                        verbatim_notes=verbatim_notes_blob,
+                    )
+                    + (
+                        correspondence_register_penalty(
+                            text,
+                            channel=channel,
+                            objective=objective,
+                            standing_limits=standing_limits,
+                            verbatim_notes=verbatim_notes_blob,
+                        )
+                        if channel != "email"
+                        else 0
                     ),
                     "signer_band": _signer_band(text, signer),
                     "rejected": rejected,
