@@ -313,7 +313,9 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
 
 def _log_k43_review_status(tip_sha: str, *, actuator: str) -> None:
     """Log advisory K43 status for ``tip_sha``. Never refuses."""
-    from services.git_integration_worker.master_review_owed import land_k43_review_status
+    from services.git_integration_worker.master_review_owed import (
+        land_k43_review_status,
+    )
 
     status = land_k43_review_status(tip_sha, actuator=actuator)
     logger.info(

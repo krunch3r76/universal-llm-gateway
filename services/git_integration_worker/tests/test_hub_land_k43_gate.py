@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import services.git_integration_worker.master_review_owed as mro
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CURSOR_SDK_DISPATCH_LEDGER_ENV,
 )
@@ -22,9 +23,7 @@ from services.git_integration_worker.cursor_sdk_land_lease import (
     release_land_lease,
     try_acquire_land_lease,
 )
-import services.git_integration_worker.master_review_owed as mro
 from services.git_integration_worker.master_review_owed import (
-    K43_LEDGER_OVERRIDE_SPOOL,
     bind_canonical_verdict,
     land_k43_review_status,
     record_land_exemption,

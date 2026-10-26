@@ -104,6 +104,8 @@ BODY_30054_PARTIAL_CAPTURE = (
     '"head_sha":"743839e84a2fb311a67df94f205ea391a2680aae","commits_ahead":0,'
     '"landed":false,"branch":"cursor-sdk/lane-18336"}'
 )
+
+
 def _line_30054_verdict(verdict: str) -> str:
     return f"VERDICT: {verdict} range={A035}..{TIP7438} head={TIP7438}\n"
 
@@ -825,9 +827,9 @@ def test_section7_land_waits_for_bound_approve() -> None:
     gotchas = (root / "skills/conductor/reference-gotchas.md").read_text(
         encoding="utf-8"
     )
-    render = (
-        REPO / "libs/implement_admission/conductor_packet_render.py"
-    ).read_text(encoding="utf-8")
+    render = (REPO / "libs/implement_admission/conductor_packet_render.py").read_text(
+        encoding="utf-8"
+    )
     for text in (posture, kernel, gotchas):
         assert "bound APPROVE" in text
         assert "REQUEST_CHANGES" in text or "forward fix" in text
@@ -1273,7 +1275,9 @@ def conn_row(tip: str) -> sqlite3.Row:
     return row
 
 
-def test_post_land_range_verdict_covers_siblings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_post_land_range_verdict_covers_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """T6: one range APPROVE covers every sha in a two-commit gap."""
     root = _pin_ledger(monkeypatch)
     repo = root / "repo"
