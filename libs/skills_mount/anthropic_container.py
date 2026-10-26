@@ -11,6 +11,8 @@ from typing import Any, Literal
 from agent_seat.guidance_entity import entity_slug_from_id
 from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
+from skills_mount.resolve import SkillMountResolveError
+
 MAX_ANTHROPIC_CONTAINER_SKILLS = 8
 
 SkillKind = Literal["custom", "anthropic"]
@@ -19,7 +21,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_INDEX_PATH = _PROJECT_ROOT / "config" / "anthropic_skills_index.json"
 
 
-class AnthropicContainerSkillError(LookupError):
+class AnthropicContainerSkillError(SkillMountResolveError):
     """Raised when a slug lacks a container index mapping."""
 
 
@@ -52,19 +54,35 @@ def anthropic_skill_index_entry(slug: str) -> dict[str, Any] | None:
     return None
 
 
+def _layer_c_without_container_index(slug: str) -> bool:
+    """True for unindexed scope-default ``rule:*`` ids (Layer-C inline only)."""
+    canonical = canonical_agent_skill_id(slug)
+    return canonical.startswith("rule:") or slug.startswith("rule:")
+
+
 def partition_slugs_for_container(
     slugs: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split ordered *slugs* into (container_mount, inline_overflow)."""
+    """Split ordered *slugs* into (container_mount, inline_overflow).
+
+    The first ``MAX_ANTHROPIC_CONTAINER_SKILLS`` slots mount when indexed; an
+    unindexed caller/agent_skill in those slots fails closed. Index >= 8 and
+    unindexed ``rule:*`` scope defaults overflow to Layer-C inline.
+    """
     mount: list[str] = []
     inline: list[str] = []
-    for slug in slugs:
-        if len(mount) < MAX_ANTHROPIC_CONTAINER_SKILLS and anthropic_skill_index_entry(
-            slug
-        ):
-            mount.append(slug)
-        else:
+    for idx, slug in enumerate(slugs):
+        if idx >= MAX_ANTHROPIC_CONTAINER_SKILLS:
             inline.append(slug)
+            continue
+        if anthropic_skill_index_entry(slug):
+            mount.append(slug)
+        elif _layer_c_without_container_index(slug):
+            inline.append(slug)
+        else:
+            raise AnthropicContainerSkillError(
+                f"anthropic_container skill not indexed: {slug!r}"
+            )
     return tuple(mount), tuple(inline)
 
 

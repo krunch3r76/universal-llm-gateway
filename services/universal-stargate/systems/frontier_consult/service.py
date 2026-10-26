@@ -183,11 +183,14 @@ def _resolve_skills_mount(
 
         try:
             entries = resolve_container_skill_entries(mount_skill_ids)
-        except LookupError as exc:
+        except SkillMountResolveError as exc:
             raise FrontierEndpointError(
                 request_id=request_id,
                 field="skills",
                 reason=str(exc),
+                status_code=422,
+                code="skills_anthropic_container_unmapped",
+                details={"reason_code": "skills_anthropic_container_unmapped"},
             ) from exc
         mount_slugs = frozenset(mount_skill_ids)
         if event_publisher is not None:
@@ -296,6 +299,17 @@ def _classification_missing_slug(exc: Exception) -> str:
 
     match = re.search(r"canonical slug '([^']+)'", str(exc))
     return match.group(1) if match else "unknown"
+
+
+def _inline_skill_budget_bytes(
+    generation_options: dict[str, Any] | None,
+) -> int | None:
+    """Default 50kB inline budget; ``None`` only when caller opts out explicitly."""
+    opts = generation_options or {}
+    if "inline_skill_budget_bytes" in opts:
+        raw = opts["inline_skill_budget_bytes"]
+        return None if raw is None else int(raw)
+    return INJECTED_BODY_BUDGET_BYTES
 
 
 def _dropped_entry_canonical(entry: dict[str, Any]) -> str:
@@ -686,6 +700,19 @@ async def build_dispatch_body(
                     "reason_code": "capability_card_value_invalid",
                 },
             ) from exc
+        except SkillMountResolveError as exc:
+            from model_capabilities import skills_mount_backend
+
+            if skills_mount_backend(effective_model) != "anthropic_container":
+                raise
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+                code="skills_anthropic_container_unmapped",
+                details={"reason_code": "skills_anthropic_container_unmapped"},
+            ) from exc
         channel_rows = skill_partition.rows
         provider_mount_slugs = skill_partition.provider_mount_slugs
         caller_layer_c_ids = caller_skill_ids_for_layer_c(
@@ -724,6 +751,7 @@ async def build_dispatch_body(
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
                 exclude_mcp_predicated=not mcp_enabled,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -849,11 +877,7 @@ async def build_dispatch_body(
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
                 exclude_mcp_predicated=not mcp_enabled,
-                budget_bytes=(
-                    None
-                    if inject_profile == "dispatch"
-                    else INJECTED_BODY_BUDGET_BYTES
-                ),
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(

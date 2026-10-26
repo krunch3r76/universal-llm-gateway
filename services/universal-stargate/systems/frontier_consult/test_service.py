@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from agent_seat import AgentMeta, HydrationBundle
+from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES
 from fastapi import Response
 from skills_mount import ResolvedSkillBundle
 
@@ -20,10 +21,18 @@ from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
     _code_touching_generate,
+    _inline_skill_budget_bytes,
     build_dispatch_body,
 )
 
 _DISPATCH_THREAD = "test-dispatch-thread"
+
+
+def test_inline_skill_budget_bytes_finite_default_and_explicit_opt_out() -> None:
+    assert _inline_skill_budget_bytes(None) == INJECTED_BODY_BUDGET_BYTES
+    assert _inline_skill_budget_bytes({}) == INJECTED_BODY_BUDGET_BYTES
+    assert _inline_skill_budget_bytes({"inline_skill_budget_bytes": None}) is None
+    assert _inline_skill_budget_bytes({"inline_skill_budget_bytes": 12000}) == 12000
 
 
 def _bundle(meta: AgentMeta) -> HydrationBundle:
@@ -129,7 +138,8 @@ async def test_build_dispatch_body_role_default_effort_when_omitted(
     )
     body = await build_dispatch_body(req)
     preview = body["pipeline_options"]["_knob_resolution_preview"]
-    assert body["pipeline_options"]["generation_parameters"]["reasoning_effort"] == "high"
+    gen = body["pipeline_options"]["generation_parameters"]
+    assert gen["reasoning_effort"] == "high"
     assert preview["requested_effort"] == "high"
     assert preview["status"] == "mapped"
 
@@ -1449,7 +1459,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
         patch(
             "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            # resolve_generate_prompt_resolution (was read_latest_dispatch_thread).
             return_value=GeneratePromptResolution(
                 text="hello", prompt_bind_mode="latest"
             ),
@@ -1536,7 +1546,7 @@ async def test_api_role_generate_skills_non_openai_admits(
         patch(
             "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            # resolve_generate_prompt_resolution (was read_latest_dispatch_thread).
             return_value=GeneratePromptResolution(
                 text="hello", prompt_bind_mode="latest"
             ),

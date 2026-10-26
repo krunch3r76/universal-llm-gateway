@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
+from skills_mount.anthropic_container import (
+    AnthropicContainerSkillError,
+    clear_anthropic_skills_index_cache_for_tests,
+)
 
 from agent_seat.skills_merge import (
     EffectiveSkill,
@@ -98,8 +102,6 @@ def test_partition_anthropic_container_mounts_mapped_up_to_eight(
     }
     index_path.write_text(json.dumps({"skills": skills}), encoding="utf-8")
     monkeypatch.setenv("ANTHROPIC_SKILLS_INDEX_PATH", str(index_path))
-    from skills_mount.anthropic_container import clear_anthropic_skills_index_cache_for_tests
-
     clear_anthropic_skills_index_cache_for_tests()
     monkeypatch.setattr(
         "agent_seat.skills_merge._read_mount_backend",
@@ -124,6 +126,43 @@ def test_partition_anthropic_container_mounts_mapped_up_to_eight(
     )
     assert len(partition.layer_b) == 8
     assert len(partition.layer_c) == 2
+    clear_anthropic_skills_index_cache_for_tests()
+
+
+def test_partition_anthropic_unmapped_in_first_eight_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+
+    index_path = tmp_path / "anthropic_skills_index.json"
+    index_path.write_text(
+        json.dumps({"skills": {"mapped-skill": {"skill_id": "sk_1", "type": "custom"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_SKILLS_INDEX_PATH", str(index_path))
+    clear_anthropic_skills_index_cache_for_tests()
+    monkeypatch.setattr(
+        "agent_seat.skills_merge._read_mount_backend",
+        lambda _model: "anthropic_container",
+    )
+    effective = (
+        EffectiveSkill(
+            requested_id="missing-skill",
+            canonical_id=canonical_agent_skill_id("missing-skill"),
+            origin="caller",
+        ),
+    )
+    with pytest.raises(AnthropicContainerSkillError, match="not indexed"):
+        partition_skill_channels(
+            effective,
+            model="anthropic/claude-sonnet-5-5",
+            mcp_enabled=True,
+            role="synthesizer",
+            platform="api",
+            inject_profile="dispatch",
+            code_touching=True,
+        )
     clear_anthropic_skills_index_cache_for_tests()
 
 
