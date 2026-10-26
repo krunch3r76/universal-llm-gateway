@@ -188,7 +188,7 @@ def partition_skill_channels(
     elif backend == "anthropic_container":
         from skills_mount.anthropic_container import partition_slugs_for_container
 
-        ordered = tuple(skill.requested_id for skill in effective)
+        ordered = tuple((skill.requested_id, skill.origin) for skill in effective)
         mount_tuple, _overflow = partition_slugs_for_container(ordered)
         mount_slugs = frozenset(mount_tuple)
     else:

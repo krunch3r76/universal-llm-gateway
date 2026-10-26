@@ -363,3 +363,71 @@ def test_resolve_container_skill_entries_default_index_versions_latest() -> None
         assert all(entry["version"] == "latest" for entry in entries)
     finally:
         clear_anthropic_skills_index_cache_for_tests()
+
+
+def test_synthesizer_dispatch_scope_defaults_do_not_fail_container_partition() -> None:
+    """Live-probe regression: unindexed scope_default rules inline; caller unmapped fails."""
+    clear_anthropic_skills_index_cache_for_tests()
+    try:
+        effective = resolve_effective_skills(
+            [
+                "lean-dispatch",
+                "entity-lifecycle-discipline",
+                "entity-creation-discipline",
+                "cortex-orientation",
+            ],
+            role="synthesizer",
+            platform="api",
+            inject_profile="dispatch",
+            code_touching=False,
+            packet_invariant_ids=(),
+        )
+        partition = partition_skill_channels(
+            effective,
+            model="anthropic/claude-sonnet-5-5",
+            mcp_enabled=True,
+            role="synthesizer",
+            platform="api",
+            inject_profile="dispatch",
+            code_touching=False,
+        )
+        caller_ids = {
+            "lean-dispatch",
+            "entity-lifecycle-discipline",
+            "entity-creation-discipline",
+            "cortex-orientation",
+        }
+        assert caller_ids <= frozenset(partition.layer_b)
+        scope_defaults = {
+            skill.requested_id
+            for skill in effective
+            if skill.origin == "scope_default"
+        }
+        assert scope_defaults
+        mounted_or_inline = frozenset(partition.layer_b) | frozenset(partition.layer_c)
+        assert scope_defaults <= mounted_or_inline
+        for slug in scope_defaults:
+            if slug in partition.layer_b:
+                continue
+            assert slug in partition.layer_c
+
+        unmapped_caller = resolve_effective_skills(
+            ["totally-unindexed-caller-skill-xyz"],
+            role="synthesizer",
+            platform="api",
+            inject_profile="dispatch",
+            code_touching=False,
+            packet_invariant_ids=(),
+        )
+        with pytest.raises(AnthropicContainerSkillError, match="not indexed"):
+            partition_skill_channels(
+                unmapped_caller,
+                model="anthropic/claude-sonnet-5-5",
+                mcp_enabled=True,
+                role="synthesizer",
+                platform="api",
+                inject_profile="dispatch",
+                code_touching=False,
+            )
+    finally:
+        clear_anthropic_skills_index_cache_for_tests()

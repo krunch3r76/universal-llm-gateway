@@ -64,10 +64,13 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
+      - anthropic/claude-sonnet-5-5
+      - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-4
       - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
+      - anthropic/claude-haiku-5-5
       - anthropic/claude-3-5-sonnet
 
   claude/web:
@@ -413,6 +416,7 @@ roles:
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
+      - anthropic/claude-haiku-5-5
       - cursor/claude-opus-5
       - google/gemini-3.6-flash
       - google/gemini-3.5-flash
@@ -432,6 +436,12 @@ roles:
       - google/gemini-2.5-flash
       - google/gemini-2.5-pro
       - google/gemini-2.5-flash-lite
+      - anthropic/claude-sonnet-5-5
+      - anthropic/claude-sonnet-5
+      - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-5
+      - anthropic/claude-opus-4-8
+      - anthropic/claude-haiku-5-5
 
   artisan:
     default_effort: high

@@ -54,30 +54,28 @@ def anthropic_skill_index_entry(slug: str) -> dict[str, Any] | None:
     return None
 
 
-def _layer_c_without_container_index(slug: str) -> bool:
-    """True for unindexed scope-default ``rule:*`` ids (Layer-C inline only)."""
-    canonical = canonical_agent_skill_id(slug)
-    return canonical.startswith("rule:") or slug.startswith("rule:")
+SkillOrigin = Literal["caller", "scope_default"]
 
 
 def partition_slugs_for_container(
-    slugs: tuple[str, ...],
+    skills: tuple[tuple[str, SkillOrigin], ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split ordered *slugs* into (container_mount, inline_overflow).
+    """Split ordered *(slug, origin)* into (container_mount, inline_overflow).
 
     The first ``MAX_ANTHROPIC_CONTAINER_SKILLS`` slots mount when indexed; an
-    unindexed caller/agent_skill in those slots fails closed. Index >= 8 and
-    unindexed ``rule:*`` scope defaults overflow to Layer-C inline.
+    unindexed ``origin=\"caller\"`` skill in those slots fails closed.
+    Unindexed ``scope_default`` entries overflow to Layer-C inline; index >= 8
+    always overflows without raising.
     """
     mount: list[str] = []
     inline: list[str] = []
-    for idx, slug in enumerate(slugs):
+    for idx, (slug, origin) in enumerate(skills):
         if idx >= MAX_ANTHROPIC_CONTAINER_SKILLS:
             inline.append(slug)
             continue
         if anthropic_skill_index_entry(slug):
             mount.append(slug)
-        elif _layer_c_without_container_index(slug):
+        elif origin == "scope_default":
             inline.append(slug)
         else:
             raise AnthropicContainerSkillError(
