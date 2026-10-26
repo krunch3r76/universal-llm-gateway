@@ -10,6 +10,7 @@ from tools.cursor_bridge import (
     BridgeOp,
     _prune_sidebar,
     _rename_tab,
+    _send_msg,
     _spawn_tab,
     _wake_tab,
 )
@@ -37,6 +38,68 @@ def test_spawn_tab_calls_launch_with_debug_url(
     assert out["op"] == "spawn_tab"
     assert out["gui_host"] == gui_host
     assert out["ok"] is True
+
+
+def test_send_msg_bus_only_without_agent_id() -> None:
+    with patch("tools.cursor_bridge._send_impl") as send_impl:
+        send_impl.return_value = {"thread": {"id": "1"}, "turn_number": 2}
+        with patch("tools.cursor_bridge.relay_wake_tab") as wake:
+            out = _send_msg(thread="1", body="hello", after_turn=0)
+    send_impl.assert_called_once()
+    wake.assert_not_called()
+    assert out["op"] == "send_msg"
+
+
+def test_send_msg_pastes_when_agent_id_set() -> None:
+    with patch("tools.cursor_bridge._send_impl") as send_impl:
+        send_impl.return_value = {"thread": {"id": "20723"}, "turn_number": 7}
+        with patch("tools.cursor_bridge.relay_wake_tab") as wake:
+            wake.return_value = {"ok": True, "op": "wake_tab"}
+            out = _send_msg(
+                thread="20723",
+                body="now post PONG2",
+                after_turn=6,
+                gui_host=":8",
+                agent_id="0b2e33aa",
+            )
+    wake.assert_called_once_with(
+        gui_host=":8",
+        agent_id="0b2e33aa",
+        body="now post PONG2",
+    )
+    assert out["op"] == "send_msg"
+    assert out["glass_paste"]["ok"] is True
+    assert out["editor_agent_id"] == "0b2e33aa"
+
+
+def test_send_msg_glass_paste_failure_surfaces_error() -> None:
+    with patch("tools.cursor_bridge._send_impl") as send_impl:
+        send_impl.return_value = {"turn_number": 9}
+        with patch("tools.cursor_bridge.relay_wake_tab") as wake:
+            wake.return_value = {"ok": False, "error": "unknown_target"}
+            out = _send_msg(thread="1", body="x", after_turn=0, agent_id="aid")
+    assert out["ok"] is False
+    assert out["error"] == "unknown_target"
+
+
+def test_send_msg_spawn_tab_then_followup_sequence() -> None:
+    """spawn_tab editor_agent_id must be passable to send_msg for Glass paste."""
+    with patch("cursor_bridge.bridge_spawn_relay.launch_cursor_agents_tab") as launch:
+        launch.return_value = {"ok": True, "editor_agent_id": "spawned-aid"}
+        spawn_out = _spawn_tab(gui_host=":8", prompt="first", model="composer-2.5")
+    aid = spawn_out["editor_agent_id"]
+    with patch("tools.cursor_bridge._send_impl") as send_impl:
+        send_impl.return_value = {"turn_number": 8}
+        with patch("tools.cursor_bridge.relay_wake_tab") as wake:
+            wake.return_value = {"ok": True}
+            msg_out = _send_msg(
+                thread="20723",
+                body="follow-up",
+                after_turn=None,
+                agent_id=aid,
+            )
+    wake.assert_called_once_with(gui_host=":8", agent_id="spawned-aid", body="follow-up")
+    assert msg_out.get("ok") is not False
 
 
 def test_spawn_tab_requires_prompt() -> None:
