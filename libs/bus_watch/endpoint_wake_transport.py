@@ -121,6 +121,19 @@ class StoreClient:
         response.raise_for_status()
         return response.json().get("holder")
 
+    def lane_parent(self, thread_id: str) -> str | None:
+        """Return lane-current parent_thread, or None when the thread is unbound or the read fails."""
+        try:
+            payload = self._bus("GET", f"/threads/{thread_id}/lane-current")
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        parent = payload.get("parent_thread")
+        if not isinstance(parent, str) or not parent.strip():
+            return None
+        return parent.strip()
+
     def subscription(
         self, agent: str, thread_id: str
     ) -> tuple[str, dict[str, Any]] | None:
