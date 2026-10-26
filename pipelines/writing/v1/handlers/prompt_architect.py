@@ -162,7 +162,6 @@ class WritingPromptArchitectHandler(BaseHandler):
                     step,
                     context,
                     temperature=0.2,
-                    max_tokens=2048,
                 )
                 content = result.content
         except Exception as exc:  # noqa: BLE001
