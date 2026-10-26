@@ -23,4 +23,8 @@ template: |
   or to an explicit omit_with_reason. For act_outside_message: map to act_then_confirm only when
   an attested pin confirms the external action was already completed; otherwise map to ask_back
   (intent-conditional or ask-back wording — never act_then_confirm without attested completion).
+  When <brief> Objective or standing_limits scopes the reply to a specific offer or point, or
+  excludes a secondary/standing ask listed in <source_obligations>, beat_order MUST map that
+  obligation using the canonical token form `O<n>: omit_with_reason (<short reason>)` so
+  downstream parsing always matches (example: `O1: omit_with_reason (per-offer reply only)`).
   Do not introduce proper nouns or numbers absent from the blocks above.

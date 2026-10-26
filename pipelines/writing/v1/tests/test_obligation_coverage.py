@@ -203,6 +203,183 @@ def test_meridial_before_after_drafter_calls_and_tokens_saved() -> None:
     assert apply_cov.get("covering_sentence")
 
 
+def _omit_with_reason_finalize(
+    *,
+    channel: str,
+    architect_brief: str,
+    draft: str,
+) -> dict[str, Any]:
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "Please send your monthly availability list.",
+            "kind": "request",
+            "obligation": "answer",
+            "semantic_reading": "standing monthly availability list",
+        }
+    ]
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": channel,
+                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "prompt_architect": _Out({"architect_brief": architect_brief}),
+        "source_obligations": _Out({"obligations": obligations}),
+        "draft": _Out(
+            {"ok": True, "draft": draft},
+            model_id="hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid",
+        ),
+        "independence": _Out({"refused": None, "independence": "full"}),
+        "fact_ceiling_audit": _Out(
+            {"verdict": "ship", "findings": []},
+            model_id="qwen3-14b-q4-k-m-40960",
+        ),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    return payload
+
+
+@pytest.mark.parametrize("channel", ["email", "sms"])
+def test_correspondence_omit_with_reason_proximity_passes_ship_gate(
+    channel: str,
+) -> None:
+    body = (
+        "Maria, I can't take those Petaluma shifts. Thanks for sending them. Kaywan"
+    )
+    if channel == "email":
+        draft = f"To: Maria\nSubject: Petaluma shifts\n\n{body}"
+    else:
+        draft = body
+    brief = "O1 (request): omit_with_reason — operator replying per-offer only"
+    payload = _omit_with_reason_finalize(
+        channel=channel, architect_brief=brief, draft=draft
+    )
+    assert payload.get("refused") != "obligation_coverage_failed"
+    ship = payload.get("ship_gate") or {}
+    assert ship.get("pass") is True
+    row = next(
+        (r for r in payload.get("coverage_map") or [] if r.get("id") == "O1"),
+        None,
+    )
+    assert row is not None
+    assert row.get("reply_mode") == "omit_with_reason"
+    assert row.get("status") == "declined_with_reason"
+
+
+def test_architect_omit_proximity_does_not_cross_next_obligation_line() -> None:
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    omit_ids = finalize._omit_with_reason_ids(brief)
+    assert "O1" not in omit_ids
+    assert "O2" in omit_ids
+
+
+def test_architect_omit_o2_unanswered_o1_fails_coverage_gate() -> None:
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "Can you cover Petaluma?",
+            "kind": "request",
+            "obligation": "decline_with_reason",
+            "semantic_reading": "decline offer",
+        },
+        {
+            "id": "O2",
+            "quoted_span": "Please send your monthly availability list.",
+            "kind": "request",
+            "obligation": "answer",
+            "semantic_reading": "standing monthly availability list",
+        },
+    ]
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    cov_map, refusal = finalize._obligation_coverage_gate(
+        "Thanks for reaching out.",
+        obligations,
+        selected="draft_v1",
+        audit_map=None,
+        revision_ran=False,
+        architect_brief=brief,
+        channel="sms",
+    )
+    by_id = {str(r.get("id")): r for r in cov_map}
+    assert by_id["O1"].get("status") == "missing"
+    assert by_id["O1"].get("reply_mode") != "omit_with_reason"
+    assert by_id["O2"].get("reply_mode") == "omit_with_reason"
+    assert refusal is not None
+
+
+def test_architect_omit_o2_answered_o1_passes_coverage_gate() -> None:
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "Can you cover Petaluma?",
+            "kind": "request",
+            "obligation": "decline_with_reason",
+            "semantic_reading": "decline offer",
+        },
+        {
+            "id": "O2",
+            "quoted_span": "Please send your monthly availability list.",
+            "kind": "request",
+            "obligation": "answer",
+            "semantic_reading": "standing monthly availability list",
+        },
+    ]
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    draft = "Maria, I can't take those Petaluma shifts. Thanks, Kaywan"
+    cov_map, refusal = finalize._obligation_coverage_gate(
+        draft,
+        obligations,
+        selected="draft_v1",
+        audit_map=None,
+        revision_ran=False,
+        architect_brief=brief,
+        channel="sms",
+    )
+    by_id = {str(r.get("id")): r for r in cov_map}
+    assert by_id["O1"].get("status") == "declined_with_reason"
+    assert by_id["O2"].get("reply_mode") == "omit_with_reason"
+    assert refusal is None
+
+
+def test_decline_phrasing_natural_sms_covers_obligation() -> None:
+    draft = "Maria, I won't be able to cover the Petaluma dates you sent. Thank you, Kaywan"
+    cov = _obligation.coverage_map_for_draft(
+        draft,
+        [
+            {
+                "id": "O1",
+                "quoted_span": "Can you cover Petaluma?",
+                "kind": "request",
+                "obligation": "decline_with_reason",
+                "semantic_reading": "cover Petaluma shifts",
+            }
+        ],
+    )
+    assert cov[0]["status"] == "declined_with_reason"
+
+
 def test_filing_omit_with_reason_never_obligation_refuses() -> None:
     obligations = [
         {

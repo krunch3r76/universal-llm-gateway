@@ -56,7 +56,10 @@ _CTA_DECLINE_STEM = re.compile(
     re.I,
 )
 _DECLINE = re.compile(
-    r"\b(?:i\s+(?:decline|cannot|can't|won't|will\s+not|am\s+unable)|unable\s+to)\b",
+    r"\b(?:i\s+(?:decline|cannot|can't|won't|will\s+not|am\s+unable)"
+    r"|(?:can't|cannot)\s+(?:take|cover)"
+    r"|won't\s+be\s+able\s+to\s+(?:take|cover)"
+    r"|unable\s+to\s+(?:take|cover))\b",
     re.I,
 )
 _ENVELOPE_LINE = re.compile(
