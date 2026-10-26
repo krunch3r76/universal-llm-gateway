@@ -334,6 +334,90 @@ def test_driving_seat_reuse_signed_out_account_refused(
         )
 
 
+def test_driving_seat_dormant_unbound_account_mismatch_refused(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from claude_bundles.cdp_registry.driving_seat import ensure_driving_operator_seat
+
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+
+    parent = "66666"
+    rid = "dorm-unbound"
+    row = {
+        "registration_id": rid,
+        "status": "dormant",
+        "holder": "h",
+        "purpose": "operator-proxy",
+        "mission_kind": "root",
+        "parent_thread": parent,
+        "profile_suffix": "account-2",
+        "account_id": "account-2",
+        "port": 9223,
+        "display": ":2",
+    }
+    (isolated_registry / "active.json").write_text(
+        json.dumps({rid: row}), encoding="utf-8"
+    )
+
+    with pytest.raises(RegistryError, match="driving seat account"):
+        ensure_driving_operator_seat(
+            holder="h",
+            parent_thread=parent,
+            account_id="default",
+            launch=False,
+            is_listening=lambda _p: False,
+        )
+
+
+def test_driving_seat_live_bind_account_mismatch_refused(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from claude_bundles.cdp_registry.driving_seat import ensure_driving_operator_seat
+
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+
+    parent = "55555"
+    rid = "live-no-seat"
+    row = {
+        "registration_id": rid,
+        "status": "active",
+        "holder": "h",
+        "purpose": "operator-proxy",
+        "mission_kind": "root",
+        "parent_thread": parent,
+        "profile_suffix": "account-2",
+        "account_id": "account-2",
+        "port": 9224,
+        "display": ":2",
+    }
+    (isolated_registry / "active.json").write_text(
+        json.dumps({rid: row}), encoding="utf-8"
+    )
+
+    with pytest.raises(RegistryError, match="driving seat account"):
+        ensure_driving_operator_seat(
+            holder="h",
+            parent_thread=parent,
+            account_id="default",
+            launch=False,
+            is_listening=lambda _p: True,
+        )
+
+
 def test_open_tab_lane_refuses_unsigned_account(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

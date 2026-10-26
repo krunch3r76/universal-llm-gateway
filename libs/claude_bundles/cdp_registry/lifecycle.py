@@ -39,6 +39,7 @@ from .models import (
     account_is_signed_in,
     account_profile_suffix,
     assert_profile_suffix_available,
+    normalize_account_id,
     resolve_reserve_account_id,
     seat_open,
 )
@@ -113,14 +114,21 @@ def _operator_join_candidate(row: dict[str, Any]) -> bool:
     return process_holds_driver_lock(rid) or is_driver_lock_held(rid)
 
 
-def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
+def _join_target(
+    active: dict[str, Any],
+    parent: str,
+    *,
+    account_id: str | None = None,
+) -> dict[str, Any] | None:
     """Smallest-started allocating row for *parent* that a driver still holds."""
     from .driving_seat import driving_lane_census
 
+    want_account = normalize_account_id(account_id)
     eligible = [
         row
         for row in driving_lane_census(active, parent)["allocating"]
         if _operator_join_candidate(row)
+        and normalize_account_id(row.get("account_id")) == want_account
     ]
     if not eligible:
         return None
@@ -255,11 +263,18 @@ def reserve_allocating_row(
 
     from .dormant import reserved_chromes_by_display
 
+    join_account = resolve_reserve_account_id(
+        account_id=account_id,
+        carry=carry,
+        prior_row=None,
+        profile_suffix=profile_suffix,
+    )
+
     while True:
         with _store.ports_lock():
             active = _store.load_active()
             if join_eligible:
-                target = _join_target(active, parent)
+                target = _join_target(active, parent, account_id=join_account)
                 if target is not None:
                     return target, False
             _expect_status_ok(active)
@@ -286,7 +301,7 @@ def reserve_allocating_row(
         with _store.ports_lock():
             active = _store.load_active()
             if join_eligible:
-                target = _join_target(active, parent)
+                target = _join_target(active, parent, account_id=join_account)
                 if target is not None:
                     return target, False
             _expect_status_ok(active)
@@ -489,6 +504,9 @@ def _wait_for_joined_row(
             time.sleep(cdp_lane._POLL_MS / 1000)
             continue
         if status == "active" and isinstance(current, dict):
+            from .driving_seat import _assert_driving_seat_account
+
+            _assert_driving_seat_account(current, account_id)
             if joined is not None:
                 joined.append(registration_id)
             return _row_to_registration(current)
