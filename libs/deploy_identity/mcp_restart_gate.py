@@ -15,13 +15,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.error import URLError
-from urllib.request import urlopen
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from urllib.error import URLError
+from urllib.request import urlopen
 
 PROBE_WALL_S = 120
 HEALTH_WAIT_S = 120

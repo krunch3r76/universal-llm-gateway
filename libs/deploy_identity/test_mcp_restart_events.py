@@ -34,4 +34,6 @@ def test_emit_restart_event_publish_error_does_not_raise(
         "scripts.model_manager.observation_event._emit_sync",
         lambda *_a, **_k: (_ for _ in ()).throw(OSError("refused")),
     )
-    emit_restart_event("mcp.restart.ok", {"stamp_sha": "a" * 40, "health_code_version": "a" * 40})
+    emit_restart_event(
+        "mcp.restart.ok", {"stamp_sha": "a" * 40, "health_code_version": "a" * 40}
+    )
