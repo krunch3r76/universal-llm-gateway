@@ -6,9 +6,9 @@ refuse a land, does not revert, and does not call ``team_dispatch``.
 Ride-along notices use the same poster and ``gap_posted_at`` dedupe and also
 do not block.
 
-``land_k43_block_reason`` is the pre-land query the hub land actuator calls.
-An ``APPROVE`` verdict or a recorded ``exemption_ref`` admits the tip. This
-module still does not revert a commit and does not call ``team_dispatch``.
+``land_k43_review_status`` is the pre-land advisory query the hub land
+actuator logs; it never refuses a land. This module still does not revert a
+commit and does not call ``team_dispatch``.
 
 Authority for the rows is the dispatch-ledger table ``master_review_owed``.
 The JSON file is the idempotent seed. Recovery is the next check: seed rows
@@ -54,6 +54,7 @@ GAP_THREAD = "15851"
 GAP_TO = "grok-bot-gc1"
 GAP_FROM = "git-integration-worker"
 DATA_FILE = Path(__file__).with_name("master_review_owed_rows.json")
+K43_LEDGER_OVERRIDE_SPOOL = "master_review_k43_ledger_override.jsonl"
 MASTER_REF = "refs/heads/master"
 
 TurnList = Sequence[dict[str, Any]]
@@ -455,29 +456,113 @@ def bind_canonical_verdict(
     )
 
 
-def land_k43_block_reason(
+def _k43_ledger_override_spool_path() -> Path:
+    ledger = resolve_cursor_sdk_dispatch_ledger_path()
+    return ledger.parent / K43_LEDGER_OVERRIDE_SPOOL
+
+
+def _record_k43_override_best_effort(tip_sha: str, *, actuator: str) -> None:
+    try:
+        record_k43_ledger_unavailable_override(tip_sha, actuator=actuator)
+    except Exception:
+        logger.warning(
+            "k43 ledger override record failed tip=%s actuator=%s",
+            tip_sha,
+            actuator,
+            exc_info=True,
+        )
+
+
+def record_k43_ledger_unavailable_override(
     tip_sha: str,
     *,
+    actuator: str,
     mounts_table: list[tuple[str, str]] | None = None,
-) -> str | None:
-    """Return why a hub land of ``tip_sha`` must not move master.
+) -> bool:
+    """Append a durable override when the review ledger was unreadable at land time.
 
-    ``None`` means the tip has an ``APPROVE`` verdict or a non-empty
-    ``exemption_ref``. ``REQUEST_CHANGES``, a gap row, and a missing row
-    return ``k43_unbound``. An unreadable ledger returns
-    ``k43_ledger_unavailable`` so the land fails closed. Reads the
-    dispatch ledger and does not post, bind, or move refs.
+    Never raises. Returns True when a line was appended.
+    """
+    del mounts_table
+    tip = (tip_sha or "").strip().lower()
+    try:
+        path = _k43_ledger_override_spool_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "kind": "ledger_unavailable_override",
+            "tip_sha": tip,
+            "actuator": (actuator or "").strip(),
+            "reason": "ledger_unavailable",
+            "recorded_at": _now(),
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+        return True
+    except Exception:
+        logger.warning(
+            "k43 ledger override spool write failed tip=%s actuator=%s",
+            tip,
+            actuator,
+            exc_info=True,
+        )
+        return False
+
+
+def _reconcile_k43_ledger_overrides(tips: set[str]) -> None:
+    """Link spool overrides to gap processing after the ledger is readable again."""
+    if not tips:
+        return
+    spool = _k43_ledger_override_spool_path()
+    if not spool.is_file():
+        return
+    try:
+        reconciled: set[str] = set()
+        for line in spool.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            parsed = json.loads(line)
+            if parsed.get("kind") == "reconciled":
+                tip = str(parsed.get("tip_sha") or "").lower()
+                if tip:
+                    reconciled.add(tip)
+        pending = {tip.lower() for tip in tips if tip} - reconciled
+        if not pending:
+            return
+        with spool.open("a", encoding="utf-8") as handle:
+            for tip in sorted(pending):
+                entry = {
+                    "kind": "reconciled",
+                    "tip_sha": tip,
+                    "reconciled_at": _now(),
+                    "via": "unreviewed_master_commits",
+                }
+                handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    except Exception:
+        logger.warning("k43 ledger override reconcile failed", exc_info=True)
+
+
+def land_k43_review_status(
+    tip_sha: str,
+    *,
+    actuator: str = "",
+    mounts_table: list[tuple[str, str]] | None = None,
+) -> str:
+    """Advisory K43 status for a hub land tip; never blocks.
+
+    Returns ``approved``, ``exempt``, ``unreviewed``, or ``ledger_unavailable``.
     """
     tip = (tip_sha or "").strip().lower()
     if not tip:
-        return "k43_unbound"
+        return "unreviewed"
     try:
         conn, _reason = _open_ledger(mounts_table)
     except Exception:
         logger.warning("k43 land ledger open failed tip=%s", tip, exc_info=True)
-        return "k43_ledger_unavailable"
+        _record_k43_override_best_effort(tip, actuator=actuator)
+        return "ledger_unavailable"
     if conn is None:
-        return "k43_ledger_unavailable"
+        _record_k43_override_best_effort(tip, actuator=actuator)
+        return "ledger_unavailable"
     try:
         row = conn.execute(
             "SELECT verdict, exemption_ref FROM master_review_owed WHERE tip_sha = ?",
@@ -485,18 +570,19 @@ def land_k43_block_reason(
         ).fetchone()
     except sqlite3.Error:
         logger.warning("k43 land ledger read failed tip=%s", tip, exc_info=True)
-        return "k43_ledger_unavailable"
+        _record_k43_override_best_effort(tip, actuator=actuator)
+        return "ledger_unavailable"
     finally:
         conn.close()
     if row is None:
-        return "k43_unbound"
+        return "unreviewed"
     verdict = str(row["verdict"] or "").strip().upper()
     if verdict == "APPROVE":
-        return None
+        return "approved"
     exemption = str(row["exemption_ref"] or "").strip()
     if exemption:
-        return None
-    return "k43_unbound"
+        return "exempt"
+    return "unreviewed"
 
 
 def record_land_exemption(
@@ -656,11 +742,11 @@ def _post_one(
 ) -> None:
     subject = f"NOTICE|{tag}|{tip}"
     body = (
-        f"NOTICE: master commits with no covering review row.\n"
+        f"Landed without a review yet: {base}..{tip}. "
+        "A post-land review is welcome; a VERDICT line for this range "
+        "will close this entry.\n"
         f"tag: {tag}\nrange: {base}..{tip}\n"
         f"commits: {' '.join(commits)}\n"
-        "An owed K43 review binds with the canonical VERDICT line. "
-        "This notice does not block land or restart.\n"
     )
     poster(subject, body, tag)
 
@@ -908,6 +994,7 @@ def unreviewed_master_commits(
                 continue
             posted.append(tip)
         _advance_floor(conn, root, window, gap_set)
+        _reconcile_k43_ledger_overrides(set(gaps) | set(posted))
         return ReviewCheckResult(
             ok=True,
             reason=None,

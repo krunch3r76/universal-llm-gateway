@@ -104,6 +104,8 @@ BODY_30054_PARTIAL_CAPTURE = (
     '"head_sha":"743839e84a2fb311a67df94f205ea391a2680aae","commits_ahead":0,'
     '"landed":false,"branch":"cursor-sdk/lane-18336"}'
 )
+
+
 def _line_30054_verdict(verdict: str) -> str:
     return f"VERDICT: {verdict} range={A035}..{TIP7438} head={TIP7438}\n"
 
@@ -825,9 +827,9 @@ def test_section7_land_waits_for_bound_approve() -> None:
     gotchas = (root / "skills/conductor/reference-gotchas.md").read_text(
         encoding="utf-8"
     )
-    render = (
-        REPO / "libs/implement_admission/conductor_packet_render.py"
-    ).read_text(encoding="utf-8")
+    render = (REPO / "libs/implement_admission/conductor_packet_render.py").read_text(
+        encoding="utf-8"
+    )
     for text in (posture, kernel, gotchas):
         assert "bound APPROVE" in text
         assert "REQUEST_CHANGES" in text or "forward fix" in text
@@ -1216,3 +1218,117 @@ def test_ledger_connect_lock_is_a_failed_check(
     assert result.reason == "ledger_connect_failed"
     assert result.commits is None
     assert posts == []
+
+
+def test_post_land_approve_closes_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T5: range APPROVE after gap notice covers the tip without reposting."""
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 2)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    conn.execute(
+        "UPDATE master_review_owed_state SET review_window_base = ?",
+        (shas[0],),
+    )
+    conn.commit()
+    conn.close()
+    posts: list[str] = []
+
+    def _poster(_subject: str, body: str, tag: str) -> None:
+        posts.append(f"{tag}:{body}")
+
+    first = _check(repo, shas[0], data_path=_empty_rows(root), poster=_poster)
+    assert first.ok is True
+    assert first.posted_tips == (shas[1],)
+    tip_row_before = conn_row(shas[1])
+    assert tip_row_before["gap_posted_at"]
+    line = f"VERDICT: APPROVE range={shas[0]}..{shas[1]} head={shas[1]}\n"
+    bound = mro.bind_canonical_verdict(
+        line,
+        repo=repo,
+        bus_thread="t5",
+        bus_turn=1,
+        review_dispatch_id="t5",
+        mounts_table=EXT4,
+    )
+    assert bound.status == "bound"
+    second = _check(repo, shas[0], data_path=_empty_rows(root), poster=_poster)
+    assert second.ok is True
+    assert shas[1] not in (second.commits or [])
+    assert posts.count(f"gap:{shas[1]}") == 0 or len(posts) == 1
+    tip_row_after = conn_row(shas[1])
+    assert tip_row_after["gap_posted_at"] == tip_row_before["gap_posted_at"]
+    assert tip_row_after["verdict"] == "APPROVE"
+
+
+def conn_row(tip: str) -> sqlite3.Row:
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    row = conn.execute(
+        "SELECT gap_posted_at, verdict FROM master_review_owed WHERE tip_sha = ?",
+        (tip.lower(),),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    return row
+
+
+def test_post_land_range_verdict_covers_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T6: one range APPROVE covers every sha in a two-commit gap."""
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 3)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    conn, _reason = mro._open_ledger(EXT4)
+    assert conn is not None
+    conn.execute(
+        "UPDATE master_review_owed_state SET review_window_base = ?",
+        (shas[0],),
+    )
+    conn.commit()
+    conn.close()
+    gap = _check(repo, shas[0], data_path=_empty_rows(root), poster=lambda *_a: None)
+    assert gap.ok is True
+    assert set(gap.commits or []) >= {shas[1], shas[2]}
+    line = f"VERDICT: APPROVE range={shas[0]}..{shas[2]} head={shas[2]}\n"
+    assert (
+        mro.bind_canonical_verdict(
+            line,
+            repo=repo,
+            bus_thread="t6",
+            bus_turn=1,
+            review_dispatch_id="t6",
+            mounts_table=EXT4,
+        ).status
+        == "bound"
+    )
+    after = _check(repo, shas[0], data_path=_empty_rows(root), poster=lambda *_a: None)
+    assert after.ok is True
+    assert shas[1] not in (after.commits or [])
+    assert shas[2] not in (after.commits or [])
+
+
+def test_gap_notice_text_invites_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T7: gap notice invites post-land review; no violation/refuse wording."""
+    root = _pin_ledger(monkeypatch)
+    repo = root / "repo"
+    shas = _init_repo(repo, 2)
+    monkeypatch.setattr(mro, "INITIAL_REVIEW_WINDOW_BASE", shas[0])
+    bodies: list[str] = []
+    _check(
+        repo,
+        shas[0],
+        data_path=_empty_rows(root),
+        poster=lambda _s, body, _t: bodies.append(body),
+    )
+    assert bodies
+    text = bodies[0]
+    assert "Landed without a review yet" in text
+    assert "range:" in text and ".." in text
+    assert "post-land review is welcome" in text
+    assert "violation" not in text.lower()
+    assert "refuse" not in text.lower()
