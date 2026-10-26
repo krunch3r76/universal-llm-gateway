@@ -127,7 +127,7 @@ def test_overlay_home_is_replaced_by_passwd_field() -> None:
 
 
 def test_missing_passwd_home_refuses_before_docker(tmp_path: Path) -> None:
-    """Empty getent field 6 exits non-zero and does not invoke docker."""
+    """Empty getent field 6 exits 1 with ERROR on stderr (not 127); no docker."""
     bin_dir, docker_marker = _stub_bins(tmp_path, "io:x:1:1:::\n")
     proc = _run_head(
         _head_through_pin(),
@@ -135,6 +135,8 @@ def test_missing_passwd_home_refuses_before_docker(tmp_path: Path) -> None:
         home=str(tmp_path / "overlay"),
         path_prefix=bin_dir,
     )
-    assert proc.returncode != 0
-    assert "passwd home" in proc.stderr
+    assert proc.returncode == 1, proc.stderr
+    assert proc.returncode != 127
+    assert "ERROR: passwd home" in proc.stderr
+    assert "refusing mcp compose" in proc.stderr
     assert not docker_marker.exists()

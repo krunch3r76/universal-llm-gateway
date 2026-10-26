@@ -50,7 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OWNER_HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
 if [[ -z "${OWNER_HOME}" || "${OWNER_HOME}" != /* ]]; then
-  mcp_sync_error "ERROR: passwd home for uid $(id -u) missing; refusing mcp compose." >&2
+  echo "ERROR: passwd home for uid $(id -u) missing; refusing mcp compose." >&2
   exit 1
 fi
 export HOME="${OWNER_HOME}"
@@ -211,12 +211,12 @@ gate_emit_log() {
   "$PYTHON" -m deploy_identity.mcp_restart_gate \
     --workspace-root "$WORKSPACE_ROOT" \
     "${data_args[@]}" \
-    emit-log "$msg" 2>/dev/null || true
+    emit-log -- "$msg" 2>/dev/null || true
 }
 
 mcp_sync_error() {
-  gate_emit_log "$1"
   echo "$1" >&2
+  gate_emit_log "$1"
 }
 
 _restore_window_exit() {
