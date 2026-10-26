@@ -1032,14 +1032,29 @@ def _intake_blocks(
             )
         )
     if check_class == "correspondence":
+        appeal_blob = " ".join(
+            [
+                purpose_text,
+                str(intake.get("objective") or ""),
+                " ".join(str(n) for n in intake.get("verbatim_notes") or []),
+            ]
+        ).lower()
+        needs_appeal_subject = any(
+            token in appeal_blob
+            for token in ("appeal", "apn", "hearing", "assessment appeals")
+        )
+        envelope_rule = (
+            "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."
+            if needs_appeal_subject
+            else "Email envelope: To: line, Subject: line, signer closing."
+        )
         brief_lines.append(
             "Register rule: verbatim_notes are facts to restate in this channel's register, "
             "not text to copy. Copy a note word for word only when it is marked verbatim_required. "
             'Prohibited: sworn openings ("I, <name>, am submitting", "I, <name>, declare", jurats) '
             'and impersonal "This correspondence serves to submit...". '
             "Required when standing_limits call for first person: plain "
-            '"I am submitting..." / "Attached are my...". '
-            "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."
+            f'"I am submitting..." / "Attached are my...". {envelope_rule}'
         )
         brief_lines.append(
             "Review rubric (correspondence): flag declaration phrasing or jurat language as type "

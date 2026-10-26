@@ -24,7 +24,19 @@ _REQUEST = re.compile(
 )
 _DEADLINE = re.compile(r"\b(?:deadline|due by|by \w+day|before \w+)\b", re.I)
 _ATTACHMENT = re.compile(r"\b(?:attach(?:ed|ment)?|enclosed|see attached)\b", re.I)
-_PLEASANTRY = re.compile(r"^(?:hi|hello|thanks|thank you|best,|regards,)", re.I)
+_PLEASANTRY = re.compile(
+    r"^(?:hi|hello|thanks|thank you|best,|regards,|cheers,)\s*\.?\s*$",
+    re.I,
+)
+_GREETING_PREFIX = re.compile(
+    r"^(?:"
+    r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
+    r"hello\s*[,—–-]\s*|"
+    r"thanks?\s*,?\s*|"
+    r"thank you\s*,?\s*"
+    r")",
+    re.I,
+)
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:
@@ -57,30 +69,41 @@ def _split_spans(source_message: str) -> list[str]:
     return [chunk.strip() for chunk in chunks if chunk.strip()]
 
 
+def _strip_greeting_prefix(span: str) -> str:
+    text = span.strip()
+    while text:
+        match = _GREETING_PREFIX.match(text)
+        if not match:
+            break
+        text = text[match.end() :].strip()
+    return text
+
+
 def _classify_span(span: str) -> tuple[str, str, str]:
     """Return kind, obligation, and one-line semantic_reading for a span."""
-    if _PLEASANTRY.match(span):
-        return (
-            "pleasantry",
-            "none",
-            "greeting or courtesy without a required reply action",
-        )
-    if _APPLY_CTA.search(span):
+    core = _strip_greeting_prefix(span) or span.strip()
+    if _APPLY_CTA.search(core) or _APPLY_CTA.search(span):
         return (
             "call_to_action",
             "act_outside_message",
             "sender wants an application submitted through the link; "
             "a reply email is not the application",
         )
-    if _QUESTION.search(span):
-        return "question", "answer", f"answer the question: {span[:120]}"
-    if _REQUEST.search(span):
-        return "request", "answer", f"respond to the request: {span[:120]}"
-    if _DEADLINE.search(span):
-        return "deadline", "acknowledge", f"acknowledge deadline: {span[:120]}"
-    if _ATTACHMENT.search(span):
-        return "attachment", "acknowledge", f"acknowledge attachment reference: {span[:120]}"
-    return "statement", "acknowledge", f"acknowledge or reflect: {span[:120]}"
+    if _QUESTION.search(core):
+        return "question", "answer", f"answer the question: {core[:120]}"
+    if _REQUEST.search(core):
+        return "request", "answer", f"respond to the request: {core[:120]}"
+    if _DEADLINE.search(core):
+        return "deadline", "acknowledge", f"acknowledge deadline: {core[:120]}"
+    if _ATTACHMENT.search(core):
+        return "attachment", "acknowledge", f"acknowledge attachment reference: {core[:120]}"
+    if _PLEASANTRY.match(core) or (not core.strip() and _PLEASANTRY.match(span.strip())):
+        return (
+            "pleasantry",
+            "none",
+            "greeting or courtesy without a required reply action",
+        )
+    return "statement", "acknowledge", f"acknowledge or reflect: {core[:120]}"
 
 
 def fallback_obligations(source_message: str) -> list[dict[str, Any]]:

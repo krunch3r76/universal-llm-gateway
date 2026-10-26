@@ -15,7 +15,10 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._obligation_coverage import actionable_obligations, coverage_map_for_draft
+from ._obligation_coverage import (
+    actionable_obligations,
+    merge_audit_coverage_map,
+)
 from .email_envelope import has_email_subject, polish_email_draft
 from .independence import (
     _allow_partial,
@@ -283,6 +286,8 @@ def _obligation_coverage_gate(
     selected_body: str,
     obligations: list[dict[str, Any]],
     *,
+    selected: str,
+    audit_map: list[dict[str, Any]] | None,
     revision_ran: bool,
     architect_brief: str = "",
     channel: str = "",
@@ -291,7 +296,12 @@ def _obligation_coverage_gate(
     actionable = actionable_obligations(obligations)
     if not actionable or not selected_body.strip():
         return [], None
-    coverage_map = coverage_map_for_draft(selected_body, actionable)
+    coverage_map = merge_audit_coverage_map(
+        selected_body,
+        obligations,
+        audit_map,
+        selected=selected,
+    )
     coverage_map = _apply_architect_omit_with_reason(
         coverage_map, architect_brief, channel=channel
     )
@@ -634,9 +644,13 @@ class WritingFinalizeHandler(BaseHandler):
             intake = assemble.get("intake")
             if isinstance(intake, dict):
                 channel = str(intake.get("channel") or "")
+        obl_audit = _json_of(outputs, "obligation_coverage") or {}
+        audit_map = list(obl_audit.get("coverage_map") or [])
         coverage_map, obl_refusal = _obligation_coverage_gate(
             selected_body,
             obligations,
+            selected=selected,
+            audit_map=audit_map or None,
             revision_ran=revision_ran,
             architect_brief=architect_brief,
             channel=channel,

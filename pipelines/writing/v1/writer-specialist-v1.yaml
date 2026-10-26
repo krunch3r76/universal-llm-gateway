@@ -45,13 +45,18 @@ steps:
 
   - name: prompt_architect
     type: writing_prompt_architect_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: source_obligations
+        fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
   - name: drafter_openai
     type: generate
     model_ref: drafter_openai
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('channel') == 'filing')"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -66,7 +71,7 @@ steps:
     type: generate
     model_ref: drafter_google
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('channel') == 'filing')"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -81,7 +86,7 @@ steps:
     type: generate
     model_ref: drafter_xai
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('channel') == 'filing')"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -111,7 +116,7 @@ steps:
     type: generate
     model_ref: drafter_local_ernie
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('channel') == 'filing')"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block

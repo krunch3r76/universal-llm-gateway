@@ -343,6 +343,121 @@ def test_three_ask_missing_one_refuses_finalize() -> None:
     assert payload.get("refused") == "obligation_coverage_failed"
 
 
+def _finalize_outputs(
+    draft_text: str,
+    obligations: list[dict[str, Any]],
+    *,
+    channel: str = "email",
+) -> dict[str, Any]:
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": channel,
+                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": obligations}),
+        "draft": _Out({"ok": True, "draft": draft_text}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft_text),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    return payload
+
+
+def test_s1_meridial_chat_without_apply_action_refuses() -> None:
+    src = _run_source(_MERIDIAL)
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thanks for reaching out. I'd love to chat more about the team.\n\n"
+        "Best,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, _obligation.actionable_obligations(src["obligations"])
+    )
+    apply_row = next(
+        (row for row in cov if row.get("obligation") == "act_outside_message"),
+        None,
+    )
+    assert apply_row is not None
+    assert apply_row["status"] == "missing"
+    payload = _finalize_outputs(draft, src["obligations"])
+    assert payload.get("refused") == "obligation_coverage_failed"
+    assert payload.get("status") == "refused"
+
+
+def test_s2_three_ask_portfolio_missing_not_declined() -> None:
+    inbound = (
+        "What is your hourly rate? "
+        "Can you start on Monday? "
+        "Please send your portfolio link."
+    )
+    obligations = source_obligations.fallback_obligations(inbound)
+    draft = (
+        "To: client@example.com\n"
+        "Subject: Re: your questions\n\n"
+        "My rate is $200 per hour. I can start on Monday. "
+        "I can't wait to hear from you.\n\nThanks,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, _obligation.actionable_obligations(obligations)
+    )
+    portfolio_rows = [
+        row
+        for row in cov
+        if "portfolio" in str(
+            next(
+                (
+                    o.get("quoted_span")
+                    for o in obligations
+                    if o.get("id") == row.get("id")
+                ),
+                "",
+            )
+        ).lower()
+    ]
+    assert portfolio_rows
+    assert portfolio_rows[0]["status"] == "missing"
+    assert portfolio_rows[0]["status"] != "declined_with_reason"
+    payload = _finalize_outputs(draft, obligations)
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_s3_shared_stopwords_do_not_count_as_answer() -> None:
+    obligations = source_obligations.fallback_obligations(
+        "Can you send your portfolio link?"
+    )
+    draft = (
+        "To: client@example.com\n"
+        "Subject: Re: question\n\n"
+        "Can you share your availability?\n\nThanks,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, _obligation.actionable_obligations(obligations)
+    )
+    assert cov[0]["status"] == "missing"
+    payload = _finalize_outputs(draft, obligations)
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
 def test_obligation_coverage_handler_emits_missing_block() -> None:
     inbound = "Can you confirm the meeting time?"
     obligations = source_obligations.fallback_obligations(inbound)

@@ -87,6 +87,11 @@ def test_pipeline_shape() -> None:
     by_name = {step.name: step for step in spec.steps}
     assert by_name["draft"].type == "writing_draft_selector_v1"
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
+    assert "source_obligations" in by_name["prompt_architect"].computed_depends_on
+    assert any(
+        entry.step == "source_obligations"
+        for entry in (by_name["prompt_architect"].reads_from or [])
+    )
     _no_max_tokens = (
         *_CLOUD_DRAFTERS,
         "drafter_local_hermes",
