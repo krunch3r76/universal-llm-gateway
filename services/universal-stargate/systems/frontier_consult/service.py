@@ -344,18 +344,20 @@ def _caller_origin_overflow_skills(
     return skills
 
 
-def _classify_required_body_overflow(
-    dropped: list[dict[str, Any]],
-    caller_canonical_set: frozenset[str],
+def _build_inline_skill_budget_error(
+    overflow_skills: list[str],
     *,
     request_id: str,
     role: str | None,
     model: str,
+    budget_bytes: int | None = None,
     event_publisher: EventPublisher | None = None,
-) -> FrontierEndpointError | None:
-    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
-    if not overflow_skills:
-        return None
+) -> FrontierEndpointError:
+    effective_budget = (
+        INJECTED_BODY_BUDGET_BYTES
+        if budget_bytes is None
+        else budget_bytes
+    )
     if event_publisher is not None:
         event_publisher(
             DispatchSkillsInlineRejected(
@@ -363,7 +365,7 @@ def _classify_required_body_overflow(
                 role=role,
                 model=model,
                 skills=overflow_skills,
-                budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                budget_bytes=effective_budget,
                 reason_code="budget",
             )
         )
@@ -378,9 +380,32 @@ def _classify_required_body_overflow(
         code="skills_inline_budget_exceeded",
         details={
             "skills": overflow_skills,
-            "budget_bytes": INJECTED_BODY_BUDGET_BYTES,
+            "budget_bytes": effective_budget,
             "reason_code": "budget",
         },
+    )
+
+
+def _classify_required_body_overflow(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    budget_bytes: int | None = None,
+    event_publisher: EventPublisher | None = None,
+) -> FrontierEndpointError | None:
+    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
+    if not overflow_skills:
+        return None
+    return _build_inline_skill_budget_error(
+        overflow_skills,
+        request_id=request_id,
+        role=role,
+        model=model,
+        budget_bytes=budget_bytes,
+        event_publisher=event_publisher,
     )
 
 
@@ -407,6 +432,7 @@ def _raise_required_body_unresolved(
     request_id: str,
     role: str | None,
     model: str,
+    budget_bytes: int | None = None,
     event_publisher: EventPublisher | None = None,
 ) -> None:
     overflow_err = _classify_required_body_overflow(
@@ -415,6 +441,7 @@ def _raise_required_body_unresolved(
         request_id=request_id,
         role=role,
         model=model,
+        budget_bytes=budget_bytes,
         event_publisher=event_publisher,
     )
     if overflow_err is not None:
@@ -804,6 +831,7 @@ async def build_dispatch_body(
                 request_id=request_id,
                 role=req.role,
                 model=effective_model,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
                 event_publisher=event_publisher,
             )
         injected_bodies_md = bundle.injected_bodies_md
@@ -912,6 +940,7 @@ async def build_dispatch_body(
                 request_id=request_id,
                 role=req.role,
                 model=effective_model,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
                 event_publisher=event_publisher,
             )
         if resolution.block_md:

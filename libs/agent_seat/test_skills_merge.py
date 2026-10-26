@@ -7,6 +7,7 @@ from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 from skills_mount.anthropic_container import (
     AnthropicContainerSkillError,
     clear_anthropic_skills_index_cache_for_tests,
+    resolve_container_skill_entries,
 )
 
 from agent_seat.skills_merge import (
@@ -340,3 +341,25 @@ def test_enforce_mcp_predicated_classification_missing_propagates(
     )
     with pytest.raises(SkillClassificationMissingError):
         enforce_mcp_predicated_skills(effective, mcp_enabled=False)
+
+
+_DEFAULT_INDEX_SKILL_SLUGS = (
+    "lean-dispatch",
+    "entity-lifecycle-discipline",
+    "entity-creation-discipline",
+    "cortex-orientation",
+    "docstring-quality",
+    "event-instrumentation-discipline",
+    "git-posture",
+)
+
+
+def test_resolve_container_skill_entries_default_index_versions_latest() -> None:
+    """Repo config/anthropic_skills_index.json must pin container version to latest."""
+    clear_anthropic_skills_index_cache_for_tests()
+    try:
+        entries = resolve_container_skill_entries(_DEFAULT_INDEX_SKILL_SLUGS)
+        assert len(entries) == len(_DEFAULT_INDEX_SKILL_SLUGS)
+        assert all(entry["version"] == "latest" for entry in entries)
+    finally:
+        clear_anthropic_skills_index_cache_for_tests()

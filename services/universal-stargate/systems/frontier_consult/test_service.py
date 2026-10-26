@@ -35,6 +35,65 @@ def test_inline_skill_budget_bytes_finite_default_and_explicit_opt_out() -> None
     assert _inline_skill_budget_bytes({"inline_skill_budget_bytes": 12000}) == 12000
 
 
+_CUSTOM_INLINE_BUDGET = 12000
+
+
+def _layer_c_budget_drop(slug: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": f"agent_skill:{slug}",
+            "reason": "layer_c_budget",
+            "slug": slug,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_role_path_caller_overflow_reports_custom_inline_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return HydrationBundle(
+            briefing_card_md="# briefing",
+            agent_meta=AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+            ),
+            inline_only=True,
+            required_body_unresolved=True,
+            required_body_dropped=_layer_c_budget_drop("architecture-invariants"),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.caller_skill_ids_for_layer_c",
+        lambda skills, layer_c: ("architecture-invariants",),
+    )
+
+    events: list[Any] = []
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model="openai/gpt-5.5",
+        skills=["architecture-invariants"],
+        generation_options={"inline_skill_budget_bytes": _CUSTOM_INLINE_BUDGET},
+    )
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await build_dispatch_body(req, event_publisher=events.append)
+    err = exc_info.value
+    assert err.code == "skills_inline_budget_exceeded"
+    assert err.details is not None
+    assert err.details["budget_bytes"] == _CUSTOM_INLINE_BUDGET
+    rejected = [e for e in events if e.signal == "dispatch.skills.inline.rejected"]
+    assert rejected[0].payload["budget_bytes"] == _CUSTOM_INLINE_BUDGET
+
+
 def _bundle(meta: AgentMeta) -> HydrationBundle:
     return HydrationBundle(briefing_card_md="# briefing", agent_meta=meta)
 
