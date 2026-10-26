@@ -142,6 +142,20 @@ def price_usage(
     return out
 
 
+def _format_tool_errors_summary(tool_errors: list[dict[str, Any]] | None) -> str:
+    if not tool_errors:
+        return ""
+    lines = ["", "## tool errors", ""]
+    for tc in tool_errors:
+        name = tc.get("name") or "unknown"
+        turn = tc.get("turn")
+        prefix = f"- turn {turn}: " if turn is not None else "- "
+        result = tc.get("result") or tc.get("error") or "failed"
+        lines.append(f"{prefix}`{name}` — {result}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def append_api_closeout_economics(
     content: str,
     *,
@@ -150,12 +164,25 @@ def append_api_closeout_economics(
     model: str,
     usage: dict[str, Any] | None,
     contract: str | None = None,
+    archive_uri: str | None = None,
+    tool_errors: list[dict[str, Any]] | None = None,
 ) -> str:
     """Append markdown + structured JSON economics footer for durable sidecars."""
     priced = price_usage(usage, model=model)
-    if not work_key and priced is None:
+    if (
+        not work_key
+        and priced is None
+        and not archive_uri
+        and not tool_errors
+    ):
         return content
-    lines = [content.rstrip(), "", "## dispatch economics", ""]
+    lines = [content.rstrip()]
+    if archive_uri:
+        lines.extend(["", f"archive_uri: {archive_uri}"])
+    tool_block = _format_tool_errors_summary(tool_errors)
+    if tool_block:
+        lines.append(tool_block.rstrip())
+    lines.extend(["", "## dispatch economics", ""])
     if work_key:
         lines.append(f"work_key: {work_key}")
     lines.append(f"execution_id: {execution_id}")
@@ -172,11 +199,15 @@ def append_api_closeout_economics(
         ):
             if key in priced and priced[key] is not None:
                 lines.append(f"{key}: {priced[key]}")
-    structured = {
+    structured: dict[str, Any] = {
         "work_key": work_key,
         "execution_id": execution_id,
         "contract": contract,
         "usage": priced,
     }
+    if archive_uri:
+        structured["archive_uri"] = archive_uri
+    if tool_errors:
+        structured["tool_errors"] = tool_errors
     lines.extend(["", "```json", json.dumps(structured, indent=2), "```", ""])
     return "\n".join(lines)

@@ -49,6 +49,8 @@ class PipelineExecutionOutcome:
     # Designed stop from the step that requested it. Status stays
     # ``completed``; this is a result field, not a terminal status.
     stop: StepStop | None = None
+    archive_uri: str | None = None
+    tool_errors: list[dict[str, Any]] | None = None
 
 
 def extract_model_entity_id(

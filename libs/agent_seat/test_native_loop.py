@@ -29,6 +29,19 @@ class _FakeSend:
         return self._responses.pop(0)
 
 
+def _anthropic_pause_turn(text: str, *, container_id: str = "ctr_1") -> dict[str, Any]:
+    return {
+        "id": "msg_pause",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": text}],
+        "container": {"id": container_id},
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+        "stop_reason": "pause_turn",
+    }
+
+
 def _anthropic_terminal(text: str = "done") -> dict[str, Any]:
     return {
         "id": "msg_1",
@@ -77,6 +90,36 @@ async def test_native_loop_terminal_response_no_tools(
     assert result.tool_calls_made == 0
     assert result.provider == "anthropic"
     assert send.calls[0][0] == "/api/v1/providers/anthropic/messages"
+
+
+@pytest.mark.asyncio
+async def test_native_loop_anthropic_pause_turn_continues_without_mcp_tool_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    send = _FakeSend(
+        [
+            _anthropic_pause_turn("opening"),
+            _anthropic_terminal("final answer"),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        remote_mcp=True,
+        mcp_tool_loop=False,
+    )
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=3,
+    )
+    assert result.content == "opening\n\nfinal answer"
+    assert len(send.calls) == 2
+    _path, second_body = send.calls[1]
+    assert second_body["messages"][-1]["role"] == "assistant"
+    assert second_body.get("container", {}).get("id") == "ctr_1"
 
 
 @pytest.mark.asyncio

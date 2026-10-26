@@ -79,6 +79,7 @@ class RoleProfile:
     default_model: str | None  # None ⟹ operator picks (web roles)
     allowed_models: tuple[str, ...] = field(default_factory=tuple)
     allowed_options: tuple[str, ...] | None = None  # None ⟹ no restriction
+    default_effort: str | None = None
 
 
 def _load_agents_yaml() -> dict[str, Any]:
@@ -166,8 +167,28 @@ def load_roles() -> dict[str, RoleProfile]:
             allowed_options=(
                 tuple(allowed_opts_raw) if allowed_opts_raw is not None else None
             ),
+            default_effort=entry.get("default_effort"),
         )
     return roles
+
+
+def resolve_dispatch_default_effort(
+    *,
+    role: str | None,
+    contract: str | None,
+) -> str:
+    """Role/contract default for ``reasoning_effort`` when the caller omits it."""
+    if role:
+        try:
+            role_profile = get_role(role)
+        except KeyError:
+            role_profile = None
+        if role_profile and role_profile.default_effort:
+            return str(role_profile.default_effort)
+    contract_key = (contract or "").strip().lower()
+    if contract_key == "mechanical":
+        return "low"
+    return "high"
 
 
 @functools.cache

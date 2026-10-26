@@ -1,0 +1,46 @@
+{
+  "skills": {
+    "lean-dispatch": {
+      "skill_id": "skill_01QFUofgnTQLqb4QWGkPA4km",
+      "type": "custom",
+      "version": "latest",
+      "slug": "lean-dispatch"
+    },
+    "entity-lifecycle-discipline": {
+      "skill_id": "skill_01Q5RcbTFF2TeQap4ApW4iXq",
+      "type": "custom",
+      "version": "latest",
+      "slug": "entity-lifecycle-discipline"
+    },
+    "entity-creation-discipline": {
+      "skill_id": "skill_01SNgk7UUmxLf2kn8zx6dFpN",
+      "type": "custom",
+      "version": "latest",
+      "slug": "entity-creation-discipline"
+    },
+    "cortex-orientation": {
+      "skill_id": "skill_01D61EHnzxWPD8CQhZzmw95E",
+      "type": "custom",
+      "version": "latest",
+      "slug": "cortex-orientation"
+    },
+    "docstring-quality": {
+      "skill_id": "skill_01J6evZA13AMHbh8xNDrJ8VR",
+      "type": "custom",
+      "version": "latest",
+      "slug": "docstring-quality"
+    },
+    "event-instrumentation-discipline": {
+      "skill_id": "skill_018BqKfr7gYzPV9963Czohyh",
+      "type": "custom",
+      "version": "latest",
+      "slug": "event-instrumentation-discipline"
+    },
+    "git-posture": {
+      "skill_id": "skill_01TJ3QK254MQTGkeFDDYNvmU",
+      "type": "custom",
+      "version": "latest",
+      "slug": "git-posture"
+    }
+  }
+}

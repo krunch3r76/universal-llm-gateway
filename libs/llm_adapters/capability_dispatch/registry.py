@@ -277,6 +277,8 @@ def default_reasoning_effort(model: str | ModelId) -> str | None:
     provider, bare = _resolve_provider(model)
     if f"{provider}/{bare}" in _DEFAULT_HIGH_EFFORT:
         return "high"
+    if provider == "anthropic" and _anthropic_uses_adaptive(bare):
+        return "high"
     return None
 
 

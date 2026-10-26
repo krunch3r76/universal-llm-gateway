@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import pytest
 from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
+from skills_mount.anthropic_container import (
+    AnthropicContainerSkillError,
+    clear_anthropic_skills_index_cache_for_tests,
+    resolve_container_skill_entries,
+)
 
 from agent_seat.skills_merge import (
     EffectiveSkill,
@@ -83,6 +88,83 @@ def test_partition_openai_mounts_entire_effective_list(
     assert partition.layer_a == ()
     assert partition.layer_c == ()
     assert partition.rows[0].channel == "layer_b"
+
+
+def test_partition_anthropic_container_mounts_mapped_up_to_eight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+
+    index_path = tmp_path / "anthropic_skills_index.json"
+    skills = {
+        f"skill-{i}": {"skill_id": f"sk_{i}", "type": "custom", "version": "latest"}
+        for i in range(10)
+    }
+    index_path.write_text(json.dumps({"skills": skills}), encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_SKILLS_INDEX_PATH", str(index_path))
+    clear_anthropic_skills_index_cache_for_tests()
+    monkeypatch.setattr(
+        "agent_seat.skills_merge._read_mount_backend",
+        lambda _model: "anthropic_container",
+    )
+    effective = tuple(
+        EffectiveSkill(
+            requested_id=f"skill-{i}",
+            canonical_id=canonical_agent_skill_id(f"skill-{i}"),
+            origin="caller",
+        )
+        for i in range(10)
+    )
+    partition = partition_skill_channels(
+        effective,
+        model="anthropic/claude-sonnet-5-5",
+        mcp_enabled=True,
+        role="synthesizer",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+    )
+    assert len(partition.layer_b) == 8
+    assert len(partition.layer_c) == 2
+    clear_anthropic_skills_index_cache_for_tests()
+
+
+def test_partition_anthropic_unmapped_in_first_eight_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+
+    index_path = tmp_path / "anthropic_skills_index.json"
+    index_path.write_text(
+        json.dumps({"skills": {"mapped-skill": {"skill_id": "sk_1", "type": "custom"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_SKILLS_INDEX_PATH", str(index_path))
+    clear_anthropic_skills_index_cache_for_tests()
+    monkeypatch.setattr(
+        "agent_seat.skills_merge._read_mount_backend",
+        lambda _model: "anthropic_container",
+    )
+    effective = (
+        EffectiveSkill(
+            requested_id="missing-skill",
+            canonical_id=canonical_agent_skill_id("missing-skill"),
+            origin="caller",
+        ),
+    )
+    with pytest.raises(AnthropicContainerSkillError, match="not indexed"):
+        partition_skill_channels(
+            effective,
+            model="anthropic/claude-sonnet-5-5",
+            mcp_enabled=True,
+            role="synthesizer",
+            platform="api",
+            inject_profile="dispatch",
+            code_touching=True,
+        )
+    clear_anthropic_skills_index_cache_for_tests()
 
 
 def test_partition_anthropic_routes_caller_to_layer_c(
@@ -259,3 +341,25 @@ def test_enforce_mcp_predicated_classification_missing_propagates(
     )
     with pytest.raises(SkillClassificationMissingError):
         enforce_mcp_predicated_skills(effective, mcp_enabled=False)
+
+
+_DEFAULT_INDEX_SKILL_SLUGS = (
+    "lean-dispatch",
+    "entity-lifecycle-discipline",
+    "entity-creation-discipline",
+    "cortex-orientation",
+    "docstring-quality",
+    "event-instrumentation-discipline",
+    "git-posture",
+)
+
+
+def test_resolve_container_skill_entries_default_index_versions_latest() -> None:
+    """Repo config/anthropic_skills_index.json must pin container version to latest."""
+    clear_anthropic_skills_index_cache_for_tests()
+    try:
+        entries = resolve_container_skill_entries(_DEFAULT_INDEX_SKILL_SLUGS)
+        assert len(entries) == len(_DEFAULT_INDEX_SKILL_SLUGS)
+        assert all(entry["version"] == "latest" for entry in entries)
+    finally:
+        clear_anthropic_skills_index_cache_for_tests()

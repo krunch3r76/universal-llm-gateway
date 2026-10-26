@@ -176,6 +176,35 @@ def _resolve_skills_mount(
 ) -> tuple[list[dict[str, Any]], frozenset[str], int]:
     if not mount_skill_ids:
         return [], frozenset(), 0
+    from model_capabilities import skills_mount_backend
+
+    if skills_mount_backend(effective_model) == "anthropic_container":
+        from skills_mount.anthropic_container import resolve_container_skill_entries
+
+        try:
+            entries = resolve_container_skill_entries(mount_skill_ids)
+        except SkillMountResolveError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+                code="skills_anthropic_container_unmapped",
+                details={"reason_code": "skills_anthropic_container_unmapped"},
+            ) from exc
+        mount_slugs = frozenset(mount_skill_ids)
+        if event_publisher is not None:
+            event_publisher(
+                DispatchSkillsMounted(
+                    request_id=request_id,
+                    role=role,
+                    model=effective_model,
+                    canonical_slugs=sorted(mount_slugs),
+                    entry_count=len(entries),
+                    total_bundle_bytes=0,
+                )
+            )
+        return entries, mount_slugs, 0
     try:
         bundles = resolve_skill_bundles(
             list(mount_skill_ids),
@@ -272,6 +301,17 @@ def _classification_missing_slug(exc: Exception) -> str:
     return match.group(1) if match else "unknown"
 
 
+def _inline_skill_budget_bytes(
+    generation_options: dict[str, Any] | None,
+) -> int | None:
+    """Default 50kB inline budget; ``None`` only when caller opts out explicitly."""
+    opts = generation_options or {}
+    if "inline_skill_budget_bytes" in opts:
+        raw = opts["inline_skill_budget_bytes"]
+        return None if raw is None else int(raw)
+    return INJECTED_BODY_BUDGET_BYTES
+
+
 def _dropped_entry_canonical(entry: dict[str, Any]) -> str:
     from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
 
@@ -304,18 +344,20 @@ def _caller_origin_overflow_skills(
     return skills
 
 
-def _classify_required_body_overflow(
-    dropped: list[dict[str, Any]],
-    caller_canonical_set: frozenset[str],
+def _build_inline_skill_budget_error(
+    overflow_skills: list[str],
     *,
     request_id: str,
     role: str | None,
     model: str,
+    budget_bytes: int | None = None,
     event_publisher: EventPublisher | None = None,
-) -> FrontierEndpointError | None:
-    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
-    if not overflow_skills:
-        return None
+) -> FrontierEndpointError:
+    effective_budget = (
+        INJECTED_BODY_BUDGET_BYTES
+        if budget_bytes is None
+        else budget_bytes
+    )
     if event_publisher is not None:
         event_publisher(
             DispatchSkillsInlineRejected(
@@ -323,7 +365,7 @@ def _classify_required_body_overflow(
                 role=role,
                 model=model,
                 skills=overflow_skills,
-                budget_bytes=INJECTED_BODY_BUDGET_BYTES,
+                budget_bytes=effective_budget,
                 reason_code="budget",
             )
         )
@@ -338,9 +380,32 @@ def _classify_required_body_overflow(
         code="skills_inline_budget_exceeded",
         details={
             "skills": overflow_skills,
-            "budget_bytes": INJECTED_BODY_BUDGET_BYTES,
+            "budget_bytes": effective_budget,
             "reason_code": "budget",
         },
+    )
+
+
+def _classify_required_body_overflow(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+    *,
+    request_id: str,
+    role: str | None,
+    model: str,
+    budget_bytes: int | None = None,
+    event_publisher: EventPublisher | None = None,
+) -> FrontierEndpointError | None:
+    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
+    if not overflow_skills:
+        return None
+    return _build_inline_skill_budget_error(
+        overflow_skills,
+        request_id=request_id,
+        role=role,
+        model=model,
+        budget_bytes=budget_bytes,
+        event_publisher=event_publisher,
     )
 
 
@@ -367,6 +432,7 @@ def _raise_required_body_unresolved(
     request_id: str,
     role: str | None,
     model: str,
+    budget_bytes: int | None = None,
     event_publisher: EventPublisher | None = None,
 ) -> None:
     overflow_err = _classify_required_body_overflow(
@@ -375,6 +441,7 @@ def _raise_required_body_unresolved(
         request_id=request_id,
         role=role,
         model=model,
+        budget_bytes=budget_bytes,
         event_publisher=event_publisher,
     )
     if overflow_err is not None:
@@ -660,6 +727,19 @@ async def build_dispatch_body(
                     "reason_code": "capability_card_value_invalid",
                 },
             ) from exc
+        except SkillMountResolveError as exc:
+            from model_capabilities import skills_mount_backend
+
+            if skills_mount_backend(effective_model) != "anthropic_container":
+                raise
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+                code="skills_anthropic_container_unmapped",
+                details={"reason_code": "skills_anthropic_container_unmapped"},
+            ) from exc
         channel_rows = skill_partition.rows
         provider_mount_slugs = skill_partition.provider_mount_slugs
         caller_layer_c_ids = caller_skill_ids_for_layer_c(
@@ -698,6 +778,7 @@ async def build_dispatch_body(
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
                 exclude_mcp_predicated=not mcp_enabled,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -750,6 +831,7 @@ async def build_dispatch_body(
                 request_id=request_id,
                 role=req.role,
                 model=effective_model,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
                 event_publisher=event_publisher,
             )
         injected_bodies_md = bundle.injected_bodies_md
@@ -823,6 +905,7 @@ async def build_dispatch_body(
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
                 exclude_mcp_predicated=not mcp_enabled,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -857,6 +940,7 @@ async def build_dispatch_body(
                 request_id=request_id,
                 role=req.role,
                 model=effective_model,
+                budget_bytes=_inline_skill_budget_bytes(req.generation_options),
                 event_publisher=event_publisher,
             )
         if resolution.block_md:
@@ -962,6 +1046,13 @@ async def build_dispatch_body(
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
+    if generation_options.get("reasoning_effort") is None:
+        from agent_seat.profiles import resolve_dispatch_default_effort
+
+        generation_options["reasoning_effort"] = resolve_dispatch_default_effort(
+            role=req.role,
+            contract=req.resolved_contract,
+        )
     if "max_tool_turns" in generation_options:
         raise FrontierEndpointError(
             request_id=request_id,

@@ -41,6 +41,9 @@ _ANTHROPIC_BETA_INTERLEAVED = "interleaved-thinking-2025-05-14"
 _ANTHROPIC_BETA_CONTEXT = "context-management-2025-06-27"
 _ANTHROPIC_BETA_COMPACT = "compact-2026-01-12"
 _ANTHROPIC_BETA_FAST = "fast-mode-2026-02-01"
+_ANTHROPIC_BETA_CODE_EXEC = "code-execution-2025-08-25"
+_ANTHROPIC_BETA_SKILLS = "skills-2025-10-02"
+_CODE_EXEC_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}
 
 
 class AnthropicAdapter:
@@ -219,6 +222,35 @@ class AnthropicAdapter:
         if body.get("mcp_servers"):
             auto_betas.append(_ANTHROPIC_BETA_MCP)
 
+        if req.skills_mount:
+            container_skills: list[dict[str, Any]] = []
+            for entry in req.skills_mount:
+                if not isinstance(entry, dict):
+                    continue
+                skill_id = entry.get("skill_id")
+                if not skill_id:
+                    continue
+                kind = str(entry.get("type") or "custom")
+                container_skills.append(
+                    {
+                        "type": kind,
+                        "skill_id": skill_id,
+                        "version": str(entry.get("version") or "latest"),
+                    }
+                )
+            if container_skills:
+                container = dict(body.get("container") or {})
+                container["skills"] = container_skills
+                body["container"] = container
+                tools_list = list(body.get("tools") or [])
+                if not any(
+                    isinstance(t, dict) and t.get("name") == "code_execution"
+                    for t in tools_list
+                ):
+                    tools_list.append(_CODE_EXEC_TOOL)
+                body["tools"] = tools_list
+                auto_betas.extend([_ANTHROPIC_BETA_CODE_EXEC, _ANTHROPIC_BETA_SKILLS])
+
         explicit_betas = opts.get("betas", [])
         if isinstance(explicit_betas, list):
             beta_values = [*explicit_betas, *auto_betas]
@@ -314,6 +346,12 @@ class AnthropicAdapter:
                 "blocks": thinking_blocks,
             }
 
+        container_raw = response_data.get("container")
+        container_id: str | None = None
+        if isinstance(container_raw, dict):
+            cid = container_raw.get("id")
+            container_id = str(cid) if cid else None
+
         return {
             "content": "".join(content_parts),
             "model": str(response_data.get("model", "")),
@@ -324,8 +362,27 @@ class AnthropicAdapter:
             "tool_calls": tool_calls or None,
             "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("id"),
-            "raw": None,
+            "container_id": container_id,
+            "raw": response_data,
         }
+
+    def append_pause_turn_continuation(
+        self,
+        body: dict[str, Any],
+        raw_response: dict[str, Any],
+    ) -> None:
+        """Append assistant turn and reuse ``container.id`` after ``pause_turn``."""
+        body["messages"].append(
+            {
+                "role": "assistant",
+                "content": raw_response.get("content", []),
+            }
+        )
+        container = raw_response.get("container")
+        if isinstance(container, dict):
+            container_id = container.get("id")
+            if container_id:
+                body.setdefault("container", {})["id"] = container_id
 
     def append_tool_round(
         self,

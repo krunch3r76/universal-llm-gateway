@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from agent_seat import AgentMeta, HydrationBundle
+from agent_seat.body_injection import INJECTED_BODY_BUDGET_BYTES
 from fastapi import Response
 from skills_mount import ResolvedSkillBundle
 
@@ -20,10 +21,77 @@ from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
     _code_touching_generate,
+    _inline_skill_budget_bytes,
     build_dispatch_body,
 )
 
 _DISPATCH_THREAD = "test-dispatch-thread"
+
+
+def test_inline_skill_budget_bytes_finite_default_and_explicit_opt_out() -> None:
+    assert _inline_skill_budget_bytes(None) == INJECTED_BODY_BUDGET_BYTES
+    assert _inline_skill_budget_bytes({}) == INJECTED_BODY_BUDGET_BYTES
+    assert _inline_skill_budget_bytes({"inline_skill_budget_bytes": None}) is None
+    assert _inline_skill_budget_bytes({"inline_skill_budget_bytes": 12000}) == 12000
+
+
+_CUSTOM_INLINE_BUDGET = 12000
+
+
+def _layer_c_budget_drop(slug: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": f"agent_skill:{slug}",
+            "reason": "layer_c_budget",
+            "slug": slug,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_role_path_caller_overflow_reports_custom_inline_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return HydrationBundle(
+            briefing_card_md="# briefing",
+            agent_meta=AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+            ),
+            inline_only=True,
+            required_body_unresolved=True,
+            required_body_dropped=_layer_c_budget_drop("architecture-invariants"),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.caller_skill_ids_for_layer_c",
+        lambda skills, layer_c: ("architecture-invariants",),
+    )
+
+    events: list[Any] = []
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model="openai/gpt-5.5",
+        skills=["architecture-invariants"],
+        generation_options={"inline_skill_budget_bytes": _CUSTOM_INLINE_BUDGET},
+    )
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        await build_dispatch_body(req, event_publisher=events.append)
+    err = exc_info.value
+    assert err.code == "skills_inline_budget_exceeded"
+    assert err.details is not None
+    assert err.details["budget_bytes"] == _CUSTOM_INLINE_BUDGET
+    rejected = [e for e in events if e.signal == "dispatch.skills.inline.rejected"]
+    assert rejected[0].payload["budget_bytes"] == _CUSTOM_INLINE_BUDGET
 
 
 def _bundle(meta: AgentMeta) -> HydrationBundle:
@@ -100,6 +168,39 @@ async def test_build_dispatch_body_sets_knob_resolution_preview(
     assert preview["resolved_model"] == body["pipeline_options"]["model"]
     assert preview["status"] == "mapped"
     assert preview["reasoning_native"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_build_dispatch_body_role_default_effort_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="anthropic/claude-sonnet-5-5",
+                allowed_models=["anthropic/claude-sonnet-5-5"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        role="synthesizer",
+        model="anthropic/claude-sonnet-5-5",
+        dispatch_thread_id=_DISPATCH_THREAD,
+    )
+    body = await build_dispatch_body(req)
+    preview = body["pipeline_options"]["_knob_resolution_preview"]
+    gen = body["pipeline_options"]["generation_parameters"]
+    assert gen["reasoning_effort"] == "high"
+    assert preview["requested_effort"] == "high"
+    assert preview["status"] == "mapped"
 
 
 @pytest.mark.asyncio
@@ -1417,7 +1518,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
         patch(
             "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            # resolve_generate_prompt_resolution (was read_latest_dispatch_thread).
             return_value=GeneratePromptResolution(
                 text="hello", prompt_bind_mode="latest"
             ),
@@ -1504,7 +1605,7 @@ async def test_api_role_generate_skills_non_openai_admits(
         patch(
             "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            # resolve_generate_prompt_resolution (was read_latest_dispatch_thread).
             return_value=GeneratePromptResolution(
                 text="hello", prompt_bind_mode="latest"
             ),
