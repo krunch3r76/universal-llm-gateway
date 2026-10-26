@@ -45,6 +45,7 @@ _RESTATE_STOPWORDS = frozenset(
         "to",
         "via",
         "with",
+        "currently",
     }
 )
 _CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
@@ -89,11 +90,20 @@ def normalize_decline_ability_phrases(text: str) -> str:
     return _UNABLE_TO.sub("can not", text)
 
 
+def normalize_temporal_monthly_synonyms(text: str) -> str:
+    """Align restate checks for temporal and monthly calendar phrasing variants."""
+    text = re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
+    text = re.sub(r"\bfor\s+next\s+month'?s?\b", "monthly", text, flags=re.I)
+    text = re.sub(r"\bnext\s+month'?s?\b", "monthly", text, flags=re.I)
+    return text
+
+
 def normalize_text_for_token_match(text: str) -> str:
     """Normalize dashes, contractions, and decline phrasing before token extraction."""
     text = normalize_email_dashes(text)
     text = normalize_contractions(text)
-    return normalize_decline_ability_phrases(text)
+    text = normalize_decline_ability_phrases(text)
+    return normalize_temporal_monthly_synonyms(text)
 
 
 def normalize_email_dashes(text: str) -> str:

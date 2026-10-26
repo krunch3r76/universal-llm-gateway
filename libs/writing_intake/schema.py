@@ -27,6 +27,7 @@ _INTAKE_SCHEMA_HINT: dict[str, Any] = {
         "intake_answers",
         "fact_sources",
         "source_message",
+        "recipient_role",
     ],
     "call_shape": (
         "Structured intake via pipeline_options.intake (or top-level intake fields). "
@@ -97,6 +98,7 @@ class OutboundWriteIntake(BaseModel):
     intake_answers: list[str] = Field(default_factory=list)
     fact_sources: dict[str, str] = Field(default_factory=dict)
     source_message: str | None = None
+    recipient_role: str | None = None
 
     @field_validator("fact_sources", mode="before")
     @classmethod
@@ -167,7 +169,13 @@ class OutboundWriteIntake(BaseModel):
         return cleaned
 
     @field_validator(
-        "recipient", "objective", "purpose", "audience", "subject", "source_message"
+        "recipient",
+        "objective",
+        "purpose",
+        "audience",
+        "subject",
+        "source_message",
+        "recipient_role",
     )
     @classmethod
     def _strip_optional(cls, value: str | None) -> str | None:
@@ -222,6 +230,7 @@ def _structured_intake_raw(options: Mapping[str, Any]) -> dict[str, Any]:
             "intake_answers",
             "fact_sources",
             "source_message",
+            "recipient_role",
         ):
             if key in options:
                 raw[key] = options[key]

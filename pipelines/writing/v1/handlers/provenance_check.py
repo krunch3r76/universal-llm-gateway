@@ -500,6 +500,20 @@ def _clause_pinned(sentence: str, claims: list[Any]) -> bool:
     return False
 
 
+def _attested_pin_ledger_tokens(
+    pin_ledger: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Content tokens from pin ledger excerpts (prose_rhythm may restore attested words)."""
+    tokens: set[str] = set()
+    for row in pin_ledger or []:
+        if not isinstance(row, dict):
+            continue
+        excerpt = str(row.get("excerpt") or "")
+        if excerpt.strip():
+            tokens |= _tokens(excerpt)
+    return tokens
+
+
 def _pin_order(clauses: list[dict[str, Any]]) -> list[str]:
     order: list[str] = []
     for clause in clauses:
@@ -759,6 +773,9 @@ def revision_delta(
     v1_order = _pin_order(v1_clause_rows)
     v2_order = _pin_order(v2_clause_rows)
     join_words = set(_FUNCTION_WORDS)
+    attested_pin_tokens = (
+        _attested_pin_ledger_tokens(pin_ledger) if pin_ledger else set()
+    )
     v1_sentence_set = set(_sentences(v1_text))
     v1_content_seqs = {_content_token_seq(s, join_words) for s in _sentences(v1_text)}
 
@@ -849,7 +866,7 @@ def revision_delta(
             violations.append(_violation("v2_new_unpinned_clause", None, detail))
             violations.append(_violation("fact_added", None, detail))
 
-    new_tokens = v2_tokens - v1_tokens - join_words
+    new_tokens = v2_tokens - v1_tokens - join_words - attested_pin_tokens
     if new_tokens:
         for sentence in _sentences(v2_text):
             if _in_v1(sentence) or _is_non_claim_envelope_unit(
@@ -869,7 +886,9 @@ def revision_delta(
                         break
                 if not row_pins:
                     continue
-            sent_new = _tokens(sentence) - v1_tokens - join_words
+            sent_new = (
+                _tokens(sentence) - v1_tokens - join_words - attested_pin_tokens
+            )
             if not sent_new:
                 continue
             detail = sentence

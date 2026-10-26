@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from writing_intake.fact_inventory import build_fact_inventory, run_drift_check
-from writing_intake.schema import validate_intake_payload
+from writing_intake.schema import OutboundWriteIntake, validate_intake_payload
 
 _PKG = "writing_v1_handlers"
 if _PKG not in sys.modules:
@@ -48,6 +48,33 @@ rev 5 — not legal advice — draft.
 At 5:10 PM that day, I emailed her a list of repairs (Exhibit 7).
 The reinstatement request was filed May 27, 2026 (Exhibit 8).
 """
+
+
+def test_outbound_write_intake_accepts_recipient_role() -> None:
+    intake, refusal = validate_intake_payload(
+        {
+            "intake": {
+                "verbatim_notes": ["Decline standing availability."],
+                "recipient": "Maria",
+                "objective": "Reply to VMS",
+                "channel": "email",
+                "recipient_role": "VMS scheduler",
+            }
+        }
+    )
+    assert refusal is None
+    assert intake is not None
+    assert intake.recipient_role == "VMS scheduler"
+    model = OutboundWriteIntake.model_validate(
+        {
+            "verbatim_notes": ["Note."],
+            "recipient": "Clerk",
+            "objective": "Notify",
+            "channel": "sms",
+            "recipient_role": "  intake coordinator  ",
+        }
+    )
+    assert model.recipient_role == "intake coordinator"
 
 
 def test_validate_intake_refusal_enrichment() -> None:

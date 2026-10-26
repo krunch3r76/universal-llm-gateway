@@ -102,6 +102,21 @@ def test_derive_email_subject_no_hearing_without_hearing_phrase() -> None:
     )
 
 
+def test_email_restate_pin_satisfied_amanda_vms_temporal_monthly() -> None:
+    pin_p2 = (
+        "I do not have standing availability on any day of the week. "
+        "My schedule stays full most of the time."
+    )
+    draft_p2 = (
+        "I do not have standing availability on any day of the week. "
+        "Right now my schedule stays full most of the time."
+    )
+    assert email_envelope.email_restate_pin_satisfied(draft_p2, pin_p2)
+    pin_p3 = "I am not able to provide a monthly open calendar."
+    draft_p3 = "I am not able to provide an open calendar for next month."
+    assert email_envelope.email_restate_pin_satisfied(draft_p3, pin_p3)
+
+
 def test_email_restate_pin_satisfied_contraction_and_decline_synonyms() -> None:
     pin_p2 = (
         "I do not have standing availability on any day of the week because "
