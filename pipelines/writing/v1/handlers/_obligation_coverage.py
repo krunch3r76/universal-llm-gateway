@@ -56,10 +56,12 @@ _CTA_DECLINE_STEM = re.compile(
     re.I,
 )
 _DECLINE = re.compile(
-    r"\b(?:i\s+(?:decline|cannot|can't|won't|will\s+not|am\s+unable)"
-    r"|(?:can't|cannot)\s+(?:take|cover)"
-    r"|won't\s+be\s+able\s+to\s+(?:take|cover)"
-    r"|unable\s+to\s+(?:take|cover))\b",
+    r"\b(?:i\s+(?:(?:also|still|currently|unfortunately)\s+)?"
+    r"(?:decline|cannot|can't|can\s+not|won't|will\s+not|am\s+(?:not\s+able|unable)|"
+    r"do\s+not\s+have|don't\s+have)|"
+    r"(?:can't|cannot|can\s+not)\s+(?:take|cover|provide|make|send|submit)|"
+    r"won't\s+be\s+able\s+to\s+(?:take|cover|provide|make|send|submit)|"
+    r"(?:not\s+able|unable)\s+to\s+(?:take|cover|provide|make|send|submit))\b",
     re.I,
 )
 _ENVELOPE_LINE = re.compile(
@@ -387,6 +389,14 @@ def verify_obligation(
         for sentence in body_sentences:
             if _act_outside_sentence_covers(sentence, act_attested=act_attested):
                 return "addressed", sentence
+        for sentence in body_sentences:
+            if not _sentence_declines(sentence):
+                continue
+            sent_norm = _normalize_apostrophes(sentence)
+            if _CTA_DECLINE_STEM.search(sent_norm) or (
+                span_tokens and (span_tokens & _tokens(sentence))
+            ):
+                return "declined_with_reason", sentence
         return "missing", ""
 
     for sentence in body_sentences:

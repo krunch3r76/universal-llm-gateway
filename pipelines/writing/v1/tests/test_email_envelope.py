@@ -102,6 +102,23 @@ def test_derive_email_subject_no_hearing_without_hearing_phrase() -> None:
     )
 
 
+def test_email_restate_pin_satisfied_contraction_and_decline_synonyms() -> None:
+    pin_p2 = (
+        "I do not have standing availability on any day of the week because "
+        "my schedule stays full most of the time."
+    )
+    draft_p2 = (
+        "I don't have standing availability on any day of the week because "
+        "my schedule stays full most of the time."
+    )
+    assert email_envelope.email_restate_pin_satisfied(draft_p2, pin_p2)
+    pin_p3 = "I am not able to provide a monthly open calendar."
+    draft_p3 = (
+        "I also can't provide a monthly open calendar for next month."
+    )
+    assert email_envelope.email_restate_pin_satisfied(draft_p3, pin_p3)
+
+
 def test_email_restate_pin_satisfied_p2_plus_and_through() -> None:
     pin = (
         "I, Kaywan Joseph Mansubi, am submitting my CCP § 2015.5 Declaration of "

@@ -22,6 +22,7 @@ _EXHIBIT_NOTE_RE = re.compile(r"^\s*(Exhibit\s+\d+)\s*:\s*(.+)$", re.I)
 _RESTATE_STOPWORDS = frozenset(
     {
         "a",
+        "am",
         "an",
         "and",
         "are",
@@ -46,6 +47,53 @@ _RESTATE_STOPWORDS = frozenset(
         "with",
     }
 )
+_CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
+    (r"\bwon't\b", "will not"),
+    (r"\bcan't\b", "cannot"),
+    (r"\bdon't\b", "do not"),
+    (r"\bdoesn't\b", "does not"),
+    (r"\bdidn't\b", "did not"),
+    (r"\bisn't\b", "is not"),
+    (r"\baren't\b", "are not"),
+    (r"\bwasn't\b", "was not"),
+    (r"\bweren't\b", "were not"),
+    (r"\bhaven't\b", "have not"),
+    (r"\bhasn't\b", "has not"),
+    (r"\bhadn't\b", "had not"),
+    (r"\bwouldn't\b", "would not"),
+    (r"\bcouldn't\b", "could not"),
+    (r"\bshouldn't\b", "should not"),
+    (r"\bi'm\b", "i am"),
+    (r"\bi'll\b", "i will"),
+    (r"\bi've\b", "i have"),
+    (r"\bi'd\b", "i would"),
+)
+_DECLINE_ABILITY_NOT_ABLE = re.compile(
+    r"\b(?:am|is|are)\s+not\s+able\s+to\b",
+    re.I,
+)
+_UNABLE_TO = re.compile(r"\bunable\s+to\b", re.I)
+
+
+def normalize_contractions(text: str) -> str:
+    """Expand apostrophe contractions so token overlap ignores style variants."""
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    for pattern, replacement in _CONTRACTION_EXPANSIONS:
+        text = re.sub(pattern, replacement, text, flags=re.I)
+    return re.sub(r"\bcannot\b", "can not", text, flags=re.I)
+
+
+def normalize_decline_ability_phrases(text: str) -> str:
+    """Map inability phrasing to the same tokens as ``cannot`` / ``can't``."""
+    text = _DECLINE_ABILITY_NOT_ABLE.sub("can not", text)
+    return _UNABLE_TO.sub("can not", text)
+
+
+def normalize_text_for_token_match(text: str) -> str:
+    """Normalize dashes, contractions, and decline phrasing before token extraction."""
+    text = normalize_email_dashes(text)
+    text = normalize_contractions(text)
+    return normalize_decline_ability_phrases(text)
 
 
 def normalize_email_dashes(text: str) -> str:
@@ -209,7 +257,7 @@ def polish_email_draft(
 
 def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
     """True when draft contains pin text or an email opening rewrite of it."""
-    norm_draft = normalize_email_dashes(draft_text)
+    norm_draft = normalize_text_for_token_match(draft_text)
     draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
     norm_pin = normalize_email_dashes(pin_excerpt)
     for variant in (
@@ -217,7 +265,10 @@ def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
         rewrite_email_opening(norm_pin),
         normalize_email_dashes(rewrite_email_opening(norm_pin)),
     ):
-        anchors = set(_TOKEN.findall(variant.lower())) - _RESTATE_STOPWORDS
+        anchors = (
+            set(_TOKEN.findall(normalize_text_for_token_match(variant).lower()))
+            - _RESTATE_STOPWORDS
+        )
         if anchors and anchors <= draft_tokens:
             return True
         if variant.strip().lower() in norm_draft.lower():

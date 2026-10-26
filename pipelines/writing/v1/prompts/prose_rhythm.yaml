@@ -33,4 +33,5 @@ template: |
   When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim, plain first-person body, and the signer closing; replace em/en dashes with ASCII hyphen or "through" for ranges.
   When channel is email or sms (correspondence): keep prose paragraphs only — never convert correspondence into numbered or bulleted lists, and never add "Please note the following" or "I am responding to your request".
   When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
+  Never introduce new causal connectives ('because', 'therefore', 'so', 'since', 'as a result') that are not already present in <draft> or <documents>, and preserve any greeting line ('Hi <Name>,') when present in <draft>.
   No narrative arc or earned close on transactional messages. Output the revised plain-text body only.
