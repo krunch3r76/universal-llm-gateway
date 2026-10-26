@@ -28,6 +28,7 @@ from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
     STATUS_TAB,
+    AccountNotSignedInError,
     JoinedReentryExhausted,
     Registration,
     RegistryError,
@@ -35,6 +36,11 @@ from .models import (
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
+    account_is_signed_in,
+    account_profile_suffix,
+    assert_profile_suffix_available,
+    normalize_account_id,
+    resolve_reserve_account_id,
     seat_open,
 )
 
@@ -108,14 +114,21 @@ def _operator_join_candidate(row: dict[str, Any]) -> bool:
     return process_holds_driver_lock(rid) or is_driver_lock_held(rid)
 
 
-def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
+def _join_target(
+    active: dict[str, Any],
+    parent: str,
+    *,
+    account_id: str | None = None,
+) -> dict[str, Any] | None:
     """Smallest-started allocating row for *parent* that a driver still holds."""
     from .driving_seat import driving_lane_census
 
+    want_account = normalize_account_id(account_id)
     eligible = [
         row
         for row in driving_lane_census(active, parent)["allocating"]
         if _operator_join_candidate(row)
+        and normalize_account_id(row.get("account_id")) == want_account
     ]
     if not eligible:
         return None
@@ -156,6 +169,30 @@ def _mint_headroom_gate(
         _check_headroom(after_drain=True)
 
 
+def _supersede_stale_account_row(
+    active: dict[str, Any], profile_suffix: str, listen: _ListenFn
+) -> None:
+    """Drop a non-live row holding *profile_suffix* when Chrome is not live."""
+    stale_statuses = {"released", "orphaned_retry", STATUS_DORMANT}
+    to_drop: list[str] = []
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("profile_suffix") or "") != profile_suffix:
+            continue
+        if row.get("status") not in stale_statuses:
+            continue
+        profile = Path(str(row.get("profile") or cdp_lane.profile_for(profile_suffix)))
+        if cdp_lane.chrome_port_for_profile(profile) is not None:
+            continue
+        port = row.get("port")
+        if isinstance(port, int) and listen(port):
+            continue
+        to_drop.append(str(rid))
+    for rid in to_drop:
+        active.pop(rid, None)
+
+
 def reserve_allocating_row(
     *,
     holder: str,
@@ -169,6 +206,7 @@ def reserve_allocating_row(
     expect_status: str | None = None,
     launch: bool = True,
     join: bool = True,
+    account_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Reserve a port under ``ports.lock``, or join an in-flight allocating row.
 
@@ -225,11 +263,18 @@ def reserve_allocating_row(
 
     from .dormant import reserved_chromes_by_display
 
+    join_account = resolve_reserve_account_id(
+        account_id=account_id,
+        carry=carry,
+        prior_row=None,
+        profile_suffix=profile_suffix,
+    )
+
     while True:
         with _store.ports_lock():
             active = _store.load_active()
             if join_eligible:
-                target = _join_target(active, parent)
+                target = _join_target(active, parent, account_id=join_account)
                 if target is not None:
                     return target, False
             _expect_status_ok(active)
@@ -256,7 +301,7 @@ def reserve_allocating_row(
         with _store.ports_lock():
             active = _store.load_active()
             if join_eligible:
-                target = _join_target(active, parent)
+                target = _join_target(active, parent, account_id=join_account)
                 if target is not None:
                     return target, False
             _expect_status_ok(active)
@@ -266,8 +311,34 @@ def reserve_allocating_row(
                 continue
             exclude = _used_ports(active) | _peer_lane_ports()
             port = select_free_registry_port(listen, exclude=exclude)
+            prior_row = (
+                active.get(registration_id)
+                if registration_id and registration_id in active
+                else None
+            )
+            norm_account = resolve_reserve_account_id(
+                account_id=account_id,
+                carry=carry,
+                prior_row=prior_row if isinstance(prior_row, dict) else None,
+                profile_suffix=profile_suffix,
+            )
+            if norm_account != "default" and not account_is_signed_in(norm_account):
+                raise AccountNotSignedInError(
+                    f"account {norm_account!r} is not signed in; refusing registry mint"
+                )
+            if profile_suffix is None and norm_account != "default":
+                profile_suffix = account_profile_suffix(norm_account)
+                if registration_id is None:
+                    registration_id = uuid.uuid4().hex
+                if profile_suffix:
+                    _supersede_stale_account_row(active, profile_suffix, listen)
             if registration_id is None or profile_suffix is None:
                 registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+            assert_profile_suffix_available(
+                active,
+                str(profile_suffix),
+                registration_id=registration_id,
+            )
             prior = active.get(registration_id) if registration_id else None
             row: dict[str, Any] = {
                 **(carry or {}),
@@ -284,6 +355,7 @@ def reserve_allocating_row(
                 "chrome_pid": None,
                 "holder_pid": os.getpid(),
                 "started_at": time.time(),
+                "account_id": norm_account,
             }
             # Carry must not mint a seat. Keys already on the stored row stay,
             # so a close that landed before this write is not dropped.
@@ -344,7 +416,8 @@ def _finish_reserved_launch(
     display = str(row.get("display") or "").strip() or None
     try:
         if launch:
-            with cdp_lane.launch_display(display):
+            acct = str(row.get("account_id") or "default")
+            with cdp_lane.launch_display(display), cdp_lane.launch_account(acct):
                 chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
         row = activate_allocating_row(registration_id, chrome_pid)
     except Exception:
@@ -364,6 +437,7 @@ def _mint_after_join(
     listen: _ListenFn,
     launch_fn: _LaunchFn,
     join: bool,
+    account_id: str | None = None,
 ) -> Registration:
     """One reserve re-entry. ``join=False`` is the stranded-row mint only."""
     row, minted = reserve_allocating_row(
@@ -374,6 +448,7 @@ def _mint_after_join(
         listen=listen,
         launch=True,
         join=join,
+        account_id=account_id,
     )
     if not minted:
         return _wait_for_joined_row(
@@ -385,6 +460,7 @@ def _mint_after_join(
             listen=listen,
             launch_fn=launch_fn,
             joined=None,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=True, launch_fn=launch_fn)
 
@@ -404,6 +480,7 @@ def _wait_for_joined_row(
     launch_fn: _LaunchFn,
     joined: list | None,
     reentry: bool = False,
+    account_id: str | None = None,
 ) -> Registration:
     """Poll until the joined row leaves ``allocating``. No deadline.
 
@@ -427,6 +504,9 @@ def _wait_for_joined_row(
             time.sleep(cdp_lane._POLL_MS / 1000)
             continue
         if status == "active" and isinstance(current, dict):
+            from .driving_seat import _assert_driving_seat_account
+
+            _assert_driving_seat_account(current, account_id)
             if joined is not None:
                 joined.append(registration_id)
             return _row_to_registration(current)
@@ -444,6 +524,7 @@ def _wait_for_joined_row(
                 listen=listen,
                 launch_fn=launch_fn,
                 join=False,
+                account_id=account_id,
             )
         re_row, minted = reserve_allocating_row(
             holder=holder,
@@ -453,6 +534,7 @@ def _wait_for_joined_row(
             listen=listen,
             launch=True,
             join=True,
+            account_id=account_id,
         )
         if minted:
             return _finish_reserved_launch(re_row, launch=True, launch_fn=launch_fn)
@@ -466,6 +548,7 @@ def _wait_for_joined_row(
             launch_fn=launch_fn,
             joined=joined,
             reentry=True,
+            account_id=account_id,
         )
 
 
@@ -479,6 +562,7 @@ def register_lane(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
     joined: list | None = None,
+    account_id: str | None = None,
 ) -> Registration:
     """Reserve port under lock, launch Chrome outside lock, then flip active (F1).
 
@@ -507,6 +591,7 @@ def register_lane(
         listen=listen,
         launch=launch,
         join=True,
+        account_id=account_id,
     )
     if not minted:
         return _wait_for_joined_row(
@@ -518,6 +603,7 @@ def register_lane(
             listen=listen,
             launch_fn=launch_fn,
             joined=joined,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=launch, launch_fn=launch_fn)
 

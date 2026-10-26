@@ -175,6 +175,42 @@ def launch_display(display: str | None) -> Iterator[None]:
         _LAUNCH_DISPLAY.reset(token)
 
 
+_LAUNCH_ACCOUNT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cdp_launch_account", default=None
+)
+
+
+@contextlib.contextmanager
+def launch_account(account_id: str | None) -> Iterator[None]:
+    """Bind the account ``_launch_chrome`` uses when its argument is omitted."""
+    token = _LAUNCH_ACCOUNT.set(account_id)
+    try:
+        yield
+    finally:
+        _LAUNCH_ACCOUNT.reset(token)
+
+
+def resolve_effective_account_id(
+    account_id: str | None = None, profile: Path | None = None
+) -> str:
+    """Effective account for profile seed and cookie transfer."""
+    from claude_bundles.cdp_registry.models import normalize_account_id
+
+    explicit = str(account_id or "").strip()
+    if explicit:
+        return normalize_account_id(explicit)
+    ctx = _LAUNCH_ACCOUNT.get()
+    if ctx is not None and str(ctx).strip():
+        return normalize_account_id(str(ctx))
+    if profile is not None:
+        prefix = f"{PRIMARY_PROFILE.name}-account-"
+        if profile.name.startswith(prefix):
+            return normalize_account_id(
+                profile.name.removeprefix(f"{PRIMARY_PROFILE.name}-")
+            )
+    return "default"
+
+
 def chrome_display_env(display: str | None = None) -> dict[str, str]:
     """Env for headed CDP Chrome: resolved XAUTHORITY, never parent fallthrough.
 
@@ -500,7 +536,11 @@ def held_suffixes() -> set[str]:
 # --------------------------------------------------------------------------- #
 # Chrome lifecycle
 # --------------------------------------------------------------------------- #
-def _seed_profile(profile: Path) -> None:
+def _seed_profile(profile: Path, *, account_id: str | None = None) -> None:
+    eff = resolve_effective_account_id(account_id, profile)
+    if eff != "default":
+        profile.mkdir(parents=True, exist_ok=True)
+        return
     if (profile / "Default").exists():
         return
     profile.mkdir(parents=True, exist_ok=True)
@@ -516,7 +556,13 @@ def _kill_lane_chrome(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
 
 
-def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
+def _launch_chrome(
+    port: int,
+    profile: Path,
+    display: str | None = None,
+    *,
+    account_id: str | None = None,
+) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens.
 
     *display* is the admitted candidate. Omitted, the ``launch_display``
@@ -537,7 +583,8 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
     display_val = cdp_display(chosen)
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
-    _seed_profile(profile)
+    eff = resolve_effective_account_id(account_id, profile)
+    _seed_profile(profile, account_id=eff)
     log = chrome_cdp_log_path(port)
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
     with open(log, "ab") as logf:
@@ -554,7 +601,7 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
     deadline = time.monotonic() + _LAUNCH_WAIT_S
     while time.monotonic() < deadline:
         if is_listening(port):
-            _seed_lane_session(port, proc.pid)
+            _seed_lane_session(port, proc.pid, account_id=eff)
             return proc.pid
         time.sleep(_POLL_MS / 1000)
     _kill_lane_chrome(proc.pid)
@@ -567,7 +614,7 @@ def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
     raise LaneError(f"Chrome on :{port} did not reach CDP in {_LAUNCH_WAIT_S}s")
 
 
-def _seed_lane_session(port: int, pid: int) -> None:
+def _seed_lane_session(port: int, pid: int, *, account_id: str | None = None) -> None:
     """Install the primary's live claude.ai cookies; tear the lane down on failure.
 
     The rsync in ``_seed_profile`` cannot carry the session — a running Chrome
@@ -576,8 +623,19 @@ def _seed_lane_session(port: int, pid: int) -> None:
     later inside ``ensure_cowork_auto`` having already leaked a Chrome and a
     profile directory.
     """
+    eff = resolve_effective_account_id(account_id)
+    if eff != "default":
+        seed_lane_cookies(port, account_id=eff)
+        from claude_bundles.cdp_cookie_seed import read_session_cookies
+
+        try:
+            read_session_cookies(port)
+        except CookieSeedError:
+            _kill_lane_chrome(pid)
+            raise
+        return
     try:
-        seed_lane_cookies(port)
+        seed_lane_cookies(port, account_id="default")
     except CookieSeedError:
         _kill_lane_chrome(pid)
         raise

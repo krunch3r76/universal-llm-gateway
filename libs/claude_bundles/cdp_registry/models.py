@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +50,232 @@ _ListenFn = Callable[[int], bool]
 
 class RegistryError(RuntimeError):
     """Base exception for failures while allocating, attaching, or managing CDP registry hosts and persistent rows."""
+
+
+DEFAULT_ACCOUNT_ID = "default"
+_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+_SEAT_ACCOUNTS_ENV = "CDP_SEAT_ACCOUNTS_PATH"
+_ACCOUNT_SIGNIN_ENV = "CDP_ACCOUNT_SIGNIN_PATH"
+_LIVE_PROFILE_SUFFIX_STATUSES = frozenset(
+    {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}
+)
+
+
+def normalize_account_id(account_id: str | None) -> str:
+    """Return a validated account id; empty/None maps to ``default``."""
+    if account_id is None:
+        return DEFAULT_ACCOUNT_ID
+    text = str(account_id).strip()
+    if not text:
+        return DEFAULT_ACCOUNT_ID
+    if text in {".", ".."} or "/" in text or ".." in text or text.startswith("."):
+        raise RegistryError(f"invalid account_id: {account_id!r}")
+    if not _ACCOUNT_ID_RE.fullmatch(text):
+        raise RegistryError(f"invalid account_id: {account_id!r}")
+    return text
+
+
+def account_profile_suffix(account_id: str | None) -> str | None:
+    """Persistent profile suffix for non-default accounts; ``None`` for default."""
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        return None
+    if norm.startswith("account-"):
+        return norm
+    return f"account-{norm}"
+
+
+def _seat_accounts_path() -> Path:
+    raw = os.environ.get(_SEAT_ACCOUNTS_ENV, "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / ".gateway" / "cdp-registry" / "seat_accounts.json"
+
+
+def _account_signin_path() -> Path:
+    """Path to operator-maintained sign-in registry (no in-repo writer or TTL).
+
+    Entries are written out-of-band after a verified claude.ai login; first
+    account-2 use requires that manual step before routed asks may select it.
+    """
+    raw = os.environ.get(_ACCOUNT_SIGNIN_ENV, "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / ".gateway" / "cdp-registry" / "account_sign_in.json"
+
+
+def account_id_from_profile_suffix(profile_suffix: str | None) -> str | None:
+    """Map persistent ``account-*`` profile suffix back to account id."""
+    suffix = str(profile_suffix or "").strip()
+    if suffix.startswith("account-"):
+        return normalize_account_id(suffix)
+    return None
+
+
+def resolve_reserve_account_id(
+    *,
+    account_id: str | None = None,
+    carry: dict[str, Any] | None = None,
+    prior_row: dict[str, Any] | None = None,
+    profile_suffix: str | None = None,
+) -> str:
+    """Resolve account for ``reserve_allocating_row`` without dropping dormant identity."""
+    explicit = str(account_id or "").strip()
+    if explicit:
+        return normalize_account_id(explicit)
+    if isinstance(carry, dict) and str(carry.get("account_id") or "").strip():
+        return normalize_account_id(str(carry["account_id"]))
+    if isinstance(prior_row, dict) and str(prior_row.get("account_id") or "").strip():
+        return normalize_account_id(str(prior_row["account_id"]))
+    from_suffix = account_id_from_profile_suffix(profile_suffix)
+    if from_suffix is not None:
+        return from_suffix
+    if isinstance(prior_row, dict):
+        from_prior = account_id_from_profile_suffix(prior_row.get("profile_suffix"))
+        if from_prior is not None:
+            return from_prior
+    return DEFAULT_ACCOUNT_ID
+
+
+def signed_in_accounts() -> set[str]:
+    """Account ids marked signed-in in the operator-written sign-in file."""
+    path = _account_signin_path()
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    accounts = payload.get("accounts")
+    if isinstance(accounts, dict):
+        out: set[str] = set()
+        for key, meta in accounts.items():
+            if not str(key or "").strip():
+                continue
+            try:
+                if isinstance(meta, dict) and meta.get("signed_in") is True:
+                    out.add(normalize_account_id(str(key)))
+                elif meta is True:
+                    out.add(normalize_account_id(str(key)))
+            except RegistryError:
+                continue
+        return out
+    if isinstance(accounts, list):
+        out_list: set[str] = set()
+        for item in accounts:
+            if not str(item or "").strip():
+                continue
+            try:
+                out_list.add(normalize_account_id(str(item)))
+            except RegistryError:
+                continue
+        return out_list
+    return set()
+
+
+def account_is_signed_in(account_id: str | None) -> bool:
+    """True when *account_id* is default or listed in the sign-in registry."""
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        return True
+    return norm in signed_in_accounts()
+
+
+class AccountNotSignedInError(RegistryError):
+    """Raised when routing to a non-default account that is not signed in."""
+
+
+def _resolve_account_id_raw(
+    account_id: str | None = None,
+    *,
+    purpose: str | None = None,
+    holder: str | None = None,
+    parent_thread: str | None = None,
+    model: str | None = None,
+) -> tuple[str, bool]:
+    """Return (account_id, explicit_request) before the signed-in gate."""
+    _ = model  # reserved for future routing
+    explicit = str(account_id or "").strip()
+    if explicit:
+        return normalize_account_id(explicit), True
+    path = _seat_accounts_path()
+    if path.is_file():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            by_parent = payload.get("by_parent_thread") or {}
+            by_holder = payload.get("by_holder") or {}
+            by_purpose = payload.get("by_purpose") or {}
+            parent = str(parent_thread or "").strip()
+            if parent and parent in by_parent:
+                return normalize_account_id(str(by_parent[parent])), False
+            hold = str(holder or "").strip()
+            if hold and hold in by_holder:
+                return normalize_account_id(str(by_holder[hold])), False
+            purp = str(purpose or "").strip()
+            if purp and purp in by_purpose:
+                return normalize_account_id(str(by_purpose[purp])), False
+            default = payload.get("default")
+            if default is not None and str(default).strip():
+                return normalize_account_id(str(default)), False
+    return DEFAULT_ACCOUNT_ID, False
+
+
+def resolve_account_id(
+    account_id: str | None = None,
+    *,
+    purpose: str | None = None,
+    holder: str | None = None,
+    parent_thread: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Resolve the effective account id for a CDP ask or registry mint.
+
+    Non-default accounts require a sign-in entry in ``account_sign_in.json``.
+    Explicit requests fail closed; config-driven mappings fall back to default.
+    """
+    resolved, explicit = _resolve_account_id_raw(
+        account_id,
+        purpose=purpose,
+        holder=holder,
+        parent_thread=parent_thread,
+        model=model,
+    )
+    if resolved == DEFAULT_ACCOUNT_ID or account_is_signed_in(resolved):
+        return resolved
+    if explicit:
+        raise AccountNotSignedInError(
+            f"account {resolved!r} is not signed in; refusing routed ask"
+        )
+    return DEFAULT_ACCOUNT_ID
+
+
+def assert_profile_suffix_available(
+    active: dict[str, Any],
+    profile_suffix: str,
+    *,
+    registration_id: str | None = None,
+) -> None:
+    """Refuse a second live host row on the same persistent profile suffix."""
+    suffix = str(profile_suffix or "").strip()
+    if not suffix:
+        return
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        if registration_id and str(rid) == str(registration_id):
+            continue
+        if str(row.get("profile_suffix") or "") != suffix:
+            continue
+        if row.get("status") not in _LIVE_PROFILE_SUFFIX_STATUSES:
+            continue
+        raise RegistryError(
+            f"profile suffix {suffix!r} already reserved by live row {rid!r}"
+        )
 
 
 class JoinedReentryExhausted(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
@@ -173,6 +401,7 @@ class DormantSeat:
     parent_thread: str | None = None
     dormant_at: float | None = None
     last_port: int | None = None
+    account_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +463,7 @@ def _row_to_dormant_seat(row: dict[str, Any]) -> DormantSeat:
         parent_thread=row.get("parent_thread"),
         dormant_at=row.get("dormant_at"),
         last_port=port if isinstance(port, int) else None,
+        account_id=_optional_str(row.get("account_id")),
     )
 
 

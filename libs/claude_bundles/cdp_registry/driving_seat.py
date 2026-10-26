@@ -18,10 +18,13 @@ from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from .models import (
     _HOST_LISTABLE_STATUSES,
     STATUS_DORMANT,
+    AccountNotSignedInError,
     OperatorSeatDeferred,
     Registration,
     RegistryError,
     SeatContended,
+    account_is_signed_in,
+    normalize_account_id,
     seat_open,
 )
 
@@ -32,7 +35,21 @@ _HOP_KIND = "hop"
 _ROOT_KIND = "root"
 
 
-def launch_or_defer(branch: str, call):
+def _assert_driving_seat_account(row: dict[str, Any], account_id: str | None) -> None:
+    """Refuse reuse when the seated row targets a different or unsigned account."""
+    requested = normalize_account_id(account_id)
+    row_account = normalize_account_id(row.get("account_id"))
+    if row_account != requested:
+        raise RegistryError(
+            f"driving seat account {row_account!r} != requested {requested!r}"
+        )
+    if row_account != "default" and not account_is_signed_in(row_account):
+        raise AccountNotSignedInError(
+            f"account {row_account!r} is not signed in; refusing driving seat reuse"
+        )
+
+
+def launch_or_defer(branch: str, call, *, account_id: str | None = None):
     """Run a Chrome launch; defer to tab path when X headroom is short."""
     from claude_bundles import cdp_lane
     from claude_bundles import cdp_registry_store as store
@@ -44,7 +61,9 @@ def launch_or_defer(branch: str, call):
         return call()
     except XDisplayCapacityError as exc:
         active = store.load_active()
-        host = eligible_host(active, cdp_lane.cdp_display_candidates())
+        host = eligible_host(
+            active, cdp_lane.cdp_display_candidates(), account_id=account_id
+        )
         if host is None:
             raise
         display = str(host.get("display") or cdp_lane.cdp_display())
@@ -139,6 +158,7 @@ def ensure_driving_operator_seat(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
     joined: list | None = None,
+    account_id: str | None = None,
 ) -> Registration:
     """Return the open driving-operator seat for *parent_thread*.
 
@@ -209,6 +229,7 @@ def ensure_driving_operator_seat(
         if len(open_seats) == 1:
             row = open_seats[0]
             rid = str(row["registration_id"])
+            _assert_driving_seat_account(row, account_id)
             if row.get("status") == STATUS_DORMANT:
                 reg = launch_or_defer(
                     "open_seat_relaunch",
@@ -218,6 +239,7 @@ def ensure_driving_operator_seat(
                         launch_chrome=launch_chrome,
                         is_listening=is_listening,
                     ),
+                    account_id=account_id,
                 )
                 return reg, "open_seat_relaunch"
             if url:
@@ -228,7 +250,9 @@ def ensure_driving_operator_seat(
 
         dormant_unbound = census["dormant_unbound"]
         if dormant_unbound:
-            rid = str(dormant_unbound[0]["registration_id"])
+            row = dormant_unbound[0]
+            rid = str(row["registration_id"])
+            _assert_driving_seat_account(row, account_id)
             cdp_registry.bind_driving_seat(rid)
             reg = launch_or_defer(
                 "dormant_unbound_relaunch",
@@ -238,11 +262,13 @@ def ensure_driving_operator_seat(
                     launch_chrome=launch_chrome,
                     is_listening=is_listening,
                 ),
+                account_id=account_id,
             )
             return reg, "dormant_unbound_relaunch"
 
         if len(live) == 1:
             found = live[0]
+            _assert_driving_seat_account(found, account_id)
             found_id = str(found["registration_id"])
             cdp_registry.bind_driving_seat(found_id)
             if url:
@@ -261,7 +287,9 @@ def ensure_driving_operator_seat(
                 launch_chrome=launch_chrome,
                 is_listening=is_listening,
                 joined=joined,
+                account_id=account_id,
             ),
+            account_id=account_id,
         )
         fresh = store.load_active().get(reg.registration_id) or {}
         if joined or fresh.get("status") == "allocating":

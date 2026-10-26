@@ -935,6 +935,67 @@ def test_backfill_orphaned_retry_chat_urls_verdict(
     assert reg.chat_url_for_registration("or-scrape") == scrape_url
 
 
+def test_reserve_allocating_row_cross_account_does_not_join(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles.cdp_registry.lifecycle import (
+        _join_target,
+        reserve_allocating_row,
+    )
+
+    parent = "20695-xacct"
+    seeded_id = "alloc-account-2"
+    reg._store.write_active(
+        {
+            seeded_id: {
+                "registration_id": seeded_id,
+                "port": 9223,
+                "profile_suffix": "account-2",
+                "profile": str(isolated_registry / "profile-a2"),
+                "holder": "operator-seat",
+                "purpose": "operator-proxy",
+                "mission_kind": "root",
+                "parent_thread": parent,
+                "status": "allocating",
+                "account_id": "account-2",
+                "chrome_pid": None,
+                "holder_pid": None,
+                "started_at": 1.0,
+            }
+        }
+    )
+    reg._claim_driver_lock(seeded_id)
+
+    active = reg._load_active()
+    assert _join_target(active, parent, account_id="default") is None
+    assert _join_target(active, parent, account_id="account-2") is not None
+
+    row, minted = reserve_allocating_row(
+        holder="operator-seat",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread=parent,
+        listen=lambda _port: False,
+        launch=False,
+        account_id="default",
+    )
+    assert minted is True
+    assert row["registration_id"] != seeded_id
+    assert row.get("account_id") == "default"
+
+    joined_row, joined = reserve_allocating_row(
+        holder="operator-seat",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread=parent,
+        listen=lambda _port: False,
+        launch=False,
+        account_id="account-2",
+    )
+    assert joined is False
+    assert joined_row["registration_id"] == seeded_id
+
+
 def test_allocating_row_strips_seat_fields_and_rollback_drops_it(
     isolated_registry: Path,
 ) -> None:
