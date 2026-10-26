@@ -218,6 +218,58 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
 
 
 _MAESTRO_CSE_WAKE_TARGETS = frozenset({"maestro", "web-anthropic"})
+_MAESTRO_SEAT_REGISTRATION_THREAD = "12286"
+
+
+def _maestro_direct_address_thread(
+    thread: str, store: StoreClient | None
+) -> bool:
+    """True on the maestro registration lane or a lane the maestro seat currently holds."""
+    lane = str(thread or "").strip()
+    if not lane:
+        return False
+    if lane == _MAESTRO_SEAT_REGISTRATION_THREAD:
+        return True
+    if store is None:
+        return False
+    try:
+        return store.holder(lane) is not None
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: maestro direct-address holder probe failed lane=%s",
+            lane,
+        )
+        return False
+
+
+def _maestro_direct_address_turn(
+    turn: dict[str, Any], store: StoreClient | None
+) -> bool:
+    """Explicit ``to=maestro`` on a lane the maestro seat owns (not subject-gated)."""
+    to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
+    if to_agent != "maestro":
+        return False
+    return _maestro_direct_address_thread(str(turn.get("thread") or ""), store)
+
+
+def _observe_maestro_wake_drop(
+    *,
+    thread: str,
+    turn_id: int | None,
+    reason: str,
+    rule_id: str | None = None,
+    subject: str = "",
+) -> None:
+    """Observation event when a direct maestro-address turn is dropped before delivery."""
+    from bus_watch.events import emit_endpoint_wake_maestro_drop
+
+    emit_endpoint_wake_maestro_drop(
+        thread=thread,
+        turn_id=turn_id,
+        reason=reason,
+        rule_id=rule_id,
+        subject_preview=(subject or "")[:160],
+    )
 
 
 def _maestro_cse_nonwake_head(
@@ -332,6 +384,7 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "drop_stage_mgr_echo",
     "drop_ack_route_coord",
     "wake_maestro_ack_batch",
+    "wake_maestro_direct_address",
     "drop_maestro_telemetry",
     "wake_cursor_gate_on_interm",
     "drop_dispatch_intermediate",
@@ -424,7 +477,9 @@ def _subject_allowed_rule_id(
     return None
 
 
-def qualify(turn: dict[str, Any], *, cse: bool) -> RuleVerdict:
+def qualify(
+    turn: dict[str, Any], *, cse: bool, store: StoreClient | None = None
+) -> RuleVerdict:
     """First-match-wins wake qualification (see endpoint_wake_rules.yaml)."""
     _ = _declared_wake_rule_ids()
     to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
@@ -448,6 +503,8 @@ def qualify(turn: dict[str, Any], *, cse: bool) -> RuleVerdict:
         and subject.strip().startswith("STATUS|ack-batch|")
     ):
         return RuleVerdict(True, "wake_maestro_ack_batch")
+    if _maestro_direct_address_turn(turn, store):
+        return RuleVerdict(True, "wake_maestro_direct_address")
     if _maestro_cse_nonwake_head(
         to_agent=to_agent,
         from_agent=from_agent,
@@ -476,7 +533,9 @@ def qualify(turn: dict[str, Any], *, cse: bool) -> RuleVerdict:
     return RuleVerdict(False, "default_suppress")
 
 
-def _legacy_qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
+def _legacy_qualifies(
+    turn: dict[str, Any], *, cse: bool, store: StoreClient | None = None
+) -> bool:
     """Imperative qualification preserved for parity tests."""
     to_agent = normalize_bus_address(str(turn.get("to_agent") or ""))
     from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
@@ -491,6 +550,8 @@ def _legacy_qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
         or to_agent in {"grok-bot", "web-anthropic", "maestro"}
     ) and head in {"ACK", "ROUTE"}:
         return False
+    if _maestro_direct_address_turn(turn, store):
+        return True
     if _maestro_cse_nonwake_head(
         to_agent=to_agent, from_agent=from_agent, subject=subject, head=head
     ):
@@ -502,9 +563,11 @@ def _legacy_qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
     return True
 
 
-def qualifies(turn: dict[str, Any], *, cse: bool) -> bool:
+def qualifies(
+    turn: dict[str, Any], *, cse: bool, store: StoreClient | None = None
+) -> bool:
     """True when ``qualify`` selects a wake rule."""
-    return qualify(turn, cse=cse).wake
+    return qualify(turn, cse=cse, store=store).wake
 
 
 def resolve_target(
@@ -655,8 +718,17 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             cse = (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             )
-        verdict = qualify(turn, cse=cse)
+        direct_maestro = _maestro_direct_address_turn(turn, store)
+        verdict = qualify(turn, cse=cse, store=store)
         if not verdict.wake:
+            if direct_maestro:
+                _observe_maestro_wake_drop(
+                    thread=thread,
+                    turn_id=int(turn["id"]) if turn.get("id") is not None else None,
+                    reason="subject_unmatched",
+                    rule_id=verdict.rule_id,
+                    subject=subject,
+                )
             continue
         if turn.get("read_at"):
             continue
@@ -666,8 +738,26 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
             lane = str(resolved[1].get("agent_id") or "").strip()
             if not lane or not store.holder(lane):
+                if direct_maestro:
+                    _observe_maestro_wake_drop(
+                        thread=thread,
+                        turn_id=int(turn["id"])
+                        if turn.get("id") is not None
+                        else None,
+                        reason="no_route",
+                        rule_id=verdict.rule_id,
+                        subject=subject,
+                    )
                 continue
         elif resolved is None:
+            if direct_maestro:
+                _observe_maestro_wake_drop(
+                    thread=thread,
+                    turn_id=int(turn["id"]) if turn.get("id") is not None else None,
+                    reason="no_route",
+                    rule_id=verdict.rule_id,
+                    subject=subject,
+                )
             continue
         pending.append(_pending_item(turn, decided_by_rule=verdict.rule_id))
     new_hw = int(turns[-1]["id"])
@@ -733,7 +823,6 @@ def _cse_agree(holder: dict[str, Any], dry: dict[str, Any]) -> bool:
     return bool(a and a == b)
 
 
-_MAESTRO_SEAT_REGISTRATION_THREAD = "12286"
 _SEAT_REGISTRATION_HEAD = "TYPE: SEAT_REGISTRATION"
 _WAKE_REGISTRATION_REFUSED_SUBJECT = "FACT|wake-registration-refused"
 _WAKE_REGISTRATION_REFUSED_TARGETS = ("maestro", "grok-bot-gc1")
