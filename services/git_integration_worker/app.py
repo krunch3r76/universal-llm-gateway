@@ -66,6 +66,9 @@ from services.git_integration_worker.routes.cursor_sdk_tail import (
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
+from services.git_integration_worker.routes.mechanical_land import (
+    router as mechanical_land_router,
+)
 from services.git_integration_worker.routes.triggers import router as triggers_router
 from services.git_integration_worker.startup_persistence import (
     schedule_startup_persistence,
@@ -281,6 +284,7 @@ def create_app() -> FastAPI:
     app.include_router(cursor_catalog_router)
     app.include_router(admin_router)
     app.include_router(triggers_router)
+    app.include_router(mechanical_land_router)
     return app
 
 

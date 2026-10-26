@@ -9,6 +9,8 @@ from mechanical_land.schema import (
     UnknownJournalEvent,
 )
 
+CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
+
 __all__ = [
     "JOURNAL_EVENT_NAMES",
     "JournalEntry",
