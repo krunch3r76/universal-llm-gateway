@@ -39,6 +39,16 @@ def mcp_restart_snapshot_restored(*, reason: str) -> Event:
 
 
 @event_factory
+def mcp_restart_log(*, detail: str) -> Event:
+    return Event(
+        signal="mcp.restart.log",
+        role="observation",
+        scope="node",
+        payload={"detail": detail[:500]},
+    )
+
+
+@event_factory
 def mcp_restart_snapshot_failed(*, reason: str) -> Event:
     return Event(
         signal="mcp.restart.snapshot.failed",
@@ -63,6 +73,9 @@ def emit_restart_event(signal: str, payload: dict[str, Any]) -> None:
         "mcp.restart.snapshot.failed": lambda: mcp_restart_snapshot_failed(
             reason=str(payload.get("reason", ""))
         ),
+        "mcp.restart.log": lambda: mcp_restart_log(
+            detail=str(payload.get("detail", payload.get("message", "")))
+        ),
     }
     factory = factories.get(signal)
     if factory is None:
@@ -86,6 +99,7 @@ __all__ = [
     "emit_restart_event",
     "mcp_restart_check_failed",
     "mcp_restart_check_timeout",
+    "mcp_restart_log",
     "mcp_restart_snapshot_failed",
     "mcp_restart_snapshot_restored",
 ]

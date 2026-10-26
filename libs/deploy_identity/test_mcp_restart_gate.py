@@ -17,6 +17,7 @@ from deploy_identity.mcp_restart_gate import (
     LOCAL_IMAGE,
     GateInput,
     _cold_import_script,
+    _probe_output_detail,
     _starting_elapsed,
     execute_restore,
     gate_allows_restore,
@@ -663,9 +664,7 @@ def test_import_probe_emits_check_failed(
 
     monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
     assert run_import_probe(tmp_path) == 1
-    assert events == [
-        ("mcp.restart.check.failed", {"detail": "ImportError: server"})
-    ]
+    assert events == [("mcp.restart.check.failed", {"detail": "ImportError: server"})]
 
 
 def test_import_probe_emits_check_timeout(
@@ -679,10 +678,48 @@ def test_import_probe_emits_check_timeout(
     )
 
     def _run(args: list[str], **kwargs: object) -> _Proc:
-        raise subprocess.TimeoutExpired(cmd=args, timeout=float(kwargs.get("timeout", 120)))
+        raise subprocess.TimeoutExpired(
+            cmd=args, timeout=float(kwargs.get("timeout", 120))
+        )
 
     monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
     assert run_import_probe(tmp_path) == 2
     assert events == [
         ("mcp.restart.check.timeout", {"detail": "import probe timed out"})
     ]
+
+
+def test_probe_output_detail_keeps_tail() -> None:
+    """Probe stderr detail uses the last 500 chars so tracebacks are visible."""
+    prefix = "logs/.test_write read-only\n" * 40
+    tail = "ModuleNotFoundError: No module named 'psutil'"
+    raw = f"{prefix}{tail}"
+    proc = _Proc(1, b"", raw.encode())
+    detail = _probe_output_detail(proc)
+    assert detail == raw[-500:]
+    assert "ModuleNotFoundError" in detail
+
+
+def test_emit_log_cli_emits_restart_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp_restart_gate",
+            "--workspace-root",
+            str(tmp_path),
+            "emit-log",
+            "ERROR: MCP import probe failed",
+        ],
+    )
+    from deploy_identity.mcp_restart_gate import _cli
+
+    assert _cli() == 0
+    assert events == [("mcp.restart.log", {"detail": "ERROR: MCP import probe failed"})]
