@@ -432,7 +432,7 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
 
 
 def test_how_this_seat_works_names_reachable_models() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    out = ensure_operator_proxy_mission_prompt("thread_id: 12286\n# Mission\n")
     refusals = out.split("## Hard refusals", 1)[1]
     assert (
         "maestro house: desired_model=cdp/fable-5.1 desired_effort=medium "
@@ -509,7 +509,7 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     """Hop template keeps 11 original bullets plus L5 append (1685-1687 cite)."""
     refusals = _BRIEFING_BLOCK.split("## Hard refusals", 1)[1]
     hop_bullets = [ln for ln in refusals.splitlines() if ln.startswith("- ")]
-    assert len(hop_bullets) == 16
+    assert len(hop_bullets) == 17
     assert "wc -m" in refusals
     assert "conductor_hop.py:1685-1687" in refusals
     assert "Sleep at most 290" not in refusals
