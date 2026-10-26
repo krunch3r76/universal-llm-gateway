@@ -44,7 +44,9 @@ def resolve_resume_host(row: dict[str, Any], *, trigger: str) -> dict[str, Any]:
     if isinstance(own, dict) and host_row_eligible(own):
         return own
     acct = normalize_account_id(row.get("account_id"))
-    host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
+    host = eligible_host(
+        active, cdp_lane.cdp_display_candidates(acct), account_id=acct
+    )
     if host is not None:
         return host
     return _mint_pool_host(trigger=trigger, account_id=acct)
@@ -62,7 +64,9 @@ def _mint_pool_host(*, trigger: str, account_id: str | None = None) -> dict[str,
     with tab_host_mint_lock():
         active = _store.load_active()
         acct = normalize_account_id(account_id)
-        host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
+        host = eligible_host(
+            active, cdp_lane.cdp_display_candidates(acct), account_id=acct
+        )
         if host is not None:
             return host
         host_reg = register_lane(

@@ -318,7 +318,9 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
 
             active = store.load_active()
             acct = normalize_account_id(getattr(seat, "account_id", None))
-            host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
+            host = eligible_host(
+                active, cdp_lane.cdp_display_candidates(acct), account_id=acct
+            )
             if host is not None:
                 from cdp_ask.followup_events import (
                     cdp_ask_dormant_relaunch_deferred,

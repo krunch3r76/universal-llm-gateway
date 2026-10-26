@@ -558,6 +558,15 @@ def _launch_chrome(
         if chosen is not None
         else cdp_display_for_account(eff_acct)
     )
+    from claude_bundles.cdp_registry.models import (
+        RegistryError,
+        _load_accounts_config,
+        _normalize_display_binding,
+    )
+
+    never_key = _normalize_display_binding(display_val)
+    if never_key in _load_accounts_config().never:
+        raise RegistryError(f"display {never_key} is forbidden for default CDP fleet")
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
     eff = resolve_effective_account_id(account_id, profile)

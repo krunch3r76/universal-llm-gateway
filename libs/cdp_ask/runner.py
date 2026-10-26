@@ -141,12 +141,21 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     pred = (req.predecessor_registration_id or "").strip()
     if kind == "hop" and pred:
         from claude_bundles import cdp_registry_store as store
-        from claude_bundles.cdp_registry.models import RegistryError, SeatContended
+        from claude_bundles.cdp_registry.models import (
+            RegistryError,
+            SeatContended,
+            normalize_account_id,
+        )
 
+        pred_account: str | None = None
+        pred_peek = store.load_active().get(pred)
+        if isinstance(pred_peek, dict):
+            pred_account = normalize_account_id(pred_peek.get("account_id"))
         try:
             launch_or_defer(
                 "hop_predecessor_relaunch",
                 lambda: cdp_registry.relaunch_dormant(pred, holder=holder),
+                account_id=pred_account,
             )
             active = store.load_active()
             row = active.get(pred)

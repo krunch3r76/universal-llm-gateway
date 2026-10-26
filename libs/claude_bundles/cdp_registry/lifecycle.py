@@ -233,35 +233,34 @@ def reserve_allocating_row(
                 },
             )
 
-    join_account = resolve_reserve_account_id(
-        account_id=account_id,
-        carry=carry,
-        prior_row=None,
-        profile_suffix=profile_suffix,
-    )
-
-    resolved_display = cdp_lane.cdp_display_for_account(join_account)
-
     with _store.ports_lock():
         active = _store.load_active()
+        prior_row = (
+            active.get(registration_id)
+            if registration_id and registration_id in active
+            else None
+        )
+        prior_for_resolve = prior_row if isinstance(prior_row, dict) else None
         if join_eligible:
+            join_account = resolve_reserve_account_id(
+                account_id=account_id,
+                carry=carry,
+                prior_row=None,
+                profile_suffix=profile_suffix,
+            )
             target = _join_target(active, parent, account_id=join_account)
             if target is not None:
                 return target, False
         _expect_status_ok(active)
         exclude = _used_ports(active) | _peer_lane_ports()
         port = select_free_registry_port(listen, exclude=exclude)
-        prior_row = (
-            active.get(registration_id)
-            if registration_id and registration_id in active
-            else None
-        )
         norm_account = resolve_reserve_account_id(
             account_id=account_id,
             carry=carry,
-            prior_row=prior_row if isinstance(prior_row, dict) else None,
+            prior_row=prior_for_resolve,
             profile_suffix=profile_suffix,
         )
+        resolved_display = cdp_lane.cdp_display_for_account(norm_account)
         if norm_account != "default" and not account_is_signed_in(norm_account):
             raise AccountNotSignedInError(
                 f"account {norm_account!r} is not signed in; refusing registry mint"

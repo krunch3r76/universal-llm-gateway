@@ -1045,6 +1045,43 @@ def test_relaunch_dormant_default_on_colon_three_moves_to_colon_two(
     assert relaunched.display == ":2"
 
 
+def test_relaunch_dormant_prior_row_account_agrees_with_display(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dormant row account (not join arg) drives both stored account_id and display."""
+    extra = '\ncdp_account_displays:\n  account-2: ":4"\n'
+    cfg = tmp_path / "accounts.yaml"
+    cfg.write_text(
+        (Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml")
+        .read_text(encoding="utf-8")
+        + extra,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(cfg))
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_prior_a2")
+    active = reg._load_active()
+    row = active[seat.registration_id]
+    row["account_id"] = "account-2"
+    row["profile_suffix"] = "reg-prior-a2"
+    row["display"] = ":2"
+    reg._store.write_active(active)
+    reg.make_dormant(seat.registration_id, is_listening=lambda _port: False)
+    reg.relaunch_dormant(
+        seat.registration_id,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _port: False,
+    )
+    stored = _row(seat.registration_id)
+    assert stored["account_id"] == "account-2"
+    assert stored["display"] == ":4"
+
+
 def test_relaunch_dormant_account_two_stays_on_colon_four(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

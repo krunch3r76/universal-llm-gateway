@@ -404,6 +404,19 @@ def test_cdp_display_candidates_account_two_never_default_displays(
         assert forbidden not in got
 
 
+def test_launch_chrome_rejects_explicit_colon_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_lane import _launch_chrome
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    monkeypatch.setenv(
+        "CDP_ACCOUNTS_CONFIG_PATH", str(_write_accounts_config(tmp_path))
+    )
+    with pytest.raises(RegistryError, match="forbidden"):
+        _launch_chrome(9223, tmp_path / "profile", display=":1")
+
+
 def test_cdp_display_remaps_cdp_display_colon_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
