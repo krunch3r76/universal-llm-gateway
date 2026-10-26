@@ -161,3 +161,55 @@ def test_go_conditions_on_step_outputs() -> None:
         "draft": step({"refused": "no_draft_candidates"}),
     }
     assert evaluator.evaluate(by_name["independence"].condition, refused_draft, {}) is False
+
+    correspondence = {
+        "assemble": step(
+            {
+                "refused": None,
+                "channel": "email",
+                "check_class": "correspondence",
+            }
+        ),
+    }
+    opts_default: dict = {"output": "envelope", "full_drafter_fanout": False}
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_anthropic"].condition, correspondence, opts_default
+        )
+        is True
+    )
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, correspondence, opts_default
+        )
+        is False
+    )
+    assert (
+        evaluator.evaluate(by_name["prose_rhythm_pass"].condition, clean, opts_default)
+        is True
+    )
+
+    opts_fanout = {**opts_default, "full_drafter_fanout": True}
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, correspondence, opts_fanout
+        )
+        is True
+    )
+    filing = {
+        "assemble": step(
+            {"refused": None, "channel": "filing", "check_class": "sworn"},
+        ),
+    }
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_local_hermes"].condition, filing, opts_default
+        )
+        is True
+    )
+    assert (
+        evaluator.evaluate(
+            by_name["drafter_anthropic"].condition, filing, opts_default
+        )
+        is True
+    )

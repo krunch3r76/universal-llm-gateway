@@ -28,3 +28,4 @@ template: |
   obligation using the canonical token form `O<n>: omit_with_reason (<short reason>)` so
   downstream parsing always matches (example: `O1: omit_with_reason (per-offer reply only)`).
   Do not introduce proper nouns or numbers absent from the blocks above.
+  Recipient role and internal workflow/counterparty divisions in <brief> are silent routing context only — structure beats for what this recipient asked; never plan beats that restate org-chart, other schedulers' channels, or internal process to the recipient unless a verbatim_required or restate pin requires it.

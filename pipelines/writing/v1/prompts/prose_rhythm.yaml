@@ -24,6 +24,9 @@ template: |
   (5) End paragraphs on concrete nouns or facts.
   When <missing_obligations> is non-empty, incorporate those obligations while preserving attested pins and rhythm.
   Keep every content word. Keep frequency phrases as written. Keep "I stated" and "I said" attribution. Keep numbering.
+  Preserve the frontier draft's structure and every attested fact/pin without adding any new entities, portals, or counterparties (strict fact ceiling).
+  Eliminate repetitive phrases/lemmas across adjacent sentences (e.g. if one sentence says "full most of the time", drop redundant "at this time" in the next).
   When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim, plain first-person body, and the signer closing; replace em/en dashes with ASCII hyphen or "through" for ranges.
+  When channel is email or sms (correspondence): keep prose paragraphs only — never convert correspondence into numbered or bulleted lists, and never add "Please note the following" or "I am responding to your request".
   When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
   No narrative arc or earned close on transactional messages. Output the revised plain-text body only.

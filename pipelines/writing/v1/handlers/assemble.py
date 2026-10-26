@@ -177,6 +177,12 @@ def _brief_lines(brief: dict[str, Any]) -> str:
         f"Objective priority: {priority}",
         f"Deliverable: {', '.join(parts)}",
     ]
+    recipient_role = brief.get("recipient_role")
+    if isinstance(recipient_role, str) and recipient_role.strip():
+        lines.append(
+            "Recipient role (silent routing context — do not restate to recipient): "
+            + _fence(recipient_role.strip())
+        )
     return "\n".join(lines)
 
 
@@ -1019,6 +1025,12 @@ def _intake_blocks(
         f"Not attested: {not_attested or 'none'}",
         f"Check class: {check_class}",
     ]
+    recipient_role = intake.get("recipient_role")
+    if isinstance(recipient_role, str) and recipient_role.strip():
+        brief_lines.append(
+            "Recipient role (silent routing context — do not restate to recipient): "
+            + _fence(recipient_role.strip())
+        )
     purpose_points = intake.get("purpose_points") or []
     purpose_text = str(
         intake.get("purpose") or intake.get("objective") or ""

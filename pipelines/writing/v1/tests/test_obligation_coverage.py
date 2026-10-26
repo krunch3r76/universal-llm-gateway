@@ -131,13 +131,14 @@ def test_meridial_before_after_drafter_calls_and_tokens_saved() -> None:
         "drafter_openai",
         "drafter_google",
         "drafter_xai",
+        "drafter_local_hermes",
         "drafter_local_ernie",
     }
-    assert len(active) == 2
+    assert active == ["drafter_anthropic"]
     tokens_per_drafter = 500
     usage_before = {name: tokens_per_drafter for name in all_drafters}
     usage_after = {name: tokens_per_drafter for name in active}
-    assert sum(usage_before.values()) - sum(usage_after.values()) == 4 * tokens_per_drafter
+    assert sum(usage_before.values()) - sum(usage_after.values()) == 5 * tokens_per_drafter
 
     src = _run_source(_MERIDIAL)
     draft_text = (
@@ -478,7 +479,7 @@ def test_two_drafter_default_vs_six_on_correspondence() -> None:
         )
         if evaluator.evaluate(by_name[name].condition, ctx, options)
     ]
-    assert active == ["drafter_local_hermes", "drafter_anthropic"]
+    assert active == ["drafter_anthropic"]
     options["full_drafter_fanout"] = True
     active_all = [
         name

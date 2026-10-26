@@ -266,6 +266,25 @@ def _attested_allows_future_offers(objective: str, verbatim_notes: str) -> bool:
     return False
 
 
+_LIST_FORMAT_ALLOWED = re.compile(
+    r"\b(?:numbered|bullet(?:ed|s)?|list|outline)\b",
+    re.I,
+)
+_NUMBERED_OR_BULLET_LINE = re.compile(r"(?m)^\s*(?:\d+\.\s+|[-*•]\s+)")
+_EXHIBIT_LINE = re.compile(r"^\s*Exhibit\s+\d+\s*:", re.I)
+_THROAT_CLEARING = re.compile(
+    r"\bplease\s+note\s+the\s+following\b|\bi\s+am\s+responding\s+to\s+your\s+request\b",
+    re.I,
+)
+def _correspondence_has_list_body(text: str) -> bool:
+    for line in text.splitlines():
+        if _EXHIBIT_LINE.match(line):
+            continue
+        if _NUMBERED_OR_BULLET_LINE.match(line):
+            return True
+    return False
+
+
 def correspondence_register_penalty(
     text: str,
     *,
@@ -273,6 +292,8 @@ def correspondence_register_penalty(
     objective: str = "",
     standing_limits: str = "",
     verbatim_notes: str = "",
+    signer: str = "",
+    signer_verbatim_required: bool = False,
 ) -> int:
     """Penalize cold decline register and unprompted over-answers on correspondence."""
     del standing_limits  # reserved for envelope-specific rules on email
@@ -288,6 +309,26 @@ def correspondence_register_penalty(
         objective, verbatim_notes
     ):
         penalty += 3
+    attestation_blob = f"{objective}\n{verbatim_notes}"
+    if channel in {"email", "sms"}:
+        if (
+            channel == "sms"
+            and signer.strip()
+            and not signer_verbatim_required
+        ):
+            signoff = re.search(
+                rf"(?:thank\s+you|thanks|sincerely|regards|best)\s*,\s*\n*\s*"
+                rf"{re.escape(signer.strip())}\s*$",
+                text.strip(),
+                re.I,
+            )
+            if signoff:
+                penalty += 3
+        if not _LIST_FORMAT_ALLOWED.search(attestation_blob):
+            if _correspondence_has_list_body(text):
+                penalty += 3
+        if _THROAT_CLEARING.search(register_text):
+            penalty += 3
     return penalty
 
 
@@ -332,5 +373,6 @@ def email_draft_penalty(
         objective=objective,
         standing_limits=standing_limits,
         verbatim_notes=verbatim_notes,
+        signer=signer,
     )
     return penalty
