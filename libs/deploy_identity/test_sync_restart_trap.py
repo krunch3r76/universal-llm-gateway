@@ -491,14 +491,15 @@ def test_env_key_name_diff_recreates_before_sync(
     assert "fixture-token-not-secret" not in combined
     assert "envkey-sentinel" not in combined
     rm_at = log.find("rm -f mcp-server")
-    sync_cp = log.find("mcp-server:/app/libs/", rm_at)
-    stop_tail = log[sync_cp:] if sync_cp >= 0 else log
+    first_cp_after_rm = log.find("mcp-server:/app/libs/", rm_at)
+    up_no_start = log.find("up -d --no-start mcp-server", rm_at)
+    stop_tail = log[first_cp_after_rm:] if first_cp_after_rm >= 0 else log
     stop_match = re.search(r"^stop ", stop_tail, re.MULTILINE)
     assert rm_at >= 0, log
-    assert "up -d" in log and "mcp-server" in log
-    assert sync_cp > rm_at, log
+    assert first_cp_after_rm > rm_at, log
+    assert up_no_start >= 0 and up_no_start < first_cp_after_rm, log
     assert stop_match is not None, log
-    assert sync_cp + stop_match.start() > sync_cp, log
+    assert first_cp_after_rm + stop_match.start() > first_cp_after_rm, log
 
 
 def test_env_inspect_splits_names_inside_docker() -> None:
