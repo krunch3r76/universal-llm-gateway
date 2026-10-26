@@ -31,6 +31,7 @@ pytestmark = pytest.mark.offline
 
 _STEP_ORDER = [
     "assemble",
+    "source_obligations",
     "prompt_architect",
     "drafter_openai",
     "drafter_google",
@@ -41,6 +42,7 @@ _STEP_ORDER = [
     "draft",
     "independence",
     "fact_ceiling_audit",
+    "obligation_coverage",
     "provenance_check",
     "prose_rhythm_pass",
     "fact_ceiling_final",
@@ -120,6 +122,8 @@ def test_pipeline_shape() -> None:
     router = _Router()
     handlers.register_handlers(router)
     registered = {step_type for _domain, step_type, _cls in router.rows}
+    assert "writing_source_obligations_v1" in registered
+    assert "writing_obligation_coverage_v1" in registered
     assert "writing_prompt_architect_v1" in registered
     assert "writing_draft_selector_v1" in registered
     assert "writing_seat_dispatch_v1" in registered

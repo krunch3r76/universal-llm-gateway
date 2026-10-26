@@ -15,12 +15,15 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from ._obligation_coverage import actionable_obligations, coverage_map_for_draft
 from .email_envelope import has_email_subject, polish_email_draft
 from .independence import (
     _allow_partial,
     is_independent,
     load_writing_models,
 )
+
+_REQUIRED_ASK_KINDS = frozenset({"question", "request", "call_to_action"})
 
 _GENERATE_STEPS = (
     ("drafter_openai", "drafter_openai"),
@@ -229,6 +232,46 @@ def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
             break
         bag.remove(key)
     return contained and len(final_keys) > len(initial_keys)
+
+
+def _obligation_coverage_gate(
+    selected_body: str,
+    obligations: list[dict[str, Any]],
+    *,
+    revision_ran: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Re-score obligations on the shipped body; return coverage_map and optional refusal."""
+    actionable = actionable_obligations(obligations)
+    if not actionable or not selected_body.strip():
+        return [], None
+    coverage_map = coverage_map_for_draft(selected_body, actionable)
+    missing = [row for row in coverage_map if row.get("status") == "missing"]
+    if not missing:
+        return coverage_map, None
+    required_missing = [
+        row for row in missing if row.get("kind") in _REQUIRED_ASK_KINDS
+    ]
+    fail = bool(required_missing) or (revision_ran and len(missing) >= 2)
+    if not fail:
+        return coverage_map, None
+    unresolved: list[dict[str, Any]] = []
+    for row in missing:
+        oid = row.get("id")
+        unresolved.append(
+            {
+                "type": "obligation_coverage_failed",
+                "claim_id": oid,
+                "detail": (
+                    f"{oid} ({row.get('kind')}) remains missing: "
+                    f"{row.get('obligation')}"
+                ),
+            }
+        )
+    return coverage_map, {
+        "refused": "obligation_coverage_failed",
+        "status": "refused",
+        "unresolved": unresolved,
+    }
 
 
 def _cost(
@@ -527,6 +570,16 @@ class WritingFinalizeHandler(BaseHandler):
                     }
                 )
         selected_body = _selected_body(selected, draft, revision)
+        src_json = _json_of(outputs, "source_obligations") or {}
+        obligations = list(src_json.get("obligations") or [])
+        coverage_map, obl_refusal = _obligation_coverage_gate(
+            selected_body,
+            obligations,
+            revision_ran=revision_ran,
+        )
+        if obl_refusal is not None:
+            passed = False
+            unresolved.extend(obl_refusal["unresolved"])
         if str(assemble.get("channel") or "") == "email" and not has_email_subject(
             selected_body
         ):
@@ -546,6 +599,7 @@ class WritingFinalizeHandler(BaseHandler):
         }
         est_cost, cost_note = _cost(outputs, usage, models)
         payload: dict[str, Any] = {
+            "coverage_map": coverage_map,
             "draft_v1": draft,
             "provenance": {
                 "pin_ledger": assemble.get("pin_ledger"),
@@ -603,4 +657,7 @@ class WritingFinalizeHandler(BaseHandler):
         if filing_text is not None:
             payload["filing_text"] = filing_text
         payload["selected_draft"] = selected_body
+        if obl_refusal is not None:
+            payload["refused"] = obl_refusal["refused"]
+            payload["ship_gate"]["pass"] = False
         return _step(_attach_status(payload))

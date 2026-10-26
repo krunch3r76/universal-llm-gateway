@@ -17,6 +17,11 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from writing_intake.source_premise import unsupported_source_claims
 
+from ._obligation_coverage import (
+    actionable_obligations,
+    coverage_map_for_draft,
+    obligation_coverage_score,
+)
 from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
@@ -118,11 +123,12 @@ def _signer_band(draft_text: str, signer: str) -> int:
     return 0
 
 
-def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int]:
-    """Sort eligible drafts: signer, voice, pin coverage minus email penalty, order."""
+def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int, int]:
+    """Sort eligible drafts: obligation coverage, signer, voice, pins, order."""
     index, row = pair
     pin_tier = int(row["score"]) - int(row["email_penalty"])
     return (
+        -int(row.get("obligation_coverage_score") or 0),
         -int(row["signer_band"]),
         -int(row["voice_bonus"]),
         -pin_tier,
@@ -194,6 +200,14 @@ class WritingDraftSelectorHandler(BaseHandler):
             standing_limits = str(intake.get("standing_limits") or "")
             source_message = str(intake.get("source_message") or "")
         aliases = load_writing_models()
+        src = outputs.get("source_obligations")
+        src_json = (
+            src.get("json")
+            if isinstance(src, dict)
+            else getattr(src, "json", None)
+        )
+        obligations = list((src_json or {}).get("obligations") or [])
+        actionable = actionable_obligations(obligations)
         candidates: list[dict[str, Any]] = []
         for step_name, role in _DRAFTER_STEPS:
             out = outputs.get(step_name)
@@ -226,6 +240,10 @@ class WritingDraftSelectorHandler(BaseHandler):
                 rejected = "unresolved_need"
             elif premise_violations:
                 rejected = premise_violations[0]
+            obl_score = obligation_coverage_score(text, actionable) if actionable else 0
+            cov_map = (
+                coverage_map_for_draft(text, actionable) if actionable else []
+            )
             candidates.append(
                 {
                     "role": role,
@@ -234,6 +252,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                     "model_id": model_id,
                     "family": model_family(str(model_id)),
                     "score": _score_draft(text, attested, channel=channel),
+                    "obligation_coverage_score": obl_score,
+                    "coverage_map": cov_map,
                     "voice_bonus": 1 if _FIRST_PERSON.search(text) else 0,
                     "email_penalty": email_draft_penalty(
                         text,
@@ -304,6 +324,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                 "selected_step": winner["step"],
                 "candidates": candidates,
                 "coverage_score": winner["score"],
+                "obligation_coverage_score": winner.get("obligation_coverage_score", 0),
+                "coverage_map": winner.get("coverage_map") or [],
             },
             model_id=str(winner["model_id"]),
         )

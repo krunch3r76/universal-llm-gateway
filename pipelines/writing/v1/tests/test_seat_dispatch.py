@@ -212,9 +212,11 @@ def test_writer_prompt_renders_with_empty_source_message() -> None:
     """Generate path: optional source_message may be empty; seat_dispatch passes the key."""
     cfg = _writer_prompt_config()
     assert "source_message" in cfg.optional_placeholders
+    assert "source_obligations" in cfg.optional_placeholders
     fields = {
         "verbatim_notes": "NOTE",
         "source_message": "",
+        "source_obligations": "",
         "documents": "DOC",
         "brief": "BRIEF",
         "architect_brief": "ARCH",

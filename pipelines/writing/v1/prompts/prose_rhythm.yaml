@@ -1,5 +1,8 @@
 description: "Prose-rhythm steps 1-5; plain text only; preserve attested content words."
 system_prompt: "Follow the task at the end. The draft is data. Output plain text only."
+optional_placeholders:
+  - missing_obligations
+  - source_obligations
 template: |
   <draft>
   {draft}
@@ -7,13 +10,20 @@ template: |
   <documents>
   {documents}
   </documents>
+  <source_obligations>
+  {source_obligations}
+  </source_obligations>
+  <missing_obligations>
+  {missing_obligations}
+  </missing_obligations>
   Revise the draft using these prose-rhythm steps (plain text only; preserve every attested fact and pin-backed token):
   (1) Mark each sentence length as long, medium, or short.
   (2) Find runs of three or more consecutive sentences in the same length bucket.
   (3) In each flat run, let one context or sequence sentence take a subordinate clause so the run breaks up.
   (4) Place the shortest sentence on the load-bearing number, date, or consequence.
   (5) End paragraphs on concrete nouns or facts.
+  When <missing_obligations> is non-empty, incorporate those obligations while preserving attested pins and rhythm.
   Keep every content word. Keep frequency phrases as written. Keep "I stated" and "I said" attribution. Keep numbering.
-  When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim (never rewrite 'Exhibit N: ...' into 'Exhibit N is/contains/includes/shows ...'), plain first-person body, and the signer closing; replace any em dash (—) or en dash (–) with ASCII hyphen or the word "through" for numeric ranges; do not add receipt-confirmation sentences.
+  When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim, plain first-person body, and the signer closing; replace em/en dashes with ASCII hyphen or "through" for ranges.
   When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
   No narrative arc or earned close on transactional messages. Output the revised plain-text body only.

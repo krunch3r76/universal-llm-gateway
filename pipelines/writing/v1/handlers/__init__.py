@@ -14,8 +14,10 @@ from .assemble import WritingAssembleHandler
 from .draft_selector import WritingDraftSelectorHandler
 from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
+from .obligation_coverage import WritingObligationCoverageHandler
 from .prompt_architect import WritingPromptArchitectHandler
 from .provenance_check import WritingProvenanceCheckHandler
+from .source_obligations import WritingSourceObligationsHandler
 from .review_local import WritingReviewLocalHandler
 from .seat_dispatch import WritingReviewOpenaiHandler, WritingSeatDispatchHandler
 from .seat_wait import (
@@ -42,8 +44,18 @@ def register_handlers(router: DomainRouter) -> None:
     )
     router.register_domain_handler_class(
         "writing",
+        "writing_source_obligations_v1",
+        WritingSourceObligationsHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
         "writing_prompt_architect_v1",
         WritingPromptArchitectHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_obligation_coverage_v1",
+        WritingObligationCoverageHandler,
     )
     router.register_domain_handler_class(
         "writing",
