@@ -14,6 +14,7 @@ from writing_intake.fact_inventory import run_drift_check
 from .email_envelope import (
     email_restate_pin_satisfied,
     has_email_subject,
+    normalize_text_for_token_match,
     polish_email_draft,
 )
 
@@ -56,6 +57,8 @@ _NAME_STOP = frozenset(
 )
 _FUNCTION_WORDS = frozenset(
     {
+        "also",
+        "am",
         "and",
         "when",
         "the",
@@ -71,6 +74,14 @@ _FUNCTION_WORDS = frozenset(
         "in",
         "on",
         "so",
+        "do",
+        "not",
+        "can",
+        "will",
+        "able",
+        "to",
+        "hi",
+        "hello",
     }
 )
 _CLAUSE_DETAIL_MAX = 160
@@ -447,13 +458,15 @@ def _sentences(text: str) -> list[str]:
 
 
 def _tokens(text: str) -> set[str]:
-    return set(_TOKEN.findall(_normalize_numeric_ranges(text).lower()))
+    normalized = _normalize_numeric_ranges(normalize_text_for_token_match(text))
+    return set(_TOKEN.findall(normalized.lower()))
 
 
 def _content_token_seq(text: str, join_words: set[str]) -> tuple[str, ...]:
+    normalized = _normalize_numeric_ranges(normalize_text_for_token_match(text))
     return tuple(
         tok
-        for tok in _TOKEN.findall(_normalize_numeric_ranges(text).lower())
+        for tok in _TOKEN.findall(normalized.lower())
         if tok not in join_words
     )
 

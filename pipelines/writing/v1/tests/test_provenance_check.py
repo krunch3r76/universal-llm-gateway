@@ -320,6 +320,18 @@ def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
     assert dropped[0]["detail"] == "Jennifer"
 
 
+def test_revision_delta_contraction_expansion_no_false_drops() -> None:
+    draft_v1 = (
+        "Hi Maria, I can't cover the PHC Petaluma shifts on 11/3. Thanks."
+    )
+    draft_v2 = (
+        "Hi Maria, I cannot cover the PHC Petaluma shifts on 11/3. Thanks."
+    )
+    v1 = {"draft": draft_v1}
+    v2 = {"draft": draft_v2}
+    assert provenance.revision_delta(v1, v2) == []
+
+
 def test_causal_connective_clause_joining_so() -> None:
     pattern = provenance._CAUSAL_CONNECTIVES_RE
     merge = (

@@ -850,6 +850,39 @@ def test_curly_apostrophe_action_and_decline_matching() -> None:
     ) is None
 
 
+def test_act_outside_message_declined_availability_passes_coverage_gate() -> None:
+    row = {
+        "id": "O1",
+        "quoted_span": (
+            "please send over your standing weekly availability and your open "
+            "dates for next month's calendar so we can update your file"
+        ),
+        "kind": "request",
+        "obligation": "act_outside_message",
+    }
+    draft = (
+        "To: Amanda@example.com\n"
+        "Subject: Re: availability\n\n"
+        "I don't have standing availability on any day of the week. "
+        "I also can't provide a monthly open calendar.\n\n"
+        "Best,\nPat"
+    )
+    status, covering = _obligation.verify_obligation(draft, row, pin_ledger=[])
+    assert status == "declined_with_reason"
+    assert covering
+    cov_map, refusal = finalize._obligation_coverage_gate(
+        draft,
+        [row],
+        selected="draft_v1",
+        audit_map=None,
+        revision_ran=False,
+        architect_brief="",
+        channel="email",
+    )
+    assert refusal is None
+    assert cov_map[0]["status"] == "declined_with_reason"
+
+
 def test_body_sentences_keep_terminal_punctuation_lines() -> None:
     draft = (
         "To: client@example.com\n"
