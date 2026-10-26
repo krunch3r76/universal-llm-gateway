@@ -133,14 +133,44 @@ def _requested_signer(assemble_json: dict[str, Any]) -> str:
     return token
 
 
-def _signer_band(draft_text: str, signer: str) -> int:
+def _signer_verbatim_required(
+    attested_pins: list[dict[str, Any]],
+    *,
+    signer: str,
+) -> bool:
+    """True when a pin marked verbatim_required requires the signer name in its excerpt."""
+    if not signer.strip():
+        return False
+    signer_re = re.compile(rf"\b{re.escape(signer.strip())}\b", re.I)
+    for pin in attested_pins:
+        if pin.get("verbatim_required") is not True:
+            continue
+        excerpt = str(pin.get("excerpt") or "")
+        if signer_re.search(excerpt):
+            return True
+    return False
+
+
+def _signer_band(
+    draft_text: str,
+    signer: str,
+    *,
+    channel: str = "",
+    signer_verbatim_required: bool = False,
+) -> int:
     """Score whether the draft speaks as the requested signer.
 
-    ``1`` when the signer token appears. ``-1`` when an ``I, Name, state``
-    line names someone else. ``0`` when no signer was requested, or the
+    ``1`` when the signer token appears (email and sworn; not SMS unless
+    verbatim_required). ``-1`` when an ``I, Name, state`` line names someone
+    else. ``0`` when no signer was requested, SMS omits name reward, or the
     draft neither names the signer nor a conflicting declarant. No I/O.
     """
     if not signer:
+        return 0
+    if channel == "sms" and not signer_verbatim_required:
+        declarant = _DECLARANT.search(draft_text)
+        if declarant and signer.casefold() not in declarant.group(1).casefold():
+            return -1
         return 0
     if re.search(rf"\b{re.escape(signer)}\b", draft_text, re.I):
         return 1
@@ -237,6 +267,7 @@ class WritingDraftSelectorHandler(BaseHandler):
                 verbatim_notes_blob = "\n".join(str(n) for n in notes)
             else:
                 verbatim_notes_blob = str(notes or "")
+        signer_verbatim_required = _signer_verbatim_required(attested, signer=signer)
         aliases = load_writing_models()
         src = outputs.get("source_obligations")
         src_json = (
@@ -335,11 +366,18 @@ class WritingDraftSelectorHandler(BaseHandler):
                             objective=objective,
                             standing_limits=standing_limits,
                             verbatim_notes=verbatim_notes_blob,
+                            signer=signer,
+                            signer_verbatim_required=signer_verbatim_required,
                         )
                         if channel != "email"
                         else 0
                     ),
-                    "signer_band": _signer_band(text, signer),
+                    "signer_band": _signer_band(
+                        text,
+                        signer,
+                        channel=channel,
+                        signer_verbatim_required=signer_verbatim_required,
+                    ),
                     "rejected": rejected,
                 }
             )
