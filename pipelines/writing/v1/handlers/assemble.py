@@ -1038,10 +1038,9 @@ def _intake_blocks(
                 str(intake.get("objective") or ""),
                 " ".join(str(n) for n in intake.get("verbatim_notes") or []),
             ]
-        ).lower()
-        needs_appeal_subject = any(
-            token in appeal_blob
-            for token in ("appeal", "apn", "hearing", "assessment appeals")
+        )
+        needs_appeal_subject = bool(
+            re.search(r"\b(?:appeals?|apn|hearings?)\b", appeal_blob, re.I)
         )
         envelope_rule = (
             "Email envelope: To: line, Subject: line (appeals, APN, hearing date), signer closing."

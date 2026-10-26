@@ -7,4 +7,5 @@ template: |
   <draft>
   {draft}
   </draft>
-  For each actionable obligation, emit JSON coverage rows with id, status (addressed|declined_with_reason|missing), and covering_sentence quoting the draft sentence that satisfies or declines the obligation.
+  For each actionable obligation, emit JSON coverage rows with id, status (addressed|declined_with_reason|missing), and covering_sentence quoting an exact draft body sentence that satisfies or declines the obligation.
+  For act_outside_message obligations (such as an apply-here link), a conversational reply ("I'd love to chat", "Thanks for reaching out") is NOT coverage — the draft is addressed ONLY if it explicitly states the external action taken or to be taken (e.g., "I applied through the link" or "I will submit my application via the link").

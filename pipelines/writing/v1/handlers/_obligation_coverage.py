@@ -6,14 +6,21 @@ import re
 from typing import Any
 
 _TOKEN = re.compile(r"[a-z0-9]{3,}")
+_CTA_VERBS = (
+    r"apply|applied|submit|submitted|complete|completed|"
+    r"book|booked|schedule|scheduled|register|registered|upload|uploaded"
+)
 _ACTION_CONFIRM = re.compile(
-    r"\b(?:"
-    r"i(?:'ve|\s+have)?\s+(?:applied|submitted|completed)|"
-    r"i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:apply|submit|complete)|"
-    r"submitting\s+my\s+application|"
-    r"applied\s+(?:through|via|at)\b|"
-    r"apply\s+(?:through|via|at)\b"
-    r")\b",
+    rf"(?:"
+    rf"i\s+(?:{_CTA_VERBS})\b|"
+    rf"i(?:'ve|\s+have)\s+(?:{_CTA_VERBS}|signed\s+up)|"
+    rf"i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:{_CTA_VERBS}|sign\s+up)|"
+    rf"(?:{_CTA_VERBS})\s+(?:through|via|at|on)\b|"
+    rf"(?:{_CTA_VERBS})\s+(?:the\s+)?(?:link|portal|form|site)\b|"
+    rf"sign(?:ed)?\s+up\s+(?:through|via|at|on)\b|"
+    r"submitting\s+my\s+(?:application|registration)\b|"
+    rf"my\s+(?:application|registration)\s+(?:was\s+)?(?:{_CTA_VERBS})"
+    rf")",
     re.I,
 )
 _DECLINE = re.compile(
@@ -105,9 +112,59 @@ def _is_envelope_or_closing(line: str) -> bool:
         return True
     if _VALEDiction.match(stripped):
         return True
-    if re.match(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\.?\s*$", stripped) and len(stripped) < 40:
+    if re.search(r"[.!?]\s*$", stripped):
+        return False
+    if (
+        re.match(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*$", stripped)
+        and len(stripped) < 40
+    ):
         return True
     return False
+
+
+def _covering_in_body(covering: str, body: str) -> bool:
+    text = covering.strip()
+    if not text:
+        return False
+    return text in _sentences(body)
+
+
+def apply_audit_overlay(
+    base: dict[str, Any],
+    audit: dict[str, Any] | None,
+    body: str,
+) -> dict[str, Any]:
+    """Merge an audit/model row onto deterministic coverage with body validation."""
+    if not audit:
+        return dict(base)
+    obligation = str(base.get("obligation") or audit.get("obligation") or "")
+    det_status = str(base.get("status") or "missing")
+    status = str(audit.get("status") or det_status)
+    covering = str(audit.get("covering_sentence") or base.get("covering_sentence") or "")
+
+    if status == "missing":
+        row = {**base, **audit, "status": "missing", "covering_sentence": covering}
+        row["reply_mode"] = _reply_mode(base, "missing")
+        return row
+
+    if status not in {"addressed", "declined_with_reason"}:
+        return dict(base)
+
+    if not _covering_in_body(covering, body):
+        return dict(base)
+
+    if obligation == "act_outside_message":
+        if status == "addressed" and not _ACTION_CONFIRM.search(covering):
+            return dict(base)
+        if det_status == "missing" and status == "addressed":
+            if not _ACTION_CONFIRM.search(covering):
+                return dict(base)
+
+    row = {**base, **audit, "status": status, "covering_sentence": covering}
+    row["reply_mode"] = _reply_mode(base, status)
+    if status == "declined_with_reason":
+        row["reply_mode"] = str(audit.get("reply_mode") or "omit_with_reason")
+    return row
 
 
 def _sentences(draft: str) -> list[str]:
@@ -218,31 +275,16 @@ def merge_audit_coverage_map(
     selected: str,
 ) -> list[dict[str, Any]]:
     """Blend obligation_coverage audit rows with a fresh deterministic pass."""
+    del selected
     actionable = actionable_obligations(obligations)
     fresh = coverage_map_for_draft(selected_body, actionable)
     if not audit_map:
         return fresh
     audit_by_id = {str(row.get("id")): row for row in audit_map if row.get("id")}
-    if selected == "draft_v1":
-        merged: list[dict[str, Any]] = []
-        for row in fresh:
-            oid = str(row.get("id") or "")
-            if oid in audit_by_id:
-                merged.append({**row, **audit_by_id[oid]})
-            else:
-                merged.append(dict(row))
-        return merged
-    merged = []
-    for row in fresh:
-        oid = str(row.get("id") or "")
-        audit_row = audit_by_id.get(oid)
-        if audit_row:
-            covering = str(audit_row.get("covering_sentence") or "")
-            if covering and covering in selected_body:
-                merged.append({**row, **audit_row})
-                continue
-        merged.append(dict(row))
-    return merged
+    return [
+        apply_audit_overlay(row, audit_by_id.get(str(row.get("id") or "")), selected_body)
+        for row in fresh
+    ]
 
 
 def obligation_coverage_score(draft: str, obligations: list[dict[str, Any]]) -> int:

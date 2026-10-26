@@ -382,6 +382,79 @@ def _finalize_outputs(
     return payload
 
 
+def test_s1_audit_cannot_override_missing_act_outside_message() -> None:
+    src = _run_source(_MERIDIAL)
+    act_id = next(
+        o["id"]
+        for o in src["obligations"]
+        if o.get("obligation") == "act_outside_message"
+    )
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thanks for reaching out. I'd love to chat more about the team.\n\n"
+        "Best,\nPat"
+    )
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "obligation_coverage": _Out(
+            {
+                "coverage_map": [
+                    {
+                        "id": act_id,
+                        "kind": "call_to_action",
+                        "obligation": "act_outside_message",
+                        "reply_mode": "act_then_confirm",
+                        "status": "addressed",
+                        "covering_sentence": "I'd love to chat more about the team.",
+                    }
+                ]
+            }
+        ),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_body_sentences_keep_terminal_punctuation_lines() -> None:
+    draft = (
+        "To: client@example.com\n"
+        "Subject: Re: timing\n\n"
+        "Tuesday.\n"
+        "Yes, Monday works.\n\n"
+        "Best,\nPat"
+    )
+    sentences = _obligation._sentences(draft)
+    assert "Tuesday." in sentences
+    assert "Yes, Monday works." in sentences
+
+
 def test_s1_meridial_chat_without_apply_action_refuses() -> None:
     src = _run_source(_MERIDIAL)
     draft = (
