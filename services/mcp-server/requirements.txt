@@ -13,7 +13,8 @@ jsonschema>=4.18
 playwright
 python-multipart>=0.0.9
 pdfplumber>=0.11
-pymupdf4llm>=0.0.17
+pymupdf==1.28.2
+pymupdf4llm==1.28.2
 html2text>=2024.2
 Pillow>=10.0
 filetype>=1.2
