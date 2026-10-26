@@ -245,7 +245,7 @@ steps:
       - step: assemble
         fields: [json]
       - step: prompt_architect
-        fields: [json]
+        fields: [json, model_id, prompt_tokens, completion_tokens]
       - step: drafter_openai
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: drafter_google
@@ -271,8 +271,8 @@ steps:
       - step: fact_ceiling_final
         fields: [json]
       - step: source_obligations
-        fields: [json]
+        fields: [json, model_id, prompt_tokens, completion_tokens]
       - step: obligation_coverage
-        fields: [json]
+        fields: [json, model_id, prompt_tokens, completion_tokens]
     handler_outputs:
       unsent: finalize.json.unsent

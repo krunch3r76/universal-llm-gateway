@@ -17,7 +17,6 @@ from .independence import WritingIndependenceHandler
 from .obligation_coverage import WritingObligationCoverageHandler
 from .prompt_architect import WritingPromptArchitectHandler
 from .provenance_check import WritingProvenanceCheckHandler
-from .source_obligations import WritingSourceObligationsHandler
 from .review_local import WritingReviewLocalHandler
 from .seat_dispatch import WritingReviewOpenaiHandler, WritingSeatDispatchHandler
 from .seat_wait import (
@@ -25,6 +24,7 @@ from .seat_wait import (
     WritingSeatSelectHandler,
     WritingSeatWaitHandler,
 )
+from .source_obligations import WritingSourceObligationsHandler
 
 if TYPE_CHECKING:
     from systems.pipeline.core.domain_router import DomainRouter

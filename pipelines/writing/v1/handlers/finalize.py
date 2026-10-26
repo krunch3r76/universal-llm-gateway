@@ -26,12 +26,15 @@ from .independence import (
 _REQUIRED_ASK_KINDS = frozenset({"question", "request", "call_to_action"})
 
 _GENERATE_STEPS = (
+    ("source_obligations", "prompt_architect"),
+    ("prompt_architect", "prompt_architect"),
     ("drafter_openai", "drafter_openai"),
     ("drafter_google", "drafter_google"),
     ("drafter_xai", "drafter_xai"),
     ("drafter_local_hermes", "drafter_local_hermes"),
     ("drafter_local_ernie", "drafter_local_ernie"),
     ("drafter_anthropic", "drafter_anthropic"),
+    ("obligation_coverage", "reviewer"),
     ("fact_ceiling_audit", "verifier"),
     ("prose_rhythm_pass", "reviser"),
 )
@@ -234,18 +237,70 @@ def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
     return contained and len(final_keys) > len(initial_keys)
 
 
+_OMIT_WITH_REASON = re.compile(
+    r"\b(O\d+)\s*:\s*omit_with_reason\b",
+    re.I,
+)
+
+
+def _omit_with_reason_ids(architect_brief: str) -> set[str]:
+    return {match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)}
+
+
+def _apply_architect_omit_with_reason(
+    coverage_map: list[dict[str, Any]],
+    architect_brief: str,
+    *,
+    channel: str,
+) -> list[dict[str, Any]]:
+    """Mark architect-declared omissions as covered (declined_with_reason)."""
+    omit_ids = _omit_with_reason_ids(architect_brief)
+    if not omit_ids and channel != "filing":
+        return coverage_map
+    if channel == "filing" and "omit_with_reason" in architect_brief.lower():
+        for match in re.finditer(r"\b(O\d+)\b", architect_brief):
+            if "omit_with_reason" in architect_brief[match.start() : match.start() + 80].lower():
+                omit_ids.add(match.group(1).upper())
+    updated: list[dict[str, Any]] = []
+    for row in coverage_map:
+        oid = str(row.get("id") or "").upper()
+        if oid in omit_ids:
+            updated.append(
+                {
+                    **row,
+                    "status": "declined_with_reason",
+                    "reply_mode": "omit_with_reason",
+                    "covering_sentence": row.get("covering_sentence")
+                    or "omit_with_reason per architect brief",
+                }
+            )
+        else:
+            updated.append(dict(row))
+    return updated
+
+
 def _obligation_coverage_gate(
     selected_body: str,
     obligations: list[dict[str, Any]],
     *,
     revision_ran: bool,
+    architect_brief: str = "",
+    channel: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Re-score obligations on the shipped body; return coverage_map and optional refusal."""
     actionable = actionable_obligations(obligations)
     if not actionable or not selected_body.strip():
         return [], None
     coverage_map = coverage_map_for_draft(selected_body, actionable)
-    missing = [row for row in coverage_map if row.get("status") == "missing"]
+    coverage_map = _apply_architect_omit_with_reason(
+        coverage_map, architect_brief, channel=channel
+    )
+    missing = [
+        row
+        for row in coverage_map
+        if row.get("status") == "missing"
+        and row.get("reply_mode") != "omit_with_reason"
+    ]
     if not missing:
         return coverage_map, None
     required_missing = [
@@ -572,10 +627,19 @@ class WritingFinalizeHandler(BaseHandler):
         selected_body = _selected_body(selected, draft, revision)
         src_json = _json_of(outputs, "source_obligations") or {}
         obligations = list(src_json.get("obligations") or [])
+        architect_json = _json_of(outputs, "prompt_architect") or {}
+        architect_brief = str(architect_json.get("architect_brief") or "")
+        channel = str(assemble.get("channel") or "")
+        if not channel:
+            intake = assemble.get("intake")
+            if isinstance(intake, dict):
+                channel = str(intake.get("channel") or "")
         coverage_map, obl_refusal = _obligation_coverage_gate(
             selected_body,
             obligations,
             revision_ran=revision_ran,
+            architect_brief=architect_brief,
+            channel=channel,
         )
         if obl_refusal is not None:
             passed = False
