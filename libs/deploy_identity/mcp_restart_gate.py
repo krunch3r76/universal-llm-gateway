@@ -393,7 +393,10 @@ def _probe_output_detail(proc: subprocess.CompletedProcess[bytes]) -> str:
         text = raw.decode("utf-8", errors="replace")
     else:
         text = str(raw)
-    return text.strip()[:500]
+    text = text.strip()
+    if len(text) <= 500:
+        return text
+    return text[-500:]
 
 
 def _emit_import_probe(signal: str, detail: str) -> None:
@@ -799,6 +802,8 @@ def _cli() -> int:
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=HEALTH_WAIT_S)
     sub.add_parser("entrypoint-probe")
+    p_log = sub.add_parser("emit-log")
+    p_log.add_argument("message")
 
     args = parser.parse_args()
     root: Path = args.workspace_root
@@ -850,6 +855,11 @@ def _cli() -> int:
         return wait_for_healthy(args.timeout)
     if args.op == "entrypoint-probe":
         print(mcp_server_entrypoint_probe(root))
+        return 0
+    if args.op == "emit-log":
+        from deploy_identity.mcp_restart_events import emit_restart_event
+
+        emit_restart_event("mcp.restart.log", {"detail": args.message})
         return 0
     return 2
 

@@ -24,8 +24,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 _HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
 
 from bus_watch.digest_budget import effective_policy
@@ -47,6 +45,8 @@ def _utcnow() -> str:
 
 def attended_loop_pids(root: str) -> list[int]:
     """PIDs of ``liaison-tick.py --root <root> --loop`` that are not the ticker."""
+    import psutil
+
     out: list[int] = []
     for proc in psutil.process_iter(["pid", "cmdline"]):
         argv = proc.info.get("cmdline") or []
