@@ -310,7 +310,12 @@ def transition(policy: dict[str, Any], state: RunState) -> Transition:
     if step == "close":
         if state.status == "closed":
             return Transition(command="noop", reason="closed")
-        return Transition(command="close", step_id="close", attempt=1)
+        return Transition(
+            command="close",
+            step_id="close",
+            attempt=1,
+            to_step="close",
+        )
 
     return Transition(command="noop", reason=f"unhandled step={step}")
 

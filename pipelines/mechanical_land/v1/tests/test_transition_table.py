@@ -5,13 +5,16 @@ from __future__ import annotations
 import pytest
 from mechanical_land.policy import PolicyInvalidError, policy_sha256, stamp_policy
 from mechanical_land.schema import (
+    EvidenceState,
     GateResult,
     GateVerdict,
     LandState,
     LegClosedPayload,
     LegRecord,
+    RestartState,
     ReviewState,
     ReviewVerdict,
+    RulingFoldedPayload,
     RunState,
 )
 from mechanical_land.transition import transition
@@ -26,10 +29,22 @@ POLICY = {
 
 
 def _state(**kwargs: object) -> RunState:
-    s = RunState(kind="implement")
+    kind = kwargs.pop("kind", "implement")
+    s = RunState(kind=str(kind))
     for k, v in kwargs.items():
         setattr(s, k, v)
     return s
+
+
+def _closeout_ok() -> LegClosedPayload:
+    return LegClosedPayload(
+        dispatch_id="d1",
+        closeout_status="complete",
+        work_outcome="ok",
+        head_sha=HEX,
+        branch="b",
+        branch_point=HEX,
+    )
 
 
 @pytest.mark.parametrize(
@@ -37,23 +52,25 @@ def _state(**kwargs: object) -> RunState:
     [
         pytest.param(
             {"step": "run", "kind": "implement"},
-            ("admit", "implement", 1, None, None),
+            ("admit", "implement", 1, "implement", "birth", None, None),
             id="run_birthed_to_implement",
         ),
         pytest.param(
             {
                 "step": "implement",
-                "last_closeout": LegClosedPayload(
-                    dispatch_id="d1",
-                    closeout_status="complete",
-                    work_outcome="ok",
-                    head_sha=HEX,
-                    branch="b",
-                    branch_point=HEX,
-                ),
+                "last_closeout": _closeout_ok(),
             },
-            ("gate", "gate", 1, None, None),
+            ("gate", "gate", 1, "gate", "implement closed", None, None),
             id="implement_closed_ok_to_gate",
+        ),
+        pytest.param(
+            {
+                "step": "fix",
+                "gate_results": {1: GateResult(1, GateVerdict.RED, HEX, ruff_exit=1)},
+                "last_closeout": _closeout_ok(),
+            },
+            ("gate", "gate", 2, "gate", "fix closed", None, None),
+            id="fix_closed_ok_to_gate_n_plus_1",
         ),
         pytest.param(
             {
@@ -67,7 +84,7 @@ def _state(**kwargs: object) -> RunState:
                     branch_point=HEX,
                 ),
             },
-            ("block", None, None, None, "leg_failed"),
+            ("block", None, None, None, None, None, "leg_failed"),
             id="implement_failed_blocked",
         ),
         pytest.param(
@@ -77,7 +94,7 @@ def _state(**kwargs: object) -> RunState:
                     1: GateResult(1, GateVerdict.GREEN, HEX),
                 },
             },
-            ("review", "review", 1, "bus_request", None),
+            ("review", "review", 1, "review", "gate green", "bus_request", None),
             id="gate_green_to_review_bus_request",
         ),
         pytest.param(
@@ -88,7 +105,7 @@ def _state(**kwargs: object) -> RunState:
                     1: GateResult(1, GateVerdict.RED, HEX, ruff_exit=1),
                 },
             },
-            ("admit", "fix", 1, None, None),
+            ("admit", "fix", 1, "fix", "gate_red", None, None),
             id="gate_red_gate_fix_used_0_to_fix",
         ),
         pytest.param(
@@ -99,7 +116,7 @@ def _state(**kwargs: object) -> RunState:
                     2: GateResult(2, GateVerdict.RED, HEX, ruff_exit=1),
                 },
             },
-            ("block", None, None, None, "gate_red_after_fix"),
+            ("block", "gate", 2, None, None, None, "gate_red_after_fix"),
             id="gate_red_after_fix_blocked",
         ),
         pytest.param(
@@ -109,7 +126,7 @@ def _state(**kwargs: object) -> RunState:
                     1: GateResult(1, GateVerdict.INFRA_ERROR, HEX),
                 },
             },
-            ("block", None, None, None, "gate_infra"),
+            ("block", "gate", 1, None, None, None, "gate_infra"),
             id="gate_infra_blocked",
         ),
         pytest.param(
@@ -122,7 +139,7 @@ def _state(**kwargs: object) -> RunState:
                     route="bus_request",
                 ),
             },
-            ("land", "land", 1, None, None),
+            ("land", "land", 1, "land", "review approve", None, None),
             id="review_bus_request_approve_to_land",
         ),
         pytest.param(
@@ -135,7 +152,7 @@ def _state(**kwargs: object) -> RunState:
                     route="check_review",
                 ),
             },
-            ("land", "land", 1, None, None),
+            ("land", "land", 1, "land", "review approve", None, None),
             id="review_check_review_approve_to_land",
         ),
         pytest.param(
@@ -145,7 +162,15 @@ def _state(**kwargs: object) -> RunState:
                     verdict=ReviewVerdict.UNBOUND, route="bus_request"
                 ),
             },
-            ("review", "review", 1, "check_review", None),
+            (
+                "review",
+                "review",
+                1,
+                "review",
+                "review_route_advanced",
+                "check_review",
+                None,
+            ),
             id="bus_request_unbound_fallback_check_review",
         ),
         pytest.param(
@@ -155,7 +180,7 @@ def _state(**kwargs: object) -> RunState:
                     verdict=ReviewVerdict.UNBOUND, route="check_review"
                 ),
             },
-            ("block", None, None, None, "review_unbound"),
+            ("block", "review", 0, None, None, None, "review_unbound"),
             id="review_unbound_blocked",
         ),
         pytest.param(
@@ -167,7 +192,7 @@ def _state(**kwargs: object) -> RunState:
                     blockers=("B1",),
                 ),
             },
-            ("admit", "fix", 1, None, None),
+            ("admit", "fix", 1, "fix", "review_request_changes", None, None),
             id="request_changes_review_fix_0_to_fix",
         ),
         pytest.param(
@@ -179,7 +204,15 @@ def _state(**kwargs: object) -> RunState:
                     blockers=("B1",),
                 ),
             },
-            ("block", None, None, None, "review_request_changes"),
+            (
+                "block",
+                "review",
+                0,
+                None,
+                None,
+                None,
+                "review_request_changes",
+            ),
             id="request_changes_review_fix_1_blocked",
         ),
         pytest.param(
@@ -188,7 +221,7 @@ def _state(**kwargs: object) -> RunState:
                 "gate_results": {1: GateResult(1, GateVerdict.GREEN, HEX)},
                 "review": ReviewState(tip_sha="0" * 40, verdict=ReviewVerdict.APPROVE),
             },
-            ("block", None, None, None, "tip_drift"),
+            ("block", "review", 0, None, None, None, "tip_drift"),
             id="tip_drift_blocked",
         ),
         pytest.param(
@@ -196,23 +229,164 @@ def _state(**kwargs: object) -> RunState:
                 "step": "land",
                 "land": LandState(landed=True, tip_sha=HEX),
             },
-            ("restart", "restart", 1, None, None),
+            ("restart", "restart", 1, "restart", "landed", None, None),
             id="land_landed_to_restart",
         ),
         pytest.param(
+            {
+                "step": "land",
+                "attempt": 1,
+                "land": LandState(landed=False, refuse_reason="not_ff"),
+            },
+            ("block", "land", 1, None, None, None, "not_ff"),
+            id="land_refused_not_ff_blocked",
+        ),
+        pytest.param(
+            {
+                "step": "restart",
+                "restart": RestartState(restart_set=("universal-stargate",)),
+            },
+            ("probe", "probe", 1, "probe", "restart issued", None, None),
+            id="restart_issued_to_probe",
+        ),
+        pytest.param(
+            {"step": "restart", "status": "awaiting_restart"},
+            ("wait", None, None, None, "awaiting_restart", None, None),
+            id="restart_giw_awaiting_restart",
+        ),
+        pytest.param(
+            {
+                "step": "restart",
+                "restart": RestartState(
+                    restart_set=("git_integration_worker",),
+                    intents=[{"service": "git_integration_worker", "state": "expired"}],
+                ),
+            },
+            (
+                "block",
+                "restart",
+                0,
+                None,
+                None,
+                None,
+                "restart_intent_expired",
+            ),
+            id="restart_intent_expired_blocked",
+        ),
+        pytest.param(
+            {
+                "step": "probe",
+                "probe": {
+                    "universal-stargate": {
+                        "live": True,
+                        "observed_code_version": HEX,
+                    }
+                },
+            },
+            ("close", "close", 1, "close", "live", None, None),
+            id="probe_all_live_to_close",
+        ),
+        pytest.param(
+            {
+                "step": "probe",
+                "probe": {"universal-stargate": {"live": False}},
+            },
+            ("block", "probe", 0, None, None, None, "not_live"),
+            id="probe_not_live_blocked",
+        ),
+        pytest.param(
+            {"step": "close", "status": "running"},
+            ("close", "close", 1, "close", None, None, None),
+            id="close_ok_to_closed",
+        ),
+        pytest.param(
             {"step": "close", "status": "closed"},
-            ("noop", None, None, None, None),
-            id="close_ok_noop",
+            ("noop", None, None, None, "terminal", None, None),
+            id="close_already_closed_noop",
         ),
         pytest.param(
             {"pending_hold": True, "status": "blocked_hold", "step": "gate"},
-            ("wait", None, None, None, None),
+            ("wait", None, None, None, "blocked_hold", None, None),
             id="ruling_hold_overlay",
+        ),
+        pytest.param(
+            {
+                "step": "gate",
+                "gate_results": {1: GateResult(1, GateVerdict.GREEN, HEX)},
+                "rulings": [
+                    RulingFoldedPayload(
+                        verb="RESUME",
+                        step=None,
+                        reason=None,
+                        bus_thread="12286",
+                        turn=2,
+                    )
+                ],
+            },
+            ("review", "review", 1, "review", "gate green", "bus_request", None),
+            id="ruling_resume_overlay_continue",
+        ),
+        pytest.param(
+            {
+                "step": "gate",
+                "gate_results": {1: GateResult(1, GateVerdict.GREEN, HEX)},
+                "rulings": [
+                    RulingFoldedPayload(
+                        verb="BLOCK",
+                        step="gate",
+                        reason="operator halt",
+                        bus_thread="12286",
+                        turn=3,
+                    )
+                ],
+            },
+            ("block", None, None, None, None, None, "ruling_block"),
+            id="ruling_block_overlay",
+        ),
+        pytest.param(
+            {
+                "step": "gate",
+                "gate_results": {1: GateResult(1, GateVerdict.RED, HEX, ruff_exit=1)},
+                "waived_gate_attempts": {1},
+            },
+            ("review", "review", 1, "review", "gate green", "bus_request", None),
+            id="ruling_waive_gate_red_treated_green",
+        ),
+        pytest.param(
+            {"step": "run", "kind": "evidence"},
+            ("admit", "evidence", 1, "evidence", "birth", None, None),
+            id="evidence_run_to_evidence_leg",
+        ),
+        pytest.param(
+            {
+                "kind": "evidence",
+                "step": "evidence",
+                "evidence": EvidenceState(sidecar_ref="cortex://notes/x", sha256="abc"),
+            },
+            ("close", "harvest", 1, "close", "evidence harvested", None, None),
+            id="evidence_harvested_to_closed",
+        ),
+        pytest.param(
+            {
+                "kind": "evidence",
+                "step": "evidence",
+                "last_closeout": LegClosedPayload(
+                    dispatch_id="d-ev",
+                    closeout_status="complete",
+                    work_outcome="ok",
+                    head_sha=HEX,
+                    branch="b",
+                    branch_point=HEX,
+                    files_modified=("unexpected.py",),
+                ),
+            },
+            ("block", None, None, None, None, None, "evidence_run_wrote"),
+            id="evidence_run_wrote_blocked",
         ),
     ],
 )
 def test_transition_row(state_kwargs, expected) -> None:
-    cmd, step_id, attempt, route, reason_code = expected
+    cmd, step_id, attempt, to_step, reason, route, reason_code = expected
     st = _state(**state_kwargs)
     tr = transition(POLICY, st)
     assert tr.command == cmd
@@ -220,6 +394,10 @@ def test_transition_row(state_kwargs, expected) -> None:
         assert tr.step_id == step_id
     if attempt is not None:
         assert tr.attempt == attempt
+    if to_step is not None:
+        assert tr.to_step == to_step
+    if reason is not None:
+        assert tr.reason == reason
     if route is not None:
         assert tr.review_route == route
     if reason_code:
