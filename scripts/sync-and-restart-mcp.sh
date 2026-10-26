@@ -812,6 +812,7 @@ if [[ "$NO_CACHE" == "true" ]]; then
   echo "Starting MCP server (bootstrap sync before first boot)..."
   bootstrap_mcp_container_from_tree
   write_source_sync_stamp_before_serving_restart
+  restart_mcp_gracefully
 else
   ensure_mcp_container
   if container_passthrough_env_keys_differ; then
@@ -841,6 +842,14 @@ trap _cleanup_stamp_snapshot EXIT
 if wait_for_mcp_healthy; then
   verify_sync_nonce_survived
   gate promote-booted
+  _emit_sync_args=(emit-direct-sync-success)
+  if [[ "$NO_CACHE" == "true" ]]; then
+    _emit_sync_args+=(--no-cache)
+  fi
+  if [[ -n "${CHECKED_IMAGE_ID:-}" ]]; then
+    _emit_sync_args+=(--image-id "$CHECKED_IMAGE_ID")
+  fi
+  gate "${_emit_sync_args[@]}" || true
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
     REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
     if [[ -f "$REFRESH_SCRIPT" ]]; then

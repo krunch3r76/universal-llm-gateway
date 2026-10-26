@@ -9,10 +9,14 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -734,6 +738,61 @@ def wait_for_healthy(timeout_s: int = HEALTH_WAIT_S) -> int:
         time.sleep(2)
 
 
+def read_container_stamp_sha(container: str = CONTAINER_NAME) -> str | None:
+    from deploy_identity.code_version import read_stamp_sha
+
+    proc = subprocess.run(
+        ["docker", "exec", container, "cat", "/app/.source_sync_stamp"],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return None
+    with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
+        tmp.write(proc.stdout)
+        path = Path(tmp.name)
+    try:
+        return read_stamp_sha(path)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def fetch_mcp_health_code_version(timeout_s: float = 5.0) -> str | None:
+    from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
+
+    url = resolve_mcp_health_probe_url()
+    try:
+        with urlopen(url, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+    except (OSError, URLError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    cv = data.get("code_version")
+    if not isinstance(cv, str) or not cv.strip():
+        return None
+    return cv.strip().lower()
+
+
+def emit_direct_sync_success_events(*, no_cache: bool, image_id: str | None) -> None:
+    from deploy_identity.mcp_restart_events import emit_restart_event
+
+    stamp_sha = read_container_stamp_sha() or ""
+    health_code_version = fetch_mcp_health_code_version() or ""
+    base: dict[str, object] = {
+        "stamp_sha": stamp_sha,
+        "health_code_version": health_code_version,
+        "no_cache": no_cache,
+    }
+    if image_id:
+        base["image_id"] = image_id
+    emit_restart_event("mcp.restart.ok", dict(base))
+    if stamp_sha and health_code_version and stamp_sha != health_code_version:
+        emit_restart_event("mcp.restart.seal_mismatch", dict(base))
+
+
 def mcp_server_entrypoint_probe(
     root: Path,
 ) -> Literal["verified", "contradicted", "indeterminate"]:
@@ -804,6 +863,9 @@ def _cli() -> int:
     sub.add_parser("entrypoint-probe")
     p_log = sub.add_parser("emit-log")
     p_log.add_argument("message")
+    p_sync = sub.add_parser("emit-direct-sync-success")
+    p_sync.add_argument("--no-cache", action="store_true")
+    p_sync.add_argument("--image-id", default="")
 
     args = parser.parse_args()
     root: Path = args.workspace_root
@@ -860,6 +922,10 @@ def _cli() -> int:
         from deploy_identity.mcp_restart_events import emit_restart_event
 
         emit_restart_event("mcp.restart.log", {"detail": args.message})
+        return 0
+    if args.op == "emit-direct-sync-success":
+        image_id = args.image_id.strip() or None
+        emit_direct_sync_success_events(no_cache=bool(args.no_cache), image_id=image_id)
         return 0
     return 2
 
