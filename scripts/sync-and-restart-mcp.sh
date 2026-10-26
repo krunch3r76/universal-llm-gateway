@@ -211,7 +211,7 @@ gate_emit_log() {
   "$PYTHON" -m deploy_identity.mcp_restart_gate \
     --workspace-root "$WORKSPACE_ROOT" \
     "${data_args[@]}" \
-    emit-log -- "$msg" 2>/dev/null || true
+    emit-log -- "$msg" || true
 }
 
 mcp_sync_error() {
