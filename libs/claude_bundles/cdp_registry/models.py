@@ -56,6 +56,7 @@ DEFAULT_ACCOUNT_ID = "default"
 _ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 _SEAT_ACCOUNTS_ENV = "CDP_SEAT_ACCOUNTS_PATH"
 _ACCOUNT_SIGNIN_ENV = "CDP_ACCOUNT_SIGNIN_PATH"
+_ACCOUNTS_CONFIG_ENV = "CDP_ACCOUNTS_CONFIG_PATH"
 _LIVE_PROFILE_SUFFIX_STATUSES = frozenset(
     {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}
 )
@@ -181,6 +182,159 @@ def account_is_signed_in(account_id: str | None) -> bool:
     if norm == DEFAULT_ACCOUNT_ID:
         return True
     return norm in signed_in_accounts()
+
+
+ACCOUNTS_CONFIG_PATH = (
+    Path(__file__).resolve().parents[3] / "config" / "cdp" / "accounts.yaml"
+)
+_VALID_DISPLAY_KINDS = frozenset(
+    {"cdp_default", "messages", "cdp_account", "cursor"}
+)
+_FORBIDDEN_ACCOUNT_MAP_DISPLAYS = frozenset({":1", ":2", ":3", ":8"})
+
+
+class AccountDisplayError(RegistryError):
+    """Raised when a non-default account has no valid display binding in config."""
+
+
+def _accounts_config_path() -> Path:
+    raw = os.environ.get(_ACCOUNTS_CONFIG_ENV, "").strip()
+    if raw:
+        return Path(raw)
+    return ACCOUNTS_CONFIG_PATH
+
+
+def _normalize_display_binding(display_raw: str) -> str:
+    text = display_raw.strip()
+    if not text.startswith(":"):
+        text = f":{text}"
+    return text.split(".", 1)[0]
+
+
+def _load_accounts_yaml_dict() -> dict[str, Any]:
+    path = _accounts_config_path()
+    if not path.is_file():
+        raise AccountDisplayError(f"missing accounts config: {path}")
+    try:
+        import yaml
+    except ImportError as exc:
+        raise AccountDisplayError("PyYAML required for accounts config") from exc
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise AccountDisplayError(f"malformed accounts config: {path}") from exc
+    if not isinstance(raw, dict):
+        raise AccountDisplayError(f"malformed accounts config: {path}")
+    return raw
+
+
+@dataclass(frozen=True)
+class _AccountsConfig:
+    never: frozenset[str]
+    displays: dict[str, dict[str, str]]
+    cdp_account_displays: dict[str, str]
+
+
+def _parse_accounts_config(raw: dict[str, Any]) -> _AccountsConfig:
+    never_raw = raw.get("never")
+    if never_raw is None:
+        never_set = frozenset({":1"})
+    elif isinstance(never_raw, list):
+        never_set = frozenset(
+            _normalize_display_binding(str(item)) for item in never_raw if str(item).strip()
+        )
+    else:
+        raise AccountDisplayError("malformed never list in accounts config")
+
+    displays_raw = raw.get("displays")
+    if not isinstance(displays_raw, dict):
+        raise AccountDisplayError("malformed displays section in accounts config")
+
+    displays: dict[str, dict[str, str]] = {}
+    for key, row in displays_raw.items():
+        disp = _normalize_display_binding(str(key))
+        if not isinstance(row, dict):
+            raise AccountDisplayError(f"malformed display row for {disp!r}")
+        owner = row.get("owner")
+        kind = row.get("kind")
+        if not isinstance(owner, str) or not owner.strip():
+            raise AccountDisplayError(f"display {disp!r} missing owner")
+        if kind not in _VALID_DISPLAY_KINDS:
+            raise AccountDisplayError(f"display {disp!r} has invalid kind {kind!r}")
+        if disp in displays:
+            raise AccountDisplayError(f"duplicate display row {disp!r}")
+        displays[disp] = {"owner": owner.strip(), "kind": str(kind)}
+
+    mapping_raw = raw.get("cdp_account_displays")
+    if mapping_raw is None:
+        account_map: dict[str, str] = {}
+    elif not isinstance(mapping_raw, dict):
+        raise AccountDisplayError("malformed cdp_account_displays in accounts config")
+    else:
+        account_map = {}
+        claimants: dict[str, str] = {}
+        for acct_raw, disp_raw in mapping_raw.items():
+            acct = normalize_account_id(str(acct_raw))
+            disp = _normalize_display_binding(str(disp_raw))
+            if disp in never_set or disp in _FORBIDDEN_ACCOUNT_MAP_DISPLAYS:
+                raise AccountDisplayError(
+                    f"cdp_account_displays may not map account {acct!r} to {disp!r}"
+                )
+            row = displays.get(disp)
+            if row is None or row["kind"] != "cdp_account":
+                raise AccountDisplayError(
+                    f"cdp_account_displays {acct!r} -> {disp!r} is not a cdp_account display"
+                )
+            prior = claimants.get(disp)
+            if prior is not None:
+                raise AccountDisplayError(
+                    f"duplicate display claim on {disp!r} ({prior!r} and {acct!r})"
+                )
+            claimants[disp] = acct
+            account_map[acct] = disp
+
+    return _AccountsConfig(
+        never=never_set,
+        displays=displays,
+        cdp_account_displays=account_map,
+    )
+
+
+def _load_accounts_config() -> _AccountsConfig:
+    return _parse_accounts_config(_load_accounts_yaml_dict())
+
+
+def display_rows() -> dict[str, dict[str, str]]:
+    """Display metadata rows from ``config/cdp/accounts.yaml``."""
+    return dict(_load_accounts_config().displays)
+
+
+def validate_default_display_resolved(resolved: str) -> None:
+    """Fail closed when the default account's resolved display is forbidden or claimed."""
+    key = _normalize_display_binding(resolved)
+    cfg = _load_accounts_config()
+    if key in cfg.never:
+        raise RegistryError(f"display {key} is forbidden for default CDP fleet")
+    for acct, disp in cfg.cdp_account_displays.items():
+        if disp == key:
+            raise RegistryError(f"display {key} claimed by account {acct!r}")
+    row = cfg.displays.get(key)
+    if row is not None and row["kind"] != "cdp_default":
+        raise RegistryError(
+            f"display {key} has kind {row['kind']!r}, expected cdp_default"
+        )
+
+
+def account_display(account_id: str) -> str:
+    """X display for a non-default account from ``cdp_account_displays`` in accounts.yaml."""
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        raise AccountDisplayError("default account has no config display binding")
+    cfg = _load_accounts_config()
+    disp = cfg.cdp_account_displays.get(norm)
+    if disp is None:
+        raise AccountDisplayError(f"no display binding for account {norm!r}")
+    return disp
 
 
 class AccountNotSignedInError(RegistryError):

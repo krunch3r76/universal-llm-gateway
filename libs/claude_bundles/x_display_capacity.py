@@ -1,17 +1,14 @@
-"""X11/Xvfb client occupancy for CDP Chrome mint — a distinct capacity axis.
+"""X11/Xvfb client occupancy telemetry for CDP Chrome — a distinct capacity axis.
 
 ``free_slots`` on active-work counts recorded project-ask *streams* against
 the advisory ceilings in ``cdp_ask.lane_admission``. Xvfb ``-maxclients``
-counts unix connections on the display. A
-registry that still has a TCP port, and a satellite that still has stream
-slots, can both report room while the display cannot host another multiprocess
-Chrome. This module is the X axis: probe ``/proc/net/unix`` the same way the
-9498 live incident did, refuse mint when headroom is below one Chrome budget,
-and publish the scalars next to ``free_slots`` without rewriting that formula.
+counts unix connections on the display. This module probes ``/proc/net/unix``
+and publishes scalars next to ``free_slots`` without rewriting that formula.
+Pre-mint X headroom refusal lives in ``_launch_chrome`` (MaxClients log token).
 
-Who calls: ``register_lane`` / ``relaunch_dormant`` / ``_allocate_port_for_profile``
-before they pick a port, and ``_launch_chrome`` again on listen-timeout so a
-TOCTOU miss still names X instead of blaming the browser.
+Who calls: active-work snapshots via ``attach_x_display_capacity``, and
+``_launch_chrome`` on listen-timeout so a TOCTOU miss still names X instead of
+blaming the browser.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -241,30 +238,6 @@ def _load_pin_lanes() -> dict[str, dict]:
     return {str(key): row for key, row in loaded.items() if isinstance(row, dict)}
 
 
-def pin_lanes_on_display(display: str, lanes: Mapping[str, Any] | None = None) -> int:
-    """Pin lanes whose ``display`` matches *display*. One Chrome budget each."""
-    from claude_bundles.cdp_lane import _display_key
-
-    rows = _load_pin_lanes() if lanes is None else lanes
-    try:
-        want = _display_key(display)
-    except (TypeError, ValueError):
-        return 0
-    count = 0
-    for row in rows.values():
-        if not isinstance(row, dict):
-            continue
-        raw = row.get("display")
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        try:
-            if _display_key(raw) == want:
-                count += 1
-        except (TypeError, ValueError):
-            continue
-    return count
-
-
 def pin_ports(lanes: Mapping[str, Any] | None = None) -> set[int]:
     """TCP ports named in ``pins.toml``. Empty when the file cannot be read."""
     rows = _load_pin_lanes() if lanes is None else lanes
@@ -325,22 +298,6 @@ def probe_x_display(
         "x_chrome_client_budget": budget,
         "x_probe": probe,
     }
-
-
-def exhausted_message(snap: Mapping[str, Any]) -> str:
-    """Build the operator-facing refusal that names X occupancy, not Chrome/CDP.
-
-    Used both at pre-port-select refuse and as the body of ``XDisplayCapacityError``.
-    """
-    display = snap.get("x_display") or ":?"
-    clients = snap.get("x_clients")
-    cap = snap.get("x_max_clients")
-    budget = snap.get("x_chrome_client_budget")
-    return (
-        f"X display {display} exhausted: {clients} of {cap} clients "
-        f"(need {budget} free for one multiprocess Chrome); "
-        f"refusing mint rather than waiting for Chrome CDP"
-    )
 
 
 def _log_chunk(log_path: str, *, start_offset: int = 0) -> bytes:
@@ -423,181 +380,6 @@ def require_cdp_display_reachable(
     except DisplayAuthError as exc:
         raise XDisplayCapacityError(str(exc)) from exc
     return display_val
-
-
-def _display_auth_resolves(display: str) -> bool:
-    """True when per-display → flat → live Xvfb ``-auth`` yields a cookie path."""
-    from claude_bundles.cdp_display_auth import DisplayAuthError, resolve_display_auth
-
-    try:
-        resolved = resolve_display_auth(display)
-    except DisplayAuthError:
-        return False
-    return resolved.path is not None
-
-
-def _reserved_on_display(display: str, reserved_by_display: Mapping[str, int]) -> int:
-    from claude_bundles.cdp_lane import _display_key
-
-    key = _display_key(display)
-    for raw, count in reserved_by_display.items():
-        try:
-            if _display_key(str(raw)) != key:
-                continue
-            return count if count > 0 else 0
-        except (TypeError, ValueError):
-            continue
-    return 0
-
-
-def _emit_display_fallover(
-    *,
-    admitted: str,
-    skipped: list[str],
-    candidates: list[str],
-) -> None:
-    with contextlib.suppress(Exception):
-        from claude_bundles import cdp_registry_events as _events
-
-        _events.emit(
-            _events.cdp_port_display_fallover(
-                admitted=admitted,
-                skipped=skipped,
-                candidates=candidates,
-            )
-        )
-
-
-def admit_display(
-    candidates: list[str],
-    reserved_by_display: Mapping[str, int],
-    *,
-    counts: Mapping[str, int] | None = None,
-    max_clients: int | None = None,
-    chrome_budget: int | None = None,
-    proc_net_unix: Path | None = None,
-    auth_resolves: Callable[[str], bool] | None = None,
-) -> str:
-    """Return the first candidate with headroom and a resolvable XAUTHORITY.
-
-    Sticky order, not least-loaded. Raises ``XDisplayCapacityError`` naming
-    every candidate's counts when none admits.
-
-    A sole candidate that has headroom but no resolvable XAUTHORITY is still
-    returned. Single-display hosts then fail inside ``_launch_chrome`` via
-    ``require_cdp_display_reachable``, which is today's refusal. With another
-    candidate left, missing auth skips this display.
-    """
-    from claude_bundles.cdp_lane import _display_key
-
-    normalized: list[str] = []
-    for raw in candidates:
-        item = str(raw).strip()
-        if not item:
-            continue
-        if not item.startswith(":"):
-            item = f":{item}"
-        key = _display_key(item)
-        if key not in normalized:
-            normalized.append(key)
-    if not normalized:
-        raise XDisplayCapacityError("X display fallover exhausted: no candidates")
-
-    failures: list[str] = []
-    skipped: list[str] = []
-    for index, display in enumerate(normalized):
-        reserved = _reserved_on_display(display, reserved_by_display)
-        count = counts.get(display) if counts is not None else None
-        try:
-            snap = require_chrome_headroom(
-                display=display,
-                count=count,
-                max_clients=max_clients,
-                chrome_budget=chrome_budget,
-                proc_net_unix=proc_net_unix,
-                reserved_chromes=reserved,
-            )
-        except XDisplayCapacityError as exc:
-            failures.append(str(exc))
-            skipped.append(display)
-            continue
-        resolves = (
-            bool(auth_resolves(display))
-            if auth_resolves is not None
-            else _display_auth_resolves(display)
-        )
-        if resolves:
-            if skipped:
-                _emit_display_fallover(
-                    admitted=display, skipped=skipped, candidates=normalized
-                )
-            return display
-        if index == len(normalized) - 1 and not skipped:
-            # Sole candidate: defer auth to launch (single-display today).
-            return display
-        clients = snap.get("x_clients")
-        cap = snap.get("x_max_clients")
-        failures.append(
-            f"X display {display}: {clients} of {cap} clients, no resolvable XAUTHORITY"
-        )
-        skipped.append(display)
-    raise XDisplayCapacityError("X display fallover exhausted: " + "; ".join(failures))
-
-
-def require_chrome_headroom(
-    *,
-    display: str | None = None,
-    count: int | None = None,
-    max_clients: int | None = None,
-    chrome_budget: int | None = None,
-    proc_net_unix: Path | None = None,
-    reserved_chromes: int = 0,
-    after_drain: bool = False,
-) -> dict[str, Any]:
-    """Refuse mint when observed X headroom cannot host one more Chrome.
-
-    *reserved_chromes* counts rows already ``allocating`` so two concurrent
-    mints cannot both pass a check that only saw the current process table.
-    Pin lanes on this display (``pins.toml``) add one Chrome budget each on
-    top of that, so a mint cannot spend the pins' own room. Values below 0
-    are treated as 0.
-
-    Refuse when ``headroom - (reserved_chromes + pin_lanes) * budget < budget``.
-    Equality admits: the last full budget is enough for one mint. Unobserved
-    procfs (``x_exhausted is None``) does not refuse, including when reserves
-    are non-zero. Missing or malformed ``pins.toml`` reserves zero pins.
-    """
-    snap = probe_x_display(
-        display=display,
-        count=count,
-        max_clients=max_clients,
-        chrome_budget=chrome_budget,
-        proc_net_unix=proc_net_unix,
-    )
-    if snap["x_exhausted"] is None:
-        return snap
-    reserved = reserved_chromes if reserved_chromes > 0 else 0
-    reserved += pin_lanes_on_display(str(snap["x_display"]))
-    headroom = snap["x_headroom"]
-    budget = int(snap["x_chrome_client_budget"])
-    short = isinstance(headroom, int) and headroom - reserved * budget < budget
-    if snap["x_exhausted"] is True or short:
-        with contextlib.suppress(Exception):
-            from claude_bundles import cdp_registry_events as _events
-
-            _events.emit(
-                _events.cdp_display_exhausted(
-                    display=str(snap["x_display"]),
-                    x_clients=snap["x_clients"],
-                    x_max_clients=int(snap["x_max_clients"]),
-                    x_headroom=snap["x_headroom"],
-                    x_chrome_client_budget=budget,
-                    x_reserved_chromes=reserved,
-                    after_drain=after_drain,
-                )
-            )
-        raise XDisplayCapacityError(exhausted_message(snap))
-    return snap
 
 
 def x_display_wire_fields(snap: Mapping[str, Any]) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from typing import Any
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_store as _store
+from claude_bundles.cdp_registry.models import normalize_account_id
 from claude_bundles.cdp_registry.tab_rows import eligible_host, tab_host_mint_lock
 from claude_bundles.cdp_registry.tab_rows_reopen import (
     host_row_eligible,
@@ -42,13 +43,14 @@ def resolve_resume_host(row: dict[str, Any], *, trigger: str) -> dict[str, Any]:
     own = active.get(own_id) if own_id else None
     if isinstance(own, dict) and host_row_eligible(own):
         return own
-    host = eligible_host(active, cdp_lane.cdp_display_candidates())
+    acct = normalize_account_id(row.get("account_id"))
+    host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
     if host is not None:
         return host
-    return _mint_pool_host(trigger=trigger)
+    return _mint_pool_host(trigger=trigger, account_id=acct)
 
 
-def _mint_pool_host(*, trigger: str) -> dict[str, Any]:
+def _mint_pool_host(*, trigger: str, account_id: str | None = None) -> dict[str, Any]:
     from claude_bundles import cdp_registry_events as _events
     from claude_bundles.cdp_registry.driver_locks import _release_driver_lock
     from claude_bundles.cdp_registry.lifecycle import register_lane
@@ -59,7 +61,8 @@ def _mint_pool_host(*, trigger: str) -> dict[str, Any]:
         minted_trigger = "resume"
     with tab_host_mint_lock():
         active = _store.load_active()
-        host = eligible_host(active, cdp_lane.cdp_display_candidates())
+        acct = normalize_account_id(account_id)
+        host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
         if host is not None:
             return host
         host_reg = register_lane(
@@ -67,6 +70,7 @@ def _mint_pool_host(*, trigger: str) -> dict[str, Any]:
             purpose="tab_host",
             mission_kind=None,
             parent_thread=None,
+            account_id=acct if acct != "default" else None,
         )
         _release_driver_lock(host_reg.registration_id)
         active = _store.load_active()

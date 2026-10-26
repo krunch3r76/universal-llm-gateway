@@ -62,11 +62,15 @@ def launch_or_defer(branch: str, call, *, account_id: str | None = None):
     except XDisplayCapacityError as exc:
         active = store.load_active()
         host = eligible_host(
-            active, cdp_lane.cdp_display_candidates(), account_id=account_id
+            active,
+            cdp_lane.cdp_display_candidates(account_id),
+            account_id=account_id,
         )
         if host is None:
             raise
-        display = str(host.get("display") or cdp_lane.cdp_display())
+        display = str(
+            host.get("display") or cdp_lane.cdp_display_for_account(account_id)
+        )
         host_id = str(host["registration_id"])
         with contextlib.suppress(Exception):
             _events.emit(

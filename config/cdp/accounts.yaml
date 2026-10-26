@@ -1,0 +1,17 @@
+# Per-account CDP X display bindings (override path via CDP_ACCOUNTS_CONFIG_PATH).
+never:
+  - ":1"
+displays:
+  ":2":
+    owner: default
+    kind: cdp_default
+  ":3":
+    owner: messages
+    kind: messages
+  ":4":
+    owner: account-2
+    kind: cdp_account
+  ":8":
+    owner: io
+    kind: cursor
+cdp_account_displays: {}

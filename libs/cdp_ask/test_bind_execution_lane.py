@@ -52,6 +52,7 @@ def test_bind_execution_lane_operator_proxy_uses_ensure() -> None:
         purpose="operator-proxy",
         mission_kind="root",
         joined=[],
+        account_id="default",
     )
     mint.assert_not_called()
     retire.assert_called_once_with("driving-root", parent_thread="9497")
@@ -115,10 +116,6 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     )
     monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: False)
     monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
-    monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.require_chrome_headroom",
-        lambda **_kwargs: {"x_exhausted": False},
-    )
     return root
 
 
@@ -722,7 +719,7 @@ async def test_run_execution_bind_yields_the_event_loop(
     [
         "hop_with_predecessor",
         "hop_no_predecessor",
-        "hop_admit_display_raises",
+        "hop_register_deferred",
     ],
 )
 def test_tab_ask_when_x_headroom_below_one_chrome_hop(
@@ -766,7 +763,7 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop(
     )
     monkeypatch.setattr(
         "cdp_ask.runner.launch_or_defer",
-        lambda branch, call: call(),
+        lambda branch, call, account_id=None: call(),
     )
     if case == "hop_with_predecessor":
         monkeypatch.setattr(
@@ -815,7 +812,7 @@ def test_tab_ask_when_x_headroom_below_one_chrome_hop_no_eligible_host(
 
     monkeypatch.setattr(
         "cdp_ask.runner.launch_or_defer",
-        lambda _branch, _call: (_ for _ in ()).throw(
+        lambda _branch, _call, account_id=None: (_ for _ in ()).throw(
             XDisplayCapacityError("exhausted")
         ),
     )

@@ -314,8 +314,11 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
         from claude_bundles.x_display_capacity import XDisplayCapacityError
 
         if isinstance(exc, XDisplayCapacityError):
+            from claude_bundles.cdp_registry.models import normalize_account_id
+
             active = store.load_active()
-            host = eligible_host(active, cdp_lane.cdp_display_candidates())
+            acct = normalize_account_id(getattr(seat, "account_id", None))
+            host = eligible_host(active, cdp_lane.cdp_display_candidates(acct))
             if host is not None:
                 from cdp_ask.followup_events import (
                     cdp_ask_dormant_relaunch_deferred,

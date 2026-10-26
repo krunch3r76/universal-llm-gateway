@@ -229,7 +229,7 @@ four-condition trigger in `decision:architecture-bind-escalation-chain` holds
 (`cdp-operator-proxy` § Architecture-bind chain) — **pre-authorized, ¬ operator ping**.
 That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
 the grok card (`effort` through `xhigh`). Announce
-model + effort + why. When that CDP consult is refused or fails (including `X display exhausted` only when the display has no Chrome and no X room for one multiprocess Chrome — with an eligible host, tab asks open a tab instead), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`) or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
+model + effort + why. When that CDP consult is refused or fails (with an eligible host, tab asks open a tab instead of waiting on pool mint), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`) or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
 check (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks — an architecture is not self-ratifiable) and verbatim
 densify. ¬ fork those rules here.
 

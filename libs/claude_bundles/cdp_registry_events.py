@@ -223,29 +223,6 @@ def cdp_port_exit_kill_decision(
 
 
 @event_factory
-def cdp_port_display_fallover(
-    *,
-    admitted: str,
-    skipped: list[str],
-    candidates: list[str],
-) -> Event:
-    """Mint skipped an exhausted display and admitted a later candidate.
-
-    Sibling of ``cdp.port.exit_kill_decision`` — same ``cdp.port`` family.
-    """
-    return Event(
-        signal="cdp.port.display_fallover",
-        role="observation",
-        scope="node",
-        payload={
-            "admitted": admitted,
-            "skipped": list(skipped),
-            "candidates": list(candidates),
-        },
-    )
-
-
-@event_factory
 def cdp_port_harvest_dormant(
     *,
     registration_id: str,
@@ -726,34 +703,6 @@ def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
         role="observation",
         scope="node",
         payload={"lane": lane, "execution_ids": execution_ids},
-    )
-
-
-@event_factory
-def cdp_display_exhausted(
-    *,
-    display: str,
-    x_clients: int | None,
-    x_max_clients: int,
-    x_headroom: int | None,
-    x_chrome_client_budget: int,
-    x_reserved_chromes: int = 0,
-    after_drain: bool = False,
-) -> Event:
-    """Mint refused because Xvfb/X11 MaxClients cannot host another Chrome."""
-    return Event(
-        signal="cdp.display.exhausted",
-        role="observation",
-        scope="node",
-        payload={
-            "display": display,
-            "x_clients": x_clients,
-            "x_max_clients": x_max_clients,
-            "x_headroom": x_headroom,
-            "x_chrome_client_budget": x_chrome_client_budget,
-            "x_reserved_chromes": x_reserved_chromes,
-            "after_drain": after_drain,
-        },
     )
 
 

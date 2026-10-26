@@ -1028,269 +1028,53 @@ def test_drain_live_hosts_to_dormant_filters_by_display(
     assert _row(seat_on_3.registration_id)["status"] == "retained"
 
 
-def test_reserve_mint_headroom_shortfall_drains_charged_display_once(
+def test_relaunch_dormant_default_on_colon_three_moves_to_colon_two(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """First headroom shortfall runs one display-scoped drain; recheck allows mint."""
-    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
-    from claude_bundles.x_display_capacity import XDisplayCapacityError
-
-    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
-    seat_on_2 = _seat(chat_url="https://claude.ai/cowork/cse_mint2")
-    seat_on_3 = _seat(chat_url="https://claude.ai/cowork/cse_mint3")
-    for seat in (seat_on_2, seat_on_3):
-        reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_display_stay")
     active = reg._load_active()
-    active[seat_on_2.registration_id]["display"] = ":2"
-    active[seat_on_3.registration_id]["display"] = ":3"
+    active[seat.registration_id]["display"] = ":3"
     reg._store.write_active(active)
-    _successful_empty_list(monkeypatch)
-
-    headroom_calls = 0
-
-    def headroom(**_kwargs: object) -> dict[str, bool]:
-        nonlocal headroom_calls
-        headroom_calls += 1
-        if headroom_calls == 1:
-            raise XDisplayCapacityError("short")
-        return {"x_exhausted": False}
-
-    monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.require_chrome_headroom", headroom
-    )
-
-    listening_ports = {
-        int(_row(seat_on_2.registration_id)["port"]),
-        int(_row(seat_on_3.registration_id)["port"]),
-    }
-
-    def listen(port: int) -> bool:
-        return port in listening_ports
-
-    row, minted = reserve_allocating_row(
-        holder="mint-after-drain",
-        purpose="operator-proxy",
-        mission_kind="root",
-        parent_thread="t-drain",
-        listen=listen,
-        launch=True,
-        join=False,
-    )
-    assert minted is True
-    assert row["display"] == ":2"
-    assert _row(seat_on_2.registration_id)["status"] == "dormant"
-    assert _row(seat_on_3.registration_id)["status"] == "retained"
-    assert headroom_calls == 2
-
-
-def test_reserve_mint_headroom_still_short_drains_only_once(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Persistent shortfall raises without a second drain pass."""
-    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
-    from claude_bundles.x_display_capacity import XDisplayCapacityError
-
-    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
-
-    drain_calls: list[str | None] = []
-    real_drain = drain_live_hosts_to_dormant
-
-    def counting_drain(**kwargs: object) -> dormant_drain.DrainResult:
-        drain_calls.append(kwargs.get("display"))  # type: ignore[arg-type]
-        return real_drain(**kwargs)
-
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.dormant_drain.drain_live_hosts_to_dormant",
-        counting_drain,
-    )
-
-    def always_short(**_kwargs: object) -> None:
-        raise XDisplayCapacityError("still short")
-
-    monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.require_chrome_headroom", always_short
-    )
-
-    with pytest.raises(XDisplayCapacityError, match="still short"):
-        reserve_allocating_row(
-            holder="no-mint",
-            purpose="operator-proxy",
-            mission_kind="root",
-            parent_thread="t-fail",
-            listen=lambda _p: False,
-            launch=True,
-            join=False,
-        )
-    assert drain_calls == [":2"]
-
-
-def test_mint_headroom_recheck_emits_after_drain_true(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """After one drain pass, a still-short recheck tags cdp.display.exhausted."""
-    from claude_bundles import cdp_registry_events as ev
-    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
-    from claude_bundles.x_display_capacity import XDisplayCapacityError, probe_x_display
-
-    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
-
-    exhausted = probe_x_display(display=":2", count=63, max_clients=64, chrome_budget=8)
-
-    def always_exhausted(**_kwargs: object) -> dict[str, object]:
-        return dict(exhausted)
-
-    monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.probe_x_display", always_exhausted
-    )
-
-    display_events: list[object] = []
-
-    def capture_emit(event: object) -> None:
-        if getattr(event, "signal", None) == "cdp.display.exhausted":
-            display_events.append(event)
-
-    monkeypatch.setattr(ev, "emit", capture_emit)
-
-    drain_calls: list[str | None] = []
-
-    def counting_drain(**kwargs: object) -> dormant_drain.DrainResult:
-        drain_calls.append(kwargs.get("display"))  # type: ignore[arg-type]
-        return dormant_drain.DrainResult()
-
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.dormant_drain.drain_live_hosts_to_dormant",
-        counting_drain,
-    )
-
-    with pytest.raises(XDisplayCapacityError):
-        reserve_allocating_row(
-            holder="no-mint",
-            purpose="operator-proxy",
-            mission_kind="root",
-            parent_thread="t-after-drain-event",
-            listen=lambda _p: False,
-            launch=True,
-            join=False,
-        )
-
-    assert drain_calls == [":2"]
-    assert len(display_events) == 2
-    assert display_events[0].payload["after_drain"] is False  # type: ignore[attr-defined]
-    assert display_events[1].payload["after_drain"] is True  # type: ignore[attr-defined]
-
-
-def test_reserve_post_drain_does_not_overwrite_released_row(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Concurrent release during headroom drain must not clobber released status."""
-    from claude_bundles.cdp_registry import lifecycle as life
-
-    seat = _seat(chat_url="https://claude.ai/cowork/cse_post_drain_rel")
-    reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
-    rid = seat.registration_id
-
-    def drain_then_release(**_kwargs: object) -> dormant_drain.DrainResult:
-        active = reg._store.load_active()
-        row = dict(active[rid])
-        row["status"] = "released"
-        row["released_at"] = 1.0
-        active[rid] = row
-        reg._store.write_active(active)
-        return dormant_drain.DrainResult()
-
-    monkeypatch.setattr(life, "_mint_headroom_gate", lambda **_kw: drain_then_release())
-
-    with pytest.raises(reg.SeatContended) as excinfo:
-        life.reserve_allocating_row(
-            holder=seat.holder,
-            purpose=seat.purpose,
-            mission_kind="root",
-            parent_thread="lane-post-drain-rel",
-            listen=lambda _p: False,
-            registration_id=rid,
-            profile_suffix=seat.profile_suffix,
-            carry={"chat_url": _row(rid).get("chat_url")},
-            expect_status="dormant",
-            launch=True,
-            join=False,
-        )
-    assert excinfo.value.data["depth"] == "reserve_compare_and_set"
-    assert excinfo.value.data["observed_status"] == "released"
-    assert _row(rid)["status"] == "released"
-
-
-def test_reserve_post_drain_joins_allocating_instead_of_second_mint(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Join target appearing during drain returns join, not a duplicate mint."""
-    from claude_bundles.cdp_registry import lifecycle as life
-
-    parent = "lane-post-drain-join"
-    peer_id = "peer-alloc-post-drain"
-    reg._store.write_active(
-        {
-            peer_id: {
-                "registration_id": peer_id,
-                "port": 9223,
-                "profile_suffix": "reg-peerpd",
-                "profile": str(isolated_registry / "peer-profile"),
-                "holder": "peer-holder",
-                "purpose": "operator-proxy",
-                "mission_kind": "root",
-                "parent_thread": parent,
-                "status": "allocating",
-                "chrome_pid": None,
-                "holder_pid": None,
-                "started_at": 1.0,
-            }
-        }
-    )
-
-    def drain_then_seed_peer(**_kwargs: object) -> dormant_drain.DrainResult:
-        reg._claim_driver_lock(peer_id)
-        return dormant_drain.DrainResult()
-
-    monkeypatch.setattr(
-        life, "_mint_headroom_gate", lambda **_kw: drain_then_seed_peer()
-    )
-
-    row, minted = life.reserve_allocating_row(
-        holder="join-after-drain",
-        purpose="operator-proxy",
-        mission_kind="root",
-        parent_thread=parent,
-        listen=lambda _p: False,
-        launch=True,
-        join=True,
-    )
-    assert minted is False
-    assert row["registration_id"] == peer_id
-    active = reg._load_active()
-    assert len(active) == 1
-    assert peer_id in active
-
-
-def test_relaunch_dormant_rewrites_display_to_admitted_candidate(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Display is placement. Relaunch may move the row onto another display."""
-    seat = _seat(chat_url="https://claude.ai/cowork/cse_display_move")
-    assert _row(seat.registration_id)["display"] == ":2"
     reg.make_dormant(seat.registration_id, is_listening=lambda _port: False)
-    monkeypatch.setattr(reg.cdp_lane, "cdp_display_candidates", lambda: [":2", ":3"])
-
-    def _admit(candidates: list[str], reserved: dict[str, int]) -> str:
-        assert candidates[0] == ":2"
-        assert ":3" in candidates
-        return ":3"
-
-    monkeypatch.setattr("claude_bundles.x_display_capacity.admit_display", _admit)
     relaunched = reg.relaunch_dormant(
         seat.registration_id,
         launch_chrome=_noop_launch,
         is_listening=lambda _port: False,
     )
-    row = _row(seat.registration_id)
-    assert row["display"] == ":3"
-    assert row["chat_url"] == "https://claude.ai/cowork/cse_display_move"
-    assert relaunched.display == ":3"
+    assert _row(seat.registration_id)["display"] == ":2"
+    assert relaunched.display == ":2"
+
+
+def test_relaunch_dormant_account_two_stays_on_colon_four(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    extra = '\ncdp_account_displays:\n  account-2: ":4"\n'
+    cfg = tmp_path / "accounts.yaml"
+    cfg.write_text(
+        (Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml")
+        .read_text(encoding="utf-8")
+        + extra,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(cfg))
+    signin = isolated_registry / "account_sign_in.json"
+    signin.write_text(
+        json.dumps({"accounts": {"account-2": {"signed_in": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_a2_disp")
+    active = reg._load_active()
+    row = active[seat.registration_id]
+    row["account_id"] = "account-2"
+    row["profile_suffix"] = "account-2"
+    row["display"] = ":4"
+    reg._store.write_active(active)
+    reg.make_dormant(seat.registration_id, is_listening=lambda _port: False)
+    relaunched = reg.relaunch_dormant(
+        seat.registration_id,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _port: False,
+    )
+    assert _row(seat.registration_id)["display"] == ":4"
+    assert relaunched.display == ":4"

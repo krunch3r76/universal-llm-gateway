@@ -230,11 +230,6 @@ def test_dormant_relaunch_unsigned_account_raises_and_keeps_account_id(
         json.dumps({rid: row}), encoding="utf-8"
     )
 
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.lifecycle._mint_headroom_gate",
-        lambda **kwargs: None,
-    )
-
     with pytest.raises(AccountNotSignedInError):
         relaunch_dormant(
             rid,

@@ -112,7 +112,7 @@ def tab_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, A
     )
     monkeypatch.setattr(
         "claude_bundles.cdp_lane.cdp_display_candidates",
-        lambda: [":2"],
+        lambda account_id=None: [":2"],
     )
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.tab_rows._TAB_MINT_LOCK",

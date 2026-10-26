@@ -107,7 +107,8 @@ def cdp_display(display: str | None = None) -> str:
             return val
     cdp_val = os.environ.get("CDP_DISPLAY", "").strip()
     if cdp_val:
-        return cdp_val
+        key = _display_key(cdp_val)
+        return _INHERITED_DISPLAY_REMAP.get(key, key)
     inherited = os.environ.get("DISPLAY", "").strip()
     if inherited:
         key = _display_key(inherited)
@@ -115,48 +116,26 @@ def cdp_display(display: str | None = None) -> str:
     return _DEFAULT_DISPLAY
 
 
-# Jupiter runs a pair of Xvfb seats. Unset CDP_DISPLAYS falls over to the other.
-_JUPITER_DISPLAY_PAIR = (":2", ":3")
+def cdp_display_for_account(account_id: str | None) -> str:
+    """X display for CDP Chrome for *account_id* (default uses ``cdp_display()``)."""
+    from claude_bundles.cdp_registry.models import (
+        DEFAULT_ACCOUNT_ID,
+        account_display,
+        normalize_account_id,
+        validate_default_display_resolved,
+    )
+
+    norm = normalize_account_id(account_id)
+    if norm == DEFAULT_ACCOUNT_ID:
+        resolved = cdp_display()
+        validate_default_display_resolved(resolved)
+        return resolved
+    return account_display(norm)
 
 
-def _jupiter_partner(primary: str) -> str | None:
-    if primary == _JUPITER_DISPLAY_PAIR[0]:
-        return _JUPITER_DISPLAY_PAIR[1]
-    if primary == _JUPITER_DISPLAY_PAIR[1]:
-        return _JUPITER_DISPLAY_PAIR[0]
-    return None
-
-
-def cdp_display_candidates() -> list[str]:
-    """Ordered mint candidates. First is today's ``cdp_display()``.
-
-    Explicit ``CDP_DISPLAYS`` (comma list) is authoritative: it is appended
-    after the primary, de-duplicated, and the Jupiter partner is not added.
-
-    When ``CDP_DISPLAYS`` is unset, a primary on the Jupiter pair yields both
-    seats — ``:2`` becomes ``[":2", ":3"]`` and ``:3`` becomes ``[":3", ":2"]``.
-    Any other primary stays ``[primary]``. Not sourced from ``standing_pins``.
-    """
-    primary = _display_key(cdp_display())
-    raw = os.environ.get("CDP_DISPLAYS", "").strip()
-    if not raw:
-        partner = _jupiter_partner(primary)
-        if partner is None:
-            return [primary]
-        return [primary, partner]
-    ordered = [primary]
-    seen = {primary}
-    for part in raw.split(","):
-        item = part.strip()
-        if not item:
-            continue
-        if not item.startswith(":"):
-            item = f":{item}"
-        key = _display_key(item)
-        if key not in seen:
-            seen.add(key)
-            ordered.append(key)
-    return ordered
+def cdp_display_candidates(account_id: str | None = None) -> list[str]:
+    """Single mint display for *account_id* (no cross-display fallover)."""
+    return [cdp_display_for_account(account_id)]
 
 
 # Admitted display for a 2-arg ``_launch_chrome`` call. Optional argument wins.
@@ -487,20 +466,13 @@ def _allocate_port_for_profile(
         return existing, True
     if not launch:
         raise LaneError(f"no live Chrome for profile '{suffix}' and launch=False")
-    from claude_bundles.cdp_registry.dormant import reserved_chromes_by_display
-    from claude_bundles.cdp_registry_store import load_active
-    from claude_bundles.x_display_capacity import admit_display
+    from claude_bundles.cdp_registry.models import account_id_from_profile_suffix
 
-    active: dict[str, object] = {}
-    with contextlib.suppress(Exception):
-        loaded = load_active()
-        if isinstance(loaded, dict):
-            active = loaded
-    # Fallover is before port selection. The 2-arg call keeps launch doubles
-    # working; ``launch_display`` threads the admitted display into Chrome.
-    display = admit_display(
-        cdp_display_candidates(), reserved_chromes_by_display(active)
-    )
+    acct = _LAUNCH_ACCOUNT.get()
+    if acct is None or not str(acct).strip():
+        derived = account_id_from_profile_suffix(suffix)
+        acct = derived if derived is not None else "default"
+    display = cdp_display_for_account(acct)
     # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
     # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
     exclude = set(held_ports())
@@ -579,8 +551,13 @@ def _launch_chrome(
         require_cdp_display_reachable,
     )
 
+    eff_acct = resolve_effective_account_id(account_id, profile)
     chosen = display if display is not None else _LAUNCH_DISPLAY.get()
-    display_val = cdp_display(chosen)
+    display_val = (
+        cdp_display(chosen)
+        if chosen is not None
+        else cdp_display_for_account(eff_acct)
+    )
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
     eff = resolve_effective_account_id(account_id, profile)

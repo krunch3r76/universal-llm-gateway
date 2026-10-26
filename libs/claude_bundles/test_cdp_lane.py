@@ -125,17 +125,6 @@ def test_cdp_display_prefers_cdp_display(
         lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
     )
 
-    headroom_displays: list[str | None] = []
-
-    def _headroom_spy(**kwargs: object) -> dict[str, object]:
-        headroom_displays.append(kwargs.get("display"))  # type: ignore[arg-type]
-        return {"x_exhausted": False}
-
-    monkeypatch.setattr(
-        "claude_bundles.x_display_capacity.require_chrome_headroom",
-        _headroom_spy,
-    )
-
     row, minted = reserve_allocating_row(
         holder="display-unify",
         purpose="operator-proxy",
@@ -144,7 +133,6 @@ def test_cdp_display_prefers_cdp_display(
         listen=lambda _port: False,
     )
     assert minted is True
-    assert headroom_displays[-1] == resolved
     assert row["display"] == resolved
     assert cdp_lane.chrome_display_env()["DISPLAY"] == resolved
 

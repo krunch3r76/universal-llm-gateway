@@ -51,25 +51,7 @@ __all__ = [
     "make_dormant",
     "reclaim_dormant_rows",
     "relaunch_dormant",
-    "reserved_chromes_by_display",
 ]
-
-
-def reserved_chromes_by_display(active: Mapping[str, Any]) -> dict[str, int]:
-    """Count ``allocating`` rows per existing ``display`` field.
-
-    Display is placement. Rows with no display are not charged to a candidate.
-    """
-    counts: dict[str, int] = {}
-    for row in active.values():
-        if not isinstance(row, dict) or row.get("status") != "allocating":
-            continue
-        raw = str(row.get("display") or "").strip()
-        if not raw:
-            continue
-        key = cdp_lane._display_key(raw)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
 
 
 def _place_display(registration_id: str, display: str) -> None:

@@ -52,10 +52,44 @@ def _noop_launch(port: int, profile: Path) -> int:
     return 1
 
 
+def test_accounts_yaml_structure_committed_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import ACCOUNTS_CONFIG_PATH, display_rows
+
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(ACCOUNTS_CONFIG_PATH))
+    rows = display_rows()
+    for disp, meta in rows.items():
+        assert meta.get("owner")
+        assert meta.get("kind") in {
+            "cdp_default",
+            "messages",
+            "cdp_account",
+            "cursor",
+        }
+    assert rows[":2"]["kind"] == "cdp_default"
+    assert rows[":3"]["kind"] == "messages"
+    assert rows[":4"]["kind"] == "cdp_account"
+    assert rows[":8"]["kind"] == "cursor"
+
+    import yaml
+
+    raw = yaml.safe_load(ACCOUNTS_CONFIG_PATH.read_text(encoding="utf-8"))
+    assert raw.get("never") == [":1"]
+    extra = tmp_path / "bad-map.yaml"
+    bad = dict(raw)
+    bad["cdp_account_displays"] = {"account-2": ":2"}
+    extra.write_text(yaml.dump(bad), encoding="utf-8")
+    monkeypatch.setenv("CDP_ACCOUNTS_CONFIG_PATH", str(extra))
+    from claude_bundles.cdp_registry.models import AccountDisplayError, account_display
+
+    with pytest.raises(AccountDisplayError):
+        account_display("account-2")
+
+
 def test_register_lane_records_display(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("CDP_DISPLAYS", raising=False)
     monkeypatch.setenv("CDP_DISPLAY", ":7")
     r = reg.register_lane(
         holder="display-test",
@@ -477,7 +511,7 @@ def test_launch_failure_rolls_back_allocating(isolated_registry: Path) -> None:
     assert again.port == 9223
 
 
-def test_register_refuses_x_exhaustion_before_selecting_port(
+def test_register_lane_mints_at_sixty_three_of_sixty_four_x_clients(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -486,21 +520,18 @@ def test_register_refuses_x_exhaustion_before_selecting_port(
     )
     launched: list[int] = []
 
-    def boom(port: int, profile: Path) -> int:
+    def capture_launch(port: int, profile: Path) -> int:
         launched.append(port)
-        raise AssertionError("must not launch")
+        profile.mkdir(parents=True, exist_ok=True)
+        return 1
 
-    from claude_bundles.x_display_capacity import XDisplayCapacityError
-
-    with pytest.raises(XDisplayCapacityError, match="X display"):
-        reg.register_lane(
-            holder="a",
-            launch_chrome=boom,
-            is_listening=lambda _p: False,
-        )
-    assert launched == []
-    assert reg._load_active() == {}
-    assert reg.list_active() == []
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=capture_launch,
+        is_listening=lambda _p: False,
+    )
+    assert launched
+    assert r.display == ":2"
 
 
 def test_reattach_emits_reattached(

@@ -257,7 +257,7 @@ def open_tab_row_for_ask(
     resolved_account = normalize_account_id(account_id)
     with tab_host_mint_lock():
         active = _store.load_active()
-        candidates = cdp_lane.cdp_display_candidates()
+        candidates = cdp_lane.cdp_display_candidates(resolved_account)
         if host_row is not None:
             host_account = normalize_account_id(host_row.get("account_id"))
             if host_account != resolved_account:

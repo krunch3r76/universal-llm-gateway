@@ -141,34 +141,6 @@ def _join_target(
     )
 
 
-def _mint_headroom_gate(
-    *,
-    display: str,
-    reserved_chromes: int,
-    listen: _ListenFn,
-) -> None:
-    """Refuse or drain once when X headroom is short before minting Chrome."""
-    from claude_bundles.x_display_capacity import (
-        XDisplayCapacityError,
-        require_chrome_headroom,
-    )
-
-    from .dormant_drain import drain_live_hosts_to_dormant
-
-    def _check_headroom(*, after_drain: bool = False) -> None:
-        require_chrome_headroom(
-            display=display,
-            reserved_chromes=reserved_chromes,
-            after_drain=after_drain,
-        )
-
-    try:
-        _check_headroom(after_drain=False)
-    except XDisplayCapacityError:
-        drain_live_hosts_to_dormant(display=display, is_listening=listen)
-        _check_headroom(after_drain=True)
-
-
 def _supersede_stale_account_row(
     active: dict[str, Any], profile_suffix: str, listen: _ListenFn
 ) -> None:
@@ -261,8 +233,6 @@ def reserve_allocating_row(
                 },
             )
 
-    from .dormant import reserved_chromes_by_display
-
     join_account = resolve_reserve_account_id(
         account_id=account_id,
         carry=carry,
@@ -270,120 +240,90 @@ def reserve_allocating_row(
         profile_suffix=profile_suffix,
     )
 
-    while True:
-        with _store.ports_lock():
-            active = _store.load_active()
-            if join_eligible:
-                target = _join_target(active, parent, account_id=join_account)
-                if target is not None:
-                    return target, False
-            _expect_status_ok(active)
-            reserved_chromes = _count_allocating(active) if launch else 0
-            reserved_map = reserved_chromes_by_display(active) if launch else {}
+    resolved_display = cdp_lane.cdp_display_for_account(join_account)
 
-        candidates = cdp_lane.cdp_display_candidates()
-        if launch and len(candidates) > 1:
-            # Ordered fallover before port selection. A single candidate keeps
-            # today's drain-then-recheck gate below instead of refusing first.
-            from claude_bundles.x_display_capacity import admit_display
-
-            resolved_display = admit_display(candidates, reserved_map)
-        else:
-            resolved_display = candidates[0]
-
-        if launch:
-            _mint_headroom_gate(
-                display=resolved_display,
-                reserved_chromes=int(reserved_map.get(resolved_display, 0)),
-                listen=listen,
+    with _store.ports_lock():
+        active = _store.load_active()
+        if join_eligible:
+            target = _join_target(active, parent, account_id=join_account)
+            if target is not None:
+                return target, False
+        _expect_status_ok(active)
+        exclude = _used_ports(active) | _peer_lane_ports()
+        port = select_free_registry_port(listen, exclude=exclude)
+        prior_row = (
+            active.get(registration_id)
+            if registration_id and registration_id in active
+            else None
+        )
+        norm_account = resolve_reserve_account_id(
+            account_id=account_id,
+            carry=carry,
+            prior_row=prior_row if isinstance(prior_row, dict) else None,
+            profile_suffix=profile_suffix,
+        )
+        if norm_account != "default" and not account_is_signed_in(norm_account):
+            raise AccountNotSignedInError(
+                f"account {norm_account!r} is not signed in; refusing registry mint"
             )
-
-        with _store.ports_lock():
-            active = _store.load_active()
-            if join_eligible:
-                target = _join_target(active, parent, account_id=join_account)
-                if target is not None:
-                    return target, False
-            _expect_status_ok(active)
-            post_drain_allocating = _count_allocating(active) if launch else 0
-            if launch and post_drain_allocating != reserved_chromes:
-                reserved_chromes = post_drain_allocating
-                continue
-            exclude = _used_ports(active) | _peer_lane_ports()
-            port = select_free_registry_port(listen, exclude=exclude)
-            prior_row = (
-                active.get(registration_id)
-                if registration_id and registration_id in active
-                else None
-            )
-            norm_account = resolve_reserve_account_id(
-                account_id=account_id,
-                carry=carry,
-                prior_row=prior_row if isinstance(prior_row, dict) else None,
-                profile_suffix=profile_suffix,
-            )
-            if norm_account != "default" and not account_is_signed_in(norm_account):
-                raise AccountNotSignedInError(
-                    f"account {norm_account!r} is not signed in; refusing registry mint"
-                )
-            if profile_suffix is None and norm_account != "default":
-                profile_suffix = account_profile_suffix(norm_account)
-                if registration_id is None:
-                    registration_id = uuid.uuid4().hex
-                if profile_suffix:
-                    _supersede_stale_account_row(active, profile_suffix, listen)
-            if registration_id is None or profile_suffix is None:
-                registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
-            assert_profile_suffix_available(
-                active,
-                str(profile_suffix),
+        if profile_suffix is None and norm_account != "default":
+            profile_suffix = account_profile_suffix(norm_account)
+            if registration_id is None:
+                registration_id = uuid.uuid4().hex
+            if profile_suffix:
+                _supersede_stale_account_row(active, profile_suffix, listen)
+        if registration_id is None or profile_suffix is None:
+            registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+        assert_profile_suffix_available(
+            active,
+            str(profile_suffix),
+            registration_id=registration_id,
+        )
+        prior = active.get(registration_id) if registration_id else None
+        row: dict[str, Any] = {
+            **(carry or {}),
+            "registration_id": registration_id,
+            "port": port,
+            "profile_suffix": profile_suffix,
+            "profile": str(cdp_lane.profile_for(profile_suffix)),
+            "holder": holder,
+            "purpose": purpose,
+            "display": resolved_display,
+            "mission_kind": mission_kind,
+            "parent_thread": parent_thread,
+            "status": "allocating",
+            "chrome_pid": None,
+            "holder_pid": os.getpid(),
+            "started_at": time.time(),
+            "account_id": norm_account,
+        }
+        # Carry must not mint a seat. Keys already on the stored row stay,
+        # so a close that landed before this write is not dropped.
+        for seat_key in (
+            "seat_lane",
+            "seat_bound_at",
+            "seat_closed_at",
+            "seat_close_reason",
+            "superseded_by",
+        ):
+            row.pop(seat_key, None)
+            if isinstance(prior, dict) and seat_key in prior:
+                row[seat_key] = prior[seat_key]
+        _claim_driver_lock(registration_id)
+        active[registration_id] = row
+        _store.write_active(active)
+        _store.append_log("allocating", row)
+        _events.emit(
+            _events.cdp_port_allocating(
                 registration_id=registration_id,
+                port=port,
+                parent_thread=parent_thread
+                if isinstance(parent_thread, str)
+                else None,
+                holder=holder,
             )
-            prior = active.get(registration_id) if registration_id else None
-            row: dict[str, Any] = {
-                **(carry or {}),
-                "registration_id": registration_id,
-                "port": port,
-                "profile_suffix": profile_suffix,
-                "profile": str(cdp_lane.profile_for(profile_suffix)),
-                "holder": holder,
-                "purpose": purpose,
-                "display": resolved_display,
-                "mission_kind": mission_kind,
-                "parent_thread": parent_thread,
-                "status": "allocating",
-                "chrome_pid": None,
-                "holder_pid": os.getpid(),
-                "started_at": time.time(),
-                "account_id": norm_account,
-            }
-            # Carry must not mint a seat. Keys already on the stored row stay,
-            # so a close that landed before this write is not dropped.
-            for seat_key in (
-                "seat_lane",
-                "seat_bound_at",
-                "seat_closed_at",
-                "seat_close_reason",
-                "superseded_by",
-            ):
-                row.pop(seat_key, None)
-                if isinstance(prior, dict) and seat_key in prior:
-                    row[seat_key] = prior[seat_key]
-            _claim_driver_lock(registration_id)
-            active[registration_id] = row
-            _store.write_active(active)
-            _store.append_log("allocating", row)
-            _events.emit(
-                _events.cdp_port_allocating(
-                    registration_id=registration_id,
-                    port=port,
-                    parent_thread=parent_thread
-                    if isinstance(parent_thread, str)
-                    else None,
-                    holder=holder,
-                )
-            )
-        return row, True
+        )
+    return row, True
 
 
 def activate_allocating_row(
