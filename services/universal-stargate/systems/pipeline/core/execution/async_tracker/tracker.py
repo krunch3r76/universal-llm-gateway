@@ -148,6 +148,8 @@ class PipelineExecutionTracker:
         reasoning: Any = None,
         hints: list[dict[str, Any]] | None = None,
         stop: StepStop | None = None,
+        archive_uri: str | None = None,
+        tool_errors: list[dict[str, Any]] | None = None,
     ) -> None:
         """Record success terminal state (idempotent)."""
         lifecycle.complete_execution(
@@ -161,6 +163,8 @@ class PipelineExecutionTracker:
             reasoning=reasoning,
             hints=hints,
             stop=stop,
+            archive_uri=archive_uri,
+            tool_errors=tool_errors,
         )
 
     def fail_execution(

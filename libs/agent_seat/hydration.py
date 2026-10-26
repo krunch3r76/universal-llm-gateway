@@ -454,6 +454,13 @@ async def hydrate_agent(
             resolve_platform = parts[1]
 
     already_present = (briefing or "") + (continuation_md or "")
+    inline_budget: int | None
+    if inject_profile == "dispatch":
+        inline_budget = None
+    else:
+        from agent_seat.inject_budget import INJECTED_BODY_BUDGET_BYTES
+
+        inline_budget = INJECTED_BODY_BUDGET_BYTES
     try:
         resolution = await asyncio.to_thread(
             resolve_injected_bodies,
@@ -468,6 +475,7 @@ async def hydrate_agent(
             inline_only_dispatch=inline_only and inject_profile == "dispatch",
             provider_mount_slugs=provider_mount_slugs,
             exclude_mcp_predicated=exclude_mcp_predicated,
+            budget_bytes=inline_budget,
         )
         if resolution.block_md:
             injected_bodies_md = resolution.block_md

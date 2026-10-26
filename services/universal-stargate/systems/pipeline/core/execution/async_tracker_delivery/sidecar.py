@@ -71,6 +71,8 @@ def enrich_on_behalf_sidecar_content(
 
     usage = record.result.usage if record.result is not None else None
     model = _effective_resolved_model(record)
+    archive_uri = record.result.archive_uri if record.result else None
+    tool_errors = record.result.tool_errors if record.result else None
     return append_api_closeout_economics(
         content,
         work_key=record.work_key,
@@ -78,6 +80,8 @@ def enrich_on_behalf_sidecar_content(
         model=model,
         usage=usage,
         contract=record.resolved_contract,
+        archive_uri=archive_uri,
+        tool_errors=tool_errors,
     )
 
 

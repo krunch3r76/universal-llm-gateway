@@ -18,7 +18,7 @@ Origin = Literal["caller", "scope_default"]
 Channel = Literal["layer_a", "layer_b", "layer_c", "none"]
 Disposition = Literal["delivered", "dropped"]
 
-_VALID_MOUNT_BACKENDS = frozenset({"openai_container", "none"})
+_VALID_MOUNT_BACKENDS = frozenset({"openai_container", "anthropic_container", "none"})
 
 
 class SkillsMountBackendInvalidError(ValueError):
@@ -185,6 +185,12 @@ def partition_skill_channels(
     backend = _read_mount_backend(model)
     if backend == "openai_container":
         mount_slugs = frozenset(skill.requested_id for skill in effective)
+    elif backend == "anthropic_container":
+        from skills_mount.anthropic_container import partition_slugs_for_container
+
+        ordered = tuple(skill.requested_id for skill in effective)
+        mount_tuple, _overflow = partition_slugs_for_container(ordered)
+        mount_slugs = frozenset(mount_tuple)
     else:
         mount_slugs = frozenset()
 

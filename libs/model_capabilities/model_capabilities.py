@@ -24,7 +24,7 @@ __all__ = [
 CARD_VERSION: Final[str] = "2026-07-21"
 
 ReasonCode = Literal["capability_card_missing", "capability_card_field_missing"]
-SkillsMountBackend = Literal["openai_container", "none"]
+SkillsMountBackend = Literal["openai_container", "anthropic_container", "none"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ _ANTHROPIC_API = ModelCapabilityCard(
     # web_search/web_fetch/code_execution map only via req.tools →
     # _ANTHROPIC_SERVER_TOOL_VERSION_MAP (anthropic/_helpers.py).
     server_side_tools=(),
-    skills_mount_backend="none",
+    skills_mount_backend="anthropic_container",
 )
 
 _OPENAI_API = ModelCapabilityCard(

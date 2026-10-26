@@ -103,6 +103,38 @@ async def test_build_dispatch_body_sets_knob_resolution_preview(
 
 
 @pytest.mark.asyncio
+async def test_build_dispatch_body_role_default_effort_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="anthropic/claude-sonnet-5-5",
+                allowed_models=["anthropic/claude-sonnet-5-5"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        role="synthesizer",
+        model="anthropic/claude-sonnet-5-5",
+        dispatch_thread_id=_DISPATCH_THREAD,
+    )
+    body = await build_dispatch_body(req)
+    preview = body["pipeline_options"]["_knob_resolution_preview"]
+    assert body["pipeline_options"]["generation_parameters"]["reasoning_effort"] == "high"
+    assert preview["requested_effort"] == "high"
+    assert preview["status"] == "mapped"
+
+
+@pytest.mark.asyncio
 async def test_build_dispatch_body_knob_resolution_preview_includes_max_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

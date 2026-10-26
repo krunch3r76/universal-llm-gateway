@@ -392,6 +392,7 @@ roles:
     default_model: null
 
   reviewer:
+    default_effort: high
     description: "Review and audit with reliable MCP writes. Code-lane standing default: cursor/grok-4.7 via route_policy.yaml workflows.check_review (decision:code-review-panel-cursor-substrate); contract=freeform omit-model coerces to seat=cursor-sdk. Explicit model=openai/* keeps API (life / checkout-free). Judgment / path-sim R-admit → CDP. Life/writing: Terra standing, or google/gemini-3.6-flash as MCP-capable peer. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 OPERATOR-GATED (explicit auth; not standing default)."
     default_family: gpt
     default_platform: api
@@ -419,6 +420,7 @@ roles:
       - google/gemini-2.5-pro
 
   synthesizer:
+    default_effort: high
     description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed code-surface writes use reviewer (gpt-5.6-terra). Writing second family with Terra (Terra+Gemini; ¬ Grok). web-anthropic can write through life/Cortex MCP but has no code/workspaces surface."
     default_family: gemini
     default_platform: api
@@ -432,6 +434,7 @@ roles:
       - google/gemini-2.5-flash-lite
 
   artisan:
+    default_effort: high
     description: "Inline reasoning specialist; structured execution at frontier-grade reasoning. Engineering default Grok; PROHIBITED for writing/correspondence — see decision:writing-consult-model-routing."
     default_family: grok
     default_platform: api
@@ -440,6 +443,7 @@ roles:
       - xai/grok-4.7
 
   skeptic:
+    default_effort: high
     description: "Adversarial / dialectical seat; pushback on consensus framing.
       Engineering panels only (standing panel family with Terra reviewer). Writing
       uses Terra+Gemini, not default panel_dispatch. Family MUST differ from the

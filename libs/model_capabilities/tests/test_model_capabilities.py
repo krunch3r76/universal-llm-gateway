@@ -128,6 +128,7 @@ def test_server_side_tools_and_mount_backend() -> None:
     assert server_side_tools("anthropic/claude-opus-4-8") == ()
     assert server_side_tools("google/gemini-3.5-flash") == ()
     assert skills_mount_backend("openai/gpt-5.5") == "openai_container"
+    assert skills_mount_backend("anthropic/claude-opus-4-8") == "anthropic_container"
     assert skills_mount_backend("google/gemini-3.5-flash") == "none"
 
 

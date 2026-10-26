@@ -85,6 +85,48 @@ def test_partition_openai_mounts_entire_effective_list(
     assert partition.rows[0].channel == "layer_b"
 
 
+def test_partition_anthropic_container_mounts_mapped_up_to_eight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+
+    index_path = tmp_path / "anthropic_skills_index.json"
+    skills = {
+        f"skill-{i}": {"skill_id": f"sk_{i}", "type": "custom", "version": "latest"}
+        for i in range(10)
+    }
+    index_path.write_text(json.dumps({"skills": skills}), encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_SKILLS_INDEX_PATH", str(index_path))
+    from skills_mount.anthropic_container import clear_anthropic_skills_index_cache_for_tests
+
+    clear_anthropic_skills_index_cache_for_tests()
+    monkeypatch.setattr(
+        "agent_seat.skills_merge._read_mount_backend",
+        lambda _model: "anthropic_container",
+    )
+    effective = tuple(
+        EffectiveSkill(
+            requested_id=f"skill-{i}",
+            canonical_id=canonical_agent_skill_id(f"skill-{i}"),
+            origin="caller",
+        )
+        for i in range(10)
+    )
+    partition = partition_skill_channels(
+        effective,
+        model="anthropic/claude-sonnet-5-5",
+        mcp_enabled=True,
+        role="synthesizer",
+        platform="api",
+        inject_profile="dispatch",
+        code_touching=True,
+    )
+    assert len(partition.layer_b) == 8
+    assert len(partition.layer_c) == 2
+    clear_anthropic_skills_index_cache_for_tests()
+
+
 def test_partition_anthropic_routes_caller_to_layer_c(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

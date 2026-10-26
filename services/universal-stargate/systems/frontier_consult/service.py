@@ -176,6 +176,32 @@ def _resolve_skills_mount(
 ) -> tuple[list[dict[str, Any]], frozenset[str], int]:
     if not mount_skill_ids:
         return [], frozenset(), 0
+    from model_capabilities import skills_mount_backend
+
+    if skills_mount_backend(effective_model) == "anthropic_container":
+        from skills_mount.anthropic_container import resolve_container_skill_entries
+
+        try:
+            entries = resolve_container_skill_entries(mount_skill_ids)
+        except LookupError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+            ) from exc
+        mount_slugs = frozenset(mount_skill_ids)
+        if event_publisher is not None:
+            event_publisher(
+                DispatchSkillsMounted(
+                    request_id=request_id,
+                    role=role,
+                    model=effective_model,
+                    canonical_slugs=sorted(mount_slugs),
+                    entry_count=len(entries),
+                    total_bundle_bytes=0,
+                )
+            )
+        return entries, mount_slugs, 0
     try:
         bundles = resolve_skill_bundles(
             list(mount_skill_ids),
@@ -823,6 +849,11 @@ async def build_dispatch_body(
                 caller_skill_ids=caller_layer_c_ids,
                 provider_mount_slugs=provider_mount_slugs,
                 exclude_mcp_predicated=not mcp_enabled,
+                budget_bytes=(
+                    None
+                    if inject_profile == "dispatch"
+                    else INJECTED_BODY_BUDGET_BYTES
+                ),
             )
         except CallerSkillUnresolvedError as exc:
             raise FrontierEndpointError(
@@ -962,6 +993,13 @@ async def build_dispatch_body(
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
+    if generation_options.get("reasoning_effort") is None:
+        from agent_seat.profiles import resolve_dispatch_default_effort
+
+        generation_options["reasoning_effort"] = resolve_dispatch_default_effort(
+            role=req.role,
+            contract=req.resolved_contract,
+        )
     if "max_tool_turns" in generation_options:
         raise FrontierEndpointError(
             request_id=request_id,

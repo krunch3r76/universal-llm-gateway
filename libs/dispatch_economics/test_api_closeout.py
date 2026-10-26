@@ -311,3 +311,24 @@ def test_append_api_closeout_includes_work_key_and_json() -> None:
     parsed = json.loads(block)
     assert parsed["work_key"] == "todo:ac"
     assert parsed["execution_id"] == "exec-1"
+
+
+@pytest.mark.offline
+def test_append_api_closeout_includes_archive_uri_and_tool_errors() -> None:
+    body = append_api_closeout_economics(
+        "closeout",
+        work_key=None,
+        execution_id="exec-2",
+        model="anthropic/claude-sonnet-4-6",
+        usage=None,
+        archive_uri="workspaces://universal-llm-gateway/.runtime/thread-artifacts/1/turn_0001.json",
+        tool_errors=[
+            {"turn": 1, "name": "entity_create", "ok": False, "result": "timeout"},
+        ],
+    )
+    assert "archive_uri: workspaces://" in body
+    assert "## tool errors" in body
+    assert "entity_create" in body
+    parsed = json.loads(body.split("```json")[1].split("```")[0].strip())
+    assert parsed["archive_uri"].endswith("turn_0001.json")
+    assert parsed["tool_errors"][0]["name"] == "entity_create"
