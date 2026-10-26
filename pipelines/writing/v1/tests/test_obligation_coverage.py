@@ -996,6 +996,109 @@ def test_act_outside_message_attested_past_claim_allows_act_then_confirm() -> No
     assert payload.get("refused") is None
 
 
+def test_act_outside_b1_mixed_sentence_unattested_past_fails() -> None:
+    obligations = _meridial_act_obligation()
+    pin_ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "I live in the South Bay."}
+    ]
+    mixed_sentences = [
+        (
+            "I submitted my application through the portal, so no need to apply "
+            "through the link."
+        ),
+        (
+            "I applied through the portal yesterday and will apply through the "
+            "link for the second role."
+        ),
+    ]
+    for sentence in mixed_sentences:
+        draft = (
+            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+            f"{sentence}\n\nBest,\nPat"
+        )
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing", sentence
+
+
+def test_act_outside_b2_body_wide_unattested_past_fails_finalize() -> None:
+    src = _run_source(_MERIDIAL)
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    pin_ledger = [
+        {"pin_id": "P1", "attested": True, "excerpt": "I live in the South Bay."}
+    ]
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thank you for the AI Trust and Safety outreach. "
+        "I applied through the link. "
+        "I will submit the form via the portal.\n\n"
+        "Best,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=pin_ledger
+    )
+    act_row = next(r for r in cov if r.get("obligation") == "act_outside_message")
+    assert act_row["status"] == "missing"
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": pin_ledger,
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_act_outside_b3_negated_pin_excerpt_not_attested_act() -> None:
+    negated_ledgers = [
+        [{"pin_id": "P1", "attested": True, "excerpt": "I haven't applied through the link."}],
+        [
+            {
+                "pin_id": "P1",
+                "attested": True,
+                "excerpt": "I have not applied through the portal yet.",
+            }
+        ],
+        [{"pin_id": "P1", "attested": True, "excerpt": "I never applied through the portal."}],
+    ]
+    obligations = _meridial_act_obligation()
+    draft = (
+        "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+        "I applied through the link.\n\nBest,\nPat"
+    )
+    for pin_ledger in negated_ledgers:
+        assert _obligation.has_attested_external_act(pin_ledger) is False
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing"
+
+
 def test_obligation_coverage_handler_emits_missing_block() -> None:
     inbound = "Can you confirm the meeting time?"
     obligations = source_obligations.fallback_obligations(inbound)

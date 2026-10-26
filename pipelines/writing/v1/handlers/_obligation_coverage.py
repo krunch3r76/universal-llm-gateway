@@ -132,18 +132,58 @@ def _normalize_apostrophes(text: str) -> str:
     return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
+_PAST_ACTION_NEGATION = re.compile(
+    r"\b(?:not|never|no\s+need\s+to|haven't|hasn't|hadn't|didn't|did\s+not|"
+    r"have\s+not|has\s+not|had\s+not|yet\s+to|without)\b",
+    re.I,
+)
+_INTENT_ACTION_NEGATION = re.compile(
+    r"\b(?:not|never|no\s+need\s+to|won't|will\s+not|don't|do\s+not|"
+    r"cannot|can't|unable\s+to|without)\b",
+    re.I,
+)
+
+
+def _match_is_negated(
+    norm: str, match: re.Match[str], negation: re.Pattern[str]
+) -> bool:
+    start = match.start()
+    prefix = norm[max(0, start - 30) : start]
+    if negation.search(prefix):
+        return True
+    return negation.search(match.group(0)) is not None
+
+
+def _has_affirmative_past_action(text: str) -> bool:
+    norm = _normalize_apostrophes(text)
+    for match in _PAST_ACTION_CONFIRM.finditer(norm):
+        if not _match_is_negated(norm, match, _PAST_ACTION_NEGATION):
+            return True
+    return False
+
+
+def _has_affirmative_intent_action(text: str) -> bool:
+    norm = _normalize_apostrophes(text)
+    for match in _INTENT_OR_ASK_BACK_CONFIRM.finditer(norm):
+        if not _match_is_negated(norm, match, _INTENT_ACTION_NEGATION):
+            return True
+    return False
+
+
 def has_attested_external_act(pin_ledger: list[dict[str, Any]] | None) -> bool:
     """True when an attested pin excerpt records a completed external action."""
     if not pin_ledger:
         return False
     for pin in pin_ledger:
+        if not isinstance(pin, dict):
+            continue
         if pin.get("attested") is not True:
             continue
         provenance = pin.get("provenance")
         if provenance not in {"operator_account", "document", None}:
             continue
-        excerpt = _normalize_apostrophes(str(pin.get("excerpt") or ""))
-        if _PAST_ACTION_CONFIRM.search(excerpt):
+        excerpt = str(pin.get("excerpt") or "")
+        if _has_affirmative_past_action(excerpt):
             return True
     return False
 
@@ -156,12 +196,19 @@ def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
 
 
 def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
-    norm = _normalize_apostrophes(sentence)
-    if _INTENT_OR_ASK_BACK_CONFIRM.search(norm):
+    if _has_affirmative_past_action(sentence) and not act_attested:
+        return False
+    if act_attested and _has_affirmative_past_action(sentence):
         return True
-    if _PAST_ACTION_CONFIRM.search(norm):
-        return act_attested
+    if _has_affirmative_intent_action(sentence):
+        return True
     return False
+
+
+def _body_has_unattested_past_claim(body: str, *, act_attested: bool) -> bool:
+    if act_attested:
+        return False
+    return any(_has_affirmative_past_action(s) for s in _sentences(body))
 
 
 def _tokens(text: str) -> set[str]:
@@ -240,8 +287,12 @@ def apply_audit_overlay(
         ):
             return dict(base)
 
-    if obligation == "act_outside_message" and status == "addressed":
-        if not _act_outside_sentence_covers(covering, act_attested=act_attested):
+    if obligation == "act_outside_message":
+        if _body_has_unattested_past_claim(body, act_attested=act_attested):
+            return dict(base)
+        if status == "addressed" and not _act_outside_sentence_covers(
+            covering, act_attested=act_attested
+        ):
             return dict(base)
 
     row = {**base, **audit, "status": status, "covering_sentence": covering}
@@ -310,6 +361,10 @@ def verify_obligation(
     body_sentences = _sentences(draft)
 
     if obligation == "act_outside_message":
+        if not act_attested:
+            for sentence in body_sentences:
+                if _has_affirmative_past_action(sentence):
+                    return "missing", ""
         for sentence in body_sentences:
             if _act_outside_sentence_covers(sentence, act_attested=act_attested):
                 return "addressed", sentence
