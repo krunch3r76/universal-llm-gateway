@@ -45,7 +45,6 @@ _RESTATE_STOPWORDS = frozenset(
         "to",
         "via",
         "with",
-        "currently",
     }
 )
 _CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
@@ -91,11 +90,8 @@ def normalize_decline_ability_phrases(text: str) -> str:
 
 
 def normalize_temporal_monthly_synonyms(text: str) -> str:
-    """Align restate checks for temporal and monthly calendar phrasing variants."""
-    text = re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
-    text = re.sub(r"\bfor\s+next\s+month'?s?\b", "monthly", text, flags=re.I)
-    text = re.sub(r"\bnext\s+month'?s?\b", "monthly", text, flags=re.I)
-    return text
+    """Align restate checks for ``right now`` vs ``currently`` without conflating monthly."""
+    return re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
 
 
 def normalize_text_for_token_match(text: str) -> str:

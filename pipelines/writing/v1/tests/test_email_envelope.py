@@ -113,8 +113,18 @@ def test_email_restate_pin_satisfied_amanda_vms_temporal_monthly() -> None:
     )
     assert email_envelope.email_restate_pin_satisfied(draft_p2, pin_p2)
     pin_p3 = "I am not able to provide a monthly open calendar."
-    draft_p3 = "I am not able to provide an open calendar for next month."
+    draft_p3 = "I am not able to provide a monthly open calendar each month."
     assert email_envelope.email_restate_pin_satisfied(draft_p3, pin_p3)
+
+
+def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> None:
+    pin = "Currently my schedule stays full most of the time."
+    assert not email_envelope.email_restate_pin_satisfied(
+        "My schedule stays full most of the time.", pin
+    )
+    assert email_envelope.email_restate_pin_satisfied(
+        "Right now my schedule stays full most of the time.", pin
+    )
 
 
 def test_email_restate_pin_satisfied_contraction_and_decline_synonyms() -> None:
