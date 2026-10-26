@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from mechanical_land.schema import (
     BlockedPayload,
     ClosedPayload,
@@ -21,6 +23,7 @@ from mechanical_land.schema import (
     RestartPlannedPayload,
     ResumedPayload,
     ReviewAdmittedPayload,
+    ReviewAttemptRecord,
     ReviewFallbackAdmittedPayload,
     ReviewVerdictPayload,
     RulingFoldedPayload,
@@ -108,6 +111,11 @@ def _apply_transition_decided(state: RunState, entry: JournalEntry) -> None:
     assert isinstance(payload, TransitionDecidedPayload)
     state.step = payload.to_step
     state.attempt = payload.attempt
+    reason = payload.reason
+    if reason == "gate_red":
+        state.gate_fix_used = max(state.gate_fix_used, 1)
+    if reason == "review_request_changes":
+        state.review_fix_used = max(state.review_fix_used, 1)
 
 
 def _apply_leg_admitted(state: RunState, entry: JournalEntry) -> None:
@@ -138,6 +146,7 @@ def _apply_leg_closed(state: RunState, entry: JournalEntry) -> None:
     assert isinstance(payload, LegClosedPayload)
     state.last_closeout = payload
     legs = state.legs.get(entry.step_id, [])
+    updated: LegRecord | None = None
     for leg in reversed(legs):
         if leg.dispatch_id == payload.dispatch_id:
             leg.closeout_status = payload.closeout_status
@@ -146,9 +155,10 @@ def _apply_leg_closed(state: RunState, entry: JournalEntry) -> None:
             leg.branch = payload.branch
             leg.branch_point = payload.branch_point
             leg.sidecar_ref = payload.sidecar_ref
+            updated = leg
             break
     else:
-        leg = LegRecord(
+        updated = LegRecord(
             step_id=entry.step_id,
             attempt=entry.attempt,
             flow=entry.flow,
@@ -160,7 +170,11 @@ def _apply_leg_closed(state: RunState, entry: JournalEntry) -> None:
             branch_point=payload.branch_point,
             sidecar_ref=payload.sidecar_ref,
         )
-        state.legs.setdefault(entry.step_id, []).append(leg)
+        state.legs.setdefault(entry.step_id, []).append(updated)
+    if updated is not None:
+        state.legs_journal_order.append(updated)
+    state.status = "running"
+    state.review_admitted_pending = False
 
 
 def _apply_gate_ran(state: RunState, entry: JournalEntry) -> None:
@@ -183,22 +197,50 @@ def _apply_review_admitted(state: RunState, entry: JournalEntry) -> None:
     state.review.range = payload.range
     state.review.head = payload.head
     state.review.review_dispatch_id = payload.dispatch_id
-    state.status = "awaiting_leg"
+    state.review.route = payload.route
+    state.review.fixes = payload.fixes
+    state.review_admitted_pending = True
+    state.status = "awaiting_review"
 
 
-def _apply_review_verdict(state: RunState, _entry: JournalEntry) -> None:
-    payload = parse_payload(_entry.event, _entry.payload)
+def _apply_review_verdict(state: RunState, entry: JournalEntry) -> None:
+    payload = parse_payload(entry.event, entry.payload)
     assert isinstance(payload, ReviewVerdictPayload)
+    key = (payload.tip_sha, payload.route)
+    if key in state.folded_verdict_keys:
+        return
+    state.folded_verdict_keys.add(key)
     state.review.tip_sha = payload.tip_sha
     state.review.verdict = payload.verdict
     state.review.review_dispatch_id = payload.review_dispatch_id
     state.review.bind_status = payload.bind_status
+    state.review.route = payload.route
+    state.review.blockers = payload.blockers
+    state.review_admitted_pending = False
+    attempt = entry.attempt
+    state.review_history.append(
+        ReviewAttemptRecord(
+            attempt=attempt,
+            tip_sha=payload.tip_sha,
+            verdict=payload.verdict.value,
+            route=payload.route,
+            reviewer=payload.reviewer,
+            review_turn=payload.review_turn,
+            review_dispatch_id=payload.review_dispatch_id,
+            fixes=state.review.fixes,
+            blockers=payload.blockers,
+        )
+    )
 
 
 def _apply_review_fallback_admitted(state: RunState, entry: JournalEntry) -> None:
     payload = parse_payload(entry.event, entry.payload)
     assert isinstance(payload, ReviewFallbackAdmittedPayload)
     state.review.fallback_model = payload.model
+    if payload.to_route:
+        state.review.route = payload.to_route
+    state.review.verdict = None
+    state.review_admitted_pending = False
 
 
 def _apply_land_attempted(state: RunState, _entry: JournalEntry) -> None:
@@ -236,10 +278,13 @@ def _apply_restart_issued(state: RunState, _entry: JournalEntry) -> None:
 def _apply_probe_ran(state: RunState, _entry: JournalEntry) -> None:
     payload = parse_payload(_entry.event, _entry.payload)
     assert isinstance(payload, ProbeRanPayload)
-    state.probe[payload.service] = {
+    row: dict[str, Any] = {
         "observed_code_version": payload.observed_code_version,
         "live": payload.live,
     }
+    if payload.healthy_event is not None:
+        row["healthy_event"] = payload.healthy_event
+    state.probe[payload.service] = row
 
 
 def _apply_closed(state: RunState, entry: JournalEntry) -> None:
@@ -263,8 +308,8 @@ def _apply_evidence_harvested(state: RunState, _entry: JournalEntry) -> None:
     )
 
 
-def _apply_ruling_folded(state: RunState, _entry: JournalEntry) -> None:
-    payload = parse_payload(_entry.event, _entry.payload)
+def _apply_ruling_folded(state: RunState, entry: JournalEntry) -> None:
+    payload = parse_payload(entry.event, entry.payload)
     assert isinstance(payload, RulingFoldedPayload)
     state.rulings.append(payload)
     if payload.verb == "HOLD":
@@ -275,6 +320,8 @@ def _apply_ruling_folded(state: RunState, _entry: JournalEntry) -> None:
         state.blocked_reason = payload.reason or payload.verb
     elif payload.verb == "RESUME":
         state.pending_hold = False
+    elif payload.verb == "WAIVE_GATE" and payload.step == "gate":
+        state.waived_gate_attempts.add(entry.attempt)
 
 
 def _apply_ruling_ignored(state: RunState, _entry: JournalEntry) -> None:

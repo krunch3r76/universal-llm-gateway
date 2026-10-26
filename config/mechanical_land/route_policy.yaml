@@ -1,0 +1,60 @@
+# Default mechanical-land route policy (§5.1). Explicit options ≻ todo attrs ≻ this file.
+models:
+  implement:
+    model: cursor/composer-2.5
+    knobs:
+      fast: "false"
+  fix:
+    model: cursor/composer-2.5
+    knobs:
+      fast: "false"
+  evidence:
+    model: cursor/composer-2.5
+    knobs:
+      fast: "true"
+review:
+  route_order:
+    - bus_request
+    - check_review
+  bus_request:
+    to: grok-bot-gc1
+    thread: "15851"
+    subject_prefix: REQUEST|code-review
+    assignable_reviewers:
+      - grok-bot-gc1
+      - cdp/opus-5.5
+    bound_s: 1800
+  check_review:
+    model: cursor/grok-4.7
+    seat: cursor-sdk
+    contract: check-review
+    lane: B
+  route_max_each: 1
+retry:
+  gate_fix_max: 1
+  review_fix_max: 1
+  land_lease_retries: 3
+  admit_retry_max: 2
+gate:
+  ruff: true
+  pytest_scope: changed_dirs
+  pipeline_validate: true
+  subprocess_timeout_s: 600
+land:
+  mode: ff_only
+restart:
+  force_giw: false
+  propagate: false
+  wait_for_boundary: false
+  park_live: default
+probe:
+  healthy_wait_s: 300
+close:
+  todo_close: true
+  friction_close: true
+blocked_to:
+  agent: web-anthropic
+  thread: "12286"
+  also_lane_thread: true
+ruling_authors:
+  - web-anthropic

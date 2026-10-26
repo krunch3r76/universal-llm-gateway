@@ -47,6 +47,8 @@ categories:
     description: grokbot_computer_update
   maestro_landed_live:
     description: maestro_landed_live
+  mechanical_land:
+    description: mechanical_land
   jobs:
     description: Host-bound operator jobs (bounded registry; operator-only)
   writing:

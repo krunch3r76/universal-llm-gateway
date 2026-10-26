@@ -90,6 +90,8 @@ class TransitionDecidedPayload:
     attempt: int
     reason: str
     pipeline_execution_id: str | None = None
+    gate_fix_used: int | None = None
+    review_fix_used: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TransitionDecidedPayload:
@@ -117,6 +119,7 @@ class LegAdmittedPayload:
     lane: str
     sdk_mode: str | None
     packet_sha256: str
+    resume_of: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LegAdmittedPayload:
@@ -131,6 +134,7 @@ class LegAdmittedPayload:
             lane=str(data["lane"]),
             sdk_mode=str(sdk) if sdk is not None else None,
             packet_sha256=str(data["packet_sha256"]),
+            resume_of=_optional_str(data.get("resume_of")),
         )
 
 
@@ -251,6 +255,7 @@ class GateRanPayload:
     ruff: RuffGateSlice | None = None
     pytest: PytestGateSlice | None = None
     pipeline_validate: PipelineValidateSlice | None = None
+    infra_reason: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GateRanPayload:
@@ -264,6 +269,7 @@ class GateRanPayload:
             pipeline_validate=PipelineValidateSlice.from_dict(
                 data.get("pipeline_validate")
             ),
+            infra_reason=_optional_str(data.get("infra_reason")),
         )
 
 
@@ -273,6 +279,10 @@ class ReviewAdmittedPayload:
     model: str | None
     range: str
     head: str
+    route: str | None = None
+    fixes: str | None = None
+    request_thread: str | None = None
+    request_turn: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReviewAdmittedPayload:
@@ -281,6 +291,10 @@ class ReviewAdmittedPayload:
             model=_optional_str(data.get("model")),
             range=str(data["range"]),
             head=str(data["head"]),
+            route=_optional_str(data.get("route")),
+            fixes=_optional_str(data.get("fixes")),
+            request_thread=_optional_str(data.get("request_thread")),
+            request_turn=_optional_str(data.get("request_turn")),
         )
 
 
@@ -290,6 +304,10 @@ class ReviewVerdictPayload:
     verdict: ReviewVerdict
     review_dispatch_id: str | None
     bind_status: str
+    route: str | None = None
+    reviewer: str | None = None
+    review_turn: str | None = None
+    blockers: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReviewVerdictPayload:
@@ -298,16 +316,28 @@ class ReviewVerdictPayload:
             verdict=ReviewVerdict(str(data["verdict"])),
             review_dispatch_id=_optional_str(data.get("review_dispatch_id")),
             bind_status=str(data.get("bind_status", "")),
+            route=_optional_str(data.get("route")),
+            reviewer=_optional_str(data.get("reviewer")),
+            review_turn=_optional_str(data.get("review_turn")),
+            blockers=_tuple_str(data.get("blockers")),
         )
 
 
 @dataclass(frozen=True)
 class ReviewFallbackAdmittedPayload:
     model: str
+    from_route: str | None = None
+    to_route: str | None = None
+    why: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReviewFallbackAdmittedPayload:
-        return cls(model=str(data["model"]))
+        return cls(
+            model=str(data["model"]),
+            from_route=_optional_str(data.get("from_route")),
+            to_route=_optional_str(data.get("to_route")),
+            why=_optional_str(data.get("why")),
+        )
 
 
 @dataclass(frozen=True)
@@ -367,13 +397,16 @@ class ProbeRanPayload:
     service: str
     observed_code_version: str
     live: bool
+    healthy_event: bool | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProbeRanPayload:
+        he = data.get("healthy_event")
         return cls(
             service=str(data["service"]),
             observed_code_version=str(data["observed_code_version"]),
             live=bool(data["live"]),
+            healthy_event=bool(he) if he is not None else None,
         )
 
 
@@ -457,16 +490,24 @@ class BlockedPayload:
     reason_code: str
     detail: str
     posted_turn: int | None = None
+    posted_turn_lane: int | None = None
+    bound_name: str | None = None
+    bound_s: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BlockedPayload:
         posted = data.get("posted_turn")
+        posted_lane = data.get("posted_turn_lane")
+        bound_s = data.get("bound_s")
         return cls(
             step_id=str(data["step_id"]),
             attempt=int(data["attempt"]),
             reason_code=str(data["reason_code"]),
             detail=str(data["detail"]),
             posted_turn=int(posted) if posted is not None else None,
+            posted_turn_lane=int(posted_lane) if posted_lane is not None else None,
+            bound_name=_optional_str(data.get("bound_name")),
+            bound_s=int(bound_s) if bound_s is not None else None,
         )
 
 
@@ -561,6 +602,19 @@ class GateResult:
 
 
 @dataclass
+class ReviewAttemptRecord:
+    attempt: int
+    tip_sha: str | None = None
+    verdict: str | None = None
+    route: str | None = None
+    reviewer: str | None = None
+    review_turn: str | None = None
+    review_dispatch_id: str | None = None
+    fixes: str | None = None
+    blockers: tuple[str, ...] = ()
+
+
+@dataclass
 class ReviewState:
     tip_sha: str | None = None
     verdict: ReviewVerdict | None = None
@@ -569,6 +623,9 @@ class ReviewState:
     range: str | None = None
     head: str | None = None
     fallback_model: str | None = None
+    route: str | None = None
+    blockers: tuple[str, ...] = ()
+    fixes: str | None = None
 
 
 @dataclass
@@ -631,63 +688,81 @@ class RunState:
     attempt: int = 0
     flow: str = "main"
     legs: dict[str, list[LegRecord]] = field(default_factory=dict)
+    legs_journal_order: list[LegRecord] = field(default_factory=list)
     last_closeout: LegClosedPayload | None = None
     gate_results: dict[int, GateResult] = field(default_factory=dict)
     review: ReviewState = field(default_factory=ReviewState)
+    review_history: list[ReviewAttemptRecord] = field(default_factory=list)
     land: LandState = field(default_factory=LandState)
     restart: RestartState = field(default_factory=RestartState)
     probe: dict[str, dict[str, Any]] = field(default_factory=dict)
     rulings: list[RulingFoldedPayload | RulingIgnoredPayload] = field(
         default_factory=list
     )
+    gate_fix_used: int = 0
+    review_fix_used: int = 0
+    waived_gate_attempts: set[int] = field(default_factory=set)
+    review_admitted_pending: bool = False
     pending_hold: bool = False
     blocked_reason: str | None = None
     evidence: EvidenceState | None = None
     close: CloseState = field(default_factory=CloseState)
     tip_seq: int = 0
     active_flows: set[str] = field(default_factory=lambda: {"main"})
+    folded_verdict_keys: set[tuple[str, str | None]] = field(default_factory=set)
 
     def result_json(self) -> dict[str, Any]:
         """§9 result shape derived from the folded state."""
         legs_out: list[dict[str, Any]] = []
-        for step_id in ("implement", "fix", "review", "evidence"):
-            for leg in self.legs.get(step_id, []):
-                if leg.closeout_status is None:
-                    continue
-                legs_out.append(
-                    {
-                        "step": leg.step_id,
-                        "attempt": leg.attempt,
-                        "dispatch_id": leg.dispatch_id,
-                        "closeout_status": leg.closeout_status,
-                        "head_sha": leg.head_sha,
-                    }
-                )
+        for leg in self.legs_journal_order:
+            if leg.closeout_status is None:
+                continue
+            row: dict[str, Any] = {
+                "step": leg.step_id,
+                "attempt": leg.attempt,
+                "dispatch_id": leg.dispatch_id,
+                "closeout_status": leg.closeout_status,
+                "head_sha": leg.head_sha,
+            }
+            legs_out.append(row)
         gate_out: list[dict[str, Any]] = []
         for attempt in sorted(self.gate_results):
             gr = self.gate_results[attempt]
-            row: dict[str, Any] = {"attempt": attempt, "verdict": gr.verdict.value}
+            row = {"attempt": attempt, "verdict": gr.verdict.value}
             if gr.ruff_exit is not None:
                 row["ruff_exit"] = gr.ruff_exit
             if gr.pytest_exit is not None:
                 row["pytest_exit"] = gr.pytest_exit
             gate_out.append(row)
-        review_out: dict[str, Any] | None = None
-        if self.review.verdict is not None:
-            review_out = {
-                "tip_sha": self.review.tip_sha,
-                "verdict": self.review.verdict.value,
-                "review_dispatch_id": self.review.review_dispatch_id,
-            }
+        review_out: list[dict[str, Any]] = []
+        for rec in self.review_history:
+            item: dict[str, Any] = {"attempt": rec.attempt}
+            if rec.tip_sha is not None:
+                item["tip_sha"] = rec.tip_sha
+            if rec.verdict is not None:
+                item["verdict"] = rec.verdict
+            if rec.route is not None:
+                item["route"] = rec.route
+            if rec.reviewer is not None:
+                item["reviewer"] = rec.reviewer
+            if rec.review_turn is not None:
+                item["review_turn"] = rec.review_turn
+            if rec.review_dispatch_id is not None:
+                item["review_dispatch_id"] = rec.review_dispatch_id
+            if rec.fixes is not None:
+                item["fixes"] = rec.fixes
+            review_out.append(item)
         land_out: dict[str, Any] | None = None
         if self.land.before_sha is not None:
             land_out = {
                 "before_sha": self.land.before_sha,
                 "after_sha": self.land.after_sha,
+                "pushed": False,
             }
         restart_out = {
             "restart_set": list(self.restart.restart_set),
             "intents": list(self.restart.intents),
+            "wait_for_boundary": False,
         }
         close_out: dict[str, Any] | None = None
         if self.close.todo_close is not None:
@@ -714,7 +789,7 @@ class RunState:
             "source_ref": self.source_ref,
             "legs": legs_out,
             "gate": gate_out,
-            "review": review_out,
+            "review": review_out if review_out else None,
             "land": land_out,
             "restart": restart_out,
             "probe": dict(self.probe),

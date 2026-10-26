@@ -888,12 +888,19 @@ def test_fold_synthetic_20607_sequence_matches_section9_shape() -> None:
             {"attempt": 1, "verdict": "red", "ruff_exit": 1, "pytest_exit": 0},
             {"attempt": 2, "verdict": "green", "ruff_exit": 0, "pytest_exit": 0},
         ],
-        "review": {
-            "tip_sha": HEAD_SHA,
-            "verdict": "APPROVE",
-            "review_dispatch_id": REVIEW_DISPATCH,
+        "review": [
+            {
+                "attempt": 1,
+                "tip_sha": HEAD_SHA,
+                "verdict": "APPROVE",
+                "review_dispatch_id": REVIEW_DISPATCH,
+            }
+        ],
+        "land": {
+            "before_sha": MASTER_BEFORE,
+            "after_sha": MASTER_AFTER,
+            "pushed": False,
         },
-        "land": {"before_sha": MASTER_BEFORE, "after_sha": MASTER_AFTER},
         "restart": {
             "restart_set": ["universal-stargate"],
             "intents": [
@@ -903,6 +910,7 @@ def test_fold_synthetic_20607_sequence_matches_section9_shape() -> None:
                     "state": "pending_drain",
                 }
             ],
+            "wait_for_boundary": False,
         },
         "probe": {
             "universal-stargate": {

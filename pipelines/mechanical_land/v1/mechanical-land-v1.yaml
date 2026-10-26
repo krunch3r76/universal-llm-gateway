@@ -1,0 +1,47 @@
+# mechanical-land — pure transition pipeline (§3.1)
+schema_version: 6
+id: mechanical-land
+version: "1.0"
+type: mechanical_land
+category: mechanical_land
+description: >
+  Stamp policy at birth, fold the run journal, decide the next transition,
+  render the next leg's packet. No model calls. Side effects only in commit
+  when pipeline_options.op == start.
+output: plan
+
+options:
+  timeout_seconds: 30
+
+steps:
+  - name: validate
+    type: mechanical_land_validate_v1
+
+  - name: stamp_policy
+    type: mechanical_land_stamp_policy_v1
+    condition: "validate.json.get('op') == 'start'"
+
+  - name: transition
+    type: mechanical_land_transition_v1
+
+  - name: render_packet
+    type: mechanical_land_render_packet_v1
+    condition: "transition.json.get('needs_packet') is True"
+    handler_inputs:
+      transition: transition.json
+      validate: validate.json
+      stamp_policy: stamp_policy.json
+
+  - name: plan
+    type: mechanical_land_plan_v1
+    handler_inputs:
+      validate: validate.json
+      stamp_policy: stamp_policy.json
+      transition: transition.json
+      render_packet: render_packet.json
+
+  - name: commit
+    type: mechanical_land_commit_v1
+    condition: "validate.json.get('op') == 'start' and plan.json.get('admitted') is True"
+    handler_inputs:
+      plan: plan.json
