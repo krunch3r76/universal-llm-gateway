@@ -10,16 +10,16 @@ _CTA_VERBS = (
     r"apply|applied|submit|submitted|complete|completed|"
     r"book|booked|schedule|scheduled|register|registered|upload|uploaded"
 )
+_LINK_TARGET = r"(?:the\s+)?(?:link|portal|form|site|url|page|https?://\S+)"
 _ACTION_CONFIRM = re.compile(
     rf"(?:"
-    rf"i\s+(?:{_CTA_VERBS})\b|"
-    rf"i(?:'ve|\s+have)\s+(?:{_CTA_VERBS}|signed\s+up)|"
-    rf"i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:{_CTA_VERBS}|sign\s+up)|"
-    rf"(?:{_CTA_VERBS})\s+(?:through|via|at|on)\b|"
-    rf"(?:{_CTA_VERBS})\s+(?:the\s+)?(?:link|portal|form|site)\b|"
-    rf"sign(?:ed)?\s+up\s+(?:through|via|at|on)\b|"
-    r"submitting\s+my\s+(?:application|registration)\b|"
-    rf"my\s+(?:application|registration)\s+(?:was\s+)?(?:{_CTA_VERBS})"
+    rf"\bi(?:'ve|\s+have)\s+(?:{_CTA_VERBS}|signed\s+up)\b|"
+    rf"\bi(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:{_CTA_VERBS}|sign\s+up)\b|"
+    rf"\bi\s+(?:{_CTA_VERBS})\b|"
+    rf"\bsubmitting\s+my\s+(?:application|registration)\b|"
+    rf"\bmy\s+(?:application|registration)\s+(?:was\s+)?(?:{_CTA_VERBS})\b|"
+    rf"\b(?:apply|applied|submit|submitted|registered|register|signed\s+up|sign\s+up)"
+    rf"\s+(?:through|via|at)\s+{_LINK_TARGET}\b"
     rf")",
     re.I,
 )
@@ -153,12 +153,17 @@ def apply_audit_overlay(
     if not _covering_in_body(covering, body):
         return dict(base)
 
-    if obligation == "act_outside_message":
-        if status == "addressed" and not _ACTION_CONFIRM.search(covering):
+    if status == "declined_with_reason" and det_status == "missing":
+        if not _sentence_declines(covering):
             return dict(base)
-        if det_status == "missing" and status == "addressed":
-            if not _ACTION_CONFIRM.search(covering):
+        if obligation != "act_outside_message":
+            quoted_tokens = _tokens(str(base.get("quoted_span") or ""))
+            if quoted_tokens and not (quoted_tokens & _tokens(covering)):
                 return dict(base)
+
+    if obligation == "act_outside_message" and status == "addressed":
+        if not _ACTION_CONFIRM.search(covering):
+            return dict(base)
 
     row = {**base, **audit, "status": status, "covering_sentence": covering}
     row["reply_mode"] = _reply_mode(base, status)

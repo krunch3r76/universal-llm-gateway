@@ -442,6 +442,159 @@ def test_s1_audit_cannot_override_missing_act_outside_message() -> None:
     assert payload.get("refused") == "obligation_coverage_failed"
 
 
+def test_s1_audit_declined_with_reason_cannot_override_missing_without_decline_phrase() -> None:
+    src = _run_source(_MERIDIAL)
+    act_id = next(
+        o["id"]
+        for o in src["obligations"]
+        if o.get("obligation") == "act_outside_message"
+    )
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thanks for reaching out. I'd love to chat more about the team.\n\n"
+        "Best,\nPat"
+    )
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": src["obligations"]}),
+        "obligation_coverage": _Out(
+            {
+                "coverage_map": [
+                    {
+                        "id": act_id,
+                        "kind": "call_to_action",
+                        "obligation": "act_outside_message",
+                        "reply_mode": "omit_with_reason",
+                        "status": "declined_with_reason",
+                        "covering_sentence": "I'd love to chat more about the team.",
+                    }
+                ]
+            }
+        ),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") == "obligation_coverage_failed"
+
+
+def test_s1_audit_declined_with_reason_passes_when_sentence_explicitly_declines() -> None:
+    act_id = "O-act"
+    obligations = [
+        {
+            "id": act_id,
+            "quoted_span": "apply here at https://meridial.ai/apply",
+            "kind": "call_to_action",
+            "obligation": "act_outside_message",
+            "semantic_reading": "apply",
+        }
+    ]
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thanks for reaching out. I will not be applying for this role.\n\n"
+        "Best,\nPat"
+    )
+    outputs = {
+        "assemble": _Out(
+            {
+                "ok": True,
+                "refused": None,
+                "channel": "email",
+                "pin_ledger": [{"pin_id": "P1", "attested": True}],
+                "writer_seat": "local",
+                "reviewer_seat": "local",
+                "output": "envelope",
+            }
+        ),
+        "source_obligations": _Out({"obligations": obligations}),
+        "obligation_coverage": _Out(
+            {
+                "coverage_map": [
+                    {
+                        "id": act_id,
+                        "kind": "call_to_action",
+                        "obligation": "act_outside_message",
+                        "reply_mode": "omit_with_reason",
+                        "status": "declined_with_reason",
+                        "covering_sentence": "I will not be applying for this role.",
+                    }
+                ]
+            }
+        ),
+        "draft": _Out({"ok": True, "draft": draft}),
+        "independence": _Out(
+            {
+                "refused": None,
+                "writer_model": "anthropic/claude-sonnet-5-5",
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
+        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "provenance_check": _Out({"violations": []}),
+        "prose_rhythm_pass": _Out(None, raw=draft),
+        "fact_ceiling_final": _Out({"violations": []}),
+    }
+    payload = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+    ).json
+    assert payload is not None
+    assert payload.get("refused") is None
+    cov_map = payload.get("coverage_map") or []
+    act_row = next(row for row in cov_map if row.get("id") == act_id)
+    assert act_row["status"] == "declined_with_reason"
+
+
+def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
+    sentence = (
+        "I'm fully booked on Monday and the project was completed at Google."
+    )
+    assert _obligation._ACTION_CONFIRM.search(sentence) is None
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "apply here at https://meridial.ai/apply",
+            "kind": "call_to_action",
+            "obligation": "act_outside_message",
+            "semantic_reading": "apply",
+        }
+    ]
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: Re: role\n\n"
+        f"{sentence}\n\n"
+        "Best,\nPat"
+    )
+    cov = _obligation.coverage_map_for_draft(
+        draft, _obligation.actionable_obligations(obligations)
+    )
+    assert cov[0]["status"] == "missing"
+
+
 def test_body_sentences_keep_terminal_punctuation_lines() -> None:
     draft = (
         "To: client@example.com\n"
