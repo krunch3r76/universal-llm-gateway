@@ -601,6 +601,32 @@ verify_sync_nonce_survived() {
   echo "Verified sync nonce survived restart (writable layer intact)."
 }
 
+_mcp_container_running() {
+  docker inspect -f '{{.State.Running}}' mcp-server 2>/dev/null | grep -qx true
+}
+
+_chown_mcp_app_tree() {
+  local c=mcp-server img
+  img="$(docker inspect -f '{{.Config.Image}}' "$c" 2>/dev/null || true)"
+  if [[ -z "$img" ]]; then
+    echo "ERROR: cannot resolve image for ${c} chown." >&2
+    return 1
+  fi
+  if _mcp_container_running; then
+    docker exec -u 0 "$c" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
+      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
+    docker exec -u 0 "$c" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  else
+    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
+      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
+    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  fi
+}
+
 sync_source_into_container() {
   local c=mcp-server
   arm_restore_window
@@ -624,21 +650,26 @@ sync_source_into_container() {
     docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
       "${c}:/app/services/mcp-server/tools/local/"
   fi
-  docker exec -u 0 "$c" chown -R mcp:mcp \
-    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
-    /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
-  docker exec -u 0 "$c" chown -R mcp:mcp \
-    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
-  write_sync_nonce
+  _chown_mcp_app_tree
+  if _mcp_container_running; then
+    write_sync_nonce
+  fi
+}
+
+# Create container stopped, sync working tree, then start — never boot stale image COPY alone.
+bootstrap_mcp_container_from_tree() {
+  echo "Creating mcp-server (stopped) → sync tree → start..."
+  arm_restore_window
+  docker compose "${COMPOSE_ARGS[@]}" up -d --no-start mcp-server
+  sync_source_into_container
+  docker start mcp-server
 }
 
 ensure_mcp_container() {
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
     return 0
   fi
-  echo "MCP container not found — creating from existing image (no rebuild)..."
-  arm_restore_window
-  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  bootstrap_mcp_container_from_tree
   wait_for_mcp_healthy || return 1
 }
 
@@ -747,23 +778,23 @@ if [[ "$NO_CACHE" == "true" ]]; then
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
   set +e
+  gate image-boot-probe
+  boot_probe_rc=$?
   gate import-probe
   probe_rc=$?
   set -e
-  if [[ "$probe_rc" != 0 ]]; then
+  if [[ "$boot_probe_rc" != 0 || "$probe_rc" != 0 ]]; then
     gate retag-local-from-last-healthy || true
-    echo "ERROR: post-build MCP import probe failed — reverted :local to :last-healthy." >&2
+    echo "ERROR: post-build MCP probe failed (image-boot=${boot_probe_rc}, import=${probe_rc}) — reverted :local to :last-healthy." >&2
     exit 1
   fi
   INCOMING_SHA="$(gate source-tree-sha)"
   gate write-pending "$INCOMING_SHA"
   arm_restore_window
   remove_mcp_container_for_image_recreate
-  echo "Starting MCP server..."
-  arm_restore_window
-  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  echo "Starting MCP server (bootstrap sync before first boot)..."
+  bootstrap_mcp_container_from_tree
   write_source_sync_stamp_before_serving_restart
-  restart_mcp_gracefully
 else
   ensure_mcp_container
   if container_passthrough_env_keys_differ; then
@@ -777,7 +808,7 @@ else
       exit 1
     fi
     arm_restore_window
-    docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+    bootstrap_mcp_container_from_tree
   fi
   _STAMP_HEAD_BEFORE="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
   _STAMP_CLASS_BEFORE="$(read_stamp_classification "$WORKSPACE_ROOT" 2>/dev/null || true)"

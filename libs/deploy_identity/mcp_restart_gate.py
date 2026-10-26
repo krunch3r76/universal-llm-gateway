@@ -402,6 +402,51 @@ def _emit_import_probe(signal: str, detail: str) -> None:
     emit_restart_event(signal, {"detail": detail})
 
 
+_IMAGE_BOOT_PROBE_BODY = (
+    "from pathlib import Path\n"
+    "text = Path('/app/services/mcp-server/server.py').read_text()\n"
+    "if 'mcp.remove_tool(' in text:\n"
+    "    raise SystemExit('image server.py uses removed FastMCP.remove_tool API')\n"
+    "if 'local_provider.remove_tool' not in text:\n"
+    "    raise SystemExit('image server.py missing local_provider.remove_tool prune path')\n"
+)
+
+
+def run_image_boot_probe(*, image: str = LOCAL_IMAGE) -> int:
+    """Lint ``server.py`` in the image only (no workspace bind mounts).
+
+    The tree-mounted ``import-probe`` cold-imports modules from the working tree;
+    this probe catches stale ``COPY services/`` layers that would crash on first
+    boot after ``docker rm`` before ``docker cp`` sync runs.
+    """
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "python",
+        image,
+        "-c",
+        _IMAGE_BOOT_PROBE_BODY,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=PROBE_WALL_S, check=False
+        )
+    except subprocess.TimeoutExpired:
+        _emit_import_probe("mcp.restart.check.timeout", "image boot probe timed out")
+        return 2
+    if proc.returncode != 0:
+        _emit_import_probe(
+            "mcp.restart.check.failed",
+            _probe_output_detail(proc) or "image boot probe failed",
+        )
+        return 1
+    return 0
+
+
 def run_import_probe(workspace_root: Path, *, image: str = LOCAL_IMAGE) -> int:
     """Run the throwaway import probe in *image*.
 
@@ -736,6 +781,8 @@ def _cli() -> int:
     sub.add_parser("snapshot-if-healthy")
     p_probe = sub.add_parser("import-probe")
     p_probe.add_argument("--image", default=LOCAL_IMAGE)
+    p_boot = sub.add_parser("image-boot-probe")
+    p_boot.add_argument("--image", default=LOCAL_IMAGE)
     p_pending = sub.add_parser("write-pending")
     p_pending.add_argument("sha")
     sub.add_parser("promote-booted")
@@ -770,6 +817,8 @@ def _cli() -> int:
     if args.op == "import-probe":
         rc = run_import_probe(root, image=args.image)
         return rc
+    if args.op == "image-boot-probe":
+        return run_image_boot_probe(image=args.image)
     if args.op == "write-pending":
         write_pending(mcp_data, args.sha)
         return 0

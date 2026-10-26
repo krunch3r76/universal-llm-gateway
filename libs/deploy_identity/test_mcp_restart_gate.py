@@ -24,6 +24,7 @@ from deploy_identity.mcp_restart_gate import (
     publish_snapshot_from_container,
     read_booted,
     read_pending,
+    run_image_boot_probe,
     run_import_probe,
     snapshot_present,
     source_tree_sha,
@@ -620,6 +621,30 @@ def test_cold_import_script_uses_one_interpreter_per_module(
         [sys.executable, "-c", f"import {module}"] for module in COLD_IMPORTS
     ]
     assert len(calls) == 4
+
+
+def test_image_boot_probe_emits_check_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Image-only boot probe failure emits mcp.restart.check.failed."""
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "deploy_identity.mcp_restart_events.emit_restart_event",
+        lambda signal, payload: events.append((signal, dict(payload))),
+    )
+
+    def _run(args: list[str], **_kwargs: object) -> _Proc:
+        assert "mcp.remove_tool(" in args[-1] or "server.py" in args[-1]
+        return _Proc(1, b"", b"removed FastMCP.remove_tool API")
+
+    monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
+    assert run_image_boot_probe(image="universal-mcp-server:local") == 1
+    assert events == [
+        (
+            "mcp.restart.check.failed",
+            {"detail": "removed FastMCP.remove_tool API"},
+        )
+    ]
 
 
 def test_import_probe_emits_check_failed(

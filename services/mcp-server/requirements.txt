@@ -9,7 +9,7 @@ requests-oauthlib>=2.0
 trafilatura>=1.12
 pyyaml>=6.0
 jsonschema>=4.18
-playwright>=1.42.0
+playwright
 python-multipart>=0.0.9
 pdfplumber>=0.11
 pymupdf4llm>=0.0.17

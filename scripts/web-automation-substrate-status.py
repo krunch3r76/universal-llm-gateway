@@ -170,7 +170,9 @@ def build_report() -> dict[str, Any]:
         "repair_hints": [
             "Jupiter lane down: services/jupiter-cdp/pin-go-live <lane> (on io repo path)",
             "Tunnel down: scripts.local/cdp/tunnel-ensure.sh ensure <lane> --remote",
-            "Playwright out of sync: ~/.venvs/universal/bin/playwright install",
+            "Playwright out of sync: ~/.venvs/universal/bin/playwright install chromium firefox",
+            "MCP browser_* (container Firefox): rebuild mcp-server image after pip bump "
+            "(scripts/sync-and-restart-mcp.sh --no-cache); telemetry: mcp.browser.*",
         ],
     }
 
