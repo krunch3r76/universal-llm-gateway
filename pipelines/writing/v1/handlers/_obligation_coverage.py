@@ -142,6 +142,10 @@ _INTENT_ACTION_NEGATION = re.compile(
     r"cannot|can't|unable\s+to|without)\b",
     re.I,
 )
+_PAST_ACTION_TRAILING_NEGATION = re.compile(
+    r"\b(?:but\s+i\s+(?:haven't|have\s+not|didn't|did\s+not|never))\b",
+    re.I,
+)
 
 
 def _match_is_negated(
@@ -155,11 +159,23 @@ def _match_is_negated(
 
 
 def _has_affirmative_past_action(text: str) -> bool:
+    """Past-action on operator pin excerpts; negation windows fail safe."""
     norm = _normalize_apostrophes(text)
     for match in _PAST_ACTION_CONFIRM.finditer(norm):
-        if not _match_is_negated(norm, match, _PAST_ACTION_NEGATION):
-            return True
+        if _match_is_negated(norm, match, _PAST_ACTION_NEGATION):
+            continue
+        trailing = norm[match.end() : match.end() + 25]
+        if _PAST_ACTION_TRAILING_NEGATION.search(trailing):
+            continue
+        return True
     return False
+
+
+def _draft_sentence_has_past_action_claim(sentence: str) -> bool:
+    """Raw past-action regex on draft text; no negation window (fail closed)."""
+    return (
+        _PAST_ACTION_CONFIRM.search(_normalize_apostrophes(sentence)) is not None
+    )
 
 
 def _has_affirmative_intent_action(text: str) -> bool:
@@ -196,9 +212,9 @@ def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
 
 
 def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
-    if _has_affirmative_past_action(sentence) and not act_attested:
+    if not act_attested and _draft_sentence_has_past_action_claim(sentence):
         return False
-    if act_attested and _has_affirmative_past_action(sentence):
+    if act_attested and _draft_sentence_has_past_action_claim(sentence):
         return True
     if _has_affirmative_intent_action(sentence):
         return True
@@ -208,7 +224,7 @@ def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
 def _body_has_unattested_past_claim(body: str, *, act_attested: bool) -> bool:
     if act_attested:
         return False
-    return any(_has_affirmative_past_action(s) for s in _sentences(body))
+    return any(_draft_sentence_has_past_action_claim(s) for s in _sentences(body))
 
 
 def _tokens(text: str) -> set[str]:
@@ -363,7 +379,7 @@ def verify_obligation(
     if obligation == "act_outside_message":
         if not act_attested:
             for sentence in body_sentences:
-                if _has_affirmative_past_action(sentence):
+                if _draft_sentence_has_past_action_claim(sentence):
                     return "missing", ""
         for sentence in body_sentences:
             if _act_outside_sentence_covers(sentence, act_attested=act_attested):

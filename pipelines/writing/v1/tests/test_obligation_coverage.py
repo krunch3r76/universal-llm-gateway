@@ -1033,7 +1033,7 @@ def test_act_outside_b2_body_wide_unattested_past_fails_finalize() -> None:
         "Subject: AI Trust and Safety application\n\n"
         "Thank you for the AI Trust and Safety outreach. "
         "I applied through the link. "
-        "I will submit the form via the portal.\n\n"
+        "I'll apply through the link for the second role.\n\n"
         "Best,\nPat"
     )
     cov = _obligation.coverage_map_for_draft(
@@ -1097,6 +1097,42 @@ def test_act_outside_b3_negated_pin_excerpt_not_attested_act() -> None:
             draft, obligations, pin_ledger=pin_ledger
         )
         assert cov[0]["status"] == "missing"
+    trailing_neg = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I was going to say I applied through the link, but I haven't.",
+        }
+    ]
+    assert _obligation.has_attested_external_act(trailing_neg) is False
+
+
+def test_act_outside_b4_clause_openers_with_unattested_past_claim_fail() -> None:
+    obligations = _meridial_act_obligation()
+    pin_ledger: list[dict[str, Any]] = []
+    suffix = " I'll apply through the link for the second role."
+    bodies = [
+        "Not to worry, I applied through the portal." + suffix,
+        (
+            "No need to resend anything; I submitted my application through "
+            "the portal." + suffix
+        ),
+        "I didn't hesitate - I applied through the portal." + suffix,
+        "Not a problem: I submitted my application through the portal." + suffix,
+        (
+            "Without delay I applied through the portal, and I will apply "
+            "through the link too."
+        ),
+    ]
+    for body in bodies:
+        draft = (
+            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+            f"{body}\n\nBest,\nPat"
+        )
+        cov = _obligation.coverage_map_for_draft(
+            draft, obligations, pin_ledger=pin_ledger
+        )
+        assert cov[0]["status"] == "missing", body
 
 
 def test_obligation_coverage_handler_emits_missing_block() -> None:
