@@ -20,5 +20,7 @@ template: |
   Include lead_pin_id, beat_order, audience_posture, negative_constraints, char_budget.
   When <source_obligations> is non-empty, beat_order must map every obligation with
   obligation != none to a beat with reply_mode in {answer_in_message, act_then_confirm, ask_back}
-  or to an explicit omit_with_reason.
+  or to an explicit omit_with_reason. For act_outside_message: map to act_then_confirm only when
+  an attested pin confirms the external action was already completed; otherwise map to ask_back
+  (intent-conditional or ask-back wording — never act_then_confirm without attested completion).
   Do not introduce proper nouns or numbers absent from the blocks above.

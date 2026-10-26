@@ -74,6 +74,8 @@ def _merge_model_coverage(
     deterministic: list[dict[str, Any]],
     model_rows: list[dict[str, Any]] | None,
     draft_text: str,
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Prefer valid model rows per id; keep deterministic rows for gaps."""
     if not model_rows:
@@ -84,7 +86,11 @@ def _merge_model_coverage(
         oid = str(base.get("id") or "")
         model_row = by_id.get(oid)
         if model_row and model_row.get("status") in _VALID_STATUS:
-            merged.append(apply_audit_overlay(base, model_row, draft_text))
+            merged.append(
+                apply_audit_overlay(
+                    base, model_row, draft_text, pin_ledger=pin_ledger
+                )
+            )
         else:
             merged.append(dict(base))
     return merged
@@ -124,6 +130,7 @@ class WritingObligationCoverageHandler(BaseHandler):
             else getattr(draft_out, "json", None)
         )
         draft_text = _draft_text(draft_json if isinstance(draft_json, dict) else None)
+        pin_ledger = list(assemble_json.get("pin_ledger") or [])
         if not actionable or not draft_text.strip():
             return _step(
                 {
@@ -133,7 +140,9 @@ class WritingObligationCoverageHandler(BaseHandler):
                     "missing_obligations_block": "",
                 }
             )
-        deterministic = coverage_map_for_draft(draft_text, actionable)
+        deterministic = coverage_map_for_draft(
+            draft_text, actionable, pin_ledger=pin_ledger
+        )
         model_rows: list[dict[str, Any]] | None = None
         src_block = str((src_json or {}).get("source_obligations_block") or "")
         template = _prompt_template()
@@ -166,7 +175,9 @@ class WritingObligationCoverageHandler(BaseHandler):
                 )
             except Exception:  # noqa: BLE001
                 model_rows = None
-        coverage_map = _merge_model_coverage(deterministic, model_rows, draft_text)
+        coverage_map = _merge_model_coverage(
+            deterministic, model_rows, draft_text, pin_ledger=pin_ledger
+        )
         missing_count = sum(
             1 for row in coverage_map if row.get("status") == "missing"
         )

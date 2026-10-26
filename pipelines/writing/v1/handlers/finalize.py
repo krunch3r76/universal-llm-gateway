@@ -291,6 +291,7 @@ def _obligation_coverage_gate(
     revision_ran: bool,
     architect_brief: str = "",
     channel: str = "",
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Re-score obligations on the shipped body; return coverage_map and optional refusal."""
     actionable = actionable_obligations(obligations)
@@ -301,6 +302,7 @@ def _obligation_coverage_gate(
         obligations,
         audit_map,
         selected=selected,
+        pin_ledger=pin_ledger,
     )
     coverage_map = _apply_architect_omit_with_reason(
         coverage_map, architect_brief, channel=channel
@@ -654,6 +656,7 @@ class WritingFinalizeHandler(BaseHandler):
             revision_ran=revision_ran,
             architect_brief=architect_brief,
             channel=channel,
+            pin_ledger=list(assemble.get("pin_ledger") or []),
         )
         if obl_refusal is not None:
             passed = False

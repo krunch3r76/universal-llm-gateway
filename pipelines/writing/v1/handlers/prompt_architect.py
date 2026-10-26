@@ -15,6 +15,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 
+from ._obligation_coverage import has_attested_external_act
 from .assemble import _fence
 from .independence import load_writing_models
 
@@ -107,7 +108,11 @@ def _filing_exhibit_rule(intake: dict[str, Any]) -> str:
     )
 
 
-def _obligation_map_line(obligations: list[dict[str, Any]]) -> str:
+def _obligation_map_line(
+    obligations: list[dict[str, Any]],
+    *,
+    act_attested: bool = False,
+) -> str:
     parts: list[str] = []
     for row in obligations:
         if str(row.get("obligation") or "none") == "none":
@@ -115,11 +120,10 @@ def _obligation_map_line(obligations: list[dict[str, Any]]) -> str:
         oid = str(row.get("id") or "")
         if not oid:
             continue
-        mode = (
-            "act_then_confirm"
-            if str(row.get("obligation")) == "act_outside_message"
-            else "answer_in_message"
-        )
+        if str(row.get("obligation")) == "act_outside_message":
+            mode = "act_then_confirm" if act_attested else "ask_back"
+        else:
+            mode = "answer_in_message"
         parts.append(f"{oid}: {mode}")
     if not parts:
         return ""
@@ -130,6 +134,8 @@ def _fallback_brief(
     blocks: dict[str, str],
     intake: dict[str, Any],
     obligations: list[dict[str, Any]] | None = None,
+    *,
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> str:
     max_chars = intake.get("max_chars")
     budget = str(max_chars) if max_chars else "none"
@@ -144,7 +150,10 @@ def _fallback_brief(
         constraints,
         f"char_budget: {budget}",
     ]
-    map_line = _obligation_map_line(list(obligations or []))
+    act_attested = has_attested_external_act(pin_ledger or [])
+    map_line = _obligation_map_line(
+        list(obligations or []), act_attested=act_attested
+    )
     if map_line:
         lines.append(map_line)
     lines.extend(
@@ -222,7 +231,9 @@ class WritingPromptArchitectHandler(BaseHandler):
                 )
                 content = result.content
         except Exception as exc:  # noqa: BLE001
-            brief = _fallback_brief(blocks, intake, obligations)
+            brief = _fallback_brief(
+                blocks, intake, obligations, pin_ledger=pin_ledger
+            )
             return _step(
                 {
                     "ok": True,
@@ -235,7 +246,9 @@ class WritingPromptArchitectHandler(BaseHandler):
         raw = content if isinstance(content, str) else str(content or "")
         brief, valid = _validate_architect_brief(raw, pin_ledger, intake, obligations)
         if not valid:
-            brief = _fallback_brief(blocks, intake, obligations)
+            brief = _fallback_brief(
+                blocks, intake, obligations, pin_ledger=pin_ledger
+            )
             return _step(
                 {
                     "ok": True,
