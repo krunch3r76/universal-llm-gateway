@@ -103,9 +103,7 @@ def departing_tail_pids(root_id: str, labels: Iterable[str]) -> list[int]:
             continue
         label = _label_from_argv(argv)
         if label and (
-            label in wanted
-            or label.startswith(prefix)
-            or label.startswith(house)
+            label in wanted or label.startswith(prefix) or label.startswith(house)
         ):
             out.append(int(proc.info["pid"]))
     return out

@@ -664,9 +664,7 @@ def test_import_probe_emits_check_failed(
 
     monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
     assert run_import_probe(tmp_path) == 1
-    assert events == [
-        ("mcp.restart.check.failed", {"detail": "ImportError: server"})
-    ]
+    assert events == [("mcp.restart.check.failed", {"detail": "ImportError: server"})]
 
 
 def test_import_probe_emits_check_timeout(
@@ -680,7 +678,9 @@ def test_import_probe_emits_check_timeout(
     )
 
     def _run(args: list[str], **kwargs: object) -> _Proc:
-        raise subprocess.TimeoutExpired(cmd=args, timeout=float(kwargs.get("timeout", 120)))
+        raise subprocess.TimeoutExpired(
+            cmd=args, timeout=float(kwargs.get("timeout", 120))
+        )
 
     monkeypatch.setattr("deploy_identity.mcp_restart_gate.subprocess.run", _run)
     assert run_import_probe(tmp_path) == 2
@@ -722,6 +722,4 @@ def test_emit_log_cli_emits_restart_log(
     from deploy_identity.mcp_restart_gate import _cli
 
     assert _cli() == 0
-    assert events == [
-        ("mcp.restart.log", {"detail": "ERROR: MCP import probe failed"})
-    ]
+    assert events == [("mcp.restart.log", {"detail": "ERROR: MCP import probe failed"})]

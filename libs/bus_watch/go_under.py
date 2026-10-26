@@ -24,8 +24,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
-
 from bus_watch.digest_budget import effective_policy
 from bus_watch.fable_lock import (
     WATCH_DIR,
@@ -37,6 +35,8 @@ from bus_watch.fable_lock import (
 from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.tick_state import save_state
+
+_HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
 
 
 def _utcnow() -> str:
