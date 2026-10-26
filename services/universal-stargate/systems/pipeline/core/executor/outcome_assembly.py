@@ -16,6 +16,7 @@ from typing import Any
 
 from ..execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
 from ..handlers import StepOutput
+from ..schemas import StepConfig
 from .output_resolution import (
     content_when_output_skipped,
     extract_backtranslation_data,
@@ -23,6 +24,32 @@ from .output_resolution import (
     get_final_result,
 )
 from .prepared import PreparedPipelineExecution, execution_logger
+
+
+def _extract_archive_uri_and_tool_errors(
+    pipeline_context: Any,
+    steps: list[StepConfig],
+    execution_order: list[str],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Read ``artifact_uri`` and failed dispatch tool calls from DAG step outputs."""
+    step_type_by_id = {step.name: step.type for step in steps}
+    archive_uri: str | None = None
+    tool_errors: list[dict[str, Any]] = []
+
+    for step_id in execution_order:
+        out = pipeline_context.outputs.get(step_id)
+        if not isinstance(out, StepOutput) or not isinstance(out.json, dict):
+            continue
+        step_type = step_type_by_id.get(step_id, "")
+        if step_type == "archive_assistant_turn_v1" or step_id == "archive_assistant":
+            uri = out.json.get("artifact_uri")
+            if isinstance(uri, str) and uri.strip():
+                archive_uri = uri.strip()
+        if step_type == "frontier_dispatch_v1" or step_id == "respond":
+            for tc in out.json.get("tool_calls") or []:
+                if isinstance(tc, dict) and not tc.get("ok", True):
+                    tool_errors.append(tc)
+    return archive_uri, tool_errors
 
 
 def _aggregate_optional_step_int(
@@ -129,6 +156,12 @@ def assemble_outcome(
         list(dag_executor.execution_order),
     )
 
+    archive_uri, tool_errors = _extract_archive_uri_and_tool_errors(
+        pipeline_context,
+        prepared.steps,
+        list(dag_executor.execution_order),
+    )
+
     return PipelineExecutionOutcome(
         execution_id=pipeline_context.execution_id,
         content=final_result,
@@ -151,4 +184,6 @@ def assemble_outcome(
         model_entity_id=model_entity_id,
         hints=hints,
         stop=dag_executor.stop,
+        archive_uri=archive_uri,
+        tool_errors=tool_errors or None,
     )

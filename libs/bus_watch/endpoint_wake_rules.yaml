@@ -9,6 +9,8 @@ rules:
     action: suppress
   - id: wake_maestro_ack_batch
     action: wake
+  - id: wake_maestro_direct_address
+    action: wake
   - id: drop_maestro_telemetry
     action: suppress
   - id: wake_cursor_gate_on_interm

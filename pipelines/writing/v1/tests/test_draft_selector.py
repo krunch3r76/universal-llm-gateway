@@ -25,6 +25,7 @@ if _PKG not in sys.modules:
     _spec.loader.exec_module(_mod)
 
 draft_selector = importlib.import_module("writing_v1_handlers.draft_selector")
+email_envelope = importlib.import_module("writing_v1_handlers.email_envelope")
 
 pytestmark = pytest.mark.offline
 
@@ -206,6 +207,287 @@ def test_selector_rejects_link_claim_when_source_message_has_no_url() -> None:
     assert selected["ok"] is True
     assert selected["draft"] == clean
     assert selected["selected_role"] == "drafter_google"
+
+
+_MARIA_RX_PINS = [
+    {
+        "pin_id": "P1",
+        "attested": True,
+        "excerpt": "declining the PHC Petaluma shift dates listed",
+    },
+    {
+        "pin_id": "P2",
+        "attested": True,
+        "excerpt": "not available for those Petaluma dates",
+    },
+]
+
+
+def test_maria_rxrelief_natural_sms_decline_beats_cold_and_over_answer() -> None:
+    """Gold SMS decline outranks Hermes cold HR and Anthropic reassurance bolt-ons."""
+    gold = (
+        "Maria, I can't take those Petaluma shifts. Thanks for sending them. Kaywan"
+    )
+    hermes = (
+        "Maria, I am declining the PHC Petaluma shift dates you listed as they are "
+        "not available for me. Please let me know if there are other shifts we can "
+        "schedule. Thank you, Kaywan"
+    )
+    anthropic = (
+        "Maria, I can't cover those Petaluma dates. I'm still happy to stay on "
+        "with RxRelief. Thanks, Kaywan"
+    )
+    assemble = {
+        "pin_ledger": _MARIA_RX_PINS,
+        "channel": "sms",
+        "signer": "Kaywan",
+        "objective": "Decline the listed Petaluma shift dates only.",
+        "intake": {
+            "channel": "sms",
+            "objective": "Decline the listed Petaluma shift dates only.",
+            "verbatim_notes": [],
+        },
+    }
+    selected = _select(
+        {
+            "assemble": _Out(payload=assemble),
+            "drafter_openai": _Out(hermes),
+            "drafter_local_hermes": _Out(anthropic),
+            "drafter_anthropic": _Out(gold),
+        }
+    )
+    assert selected["ok"] is True
+    assert selected["draft"] == gold
+    assert selected["selected_role"] == "drafter_anthropic"
+    by_role = {c["role"]: c for c in selected["candidates"]}
+    assert by_role["drafter_anthropic"]["score"] >= by_role["drafter_openai"]["score"]
+    assert (
+        by_role["drafter_anthropic"]["email_penalty"]
+        < by_role["drafter_openai"]["email_penalty"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft", "expected_min_penalty"),
+    [
+        ("I'm declining the Petaluma shifts.", 3),
+        ("I'm not available for the Petaluma dates.", 3),
+        ("Unfortunately I can't make it.", 3),
+        ("I'm still happy to stay on with RxRelief.", 3),
+        ("Maria — can't take those shifts.", 3),
+    ],
+)
+def test_correspondence_register_penalty_cold_and_over_answer(
+    draft: str, expected_min_penalty: int
+) -> None:
+    penalty = email_envelope.correspondence_register_penalty(
+        draft,
+        channel="sms",
+        objective="Decline the listed Petaluma shift dates only.",
+    )
+    assert penalty >= expected_min_penalty
+
+
+def test_correspondence_register_penalty_negated_objective_still_penalizes_over_answer() -> None:
+    objective = (
+        "Decline the Petaluma dates; don't offer other shifts or future availability"
+    )
+    notes = "the future Petaluma dates"
+    penalty = email_envelope.correspondence_register_penalty(
+        "Please let me know if there are other shifts we can schedule.",
+        channel="sms",
+        objective=objective,
+        verbatim_notes=notes,
+    )
+    assert penalty >= 3
+
+
+def test_correspondence_register_penalty_affirmative_objective_allows_over_answer() -> None:
+    objective = (
+        "Decline the Petaluma dates and offer future shifts we can schedule"
+    )
+    penalty = email_envelope.correspondence_register_penalty(
+        "Please let me know if there are other shifts we can schedule.",
+        channel="sms",
+        objective=objective,
+    )
+    assert penalty == 0
+
+
+def test_signer_band_sms_neutral_when_signer_in_body() -> None:
+    signer = "Kaywan"
+    draft = (
+        "Hi Maria, I won't be able to cover the Petaluma dates you sent. Thank you, Kaywan"
+    )
+    assert (
+        draft_selector._signer_band(draft, signer, channel="sms") == 0
+    )
+    assert draft_selector._signer_band(draft, signer, channel="email") == 1
+
+
+def test_sms_trailing_signer_name_loses_to_neutral_thanks() -> None:
+    """SMS: no signature name beats Thank you, Kaywan when pins tie."""
+    pins = _MARIA_RX_PINS
+    neutral = (
+        "Hi Maria, I won't be able to cover the Petaluma dates you sent. Thank you."
+    )
+    signed = (
+        "Hi Maria, I won't be able to cover the Petaluma dates you sent. "
+        "Thank you, Kaywan"
+    )
+    assemble = {
+        "pin_ledger": pins,
+        "channel": "sms",
+        "signer": "Kaywan",
+        "objective": "Decline the listed Petaluma shift dates only.",
+        "intake": {
+            "channel": "sms",
+            "signer": "Kaywan",
+            "objective": "Decline the listed Petaluma shift dates only.",
+            "verbatim_notes": [],
+        },
+    }
+    selected = _select(
+        {
+            "assemble": _Out(payload=assemble),
+            "drafter_openai": _Out(signed),
+            "drafter_google": _Out(neutral),
+        }
+    )
+    assert selected["draft"] == neutral
+    assert selected["selected_role"] == "drafter_google"
+
+
+def test_email_still_rewards_signer_closing() -> None:
+    pins = _PINS
+    unsigned = "To: Board\nSubject: Notice\n\nI saw the notice.\n\nThank you,\n"
+    signed = (
+        "To: Board\nSubject: Notice\n\nI saw the notice.\n\nThank you,\nKaywan"
+    )
+    assemble = {
+        "pin_ledger": pins,
+        "channel": "email",
+        "signer": "Kaywan",
+        "objective": "Notify the board.",
+        "intake": {
+            "channel": "email",
+            "signer": "Kaywan",
+            "recipient": "Board",
+            "objective": "Notify the board.",
+        },
+    }
+    selected = _select(
+        {
+            "assemble": _Out(payload=assemble),
+            "drafter_openai": _Out(unsigned),
+            "drafter_google": _Out(signed),
+        }
+    )
+    assert selected["draft"] == signed
+    assert selected["selected_role"] == "drafter_google"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_penalty"),
+    [
+        ("1. Monday unavailable\n2. Tuesday unavailable", 3),
+        ("Please note the following:\nI can't cover Monday.", 3),
+        ("I am responding to your request about shifts.", 3),
+        ("- Monday unavailable\n- Tuesday unavailable", 3),
+    ],
+)
+def test_correspondence_register_penalty_lists_and_throat_clearing(
+    body: str, expected_penalty: int
+) -> None:
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Decline the listed dates.",
+    )
+    assert penalty >= expected_penalty
+
+
+def test_correspondence_register_penalty_allows_numbered_list_when_objective_asks() -> (
+    None
+):
+    body = "1. Monday unavailable\n2. Tuesday unavailable"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Send a numbered list of unavailable dates.",
+    )
+    assert penalty == 0
+
+
+def test_correspondence_register_penalty_sms_formal_signoff() -> None:
+    penalty = email_envelope.correspondence_register_penalty(
+        "Hi Maria, I can't cover those dates. Thank you, Kaywan",
+        channel="sms",
+        signer="Kaywan",
+        objective="Decline dates.",
+    )
+    assert penalty >= 3
+
+
+@pytest.mark.parametrize(
+    "closing",
+    [
+        "Thank you\nKaywan",
+        "Thanks Kaywan.",
+        "Thank you, Kaywan Joseph Mansubi",
+    ],
+)
+def test_correspondence_register_penalty_sms_signoff_variants(
+    closing: str,
+) -> None:
+    body = f"Hi Maria, I can't cover those dates. {closing}"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="sms",
+        signer="Kaywan Joseph Mansubi",
+        objective="Decline dates.",
+    )
+    assert penalty >= 3
+
+
+def test_list_format_not_allowed_on_shift_list_objective() -> None:
+    body = "1. Monday unavailable\n2. Tuesday unavailable"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Reply to the shift list Maria sent with declines only.",
+    )
+    assert penalty >= 3
+
+
+def test_list_format_negated_objective_still_penalizes_numbered_body() -> None:
+    body = "1. Monday unavailable\n2. Tuesday unavailable"
+    penalty = email_envelope.correspondence_register_penalty(
+        body,
+        channel="email",
+        objective="Decline dates; do not send a numbered list.",
+    )
+    assert penalty >= 3
+
+
+def test_signer_verbatim_required_ignores_non_verbatim_note_mentioning_signer() -> None:
+    pins = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "verbatim_required": False,
+            "excerpt": "Close with Thank you, Kaywan",
+        },
+        {
+            "pin_id": "P2",
+            "attested": True,
+            "verbatim_required": True,
+            "excerpt": "Fill was 251 when I opened Saturday",
+        },
+    ]
+    assert draft_selector._signer_verbatim_required(pins, signer="Kaywan") is False
+    pins[0]["verbatim_required"] = True
+    assert draft_selector._signer_verbatim_required(pins, signer="Kaywan") is True
 
 
 def test_selector_honors_requested_signer_kaywan() -> None:

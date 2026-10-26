@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any, override
 
+from bus_watch.impresario_ear_common import ear_paused
 from implement_admission.impresario_policy import load_impresario_policy
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -203,6 +204,13 @@ async def evaluate_impresario_ear(
     sdk_poll: Any | None = None,
     sdk_harvest: Any | None = None,
 ) -> dict[str, Any]:
+    """Judge one house and return an EAR body, unless the ear is paused.
+
+    Returns ``skip`` with reason ``ear_paused`` before any cursor-sdk generate,
+    so a resume-fed subscription cannot spend a model call during the pause.
+    """
+    if ear_paused():
+        return {"skip": True, "reason": "ear_paused"}
     mode = str(resolve.get("mode") or "deep")
     pre: dict[str, Any] | None = None
     if mode == "patrol" and isinstance(options.get("patrol_prescreen_result"), dict):

@@ -21,8 +21,6 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR, release_fable_lock
 from bus_watch.go_under import stop_attended_loops
 from bus_watch.ide_budget_exclude import pin_retired_resume_transcript
@@ -93,6 +91,8 @@ def _label_from_argv(argv: list[str]) -> str | None:
 
 
 def departing_tail_pids(root_id: str, labels: Iterable[str]) -> list[int]:
+    import psutil
+
     wanted = set(labels)
     prefix = f"{root_id}-"
     house = f"{HOUSE_LABEL_PREFIX}{root_id}-"
@@ -103,9 +103,7 @@ def departing_tail_pids(root_id: str, labels: Iterable[str]) -> list[int]:
             continue
         label = _label_from_argv(argv)
         if label and (
-            label in wanted
-            or label.startswith(prefix)
-            or label.startswith(house)
+            label in wanted or label.startswith(prefix) or label.startswith(house)
         ):
             out.append(int(proc.info["pid"]))
     return out
@@ -118,6 +116,8 @@ def tab_background_pids(transcript_id: str) -> list[int]:
     hop use that mark. ``liaison-tick.py`` is the house poller, not a tab
     terminal, and survives.
     """
+    import psutil
+
     needle = transcript_id.strip()
     if not needle:
         return []

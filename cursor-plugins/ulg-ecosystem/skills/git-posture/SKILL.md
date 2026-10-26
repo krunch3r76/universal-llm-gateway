@@ -321,7 +321,7 @@ session-path commit on a work-complete claim.
 
 ## Land = merge, never copy (operator bind a:29557, re-bound 2026-09-02)
 
-A land waits for a bound APPROVE on the tip. `REQUEST_CHANGES` is a forward fix, not a revert.
+Under K43, hub land is notice-only: a missing bound APPROVE warns, records an override, and allows the merge; review runs post-land. `REQUEST_CHANGES` is a forward fix, not a revert.
 
 `∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when incoming paths
 are clean on master; otherwise commit overlapping dirty paths, merge, and

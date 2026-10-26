@@ -146,6 +146,8 @@ def complete_execution(
     reasoning: Any = None,
     hints: list[dict[str, Any]] | None = None,
     stop: StepStop | None = None,
+    archive_uri: str | None = None,
+    tool_errors: list[dict[str, Any]] | None = None,
 ) -> None:
     """Mark a running async execution as completed and fan out its success side effects.
 
@@ -175,6 +177,8 @@ def complete_execution(
         reasoning=reasoning,
         hints=hints,
         stop=stop,
+        archive_uri=archive_uri,
+        tool_errors=tool_errors,
     )
     record.terminal_event.set()
     _emit(

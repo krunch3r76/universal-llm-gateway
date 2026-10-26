@@ -66,6 +66,20 @@ def test_effective_resolved_model_chat_dispatch_slug() -> None:
 
 
 @pytest.mark.offline
+@pytest.mark.offline
+def test_enrich_sidecar_includes_archive_uri_and_tool_errors() -> None:
+    record = _api_role_record(resolved_model="anthropic/claude-sonnet-4-6")
+    record.result.archive_uri = "workspaces://universal-llm-gateway/.runtime/t.json"
+    record.result.tool_errors = [
+        {"name": "fs", "ok": False, "result": "error"},
+    ]
+    body = enrich_on_behalf_sidecar_content(record, "closeout")
+    assert "archive_uri: workspaces://" in body
+    assert "## tool errors" in body
+    assert "`fs`" in body
+
+
+@pytest.mark.offline
 def test_enrich_sidecar_uses_entity_id_model_not_pipeline_slug() -> None:
     record = _api_role_record(resolved_model=None, result_model="team-dispatch")
     body = enrich_on_behalf_sidecar_content(record, "closeout")

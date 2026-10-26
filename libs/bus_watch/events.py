@@ -297,3 +297,29 @@ def BusWatchMultiplexRefused(  # noqa: N802
 
 def emit_multiplex_refused(**kwargs: Any) -> None:
     _emit(BusWatchMultiplexRefused(**kwargs))
+
+
+@event_factory
+def EndpointWakeMaestroDrop(  # noqa: N802
+    *,
+    thread: str,
+    turn_id: int | None,
+    reason: str,
+    rule_id: str | None = None,
+    subject_preview: str = "",
+) -> Event:
+    return Event(
+        signal="endpoint_wake.maestro_drop",
+        payload={
+            "thread": thread,
+            "turn_id": turn_id,
+            "reason": reason,
+            "rule_id": rule_id,
+            "subject_preview": subject_preview,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_maestro_drop(**kwargs: Any) -> None:
+    _emit(EndpointWakeMaestroDrop(**kwargs))

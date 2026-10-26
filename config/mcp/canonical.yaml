@@ -2165,7 +2165,7 @@ tools:
         description: Kebab slug for spawn_house thread mint and subscription title.
       agent_id:
         type: string
-        description: Deterministic Glass composer id (spawn_tab / spawn_house / wake_tab / rename_tab).
+        description: Glass composer id — spawn_tab/spawn_house mint, send_msg paste target, wake_tab/rename_tab/prune_sidebar scope.
       title:
         type: string
         description: Sidebar rename title (rename_tab).

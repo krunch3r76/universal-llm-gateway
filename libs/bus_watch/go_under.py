@@ -24,10 +24,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psutil
-
-_HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
-
 from bus_watch.digest_budget import effective_policy
 from bus_watch.fable_lock import (
     WATCH_DIR,
@@ -40,6 +36,8 @@ from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.tick_state import save_state
 
+_HUB_ROOT = Path("/mnt/torus/projects/universal-llm-gateway")
+
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -47,6 +45,8 @@ def _utcnow() -> str:
 
 def attended_loop_pids(root: str) -> list[int]:
     """PIDs of ``liaison-tick.py --root <root> --loop`` that are not the ticker."""
+    import psutil
+
     out: list[int] = []
     for proc in psutil.process_iter(["pid", "cmdline"]):
         argv = proc.info.get("cmdline") or []

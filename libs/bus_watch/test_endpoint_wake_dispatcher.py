@@ -407,6 +407,43 @@ def test_cse_allowlist_not_display(db: None) -> None:
     )
 
 
+def test_maestro_direct_address_pointer_on_12286_qualifies() -> None:
+    """Specimen 12286#4854: closeout substring must not suppress direct to=maestro on 12286."""
+    turn = {
+        "to_agent": "maestro",
+        "from_agent": "cursor",
+        "subject": "pointer: :4/:5 probe closeout",
+        "thread": "12286",
+        "id": 4854,
+        "turn_number": 4854,
+    }
+    verdict = qualify(turn, cse=True)
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_maestro_direct_address"
+
+
+def test_maestro_direct_address_closeout_on_held_lane() -> None:
+    """Specimen 20729#1: held lane wakes on CLOSEOUT vocabulary without milestone head."""
+
+    class _HolderStore:
+        def holder(self, lane: str) -> dict[str, str] | None:
+            if lane == "20729":
+                return {"registration_id": "reg-held"}
+            return None
+
+    turn = {
+        "to_agent": "maestro",
+        "from_agent": "cursor",
+        "subject": "CLOSEOUT xvfb :4/:5 read-only probe",
+        "thread": "20729",
+        "id": 1,
+        "turn_number": 1,
+    }
+    verdict = qualify(turn, cse=True, store=_HolderStore())  # type: ignore[arg-type]
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_maestro_direct_address"
+
+
 def test_grok_impresario_conductor_milestone_and_intermediate_wakes() -> None:
     impresario_targets = (
         "grok-bot-gc1",
@@ -2827,13 +2864,13 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
     assert resolve_endpoint("stage-manager", thread) is not None
 
 
-def test_declared_rule_map_loads_thirteen_rules(db: None) -> None:
+def test_declared_rule_map_loads_fourteen_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
     assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 13
-    assert _declared_wake_rule_ids()[8] == "drop_routine_hop_closeout"
-    assert _declared_wake_rule_ids()[7] == "wake_peer_sender"
+    assert len(_declared_wake_rule_ids()) == 14
+    assert _declared_wake_rule_ids()[9] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[8] == "wake_peer_sender"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:

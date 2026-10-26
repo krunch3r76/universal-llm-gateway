@@ -38,6 +38,7 @@ class _AnthropicState:
     _mcp_result_is_error: bool = False
     _mcp_result_content: Any | None = None
     _redacted_data: str | None = None
+    container: dict[str, Any] | None = None
 
 
 class AnthropicReducer:
@@ -79,7 +80,7 @@ class AnthropicReducer:
     @staticmethod
     def to_terminal_dict(state: _AnthropicState) -> dict[str, Any]:
         """Convert reducer state to raw Anthropic response dict shape."""
-        return {
+        payload: dict[str, Any] = {
             "id": state.id,
             "model": state.model,
             "stop_reason": state.stop_reason,
@@ -87,6 +88,9 @@ class AnthropicReducer:
             "content": state.content,
             "usage": state.usage,
         }
+        if state.container:
+            payload["container"] = state.container
+        return payload
 
     @staticmethod
     def _parse_payload(event: SSEMessage) -> dict[str, Any]:
@@ -106,6 +110,9 @@ class AnthropicReducer:
         state.id = str(message.get("id") or "")
         state.model = str(message.get("model") or "")
         state.stop_reason = message.get("stop_reason")
+        container = message.get("container")
+        if isinstance(container, dict):
+            state.container = dict(container)
         usage = message.get("usage")
         if isinstance(usage, dict):
             AnthropicReducer._overwrite_usage_fields(state, usage)
@@ -260,6 +267,11 @@ class AnthropicReducer:
         if isinstance(delta, dict):
             stop_reason = delta.get("stop_reason")
             state.stop_reason = str(stop_reason) if stop_reason is not None else None
+            container = delta.get("container")
+            if isinstance(container, dict):
+                merged = dict(state.container or {})
+                merged.update(container)
+                state.container = merged
         usage = payload.get("usage")
         if not isinstance(usage, dict):
             return
