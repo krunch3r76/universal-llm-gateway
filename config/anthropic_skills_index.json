@@ -41,6 +41,12 @@
       "type": "custom",
       "version": "latest",
       "slug": "git-posture"
+    },
+    "cortex-provenance-discipline": {
+      "skill_id": "skill_012a5KM1TyXFnoE1Z211JcDX",
+      "type": "custom",
+      "version": "latest",
+      "slug": "cortex-provenance-discipline"
     }
   }
 }
