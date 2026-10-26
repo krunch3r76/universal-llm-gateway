@@ -52,13 +52,19 @@ _GO = (
 
 
 class _Out:
-    def __init__(self, payload: dict[str, Any] | None, *, raw: str = "") -> None:
+    def __init__(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        raw: str = "",
+        model_id: str | None = None,
+    ) -> None:
         self.json = payload
         self.error = None
         self.raw = raw
         self.prompt_tokens = 0
         self.completion_tokens = 0
-        self.model_id = None
+        self.model_id = model_id
 
 
 class _Ctx:
@@ -313,7 +319,7 @@ def test_three_ask_missing_one_refuses_finalize() -> None:
     assert len([o for o in obligations if o.get("obligation") != "none"]) >= 3
     draft_v1 = (
         "To: client@example.com\nSubject: Re: your questions\n\n"
-        "My rate is $200 per hour. I can start on Monday.\n\nThanks,\nPat"
+        "My hourly rate is $200. I can start on Monday.\n\nThanks,\nPat"
     )
     outputs = {
         "assemble": _Out(
@@ -583,6 +589,11 @@ def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
         "I completed my PhD at Stanford in 2019.",
         "I've submitted three papers this year.",
         "I booked a flight to Boston.",
+        "I applied to a similar role at another company last year.",
+        "I've applied for jobs like this before.",
+        "I submitted to NeurIPS this year.",
+        "I registered for a conference in May.",
+        "I completed in record time.",
     ]
     for sentence in negatives:
         assert _obligation._ACTION_CONFIRM.search(sentence) is None
@@ -609,6 +620,34 @@ def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
         )
         cov = _obligation.coverage_map_for_draft(draft, obligations)
         assert cov[0]["status"] == "addressed", sentence
+
+
+def test_curly_apostrophe_action_and_decline_matching() -> None:
+    obligations = _meridial_act_obligation()
+    applied = "I\u2019ve applied through the link today."
+    draft_applied = (
+        "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
+        f"{applied}\n\nBest,\nPat"
+    )
+    cov_applied = _obligation.coverage_map_for_draft(draft_applied, obligations)
+    assert cov_applied[0]["status"] == "addressed"
+    decline_row = {
+        "id": "O-decline",
+        "quoted_span": "apply for this role",
+        "kind": "request",
+        "obligation": "answer_in_message",
+    }
+    decline_sentence = "I won\u2019t be applying for this role."
+    status, covering = _obligation.verify_obligation(
+        f"To: x\nSubject: y\n\n{decline_sentence}\n\nBest,\nPat",
+        decline_row,
+    )
+    assert status == "declined_with_reason"
+    assert covering == decline_sentence
+    assert not _obligation._sentence_declines("I can\u2019t wait to talk.")
+    assert _obligation._CTA_DECLINE_STEM.search(
+        "I cannot share details about my current role."
+    ) is None
 
 
 def test_body_sentences_keep_terminal_punctuation_lines() -> None:
@@ -661,7 +700,7 @@ def test_b1_audit_decline_on_other_ask_cannot_cover_unrelated_missing_ask() -> N
     draft = (
         "To: client@example.com\n"
         "Subject: Re: your questions\n\n"
-        "My rate is $200 per hour. I can't start on Monday.\n\n"
+        "My hourly rate is $200. I can't start on Monday.\n\n"
         "Thanks,\nPat"
     )
     outputs = {
@@ -691,7 +730,10 @@ def test_b1_audit_decline_on_other_ask_cannot_cover_unrelated_missing_ask() -> N
                 ]
             }
         ),
-        "draft": _Out({"ok": True, "draft": draft}),
+        "draft": _Out(
+            {"ok": True, "draft": draft},
+            model_id="anthropic/claude-sonnet-5-5",
+        ),
         "independence": _Out(
             {
                 "refused": None,
@@ -699,7 +741,13 @@ def test_b1_audit_decline_on_other_ask_cannot_cover_unrelated_missing_ask() -> N
                 "reviewer_model": "qwen3-5-9b-q8-0-131072",
             }
         ),
-        "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        "fact_ceiling_audit": _Out(
+            {
+                "verdict": "ship",
+                "findings": [],
+                "reviewer_model": "qwen3-5-9b-q8-0-131072",
+            }
+        ),
         "provenance_check": _Out({"violations": []}),
         "prose_rhythm_pass": _Out(None, raw=draft),
         "fact_ceiling_final": _Out({"violations": []}),
@@ -709,6 +757,10 @@ def test_b1_audit_decline_on_other_ask_cannot_cover_unrelated_missing_ask() -> N
     ).json
     assert payload is not None
     assert payload.get("refused") == "obligation_coverage_failed"
+    unresolved_ids = [
+        u["claim_id"] for u in (payload.get("ship_gate") or {}).get("unresolved") or []
+    ]
+    assert unresolved_ids == [portfolio_id]
 
 
 def test_s2_three_ask_portfolio_missing_not_declined() -> None:
@@ -721,7 +773,7 @@ def test_s2_three_ask_portfolio_missing_not_declined() -> None:
     draft = (
         "To: client@example.com\n"
         "Subject: Re: your questions\n\n"
-        "My rate is $200 per hour. I can start on Monday. "
+        "My hourly rate is $200. I can start on Monday. "
         "I can't wait to hear from you.\n\nThanks,\nPat"
     )
     cov = _obligation.coverage_map_for_draft(

@@ -7,13 +7,19 @@ from typing import Any
 
 _TOKEN = re.compile(r"[a-z0-9]{3,}")
 _LINK_TARGET = r"(?:the\s+)?(?:link|portal|form|site|url|page|https?://\S+)"
+_FP_PREP = r"(?:for|to|on|in|at|via|through)"
+_FP_TARGET = (
+    r"(?:(?:(?:the|this|that|your|my|an?)\s+)?"
+    r"(?:link|portal|form|url|site|page|slot|time|call|interview|calendar)\b|"
+    r"(?:the|this|that|your|my)\s+(?:role|position|application|opening|posting)\b|"
+    r"https?://\S+)"
+)
+_FP_APP_MIDDLE = r"(?:(?:my|the|this|that|your)\s+application\s+)?"
 _FP_ACTION = (
     r"\b(?:i(?:'ve|\s+have)?\s+(?:applied|submitted|completed|registered|booked|"
     r"scheduled|uploaded|signed\s+up)|i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)"
-    r"\s+(?:apply|submit|complete|register|book|schedule|upload|sign\s+up))\s+"
-    r"(?:for\b|to\b|on\b|in\b|at\b|via\b|through\b|online\b|(?:my|the|an|this|that)\s+"
-    r"(?:application|form|profile|resume|cv|link|portal|slot|time|call|interview|role|"
-    r"position|registration))\b"
+    r"\s+(?:apply|submit|complete|register|book|schedule|upload|sign\s+up))"
+    rf"(?:\s+online\b|\s+{_FP_APP_MIDDLE}(?:{_FP_PREP}\s+{_FP_TARGET}))"
 )
 _ACTION_CONFIRM = re.compile(
     rf"(?:"
@@ -27,8 +33,7 @@ _ACTION_CONFIRM = re.compile(
 _CTA_DECLINE_STEM = re.compile(
     r"\b(?:appl(?:y|ied|ication|ying)|submit(?:ted|ting)?|"
     r"regist(?:er|ered|ering|ration)|book(?:ed|ing)?|schedul(?:e|ed|ing)|"
-    r"upload(?:ed|ing)?|sign(?:ed|ing)?\s+up|complet(?:e|ed|ing)|link|portal|form|"
-    r"role|position)\b",
+    r"upload(?:ed|ing)?|sign(?:ed|ing)?\s+up)\b",
     re.I,
 )
 _DECLINE = re.compile(
