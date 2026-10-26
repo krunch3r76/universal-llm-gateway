@@ -83,7 +83,10 @@ def classify_version_satisfaction(
     merits-failure path when observed is an ancestor of ``code_ref``.
     """
     relation = code_ref_relation_from_observed(code_ref, observed)
-    if code_ref_relation_mod.resolve_commit_sha(str(code_ref or "").strip()) is None:
+    if (
+        relation == "ref_unresolvable"
+        or code_ref_relation_mod.resolve_commit_sha(str(code_ref or "").strip()) is None
+    ):
         case: VersionSatisfactionCase = "unresolvable"
     elif relation == "equal":
         case = "exact_match"
