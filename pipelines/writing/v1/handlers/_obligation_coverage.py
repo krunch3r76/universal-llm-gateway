@@ -6,21 +6,29 @@ import re
 from typing import Any
 
 _TOKEN = re.compile(r"[a-z0-9]{3,}")
-_CTA_VERBS = (
-    r"apply|applied|submit|submitted|complete|completed|"
-    r"book|booked|schedule|scheduled|register|registered|upload|uploaded"
-)
 _LINK_TARGET = r"(?:the\s+)?(?:link|portal|form|site|url|page|https?://\S+)"
+_FP_ACTION = (
+    r"\b(?:i(?:'ve|\s+have)?\s+(?:applied|submitted|completed|registered|booked|"
+    r"scheduled|uploaded|signed\s+up)|i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)"
+    r"\s+(?:apply|submit|complete|register|book|schedule|upload|sign\s+up))\s+"
+    r"(?:for\b|to\b|on\b|in\b|at\b|via\b|through\b|online\b|(?:my|the|an|this|that)\s+"
+    r"(?:application|form|profile|resume|cv|link|portal|slot|time|call|interview|role|"
+    r"position|registration))\b"
+)
 _ACTION_CONFIRM = re.compile(
     rf"(?:"
-    rf"\bi(?:'ve|\s+have)\s+(?:{_CTA_VERBS}|signed\s+up)\b|"
-    rf"\bi(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:{_CTA_VERBS}|sign\s+up)\b|"
-    rf"\bi\s+(?:{_CTA_VERBS})\b|"
-    rf"\bsubmitting\s+my\s+(?:application|registration)\b|"
-    rf"\bmy\s+(?:application|registration)\s+(?:was\s+)?(?:{_CTA_VERBS})\b|"
-    rf"\b(?:apply|applied|submit|submitted|registered|register|signed\s+up|sign\s+up)"
-    rf"\s+(?:through|via|at)\s+{_LINK_TARGET}\b"
+    rf"{_FP_ACTION}|"
+    rf"\bsubmitting\s+my\s+application\b|"
+    rf"\b(?:applied|apply|submitted|submit|registered|register|signed\s+up|sign\s+up|"
+    rf"booked|book|scheduled|schedule)\s+(?:through|via|at|on)\s+{_LINK_TARGET}\b"
     rf")",
+    re.I,
+)
+_CTA_DECLINE_STEM = re.compile(
+    r"\b(?:appl(?:y|ied|ication|ying)|submit(?:ted|ting)?|"
+    r"regist(?:er|ered|ering|ration)|book(?:ed|ing)?|schedul(?:e|ed|ing)|"
+    r"upload(?:ed|ing)?|sign(?:ed|ing)?\s+up|complet(?:e|ed|ing)|link|portal|form|"
+    r"role|position)\b",
     re.I,
 )
 _DECLINE = re.compile(
@@ -96,6 +104,10 @@ def actionable_obligations(obligations: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
+def _normalize_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'")
+
+
 def _tokens(text: str) -> set[str]:
     return {
         token
@@ -156,13 +168,21 @@ def apply_audit_overlay(
     if status == "declined_with_reason" and det_status == "missing":
         if not _sentence_declines(covering):
             return dict(base)
-        if obligation != "act_outside_message":
-            quoted_tokens = _tokens(str(base.get("quoted_span") or ""))
-            if quoted_tokens and not (quoted_tokens & _tokens(covering)):
+        quoted_tokens = _tokens(str(base.get("quoted_span") or ""))
+        covering_norm = _normalize_apostrophes(covering)
+        if obligation == "act_outside_message":
+            if not (
+                _CTA_DECLINE_STEM.search(covering_norm)
+                or (quoted_tokens and quoted_tokens & _tokens(covering))
+            ):
                 return dict(base)
+        elif not (
+            quoted_tokens and quoted_tokens & _tokens(covering)
+        ):
+            return dict(base)
 
     if obligation == "act_outside_message" and status == "addressed":
-        if not _ACTION_CONFIRM.search(covering):
+        if not _ACTION_CONFIRM.search(_normalize_apostrophes(covering)):
             return dict(base)
 
     row = {**base, **audit, "status": status, "covering_sentence": covering}
@@ -197,9 +217,10 @@ def _best_sentence(draft: str, needles: set[str]) -> str:
 
 
 def _sentence_declines(sentence: str) -> bool:
-    if re.search(r"\b(?:can't|cannot)\s+wait\b", sentence, re.I):
+    norm = _normalize_apostrophes(sentence)
+    if re.search(r"\b(?:can't|cannot)\s+wait\b", norm, re.I):
         return False
-    return _DECLINE.search(sentence) is not None
+    return _DECLINE.search(norm) is not None
 
 
 def _reply_mode(row: dict[str, Any], status: str) -> str:
@@ -225,7 +246,7 @@ def verify_obligation(draft: str, row: dict[str, Any]) -> tuple[str, str]:
 
     if obligation == "act_outside_message":
         for sentence in body_sentences:
-            if _ACTION_CONFIRM.search(sentence):
+            if _ACTION_CONFIRM.search(_normalize_apostrophes(sentence)):
                 return "addressed", sentence
         return "missing", ""
 
@@ -264,6 +285,7 @@ def coverage_map_for_draft(
                 "id": row.get("id"),
                 "kind": row.get("kind"),
                 "obligation": row.get("obligation"),
+                "quoted_span": str(row.get("quoted_span") or ""),
                 "reply_mode": _reply_mode(row, status),
                 "status": status,
                 "covering_sentence": covering,
