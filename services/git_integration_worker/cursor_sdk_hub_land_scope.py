@@ -1,9 +1,8 @@
 """Hub-land scope from commissioner packet prose and lane-B ref reachability.
 
 ``land_lane_branch_onto_hub_master`` fast-forwards or clean-merges a lane
-branch onto hub master only when the tip has an APPROVE K43 or a recorded
-exemption. ``_ff_only_onto_hub_master`` and ``_clean_merge_onto_hub_master``
-run that check on the sha they resolve and merge that sha.
+branch onto hub master when lease and git prechecks pass; K43 is logged and
+never refuses. Post-land review obligations run after master moves.
 """
 
 from __future__ import annotations
@@ -59,10 +58,9 @@ def land_lane_branch_onto_hub_master(
 
     Non-blocking. Another holder returns not-landed at once. A clean merge is
     the fallback when fast-forward is refused and the merge does not conflict.
-    Before any ref move, the branch tip must have an ``APPROVE`` row in
-    ``master_review_owed`` or a recorded ``exemption_ref``. A missing ledger
-    refuses. Prechecks that already refuse (dirty overlap, gitignored path,
-    non-master HEAD) keep their reasons. Does not revert an earlier land.
+    K43 review status is advisory only and never refuses. Prechecks that
+    already refuse (dirty overlap, gitignored path, non-master HEAD) keep
+    their reasons. Does not revert an earlier land.
     Never call this to test feasibility.
     """
     from services.git_integration_worker.cursor_sdk_land_lease import (
@@ -101,23 +99,6 @@ def land_lane_branch_onto_hub_master(
     refuse_reason: str | None = None
     try:
         try:
-            from services.git_integration_worker.master_review_owed import (
-                land_k43_block_reason,
-            )
-
-            ready = _ff_ready(repo, branch_name=branch_name)
-            if isinstance(ready, _FfReadyOk):
-                block = land_k43_block_reason(ready.tip_sha)
-                if block:
-                    logger.info(
-                        "hub land refuse %s branch=%s tip=%s",
-                        block,
-                        branch_name,
-                        ready.tip_sha,
-                    )
-                    return LaneBranchLandResult(
-                        False, before, before, refuse_reason=block
-                    )
             moved, ff_reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
             if not moved:
                 refuse_reason = ff_reason
@@ -330,20 +311,42 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
     return None
 
 
-def _k43_block(tip_sha: str, *, actuator: str) -> str | None:
-    """Return the K43 refuse reason for ``tip_sha``, or ``None`` when it may merge.
+def _log_k43_review_status(tip_sha: str, *, actuator: str) -> None:
+    """Log advisory K43 status for ``tip_sha``. Never refuses."""
+    from services.git_integration_worker.master_review_owed import land_k43_review_status
 
-    Calls ``land_k43_block_reason``. A block is logged and returned so the
-    caller does not run ``git merge``. Ledger unreadability fails closed.
-    """
-    from services.git_integration_worker.master_review_owed import (
-        land_k43_block_reason,
+    status = land_k43_review_status(tip_sha, actuator=actuator)
+    logger.info(
+        "hub land k43_review_status=%s actuator=%s tip=%s",
+        status,
+        actuator,
+        tip_sha,
     )
 
-    block = land_k43_block_reason(tip_sha)
-    if block:
-        logger.info("hub land refuse %s actuator=%s tip=%s", block, actuator, tip_sha)
-    return block
+
+def _apply_review_obligations_after_hub_land(
+    hub: Path, before_sha: str, after_sha: str, tip_sha: str
+) -> None:
+    """Post-land master-review notices; failures do not undo the ref move."""
+    if not before_sha or not after_sha or before_sha == after_sha:
+        return
+    try:
+        from services.git_integration_worker.master_review_owed import (
+            apply_review_obligations_after_land,
+        )
+
+        apply_review_obligations_after_land(
+            repo=hub,
+            live_old_sha=before_sha,
+            live_new_sha=after_sha,
+            triggering_land_sha=tip_sha,
+        )
+    except Exception:
+        logger.warning(
+            "hub land apply_review_obligations_after_land failed hub=%s",
+            hub,
+            exc_info=True,
+        )
 
 
 def _refuse_without_land_lease(hub: Path, actuator: str) -> bool:
@@ -366,10 +369,10 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     """Fast-forward the hub ``master`` checkout to ``branch_name``.
 
     Returns True only when that branch tip is an ancestor of hub master afterward.
-    Resolves the tip sha, refuses unless that sha has an APPROVE K43 or a
-    recorded exemption, then runs ``git merge --ff-only`` of that sha. A dirty
-    hub tree, a non-fast-forward, a missing ref, a branch with no commits ahead
-    of master, or a K43 refusal returns False and leaves HEAD where it was.
+    Resolves the tip sha, logs advisory K43 status, then runs ``git merge
+    --ff-only`` of that sha. A dirty hub tree, a non-fast-forward, a missing
+    ref, or a branch with no commits ahead of master returns False and leaves
+    HEAD where it was.
     """
     moved, _reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
     return moved
@@ -387,9 +390,7 @@ def _ff_only_onto_hub_master(
     hub, tip_sha = ready.hub, ready.tip_sha
     if _refuse_without_land_lease(hub, "ff_only_onto_hub_master"):
         return False, None
-    blocked = _k43_block(tip_sha, actuator="ff_only_onto_hub_master")
-    if blocked:
-        return False, blocked
+    _log_k43_review_status(tip_sha, actuator="ff_only_onto_hub_master")
     pre_sha = _master_sha(hub)
     merged = _git_capture(hub, "merge", "--ff-only", tip_sha)
     if merged.returncode != 0:
@@ -398,6 +399,9 @@ def _ff_only_onto_hub_master(
     if post_sha and post_sha != pre_sha:
         before_sha, after_sha = _ff_range(hub, merged.stdout, tip_sha)
         _record_hub_master_move(hub, before_sha, after_sha, "ff_only_onto_hub_master")
+        _apply_review_obligations_after_hub_land(
+            hub, before_sha or pre_sha, after_sha or post_sha, tip_sha
+        )
     if commit_is_ancestor_of_hub_master(hub, tip_sha) is not True:
         return False, "not_ff"
     return True, None
@@ -408,11 +412,10 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
 
     The fast-forward actuator refuses the ordinary case: master has commits
     the lane does not. This lands that case only when the merge is textual
-    and conflict-free. Resolves the tip sha, refuses unless that sha has an
-    APPROVE K43 or a recorded exemption, then runs ``git merge --no-edit`` of
-    that sha. A dirty hub tree, a missing ref, a non-master checkout, a branch
-    with nothing ahead, a branch that is not actually behind master, or a K43
-    refusal returns False and leaves HEAD where it was. A conflict aborts the
+    and conflict-free. Resolves the tip sha, logs advisory K43 status, then
+    runs ``git merge --no-edit`` of that sha. A dirty hub tree, a missing ref,
+    a non-master checkout, a branch with nothing ahead, a branch that is not
+    actually behind master returns False and leaves HEAD where it was. A conflict aborts the
     merge and leaves HEAD where it was. Returns True only when the branch tip
     is an ancestor of hub master afterward.
     """
@@ -458,9 +461,7 @@ def _clean_merge_onto_hub_master(
         return False, None
     pre_sha = _master_sha(hub)
     tip_sha = tip.stdout.strip()
-    blocked = _k43_block(tip_sha, actuator="clean_merge_onto_hub_master")
-    if blocked:
-        return False, blocked
+    _log_k43_review_status(tip_sha, actuator="clean_merge_onto_hub_master")
     merged = _git_capture(hub, "merge", "--no-edit", tip_sha)
     if merged.returncode != 0:
         _abort_merge_if_started(hub)
@@ -473,6 +474,9 @@ def _clean_merge_onto_hub_master(
         before_sha, after_sha = _clean_merge_range(hub, tip_sha, post_sha)
         _record_hub_master_move(
             hub, before_sha, after_sha, "clean_merge_onto_hub_master"
+        )
+        _apply_review_obligations_after_hub_land(
+            hub, before_sha or pre_sha, after_sha or post_sha, tip_sha
         )
     if commit_is_ancestor_of_hub_master(hub, tip_sha) is not True:
         return False, "merge_conflict"
