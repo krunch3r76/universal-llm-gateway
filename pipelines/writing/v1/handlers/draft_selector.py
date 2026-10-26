@@ -27,6 +27,7 @@ from .email_envelope import (
     email_draft_penalty,
     email_restate_pin_satisfied,
 )
+from .finalize import _omit_with_reason_ids
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
 
@@ -48,11 +49,9 @@ _DECLINE_PIN_HINT = re.compile(
     re.I,
 )
 _NATURAL_DECLINE = re.compile(
-    r"\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+"
-    r"(?:take|cover|be\s+able\s+to\s+(?:take|cover))\b"
-    r"|\bunable\s+to\s+(?:take|cover)\b"
-    r"|\bi\s+am\s+declining\b"
-    r"|\bnot\s+available\s+for\s+me\b",
+    r"\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+(?:take|cover)\b"
+    r"|\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+be\s+able\s+to\s+(?:take|cover)\b"
+    r"|\bunable\s+to\s+(?:take|cover)\b",
     re.I,
 )
 
@@ -246,7 +245,19 @@ class WritingDraftSelectorHandler(BaseHandler):
             else getattr(src, "json", None)
         )
         obligations = list((src_json or {}).get("obligations") or [])
-        actionable = actionable_obligations(obligations)
+        arch = outputs.get("prompt_architect")
+        arch_json = (
+            arch.get("json")
+            if isinstance(arch, dict)
+            else getattr(arch, "json", None)
+        )
+        architect_brief = str((arch_json or {}).get("architect_brief") or "")
+        omit_ids = _omit_with_reason_ids(architect_brief)
+        actionable = [
+            row
+            for row in actionable_obligations(obligations)
+            if str(row.get("id") or "").upper() not in omit_ids
+        ]
         candidates: list[dict[str, Any]] = []
         for step_name, role in _DRAFTER_STEPS:
             out = outputs.get(step_name)

@@ -279,6 +279,90 @@ def test_correspondence_omit_with_reason_proximity_passes_ship_gate(
     assert row.get("status") == "declined_with_reason"
 
 
+def test_architect_omit_proximity_does_not_cross_next_obligation_line() -> None:
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    omit_ids = finalize._omit_with_reason_ids(brief)
+    assert "O1" not in omit_ids
+    assert "O2" in omit_ids
+
+
+def test_architect_omit_o2_unanswered_o1_fails_coverage_gate() -> None:
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "Can you cover Petaluma?",
+            "kind": "request",
+            "obligation": "decline_with_reason",
+            "semantic_reading": "decline offer",
+        },
+        {
+            "id": "O2",
+            "quoted_span": "Please send your monthly availability list.",
+            "kind": "request",
+            "obligation": "answer",
+            "semantic_reading": "standing monthly availability list",
+        },
+    ]
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    cov_map, refusal = finalize._obligation_coverage_gate(
+        "Thanks for reaching out.",
+        obligations,
+        selected="draft_v1",
+        audit_map=None,
+        revision_ran=False,
+        architect_brief=brief,
+        channel="sms",
+    )
+    by_id = {str(r.get("id")): r for r in cov_map}
+    assert by_id["O1"].get("status") == "missing"
+    assert by_id["O1"].get("reply_mode") != "omit_with_reason"
+    assert by_id["O2"].get("reply_mode") == "omit_with_reason"
+    assert refusal is not None
+
+
+def test_architect_omit_o2_answered_o1_passes_coverage_gate() -> None:
+    obligations = [
+        {
+            "id": "O1",
+            "quoted_span": "Can you cover Petaluma?",
+            "kind": "request",
+            "obligation": "decline_with_reason",
+            "semantic_reading": "decline offer",
+        },
+        {
+            "id": "O2",
+            "quoted_span": "Please send your monthly availability list.",
+            "kind": "request",
+            "obligation": "answer",
+            "semantic_reading": "standing monthly availability list",
+        },
+    ]
+    brief = (
+        "- O1: answer_in_message (decline offer)\n"
+        "- O2: omit_with_reason (per-offer only)"
+    )
+    draft = "Maria, I can't take those Petaluma shifts. Thanks, Kaywan"
+    cov_map, refusal = finalize._obligation_coverage_gate(
+        draft,
+        obligations,
+        selected="draft_v1",
+        audit_map=None,
+        revision_ran=False,
+        architect_brief=brief,
+        channel="sms",
+    )
+    by_id = {str(r.get("id")): r for r in cov_map}
+    assert by_id["O1"].get("status") == "declined_with_reason"
+    assert by_id["O2"].get("reply_mode") == "omit_with_reason"
+    assert refusal is None
+
+
 def test_decline_phrasing_natural_sms_covers_obligation() -> None:
     draft = "Maria, I won't be able to cover the Petaluma dates you sent. Thank you, Kaywan"
     cov = _obligation.coverage_map_for_draft(

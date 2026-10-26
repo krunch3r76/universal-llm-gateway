@@ -227,7 +227,7 @@ def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
 
 _CORRESPONDENCE_CHANNELS = frozenset({"email", "sms", "portal", "letter"})
 _COLD_HR_DECLINE = re.compile(
-    r"\bi\s+am\s+declining\b|\bnot\s+available\s+for\s+me\b|\bunfortunately\b",
+    r"\bdeclin(?:e|ing)\b|\bnot\s+available\b|\bunfortunately\b",
     re.I,
 )
 _OVER_ANSWER_FUTURE = re.compile(
@@ -237,15 +237,33 @@ _OVER_ANSWER_FUTURE = re.compile(
     r"|\bfuture\s+shifts\b",
     re.I,
 )
+_AFFIRMATIVE_FUTURE_INVITE = re.compile(
+    r"\b(?:offer|mention|include|state|say|ask\s+about|invite|open\s+to|"
+    r"available\s+for|happy\s+to\s+stay\s+on|keep\s+me\s+in\s+mind\s+for)\b"
+    r"[^.!?\n]{0,60}\b(?:other\s+shifts|future\s+(?:shifts|availability|dates)|"
+    r"stay(?:ing)?\s+on|keep\s+me\s+in\s+mind)\b",
+    re.I,
+)
+_FUTURE_INVITE_NEGATION = re.compile(
+    r"\b(?:don't|do\s+not|not|no|never|without|avoid|forbid|skip|omit)\b",
+    re.I,
+)
+
+
+def _normalize_curly_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'")
 
 
 def _attested_allows_future_offers(objective: str, verbatim_notes: str) -> bool:
-    """True when pins/objective explicitly invite future-availability language."""
-    blob = f"{objective}\n{verbatim_notes}".lower()
-    return any(
-        token in blob
-        for token in ("other shifts", "future", "stay on", "keep me in mind")
-    )
+    """True when objective/notes affirmatively invite future-availability language."""
+    blob = _normalize_curly_apostrophes(f"{objective}\n{verbatim_notes}")
+    for match in _AFFIRMATIVE_FUTURE_INVITE.finditer(blob):
+        prefix_start = max(0, match.start() - 30)
+        window = blob[prefix_start : match.end()]
+        if _FUTURE_INVITE_NEGATION.search(window):
+            continue
+        return True
+    return False
 
 
 def correspondence_register_penalty(
@@ -261,7 +279,8 @@ def correspondence_register_penalty(
     if channel not in _CORRESPONDENCE_CHANNELS:
         return 0
     penalty = 0
-    if _COLD_HR_DECLINE.search(text):
+    register_text = _normalize_curly_apostrophes(text)
+    if _COLD_HR_DECLINE.search(register_text):
         penalty += 3
     if channel != "email" and ("\u2014" in text or "\u2013" in text):
         penalty += 3
