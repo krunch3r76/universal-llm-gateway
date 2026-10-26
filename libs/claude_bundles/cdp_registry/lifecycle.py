@@ -39,7 +39,7 @@ from .models import (
     account_is_signed_in,
     account_profile_suffix,
     assert_profile_suffix_available,
-    normalize_account_id,
+    resolve_reserve_account_id,
     seat_open,
 )
 
@@ -296,8 +296,16 @@ def reserve_allocating_row(
                 continue
             exclude = _used_ports(active) | _peer_lane_ports()
             port = select_free_registry_port(listen, exclude=exclude)
-            norm_account = normalize_account_id(
-                account_id or (carry or {}).get("account_id")
+            prior_row = (
+                active.get(registration_id)
+                if registration_id and registration_id in active
+                else None
+            )
+            norm_account = resolve_reserve_account_id(
+                account_id=account_id,
+                carry=carry,
+                prior_row=prior_row if isinstance(prior_row, dict) else None,
+                profile_suffix=profile_suffix,
             )
             if norm_account != "default" and not account_is_signed_in(norm_account):
                 raise AccountNotSignedInError(
@@ -414,6 +422,7 @@ def _mint_after_join(
     listen: _ListenFn,
     launch_fn: _LaunchFn,
     join: bool,
+    account_id: str | None = None,
 ) -> Registration:
     """One reserve re-entry. ``join=False`` is the stranded-row mint only."""
     row, minted = reserve_allocating_row(
@@ -424,6 +433,7 @@ def _mint_after_join(
         listen=listen,
         launch=True,
         join=join,
+        account_id=account_id,
     )
     if not minted:
         return _wait_for_joined_row(
@@ -435,6 +445,7 @@ def _mint_after_join(
             listen=listen,
             launch_fn=launch_fn,
             joined=None,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=True, launch_fn=launch_fn)
 
@@ -454,6 +465,7 @@ def _wait_for_joined_row(
     launch_fn: _LaunchFn,
     joined: list | None,
     reentry: bool = False,
+    account_id: str | None = None,
 ) -> Registration:
     """Poll until the joined row leaves ``allocating``. No deadline.
 
@@ -494,6 +506,7 @@ def _wait_for_joined_row(
                 listen=listen,
                 launch_fn=launch_fn,
                 join=False,
+                account_id=account_id,
             )
         re_row, minted = reserve_allocating_row(
             holder=holder,
@@ -503,6 +516,7 @@ def _wait_for_joined_row(
             listen=listen,
             launch=True,
             join=True,
+            account_id=account_id,
         )
         if minted:
             return _finish_reserved_launch(re_row, launch=True, launch_fn=launch_fn)
@@ -516,6 +530,7 @@ def _wait_for_joined_row(
             launch_fn=launch_fn,
             joined=joined,
             reentry=True,
+            account_id=account_id,
         )
 
 
@@ -570,6 +585,7 @@ def register_lane(
             listen=listen,
             launch_fn=launch_fn,
             joined=joined,
+            account_id=account_id,
         )
     return _finish_reserved_launch(row, launch=launch, launch_fn=launch_fn)
 

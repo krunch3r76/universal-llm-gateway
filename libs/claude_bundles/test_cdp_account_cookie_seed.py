@@ -204,6 +204,38 @@ def test_what_is_running_surfaces_account_id() -> None:
     assert "account=account-2" in text
 
 
+def test_signed_in_accounts_skips_malformed_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles.cdp_registry.models import signed_in_accounts
+
+    signin = tmp_path / "account_sign_in.json"
+    signin.write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "account-2": {"signed_in": True},
+                    "../bad": {"signed_in": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
+    assert signed_in_accounts() == {"account-2"}
+
+
+def test_resolve_reserve_account_id_from_profile_suffix() -> None:
+    from claude_bundles.cdp_registry.models import resolve_reserve_account_id
+
+    assert resolve_reserve_account_id(profile_suffix="account-2") == "account-2"
+    prior = {"account_id": "account-3", "profile_suffix": "account-2"}
+    assert (
+        resolve_reserve_account_id(prior_row=prior, profile_suffix="reg-abc")
+        == "account-3"
+    )
+
+
 def test_resolve_account_id_precedence_and_signin_gate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -231,9 +263,7 @@ def test_resolve_account_id_precedence_and_signin_gate(
     monkeypatch.setenv("CDP_SEAT_ACCOUNTS_PATH", str(seat))
     monkeypatch.setenv("CDP_ACCOUNT_SIGNIN_PATH", str(signin))
 
-    assert (
-        resolve_account_id("account-2", holder="h1", purpose="ask") == "account-2"
-    )
+    assert resolve_account_id("account-2", holder="h1", purpose="ask") == "account-2"
     assert resolve_account_id(None, holder="h1") == "account-2"
     assert resolve_account_id(None, purpose="ask") == "default"
     assert resolve_account_id(None, holder="other") == "default"

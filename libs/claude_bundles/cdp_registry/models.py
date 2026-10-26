@@ -93,14 +93,52 @@ def _seat_accounts_path() -> Path:
 
 
 def _account_signin_path() -> Path:
+    """Path to operator-maintained sign-in registry (no in-repo writer or TTL).
+
+    Entries are written out-of-band after a verified claude.ai login; first
+    account-2 use requires that manual step before routed asks may select it.
+    """
     raw = os.environ.get(_ACCOUNT_SIGNIN_ENV, "").strip()
     if raw:
         return Path(raw)
     return Path.home() / ".gateway" / "cdp-registry" / "account_sign_in.json"
 
 
+def account_id_from_profile_suffix(profile_suffix: str | None) -> str | None:
+    """Map persistent ``account-*`` profile suffix back to account id."""
+    suffix = str(profile_suffix or "").strip()
+    if suffix.startswith("account-"):
+        return normalize_account_id(suffix)
+    return None
+
+
+def resolve_reserve_account_id(
+    *,
+    account_id: str | None = None,
+    carry: dict[str, Any] | None = None,
+    prior_row: dict[str, Any] | None = None,
+    profile_suffix: str | None = None,
+) -> str:
+    """Resolve account for ``reserve_allocating_row`` without dropping dormant identity."""
+    explicit = str(account_id or "").strip()
+    if explicit:
+        return normalize_account_id(explicit)
+    if isinstance(carry, dict) and str(carry.get("account_id") or "").strip():
+        return normalize_account_id(str(carry["account_id"]))
+    if isinstance(prior_row, dict) and str(prior_row.get("account_id") or "").strip():
+        return normalize_account_id(str(prior_row["account_id"]))
+    from_suffix = account_id_from_profile_suffix(profile_suffix)
+    if from_suffix is not None:
+        return from_suffix
+    if isinstance(prior_row, dict):
+        from_prior = account_id_from_profile_suffix(prior_row.get("profile_suffix"))
+        if from_prior is not None:
+            return from_prior
+    return DEFAULT_ACCOUNT_ID
+
+
 def signed_in_accounts() -> set[str]:
-    """Account ids marked signed-in in the registry sign-in file."""
+    """Account ids marked signed-in in the operator-written sign-in file."""
     path = _account_signin_path()
     if not path.is_file():
         return set()
@@ -116,17 +154,24 @@ def signed_in_accounts() -> set[str]:
         for key, meta in accounts.items():
             if not str(key or "").strip():
                 continue
-            if isinstance(meta, dict) and meta.get("signed_in") is True:
-                out.add(normalize_account_id(str(key)))
-            elif meta is True:
-                out.add(normalize_account_id(str(key)))
+            try:
+                if isinstance(meta, dict) and meta.get("signed_in") is True:
+                    out.add(normalize_account_id(str(key)))
+                elif meta is True:
+                    out.add(normalize_account_id(str(key)))
+            except RegistryError:
+                continue
         return out
     if isinstance(accounts, list):
-        return {
-            normalize_account_id(str(item))
-            for item in accounts
-            if str(item or "").strip()
-        }
+        out_list: set[str] = set()
+        for item in accounts:
+            if not str(item or "").strip():
+                continue
+            try:
+                out_list.add(normalize_account_id(str(item)))
+            except RegistryError:
+                continue
+        return out_list
     return set()
 
 
