@@ -198,6 +198,13 @@ class AccountDisplayError(RegistryError):
 
 
 def _accounts_config_path() -> Path:
+    """Resolve accounts YAML path; ``CDP_ACCOUNTS_CONFIG_PATH`` overrides ``ACCOUNTS_CONFIG_PATH``.
+
+    Each load re-reads and re-parses the file (no cache, no last-known-good). A malformed
+    edit therefore stops default mints and default joins too because ``lifecycle`` validates
+    the default display before join selection. Edit ``accounts.yaml`` atomically (write temp,
+    rename).
+    """
     raw = os.environ.get(_ACCOUNTS_CONFIG_ENV, "").strip()
     if raw:
         return Path(raw)
@@ -310,7 +317,11 @@ def display_rows() -> dict[str, dict[str, str]]:
 
 
 def validate_default_display_resolved(resolved: str) -> None:
-    """Fail closed when the default account's resolved display is forbidden or claimed."""
+    """Fail closed when the default account's resolved display is forbidden or claimed.
+
+    With an empty ``cdp_account_displays`` map only the never-rule and display kind check
+    apply; the claimed-display loop is a no-op, so an unlisted display (e.g. ``:5``) passes.
+    """
     key = _normalize_display_binding(resolved)
     cfg = _load_accounts_config()
     if key in cfg.never:

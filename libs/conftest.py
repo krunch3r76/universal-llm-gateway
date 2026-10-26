@@ -41,7 +41,12 @@ def _pin_lanes_empty_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def _cdp_accounts_config_test_map(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Tests that mint account-2 rows need a ``cdp_account_displays`` entry."""
+    """Map account-2 to ``:4`` for every ``offline`` test via a rewritten accounts YAML.
+
+    ``CDP_ACCOUNTS_CONFIG_PATH`` wins over monkeypatching ``models.ACCOUNTS_CONFIG_PATH``
+    (see ``models._accounts_config_path``). A test that needs the committed empty
+    ``cdp_account_displays`` map must set ``CDP_ACCOUNTS_CONFIG_PATH`` to its own file.
+    """
     if request.node.get_closest_marker("offline") is None:
         return
     repo_root = Path(__file__).resolve().parent.parent
