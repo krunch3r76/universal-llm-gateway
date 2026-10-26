@@ -20,6 +20,15 @@ _EVENTS_SOCK = os.environ.get(
 )
 
 
+def _live_events_publish_disabled() -> bool:
+    """Skip live Event Service writes during pytest unless explicitly opted in."""
+    if os.environ.get("ULG_EVENTS_ENABLE") == "1":
+        return False
+    if os.environ.get("ULG_EVENTS_DISABLED") == "1":
+        return True
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 async def _emit(
     signal: str,
     payload: dict[str, Any],
@@ -28,6 +37,8 @@ async def _emit(
     role: str = "observation",
     scope: str = "node",
 ) -> None:
+    if _live_events_publish_disabled():
+        return
     now = datetime.now(UTC)
     event: dict[str, Any] = {
         "signal": signal,
@@ -190,6 +201,8 @@ def _emit_sync(
     """Blocking UDS emit — mirrors _emit for sync callers. Silent on failure."""
     import socket
 
+    if _live_events_publish_disabled():
+        return
     now = datetime.now(UTC)
     event: dict[str, Any] = {
         "signal": signal,

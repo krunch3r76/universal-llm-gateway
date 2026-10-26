@@ -6,6 +6,8 @@ import os
 
 # Fail-closed: never page the operator's phone during pytest (collection/fixtures too).
 os.environ["PAGER_NOTIFY_ENABLED"] = "0"
+# Fail-closed: never publish manage/mcp restart observation events during pytest.
+os.environ.setdefault("ULG_EVENTS_DISABLED", "1")
 
 import sys
 from pathlib import Path
