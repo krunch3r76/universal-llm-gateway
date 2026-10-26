@@ -3879,5 +3879,31 @@
       ],
       "sql": "CREATE TABLE workflow_schemas (  entity_type    TEXT PRIMARY KEY,  enum_values    TEXT NOT NULL,  initial_state  TEXT NOT NULL,  terminal_states TEXT,  notes          TEXT, closure_audit_exempt INTEGER NOT NULL DEFAULT 0)"
     }
+  },
+  "triggers": {
+    "trg_update_last_accessed": {
+      "sql": "CREATE TRIGGER trg_update_last_accessed\n        AFTER INSERT ON entity_access_log\n        BEGIN\n            UPDATE entities\n            SET last_accessed_at = NEW.created_at\n            WHERE id = NEW.entity_id;\n        END",
+      "table": "entity_access_log"
+    }
+  },
+  "views": {
+    "assertion_summary": {
+      "sql": "CREATE VIEW assertion_summary AS\n        SELECT\n            e.name,\n            e.type,\n            COUNT(*) AS total_assertions,\n            SUM(CASE WHEN a.confidence = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,\n            SUM(CASE WHEN a.confidence = 'believed' THEN 1 ELSE 0 END) AS believed,\n            SUM(CASE WHEN a.confidence = 'suspected' THEN 1 ELSE 0 END) AS suspected,\n            SUM(CASE WHEN a.confidence = 'hypothesized' THEN 1 ELSE 0 END) AS hypothesized\n        FROM assertions a\n        JOIN entities e ON a.entity_id = e.id\n        GROUP BY e.id"
+    },
+    "current_entities": {
+      "sql": "CREATE VIEW current_entities AS\n        SELECT *\n        FROM entities\n        WHERE COALESCE(lifecycle, '') NOT IN ('merged', 'deprecated')"
+    },
+    "current_relationships": {
+      "sql": "CREATE VIEW current_relationships AS\n        SELECT r.*, e1.name AS from_name, e2.name AS to_name\n        FROM relationships r\n        JOIN entities e1 ON r.from_entity = e1.id\n        JOIN entities e2 ON r.to_entity = e2.id\n        WHERE r.valid_until IS NULL\n           OR date('now') <= r.valid_until"
+    },
+    "matters_with_deadlines": {
+      "sql": "CREATE VIEW matters_with_deadlines AS\n        SELECT\n            m.id AS matter_id,\n            m.name AS matter_name,\n            d.name AS deadline_name,\n            json_extract(d.attributes, '$.date') AS deadline_date,\n            json_extract(d.attributes, '$.description') AS deadline_description,\n            json_extract(d.attributes, '$.urgency') AS urgency,\n            json_extract(d.attributes, '$.outcome') AS outcome\n        FROM entities m\n        JOIN relationships r ON r.to_entity = m.id AND r.type = 'deadline_for'\n        JOIN entities d ON r.from_entity = d.id\n        WHERE m.type = 'legal_matter'\n        ORDER BY deadline_date"
+    },
+    "session_lids": {
+      "sql": "CREATE VIEW session_lids AS\n  SELECT * FROM session_journals\n  WHERE closed_by IS NULL OR closed_by != 'succession'"
+    },
+    "session_windows": {
+      "sql": "CREATE VIEW session_windows AS\n  SELECT * FROM session_journals\n  WHERE conversation_uuid IS NOT NULL OR verbatim_sha256 IS NOT NULL"
+    }
   }
 }
