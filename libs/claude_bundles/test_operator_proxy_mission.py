@@ -438,7 +438,9 @@ def test_how_this_seat_works_names_reachable_models() -> None:
         "maestro house: desired_model=cdp/fable-5.1 desired_effort=medium "
         "(K91, FACT 12286#4800); elsewhere cdp/opus-5.5-extra (K22)"
     ) in refusals
+    assert "Never commission a cdp/fable seat unless Kaywan asked" in refusals
     assert "no cdp/fable hop target" not in refusals
+    assert "(a:39008)" in refusals
     assert "cursor/claude-opus-5" not in out
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
     assert _legacy_reasoner not in out

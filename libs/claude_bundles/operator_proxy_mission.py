@@ -16,8 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import (
     hop_successor_fields,
@@ -30,6 +28,9 @@ from claude_bundles.operator_proxy_standing_render import (
 )
 from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
 
+MAESTRO_LANE_ID = "12286"
+# Authoritative shipped default for maestro self-hop: config/lanes/12286.yaml
+# (override via house-rules K91 row). Python fallback is K22, not hard-coded Fable.
 DEFAULT_MAESTRO_SELF_HOP_MODEL = "cdp/fable-5.1"
 DEFAULT_MAESTRO_SELF_HOP_EFFORT = "medium"
 ELSEWHERE_HOP_MODEL = "cdp/opus-5.5-extra"
@@ -56,10 +57,19 @@ def _maestro_self_hop_lane_config_path(lane_id: str) -> Path:
 
 
 def load_lane_config_knob(lane_id: str) -> MaestroSelfHopKnob | None:
+    if not lane_id.isdigit():
+        return None
     path = _maestro_self_hop_lane_config_path(lane_id)
     if not path.is_file():
         return None
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        import yaml
+    except ImportError:
+        return None
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
     block = raw.get("maestro_self_hop") or {}
     model = (block.get("desired_model") or "").strip()
     effort = (block.get("desired_effort") or "").strip()
@@ -83,26 +93,38 @@ def parse_k91_from_house_rules(text: str | None) -> MaestroSelfHopKnob | None:
 def resolve_maestro_self_hop(
     *,
     house_rules_text: str | None = None,
-    lane_id: str = "12286",
+    lane_id: str = MAESTRO_LANE_ID,
 ) -> MaestroSelfHopKnob:
-    """One knob read: K91 house-rules row, then lane config, then K91 defaults."""
+    """One knob read on the maestro lane only.
+
+    Order on lane 12286: house-rules K91 row, then ``config/lanes/12286.yaml``,
+    then K22 fallback (no hard-coded Fable in Python). Other lanes always K22.
+    """
+    lane = (lane_id or "").strip()
+    if not lane.isdigit() or lane != MAESTRO_LANE_ID:
+        return MaestroSelfHopKnob(
+            desired_model=ELSEWHERE_HOP_MODEL,
+            desired_effort="",
+        )
     parsed = parse_k91_from_house_rules(house_rules_text)
     if parsed is not None:
         return parsed
-    from_config = load_lane_config_knob(lane_id)
+    from_config = load_lane_config_knob(lane)
     if from_config is not None:
         return from_config
     return MaestroSelfHopKnob(
-        desired_model=DEFAULT_MAESTRO_SELF_HOP_MODEL,
-        desired_effort=DEFAULT_MAESTRO_SELF_HOP_EFFORT,
+        desired_model=ELSEWHERE_HOP_MODEL,
+        desired_effort="",
     )
 
 
 def maestro_self_hop_refusal_tail(knob: MaestroSelfHopKnob) -> str:
+    effort_part = (
+        f" desired_effort={knob.desired_effort}" if knob.desired_effort.strip() else ""
+    )
     return (
-        f"maestro house: desired_model={knob.desired_model} "
-        f"desired_effort={knob.desired_effort} (K91, FACT 12286#4800); "
-        f"elsewhere {ELSEWHERE_HOP_MODEL} (K22)"
+        f"maestro house: desired_model={knob.desired_model}{effort_part} "
+        f"(K91, FACT 12286#4800); elsewhere {ELSEWHERE_HOP_MODEL} (K22)"
     )
 
 
@@ -116,8 +138,12 @@ def apply_maestro_self_hop_fields(
         house_rules_text=house_rules_text,
         lane_id=lane_id,
     )
+    effort = knob.desired_effort.strip()
     fields["maestro_self_hop_model"] = knob.desired_model
     fields["maestro_self_hop_effort"] = knob.desired_effort
+    fields["maestro_self_hop_effort_arg"] = (
+        f", desired_effort={effort}" if effort else ""
+    )
     fields["maestro_self_hop_refusal_tail"] = maestro_self_hop_refusal_tail(knob)
     return knob
 
@@ -276,7 +302,8 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 - Admit or re-admit a conductor only with contract=conductor.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
 - Never thread_get on {lane}; the lane is huge.
-- Never pass escalation= to agent_bus hop. Pass {maestro_self_hop_refusal_tail}.
+- Never commission a cdp/fable seat unless Kaywan asked for it in this session (K22); the only standing Fable bind is the maestro self-hop (K91).
+- Never pass escalation= to agent_bus hop (a:39008). Pass {maestro_self_hop_refusal_tail}.
 - Never force git_integration_worker. Never fire contract:propagate.
 - Never sync_restart while porcelain shows first-column M or D on a path you would call landed.
 - Never send a DISPOSITION or SEAT_REGISTRATION over 2000 characters inline (wc -m). Quotes go in sidecar_content.
@@ -321,7 +348,7 @@ You are the housekeeping successor for lane {lane}. Your birth record: successor
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
 5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
-6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model={maestro_self_hop_model}, desired_effort={maestro_self_hop_effort}, hop_kind=mission, reason="housekeeping done; resume").
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model={maestro_self_hop_model}{maestro_self_hop_effort_arg}, hop_kind=mission, reason="housekeeping done; resume").
 
 ## Hard refusals (housekeeping — these bind; they are last on purpose)
 
@@ -358,6 +385,7 @@ _FIELD_ORDER = (
 _MAESTRO_SELF_HOP_FIELD_ORDER = (
     "maestro_self_hop_model",
     "maestro_self_hop_effort",
+    "maestro_self_hop_effort_arg",
     "maestro_self_hop_refusal_tail",
 )
 _LATE_FIELD_ORDER = (
@@ -666,6 +694,7 @@ __all__ = [
     "DEFAULT_MAESTRO_SELF_HOP_EFFORT",
     "DEFAULT_MAESTRO_SELF_HOP_MODEL",
     "ELSEWHERE_HOP_MODEL",
+    "MAESTRO_LANE_ID",
     "MaestroSelfHopKnob",
     "apply_maestro_self_hop_fields",
     "LIFE_SURFACE_FORBIDDEN_TOOLS",
