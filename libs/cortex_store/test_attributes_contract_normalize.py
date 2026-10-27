@@ -139,6 +139,7 @@ def test_mcp_entity_update_json_string_attributes_merges(migrated_db) -> None:
     updated = _op_entity_update(
         entity_id=eid,
         attributes='{"priority":"low"}',
+        echo="card",
     )
     assert "error" not in updated
     assert updated["attributes"] == {
