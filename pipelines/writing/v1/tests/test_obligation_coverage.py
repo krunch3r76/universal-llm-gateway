@@ -1645,6 +1645,28 @@ def test_question_titlecase_action_tail_preserved_in_semantic_reading(
     assert phrase in str(question.get("semantic_reading", "")).lower()
 
 
+@pytest.mark.parametrize(
+    "inbound",
+    (
+        "Thanks, Will",
+        "Thanks, Will Smith",
+    ),
+)
+def test_thanks_comma_common_name_signoff_stays_pleasantry(inbound: str) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+def test_question_em_dash_first_name_signature_stripped_from_semantic_reading() -> None:
+    rows = source_obligations.fallback_obligations("What time works? — Will")
+    question = next(row for row in rows if row.get("kind") == "question")
+    assert question["obligation"] == "answer"
+    assert question["semantic_reading"] == "answer the question: What time works?"
+    assert "will" not in str(question.get("semantic_reading", "")).lower()
+
+
 def test_lowercase_bullet_after_notes_not_merged_as_signature() -> None:
     rows = source_obligations.fallback_obligations("Notes\n- send transcript")
     quoted = [str(row.get("quoted_span", "")) for row in rows]
