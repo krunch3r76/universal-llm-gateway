@@ -7,6 +7,10 @@ import json
 import re
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
+
+from tools._unwindowed_read_projection import sidecar_section_listing
+
 _COMPACT_MAX_BYTES = 1500
 _COMPACT_BUDGET_BYTES = 1450
 _CDP_LINE_CAP = 45
@@ -207,6 +211,53 @@ def _compact_cdp_markdown(body: str) -> str:
     return out
 
 
+def _load_cortex_sidecar_text(sidecar_uri: str) -> str | None:
+    uri = (sidecar_uri or "").strip()
+    if not uri.startswith("cortex://"):
+        return None
+    rel = uri.removeprefix("cortex://").lstrip("/")
+    path = (cortex_files_root() / rel).resolve()
+    try:
+        path.relative_to(cortex_files_root().resolve())
+    except ValueError:
+        return None
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _attach_sidecar_listing(projected: dict[str, Any], sidecar_uri: str) -> dict[str, Any]:
+    text = _load_cortex_sidecar_text(sidecar_uri)
+    if text is None:
+        projected = projected.copy()
+        projected["sidecar_listing_error"] = f"sidecar not readable: {sidecar_uri}"
+        return projected
+    listing = sidecar_section_listing(sidecar_uri=sidecar_uri, text=text)
+    if "error" in listing:
+        projected = projected.copy()
+        projected["sidecar_listing_error"] = listing["error"]
+        return projected
+    out = projected.copy()
+    out["sidecar_sections"] = listing["sections"]
+    out["sidecar_section_reads"] = listing["section_reads"]
+    out["sidecar_total_chars"] = listing["total_chars"]
+    return out
+
+
+def _apply_compact_closeout(turn: dict[str, Any], raw_body: str) -> dict[str, Any]:
+    raw_bytes = _body_bytes(raw_body)
+    subject = str(turn.get("subject") or "")
+    projected = turn.copy()
+    if _is_json_closeout(subject, raw_body):
+        projected["body"] = _compact_json_closeout(raw_body)
+    else:
+        projected["body"] = _compact_cdp_markdown(raw_body)
+    projected["body_sha256"] = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+    projected["body_bytes"] = raw_bytes
+    projected["projection_available"] = "full"
+    return projected
+
+
 def project_turn_body(
     turn: dict[str, Any],
     *,
@@ -220,17 +271,21 @@ def project_turn_body(
         return turn
     raw_bytes = _body_bytes(raw_body)
     mode = (projection or "compact").strip().lower()
-    if mode == "full" or raw_bytes < _COMPACT_MAX_BYTES:
+    if mode == "full":
+        return turn
+
+    sidecar_uri = turn.get("sidecar_uri")
+    if isinstance(sidecar_uri, str) and sidecar_uri.strip():
+        base = turn
+        if raw_bytes >= _COMPACT_MAX_BYTES:
+            subject = str(turn.get("subject") or "")
+            if _is_json_closeout(subject, raw_body) or _is_cdp_reply(subject, raw_body):
+                base = _apply_compact_closeout(turn, raw_body)
+        return _attach_sidecar_listing(base, sidecar_uri.strip())
+
+    if raw_bytes < _COMPACT_MAX_BYTES:
         return turn
     subject = str(turn.get("subject") or "")
     if not (_is_json_closeout(subject, raw_body) or _is_cdp_reply(subject, raw_body)):
         return turn
-    projected = turn.copy()
-    if _is_json_closeout(subject, raw_body):
-        projected["body"] = _compact_json_closeout(raw_body)
-    else:
-        projected["body"] = _compact_cdp_markdown(raw_body)
-    projected["body_sha256"] = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
-    projected["body_bytes"] = raw_bytes
-    projected["projection_available"] = "full"
-    return projected
+    return _apply_compact_closeout(turn, raw_body)
