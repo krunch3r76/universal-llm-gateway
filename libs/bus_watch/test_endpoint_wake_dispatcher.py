@@ -3479,3 +3479,105 @@ def test_fire_due_wakes_delivers_worker_closeout_to_parent_lane(
     )
     fire_due_wakes(Store())  # type: ignore[arg-type]
     assert delivered == [("12286", "R")]
+
+
+_ORION_AGENT_ID = "4ed020f2-f0b2-4f3d-b49c-89aa34930f19"
+_ORION_SUBSCRIPTION = {
+    "id": 42,
+    "agent": "cursor",
+    "thread_scope": "20995",
+    "state": "subscribed",
+    "surface": "cursor",
+    "display": "orion-node",
+    "title": "20995 impresario",
+    "agent_id": _ORION_AGENT_ID,
+}
+
+
+def test_worker_closeout_to_composer_impresario_resolves_orion_binding() -> None:
+    """Worker CLOSEOUT to composer-impresario-<id> wakes the Glass row by agent_id."""
+    from bus_watch.endpoint_wake_dispatcher import _resolve_delivery_route, qualify
+    from bus_watch.endpoint_wake_transport import StoreClient
+
+    worker_thread = "21015"
+    to_agent = "composer-impresario-4ed020f2"
+    subject = "cursor-sdk CLOSEOUT d5b2 contract=implement"
+    turn = {
+        "to_agent": to_agent,
+        "from_agent": "cursor-sdk",
+        "subject": subject,
+        "thread": worker_thread,
+        "id": 9,
+        "turn_number": 3,
+    }
+    verdict = qualify(turn, cse=False, store=None)
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_gate_or_directive"
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> dict:
+            if method == "GET" and path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                if agent == "cursor":
+                    return {"subscriptions": [_ORION_SUBSCRIPTION]}
+                return {"subscriptions": []}
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    resolved = StubStore().subscription(to_agent, worker_thread)
+    assert resolved is not None
+    kind, row = resolved
+    assert kind == "agent_id"
+    assert row["display"] == "orion-node"
+    assert row["agent_id"] == _ORION_AGENT_ID
+
+    class RouteStore:
+        def subscription(self, agent: str, thread_id: str):
+            return StubStore().subscription(agent, thread_id)
+
+    route = _resolve_delivery_route(RouteStore(), to_agent, worker_thread)  # type: ignore[arg-type]
+    assert route is not None
+    assert route[1]["display"] == "orion-node"
+    assert route[1]["agent_id"] == _ORION_AGENT_ID
+
+
+def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
+    worker_thread = "21015"
+    to_agent = "composer-impresario-4ed020f2"
+    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21015 contract=implement"
+
+    class Store:
+        def __init__(self) -> None:
+            self.pending: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list:
+            return [
+                {
+                    "id": 77,
+                    "to_agent": to_agent,
+                    "from_agent": "cursor-sdk",
+                    "thread": worker_thread,
+                    "turn_number": 4,
+                    "subject": subject,
+                }
+            ]
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == to_agent:
+                return (
+                    "agent_id",
+                    dict(_ORION_SUBSCRIPTION),
+                )
+            return None
+
+        def scan(self, _high: int, new_hw: int, rows: list) -> None:
+            self.pending = rows
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert len(store.pending) == 1
+    assert store.pending[0]["agent"] == to_agent
+    assert store.pending[0]["thread_id"] == worker_thread
+    assert store.pending[0]["decided_by_rule"] == "wake_gate_or_directive"

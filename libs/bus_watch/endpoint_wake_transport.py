@@ -22,6 +22,27 @@ _RETRIABLE_DISPLAY = {
 _CSE_PENDING_ERRORS = {"no_identity", "project_ask_unconfigured"}
 _GIW = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091")
 _MAX_PARENT_HOPS = 3
+_COMPOSER_IMPRESARIO_PREFIX = "composer-impresario-"
+
+
+def composer_impresario_suffix(agent: str) -> str | None:
+    """Return the agent_id token suffix from ``composer-impresario-<token>``."""
+    raw = str(agent or "").strip().lower()
+    if not raw.startswith(_COMPOSER_IMPRESARIO_PREFIX):
+        return None
+    suffix = raw[len(_COMPOSER_IMPRESARIO_PREFIX) :].strip()
+    return suffix or None
+
+
+def agent_id_matches_composer_suffix(agent_id: str, suffix: str) -> bool:
+    """True when ``suffix`` matches the start of a Glass ``agent_id`` UUID."""
+    aid = str(agent_id or "").strip().lower()
+    suf = str(suffix or "").strip().lower()
+    if not aid or not suf:
+        return False
+    if aid.startswith(suf):
+        return True
+    return aid.replace("-", "").startswith(suf.replace("-", ""))
 
 
 def classify_display(
@@ -187,6 +208,9 @@ class StoreClient:
             or str(r.get("thread_scope") or "") in ancestor_rank
         ]
         if not candidates:
+            impresario_suffix = composer_impresario_suffix(agent)
+            if impresario_suffix is not None:
+                return self._subscription_by_cursor_agent_id_suffix(impresario_suffix)
             return None
         best = min(
             candidates,
@@ -203,6 +227,28 @@ class StoreClient:
         else:
             kind = "parent"
         return kind, best
+
+    def _subscription_by_cursor_agent_id_suffix(
+        self, suffix: str
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Glass tab bind for worker CLOSEOUT to ``composer-impresario-<id>``."""
+        payload = self._bus(
+            "GET",
+            "/endpoint-subscriptions",
+            params={"agent": "cursor"},
+        )
+        rows = [
+            row
+            for row in payload.get("subscriptions") or []
+            if row.get("state") == "subscribed"
+            and agent_id_matches_composer_suffix(
+                str(row.get("agent_id") or ""), suffix
+            )
+        ]
+        if not rows:
+            return None
+        best = max(rows, key=lambda r: int(r.get("id") or 0))
+        return "agent_id", best
 
     def subscriptions(self, agent: str = "cursor") -> list[dict[str, Any]]:
         payload = self._bus(
