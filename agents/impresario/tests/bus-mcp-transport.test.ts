@@ -6,6 +6,7 @@ import {
   callHostMcpTool,
   isMcpConnectionClosedError,
 } from "../bot/lib/bus-mcp-retry.js";
+import { parseHostMcpJson } from "../bot/lib/mcp-result.js";
 import ulgConnection, { ULG_MCP_HTTP_URL } from "../bot/host-connections/ulg.js";
 
 describe("MCP transport (streamable HTTP)", () => {
@@ -42,6 +43,13 @@ describe("MCP transport (streamable HTTP)", () => {
     });
     assert.equal(attempts, 2);
     assert.deepEqual(result, { ok: true });
+  });
+
+  it("parseHostMcpJson decodes MCP text content to bus JSON", () => {
+    const parsed = parseHostMcpJson({
+      content: [{ type: "text", text: '{"turns":[{"turn_number":1}]}' }],
+    }) as { turns: unknown[] };
+    assert.equal(parsed.turns.length, 1);
   });
 
   it("hostBusCall surfaces retry success through mocked host.mcp", async () => {
