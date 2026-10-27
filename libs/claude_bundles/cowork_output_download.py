@@ -7,7 +7,7 @@ not a rewrite of ``HARVEST_JS``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +24,13 @@ HarvestProvenance = Literal[
 # hundred chars; a real transcript runs tens of thousands. Above this bound the
 # chat body cannot be the stub the fail-closed guard exists to reject.
 THIN_CHAT_BODY_MAX_CHARS = 8000
+
+CLASSIC_OUTPUT_DOWNLOAD_ROUTE = (
+    "classic_affordance:[data-cdp-output-download=1] via _OUTPUT_DOWNLOAD_JS"
+)
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 def cortex_files_root_from_env() -> Path | None:
@@ -106,6 +113,8 @@ class OutputDownloadResult:
     filename: str
     content: str
     content_bytes: bytes
+    route: str = CLASSIC_OUTPUT_DOWNLOAD_ROUTE
+    file_uuid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +123,10 @@ class HarvestBody:
 
     content: str
     provenance: HarvestProvenance
+    filename: str | None = None
+    content_bytes: bytes | None = None
+    route: str | None = None
+    file_uuid: str | None = None
 
 
 def should_attempt_output_download(
@@ -145,6 +158,30 @@ def extract_cortex_uri(body: str) -> str | None:
     if not match:
         return None
     return match.group(0).rstrip(".,;)")
+
+
+def _session_uuid_from_filename(filename: str) -> str | None:
+    """Return the last UUID embedded in a Cowork suggested filename, if any."""
+    matches = _UUID_RE.findall(filename or "")
+    return matches[-1] if matches else None
+
+
+def _file_uuid_from_download(
+    download: object,
+    *,
+    suggested_filename: str,
+    tagged: object,
+) -> str | None:
+    """Pick a download URL UUID distinct from the session id in *suggested_filename*."""
+    session_id = _session_uuid_from_filename(suggested_filename)
+    haystacks: list[str] = [str(getattr(download, "url", "") or "")]
+    if isinstance(tagged, dict):
+        haystacks.extend(str(value) for value in tagged.values())
+    for haystack in haystacks:
+        for candidate in _UUID_RE.findall(haystack):
+            if session_id is None or candidate.lower() != session_id.lower():
+                return candidate
+    return None
 
 
 def read_cortex_uri_content(uri: str, *, cortex_root: Path) -> str | None:
@@ -202,6 +239,12 @@ async def _download_via_classic_affordance(
         filename=suggested,
         content=text,
         content_bytes=raw,
+        route=CLASSIC_OUTPUT_DOWNLOAD_ROUTE,
+        file_uuid=_file_uuid_from_download(
+            download,
+            suggested_filename=suggested,
+            tagged=tagged,
+        ),
     )
 
 
@@ -234,6 +277,8 @@ async def download_cowork_output(
 
     menu_download = await download_via_preview_menu(page, timeout_ms=timeout_ms)
     if menu_download is not None and menu_download.content_bytes:
+        if menu_download.route == CLASSIC_OUTPUT_DOWNLOAD_ROUTE:
+            return replace(menu_download, route="preview_menu_download")
         return menu_download
     preview = await extract_cowork_output_preview(page)
     if preview is not None and preview.content.strip():
@@ -286,7 +331,14 @@ async def resolve_harvest_body(
     if attempted_download:
         downloaded = await download_cowork_output(page)
         if downloaded is not None and downloaded.content.strip():
-            return HarvestBody(content=downloaded.content, provenance="output-file")
+            return HarvestBody(
+                content=downloaded.content,
+                provenance="output-file",
+                filename=getattr(downloaded, "filename", None),
+                content_bytes=getattr(downloaded, "content_bytes", None),
+                route=getattr(downloaded, "route", CLASSIC_OUTPUT_DOWNLOAD_ROUTE),
+                file_uuid=getattr(downloaded, "file_uuid", None),
+            )
 
         if harvest_source == "output-file":
             # Explicit caller demand for Output bytes — no size escape.

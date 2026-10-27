@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_bundles.cowork_output_download import HarvestBody
 
 from cdp_ask.cse_session_harvest_scrape import (
     _dom_to_harvested,
+    _try_body_harvest,
     compute_incomplete_dom,
     enrich_dom,
     is_loading,
@@ -16,6 +21,15 @@ from cdp_ask.cse_session_harvest_scrape import (
     pick_page_for_chat_url,
 )
 from cdp_ask.cse_session_models import HarvestRequest
+
+pytestmark = pytest.mark.offline
+
+_OUTPUT_FILENAME = "claude-cowork-070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
+_SESSION_ID = "070d97ff-5df4-5b11-8181-6faafdf64608"
+_CHAT_URL = "https://claude.ai/cowork/cse_01AroaPe3tJQSmHTZyVq2XCn"
+_REGISTRATION_ID = "37361992cd134cddbbc7fb378dfd492f"
+_ROUTE = "classic_affordance:[data-cdp-output-download=1] via _OUTPUT_DOWNLOAD_JS"
+_FILE_UUID = "ed1596e0-c550-42af-99e9-1254657e7cb3"
 
 
 @pytest.mark.parametrize(
@@ -133,3 +147,164 @@ async def test_pick_page_for_chat_url_falls_back() -> None:
         fallback=fallback,
     )
     assert picked is fallback
+
+
+def _settled_turn_dom(text: str) -> dict[str, object]:
+    return {
+        "turns": [{"author": "assistant", "text": text, "ordinal": 1}],
+        "title": "Session - Claude",
+        "streaming": False,
+        "in_flight": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_try_body_harvest_persists_output_file_raw_and_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """output-file harvest writes raw bytes + manifest under cortex raw transcripts."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    fixed_date = datetime(2026, 10, 27, 22, 43, 3, tzinfo=UTC)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return fixed_date
+
+    monkeypatch.setattr("cdp_ask.cse_session_harvest_scrape.datetime", _FixedDatetime)
+
+    payload = b'{"type":"user"}\n'
+    harvest_body = HarvestBody(
+        content=payload.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME,
+        content_bytes=payload,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(
+                side_effect=[
+                    _settled_turn_dom(harvest_body.content),
+                    _settled_turn_dom(harvest_body.content),
+                ]
+            ),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            AsyncMock(return_value=harvest_body),
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+
+    assert resp is not None
+    assert resp.outcome == "harvested"
+    assert resp.content_provenance == "output-file"
+    assert resp.archive_uri
+    assert resp.archive_sha256 == hashlib.sha256(payload).hexdigest()
+
+    raw_dir = tmp_path / "notes/system/transcripts/claude-cowork/raw/2026-10-27"
+    raw_path = raw_dir / _OUTPUT_FILENAME
+    manifest_path = raw_dir / f"{_SESSION_ID}.manifest.json"
+    assert raw_path.is_file()
+    assert raw_path.read_bytes() == payload
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert set(manifest) == {
+        "sha256",
+        "bytes",
+        "chat_url",
+        "registration_id",
+        "sessionId",
+        "file_uuid",
+        "captured_at",
+        "route",
+    }
+    assert manifest["sha256"] == resp.archive_sha256
+    assert manifest["bytes"] == len(payload)
+    assert manifest["chat_url"] == _CHAT_URL
+    assert manifest["registration_id"] == _REGISTRATION_ID
+    assert manifest["sessionId"] == _SESSION_ID
+    assert manifest["file_uuid"] == _FILE_UUID
+    assert manifest["captured_at"] == "2026-10-27T22:43:03+00:00"
+    assert manifest["route"] == _ROUTE
+    assert resp.archive_uri == (
+        f"cortex://notes/system/transcripts/claude-cowork/raw/2026-10-27/{_OUTPUT_FILENAME}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_try_body_harvest_output_file_revision_on_changed_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Changed Output bytes allocate __r2 while preserving the first raw file."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    first = b'{"type":"user"}\n'
+    second = b'{"type":"user","rev":2}\n'
+    harvest_first = HarvestBody(
+        content=first.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME,
+        content_bytes=first,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    harvest_second = HarvestBody(
+        content=second.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME,
+        content_bytes=second,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+    )
+
+    async def _run(body: HarvestBody):
+        with (
+            patch(
+                "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+                AsyncMock(
+                    side_effect=[
+                        _settled_turn_dom(body.content),
+                        _settled_turn_dom(body.content),
+                    ]
+                ),
+            ),
+            patch(
+                "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+                AsyncMock(return_value=body),
+            ),
+        ):
+            return await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+
+    first_resp = await _run(harvest_first)
+    second_resp = await _run(harvest_second)
+    assert first_resp is not None and second_resp is not None
+
+    raw_dir = tmp_path / "notes/system/transcripts/claude-cowork/raw"
+    date_dirs = list(raw_dir.iterdir())
+    assert len(date_dirs) == 1
+    day_dir = date_dirs[0]
+    original = day_dir / _OUTPUT_FILENAME
+    revised = day_dir / f"claude-cowork-{_SESSION_ID}__r2.jsonl"
+    assert original.read_bytes() == first
+    assert revised.read_bytes() == second
+    assert second_resp.archive_uri.endswith(
+        f"claude-cowork-{_SESSION_ID}__r2.jsonl"
+    )
+    manifest = json.loads(
+        (day_dir / f"{_SESSION_ID}__r2.manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["supersedes"].endswith(_OUTPUT_FILENAME)
