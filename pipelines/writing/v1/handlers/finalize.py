@@ -25,6 +25,7 @@ from .finalize_support import (
     _merge_drift,
     _model_of,
     _obligation_coverage_gate,
+    _omit_with_reason_ids,  # noqa: F401 — re-export for draft_selector / tests
     _polish_email_draft_if_needed,
     _raw_step,
     _selected_body,
