@@ -1,12 +1,12 @@
 """Gateway-only TCP forwarder for host Cursor and Grok CDP ports.
 
-The mcp-server container cannot open ``127.0.0.1:9338`` or ``:9339`` because
-that loopback is the container, not the host where Cursor and grok-bot listen.
-This module is the container-side origin rewrite and the host-side listener
-that compose runs as ``cdp-gateway-forwarder``. Host and Stargate callers stay
-on loopback. A process that does not own ``172.18.0.1`` does not bind those
-ports. Membership is read from local addresses; nothing here connects to
-9338 or 9339 to decide.
+The mcp-server container cannot open ``127.0.0.1:9338``, ``:9339``, or ``:19338``
+because that loopback is the container, not the host where Cursor and grok-bot
+listen. This module is the container-side origin rewrite and the host-side
+listener that compose runs as ``cdp-gateway-forwarder``. Host and Stargate
+callers stay on loopback. A process that does not own ``172.18.0.1`` does not
+bind those ports. Membership is read from local addresses; nothing here
+connects to 9338, 9339, or 19338 to decide.
 """
 
 from __future__ import annotations
@@ -185,11 +185,11 @@ def _gateway_origin(origin: str) -> str | None:
 def container_cdp_origin(
     origin: str, *, addresses: frozenset[str] | None = None
 ) -> str:
-    """Rewrite loopback 9338/9339 to the gateway only for a bridge client.
+    """Rewrite loopback 9338/9339/19338 to the gateway only for a bridge client.
 
     Any other origin, including grok display 10 ``9340``, is returned unchanged.
     When ``addresses`` is omitted the local
-    fib_trie is read. This function does not open 9338 or 9339.
+    fib_trie is read. This function does not open 9338, 9339, or 19338.
     """
     rewritten = _gateway_origin(origin)
     if rewritten is None:
@@ -203,8 +203,8 @@ def container_cdp_origin(
 def bind_targets(addresses: frozenset[str]) -> tuple[tuple[str, int], ...]:
     """Listener addresses for the forwarder, or empty when the gateway is absent.
 
-    Only ``172.18.0.1`` on 9338 and 9339. An empty result means the caller
-    must not create those sockets. ``0.0.0.0`` is never a target.
+    Only ``172.18.0.1`` on 9338, 9339, and 19338. An empty result means the
+    caller must not create those sockets. ``0.0.0.0`` is never a target.
     """
     if GATEWAY_HOST not in addresses:
         return ()
@@ -218,21 +218,24 @@ def open_listeners(
 ) -> list[socket.socket]:
     """Bind the gateway listeners, or return nothing if this host is not the gateway.
 
-    A failed bind closes any listener already opened and raises. The bind
-    address is never rewritten to ``0.0.0.0`` or loopback.
+    A failed bind on one port logs, closes that socket, and skips the port; other
+    listeners stay open. The bind address is never rewritten to ``0.0.0.0`` or
+    loopback.
     """
     opened: list[socket.socket] = []
-    try:
-        for host, port in bind_targets(addresses):
-            sock = socket_factory(socket.AF_INET, socket.SOCK_STREAM)
+    for host, port in bind_targets(addresses):
+        sock = socket_factory(socket.AF_INET, socket.SOCK_STREAM)
+        try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.listen(16)
-            opened.append(sock)
-    except OSError:
-        for sock in opened:
+        except OSError as exc:
+            logger.warning(
+                "cdp gateway forwarder: bind %s:%s failed: %s", host, port, exc
+            )
             sock.close()
-        raise
+            continue
+        opened.append(sock)
     return opened
 
 

@@ -53,7 +53,7 @@ def default_out_path(transcript_id: str) -> Path:
     return cortex_files_root() / _EXPORT_REL / f"current_{transcript_id}.json"
 
 
-def cortex_uri_for_out_path(out_path: Path) -> str | None:
+def cortex_uri_for_out_path(out_path: Path) -> str:
     rel = out_path.resolve().relative_to(cortex_files_root())
     return f"cortex://{rel.as_posix()}"
 
