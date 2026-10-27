@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from cursor_bridge.cdp_gateway_forwarder import (
+    FORWARDED_PORTS,
     GATEWAY_HOST,
     _handle_accepted_client,
     _relay_client,
@@ -169,7 +170,7 @@ def test_open_listeners_binds_gateway_only() -> None:
     }
 
 
-def test_bind_failure_closes_listener_already_opened() -> None:
+def test_bind_failure_on_one_port_keeps_other_listeners() -> None:
     created: list[_BusySecond] = []
 
     def factory(*_args: object, **_kwargs: object) -> _BusySecond:
@@ -177,11 +178,18 @@ def test_bind_failure_closes_listener_already_opened() -> None:
         created.append(sock)
         return sock
 
-    with pytest.raises(OSError, match="address in use"):
-        open_listeners(frozenset({"172.18.0.1"}), socket_factory=factory)
-    assert created[0].bound == ("172.18.0.1", 9338)
-    assert created[0].closed is True
-    assert len(created) == 2
+    listeners = open_listeners(frozenset({"172.18.0.1"}), socket_factory=factory)
+    assert len(created) == 3
+    assert created[1].bound is None
+    assert created[1].closed is True
+    assert created[0].closed is False
+    assert created[2].closed is False
+    assert [sock.bound for sock in listeners] == [
+        ("172.18.0.1", 9338),
+        ("172.18.0.1", 19338),
+    ]
+    assert listeners[0] is created[0]
+    assert listeners[1] is created[2]
 
 
 def test_allowed_peers_only_mcp_server_container() -> None:
@@ -336,8 +344,8 @@ def test_compose_publishes_gateway_forwarder_not_mcp_host_network() -> None:
     assert forwarder["network_mode"] == "host"
     assert "ports" not in forwarder
     text = _COMPOSE.read_text(encoding="utf-8")
-    assert "0.0.0.0:9338" not in text
-    assert "0.0.0.0:9339" not in text
+    for port in FORWARDED_PORTS:
+        assert f"0.0.0.0:{port}" not in text
     assert forwarder["command"] == [
         "python",
         "-m",

@@ -81,8 +81,8 @@ def cdp_origin_for_gui_host(gui_host: str | None) -> str:
     """Debug origin for one Glass host.
 
     The configured value stays loopback for host and Stargate callers. Inside
-    the mcp container, ports 9338 and 9339 are rewritten to the docker gateway
-    forwarder. The rewrite does not connect to those ports.
+    the mcp container, ports 9338, 9339, and 19338 are rewritten to the docker
+    gateway forwarder. The rewrite does not connect to those ports.
     """
     row = _row_for_gui_host(gui_host)
     if row:

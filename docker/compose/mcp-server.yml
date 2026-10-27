@@ -43,6 +43,8 @@ services:
       - ~/.cortex:/data/cortex:rw
       - ~/.gateway:/home/mcp/.gateway:ro
       # Live cursor_bridge CDP routing (orion 19338 gateway parity with :8 9338).
+      # Recreate mcp-server to pick up a new bind mount (restart does not). Start
+      # cdp-gateway-forwarder before mcp-server.
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/libs/cursor_bridge/cdp_gateway_forwarder.py:/app/libs/cursor_bridge/cdp_gateway_forwarder.py:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
