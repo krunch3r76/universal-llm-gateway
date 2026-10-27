@@ -284,3 +284,79 @@ def test_judge_event_signals() -> None:
     failed = judge_events.WritingJudgeFailed(invocation="v2", reason="transport")
     assert completed.signal == "writing.judge.completed"
     assert failed.signal == "writing.judge.failed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_pin_json_schema_candidates_invocation() -> None:
+    pin_schemas: list[dict[str, Any]] = []
+
+    async def fake_call_model(
+        _model_id: str, *_args: Any, **kwargs: Any
+    ) -> MagicMock:
+        schema = kwargs.get("json_schema")
+        if len(pin_schemas) == 0:
+            pin_schemas.append(schema)
+        content = (
+            json.dumps(_pin_payload("drafter_anthropic"))
+            if len(pin_schemas) == 1
+            else json.dumps(_quality_payload("drafter_anthropic"))
+        )
+        result = MagicMock()
+        result.content = content
+        return result
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    handler._publish_bus_event = lambda _ctx, _event: None  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    await handler.execute(_Step("candidates"), ctx)
+    assert len(pin_schemas) == 1
+    schema = pin_schemas[0]
+    assert schema.get("required") == ["candidates"]
+    props = schema.get("properties") or {}
+    assert "candidates" in props
+    assert "pins" not in props
+    assert "clauses" not in props
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_pin_json_schema_v2_invocation() -> None:
+    pin_schemas: list[dict[str, Any]] = []
+
+    async def fake_call_model(
+        _model_id: str, *_args: Any, **kwargs: Any
+    ) -> MagicMock:
+        schema = kwargs.get("json_schema")
+        if len(pin_schemas) == 0:
+            pin_schemas.append(schema)
+        content = (
+            json.dumps(_v2_pin_payload())
+            if len(pin_schemas) == 1
+            else json.dumps(_v2_quality_payload())
+        )
+        result = MagicMock()
+        result.content = content
+        return result
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    handler._publish_bus_event = lambda _ctx, _event: None  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="Revised draft body."),
+        }
+    )
+    await handler.execute(_Step("v2"), ctx)
+    assert len(pin_schemas) == 1
+    schema = pin_schemas[0]
+    assert set(schema.get("required") or []) == {"pins", "clauses"}
+    props = schema.get("properties") or {}
+    assert "pins" in props
+    assert "clauses" in props
+    assert "candidates" not in props

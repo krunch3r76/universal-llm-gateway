@@ -13,10 +13,13 @@ pin:
     <intake_directives>
     {intake_directives}
     </intake_directives>
-    For each candidate draft, return pins (satisfied, polarity_match, evidence_span)
-    and clauses (text, pin_ids, speech_act, attested). A causal clause is attested
-    only when cited pins state that causal relation. speech_act must be request,
-    assertion, or other.
+    Return pin judgments as JSON only. When candidates include candidate_id, return
+    {"candidates":[{"candidate_id","pins","clauses"}]} where each pins entry has
+    pin_id, satisfied, polarity_match, evidence_span and each clauses entry has
+    text, pin_ids, speech_act, attested. For a single revised draft without
+    candidate_id, return {"pins","clauses"} at the top level (no candidates array).
+    A causal clause is attested only when cited pins state that causal relation.
+    speech_act must be request, assertion, or other.
 quality:
   system_prompt: >
     You score correspondence writing-quality rubric violations. Return only JSON.

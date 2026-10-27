@@ -14,7 +14,31 @@ _CLAUSE_ROW_KEYS = frozenset(
 )
 _QUALITY_ROW_KEYS = frozenset({"rule", "detail", "penalty", "candidate_id"})
 
-PIN_JUDGMENT_SCHEMA: dict[str, Any] = {
+_PIN_ROW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "pin_id": {"type": "string"},
+        "satisfied": {"type": "boolean"},
+        "polarity_match": {"type": "boolean"},
+        "evidence_span": {"type": "string"},
+    },
+    "required": ["pin_id", "satisfied", "polarity_match", "evidence_span"],
+}
+
+_CLAUSE_ROW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "text": {"type": "string"},
+        "pin_ids": {"type": "array", "items": {"type": "string"}},
+        "speech_act": {"type": "string", "enum": list(SPEECH_ACTS)},
+        "attested": {"type": "boolean"},
+    },
+    "required": ["text", "pin_ids", "speech_act", "attested"],
+}
+
+PIN_CANDIDATES_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -25,83 +49,24 @@ PIN_JUDGMENT_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
                 "properties": {
                     "candidate_id": {"type": "string"},
-                    "pins": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "pin_id": {"type": "string"},
-                                "satisfied": {"type": "boolean"},
-                                "polarity_match": {"type": "boolean"},
-                                "evidence_span": {"type": "string"},
-                            },
-                            "required": [
-                                "pin_id",
-                                "satisfied",
-                                "polarity_match",
-                                "evidence_span",
-                            ],
-                        },
-                    },
-                    "clauses": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "text": {"type": "string"},
-                                "pin_ids": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "speech_act": {
-                                    "type": "string",
-                                    "enum": list(SPEECH_ACTS),
-                                },
-                                "attested": {"type": "boolean"},
-                            },
-                            "required": ["text", "pin_ids", "speech_act", "attested"],
-                        },
-                    },
+                    "pins": {"type": "array", "items": _PIN_ROW_SCHEMA},
+                    "clauses": {"type": "array", "items": _CLAUSE_ROW_SCHEMA},
                 },
                 "required": ["candidate_id", "pins", "clauses"],
             },
         },
-        "pins": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "pin_id": {"type": "string"},
-                    "satisfied": {"type": "boolean"},
-                    "polarity_match": {"type": "boolean"},
-                    "evidence_span": {"type": "string"},
-                },
-                "required": [
-                    "pin_id",
-                    "satisfied",
-                    "polarity_match",
-                    "evidence_span",
-                ],
-            },
-        },
-        "clauses": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "text": {"type": "string"},
-                    "pin_ids": {"type": "array", "items": {"type": "string"}},
-                    "speech_act": {"type": "string", "enum": list(SPEECH_ACTS)},
-                    "attested": {"type": "boolean"},
-                },
-                "required": ["text", "pin_ids", "speech_act", "attested"],
-            },
-        },
     },
+    "required": ["candidates"],
+}
+
+PIN_SINGLE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "pins": {"type": "array", "items": _PIN_ROW_SCHEMA},
+        "clauses": {"type": "array", "items": _CLAUSE_ROW_SCHEMA},
+    },
+    "required": ["pins", "clauses"],
 }
 
 QUALITY_JUDGMENT_SCHEMA: dict[str, Any] = {

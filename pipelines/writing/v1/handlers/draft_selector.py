@@ -200,10 +200,15 @@ class WritingDraftSelectorHandler(BaseHandler):
         )
         judge_json = judge_json if isinstance(judge_json, dict) else {}
         judge_pins = list(judge_json.get("pins") or [])
+        judge_clauses = list(judge_json.get("clauses") or [])
         judge_quality = list(judge_json.get("quality_findings") or [])
         seen_candidate_ids = {
             str(row.get("candidate_id") or "")
             for row in judge_pins
+            if isinstance(row, dict) and row.get("candidate_id")
+        } | {
+            str(row.get("candidate_id") or "")
+            for row in judge_clauses
             if isinstance(row, dict) and row.get("candidate_id")
         } | {
             str(row.get("candidate_id") or "")

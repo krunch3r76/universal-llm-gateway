@@ -12,7 +12,8 @@ from systems.pipeline.core.prompts import PromptBuilder
 from writing_pipeline.events import WritingJudgeCompleted, WritingJudgeFailed
 
 from .judge_schema import (
-    PIN_JUDGMENT_SCHEMA,
+    PIN_CANDIDATES_SCHEMA,
+    PIN_SINGLE_SCHEMA,
     QUALITY_JUDGMENT_SCHEMA,
     flatten_pin_judgment,
     flatten_quality_judgment,
@@ -164,13 +165,14 @@ class WritingSemanticJudgeHandler(BaseHandler):
         quality_prompt = quality_prompt.rstrip() + "\n" + _JSON_ONLY
         pin_system = str(pin_row.get("system_prompt") or "")
         quality_system = str(quality_row.get("system_prompt") or "")
+        pin_schema = PIN_CANDIDATES_SCHEMA if multi else PIN_SINGLE_SCHEMA
         ModelId.parse("qwen3-5-9b")
         model_id = "qwen3-5-9b"
 
         try:
             if self._caller is not None:
                 pin_content = await self._caller(
-                    which="pin", json_schema=PIN_JUDGMENT_SCHEMA
+                    which="pin", json_schema=pin_schema
                 )
                 quality_content = await self._caller(
                     which="quality", json_schema=QUALITY_JUDGMENT_SCHEMA
@@ -183,7 +185,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
                     context,
                     system_prompt=pin_system,
                     temperature=0.1,
-                    json_schema=PIN_JUDGMENT_SCHEMA,
+                    json_schema=pin_schema,
                 )
                 quality_result = await self._call_model(
                     model_id,
