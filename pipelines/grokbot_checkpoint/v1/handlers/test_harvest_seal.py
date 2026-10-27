@@ -1094,7 +1094,6 @@ async def test_short_overlapping_pages(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_n2_overlap_redundant_refused(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 1, _page(0, 1, 2, ["a", "b"], start=True))
     options = {

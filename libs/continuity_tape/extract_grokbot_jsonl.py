@@ -191,70 +191,37 @@ def _unrendered_by_page(pages: list[_Page]) -> list[dict[str, int]]:
     ]
 
 
-def _span_unrendered(rendered: dict[int, str], min_lo: int, running_hi: int) -> int:
-    span = running_hi - min_lo + 1
-    filled = sum(1 for pos in range(min_lo, running_hi + 1) if pos in rendered)
-    return span - filled
+def _contained_in_tail(tail: list[str], lines: list[str]) -> bool:
+    if not lines:
+        return True
+    for start in range(len(tail) - len(lines) + 1):
+        if tail[start : start + len(lines)] == lines:
+            return True
+    return False
 
 
-def _choose_overlap_k(
-    tail: list[str],
-    lines: list[str],
-    *,
-    lo: int,
-    hi: int,
-    running_hi: int,
+def _largest_overlap_k(running: list[str], lines: list[str], shared: int) -> int:
+    cap = min(shared, len(running), len(lines))
+    for k in range(cap, -1, -1):
+        if k == 0 or lines[:k] == running[-k:]:
+            return k
+    return 0
+
+
+def _full_in_overlap(
     last_lo: int,
     last_hi: int,
     last_lines: list[str],
-) -> int:
-    shared = running_hi - lo + 1
-    tail_room = max(0, hi - running_hi)
-    if len(lines) > hi - lo + 1:
-        raise TranscriptPageError(
-            f"page {lo}-{hi}: {len(lines)} lines, expected {hi - lo + 1}"
-        )
-    if len(lines) < tail_room:
-        raise TranscriptPageError(
-            f"page {lo}-{hi}: {len(lines)} lines cannot cover tail positions"
-        )
-    max_k = min(len(tail), len(lines), shared)
-    min_k = max(0, len(lines) - tail_room)
-    last_full = len(last_lines) == last_hi - last_lo + 1
+    lo: int,
+    hi: int,
+    lines: list[str],
+    running_hi: int,
+    shared: int,
+) -> tuple[bool, bool]:
+    prev_full = len(last_lines) == last_hi - last_lo + 1
     curr_full = len(lines) == hi - lo + 1
-    if last_full and curr_full and shared > 0:
-        if len(tail) < shared or len(lines) < shared:
-            raise TranscriptPageError(
-                f"overlapping pages differ at {lo}-{hi}"
-            )
-        if tail[-shared:] != lines[:shared]:
-            raise TranscriptPageError(
-                f"overlapping pages differ at {lo}-{hi}"
-            )
-        return shared
-    valid: list[int] = []
-    for k in range(min_k, max_k + 1):
-        if k == 0 or tail[-k:] == lines[:k]:
-            valid.append(k)
-    if not valid:
-        raise TranscriptPageError(f"overlapping pages differ at {lo}-{hi}")
-    if len(valid) > 1:
-        raise TranscriptPageError(
-            f"ambiguous overlap at {lo}-{hi}: matches {valid}"
-        )
-    return valid[0]
-
-
-def _contained_redundant(
-    rendered: dict[int, str], lo: int, hi: int, lines: list[str]
-) -> bool:
-    if len(lines) != hi - lo + 1:
-        return False
-    for offset, line in enumerate(lines):
-        pos = lo + offset
-        if rendered.get(pos) != line:
-            return False
-    return True
+    overlap_exact = shared == (last_hi - lo + 1) and last_hi == running_hi
+    return prev_full and overlap_exact, curr_full and overlap_exact
 
 
 @dataclass
@@ -272,19 +239,16 @@ def stitch_ordered_page_lines(
     prior_lines: list[str] | None = None,
     prior_running_hi: int | None = None,
 ) -> StitchResult:
-    """Merge page bodies oldest-first with position-bounded overlap."""
-    rendered: dict[int, str] = {}
+    """Merge page bodies by content overlap bounded to shared position span."""
+    running: list[str] = list(prior_lines) if prior_lines else []
     min_lo = 0
     running_hi = -1
     page_added: list[bool] = []
     if prior_lines:
         if prior_running_hi is None:
             prior_running_hi = len(prior_lines) - 1
-        start = prior_running_hi + 1 - len(prior_lines)
-        for offset, line in enumerate(prior_lines):
-            rendered[start + offset] = line
         running_hi = prior_running_hi
-        min_lo = start
+        min_lo = prior_running_hi + 1 - len(prior_lines)
     ordered = sorted(pages, key=lambda item: (item[0], item[1]))
     last_lo, last_hi, last_lines = 0, -1, []
     for lo, hi, lines in ordered:
@@ -294,88 +258,70 @@ def stitch_ordered_page_lines(
                 f"page {lo}-{hi}: {len(lines)} lines, expected {expected}"
             )
         if running_hi < 0:
-            for offset, line in enumerate(lines):
-                rendered[lo + offset] = line
+            running = list(lines)
             running_hi = hi
             min_lo = lo
             last_lo, last_hi, last_lines = lo, hi, lines
-            page_added.append(True)
+            page_added.append(bool(lines))
             continue
         if lo > running_hi + 1:
             raise TranscriptPageError(
                 f"gap in positions: first missing {running_hi + 1}"
             )
-        added = False
-        if lo <= running_hi:
-            if _contained_redundant(rendered, lo, hi, lines):
-                page_added.append(False)
-                last_lo, last_hi, last_lines = lo, hi, lines
-                running_hi = max(running_hi, hi)
-                continue
-            shared = running_hi - lo + 1
-            tail_positions = list(range(running_hi - shared + 1, running_hi + 1))
-            tail_full = all(pos in rendered for pos in tail_positions)
-            if tail_full and shared > 0:
-                tail = [rendered[pos] for pos in tail_positions]
-                _choose_overlap_k(
-                    tail,
-                    lines,
-                    lo=lo,
-                    hi=hi,
-                    running_hi=running_hi,
-                    last_lo=last_lo,
-                    last_hi=last_hi,
-                    last_lines=last_lines,
-                )
-            line_idx = 0
-            for pos in range(lo, hi + 1):
-                if line_idx >= len(lines):
-                    break
-                if pos in rendered:
-                    if rendered[pos] != lines[line_idx]:
-                        raise TranscriptPageError(
-                            f"overlapping pages differ at position {pos}"
-                        )
-                    line_idx += 1
-                else:
-                    rendered[pos] = lines[line_idx]
-                    added = True
-                    line_idx += 1
-            if line_idx < len(lines):
+        before = len(running)
+        if hi <= running_hi:
+            shared = max(0, running_hi - lo + 1)
+            tail = running[-shared:] if shared else []
+            if not _contained_in_tail(tail, lines):
                 raise TranscriptPageError(
-                    f"page {lo}-{hi}: lines extend past declared hi"
+                    f"overlapping pages differ at {lo}-{hi}"
                 )
+            page_added.append(False)
+        elif lo <= running_hi:
+            shared = max(0, running_hi - lo + 1)
+            prev_full, curr_full = _full_in_overlap(
+                last_lo, last_hi, last_lines, lo, hi, lines, running_hi, shared
+            )
+            if prev_full and curr_full and shared > 0:
+                if lines[:shared] != running[-shared:]:
+                    raise TranscriptPageError(
+                        f"overlapping pages differ at {lo}-{hi}"
+                    )
+                k = shared
+            else:
+                k = _largest_overlap_k(running, lines, shared)
+                matches = [
+                    cand
+                    for cand in range(1, min(shared, len(lines), len(running)) + 1)
+                    if lines[:cand] == running[-cand:]
+                ]
+                if len(matches) > 1:
+                    outputs = {tuple(running + lines[cand:]) for cand in matches}
+                    if len(outputs) > 1 and not (prev_full and curr_full):
+                        raise TranscriptPageError(
+                            f"ambiguous overlap at {lo}-{hi}: matches {matches}"
+                        )
+                if k == 0 and shared > 0 and lines:
+                    tail = running[-shared:] if shared else []
+                    if not _contained_in_tail(tail, lines[: min(len(lines), shared)]):
+                        raise TranscriptPageError(
+                            f"overlapping pages differ at {lo}-{hi}"
+                        )
+            running = running + lines[k:]
+            page_added.append(len(running) > before)
         else:
-            line_idx = 0
-            for pos in range(lo, hi + 1):
-                if line_idx >= len(lines):
-                    break
-                if pos in rendered:
-                    if rendered[pos] != lines[line_idx]:
-                        raise TranscriptPageError(
-                            f"overlapping pages differ at position {pos}"
-                        )
-                    line_idx += 1
-                else:
-                    rendered[pos] = lines[line_idx]
-                    added = True
-                    line_idx += 1
-            if line_idx < len(lines):
-                raise TranscriptPageError(
-                    f"page {lo}-{hi}: lines extend past declared hi"
-                )
+            running = running + lines
+            page_added.append(len(running) > before)
         running_hi = max(running_hi, hi)
         min_lo = min(min_lo, lo)
         last_lo, last_hi, last_lines = lo, hi, lines
-        page_added.append(added)
-    if not rendered:
-        return StitchResult([], -1, 0, 0, [])
-    out = [rendered[pos] for pos in range(min_lo, running_hi + 1) if pos in rendered]
+    span = (running_hi - min_lo + 1) if running_hi >= 0 else 0
+    unrendered = span - len(running) if span else 0
     return StitchResult(
-        lines=out,
+        lines=running,
         running_hi=running_hi,
         min_lo=min_lo,
-        unrendered_positions=_span_unrendered(rendered, min_lo, running_hi),
+        unrendered_positions=unrendered,
         page_added=page_added,
     )
 
