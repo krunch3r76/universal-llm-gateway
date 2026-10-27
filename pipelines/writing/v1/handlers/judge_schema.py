@@ -48,7 +48,7 @@ PIN_CANDIDATES_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "candidate_id": {"type": "string"},
+                    "candidate_id": {"type": "string", "minLength": 1},
                     "pins": {"type": "array", "items": _PIN_ROW_SCHEMA},
                     "clauses": {"type": "array", "items": _CLAUSE_ROW_SCHEMA},
                 },
@@ -69,23 +69,48 @@ PIN_SINGLE_SCHEMA: dict[str, Any] = {
     "required": ["pins", "clauses"],
 }
 
-QUALITY_JUDGMENT_SCHEMA: dict[str, Any] = {
+_QUALITY_FINDING_CANDIDATES_ROW: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "candidate_id": {"type": "string", "minLength": 1},
+        "rule": {"type": "string"},
+        "detail": {"type": "string"},
+        "penalty": {"type": "integer"},
+    },
+    "required": ["candidate_id", "rule", "detail", "penalty"],
+}
+
+_QUALITY_FINDING_SINGLE_ROW: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "rule": {"type": "string"},
+        "detail": {"type": "string"},
+        "penalty": {"type": "integer"},
+    },
+    "required": ["rule", "detail", "penalty"],
+}
+
+QUALITY_CANDIDATES_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "findings": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "candidate_id": {"type": "string"},
-                    "rule": {"type": "string"},
-                    "detail": {"type": "string"},
-                    "penalty": {"type": "integer"},
-                },
-                "required": ["rule", "detail", "penalty"],
-            },
+            "items": _QUALITY_FINDING_CANDIDATES_ROW,
+        },
+    },
+    "required": ["findings"],
+}
+
+QUALITY_SINGLE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "findings": {
+            "type": "array",
+            "items": _QUALITY_FINDING_SINGLE_ROW,
         },
     },
     "required": ["findings"],

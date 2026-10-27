@@ -14,7 +14,8 @@ from writing_pipeline.events import WritingJudgeCompleted, WritingJudgeFailed
 from .judge_schema import (
     PIN_CANDIDATES_SCHEMA,
     PIN_SINGLE_SCHEMA,
-    QUALITY_JUDGMENT_SCHEMA,
+    QUALITY_CANDIDATES_SCHEMA,
+    QUALITY_SINGLE_SCHEMA,
     flatten_pin_judgment,
     flatten_quality_judgment,
     pin_judgment_error,
@@ -166,6 +167,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
         pin_system = str(pin_row.get("system_prompt") or "")
         quality_system = str(quality_row.get("system_prompt") or "")
         pin_schema = PIN_CANDIDATES_SCHEMA if multi else PIN_SINGLE_SCHEMA
+        quality_schema = QUALITY_CANDIDATES_SCHEMA if multi else QUALITY_SINGLE_SCHEMA
         ModelId.parse("qwen3-5-9b")
         model_id = "qwen3-5-9b"
 
@@ -175,7 +177,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
                     which="pin", json_schema=pin_schema
                 )
                 quality_content = await self._caller(
-                    which="quality", json_schema=QUALITY_JUDGMENT_SCHEMA
+                    which="quality", json_schema=quality_schema
                 )
             else:
                 pin_result = await self._call_model(
@@ -194,7 +196,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
                     context,
                     system_prompt=quality_system,
                     temperature=0.1,
-                    json_schema=QUALITY_JUDGMENT_SCHEMA,
+                    json_schema=quality_schema,
                 )
                 pin_content = pin_result.content
                 quality_content = quality_result.content

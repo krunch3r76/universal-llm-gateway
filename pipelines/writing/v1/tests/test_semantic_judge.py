@@ -360,3 +360,89 @@ async def test_semantic_judge_pin_json_schema_v2_invocation() -> None:
     assert "pins" in props
     assert "clauses" in props
     assert "candidates" not in props
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_quality_json_schema_candidates_invocation() -> None:
+    quality_schemas: list[dict[str, Any]] = []
+    call_count = 0
+
+    async def fake_call_model(
+        _model_id: str, *_args: Any, **kwargs: Any
+    ) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            quality_schemas.append(kwargs.get("json_schema"))
+        content = (
+            json.dumps(_pin_payload("drafter_anthropic"))
+            if call_count == 1
+            else json.dumps(_quality_payload("drafter_anthropic"))
+        )
+        result = MagicMock()
+        result.content = content
+        return result
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    handler._publish_bus_event = lambda _ctx, _event: None  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    await handler.execute(_Step("candidates"), ctx)
+    assert len(quality_schemas) == 1
+    schema = quality_schemas[0]
+    assert schema.get("required") == ["findings"]
+    findings = (schema.get("properties") or {}).get("findings") or {}
+    item = findings.get("items") or {}
+    assert set(item.get("required") or []) == {
+        "candidate_id",
+        "rule",
+        "detail",
+        "penalty",
+    }
+    cid = (item.get("properties") or {}).get("candidate_id") or {}
+    assert cid.get("minLength") == 1
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_quality_json_schema_v2_invocation() -> None:
+    quality_schemas: list[dict[str, Any]] = []
+    call_count = 0
+
+    async def fake_call_model(
+        _model_id: str, *_args: Any, **kwargs: Any
+    ) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            quality_schemas.append(kwargs.get("json_schema"))
+        content = (
+            json.dumps(_v2_pin_payload())
+            if call_count == 1
+            else json.dumps(_v2_quality_payload())
+        )
+        result = MagicMock()
+        result.content = content
+        return result
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    handler._publish_bus_event = lambda _ctx, _event: None  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="Revised draft body."),
+        }
+    )
+    await handler.execute(_Step("v2"), ctx)
+    assert len(quality_schemas) == 1
+    schema = quality_schemas[0]
+    assert schema.get("required") == ["findings"]
+    findings = (schema.get("properties") or {}).get("findings") or {}
+    item = findings.get("items") or {}
+    assert set(item.get("required") or []) == {"rule", "detail", "penalty"}
+    assert "candidate_id" not in (item.get("properties") or {})
