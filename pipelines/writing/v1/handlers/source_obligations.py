@@ -49,11 +49,20 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "call", "me", "thing", "do", "all", "set",
 }) | _ACK_SINGLE_WORDS
 _NAME_WORD = r"[A-Z][\w'.-]*"
-_HONORIFIC_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|Prof)\.?[ \t]+)?"
-_NAME_ONE_OR_TWO = rf"{_HONORIFIC_PREFIX}{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
+_HONORIFIC_PREFIX = r"(?:(?:Mr|MR|Mrs|MRS|Ms|MS|Dr|DR|Prof|PROF)\.?[ \t]+)?"
+_NAME_ONE_OR_TWO = (
+    rf"{_HONORIFIC_PREFIX}{_NAME_WORD}"
+    rf"(?:[ \t]+{_NAME_WORD})?(?:[ \t]+{_NAME_WORD})?"
+)
 _HONORIFIC_TOKENS = frozenset({"mr", "mrs", "ms", "dr", "prof"})
 _SPAN_SPLIT = re.compile(
-    r"(?<=[.!?])(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bProf\.)\s+|\n+",
+    r"(?<=[.!?])"
+    r"(?<!\bMr\.)(?<!\bMR\.)"
+    r"(?<!\bMrs\.)(?<!\bMRS\.)"
+    r"(?<!\bMs\.)(?<!\bMS\.)"
+    r"(?<!\bDr\.)(?<!\bDR\.)"
+    r"(?<!\bProf\.)(?<!\bPROF\.)"
+    r"\s+|\n+",
 )
 _TRAILING_SIGNATURE = re.compile(
     rf"(?:^|\s)[—–-]+\s*({_NAME_ONE_OR_TWO}|"
@@ -141,7 +150,7 @@ def _is_acknowledgement_tail(text: str) -> bool:
 
 
 def _name_tokens(text: str) -> list[str]:
-    """Split a 1–2 word capitalized name span into normalized lookup tokens."""
+    """Split a 1–3 word capitalized name span into normalized lookup tokens."""
     tokens = [
         part.rstrip("'.-").lower()
         for part in re.split(r"[ \t]+", text.strip())
@@ -171,7 +180,7 @@ def _token_is_plausible_signature_name(token: str) -> bool:
 def _name_tokens_are_signature(text: str) -> bool:
     """True when every token in ``text`` is a plausible sign-off name, not temporal noise."""
     tokens = _name_tokens(text)
-    if not tokens or len(tokens) > 2:
+    if not tokens or len(tokens) > 3:
         return False
     parts = [part for part in re.split(r"[ \t]+", text.strip()) if part.strip()]
     name_parts = list(parts)

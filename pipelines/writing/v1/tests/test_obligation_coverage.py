@@ -1568,6 +1568,38 @@ def test_lowercase_ms_abbreviation_splits_sentences() -> None:
     assert rows[1]["quoted_span"] == "Ok?"
 
 
+def test_allcaps_honorific_mr_splits_sentences() -> None:
+    rows = source_obligations.fallback_obligations(
+        "MR. SMITH arrived. What time works?"
+    )
+    assert len(rows) == 2
+    assert rows[0]["quoted_span"] == "MR. SMITH arrived."
+    assert rows[1]["quoted_span"] == "What time works?"
+
+
+def test_allcaps_honorific_thanks_signoff_pleasantry() -> None:
+    rows = source_obligations.fallback_obligations("Thanks, DR. JANE DOE")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+def test_three_word_name_thanks_signoff_pleasantry() -> None:
+    rows = source_obligations.fallback_obligations("Thanks, Prof. Jane Doe Smith")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+def test_three_word_name_question_signature_stripped_from_semantic_reading() -> None:
+    rows = source_obligations.fallback_obligations("What time works? — Bob Alan Smith")
+    assert len(rows) == 1
+    question = rows[0]
+    assert question["kind"] == "question"
+    assert question["obligation"] == "answer"
+    assert question["semantic_reading"] == "answer the question: What time works?"
+
+
 def test_lowercase_dr_street_abbreviation_splits_sentences() -> None:
     rows = source_obligations.fallback_obligations(
         "The lab is on Elm dr. Next, turn left."
