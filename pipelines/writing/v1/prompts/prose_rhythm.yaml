@@ -32,6 +32,8 @@ template: |
   Eliminate repetitive phrases/lemmas across adjacent sentences (e.g. if one sentence says "full most of the time", drop redundant "at this time" in the next).
   When channel is email: preserve To:, Subject:, every 'Exhibit N: <title>' line verbatim, plain first-person body, and the signer closing; replace em/en dashes with ASCII hyphen or "through" for ranges.
   When channel is email or sms (correspondence): keep prose paragraphs only — never convert correspondence into numbered or bulleted lists, and never add "Please note the following" or "I am responding to your request".
+  Prohibited declaration phrasing on correspondence: no "I, <Full Name>, am submitting...", "I, <Full Name>, declare...", jurats, or impersonal "This correspondence serves to submit..."; keep plain first-person email phrasing when <brief> calls for first person.
+  Correspondence decline register: no cold HR decline diction (bare "declining"/"decline", "not available", "unfortunately"); no unprompted future-availability or relationship-reassurance offers unless <brief> Objective or verbatim notes explicitly request them.
   When channel is filing, write numbered paragraphs (1. 2. 3.) grouped from the attested claims. Do not emit a caption, an opener, or a jurat.
   Never introduce new causal connectives ('because', 'therefore', 'so', 'since', 'as a result') that are not already present in <draft> or <documents>, and preserve any greeting line ('Hi <Name>,') when present in <draft>.
   No narrative arc or earned close on transactional messages. Output the revised plain-text body only.

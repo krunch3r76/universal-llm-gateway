@@ -39,12 +39,14 @@ _STEP_ORDER = [
     "drafter_local_hermes",
     "drafter_local_ernie",
     "drafter_anthropic",
+    "semantic_judge_candidates",
     "draft",
     "independence",
     "fact_ceiling_audit",
     "obligation_coverage",
     "provenance_check",
     "prose_rhythm_pass",
+    "semantic_judge_v2",
     "fact_ceiling_final",
     "finalize",
 ]
@@ -63,6 +65,11 @@ _CLOUD_DRAFTERS = (
     "drafter_google",
     "drafter_xai",
     "drafter_anthropic",
+)
+_DRAFTER_STEPS = (
+    *_CLOUD_DRAFTERS,
+    "drafter_local_hermes",
+    "drafter_local_ernie",
 )
 
 
@@ -86,6 +93,12 @@ def test_pipeline_shape() -> None:
     assert [step.name for step in spec.steps] == _STEP_ORDER
     by_name = {step.name: step for step in spec.steps}
     assert by_name["draft"].type == "writing_draft_selector_v1"
+    judge_candidates = by_name["semantic_judge_candidates"]
+    for name in _DRAFTER_STEPS:
+        assert name in judge_candidates.computed_depends_on
+        assert any(
+            entry.step == name for entry in (judge_candidates.reads_from or [])
+        )
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
     assert "source_obligations" in by_name["prompt_architect"].computed_depends_on
     assert any(
@@ -131,6 +144,7 @@ def test_pipeline_shape() -> None:
     assert "writing_obligation_coverage_v1" in registered
     assert "writing_prompt_architect_v1" in registered
     assert "writing_draft_selector_v1" in registered
+    assert "writing_semantic_judge_v1" in registered
     assert "writing_seat_dispatch_v1" in registered
 
 

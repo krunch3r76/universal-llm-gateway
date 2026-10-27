@@ -1,0 +1,1 @@
+"""Shared writing pipeline helpers."""

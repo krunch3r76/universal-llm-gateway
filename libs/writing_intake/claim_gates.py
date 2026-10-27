@@ -1,4 +1,4 @@
-"""Deterministic provenance, volunteered-negative/concession, and purpose-relevance gates."""
+"""Deterministic provenance and purpose-relevance gates."""
 
 from __future__ import annotations
 
@@ -49,54 +49,18 @@ _CORRESPONDENCE_GENERIC = frozenset(
 _PURPOSE_MIN_OVERLAP = 1
 _NUMBERED_CLAUSE = re.compile(r"\(\s*(\d+)\s*\)")
 
-_VOLUNTEERED_NEGATIVE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"\bI\s+(?:do\s+not|don't|no\s+longer)\s+have\s+(?:any\s+)?"
-            r"(?:phone\s+records|call\s+records|records\s+of\s+these\s+calls|"
-            r"call\s+logs|the\s+envelope|an?\s+envelope)\b",
-            re.I,
-        ),
-        "volunteered_negative",
-    ),
-    (
-        re.compile(r"\bno\s+(?:phone\s+records|call\s+records|envelope)\b", re.I),
-        "volunteered_negative",
-    ),
-    (
-        re.compile(
-            r"\bI\s+(?:do\s+not|don't|cannot|can't)\s+(?:know|recall|remember)\s+"
-            r"(?:the\s+(?:exact\s+)?date|when)\s+(?:I\s+received|it\s+arrived)\b",
-            re.I,
-        ),
-        "volunteered_negative",
-    ),
-)
-
-_VOLUNTEERED_CONCESSION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"\bI\s+received\s+the\s+[^.]+?\b(?:notice|bill|letter|assessment)\b"
-            r"[^.]+?\b(?:close\s+to(?:\s*/\s*shortly\s+after)?|shortly\s+after|"
-            r"soon\s+after|around|near)\s+(?:its|the)\s+date\b",
-            re.I,
-        ),
-        "volunteered_concession",
-    ),
-)
-
 _DECLARATION_REGISTER = re.compile(
     r"^\s*I,\s+[^,\n]{2,80},\s+(?:am|do|hereby|state|declare|submit|certify)\b"
     r"|\bdeclare\s+under\s+penalty\s+of\s+perjury\b",
     re.I,
 )
 
+
 @dataclass(frozen=True, slots=True)
 class PurposePoint:
     point_id: str
     text: str
     anchor_tokens: frozenset[str]
-    allows_negative_or_concession: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,24 +94,7 @@ def purpose_content_tokens(text: str) -> frozenset[str]:
         if token in _STOPWORDS or token in _CORRESPONDENCE_GENERIC:
             continue
         tokens.add(token)
-    if "leave" in tokens:
-        tokens.add("away")
-    if "availability" in tokens or "available" in tokens:
-        tokens.add("schedule")
-    if "schedule" in tokens:
-        tokens.add("availability")
     return frozenset(tokens)
-
-
-def _allows_negative(text: str) -> bool:
-    lower = text.lower()
-    markers = (
-        "phone records",
-        "do not know the date i received",
-        "close to its date",
-        "shortly after its date",
-    )
-    return any(marker in lower for marker in markers)
 
 
 def _split_numbered_purpose(purpose: str) -> list[str]:
@@ -183,7 +130,6 @@ def parse_purpose_points(
                 point_id=f"purpose[{index}]",
                 text=item,
                 anchor_tokens=purpose_content_tokens(item),
-                allows_negative_or_concession=_allows_negative(item),
             )
             for index, item in enumerate(explicit)
         ]
@@ -194,7 +140,6 @@ def parse_purpose_points(
                 point_id=f"purpose[{index}]",
                 text=item,
                 anchor_tokens=purpose_content_tokens(item),
-                allows_negative_or_concession=_allows_negative(item),
             )
             for index, item in enumerate(numbered)
         ]
@@ -206,7 +151,6 @@ def parse_purpose_points(
                     point_id=f"purpose[{index}]",
                     text=item,
                     anchor_tokens=purpose_content_tokens(item),
-                    allows_negative_or_concession=_allows_negative(item),
                 )
                 for index, item in enumerate(segments)
             ]
@@ -218,7 +162,6 @@ def parse_purpose_points(
             point_id="purpose[0]",
             text=purpose.strip(),
             anchor_tokens=tokens,
-            allows_negative_or_concession=_allows_negative(purpose),
         )
     ]
 
@@ -236,7 +179,6 @@ def _coerce_purpose_points(
             point_id=f"purpose[{index}]",
             text=str(item),
             anchor_tokens=purpose_content_tokens(str(item)),
-            allows_negative_or_concession=_allows_negative(str(item)),
         )
         for index, item in enumerate(purpose_points)
     ]
@@ -266,23 +208,6 @@ def map_claim_to_purpose(
 def is_declaration_register(sentence: str) -> bool:
     """True when the sentence matches sworn-declaration register patterns."""
     return bool(_DECLARATION_REGISTER.search(sentence))
-
-
-def detect_volunteered_negative_or_concession(
-    claim: str,
-    purpose_points: list[PurposePoint],
-) -> tuple[str | None, str | None]:
-    """Flag volunteered negatives or concessions in a claim when purpose points do not allow them."""
-    allows = any(p.allows_negative_or_concession for p in purpose_points)
-    if allows:
-        return None, None
-    for pattern, reason in _VOLUNTEERED_NEGATIVE_PATTERNS:
-        if pattern.search(claim):
-            return reason, None
-    for pattern, reason in _VOLUNTEERED_CONCESSION_PATTERNS:
-        if pattern.search(claim):
-            return reason, None
-    return None, None
 
 
 def _normalize_for_match(text: str) -> str:
@@ -356,7 +281,6 @@ def evaluate_candidate_claim(
     strict_attestation: bool,
 ) -> ClaimEvaluation:
     """Evaluate load-bearing status; ``strict_attestation`` is deprecated (no-op)."""
-    neg_reason, _ = detect_volunteered_negative_or_concession(claim, purpose_points)
     prov = resolve_claim_provenance(
         claim,
         verbatim_notes=verbatim_notes,
@@ -366,8 +290,6 @@ def evaluate_candidate_claim(
         strict_attestation=strict_attestation,
         purpose_points=purpose_points,
     )
-    if neg_reason:
-        return ClaimEvaluation(False, neg_reason, prov, None)
     if prov == "intake_answer":
         return ClaimEvaluation(False, "intake_answer_context_only", prov, None)
     point_id = map_claim_to_purpose(claim, purpose_points)

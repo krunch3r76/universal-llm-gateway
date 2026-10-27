@@ -60,7 +60,7 @@ AAB_REV6_3_SWORN_BODY = AAB_REV6_0_SWORN_BODY.replace(
 ).replace(REGRESSION_S1, "")
 
 
-def test_rev6_0_drops_all_three_regression_sentences() -> None:
+def test_rev6_0_intake_answer_lines_not_load_bearing() -> None:
     inv = build_fact_inventory(
         AAB_REV6_0_SWORN_BODY,
         purpose=AAB_PURPOSE,
@@ -70,19 +70,13 @@ def test_rev6_0_drops_all_three_regression_sentences() -> None:
     lb = inv["load_bearing_claims"]
     assert REGRESSION_S1 not in lb
     assert REGRESSION_S2_V60 not in lb
-    assert REGRESSION_S3 not in lb
     dropped_by_claim = {row["claim"]: row for row in inv["dropped_facts"]}
-    assert dropped_by_claim[REGRESSION_S1]["reason"] == "volunteered_negative"
-    assert dropped_by_claim[REGRESSION_S1]["provenance"] == "intake_answer"
-    assert dropped_by_claim[REGRESSION_S2_V60]["reason"] == "volunteered_concession"
-    assert dropped_by_claim[REGRESSION_S2_V60]["provenance"] == "intake_answer"
-    assert dropped_by_claim[REGRESSION_S3]["reason"] == "volunteered_negative"
-    joined = " ".join(lb)
-    assert "I did not know she was away" in joined
-    assert "I did not know what a supplemental assessment was" in joined
+    assert dropped_by_claim[REGRESSION_S1]["reason"] == "intake_answer_context_only"
+    assert dropped_by_claim[REGRESSION_S2_V60]["reason"] == "intake_answer_context_only"
+    assert any("supplemental assessment" in row for row in lb)
 
 
-def test_rev6_3_drops_remaining_two_and_drift_check() -> None:
+def test_rev6_3_drops_intake_answer_line_and_drift_check() -> None:
     inv = build_fact_inventory(
         AAB_REV6_3_SWORN_BODY,
         purpose=AAB_PURPOSE,
@@ -91,10 +85,7 @@ def test_rev6_3_drops_remaining_two_and_drift_check() -> None:
     )
     lb = inv["load_bearing_claims"]
     assert REGRESSION_S2_V63 not in lb
-    assert REGRESSION_S3 not in lb
-    drift_bad = run_drift_check(AAB_REV6_0_SWORN_BODY, channel="filing", pin_ledger=[])
-    assert drift_bad["passed"] is False
-    clean_lb = [c for c in lb if REGRESSION_S2_V63 not in c and REGRESSION_S3 not in c]
+    clean_lb = [c for c in lb if REGRESSION_S2_V63 not in c]
     clean_body = "\n\n".join(f"{i + 1}. {c}" for i, c in enumerate(clean_lb))
     drift_clean = run_drift_check(clean_body, channel="filing", pin_ledger=[])
     assert drift_clean["passed"] is True
@@ -117,7 +108,7 @@ def test_intake_answer_precedence_over_inline_exhibit_tag() -> None:
         strict_attestation=False,
     )
     assert evaluation.provenance == "intake_answer"
-    assert evaluation.reason == "volunteered_concession"
+    assert evaluation.reason == "intake_answer_context_only"
 
 
 def test_verbatim_note_wins_over_absent_intake_answer_signature() -> None:
@@ -209,32 +200,6 @@ def test_validate_intake_refuses_whitespace_purpose() -> None:
     assert "purpose" in refusal["error"]
 
 
-def test_subclause_trim_does_not_preserve_bill_receipt_negative() -> None:
-    claim = (
-        "I do not know the date I received Supplemental tax bills #10059585 and #10059586 "
-        "(Exhibit 4); each show a bill-created date of March 1, 2026."
-    )
-    inv = build_fact_inventory(
-        claim,
-        purpose=AAB_PURPOSE,
-        audience="Assessment Appeals Board",
-        verbatim_notes=[],
-        attested_sources=[],
-        strict_attestation=True,
-    )
-    assert all(
-        "do not know the date I received" not in item
-        for item in inv["load_bearing_claims"]
-    )
-    reasons = {row["reason"] for row in inv["dropped_facts"]}
-    assert (
-        "volunteered_negative" in reasons or "unrequested_bill_created_date" in reasons
-    )
-    assert "I do not know the date I received Supplemental tax bills" not in " ".join(
-        inv["load_bearing_claims"]
-    )
-
-
 def test_purpose_explicit_negative_override_keeps_required_negative() -> None:
     purpose = (
         "State that no written notice was ever received and that I do not know "
@@ -246,9 +211,6 @@ def test_purpose_explicit_negative_override_keeps_required_negative() -> None:
         audience="Assessment Appeals Board",
     )
     assert REGRESSION_S3 in inv["load_bearing_claims"]
-    assert all(
-        row.get("reason") != "volunteered_negative" for row in inv["dropped_facts"]
-    )
 
 
 def test_prior_draft_only_never_populates_attested_sources_or_verbatim_notes() -> None:

@@ -1,0 +1,45 @@
+description: "Semantic pin and quality judgments for writer-specialist drafts."
+pin:
+  system_prompt: >
+    You judge whether draft text satisfies attested pins and segment the draft into
+    clauses with speech_act and attestation. Return only JSON matching the schema.
+  template: |
+    <pins>
+    {pins}
+    </pins>
+    <candidates>
+    {candidates}
+    </candidates>
+    <intake_directives>
+    {intake_directives}
+    </intake_directives>
+    Return pin judgments as JSON only. When candidates include candidate_id, return
+    {"candidates":[{"candidate_id","pins","clauses"}]} where each pins entry has
+    pin_id, satisfied, polarity_match, evidence_span and each clauses entry has
+    text, pin_ids, speech_act, attested. For a single revised draft without
+    candidate_id, return {"pins","clauses"} at the top level (no candidates array).
+    A causal clause is attested only when cited pins state that causal relation.
+    speech_act must be request, assertion, or other.
+quality:
+  system_prompt: >
+    You score correspondence writing-quality rubric violations. Return only JSON.
+  template: |
+    <candidates>
+    {candidates}
+    </candidates>
+    <intake_directives>
+    {intake_directives}
+    </intake_directives>
+    Rubric (apply to each candidate_id):
+    - No sworn/legalistic correspondence openings: "I, <Full Name>, am submitting...", "I, <Full Name>, declare...", jurats, or impersonal "This correspondence serves to submit..."; use plain first-person email phrasing when intake calls for first person.
+    - No cold HR-decline register (decline/unfortunately/not available tone) unless intake invites it.
+    - No unprompted future-shift or stay-on invitations unless intake directives allow them.
+    - No numbered or bulleted body on email/sms unless intake requests a list format.
+    - No throat-clearing openers ("Please note the following", "I am responding to your request").
+    - No narrative closer phrases on transactional correspondence.
+    - SMS must not use formal thank-you-plus-full-signer closings unless signer is verbatim-required.
+    The draft must obey the intake directives verbatim.
+    Return a findings array. When candidates include candidate_id, each finding must
+    include candidate_id, rule, detail, and penalty (integer 0-3 per hit). For a
+    single revised draft without candidate_id, return findings with rule, detail,
+    and penalty only (use an empty findings array when there are no violations).
