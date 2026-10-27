@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from durable_io.atomic import durable_write_bytes
@@ -13,7 +15,14 @@ from ..events_tape import (
     transcript_source_relocate_refused,
     transcript_source_relocated,
 )
+from ..raw_transcript_store import (
+    WriteRawTranscriptResult,
+    restore_raw_transcript,
+    write_raw_transcript,
+)
 from ..session_close_validation import build_validation_error
+
+_SESSION_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +31,16 @@ class SourceRelocateResult:
 
     prior_snapshot: bytes | None
     written_sha256: str
+    raw_rel_path: str | None = None
+    manifest_rel_path: str | None = None
+    raw_write_result: WriteRawTranscriptResult | None = None
+
+
+def _date_str_from_session_id(session_id: str) -> str:
+    match = _SESSION_DATE_RE.search(session_id)
+    if match:
+        return match.group(1)
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def relocate_transcript_source(
@@ -32,8 +51,9 @@ def relocate_transcript_source(
     session_id: str,
     transcript_id: str | None,
     files_root: Path,
+    house: str | None = None,
 ) -> SourceRelocateResult:
-    """Write JSONL bytes to the seal-adjacent source path or refuse on digest mismatch."""
+    """Write JSONL bytes to the seal path and canonical raw transcript store."""
     actual = hashlib.sha256(raw_bytes).hexdigest()
     if actual != expected_sha256:
         transcript_source_relocate_refused(
@@ -65,6 +85,23 @@ def relocate_transcript_source(
         raw_bytes,
         retain_store_root=files_root,
     )
+    native_id = (transcript_id or session_id).strip()
+    date_str = _date_str_from_session_id(session_id)
+    aliases = [a for a in (f"transcript:{session_id}", session_id, transcript_id) if a]
+    raw_write_result = write_raw_transcript(
+        files_root=files_root,
+        house=house,
+        source="cursor",
+        kind="raw",
+        date_str=date_str,
+        native_id=native_id,
+        native_ext="jsonl",
+        raw_bytes=raw_bytes,
+        exporter="cortex_store.session_close",
+        exporter_version="1.0",
+        aliases=aliases,
+        expected_sha256=expected_sha256,
+    )
     transcript_source_relocated(
         session_id=session_id,
         transcript_id=transcript_id or "",
@@ -74,6 +111,9 @@ def relocate_transcript_source(
     return SourceRelocateResult(
         prior_snapshot=prior_snapshot,
         written_sha256=written_sha256,
+        raw_rel_path=raw_write_result.raw_rel_path,
+        manifest_rel_path=raw_write_result.manifest_rel_path,
+        raw_write_result=raw_write_result,
     )
 
 
@@ -82,8 +122,11 @@ def restore_transcript_source(
     prior_snapshot: bytes | None,
     *,
     files_root: Path,
+    raw_write_result: WriteRawTranscriptResult | None = None,
 ) -> None:
     """Rollback helper: restore prior bytes or unlink when no prior file existed."""
+    if raw_write_result is not None:
+        restore_raw_transcript(raw_write_result, files_root=files_root)
     if prior_snapshot is not None:
         durable_write_bytes(
             source_abs_path,
