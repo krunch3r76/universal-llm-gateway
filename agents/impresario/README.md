@@ -29,6 +29,8 @@ systemctl --user daemon-reload && systemctl --user enable --now ulg-impresario
 
 **Log:** `~/.local/state/ulg-impresario/serve.log` (and journald for the user unit)
 
+**MCP:** host connection `ulg` uses streamable HTTP (`type: http`) to the house ulg-code endpoint (`/mcp/code`), bearer `${ULG_MCP_TOKEN}` — not the stdio bridge (stdio closes after one in-process call).
+
 **HTTP probe:** `curl -s -H "Authorization: Bearer $AGENT_SDK_BEARER_TOKEN" http://127.0.0.1:3100/v1/info`
 
 Env file template: `deploy/env.example`. Optional house secrets: `EnvironmentFile=-~/.gateway/secrets.env` in the unit (never print values).
