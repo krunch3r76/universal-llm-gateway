@@ -35,6 +35,7 @@ function e4FromTurnEvents(events: readonly { type: string; data?: unknown }[]) {
     facts.toolCalls.map((c) => ({
       toolName: c.toolName,
       args: (c.input ?? {}) as Record<string, unknown>,
+      output: c.output,
     })),
     WORK_KEY,
   );

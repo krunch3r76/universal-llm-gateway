@@ -3,7 +3,10 @@
 export type E4ToolCall = {
   toolName: string;
   args?: Record<string, unknown>;
+  output?: unknown;
 };
+
+const REVIEW_RECIPIENT = "grok-bot-gc1";
 
 export type E4RuleResult = { ok: true } | { ok: false; reason: string };
 
@@ -21,6 +24,32 @@ function busSendSubject(args: Record<string, unknown> | undefined): string {
 
 function scoreSection(args: Record<string, unknown> | undefined): string {
   return typeof args?.section === "string" ? args.section : "";
+}
+
+function parseToolOutput(output: unknown): Record<string, unknown> | null {
+  if (output === undefined || output === null) {
+    return null;
+  }
+  if (typeof output === "object" && !Array.isArray(output)) {
+    return output as Record<string, unknown>;
+  }
+  if (typeof output === "string") {
+    try {
+      return JSON.parse(output) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Effective recipient after bus_send structural normalization (output.to) or args. */
+export function effectiveBusSendTo(call: E4ToolCall): string {
+  const parsed = parseToolOutput(call.output);
+  if (typeof parsed?.to === "string") {
+    return parsed.to;
+  }
+  return typeof call.args?.to === "string" ? call.args.to : "";
 }
 
 export function checkE4CloseoutRun(
@@ -48,6 +77,13 @@ export function checkE4CloseoutRun(
     return {
       ok: false,
       reason: `bus_send subject must be ${requestSubject}, got ${subject || "(missing)"}`,
+    };
+  }
+  const reviewTo = effectiveBusSendTo(busSends[0]!);
+  if (subject.startsWith("REQUEST|review|") && reviewTo !== REVIEW_RECIPIENT) {
+    return {
+      ok: false,
+      reason: `forbidden: REQUEST|review| bus_send to=${reviewTo || "(missing)"}`,
     };
   }
 

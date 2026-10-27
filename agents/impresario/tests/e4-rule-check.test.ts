@@ -20,6 +20,11 @@ describe("E4 rule check (K109)", () => {
           subject: `REQUEST|review|${WORK_KEY}`,
           to: "grok-bot-gc1",
         },
+        output: JSON.stringify({
+          stubbed: true,
+          to: "grok-bot-gc1",
+          subject: `REQUEST|review|${WORK_KEY}`,
+        }),
       },
       {
         toolName: "score_update",
@@ -45,6 +50,28 @@ describe("E4 rule check (K109)", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /bus_send/);
+    }
+  });
+
+  it("forbidden-present fixture: REQUEST|review| to maestro", () => {
+    const calls = [
+      { toolName: "closeout_read", args: { dispatch_id: "d1" } },
+      {
+        toolName: "bus_send",
+        args: {
+          subject: `REQUEST|review|${WORK_KEY}`,
+          to: "maestro",
+        },
+      },
+      {
+        toolName: "score_update",
+        args: { section: "state", work_key: WORK_KEY, body: "x" },
+      },
+    ];
+    const result = checkE4CloseoutRun(calls, WORK_KEY);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /forbidden: REQUEST\|review\| bus_send to=maestro/);
     }
   });
 
