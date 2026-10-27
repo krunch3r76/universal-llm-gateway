@@ -646,14 +646,64 @@ def _modal_not_through_provide_genuine(window: str) -> bool:
         return _modal_not_provide_adverb_allowed(fillers[0])
     if _MODAL_NOT_PROVIDE_COORD_REST.match(middle):
         return True
-    if len(fillers) == 4:
-        adverb, verb, to_tok, conj = fillers
-        if to_tok != "to" or conj not in {"or", "and"}:
-            return False
+    if fillers and _modal_not_provide_adverb_allowed(fillers[0]):
         coord = " ".join(fillers[1:])
-        return _modal_not_provide_adverb_allowed(
-            adverb
-        ) and bool(_MODAL_NOT_PROVIDE_COORD_REST.match(coord))
+        return bool(_MODAL_NOT_PROVIDE_COORD_REST.match(coord))
+    return False
+
+
+_UNABLE_SIBLING_THROUGH_PROVIDE = re.compile(
+    r"^unable\s+to\s+(?:(?P<adv>[a-z]+)\s+)?(?P<rest>provide|"
+    r"(?:commit|agree|promise|undertake|manage|afford)\s+to(?:\s+(?:or|and))?\s+provide)$",
+    re.I,
+)
+_NO_SIBLING_TO_PROVIDE = re.compile(
+    r"^no\s+(?:way|ability|capacity|availability|plan|plans|intention|option|room|time)\s+to\s+provide$",
+    re.I,
+)
+_NO_LONGER_SIBLING_PROVIDE = re.compile(
+    r"^no\s+longer\s+(?:able\s+to\s+)?provide$",
+    re.I,
+)
+_WITHOUT_SIBLING_TO_PROVIDE = re.compile(
+    r"^without\s+(?:ability|capacity|availability|a\s+way|any\s+way)\s+to\s+provide$",
+    re.I,
+)
+
+
+def _sibling_negator_through_provide_genuine(window: str) -> bool:
+    """True for closed ``never|no|unable|without`` … ``provide`` refusal shapes only."""
+    w = window.strip().lower()
+    if re.match(r"^never\b", w):
+        if w == "never provide":
+            return True
+        m = re.match(r"^never\s+(.+)\s+provide$", w)
+        if not m:
+            return False
+        middle = m.group(1)
+        if re.fullmatch(r"(?:able|going)\s+to", middle):
+            return True
+        tokens = _TOKEN.findall(middle)
+        if len(tokens) == 1:
+            return _modal_not_provide_adverb_allowed(tokens[0])
+        if _MODAL_NOT_PROVIDE_COORD_REST.match(middle):
+            return True
+        if tokens and _modal_not_provide_adverb_allowed(tokens[0]):
+            coord = " ".join(tokens[1:])
+            return bool(_MODAL_NOT_PROVIDE_COORD_REST.match(coord))
+        return False
+    if re.match(r"^unable\b", w):
+        m = _UNABLE_SIBLING_THROUGH_PROVIDE.match(w)
+        if not m:
+            return False
+        adv = m.group("adv")
+        if adv and not _modal_not_provide_adverb_allowed(adv):
+            return False
+        return True
+    if re.match(r"^no\b", w):
+        return bool(_NO_SIBLING_TO_PROVIDE.match(w) or _NO_LONGER_SIBLING_PROVIDE.match(w))
+    if re.match(r"^without\b", w):
+        return bool(_WITHOUT_SIBLING_TO_PROVIDE.match(w))
     return False
 
 
@@ -676,14 +726,12 @@ def _provide_refusal_window_is_genuine(window: str) -> bool:
         return bool(_DO_NOT_THINK_ABILITY_REFUSAL.match(w))
     if re.match(r"^can not\s+see\b", w):
         return _provide_refusal_see_path_genuine(w)
-    if w == "never provide":
-        return True
     if re.match(r"^can not\b", w):
         return _modal_not_through_provide_genuine(w)
     if re.match(r"^not provide\b", w):
         return False
     if re.match(r"^(?:never|no|unable|without)\b", w):
-        return True
+        return _sibling_negator_through_provide_genuine(w)
     return False
 
 

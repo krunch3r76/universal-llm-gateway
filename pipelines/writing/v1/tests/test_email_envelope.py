@@ -534,6 +534,7 @@ def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> Non
             "a monthly open calendar."
         ),
         "I did not think I can send a monthly open calendar.",
+        "I can't currently commit to send a monthly open calendar.",
     )
     for draft in valid_drafts:
         assert email_envelope.email_restate_pin_satisfied(
@@ -558,6 +559,12 @@ def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> Non
         "I can't simply send a monthly open calendar, I'll send a weekly one too.",
         "I can't always send a monthly open calendar.",
         "I can't necessarily send a monthly open calendar.",
+        (
+            "I never fail to send a monthly open calendar and can not imagine stopping."
+        ),
+        (
+            "I can not wait, so without delay I will send a monthly open calendar."
+        ),
     )
     for draft in false_drafts:
         assert not email_envelope.email_restate_pin_satisfied(
