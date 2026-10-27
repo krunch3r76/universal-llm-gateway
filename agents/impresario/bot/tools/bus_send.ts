@@ -44,8 +44,86 @@ export function readTurnJsonThread(workspaceDir: string): TurnJsonReadResult {
   }
 }
 
+/** Pipe-separated subject tokens (trimmed, empty segments dropped). */
+export function parseSubjectTokens(subject: string): string[] {
+  return subject
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 export function isReviewRequestSubject(subject: string): boolean {
-  return /^REQUEST\|review\|/i.test(subject.trim());
+  const tokens = parseSubjectTokens(subject);
+  return (
+    tokens.length >= 2 &&
+    tokens[0]!.toUpperCase() === "REQUEST" &&
+    tokens[1]!.toUpperCase() === "REVIEW"
+  );
+}
+
+export type BusSendAckResult =
+  | { ok: true; turn_number?: number; turn_id?: number | string }
+  | { ok: false; error: string };
+
+/** True when agent_bus send payload confirms a posted turn. */
+export function busSendResponsePosted(body: unknown): BusSendAckResult {
+  if (body === null || body === undefined || typeof body !== "object") {
+    return { ok: false, error: "bus send response missing turn confirmation" };
+  }
+  const record = body as Record<string, unknown>;
+  const turn = record.turn;
+  if (turn !== null && turn !== undefined && typeof turn === "object") {
+    const turnRec = turn as Record<string, unknown>;
+    if (turnRec.id !== undefined && turnRec.id !== null) {
+      return {
+        ok: true,
+        turn_id: turnRec.id as number | string,
+        turn_number:
+          typeof turnRec.turn_number === "number"
+            ? turnRec.turn_number
+            : undefined,
+      };
+    }
+    if (typeof turnRec.turn_number === "number") {
+      return { ok: true, turn_number: turnRec.turn_number };
+    }
+  }
+  if (typeof record.turn_number === "number") {
+    return { ok: true, turn_number: record.turn_number };
+  }
+  if (record.id !== undefined && record.id !== null) {
+    return { ok: true, turn_id: record.id as number | string };
+  }
+  return { ok: false, error: "bus send response missing turn confirmation" };
+}
+
+export type BusSendDryRunPayload = {
+  posted: boolean;
+  error?: string;
+  thread?: string;
+  subject?: string;
+  workspaceDir: string;
+};
+
+export function busSendDryRunResult(
+  input: { subject: string; thread?: string; to?: string },
+  workspaceDir: string,
+): BusSendDryRunPayload {
+  const resolved = resolveBusSendInput({
+    subject: input.subject,
+    thread: input.thread,
+    to: input.to,
+    workspaceDir,
+  });
+  if (!resolved.ok) {
+    return { posted: false, error: resolved.error, workspaceDir };
+  }
+  return {
+    posted: false,
+    thread: resolved.thread,
+    subject: input.subject,
+    workspaceDir,
+  };
 }
 
 /** REQUEST|review| always posts to the stage manager mailbox. */
@@ -220,20 +298,9 @@ export default defineTool({
   }),
   effect: "write",
   dryRunResult: (input) => {
-    const resolved = resolveBusSendInput({
-      subject: input.subject,
-      thread: input.thread,
-      to: input.to,
-    });
-    if (!resolved.ok) {
-      return { posted: false, error: resolved.error, workspaceDir: undefined };
-    }
-    return {
-      posted: false,
-      thread: resolved.thread,
-      subject: input.subject,
-      workspaceDir: undefined,
-    };
+    const workspaceDir =
+      process.env.ULG_IMPRESARIO_DRY_RUN_WORKSPACE?.trim() ?? "";
+    return busSendDryRunResult(input, workspaceDir);
   },
   async execute(input, ctx) {
     return gateToolCall(ctx, async () => {
@@ -272,7 +339,11 @@ export default defineTool({
       if (input.sidecar_content !== undefined) {
         payload.sidecar_content = input.sidecar_content;
       }
-      await callAgentBus(ctx, "send", payload);
+      const busBody = await callAgentBus(ctx, "send", payload);
+      const ack = busSendResponsePosted(busBody);
+      if (!ack.ok) {
+        return { posted: false, error: ack.error };
+      }
       return {
         posted: true,
         thread: resolved.thread,
@@ -281,6 +352,8 @@ export default defineTool({
         recipient_corrected: resolvedFields.recipient_corrected,
         thread_defaulted: resolvedFields.thread_defaulted,
         thread_pinned: resolvedFields.thread_pinned,
+        turn_number: ack.turn_number,
+        turn_id: ack.turn_id,
       };
     });
   },

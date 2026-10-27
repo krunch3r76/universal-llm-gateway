@@ -5,7 +5,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import busSendTool, {
+  busSendDryRunResult,
+  busSendResponsePosted,
   isReviewRequestSubject,
+  parseSubjectTokens,
   resolveBusSendInput,
   resolveReviewRequestRecipient,
 } from "../bot/tools/bus_send.js";
@@ -44,10 +47,16 @@ describe("bus_send REQUEST|review| recipient (stage 5)", () => {
     assert.equal(r.recipient_corrected, false);
   });
 
-  it("isReviewRequestSubject is case-insensitive on the head", () => {
+  it("isReviewRequestSubject uses trimmed pipe tokens", () => {
     assert.equal(isReviewRequestSubject("REQUEST|Review|todo:x"), true);
-    assert.equal(isReviewRequestSubject("  request|review|todo:x  "), true);
+    assert.equal(isReviewRequestSubject("  request | Review |x"), true);
+    assert.equal(isReviewRequestSubject("REQUEST|review"), true);
     assert.equal(isReviewRequestSubject("DONE|todo:x"), false);
+    assert.deepEqual(parseSubjectTokens(" request | Review |x"), [
+      "request",
+      "Review",
+      "x",
+    ]);
   });
 });
 
@@ -183,15 +192,69 @@ describe("bus_send thread validation (stage 8)", () => {
     }
   });
 
-  it("dryRunResult includes workspaceDir", () => {
-    const dryRun = busSendTool.dryRunResult as (input: {
-      subject: string;
-      thread?: string;
-    }) => Record<string, unknown>;
-    const out = dryRun({
-      subject: "REQUEST|review|todo:x",
-      thread: "20901",
-    });
-    assert.ok("workspaceDir" in out);
+  it("busSendDryRunResult includes the session workspaceDir path", () => {
+    fs.writeFileSync(
+      path.join(workspaceDir, "turn.json"),
+      JSON.stringify({ thread: "20901" }),
+    );
+    const out = busSendDryRunResult(
+      { subject: "REQUEST|review|todo:x" },
+      workspaceDir,
+    );
+    assert.equal(out.workspaceDir, workspaceDir);
+    assert.equal(out.thread, "20901");
+  });
+});
+
+describe("bus_send posted ack (stage 9 N2)", () => {
+  it("busSendResponsePosted accepts turn.id or turn_number", () => {
+    assert.equal(
+      busSendResponsePosted({ turn: { id: 99, turn_number: 3 } }).ok,
+      true,
+    );
+    assert.equal(busSendResponsePosted({ turn_number: 7 }).ok, true);
+  });
+
+  it("busSendResponsePosted rejects empty or malformed bodies", () => {
+    assert.equal(busSendResponsePosted({}).ok, false);
+    assert.equal(busSendResponsePosted(null).ok, false);
+  });
+
+  it("execute returns posted:false when bus response lacks turn confirmation", async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-bus-ack-"));
+    fs.writeFileSync(
+      path.join(workspaceDir, "turn.json"),
+      JSON.stringify({ thread: "20901" }),
+    );
+    try {
+      const result = await busSendTool.execute!(
+        {
+          subject: "DONE|todo:x|ok",
+          to: "maestro",
+          thread: "20901",
+          body: "done",
+        },
+        {
+          session: { purpose: "tool_test" as const, id: "bus-ack-test" },
+          workspaceDir,
+          host: {
+            kv: {
+              get: async () => undefined,
+              put: async () => undefined,
+              delete: async () => undefined,
+            },
+            mcp: {
+              callTool: async () => ({
+                content: [{ type: "text", text: '{"ok":true}' }],
+              }),
+            },
+          },
+        } as never,
+      );
+      assert.equal((result as { posted: boolean }).posted, false);
+      assert.match(String((result as { error?: string }).error), /turn confirmation/);
+    } finally {
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

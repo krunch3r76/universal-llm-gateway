@@ -3,7 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { resetPollGapForTest, setPollGapForTest } from "../bot/channels/bus.js";
+import {
+  pollGapMs,
+  resetPollGapForTest,
+  setPollGapForTest,
+} from "../bot/channels/bus.js";
 
 import { resetFixtureCache } from "../bot/lib/bus-fixtures.js";
 
@@ -29,12 +33,16 @@ describe("fix2 poll gap N4", () => {
     for (const bad of [0, -1, Number.NaN]) {
       assert.throws(
         () => setPollGapForTest(bad),
-        /positive finite number or null/,
+        /positive finite number, Infinity, or null/,
       );
     }
     setPollGapForTest(10);
     resetPollGapForTest();
     setPollGapForTest(null);
+    setPollGapForTest(Number.POSITIVE_INFINITY);
+    assert.equal(pollGapMs(), Number.POSITIVE_INFINITY);
+    resetPollGapForTest();
+    assert.equal(pollGapMs(), 5000);
   });
 });
 

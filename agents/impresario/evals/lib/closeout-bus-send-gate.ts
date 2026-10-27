@@ -1,4 +1,8 @@
 import {
+  isReviewRequestSubject,
+  parseSubjectTokens,
+} from "../../bot/tools/bus_send.js";
+import {
   busSendWasPosted,
   effectiveBusSendTo,
   type E4ToolCall,
@@ -58,8 +62,12 @@ export function checkEffectiveReviewBusSend(
     return { ok: false, reason: "bus_send was not posted" };
   }
   const subject = effectiveBusSendSubject(call);
-  if (!/^REQUEST\|review\|todo:/i.test(subject)) {
+  if (!isReviewRequestSubject(subject)) {
     return { ok: false, reason: `subject mismatch: ${subject || "(missing)"}` };
+  }
+  const workKey = parseSubjectTokens(subject)[2] ?? "";
+  if (!/^todo:/i.test(workKey)) {
+    return { ok: false, reason: `subject work_key mismatch: ${workKey || "(missing)"}` };
   }
   const to = effectiveBusSendTo(call);
   if (to !== CLOSEOUT_REVIEW_RECIPIENT) {

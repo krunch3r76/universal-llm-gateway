@@ -3,23 +3,17 @@ import { fileURLToPath } from "node:url";
 
 import { defineEval, includes } from "@grok/agent-sdk/evals";
 
-import { resetFixtureCache } from "../bot/lib/bus-fixtures.js";
 import consultFixture from "./fixtures/bus/stops-consult-pending.json";
 import operatorFixture from "./fixtures/bus/stops-operator-gate.json";
 import rowPinnedFixture from "./fixtures/bus/stops-row-pinned.json";
 import e5Fixture from "./fixtures/bus/stops-e5-concurrent.json";
+import { withFixtureScenario } from "./lib/arm-fixtures.js";
 import { skipWithoutCursorCredential } from "./lib/require-cursor-credential.js";
 
 const fixtureRoot = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "fixtures",
 );
-
-function armFixtures(scenario: string): void {
-  process.env.ULG_FIXTURE_DIR = fixtureRoot;
-  process.env.ULG_FIXTURE_SCENARIO = scenario;
-  resetFixtureCache();
-}
 
 export default defineEval({
   tags: ["stops", "e2", "e2b", "e3b", "e5"],
@@ -30,20 +24,24 @@ export default defineEval({
       tags: ["e2"],
       async test(t) {
         skipWithoutCursorCredential(t);
-        armFixtures("stops-row-pinned");
-        await t.send("Handle turn.json", {
-          workspaceFiles: {
-            "turn.json": JSON.stringify(rowPinnedFixture.turn, null, 2),
-            "score.md": rowPinnedFixture.score_md,
-          },
+        await withFixtureScenario(fixtureRoot, "stops-row-pinned", async () => {
+          await t.send("Handle turn.json", {
+            workspaceFiles: {
+              "turn.json": JSON.stringify(rowPinnedFixture.turn, null, 2),
+              "score.md": rowPinnedFixture.score_md,
+            },
+          });
+          t.succeeded();
+          t.calledTool("score_update", {
+            input: { section: "open_stops" },
+            count: 1,
+          });
+          t.maxToolCalls(3);
+          t.check(
+            t.reply,
+            includes(/^STOP\|ROW_PINNED\|todo:agent-sdk-impresario-probe/),
+          );
         });
-        t.succeeded();
-        t.calledTool("score_update", {
-          input: { section: "open_stops" },
-          count: 1,
-        });
-        t.maxToolCalls(3);
-        t.check(t.reply, includes(/^STOP\|ROW_PINNED\|todo:agent-sdk-impresario-probe/));
       },
     },
     {
@@ -52,23 +50,24 @@ export default defineEval({
       tags: ["e2b"],
       async test(t) {
         skipWithoutCursorCredential(t);
-        armFixtures("stops-consult-pending");
-        await t.send("Handle turn.json", {
-          workspaceFiles: {
-            "turn.json": JSON.stringify(consultFixture.turn, null, 2),
-            "score.md": consultFixture.score_md,
-          },
+        await withFixtureScenario(fixtureRoot, "stops-consult-pending", async () => {
+          await t.send("Handle turn.json", {
+            workspaceFiles: {
+              "turn.json": JSON.stringify(consultFixture.turn, null, 2),
+              "score.md": consultFixture.score_md,
+            },
+          });
+          t.succeeded();
+          t.calledTool("score_update", {
+            input: { section: "open_stops" },
+            count: 1,
+          });
+          t.maxToolCalls(3);
+          t.check(
+            t.reply,
+            includes(/^STOP\|CONSULT_PENDING\|todo:agent-sdk-impresario-probe/),
+          );
         });
-        t.succeeded();
-        t.calledTool("score_update", {
-          input: { section: "open_stops" },
-          count: 1,
-        });
-        t.maxToolCalls(3);
-        t.check(
-          t.reply,
-          includes(/^STOP\|CONSULT_PENDING\|todo:agent-sdk-impresario-probe/),
-        );
       },
     },
     {
@@ -77,24 +76,25 @@ export default defineEval({
       tags: ["e3b"],
       async test(t) {
         skipWithoutCursorCredential(t);
-        armFixtures("stops-operator-gate");
-        await t.send("Handle turn.json", {
-          workspaceFiles: {
-            "turn.json": JSON.stringify(operatorFixture.turn, null, 2),
-            "score.md": operatorFixture.score_md,
-          },
+        await withFixtureScenario(fixtureRoot, "stops-operator-gate", async () => {
+          await t.send("Handle turn.json", {
+            workspaceFiles: {
+              "turn.json": JSON.stringify(operatorFixture.turn, null, 2),
+              "score.md": operatorFixture.score_md,
+            },
+          });
+          t.succeeded();
+          t.calledTool("request_ruling", { count: 1 });
+          t.calledTool("score_update", {
+            input: { section: "open_stops" },
+            count: 1,
+          });
+          t.maxToolCalls(3);
+          t.check(
+            t.reply,
+            includes(/^STOP\|OPERATOR_GATE\|todo:agent-sdk-impresario-probe/),
+          );
         });
-        t.succeeded();
-        t.calledTool("request_ruling", { count: 1 });
-        t.calledTool("score_update", {
-          input: { section: "open_stops" },
-          count: 1,
-        });
-        t.maxToolCalls(3);
-        t.check(
-          t.reply,
-          includes(/^STOP\|OPERATOR_GATE\|todo:agent-sdk-impresario-probe/),
-        );
       },
     },
     {
@@ -103,19 +103,20 @@ export default defineEval({
       tags: ["e5"],
       async test(t) {
         skipWithoutCursorCredential(t);
-        armFixtures("stops-e5-concurrent");
-        const files = {
-          "turn.json": JSON.stringify(e5Fixture.turn, null, 2),
-          "score.md": e5Fixture.score_md,
-        };
-        await t.send("Handle turn.json", { workspaceFiles: files });
-        t.succeeded();
-        await t.send("Handle turn.json", { workspaceFiles: files });
-        t.succeeded();
-        t.check(
-          t.reply,
-          includes(/^STOP\|ROW_PINNED\|todo:agent-sdk-impresario-probe/),
-        );
+        await withFixtureScenario(fixtureRoot, "stops-e5-concurrent", async () => {
+          const files = {
+            "turn.json": JSON.stringify(e5Fixture.turn, null, 2),
+            "score.md": e5Fixture.score_md,
+          };
+          await t.send("Handle turn.json", { workspaceFiles: files });
+          t.succeeded();
+          await t.send("Handle turn.json", { workspaceFiles: files });
+          t.succeeded();
+          t.check(
+            t.reply,
+            includes(/^STOP\|ROW_PINNED\|todo:agent-sdk-impresario-probe/),
+          );
+        });
       },
     },
   ],

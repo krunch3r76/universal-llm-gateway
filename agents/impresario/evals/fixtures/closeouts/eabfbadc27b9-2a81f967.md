@@ -53,8 +53,8 @@ git diff --stat master..HEAD                          → 3 files, 678 insertion
       "entries": [
         {
           "op": "shell",
-          "target": "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-20901 && git log -1 --oneline && git diff --stat master..HEAD 2>/dev/null | tail -5",
+          "target": "cd <worktree> && git log -1 --oneline && git diff --stat master..HEAD 2>/dev/null | tail -5",
           "detail": {
-            "command": "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-20901 && git log -1 --oneline && git diff --stat master..HEAD 2>/dev/null | tail -5",
+            "command": "cd <worktree> && git log -1 --oneline && git diff --stat master..HEAD 2>/dev/null | tail -5",
             "timeout": 30000
           },
