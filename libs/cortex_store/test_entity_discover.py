@@ -72,6 +72,7 @@ def test_entity_update_rename_mints_default_aliases(migrated_db) -> None:
     updated = _op_entity_update(
         entity_id="document:confirmation-wells-fargo",
         name="Confirmation - Wells Fargo",
+        echo="card",
     )
     assert "error" not in updated
     aliases = updated.get("aliases") or []

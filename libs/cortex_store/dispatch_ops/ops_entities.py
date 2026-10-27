@@ -38,6 +38,7 @@ from ._write_validation import (
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
+from .entity_update_receipt import build_entity_update_receipt
 
 _TRAIT_VOCAB: dict[str, frozenset[str]] = {
     "confidence_band": CONFIDENCE_BAND_VALUES,
@@ -682,9 +683,14 @@ def _op_entity_update(
             "supported_intents": ["full", "card"],
             "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
         }
+    echo = kwargs.pop("echo", None)
+    if echo is not None and echo != "card":
+        return {"error": f"Unknown echo {echo!r}. Supported: card"}
+    echo_card = echo == "card"
     updates: dict[str, object] = {
         k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE
     }
+    changed_keys = sorted(updates.keys())
     status_val = updates.get("status")
     if status_val is not None and status_val not in _VALID_STATUS:
         return {"error": _invalid_status_message(str(status_val))}
@@ -701,7 +707,8 @@ def _op_entity_update(
             updates["content_hash"] = computed
     if not updates:
         return {"error": "No fields to update"}
-    _, get_entity_card, _, _, _update_entity_impl = _impls()
+    impl_intent = "full" if echo_card else intent
+    _, get_entity_card, get_entity_impl, _, _update_entity_impl = _impls()
     with cortex_conn() as conn:
         try:
             canonical_id = _resolve_read_entity_id(
@@ -728,7 +735,7 @@ def _op_entity_update(
                 conn,
                 entity_id=canonical_id if not raw_id else entity_id,
                 updates=updates,
-                intent=intent,
+                intent=impl_intent,
             )
         except HTTPException as exc:
             return _http_error_dict(exc)
@@ -767,7 +774,7 @@ def _op_entity_update(
                     entity_type=entity_type,
                     attrs=attrs if isinstance(attrs, dict) else result.get("attributes"),
                 )
-                if birth_warning is not None:
+                if birth_warning is not None and echo_card:
                     attach_endeavor_birth_warning(result, birth_warning)
             except Exception:  # noqa: BLE001 — advisory warning must never block update
                 logger.warning(
@@ -775,6 +782,18 @@ def _op_entity_update(
                     entity_id,
                     exc_info=True,
                 )
+            if echo_card:
+                return result
+            resolved = canonical_id if not raw_id else entity_id
+            if impl_intent == "full":
+                full_card = result
+            else:
+                full_card = get_entity_impl(
+                    conn, entity_id=resolved, source="boot"
+                )
+            return build_entity_update_receipt(
+                card=full_card, changed_keys=changed_keys
+            )
         return result
 
 
