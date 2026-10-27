@@ -109,6 +109,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function pollGapMs(): number {
+  const raw = process.env.ULG_BUS_POLL_GAP_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) {
+      return n;
+    }
+  }
+  return 5000;
+}
+
 function deliveryId(thread: string, turnNumber: number): string {
   return `${thread}#${turnNumber}`;
 }
@@ -256,12 +267,12 @@ async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<
 
 async function runPollLoop(args: ChannelStartArgs): Promise<void> {
   const scenarioScore = fixturesEnabled() ? loadScenario().score_md : "";
-  let backoffMs = 5000;
+  let backoffMs = pollGapMs();
   while (!pollStopped) {
     try {
       await pollOnce(args, scenarioScore);
-      backoffMs = 5000;
-      await sleep(5000);
+      backoffMs = pollGapMs();
+      await sleep(pollGapMs());
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 503 || status === 500) {
@@ -330,5 +341,14 @@ export default defineChannel({
   },
 });
 
-export { deliverPrepared, prepareTurn, busWait };
+export { deliverPrepared, prepareTurn, busWait, pollOnce, runPollLoop };
+
+export function signalPollLoopStop(): void {
+  pollStopped = true;
+}
+
+export function resetPollLoopForTest(): void {
+  pollStopped = false;
+}
+
 export { LAST_LANE_TURN_KEY } from "../lib/bus-lane.js";
