@@ -118,13 +118,61 @@ def test_email_restate_pin_satisfied_amanda_vms_temporal_monthly() -> None:
 
 
 def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> None:
-    pin = "Currently my schedule stays full most of the time."
-    assert not email_envelope.email_restate_pin_satisfied(
-        "My schedule stays full most of the time.", pin
+    pin_currently = "Currently my schedule stays full most of the time."
+    assert email_envelope.email_restate_pin_satisfied(
+        "My schedule stays full most of the time.", pin_currently
     )
     assert email_envelope.email_restate_pin_satisfied(
-        "Right now my schedule stays full most of the time.", pin
+        "Right now my schedule stays full most of the time.", pin_currently
     )
+    pin_provide = "I am not able to provide a monthly open calendar."
+    assert email_envelope.email_restate_pin_satisfied(
+        "I can't send a monthly open calendar.", pin_provide
+    )
+
+    amanda_draft = (
+        "I don't have standing availability on any day of the week. "
+        "My schedule stays full most of the time, so I can't send a monthly open calendar."
+    )
+    amanda_pins = (
+        "I do not have standing availability on any day of the week.",
+        pin_currently,
+        pin_provide,
+    )
+    for pin in amanda_pins:
+        assert email_envelope.email_restate_pin_satisfied(amanda_draft, pin)
+
+    assert not email_envelope.email_restate_pin_satisfied(
+        "My schedule stays full most of the time.",
+        pin_currently,
+        verbatim_required=True,
+    )
+    assert not email_envelope.email_restate_pin_satisfied(
+        "I can't send a monthly open calendar.",
+        pin_provide,
+        verbatim_required=True,
+    )
+    assert not email_envelope.email_restate_pin_satisfied(
+        "I don't have standing availability on any day of the week.",
+        "I do not have standing availability on any day of the week.",
+        verbatim_required=True,
+    )
+    assert email_envelope.email_restate_pin_satisfied(
+        pin_currently,
+        pin_currently,
+        verbatim_required=True,
+    )
+    assert email_envelope.email_restate_pin_satisfied(
+        pin_provide,
+        pin_provide,
+        verbatim_required=True,
+    )
+
+    for flipped in (
+        "I can send a monthly open calendar.",
+        "I am able to provide a monthly open calendar.",
+    ):
+        assert not email_envelope.email_restate_pin_satisfied(flipped, pin_provide)
 
 
 def test_email_restate_pin_satisfied_contraction_and_decline_synonyms() -> None:

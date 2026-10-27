@@ -603,7 +603,11 @@ def _pin_matches_text(
     )
     if isinstance(pin, dict) and pin.get("restate") is True:
         excerpt = str(pin.get("excerpt") or "")
-        if excerpt and email_restate_pin_satisfied(text, excerpt):
+        if excerpt and email_restate_pin_satisfied(
+            text,
+            excerpt,
+            verbatim_required=bool(pin.get("verbatim_required")),
+        ):
             return True
     excerpt_anchors = _pin_excerpt_anchor_tokens(pin_id, pin_ledger)
     if excerpt_anchors and excerpt_anchors <= sent_tokens:
@@ -1018,14 +1022,21 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 for pin in ledger:
                     if not isinstance(pin, dict):
                         continue
-                    if pin.get("restate") is True and pin.get("attested") is True:
-                        excerpt = str(pin.get("excerpt") or "")
-                        if excerpt and not email_restate_pin_satisfied(
-                            draft_body, excerpt
+                    attested = pin.get("attested") is True
+                    excerpt = str(pin.get("excerpt") or "")
+                    verbatim = pin.get("verbatim_required") is True
+                    restate = pin.get("restate") is True
+                    if attested and excerpt and (restate or verbatim):
+                        if not email_restate_pin_satisfied(
+                            draft_body,
+                            excerpt,
+                            verbatim_required=verbatim,
                         ):
                             violations.append(
                                 _violation(
-                                    "restate_pin_missing",
+                                    "verbatim_pin_modified"
+                                    if verbatim
+                                    else "restate_pin_missing",
                                     str(pin.get("pin_id")),
                                     excerpt[:120],
                                 )

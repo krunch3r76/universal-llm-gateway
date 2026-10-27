@@ -73,6 +73,22 @@ _DECLINE_ABILITY_NOT_ABLE = re.compile(
     re.I,
 )
 _UNABLE_TO = re.compile(r"\bunable\s+to\b", re.I)
+_SUPPLY_VERBS = re.compile(
+    r"\b(?:provide|send|share|give|submit)\b",
+    re.I,
+)
+_RESTATE_NEGATION_TOKENS = frozenset(
+    {
+        "decline",
+        "declining",
+        "never",
+        "no",
+        "not",
+        "unable",
+        "without",
+    }
+)
+_RESTATE_OPTIONAL_TOKENS = frozenset({"currently"})
 
 
 def normalize_contractions(text: str) -> str:
@@ -94,11 +110,17 @@ def normalize_temporal_monthly_synonyms(text: str) -> str:
     return re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
 
 
+def normalize_supply_verbs(text: str) -> str:
+    """Map delivery/supply verbs to ``provide`` for restate token overlap."""
+    return _SUPPLY_VERBS.sub("provide", text)
+
+
 def normalize_text_for_token_match(text: str) -> str:
     """Normalize dashes, contractions, and decline phrasing before token extraction."""
     text = normalize_email_dashes(text)
     text = normalize_contractions(text)
     text = normalize_decline_ability_phrases(text)
+    text = normalize_supply_verbs(text)
     return normalize_temporal_monthly_synonyms(text)
 
 
@@ -261,8 +283,97 @@ def polish_email_draft(
     )
 
 
-def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
-    """True when draft contains pin text or an email opening rewrite of it."""
+def _token_list_lower(text: str) -> list[str]:
+    return _TOKEN.findall(text.lower())
+
+
+def _contiguous_token_subsequence(needle: list[str], haystack: list[str]) -> bool:
+    if not needle:
+        return True
+    width = len(needle)
+    if width > len(haystack):
+        return False
+    for start in range(len(haystack) - width + 1):
+        if haystack[start : start + width] == needle:
+            return True
+    return False
+
+
+def _restate_anchor_tokens(normalized_pin_text: str) -> set[str]:
+    anchors = (
+        set(_TOKEN.findall(normalized_pin_text.lower())) - _RESTATE_STOPWORDS
+    )
+    optional = anchors & _RESTATE_OPTIONAL_TOKENS
+    if optional and len(anchors - _RESTATE_OPTIONAL_TOKENS) >= 3:
+        anchors -= _RESTATE_OPTIONAL_TOKENS
+    return anchors
+
+
+def _draft_clauses(text: str) -> list[str]:
+    clauses: list[str] = []
+    for sentence in re.split(r"[.!?]+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        for piece in re.split(r",\s*", sentence):
+            piece = piece.strip()
+            if piece:
+                clauses.append(piece)
+    return clauses if clauses else [text]
+
+
+def _negation_tokens(token_set: set[str]) -> set[str]:
+    return token_set & _RESTATE_NEGATION_TOKENS
+
+
+def _restate_negation_guard(
+    draft_text: str,
+    pin_excerpt: str,
+    anchors: set[str],
+) -> bool:
+    """Require negation in the draft clause that carries restate anchors when the pin refuses."""
+    norm_pin = normalize_text_for_token_match(pin_excerpt)
+    pin_tokens = set(_TOKEN.findall(norm_pin.lower())) - _RESTATE_STOPWORDS
+    if not _negation_tokens(pin_tokens):
+        return True
+    if not anchors:
+        return True
+    for clause in _draft_clauses(draft_text):
+        norm_clause = normalize_text_for_token_match(clause)
+        clause_tokens = (
+            set(_TOKEN.findall(norm_clause.lower())) - _RESTATE_STOPWORDS
+        )
+        if not anchors <= clause_tokens:
+            continue
+        if _negation_tokens(clause_tokens):
+            return True
+        return False
+    norm_draft = normalize_text_for_token_match(draft_text)
+    draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
+    if anchors <= draft_tokens:
+        return bool(_negation_tokens(draft_tokens))
+    return True
+
+
+def email_restate_pin_satisfied(
+    draft_text: str,
+    pin_excerpt: str,
+    *,
+    verbatim_required: bool = False,
+) -> bool:
+    """True when the draft satisfies a restate or verbatim-attested pin excerpt."""
+    if verbatim_required:
+        pin_stripped = pin_excerpt.strip().lower()
+        draft_lower = draft_text.lower()
+        pin_tokens = _token_list_lower(pin_excerpt)
+        draft_tokens = _token_list_lower(draft_text)
+        draft_token_set = set(draft_tokens)
+        if not pin_tokens or not all(token in draft_token_set for token in pin_tokens):
+            return False
+        if pin_stripped in draft_lower:
+            return True
+        return _contiguous_token_subsequence(pin_tokens, draft_tokens)
+
     norm_draft = normalize_text_for_token_match(draft_text)
     draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
     norm_pin = normalize_email_dashes(pin_excerpt)
@@ -271,14 +382,19 @@ def email_restate_pin_satisfied(draft_text: str, pin_excerpt: str) -> bool:
         rewrite_email_opening(norm_pin),
         normalize_email_dashes(rewrite_email_opening(norm_pin)),
     ):
-        anchors = (
-            set(_TOKEN.findall(normalize_text_for_token_match(variant).lower()))
-            - _RESTATE_STOPWORDS
-        )
+        norm_variant = normalize_text_for_token_match(variant)
+        anchors = _restate_anchor_tokens(norm_variant)
         if anchors and anchors <= draft_tokens:
-            return True
+            if _restate_negation_guard(draft_text, pin_excerpt, anchors):
+                return True
+            continue
         if variant.strip().lower() in norm_draft.lower():
-            return True
+            if _restate_negation_guard(
+                draft_text,
+                pin_excerpt,
+                _restate_anchor_tokens(norm_variant),
+            ):
+                return True
     return False
 
 
