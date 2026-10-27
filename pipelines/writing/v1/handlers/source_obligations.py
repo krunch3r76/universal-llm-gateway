@@ -40,14 +40,14 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "september", "october", "november", "december",
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
     "yes", "no", "ok", "okay",
+    "i", "a",
 })
 _NAME_WORD = r"[A-Z][\w'.-]*"
 _NAME_ONE_OR_TWO = rf"{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
 _TRAILING_SIGNATURE = re.compile(
     rf"(?:^|\s)[—–-]+\s*({_NAME_ONE_OR_TWO}|"
-    rf"Thanks?,?\s*{_NAME_WORD}|"
-    rf"{_NAME_WORD},?\s*(?:thank\s+you|thanks?)[!.]?)\s*$",
-    re.IGNORECASE,
+    rf"(?i:thanks?),?\s*{_NAME_ONE_OR_TWO}|"
+    rf"{_NAME_ONE_OR_TWO},?\s*(?i:thank\s+you|thanks?)[!.]?)\s*$",
 )
 _COURTESY_TOKENS = re.compile(
     r"\b(?:"
@@ -96,13 +96,11 @@ def _format_block(obligations: list[dict[str, Any]]) -> str:
 
 _SIGNATURE_ONLY = re.compile(
     rf"^[—–-]+\s*({_NAME_ONE_OR_TWO}|"
-    rf"Thanks?,?\s*{_NAME_WORD}|"
-    rf"{_NAME_WORD},?\s*(?:thank\s+you|thanks?)[!.]?)\s*$",
-    re.IGNORECASE,
+    rf"(?i:thanks?),?\s*{_NAME_ONE_OR_TWO}|"
+    rf"{_NAME_ONE_OR_TWO},?\s*(?i:thank\s+you|thanks?)[!.]?)\s*$",
 )
 _COMMA_COURTESY_SIGNOFF = re.compile(
-    rf"^(?:thanks?|thank\s+you)\s*,?\s*({_NAME_ONE_OR_TWO})[!.]?\s*$",
-    re.IGNORECASE,
+    rf"^(?i:thanks?|thank\s+you)\s*,?\s*({_NAME_ONE_OR_TWO})[!.]?\s*$",
 )
 
 
@@ -115,12 +113,35 @@ def _name_tokens(text: str) -> list[str]:
     ]
 
 
+def _token_is_plausible_signature_name(token: str) -> bool:
+    """True when ``token`` looks like a sign-off name, not a keyword or courtesy word."""
+    normalized = token.rstrip("'.-").lower()
+    if len(normalized) <= 1:
+        return False
+    if normalized in _NON_SIGNATURE_TOKENS:
+        return False
+    if (
+        _REQUEST.search(token)
+        or _DEADLINE.search(token)
+        or _ATTACHMENT.search(token)
+    ):
+        return False
+    return True
+
+
 def _name_tokens_are_signature(text: str) -> bool:
     """True when every token in ``text`` is a plausible sign-off name, not temporal noise."""
     tokens = _name_tokens(text)
     if not tokens or len(tokens) > 2:
         return False
-    return all(token not in _NON_SIGNATURE_TOKENS for token in tokens)
+    parts = [part for part in re.split(r"[ \t]+", text.strip()) if part.strip()]
+    for part in parts:
+        bare = part.rstrip(".!")
+        if not re.match(r"^[A-Z][\w'.-]*$", bare):
+            return False
+        if not _token_is_plausible_signature_name(part):
+            return False
+    return True
 
 
 def _signature_fragment_is_name(fragment: str) -> bool:
@@ -150,16 +171,13 @@ def _strip_trailing_signature(text: str) -> str:
     return text[: match.start()].rstrip()
 
 
-def _is_comma_courtesy_name_tail(rest: str) -> bool:
-    """True when ``rest`` is only a 1–2 word name with optional terminal punctuation."""
-    stripped = rest.strip().rstrip(".!")
-    return bool(stripped) and _name_tokens_are_signature(stripped)
-
-
 def _is_comma_courtesy_signoff(span: str) -> bool:
     """True when ``span`` is solely ``Thanks, Name`` / ``Thank you, Name`` (one line)."""
     normalized = " ".join(span.split())
-    return _COMMA_COURTESY_SIGNOFF.match(normalized) is not None
+    match = _COMMA_COURTESY_SIGNOFF.match(normalized)
+    if not match:
+        return False
+    return _name_tokens_are_signature(match.group(1))
 
 
 def _is_dash_courtesy_signoff(span: str) -> bool:
@@ -175,27 +193,20 @@ def _is_dash_courtesy_signoff(span: str) -> bool:
     return not text
 
 
-def _is_thanks_comma_substantive(span: str) -> bool:
-    """True when ``Thanks, …`` opens a clause, not a name-only courtesy sign-off."""
-    text = " ".join(span.split())
-    for prefix in (r"thanks?\s*,?\s*", r"thank\s+you\s*,?\s*"):
-        match = re.match(prefix, text, re.IGNORECASE)
-        if match:
-            rest = text[match.end() :].strip()
-            return bool(rest) and not _is_comma_courtesy_name_tail(rest)
-    return False
-
-
 def _fragment_is_signature_only(fragment: str) -> bool:
     """True when a post-``?`` tail fragment is only dash-signature or courtesy+name."""
     frag = fragment.strip()
     if not frag:
         return True
-    if _SIGNATURE_ONLY.match(frag):
+    sig = _SIGNATURE_ONLY.match(frag)
+    if sig and _signature_fragment_is_name(sig.group(1)):
         return True
     dash = re.match(r"^[—–-]+\s*(.+)$", frag)
-    if dash and _SIGNATURE_ONLY.match(f"- {dash.group(1).strip()}"):
-        return True
+    if dash:
+        candidate = f"- {dash.group(1).strip()}"
+        sig = _SIGNATURE_ONLY.match(candidate)
+        if sig and _signature_fragment_is_name(sig.group(1)):
+            return True
     return _is_comma_courtesy_signoff(frag)
 
 
@@ -230,11 +241,46 @@ def _strip_trailing_signature_and_courtesy(text: str) -> str:
     return head if not tail else f"{head} {tail}".strip()
 
 
+def _is_direct_request(core: str) -> bool:
+    """True when ``core`` is a direct ask, not third-party future narration (``Bob will send``)."""
+    if not _REQUEST.search(core):
+        return False
+    if re.match(
+        r"^[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*)?\s+will\s+\S",
+        core.strip(),
+    ):
+        return False
+    return True
+
+
+def _is_substantive_question_tail(tail: str) -> bool:
+    """True when text after ``?`` is substantive (e.g. ``- call me``), not a signature."""
+    stripped = tail.strip()
+    if not stripped or _fragment_is_signature_only(stripped):
+        return False
+    dash = re.match(r"^[—–-]+\s*(.+)$", stripped)
+    if dash:
+        return not _signature_fragment_is_name(dash.group(1).strip())
+    return True
+
+
+def _question_semantic_core(core: str) -> str:
+    """Core text for question ``semantic_reading``, preserving non-signature post-``?`` tails."""
+    q_idx = core.rfind("?")
+    if q_idx != -1 and _is_substantive_question_tail(core[q_idx + 1 :]):
+        return core.strip()
+    return _strip_trailing_signature_and_courtesy(core)
+
+
 def _span_is_question(core: str) -> bool:
     """True when ``core`` is a question, ignoring trailing signature or courtesy."""
-    if _QUESTION.search(core):
+    if _QUESTION.search(_strip_trailing_signature_and_courtesy(core)):
         return True
-    return _QUESTION.search(_strip_trailing_signature_and_courtesy(core)) is not None
+    q_idx = core.rfind("?")
+    if q_idx == -1:
+        return False
+    tail = core[q_idx + 1 :].strip()
+    return bool(tail) and _is_substantive_question_tail(tail)
 
 
 def _span_starts_with_bullet(line: str) -> bool:
@@ -309,14 +355,23 @@ def _split_spans(source_message: str) -> list[str]:
             and not merged[-1].lstrip().startswith(("-", "–", "—"))
         ):
             merged[-1] = f"{merged[-1]} {span}".strip()
-        else:
-            merged.append(span)
+            continue
+        dash_tail = re.match(r"^[—–-]+\s*(.+)$", span)
+        if (
+            merged
+            and dash_tail
+            and not _signature_fragment_is_name(dash_tail.group(1).strip())
+            and merged[-1].rstrip().endswith("?")
+        ):
+            merged[-1] = f"{merged[-1]} {span}".strip()
+            continue
+        merged.append(span)
     return merged
 
 
 def _strip_greeting_prefix(span: str) -> str:
     text = span.strip()
-    if _is_comma_courtesy_signoff(text) or _is_thanks_comma_substantive(text):
+    if _is_comma_courtesy_signoff(text):
         return text
     while text:
         match = _GREETING_PREFIX.match(text)
@@ -382,7 +437,7 @@ def _classify_span(span: str) -> tuple[str, str, str]:
             "a reply email is not the application",
         )
     if _span_is_question(core):
-        question_core = _strip_trailing_signature_and_courtesy(core)
+        question_core = _question_semantic_core(core)
         return "question", "answer", f"answer the question: {question_core[:120]}"
     if _is_reply_closing_pleasantry(span):
         return (
@@ -390,13 +445,7 @@ def _classify_span(span: str) -> tuple[str, str, str]:
             "none",
             "reply-closing courtesy without a required reply action",
         )
-    if _is_thanks_comma_substantive(span):
-        return (
-            "statement",
-            "acknowledge",
-            f"acknowledge or reflect: {core[:120]}",
-        )
-    if _REQUEST.search(core):
+    if _is_direct_request(core):
         return "request", "answer", f"respond to the request: {core[:120]}"
     if _DEADLINE.search(core):
         return "deadline", "acknowledge", f"acknowledge deadline: {core[:120]}"

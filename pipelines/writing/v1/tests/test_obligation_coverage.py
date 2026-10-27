@@ -1567,6 +1567,57 @@ def test_two_word_bullet_items_after_colon_stay_statement_acknowledge() -> None:
         assert row["kind"] != "pleasantry"
 
 
+def test_thanks_comma_request_attachment_not_downgraded_to_pleasantry() -> None:
+    send_rows = source_obligations.fallback_obligations(
+        "Thanks, please send the transcript."
+    )
+    assert send_rows[0]["kind"] == "request"
+    assert send_rows[0]["obligation"] == "answer"
+
+    attach_rows = source_obligations.fallback_obligations("Thanks, see attached.")
+    assert attach_rows[0]["kind"] == "attachment"
+    assert attach_rows[0]["obligation"] == "acknowledge"
+
+    send_it = source_obligations.fallback_obligations("Thanks, send it.")
+    assert send_it[0]["kind"] == "request"
+    assert send_it[0]["obligation"] == "answer"
+    assert send_it[0]["kind"] != "pleasantry"
+
+
+@pytest.mark.parametrize(
+    "inbound",
+    (
+        "Thanks, sounds good.",
+        "Thanks, I agree.",
+    ),
+)
+def test_thanks_comma_lowercase_clause_stays_statement_not_pleasantry(
+    inbound: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "statement"
+    assert rows[0]["obligation"] == "acknowledge"
+    assert rows[0]["kind"] != "pleasantry"
+
+
+def test_question_dash_call_me_not_stripped_from_semantic_reading() -> None:
+    rows = source_obligations.fallback_obligations("What time works? - call me")
+    question = next(row for row in rows if row.get("kind") == "question")
+    assert "call me" in str(question.get("semantic_reading", "")).lower()
+
+
+def test_lowercase_bullet_after_notes_not_merged_as_signature() -> None:
+    rows = source_obligations.fallback_obligations("Notes\n- send transcript")
+    quoted = [str(row.get("quoted_span", "")) for row in rows]
+    assert any(span.strip() == "Notes" for span in quoted)
+    assert any("- send transcript" in span for span in quoted)
+    assert not any(
+        "Notes - send transcript" in span or "Notes\n- send transcript" in span
+        for span in quoted
+    )
+
+
 def test_bulleted_list_items_after_colon_stay_statement_acknowledge() -> None:
     inbound = "Please send:\n- Transcript\n- References"
     rows = source_obligations.fallback_obligations(inbound)
